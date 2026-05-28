@@ -10,6 +10,7 @@ import { _resetDedupCache } from "../src/ingest/captureIngest.js";
 import { AnalysisPipeline } from "../src/analysis/pipeline.js";
 import { StateStore } from "../src/analysis/stateStore.js";
 import { MockProvider } from "../src/providers/provider.js";
+import { ReportWriter } from "../src/reports/reportWriter.js";
 
 let app: ReturnType<typeof createApp>;
 
@@ -89,5 +90,33 @@ describe("server analysis wiring", () => {
       state = await stateStore.load("c1");
     }
     expect(state.findings).toHaveLength(1);
+  });
+});
+
+describe("state and report routes", () => {
+  it("GET /cases/:id/state returns the current state", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-state-route-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const app = createApp(store, { stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+
+    const res = await request(app).get("/cases/c1/state");
+    expect(res.status).toBe(200);
+    expect(res.body.caseId).toBe("c1");
+    expect(res.body.findings).toEqual([]);
+  });
+
+  it("POST /cases/:id/report writes reports and returns paths", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-report-route-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore);
+    const app = createApp(store, { stateStore, reportWriter });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+
+    const res = await request(app).post("/cases/c1/report");
+    expect(res.status).toBe(200);
+    expect(res.body.markdown).toMatch(/report\.md$/);
   });
 });

@@ -6,10 +6,14 @@ import { CaseStore } from "./storage/caseStore.js";
 import { ingestCapture } from "./ingest/captureIngest.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { CaptureMetadata } from "./types.js";
+import type { StateStore } from "./analysis/stateStore.js";
+import type { ReportWriter } from "./reports/reportWriter.js";
 
 export interface AppOptions {
   pipeline?: AnalysisPipeline;
   windowSize?: number;
+  stateStore?: StateStore;
+  reportWriter?: ReportWriter;
 }
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
@@ -65,6 +69,26 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return;
     } catch (err) {
       if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/cases/:id/state", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    try {
+      const state = await options.stateStore.load(req.params.id);
+      return res.status(200).json(state);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/report", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const paths = await options.reportWriter.writeAll(req.params.id);
+      return res.status(200).json(paths);
+    } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
