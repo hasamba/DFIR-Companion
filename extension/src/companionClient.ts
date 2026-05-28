@@ -33,8 +33,8 @@ export class CompanionClient {
 
   async ping(): Promise<boolean> {
     try {
-      const res = await this.fetchFn(`${this.baseUrl}/cases`, { method: "OPTIONS" });
-      return res.ok || res.status === 404 || res.status === 405; // server reachable
+      const res = await this.fetchFn(`${this.baseUrl}/health`, { method: "GET" });
+      return res.ok; // 200 from GET /health means the companion is reachable
     } catch {
       return false;
     }

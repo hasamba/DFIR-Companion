@@ -39,6 +39,12 @@ describe("HTTP server", () => {
     expect(res.headers["access-control-allow-headers"]).toContain("Content-Type");
   });
 
+  it("GET /health returns 200 so the extension can detect the companion is online", async () => {
+    const res = await request(app).get("/health");
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
   it("POST /cases creates a case", async () => {
     const res = await request(app)
       .post("/cases")

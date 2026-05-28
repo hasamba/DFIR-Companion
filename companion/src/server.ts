@@ -37,6 +37,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   app.use(express.json({ limit: "25mb" }));
 
+  // Lightweight reachability check used by the extension's connection status.
+  app.get("/health", (_req: Request, res: Response) => {
+    res.status(200).json({ ok: true, service: "dfir-companion" });
+  });
+
   const windowSize = options.windowSize ?? 4;
   const buffers = new Map<string, CaptureMetadata[]>();
   const SIGNIFICANT = new Set(["navigation", "tab_switch"]);
