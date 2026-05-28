@@ -35,11 +35,31 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     next();
   });
 
+  // Log each request and its final status (useful for a local single-user tool).
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    res.on("finish", () => {
+      console.log(`[req] ${req.method} ${req.url} -> ${res.statusCode}`);
+    });
+    next();
+  });
+
   app.use(express.json({ limit: "25mb" }));
 
   // Lightweight reachability check used by the extension's connection status.
   app.get("/health", (_req: Request, res: Response) => {
     res.status(200).json({ ok: true, service: "dfir-companion" });
+  });
+
+  // How many captures have been recorded for a case (counts the audit-log lines).
+  app.get("/cases/:id/captures/count", async (req: Request, res: Response) => {
+    try {
+      const log = await readFile(store.capturesLogPath(req.params.id), "utf8");
+      const count = log.split("\n").filter((l) => l.trim().length > 0).length;
+      return res.status(200).json({ count });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return res.status(200).json({ count: 0 });
+      return res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   const windowSize = options.windowSize ?? 4;

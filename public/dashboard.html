@@ -24,6 +24,7 @@
     <button id="connect">Connect</button>
     <button id="generateReport">Generate Report</button>
     <span id="status">disconnected</span>
+    <span id="captureCount" style="margin-left:auto; font-weight:bold;">Screenshots: 0</span>
   </header>
   <main>
     <section><h2>Executive Summary</h2><div id="summary">—</div></section>
@@ -35,6 +36,18 @@
   <script>
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
     let ws = null;
+    let countTimer = null;
+
+    function pollCount(caseId) {
+      if (countTimer) clearInterval(countTimer);
+      const update = () =>
+        fetch(`/cases/${caseId}/captures/count`)
+          .then(r => r.json())
+          .then(d => document.getElementById("captureCount").textContent = `Screenshots: ${d.count}`)
+          .catch(() => {});
+      update();
+      countTimer = setInterval(update, 3000);
+    }
 
     function render(state) {
       document.getElementById("summary").textContent = state.lastSummary || "—";
@@ -53,6 +66,7 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
       fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
+      pollCount(caseId);
       ws = new WebSocket(`ws://${location.host}/ws?caseId=${encodeURIComponent(caseId)}`);
       ws.onopen = () => document.getElementById("status").textContent = "connected (live)";
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
