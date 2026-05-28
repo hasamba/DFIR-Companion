@@ -1,0 +1,48 @@
+import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, ProviderError } from "./provider.js";
+
+type FetchFn = typeof fetch;
+
+export interface GeminiOptions {
+  apiKey: string;
+  model: string;       // e.g. "gemini-1.5-pro"
+  baseUrl?: string;
+  fetchFn?: FetchFn;
+}
+
+function mapStatus(status: number): ProviderError["kind"] {
+  if (status === 401 || status === 403) return "auth";
+  if (status === 429) return "rate_limit";
+  if (status === 408 || status >= 500) return "transport";
+  return "other";
+}
+
+export class GeminiProvider implements AIProvider {
+  readonly name = "gemini";
+  private readonly fetchFn: FetchFn;
+  private readonly baseUrl: string;
+  constructor(private readonly opts: GeminiOptions) {
+    this.fetchFn = opts.fetchFn ?? fetch;
+    this.baseUrl = opts.baseUrl ?? "https://generativelanguage.googleapis.com/v1beta";
+  }
+
+  async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+    const parts: unknown[] = [{ text: `${req.systemPrompt}\n\n${req.userPrompt}` }];
+    for (const img of req.images) {
+      parts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } });
+    }
+    const url = `${this.baseUrl}/models/${this.opts.model}:generateContent?key=${this.opts.apiKey}`;
+    const res = await this.fetchFn(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: { responseMimeType: "application/json" },
+      }),
+    });
+    if (!res.ok) throw new ProviderError(`Gemini HTTP ${res.status}`, mapStatus(res.status));
+    const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+    const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new ProviderError("Gemini returned no content", "other");
+    return { rawText: text };
+  }
+}
