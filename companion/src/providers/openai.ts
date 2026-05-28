@@ -17,7 +17,7 @@ function mapStatus(status: number): ProviderError["kind"] {
 }
 
 export class OpenAIProvider implements AIProvider {
-  readonly name = "openai";
+  readonly name: string = "openai";
   private readonly fetchFn: FetchFn;
   private readonly baseUrl: string;
   constructor(private readonly opts: OpenAIOptions) {

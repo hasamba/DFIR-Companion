@@ -1,6 +1,6 @@
 import express, { type Express, type Request, type Response } from "express";
 import { join } from "node:path";
-import { writeFile } from "node:fs/promises";
+import { writeFile, readFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore } from "./storage/caseStore.js";
 import { ingestCapture } from "./ingest/captureIngest.js";
@@ -96,16 +96,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   return app;
 }
 
-import { StateStore } from "./analysis/stateStore.js";
+import { StateStore as StateStoreImpl } from "./analysis/stateStore.js";
 import { AnalysisPipeline as AnalysisPipelineImpl } from "./analysis/pipeline.js";
 import { makeImageLoader } from "./analysis/imageLoader.js";
 import { ProviderRegistry } from "./providers/provider.js";
+import type { AIProvider as AnalyzeProvider } from "./providers/provider.js";
 import { OpenAIProvider } from "./providers/openai.js";
 import { OpenRouterProvider } from "./providers/openrouter.js";
 import { OllamaCloudProvider } from "./providers/ollama.js";
 import { GeminiProvider } from "./providers/gemini.js";
+import { WebSocketServer } from "ws";
+import { LiveHub } from "./live/hub.js";
+import { ReportWriter as ReportWriterImpl } from "./reports/reportWriter.js";
 
-export function buildPipeline(store: CaseStore): AnalysisPipeline | undefined {
+export function buildProvider(): AnalyzeProvider | undefined {
   const name = process.env.DFIR_AI_PROVIDER;
   const model = process.env.DFIR_AI_MODEL ?? "";
   const apiKey = process.env.DFIR_AI_KEY ?? "";
@@ -115,18 +119,37 @@ export function buildPipeline(store: CaseStore): AnalysisPipeline | undefined {
   registry.register(new OpenRouterProvider({ apiKey, model }));
   registry.register(new OllamaCloudProvider({ apiKey, model }));
   registry.register(new GeminiProvider({ apiKey, model }));
-  return new AnalysisPipelineImpl({
-    provider: registry.get(name),
-    stateStore: new StateStore(store),
-    imageLoader: makeImageLoader(store),
-  });
+  return registry.get(name);
 }
 
 export function startServer(casesRoot: string, port = 4773): void {
   const store = new CaseStore(casesRoot);
-  const app = createApp(store, { pipeline: buildPipeline(store) });
-  app.listen(port, "127.0.0.1", () => {
-    console.log(`DFIR companion listening on http://127.0.0.1:${port}`);
+  const stateStore = new StateStoreImpl(store);
+  const hub = new LiveHub();
+  const reportWriter = new ReportWriterImpl(store, stateStore);
+
+  const provider = buildProvider();
+  const wiredPipeline = provider
+    ? new AnalysisPipelineImpl({ provider, stateStore, imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s) })
+    : undefined;
+
+  const app = createApp(store, { pipeline: wiredPipeline, stateStore, reportWriter });
+
+  // Serve the dashboard.
+  app.get("/dashboard", async (_req, res) => {
+    const html = await readFile(new URL("../../public/dashboard.html", import.meta.url), "utf8");
+    res.type("html").send(html);
+  });
+
+  const server = app.listen(port, "127.0.0.1", () => {
+    console.log(`DFIR companion on http://127.0.0.1:${port} (dashboard at /dashboard)`);
+  });
+
+  const wss = new WebSocketServer({ server, path: "/ws" });
+  wss.on("connection", (socket, req) => {
+    const caseId = new URL(req.url ?? "", "http://localhost").searchParams.get("caseId") ?? "";
+    hub.subscribe(caseId, socket as unknown as import("./live/hub.js").SocketLike);
+    socket.on("close", () => hub.unsubscribe(caseId, socket as unknown as import("./live/hub.js").SocketLike));
   });
 }
 
