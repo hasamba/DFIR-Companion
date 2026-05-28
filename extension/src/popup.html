@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: system-ui, sans-serif; width: 280px; padding: 12px; }
+    label { display: block; font-size: 12px; margin-top: 8px; }
+    input { width: 100%; box-sizing: border-box; padding: 4px; }
+    .row { display: flex; gap: 8px; margin-top: 10px; }
+    button { flex: 1; padding: 8px; cursor: pointer; }
+    #status { margin-top: 10px; font-size: 12px; color: #555; }
+    .on { color: #2d6cdf; } .off { color: #cc3333; }
+  </style>
+</head>
+<body>
+  <strong>DFIR Capture</strong>
+  <label>Case ID <input id="caseId" /></label>
+  <label>Companion URL <input id="companionUrl" /></label>
+  <label>Interval (seconds) <input id="intervalSeconds" type="number" min="5" /></label>
+  <label>Dedup threshold <input id="dedupThreshold" type="number" min="0" /></label>
+  <div class="row">
+    <button id="createCase">Create case</button>
+  </div>
+  <div class="row">
+    <button id="start">Start</button>
+    <button id="stop">Stop</button>
+  </div>
+  <div id="status">idle</div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
