@@ -1,23 +1,48 @@
 import express, { type Express, type Request, type Response } from "express";
+import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore } from "./storage/caseStore.js";
 import { ingestCapture } from "./ingest/captureIngest.js";
+import type { AnalysisPipeline } from "./analysis/pipeline.js";
+import type { CaptureMetadata } from "./types.js";
 
-export function createApp(store: CaseStore): Express {
+export interface AppOptions {
+  pipeline?: AnalysisPipeline;
+  windowSize?: number;
+}
+
+export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const app = express();
-  app.use(express.json({ limit: "25mb" })); // screenshots arrive base64-encoded
+  app.use(express.json({ limit: "25mb" }));
 
+  const windowSize = options.windowSize ?? 4;
+  const buffers = new Map<string, CaptureMetadata[]>();
+  const SIGNIFICANT = new Set(["navigation", "tab_switch"]);
+
+  async function flush(caseId: string): Promise<void> {
+    const buf = buffers.get(caseId) ?? [];
+    if (buf.length === 0 || !options.pipeline) return;
+    buffers.set(caseId, []);
+    try {
+      await options.pipeline.analyzeWindow(caseId, buf);
+    } catch (err) {
+      const seqs = buf.map((c) => c.sequenceNumber);
+      await writeFile(
+        join(store.stateDir(caseId), "pending_analysis.json"),
+        JSON.stringify({ pending: seqs, error: (err as Error).message }, null, 2),
+        "utf8",
+      );
+    }
+  }
+
+  // /cases handler stays exactly as in Plan 1.
   app.post("/cases", async (req: Request, res: Response) => {
     try {
       const { caseId, name, investigator, aiProvider } = req.body ?? {};
-      if (!caseId || !name) {
-        return res.status(400).json({ error: "caseId and name are required" });
-      }
+      if (!caseId || !name) return res.status(400).json({ error: "caseId and name are required" });
       const meta = await store.createCase({
-        caseId,
-        name,
-        investigator: investigator ?? "unknown",
-        aiProvider: aiProvider ?? null,
+        caseId, name, investigator: investigator ?? "unknown", aiProvider: aiProvider ?? null,
       });
       return res.status(201).json(meta);
     } catch (err) {
@@ -28,11 +53,18 @@ export function createApp(store: CaseStore): Express {
   app.post("/captures", async (req: Request, res: Response) => {
     try {
       const metadata = await ingestCapture(store, req.body);
-      return res.status(201).json(metadata);
-    } catch (err) {
-      if (err instanceof ZodError) {
-        return res.status(400).json({ error: "invalid payload", details: err.issues });
+      res.status(201).json(metadata);
+      if (!metadata.isDuplicate && options.pipeline) {
+        const buf = buffers.get(metadata.caseId) ?? [];
+        buf.push(metadata);
+        buffers.set(metadata.caseId, buf);
+        if (buf.length >= windowSize || SIGNIFICANT.has(metadata.triggerType)) {
+          void flush(metadata.caseId);
+        }
       }
+      return;
+    } catch (err) {
+      if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -40,8 +72,35 @@ export function createApp(store: CaseStore): Express {
   return app;
 }
 
+import { StateStore } from "./analysis/stateStore.js";
+import { AnalysisPipeline as AnalysisPipelineImpl } from "./analysis/pipeline.js";
+import { makeImageLoader } from "./analysis/imageLoader.js";
+import { ProviderRegistry } from "./providers/provider.js";
+import { OpenAIProvider } from "./providers/openai.js";
+import { OpenRouterProvider } from "./providers/openrouter.js";
+import { OllamaCloudProvider } from "./providers/ollama.js";
+import { GeminiProvider } from "./providers/gemini.js";
+
+export function buildPipeline(store: CaseStore): AnalysisPipeline | undefined {
+  const name = process.env.DFIR_AI_PROVIDER;
+  const model = process.env.DFIR_AI_MODEL ?? "";
+  const apiKey = process.env.DFIR_AI_KEY ?? "";
+  if (!name) return undefined;
+  const registry = new ProviderRegistry();
+  registry.register(new OpenAIProvider({ apiKey, model }));
+  registry.register(new OpenRouterProvider({ apiKey, model }));
+  registry.register(new OllamaCloudProvider({ apiKey, model }));
+  registry.register(new GeminiProvider({ apiKey, model }));
+  return new AnalysisPipelineImpl({
+    provider: registry.get(name),
+    stateStore: new StateStore(store),
+    imageLoader: makeImageLoader(store),
+  });
+}
+
 export function startServer(casesRoot: string, port = 4773): void {
-  const app = createApp(new CaseStore(casesRoot));
+  const store = new CaseStore(casesRoot);
+  const app = createApp(store, { pipeline: buildPipeline(store) });
   app.listen(port, "127.0.0.1", () => {
     console.log(`DFIR companion listening on http://127.0.0.1:${port}`);
   });
