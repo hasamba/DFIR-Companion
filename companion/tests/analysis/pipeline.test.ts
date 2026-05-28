@@ -61,4 +61,16 @@ describe("AnalysisPipeline", () => {
     const state = await stateStore.load("c1");
     expect(state.findings).toHaveLength(0);
   });
+
+  it("invokes onState after a successful analysis", async () => {
+    let received: string | null = null;
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", validDelta),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      onState: (s) => { received = s.caseId; },
+    });
+    await pipeline.analyzeWindow("c1", [capture(1)]);
+    expect(received).toBe("c1");
+  });
 });

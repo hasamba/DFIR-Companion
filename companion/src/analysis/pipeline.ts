@@ -20,6 +20,7 @@ export interface PipelineOptions {
   imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage>;
   retries?: number;
   backoffMs?: number;
+  onState?: (state: InvestigationState) => void;
 }
 
 async function withRetry<T>(fn: () => Promise<T>, retries: number, backoffMs: number): Promise<T> {
@@ -66,6 +67,7 @@ export class AnalysisPipeline {
       sourceScreenshots: analyzable.map((c) => c.screenshotFile),
     });
     await this.opts.stateStore.save(next);
+    this.opts.onState?.(next);
     return next;
   }
 }
