@@ -1,4 +1,3 @@
-import { CompanionClient } from "./companionClient.js";
 import { DEFAULT_SETTINGS, type Settings } from "./types.js";
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
@@ -25,10 +24,21 @@ function readForm(running: boolean): Settings {
 }
 
 async function refreshStatus(s: Settings): Promise<void> {
-  const online = await new CompanionClient(s.companionUrl).ping();
   const el = statusEl();
-  el.textContent = `${s.running ? "capturing" : "stopped"} — companion ${online ? "online" : "offline"}`;
-  el.className = online ? "on" : "off";
+  const prefix = s.running ? "capturing" : "stopped";
+  try {
+    const res = await fetch(`${s.companionUrl}/health`, { method: "GET" });
+    if (res.ok) {
+      el.textContent = `${prefix} — companion online`;
+      el.className = "on";
+    } else {
+      el.textContent = `${prefix} — companion offline (health HTTP ${res.status} @ ${s.companionUrl})`;
+      el.className = "off";
+    }
+  } catch (err) {
+    el.textContent = `${prefix} — companion offline: ${(err as Error).message} (${s.companionUrl}/health)`;
+    el.className = "off";
+  }
 }
 
 async function init() {
