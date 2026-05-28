@@ -6,6 +6,7 @@ import request from "supertest";
 import sharp from "sharp";
 import { CaseStore } from "../src/storage/caseStore.js";
 import { createApp } from "../src/server.js";
+import { _resetDedupCache } from "../src/ingest/captureIngest.js";
 
 let app: ReturnType<typeof createApp>;
 
@@ -17,6 +18,7 @@ async function pngBase64(): Promise<string> {
 }
 
 beforeEach(async () => {
+  _resetDedupCache();
   const root = await mkdtemp(join(tmpdir(), "dfir-server-"));
   app = createApp(new CaseStore(root));
 });

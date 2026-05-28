@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { ingestCapture } from "../../src/ingest/captureIngest.js";
+import { ingestCapture, _resetDedupCache } from "../../src/ingest/captureIngest.js";
 
 let root: string;
 let store: CaseStore;
@@ -29,6 +29,7 @@ function payload(over: Partial<Record<string, unknown>> = {}) {
 }
 
 beforeEach(async () => {
+  _resetDedupCache();
   root = await mkdtemp(join(tmpdir(), "dfir-ingest-"));
   store = new CaseStore(root);
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
