@@ -1,0 +1,32 @@
+import { describe, it, expect } from "vitest";
+import { LiveHub, type SocketLike } from "../../src/live/hub.js";
+import { emptyState } from "../../src/analysis/stateTypes.js";
+
+function fakeSocket(): SocketLike & { sent: string[] } {
+  const sent: string[] = [];
+  return { sent, readyState: 1, OPEN: 1, send: (d: string) => sent.push(d) };
+}
+
+describe("LiveHub", () => {
+  it("broadcasts state only to subscribers of that case", () => {
+    const hub = new LiveHub();
+    const a = fakeSocket();
+    const b = fakeSocket();
+    hub.subscribe("c1", a);
+    hub.subscribe("c2", b);
+
+    hub.broadcast(emptyState("c1"));
+    expect(a.sent).toHaveLength(1);
+    expect(b.sent).toHaveLength(0);
+    expect(JSON.parse(a.sent[0]).type).toBe("state");
+  });
+
+  it("drops closed sockets", () => {
+    const hub = new LiveHub();
+    const s = fakeSocket();
+    hub.subscribe("c1", s);
+    s.readyState = 3; // CLOSED
+    hub.broadcast(emptyState("c1"));
+    expect(s.sent).toHaveLength(0);
+  });
+});
