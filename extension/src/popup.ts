@@ -41,6 +41,18 @@ async function refreshStatus(s: Settings): Promise<void> {
   }
 }
 
+async function showLastCapture(): Promise<void> {
+  const el = document.getElementById("lastCapture");
+  if (!el) return;
+  const { lastCapture } = await chrome.storage.local.get("lastCapture");
+  if (lastCapture) {
+    const c = lastCapture as { at: string; trigger: string; bytes: number; diag: string };
+    el.textContent = `last capture (${c.trigger}, ${c.bytes}B) @ ${c.at}: ${c.diag}`;
+  } else {
+    el.textContent = "no capture attempted yet";
+  }
+}
+
 async function init() {
   const s = await load();
   $("caseId").value = s.caseId;
@@ -48,6 +60,7 @@ async function init() {
   $("intervalSeconds").value = String(s.intervalSeconds);
   $("dedupThreshold").value = String(s.dedupThreshold);
   await refreshStatus(s);
+  await showLastCapture();
 
   document.getElementById("createCase")!.onclick = async () => {
     const f = readForm(s.running);

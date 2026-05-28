@@ -3,7 +3,13 @@ import type { CapturePayload } from "./types.js";
 type FetchFn = typeof fetch;
 
 export class CompanionClient {
-  constructor(private readonly baseUrl: string, private readonly fetchFn: FetchFn = fetch) {}
+  // The default wraps global fetch in an arrow so it keeps its correct binding.
+  // Invoking unbound `fetch` via `this.fetchFn(...)` throws "Illegal invocation"
+  // in a service worker context.
+  constructor(
+    private readonly baseUrl: string,
+    private readonly fetchFn: FetchFn = (input, init) => fetch(input, init),
+  ) {}
 
   async postCapture(payload: CapturePayload): Promise<boolean> {
     try {

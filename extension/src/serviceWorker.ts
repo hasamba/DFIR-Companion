@@ -36,6 +36,14 @@ async function captureActiveTab(trigger: TriggerType): Promise<void> {
     imageBase64,
   });
 
+  // Record the last capture outcome so the popup can surface it.
+  const diag = status.online
+    ? `ok (online=true, queued=${status.queued})`
+    : `offline — capture queued for retry (queued=${status.queued})`;
+  await chrome.storage.local.set({
+    lastCapture: { at: new Date().toISOString(), trigger, url: tab.url, bytes: imageBase64.length, diag },
+  });
+
   await chrome.action.setBadgeText({ text: status.online ? (status.queued ? String(status.queued) : "") : "off" });
   await chrome.action.setBadgeBackgroundColor({ color: status.online ? "#2d6cdf" : "#cc3333" });
 }
