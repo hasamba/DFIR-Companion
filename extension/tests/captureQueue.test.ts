@@ -41,4 +41,27 @@ describe("CaptureQueue", () => {
     await queue.drain(sender);
     expect(await queue.size()).toBe(2);
   });
+
+  it("concurrent drain calls do not duplicate sends", async () => {
+    await queue.enqueue(payload(1));
+    await queue.enqueue(payload(2));
+
+    const sent: string[] = [];
+    const sender = vi.fn(async (p: CapturePayload) => {
+      sent.push(p.timestamp);
+      // yield to allow interleaving if there were no guard
+      await new Promise<void>((r) => setTimeout(r, 0));
+      return true;
+    });
+
+    await Promise.all([queue.drain(sender), queue.drain(sender)]);
+
+    // Each payload sent exactly once, no duplicates
+    expect(sender).toHaveBeenCalledTimes(2);
+    expect(sent.sort()).toEqual([
+      "2026-05-28T10:01:00.000Z",
+      "2026-05-28T10:02:00.000Z",
+    ]);
+    expect(await queue.size()).toBe(0);
+  });
 });
