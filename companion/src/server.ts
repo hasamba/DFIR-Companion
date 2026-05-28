@@ -25,6 +25,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type");
+    // Chromium Private Network Access: a request from an extension page to a
+    // private address (127.0.0.1) is blocked unless the preflight allows it.
+    res.header("Access-Control-Allow-Private-Network", "true");
     if (req.method === "OPTIONS") {
       res.sendStatus(204);
       return;

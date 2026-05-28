@@ -41,8 +41,21 @@ async function init() {
 
   document.getElementById("createCase")!.onclick = async () => {
     const f = readForm(s.running);
-    const ok = await new CompanionClient(f.companionUrl).createCase(f.caseId, f.caseId, "investigator", null);
-    statusEl().textContent = ok ? `case ${f.caseId} created` : "create failed (check companion)";
+    if (!f.caseId) {
+      statusEl().textContent = "enter a Case ID first";
+      return;
+    }
+    try {
+      const res = await fetch(`${f.companionUrl}/cases`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ caseId: f.caseId, name: f.caseId, investigator: "investigator", aiProvider: null }),
+      });
+      statusEl().textContent =
+        res.status === 201 ? `case ${f.caseId} created` : `create failed: HTTP ${res.status}`;
+    } catch (err) {
+      statusEl().textContent = `create failed: ${(err as Error).message} — is the companion running at ${f.companionUrl}?`;
+    }
   };
   document.getElementById("start")!.onclick = async () => {
     const f = readForm(true);
