@@ -1,2 +1,4 @@
 node_modules/
 cases/
+dist/
+*.timestamp-*.mjs
