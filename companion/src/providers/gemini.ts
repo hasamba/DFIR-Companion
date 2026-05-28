@@ -31,14 +31,19 @@ export class GeminiProvider implements AIProvider {
       parts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } });
     }
     const url = `${this.baseUrl}/models/${this.opts.model}:generateContent?key=${this.opts.apiKey}`;
-    const res = await this.fetchFn(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: { responseMimeType: "application/json" },
-      }),
-    });
+    let res: Response;
+    try {
+      res = await this.fetchFn(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts }],
+          generationConfig: { responseMimeType: "application/json" },
+        }),
+      });
+    } catch (err) {
+      throw new ProviderError(`Gemini transport error: ${(err as Error).message}`, "transport");
+    }
     if (!res.ok) throw new ProviderError(`Gemini HTTP ${res.status}`, mapStatus(res.status));
     const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
     const text = json.candidates?.[0]?.content?.parts?.[0]?.text;

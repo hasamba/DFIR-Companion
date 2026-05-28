@@ -30,18 +30,23 @@ export class OpenAIProvider implements AIProvider {
     for (const img of req.images) {
       content.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.base64}` } });
     }
-    const res = await this.fetchFn(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${this.opts.apiKey}` },
-      body: JSON.stringify({
-        model: this.opts.model,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: req.systemPrompt },
-          { role: "user", content },
-        ],
-      }),
-    });
+    let res: Response;
+    try {
+      res = await this.fetchFn(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${this.opts.apiKey}` },
+        body: JSON.stringify({
+          model: this.opts.model,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: req.systemPrompt },
+            { role: "user", content },
+          ],
+        }),
+      });
+    } catch (err) {
+      throw new ProviderError(`OpenAI transport error: ${(err as Error).message}`, "transport");
+    }
     if (!res.ok) throw new ProviderError(`OpenAI HTTP ${res.status}`, mapStatus(res.status));
     const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     const text = json.choices?.[0]?.message?.content;
