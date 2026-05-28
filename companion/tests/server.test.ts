@@ -28,6 +28,17 @@ beforeEach(async () => {
 });
 
 describe("HTTP server", () => {
+  it("answers CORS preflight so the browser extension can POST cross-origin", async () => {
+    const res = await request(app)
+      .options("/cases")
+      .set("Origin", "chrome-extension://abc")
+      .set("Access-Control-Request-Method", "POST")
+      .set("Access-Control-Request-Headers", "content-type");
+    expect(res.status).toBe(204);
+    expect(res.headers["access-control-allow-origin"]).toBe("*");
+    expect(res.headers["access-control-allow-headers"]).toContain("Content-Type");
+  });
+
   it("POST /cases creates a case", async () => {
     const res = await request(app)
       .post("/cases")

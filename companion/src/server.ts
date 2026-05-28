@@ -1,4 +1,4 @@
-import express, { type Express, type Request, type Response } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { join } from "node:path";
 import { writeFile, readFile } from "node:fs/promises";
 import { ZodError } from "zod";
@@ -18,6 +18,20 @@ export interface AppOptions {
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const app = express();
+
+  // Allow the browser extension (a chrome-extension:// origin) to reach this
+  // localhost-only server. Binding is 127.0.0.1, so this is local-machine access.
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
   app.use(express.json({ limit: "25mb" }));
 
   const windowSize = options.windowSize ?? 4;
