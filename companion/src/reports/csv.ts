@@ -1,7 +1,8 @@
 import type { InvestigationState } from "../analysis/stateTypes.js";
 
 function cell(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
+  const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return `"${guarded.replace(/"/g, '""')}"`;
 }
 function row(values: string[]): string {
   return values.map(cell).join(",");

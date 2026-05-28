@@ -1,5 +1,9 @@
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
 
+function cellMd(value: string): string {
+  return value.replace(/\|/g, "\\|");
+}
+
 const SEVERITY_ORDER: Record<Severity, number> = {
   Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4,
 };
@@ -43,7 +47,7 @@ export function renderMarkdownReport(state: InvestigationState): string {
   } else {
     lines.push("| Technique | Name | Findings |", "| --- | --- | --- |");
     for (const t of state.mitreTechniques) {
-      lines.push(`| ${t.id} | ${t.name} | ${t.findingIds.join(", ")} |`);
+      lines.push(`| ${cellMd(t.id)} | ${cellMd(t.name)} | ${cellMd(t.findingIds.join(", "))} |`);
     }
     lines.push("");
   }

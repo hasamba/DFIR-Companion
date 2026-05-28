@@ -14,6 +14,13 @@ describe("CSV renderers", () => {
     expect(rows[1]).toContain('"PS, ""encoded"""'); // escaped
   });
 
+  it("iocsCsv guards formula-injection values with a leading single quote", () => {
+    const state = emptyState("c1");
+    state.iocs.push({ id: "i1", type: "url", value: "=cmd|'/C calc'!A0", firstSeen: "t0" });
+    const csv = iocsCsv(state);
+    expect(csv).toContain(`"'=cmd|'/C calc'!A0"`);
+  });
+
   it("iocsCsv and timelineCsv produce headers even when empty", () => {
     const state = emptyState("c1");
     expect(iocsCsv(state).trim()).toBe("id,type,value,firstSeen");

@@ -25,6 +25,13 @@ describe("renderMarkdownReport", () => {
     expect(md).toContain("T1486");
   });
 
+  it("escapes pipe characters in MITRE table cells", () => {
+    const state = emptyState("c2");
+    state.mitreTechniques.push({ id: "T1003", name: "OS Credential Dumping | LSASS", findingIds: ["f1"] });
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("OS Credential Dumping \\| LSASS");
+  });
+
   it("sorts findings by severity (Critical first)", () => {
     const state = emptyState("c1");
     const mk = (id: string, sev: "Critical" | "Low") => ({ id, severity: sev, title: id, description: "",
