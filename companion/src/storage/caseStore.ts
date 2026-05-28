@@ -1,6 +1,6 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { CaseMeta } from "../types.js";
+import type { CaseMeta, CaptureMetadata } from "../types.js";
 
 export interface CreateCaseInput {
   caseId: string;
@@ -52,5 +52,27 @@ export class CaseStore {
     }
     await writeFile(this.caseMetaPath(input.caseId), JSON.stringify(meta, null, 2), "utf8");
     return meta;
+  }
+
+  async saveScreenshot(caseId: string, filename: string, bytes: Buffer): Promise<string> {
+    const path = join(this.screenshotsDir(caseId), filename);
+    await writeFile(path, bytes);
+    return path;
+  }
+
+  async appendCapture(caseId: string, metadata: CaptureMetadata): Promise<CaptureMetadata> {
+    await appendFile(this.capturesLogPath(caseId), JSON.stringify(metadata) + "\n", "utf8");
+    return metadata;
+  }
+
+  async nextSequenceNumber(caseId: string): Promise<number> {
+    try {
+      const log = await readFile(this.capturesLogPath(caseId), "utf8");
+      const lines = log.split("\n").filter((l) => l.trim().length > 0);
+      return lines.length + 1;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return 1;
+      throw err;
+    }
   }
 }
