@@ -108,6 +108,54 @@ describe("server analysis wiring", () => {
     }
     expect(state.findings).toHaveLength(1);
   });
+
+  it("emits AI status (analyzing then idle) around a window flush", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-ai-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        timelineNote: "n", summary: "s",
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const events: string[] = [];
+    const app = createApp(store, {
+      pipeline,
+      windowSize: 10,
+      onAiStatus: (_caseId, e) => events.push(e.status),
+    });
+
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app).post("/captures").send({
+      caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
+      triggerType: "navigation", imageBase64: await pngBase64(),
+    });
+
+    for (let i = 0; i < 20 && !events.includes("idle"); i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(events[0]).toBe("analyzing");
+    expect(events).toContain("idle");
+  });
+
+  it("GET /health reports aiEnabled false without a pipeline, true with one", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-ai-health-"));
+    const store = new CaseStore(root);
+    const noAi = await request(createApp(store)).get("/health");
+    expect(noAi.body.aiEnabled).toBe(false);
+
+    const withAi = await request(createApp(store, {
+      pipeline: new AnalysisPipeline({
+        provider: new MockProvider("mock", "{}"),
+        stateStore: new StateStore(store),
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      }),
+    })).get("/health");
+    expect(withAi.body.aiEnabled).toBe(true);
+  });
 });
 
 describe("state and report routes", () => {

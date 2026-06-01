@@ -15,6 +15,14 @@
     button { background: #2d6cdf; color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
     input { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; padding: 6px; border-radius: 6px; }
     #status { font-size: 12px; color: #9aa4b2; }
+    #aiStatus { font-size: 12px; padding: 3px 8px; border-radius: 10px; }
+    .ai-unknown { background: #2a2f3a; color: #9aa4b2; }
+    .ai-off { background: #2a2f3a; color: #9aa4b2; }
+    .ai-idle { background: #1e3a2a; color: #6bcB77; }
+    .ai-analyzing { background: #3a3320; color: #ffd93b; }
+    .ai-error { background: #3a2020; color: #ff5c5c; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+    .ai-analyzing { animation: pulse 1s ease-in-out infinite; }
   </style>
 </head>
 <body>
@@ -24,7 +32,8 @@
     <button id="connect">Connect</button>
     <button id="generateReport">Generate Report</button>
     <span id="status">disconnected</span>
-    <span id="captureCount" style="margin-left:auto; font-weight:bold;">Screenshots: 0</span>
+    <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
+    <span id="captureCount" style="font-weight:bold;">Screenshots: 0</span>
   </header>
   <main>
     <section><h2>Executive Summary</h2><div id="summary">—</div></section>
@@ -37,6 +46,22 @@
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
     let ws = null;
     let countTimer = null;
+
+    function fmtTime(iso) {
+      try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
+    }
+
+    function setAi(kind, text) {
+      const el = document.getElementById("aiStatus");
+      el.className = "ai-" + kind;
+      el.textContent = "AI: " + text;
+    }
+
+    function applyAiStatus(evt) {
+      if (evt.status === "analyzing") setAi("analyzing", "analyzing… " + (evt.detail || ""));
+      else if (evt.status === "idle") setAi("idle", "up to date (" + fmtTime(evt.at) + ")");
+      else if (evt.status === "error") setAi("error", "error — " + (evt.detail || "see server log"));
+    }
 
     function pollCount(caseId) {
       if (countTimer) clearInterval(countTimer);
@@ -67,12 +92,20 @@
       if (!caseId) return;
       fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
       pollCount(caseId);
+
+      // Show whether AI analysis is configured at all.
+      fetch("/health").then(r => r.json()).then(h => {
+        if (h.aiEnabled) setAi("idle", "ready (waiting for activity)");
+        else setAi("off", "off (no provider configured)");
+      }).catch(() => setAi("unknown", "unknown"));
+
       ws = new WebSocket(`ws://${location.host}/ws?caseId=${encodeURIComponent(caseId)}`);
       ws.onopen = () => document.getElementById("status").textContent = "connected (live)";
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
         if (msg.type === "state") render(msg.state);
+        else if (msg.type === "ai_status") applyAiStatus(msg);
       };
     }
 

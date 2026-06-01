@@ -29,4 +29,19 @@ describe("LiveHub", () => {
     hub.broadcast(emptyState("c1"));
     expect(s.sent).toHaveLength(0);
   });
+
+  it("broadcastTo sends an arbitrary message only to that case's subscribers", () => {
+    const hub = new LiveHub();
+    const a = fakeSocket();
+    const b = fakeSocket();
+    hub.subscribe("c1", a);
+    hub.subscribe("c2", b);
+
+    hub.broadcastTo("c1", { type: "ai_status", status: "analyzing" });
+    expect(a.sent).toHaveLength(1);
+    expect(b.sent).toHaveLength(0);
+    const msg = JSON.parse(a.sent[0]);
+    expect(msg.type).toBe("ai_status");
+    expect(msg.status).toBe("analyzing");
+  });
 });

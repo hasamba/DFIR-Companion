@@ -20,11 +20,16 @@ export class LiveHub {
   }
 
   broadcast(state: InvestigationState): void {
-    const set = this.subs.get(state.caseId);
+    this.broadcastTo(state.caseId, { type: "state", state });
+  }
+
+  // Send an arbitrary JSON message to all live subscribers of a case.
+  broadcastTo(caseId: string, message: unknown): void {
+    const set = this.subs.get(caseId);
     if (!set) return;
-    const message = JSON.stringify({ type: "state", state });
+    const data = JSON.stringify(message);
     for (const socket of set) {
-      if (socket.readyState === socket.OPEN) socket.send(message);
+      if (socket.readyState === socket.OPEN) socket.send(data);
       else set.delete(socket);
     }
   }

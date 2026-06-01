@@ -10,11 +10,22 @@ import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
 
+export type AiStatus = "analyzing" | "idle" | "error";
+
+export interface AiStatusEvent {
+  status: AiStatus;
+  at: string;        // ISO timestamp
+  detail?: string;   // e.g. window size, or error message
+}
+
 export interface AppOptions {
   pipeline?: AnalysisPipeline;
   windowSize?: number;
   stateStore?: StateStore;
   reportWriter?: ReportWriter;
+  // Called when an AI analysis window starts / finishes / fails, so the
+  // server can push a live "AI status" indicator to dashboard clients.
+  onAiStatus?: (caseId: string, event: AiStatusEvent) => void;
 }
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
@@ -47,8 +58,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   app.use(express.json({ limit: "25mb" }));
 
   // Lightweight reachability check used by the extension's connection status.
+  // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion" });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: Boolean(options.pipeline) });
   });
 
   // How many captures have been recorded for a case (counts the audit-log lines).
@@ -71,8 +83,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const buf = buffers.get(caseId) ?? [];
     if (buf.length === 0 || !options.pipeline) return;
     buffers.set(caseId, []);
+    options.onAiStatus?.(caseId, {
+      status: "analyzing",
+      at: new Date().toISOString(),
+      detail: `analyzing ${buf.length} screenshot(s)`,
+    });
     try {
       await options.pipeline.analyzeWindow(caseId, buf);
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
     } catch (err) {
       const seqs = buf.map((c) => c.sequenceNumber);
       await writeFile(
@@ -80,6 +98,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         JSON.stringify({ pending: seqs, error: (err as Error).message }, null, 2),
         "utf8",
       );
+      options.onAiStatus?.(caseId, {
+        status: "error",
+        at: new Date().toISOString(),
+        detail: (err as Error).message,
+      });
     }
   }
 
@@ -176,7 +199,12 @@ export function startServer(casesRoot: string, port = 4773): void {
     ? new AnalysisPipelineImpl({ provider, stateStore, imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s) })
     : undefined;
 
-  const app = createApp(store, { pipeline: wiredPipeline, stateStore, reportWriter });
+  const app = createApp(store, {
+    pipeline: wiredPipeline,
+    stateStore,
+    reportWriter,
+    onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
+  });
 
   // Serve the dashboard.
   app.get("/dashboard", async (_req, res) => {
