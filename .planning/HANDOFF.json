@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-06-01T13:11:13.072Z",
+  "phase": null,
+  "phase_name": "n/a — non-GSD project (built from docs/superpowers/plans/, then extended)",
+  "phase_dir": null,
+  "plan": null,
+  "task": null,
+  "total_tasks": null,
+  "status": "paused",
+  "context_type": "default",
+  "context_note": "This project does NOT use the GSD .planning/phases structure. It was implemented from the 4 plans in docs/superpowers/plans/ (all done) and then extended with many features. There is no active phase/plan/task; work is paused at a clean, fully-committed checkpoint.",
+  "branch": "master",
+  "head_commit": "0e5babc",
+  "tests": { "companion": "89 passing", "extension": "10 passing", "build": "clean (tsc + vite)" },
+  "completed_tasks": [
+    {"id": 1, "name": "Plan 1 companion core (evidence path)", "status": "done"},
+    {"id": 2, "name": "Plan 2 analysis pipeline + AI providers", "status": "done"},
+    {"id": 3, "name": "Plan 3 reports + dashboard", "status": "done"},
+    {"id": 4, "name": "Plan 4 MV3 capture extension", "status": "done"},
+    {"id": 5, "name": "Integration fixes (CORS, Private Network Access, /health, fetch binding) for extension↔server", "status": "done"},
+    {"id": 6, "name": "Forensic timeline (real event timestamps) + attacker-path summary", "status": "done"},
+    {"id": 7, "name": "Two-tier models (cheap extraction + strong synthesis) via .env + CLI", "status": "done"},
+    {"id": 8, "name": "Holistic synthesis pass + granular per-technique findings", "status": "done"},
+    {"id": 9, "name": "Key investigative questions (status + answer + where-to-find pointers)", "status": "done"},
+    {"id": 10, "name": "IOC panel + investigation threads (open/closed) in dashboard & report", "status": "done"},
+    {"id": 11, "name": "AI on/off toggle (capture-only mode) with backfill on resume", "status": "done"},
+    {"id": 12, "name": "Mark findings/IOCs legitimate (false positives) — excluded from synthesis", "status": "done"},
+    {"id": 13, "name": "Investigation time-window scope — re-synthesize within window, drop out-of-scope everywhere", "status": "done"},
+    {"id": 14, "name": "AI status phase indicator (extracting vs synthesizing vs idle)", "status": "done"},
+    {"id": 15, "name": "Robustness: extractJsonText fences, lenient .catch() enums, tunable AI timeout (180s), live auto-synthesis", "status": "done"},
+    {"id": 16, "name": "Show finding/IOC/thread ids; back-link forensic events to correct findings; dashboard reorder", "status": "done"},
+    {"id": 17, "name": "Project README.md + CLAUDE.md", "status": "done"}
+  ],
+  "remaining_tasks": [],
+  "blockers": [
+    {"description": "The live `npm run dev` server only has code from when it started — many features were added since the user last restarted, so endpoints (e.g. /legitimate, /scope, /ai-control) 404 until restart.", "type": "human_action", "workaround": "Restart: stop process on 127.0.0.1:4773, then `cd companion && npm run dev`. Dashboard now shows 'restart the companion server' on 404."}
+  ],
+  "human_actions_pending": [
+    {"action": "Restart the companion server to load all features added this session", "context": "User was live-testing on cases test1–test4; their running server is several commits stale.", "blocking": false},
+    {"action": "Optionally set DFIR_AI_SYNTH_MODEL to a strong model (gemini-2.5-pro / gpt-4o) and DFIR_AI_MODEL to a cheap one (gpt-4o-mini) for best granular results", "context": "Two-tier model strategy; synthesis is one text-only call so a strong model there is cheap.", "blocking": false}
+  ],
+  "decisions": [
+    {"decision": "Two-phase analysis: cheap model extracts forensic events per-window; strong model synthesizes holistically", "rationale": "Findings/attacker-path need the whole timeline; extraction is high-volume so keep it cheap."},
+    {"decision": "Synthesis REPLACES the analytic layer (findings/IOCs/MITRE) instead of merging", "rationale": "Required so out-of-scope or stale conclusions drop cleanly; also avoids accumulation drift."},
+    {"decision": "Schema enums use .catch(fallback) and JSON is extracted via extractJsonText", "rationale": "One unexpected model value (e.g. IOC type 'malware') or a markdown fence must not reject the whole synthesis."},
+    {"decision": "Extraction must not guess finding ids or use capture time; synthesis back-links events→findings via relatedEventIds and reads each event's own timestamp column", "rationale": "Findings don't exist at extraction; capture time != event time."},
+    {"decision": "Per-case side-stores (ai-control, legitimate, scope) as atomic JSON files; pure filters unit-tested separately", "rationale": "Keeps state user-curatable and non-destructive (raw events preserved)."}
+  ],
+  "uncommitted_files": [],
+  "next_action": "No work is mid-flight. If resuming feature work, read CLAUDE.md first (esp. 'restart the dev server' gotcha), then run `cd companion && npm test` and `cd extension && npm test` to confirm green. User-facing next step: restart the companion server and reload the dashboard.",
+  "context_notes": "Long iterative session: implemented the 4 plans then repeatedly extended/repaired based on the user's live testing on Velociraptor screenshots. Most issues traced to (a) a stale running server, (b) weak/slow AI models, (c) over-strict parsing. All fixed and documented in CLAUDE.md. Tree is clean on master; 89 companion + 10 extension tests green."
+}
