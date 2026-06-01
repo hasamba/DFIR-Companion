@@ -14,7 +14,7 @@ import { CaseStore } from "../src/storage/caseStore.js";
 import { StateStore } from "../src/analysis/stateStore.js";
 import { AnalysisPipeline } from "../src/analysis/pipeline.js";
 import { makeImageLoader } from "../src/analysis/imageLoader.js";
-import { buildProvider } from "../src/server.js";
+import { buildProviderFrom } from "../src/server.js";
 
 function strOpt(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -23,15 +23,19 @@ function strOpt(name: string): string | undefined {
 
 async function main(): Promise<void> {
   const caseId = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "test1";
-  if (strOpt("provider")) process.env.DFIR_AI_PROVIDER = strOpt("provider");
-  if (strOpt("model")) process.env.DFIR_AI_MODEL = strOpt("model");
-  if (strOpt("key")) process.env.DFIR_AI_KEY = strOpt("key");
 
-  const provider = buildProvider();
+  // Synthesis prefers the dedicated synth model. Precedence: CLI flag >
+  // DFIR_AI_SYNTH_* > the main extraction model in .env.
+  const provName = strOpt("provider") ?? process.env.DFIR_AI_SYNTH_PROVIDER ?? process.env.DFIR_AI_PROVIDER;
+  const model = strOpt("model") ?? process.env.DFIR_AI_SYNTH_MODEL ?? process.env.DFIR_AI_MODEL;
+  const apiKey = strOpt("key") ?? process.env.DFIR_AI_SYNTH_KEY ?? process.env.DFIR_AI_KEY;
+  const imageDetail = process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined;
+  const provider = buildProviderFrom({ provider: provName, model, apiKey, imageDetail });
   if (!provider) {
-    console.error("No AI provider configured in .env (DFIR_AI_PROVIDER). Aborting.");
+    console.error("No AI provider configured (DFIR_AI_PROVIDER / --provider). Aborting.");
     process.exit(1);
   }
+  process.env.DFIR_AI_MODEL = model; // for the log line below
   const raw = process.env.DFIR_CASES_ROOT ?? "cases";
   const companionDir = fileURLToPath(new URL("../", import.meta.url));
   const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);

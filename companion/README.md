@@ -28,6 +28,7 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_AI_MODEL` | Model id understood by the provider. | `google/gemini-2.0-flash-001` |
 | `DFIR_AI_KEY` | Provider API key. | `sk-...` |
 | `DFIR_AI_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high`). High tiles screenshots at full resolution for accurate small-text OCR (OpenAI/OpenRouter models). | `high` |
+| `DFIR_AI_SYNTH_PROVIDER` / `DFIR_AI_SYNTH_MODEL` / `DFIR_AI_SYNTH_KEY` | Optional **synthesis** model (findings / MITRE / attacker path). The vars above are the cheap per-screenshot **extraction** model; point a stronger model here for the one text-only synthesis call. Unset → reuses the extraction model. | `google/gemini-2.5-pro` |
 
 Shell environment variables override `.env`. `GET /health` returns `{ aiEnabled }`
 so you can confirm whether an AI provider is configured.
@@ -120,9 +121,15 @@ the server from a `chrome-extension://` origin.
 **Two-tier model strategy (cost-effective).** Per-screenshot extraction is the
 high-volume part (one AI call per few screenshots) — use a cheap vision model there.
 Synthesis is a single text-only call over the whole timeline — point a stronger model
-at just that. Example: extract with `openai/gpt-4o-mini`, synthesize with `openai/gpt-4o`:
+at just that. Configure it once in `.env`:
 
-    npm run reanalyze -- <caseId> --reset --model openai/gpt-4o-mini --synth-model openai/gpt-4o
+    DFIR_AI_MODEL=openai/gpt-4o-mini          # extraction (cheap, reads every screenshot)
+    DFIR_AI_SYNTH_MODEL=google/gemini-2.5-pro # synthesis (strong, one text-only call)
+
+…then just `npm run reanalyze -- <caseId> --reset`. Or set it ad-hoc on the CLI
+(overrides `.env`):
+
+    npm run reanalyze -- <caseId> --reset --model openai/gpt-4o-mini --synth-model google/gemini-2.5-pro
 
 Duplicates (by perceptual hash) are still stored as evidence but skipped by the AI —
 use `reanalyze --all` to force them in.

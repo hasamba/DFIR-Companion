@@ -56,11 +56,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Optional stronger synthesis model — falls back to the extraction model.
-  const synthProvName = strOpt("synth-provider") ?? provName;
-  const synthModel = strOpt("synth-model") ?? model;
-  const synthKey = strOpt("synth-key") ?? apiKey;
-  const usingTwoTier = Boolean(strOpt("synth-model") || strOpt("synth-provider"));
+  // Optional stronger synthesis model. Precedence: CLI flag > DFIR_AI_SYNTH_* env >
+  // the extraction model. Two-tier is active whenever it differs from extraction.
+  const synthProvName = strOpt("synth-provider") ?? process.env.DFIR_AI_SYNTH_PROVIDER ?? provName;
+  const synthModel = strOpt("synth-model") ?? process.env.DFIR_AI_SYNTH_MODEL ?? model;
+  const synthKey = strOpt("synth-key") ?? process.env.DFIR_AI_SYNTH_KEY ?? apiKey;
+  const usingTwoTier = synthModel !== model || synthProvName !== provName;
   const synthesisProvider = usingTwoTier
     ? buildProviderFrom({ provider: synthProvName, model: synthModel, apiKey: synthKey, imageDetail })
     : provider;
