@@ -217,6 +217,20 @@ export function startServer(casesRoot: string, port = 4773): void {
     console.log(`DFIR companion on http://127.0.0.1:${port} (dashboard at /dashboard)`);
   });
 
+  // Friendly message instead of an unhandled-error stack trace when the port is taken.
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `\n[DFIR] Port ${port} is already in use — a DFIR companion is probably already running.\n` +
+          `       Use the existing one (http://127.0.0.1:${port}/dashboard), or stop it first:\n` +
+          `       PowerShell:  Get-NetTCPConnection -LocalPort ${port} -State Listen | ` +
+          `ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }\n`,
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
+
   const wss = new WebSocketServer({ server, path: "/ws" });
   wss.on("connection", (socket, req) => {
     const caseId = new URL(req.url ?? "", "http://localhost").searchParams.get("caseId") ?? "";
