@@ -13,7 +13,16 @@ import { extractJsonText } from "../src/analysis/extractJson.js";
 import { deltaSchema } from "../src/analysis/responseSchema.js";
 import { SYSTEM_PROMPT } from "../src/analysis/pipeline.js";
 
+function strOpt(name: string): string | undefined {
+  const i = process.argv.indexOf(`--${name}`);
+  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : undefined;
+}
+
 async function main(): Promise<void> {
+  if (strOpt("provider")) process.env.DFIR_AI_PROVIDER = strOpt("provider");
+  if (strOpt("model")) process.env.DFIR_AI_MODEL = strOpt("model");
+  if (strOpt("key")) process.env.DFIR_AI_KEY = strOpt("key");
+
   const provider = buildProvider();
   if (!provider) {
     console.log("No provider configured (DFIR_AI_PROVIDER unset).");
@@ -24,7 +33,7 @@ async function main(): Promise<void> {
   const raw = process.env.DFIR_AI_CASES_ROOT ?? process.env.DFIR_CASES_ROOT ?? "cases";
   const companionDir = fileURLToPath(new URL("../", import.meta.url));
   const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);
-  const caseId = process.argv[2] ?? "test1";
+  const caseId = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "test1";
   const shotsDir = join(casesRoot, caseId, "screenshots");
   let files: string[];
   try {
