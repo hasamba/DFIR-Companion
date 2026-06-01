@@ -90,6 +90,10 @@
     function connect() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
+      if (ws) { try { ws.close(); } catch {} ws = null; }
+      // Remember the case so a page refresh reconnects automatically.
+      localStorage.setItem("dfir.caseId", caseId);
+      history.replaceState(null, "", "?caseId=" + encodeURIComponent(caseId));
       fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
       pollCount(caseId);
 
@@ -110,6 +114,7 @@
     }
 
     document.getElementById("connect").onclick = connect;
+    document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
     document.getElementById("generateReport").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
@@ -117,6 +122,16 @@
         .then(r => r.json())
         .then(p => document.getElementById("status").textContent = `report written: ${p.markdown}`);
     };
+
+    // On load, restore the case from the URL (?caseId=) or last session and reconnect.
+    (function restore() {
+      const fromUrl = new URLSearchParams(location.search).get("caseId");
+      const caseId = (fromUrl || localStorage.getItem("dfir.caseId") || "").trim();
+      if (caseId) {
+        document.getElementById("caseId").value = caseId;
+        connect();
+      }
+    })();
   </script>
 </body>
 </html>
