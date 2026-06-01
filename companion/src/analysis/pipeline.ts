@@ -64,6 +64,44 @@ export const SYSTEM_PROMPT = [
   "If a section has nothing new, return it as an empty array (or empty string for text fields).",
 ].join("\n");
 
+// Holistic synthesis: turn the accumulated forensic timeline into analytic
+// conclusions (findings, MITRE, attacker path). Findings/attacker-path need the
+// WHOLE picture, which a single window can't see — so this runs once over the
+// full timeline after per-window extraction.
+export const SYNTHESIS_PROMPT = [
+  "You are a senior DFIR analyst writing the CONCLUSIONS of an investigation.",
+  "You are given the full forensic timeline of dated events already extracted from the evidence.",
+  "Do NOT invent new events and do NOT return forensicEvents — synthesize what is given into analysis.",
+  "",
+  "Produce:",
+  "- findings: the key analytic CONCLUSIONS (e.g. 'Microsoft Defender was disabled to evade detection'),",
+  "  NOT raw log lines. Each is an object with severity and the MITRE techniques it maps to.",
+  "- iocs: concrete indicators (ips, domains, hashes, malicious files/processes) seen in the timeline.",
+  "- mitreTechniques: the ATT&CK techniques observed, aggregated.",
+  "- attackerPath: a chronological narrative of the intrusion in kill-chain order (initial access →",
+  "  execution → persistence → priv-esc → lateral movement → C2 → exfil/impact), citing event times.",
+  "- summary: a 2-3 sentence executive overview.",
+  "",
+  "Return ONLY raw JSON (no markdown fences). Set forensicEvents, threadsOpened, threadsClosed to [],",
+  "and timelineNote to \"\". Every finding/ioc/technique MUST be an object, never a bare string. Shape:",
+  "",
+  JSON.stringify(
+    {
+      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed" }],
+      iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
+      mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses: Disable or Modify Tools" }],
+      attackerPath: "Initial access at <time> via …; then execution of …; persistence via …; impact at <time>.",
+      summary: "executive summary",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+    },
+    null,
+    2,
+  ),
+].join("\n");
+
 export interface PipelineOptions {
   provider: AIProvider;
   stateStore: StateStore;
@@ -117,6 +155,37 @@ export class AnalysisPipeline {
       timestamp: analyzable[analyzable.length - 1].timestamp,
       sourceScreenshots: analyzable.map((c) => c.screenshotFile),
     });
+    await this.opts.stateStore.save(next);
+    this.opts.onState?.(next);
+    return next;
+  }
+
+  // Holistic pass: read the whole forensic timeline and produce findings, MITRE
+  // mapping, and the attacker-path narrative. Text-only (no images), one call.
+  async synthesize(caseId: string): Promise<InvestigationState> {
+    const state = await this.opts.stateStore.load(caseId);
+    if (state.forensicTimeline.length === 0) return state;
+
+    const timelineText = state.forensicTimeline
+      .map((e) => `${e.timestamp || "(undated)"} [${e.severity}] ${e.description}`)
+      .join("\n");
+    const existingFindings = state.findings.map((f) => `[${f.id}] ${f.title}`).join("\n") || "(none yet)";
+    const userPrompt =
+      `FORENSIC TIMELINE (${state.forensicTimeline.length} dated events):\n${timelineText}\n\n` +
+      `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
+      `Running notes: ${state.lastSummary || "(none)"}\n\nReturn the JSON conclusions.`;
+
+    const retries = this.opts.retries ?? 3;
+    const backoffMs = this.opts.backoffMs ?? 500;
+
+    const delta = await withRetry(async () => {
+      const result = await this.opts.provider.analyze({ systemPrompt: SYNTHESIS_PROMPT, userPrompt, images: [] });
+      return deltaSchema.parse(JSON.parse(extractJsonText(result.rawText)));
+    }, retries, backoffMs);
+
+    // Anchor finding timestamps to the last real event time (fallback: existing state time).
+    const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
+    const next = mergeDelta(state, delta, { windowSequence: 0, timestamp: ts, sourceScreenshots: [] });
     await this.opts.stateStore.save(next);
     this.opts.onState?.(next);
     return next;

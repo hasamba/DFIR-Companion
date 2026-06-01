@@ -40,7 +40,8 @@ so you can confirm whether an AI provider is configured.
 | `npm test` | Run the full vitest suite. |
 | `npm run verify:ai -- [caseId]` | One-call smoke test: confirms the configured model returns schema-valid JSON and prints findings / forensic events / attacker path. Samples screenshots from the middle of the case (default `test1`). |
 | `npm run coverage -- [caseId]` | Reports how many of a case's screenshots were actually analyzed vs. skipped (duplicates) vs. never analyzed. |
-| `npm run reanalyze -- <caseId> [flags]` | Re-run AI analysis over already-captured screenshots, rebuilding the investigation state. See flags below. |
+| `npm run reanalyze -- <caseId> [flags]` | Re-run AI analysis over already-captured screenshots, rebuilding the investigation state, then synthesize conclusions. See flags below. |
+| `npm run synthesize -- <caseId>` | Holistic pass: read the full forensic timeline and derive findings, MITRE mapping, and the attacker-path narrative. One text-only AI call. Accepts `--provider`/`--model`/`--key` overrides. |
 
 ### `reanalyze` flags
 
@@ -53,6 +54,7 @@ so you can confirm whether an AI provider is configured.
 | `--provider NAME` | Override `DFIR_AI_PROVIDER` for this run. | from `.env` |
 | `--model ID` | Override `DFIR_AI_MODEL` for this run. | from `.env` |
 | `--key KEY` | Override `DFIR_AI_KEY` for this run. | from `.env` |
+| `--no-synthesis` | Skip the final synthesis pass (raw forensic timeline only, no findings/attacker path). | off |
 
 Examples:
 
@@ -97,11 +99,24 @@ the server from a `chrome-extension://` origin.
         forensic-timeline.csv             real incident events, sorted by event time
         state-export.json
 
-## How analysis works
+## How analysis works (two phases)
 
-Non-duplicate captures are buffered per case and flushed to the AI when the window
-fills (default 4) or on a significant trigger (navigation / tab switch). Each window
-is merged into the persistent state by id (revisiting a topic updates, never
-duplicates). Duplicates (by perceptual hash) are still stored as evidence but skipped
-by the AI — use `reanalyze --all` to force them in. The model is asked to extract
-real artifact timestamps into the forensic timeline and to narrate the attacker path.
+1. **Per-window extraction.** Non-duplicate captures are buffered per case and
+   flushed to the AI when the window fills (default 4) or on a significant trigger
+   (navigation / tab switch). Each window is merged into the persistent state by id
+   (revisiting a topic updates, never duplicates). This phase is good at pulling
+   **dated forensic events** out of the artifacts into the forensic timeline.
+2. **Holistic synthesis.** Findings, MITRE mapping, and the attacker-path narrative
+   need the *whole* timeline at once — a single window can't see it. So a synthesis
+   pass reads the full forensic timeline and produces those conclusions. It runs
+   automatically at the end of `reanalyze` (skip with `--no-synthesis`), and you can
+   re-run it any time — including with a different model — via `npm run synthesize`.
+
+Duplicates (by perceptual hash) are still stored as evidence but skipped by the AI —
+use `reanalyze --all` to force them in.
+
+Recommended recovery flow for a case that has screenshots but weak/empty analysis:
+
+    npm run reanalyze -- <caseId> --reset      # rebuild timeline + synthesize conclusions
+    # or, if the forensic timeline already looks good and you only want conclusions:
+    npm run synthesize -- <caseId>             # one cheap call; try --model to compare

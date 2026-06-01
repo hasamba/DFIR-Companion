@@ -93,9 +93,21 @@ async function main(): Promise<void> {
     await new Promise((r) => setTimeout(r, 400)); // gentle pacing for rate limits
   }
 
+  // Holistic synthesis: derive findings / MITRE / attacker path from the full
+  // forensic timeline (each window only sees a few screenshots and can't do this).
+  if (!flag("no-synthesis")) {
+    console.log(`\nSynthesizing conclusions from the full forensic timeline…`);
+    try {
+      await pipeline.synthesize(caseId);
+    } catch (err) {
+      console.log(`  synthesis failed: ${(err as Error).message}`);
+    }
+  }
+
   const final = await stateStore.load(caseId);
   console.log(`\nDone. ${ok} window(s) ok, ${failed} failed.`);
-  console.log(`Final state: findings=${final.findings.length} iocs=${final.iocs.length} timeline=${final.timeline.length} techniques=${final.mitreTechniques.length}`);
+  console.log(`Final state: findings=${final.findings.length} iocs=${final.iocs.length} forensicEvents=${final.forensicTimeline.length} techniques=${final.mitreTechniques.length}`);
+  console.log(`Attacker path: ${final.attackerPath ? "yes" : "(empty — try a stronger model)"}`);
   console.log(`Open the dashboard and connect to "${caseId}" to view, or run: npm run coverage -- ${caseId}`);
 }
 
