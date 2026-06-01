@@ -77,6 +77,33 @@ describe("mergeDelta", () => {
     expect(state.timeline[0].windowSequence).toBe(1);
   });
 
+  it("replaces key questions wholesale when synthesis provides them, keeps them otherwise", () => {
+    let state = emptyState("c1");
+    state = mergeDelta(state, {
+      ...baseDelta,
+      keyQuestions: [
+        { id: "q1", question: "Initial access?", status: "unknown", answer: "", pointer: "collect email logs" },
+      ],
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+    expect(state.keyQuestions).toHaveLength(1);
+    expect(state.keyQuestions[0].status).toBe("unknown");
+
+    // A later synthesis updates the answer set (replace, not append).
+    state = mergeDelta(state, {
+      ...baseDelta,
+      keyQuestions: [
+        { id: "q1", question: "Initial access?", status: "answered", answer: "phishing", pointer: "finding f3" },
+      ],
+    }, { windowSequence: 2, timestamp: "2026-05-28T10:05:00.000Z", sourceScreenshots: [] });
+    expect(state.keyQuestions).toHaveLength(1);
+    expect(state.keyQuestions[0].status).toBe("answered");
+    expect(state.keyQuestions[0].answer).toBe("phishing");
+
+    // A per-window delta with no keyQuestions must NOT wipe them.
+    state = mergeDelta(state, { ...baseDelta }, { windowSequence: 3, timestamp: "2026-05-28T10:10:00.000Z", sourceScreenshots: [] });
+    expect(state.keyQuestions).toHaveLength(1);
+  });
+
   it("drops tool-usage narration from forensic events at merge time", () => {
     const state = mergeDelta(emptyState("c1"), {
       ...baseDelta,

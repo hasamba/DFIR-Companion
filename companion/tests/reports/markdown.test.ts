@@ -61,6 +61,22 @@ describe("renderMarkdownReport", () => {
     expect(md.indexOf("crit1")).toBeLessThan(md.indexOf("low1"));
   });
 
+  it("renders key investigative questions and an IOC section", () => {
+    const state = emptyState("c1");
+    state.keyQuestions.push(
+      { id: "q1", question: "What was the initial access vector?", status: "answered", answer: "phishing email", pointer: "finding f3" },
+      { id: "q2", question: "Was there lateral movement?", status: "unknown", answer: "", pointer: "collect 4624 logs on targets" },
+    );
+    state.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "2026-05-20T09:00:00Z" });
+
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("## Key Investigative Questions");
+    expect(md).toContain("What was the initial access vector?");
+    expect(md).toContain("collect 4624 logs on targets");   // pointer for an unknown
+    expect(md).toContain("## Indicators of Compromise (IOCs)");
+    expect(md).toContain("10.0.0.5");
+  });
+
   it("renders investigation threads split into open and closed", () => {
     const state = emptyState("c1");
     state.openThreads.push(

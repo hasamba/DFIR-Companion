@@ -39,9 +39,11 @@
   </header>
   <main>
     <section style="grid-column: 1 / -1"><h2>Executive Summary</h2><div id="summary">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attacker Path</h2><div id="attackerPath">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)</h2><div id="forensicTimeline">—</div></section>
     <section><h2>Findings</h2><div id="findings">—</div></section>
+    <section><h2>IOCs</h2><div id="iocs">—</div></section>
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section><h2>Investigation Log</h2><div id="timeline">—</div></section>
     <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
@@ -126,6 +128,21 @@
     function render(state) {
       document.getElementById("summary").textContent = state.lastSummary || "—";
       document.getElementById("attackerPath").textContent = state.attackerPath || "—";
+
+      const QMARK = { answered: "✅", partial: "🟡", unknown: "❓" };
+      const kq = state.keyQuestions || [];
+      document.getElementById("keyQuestions").innerHTML = kq.length
+        ? kq.map(q =>
+            `<div class="finding"><strong>${QMARK[q.status] || "❓"} ${esc(q.question)}</strong>` +
+            `<br><small>${esc(q.answer || "unknown")}</small>` +
+            `${q.pointer ? `<br><small style="color:#6aa9ff">→ ${esc(q.pointer)}</small>` : ""}</div>`
+          ).join("")
+        : "<div style='color:#9aa4b2'>Not assessed yet — run Synthesize.</div>";
+
+      const iocs = state.iocs || [];
+      document.getElementById("iocs").innerHTML = iocs.length
+        ? iocs.map(i => `<div><span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)}</div>`).join("")
+        : "<div style='color:#9aa4b2'>No IOCs yet</div>";
 
       const ft = state.forensicTimeline || [];
       document.getElementById("forensicTimeline").innerHTML = ft.length

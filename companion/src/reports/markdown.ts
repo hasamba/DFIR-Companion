@@ -19,6 +19,18 @@ export function renderMarkdownReport(state: InvestigationState): string {
   lines.push("## Attacker Path", "");
   lines.push(state.attackerPath.trim().length > 0 ? state.attackerPath : "_Attacker path not yet reconstructed._", "");
 
+  lines.push("## Key Investigative Questions", "");
+  if (state.keyQuestions.length === 0) {
+    lines.push("_Not assessed yet — run synthesis._", "");
+  } else {
+    const mark = (s: string) => (s === "answered" ? "✅" : s === "partial" ? "🟡" : "❓");
+    lines.push("| | Question | Answer | Where to find it |", "| --- | --- | --- | --- |");
+    for (const q of state.keyQuestions) {
+      lines.push(`| ${mark(q.status)} | ${cellMd(q.question)} | ${cellMd(q.answer || "_unknown_")} | ${cellMd(q.pointer || "—")} |`);
+    }
+    lines.push("");
+  }
+
   lines.push("## Forensic Timeline", "");
   lines.push("_Real incident events, ordered by when they actually happened._", "");
   if (state.forensicTimeline.length === 0) {
@@ -61,6 +73,17 @@ export function renderMarkdownReport(state: InvestigationState): string {
       if (f.sourceScreenshots.length) lines.push(`- Evidence: ${f.sourceScreenshots.join(", ")}`);
       lines.push(`- Status: ${f.status} | First seen: ${f.firstSeen} | Updated: ${f.lastUpdated}`, "");
     }
+  }
+
+  lines.push("## Indicators of Compromise (IOCs)", "");
+  if (state.iocs.length === 0) {
+    lines.push("_No IOCs extracted yet._", "");
+  } else {
+    lines.push("| Type | Value | First seen |", "| --- | --- | --- |");
+    for (const i of state.iocs) {
+      lines.push(`| ${cellMd(i.type)} | ${cellMd(i.value)} | ${cellMd(i.firstSeen)} |`);
+    }
+    lines.push("");
   }
 
   lines.push("## Investigation Threads", "");

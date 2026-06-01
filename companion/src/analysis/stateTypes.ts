@@ -56,6 +56,18 @@ export interface Technique {
   findingIds: string[];
 }
 
+export type QuestionStatus = "answered" | "partial" | "unknown";
+
+// A standard DFIR question the AI tracks across the case, with its current answer
+// and a pointer to where the investigator can find/confirm it (or what to collect).
+export interface InvestigationQuestion {
+  id: string;
+  question: string;            // "What was the initial access vector?"
+  status: QuestionStatus;
+  answer: string;              // current best answer, or "" if unknown
+  pointer: string;             // where to look: finding ids / event times / screenshots, or what to collect next
+}
+
 export interface InvestigationState {
   caseId: string;
   findings: Finding[];
@@ -64,6 +76,7 @@ export interface InvestigationState {
   timeline: TimelineEntry[];           // capture/analysis timeline (what was reviewed, when)
   forensicTimeline: ForensicEvent[];   // real incident events, sorted by their true time
   mitreTechniques: Technique[];
+  keyQuestions: InvestigationQuestion[]; // standard DFIR questions + current answers
   lastSummary: string;
   attackerPath: string;                // narrative reconstruction of the attacker's path
   updatedAt: string;
@@ -78,6 +91,7 @@ export function emptyState(caseId: string): InvestigationState {
     timeline: [],
     forensicTimeline: [],
     mitreTechniques: [],
+    keyQuestions: [],
     lastSummary: "",
     attackerPath: "",
     updatedAt: new Date(0).toISOString(),

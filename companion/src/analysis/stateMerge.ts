@@ -123,6 +123,12 @@ export function mergeDelta(
   }
   forensicTimeline.sort(byEventTime);
 
+  // Key questions are a holistic reassessment — replace wholesale when synthesis
+  // provides them; otherwise keep the existing set (per-window deltas omit them).
+  const keyQuestions = delta.keyQuestions !== undefined
+    ? delta.keyQuestions.map((q) => ({ id: q.id, question: q.question, status: q.status, answer: q.answer, pointer: q.pointer }))
+    : state.keyQuestions;
+
   return {
     caseId: state.caseId,
     findings,
@@ -131,6 +137,7 @@ export function mergeDelta(
     timeline,
     forensicTimeline,
     mitreTechniques,
+    keyQuestions,
     lastSummary: delta.summary.trim().length > 0 ? delta.summary : state.lastSummary,
     attackerPath: (delta.attackerPath ?? "").trim().length > 0 ? (delta.attackerPath as string) : state.attackerPath,
     updatedAt: ctx.timestamp,

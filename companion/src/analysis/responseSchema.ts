@@ -34,6 +34,14 @@ export const deltaSchema = z.object({
   })).optional(),
   // Narrative reconstruction of the attacker's path (kill-chain story).
   attackerPath: z.string().optional(),
+  // Standard DFIR questions with current answers + where to find them.
+  keyQuestions: z.array(z.object({
+    id: z.string().min(1),
+    question: z.string().min(1),
+    status: z.enum(["answered", "partial", "unknown"]).default("unknown"),
+    answer: z.string().default(""),
+    pointer: z.string().default(""),
+  })).optional(),
 });
 
 export type AnalysisDelta = z.infer<typeof deltaSchema>;
