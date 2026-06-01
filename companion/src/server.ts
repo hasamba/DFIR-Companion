@@ -14,10 +14,14 @@ import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
 
 export type AiStatus = "analyzing" | "idle" | "error";
+// What the AI is actually doing, so the dashboard can say "processing screenshots"
+// vs "synthesizing" vs idle rather than a generic "analyzing".
+export type AiPhase = "extracting" | "synthesizing";
 
 export interface AiStatusEvent {
   status: AiStatus;
   at: string;        // ISO timestamp
+  phase?: AiPhase;   // present when status === "analyzing"
   detail?: string;   // e.g. window size, or error message
 }
 
@@ -116,7 +120,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       synthTimers.delete(caseId);
       if (synthInFlight.has(caseId)) { scheduleSynthesis(caseId); return; } // busy — retry after debounce
       synthInFlight.add(caseId);
-      options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: "synthesizing conclusions" });
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "synthesizing conclusions" });
       options.pipeline!.synthesize(caseId)
         .then(() => options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }))
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }))
@@ -130,8 +134,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     buffers.set(caseId, []);
     options.onAiStatus?.(caseId, {
       status: "analyzing",
+      phase: "extracting",
       at: new Date().toISOString(),
-      detail: `analyzing ${buf.length} screenshot(s)`,
+      detail: `${buf.length} screenshot(s)`,
     });
     try {
       await options.pipeline.analyzeWindow(caseId, buf);
@@ -171,7 +176,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
     const pending = captures.filter((c) => !c.isDuplicate && c.sequenceNumber > control.lastAnalyzedSeq);
     if (pending.length === 0) return;
-    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: `catching up on ${pending.length} screenshot(s)` });
+    options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `catching up on ${pending.length} screenshot(s)` });
     try {
       for (let i = 0; i < pending.length; i += windowSize) {
         const win = pending.slice(i, i + windowSize);
@@ -273,7 +278,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   function resynthesizeInBackground(caseId: string): void {
     if (!options.pipeline) return;
-    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: "re-synthesizing without legitimate items" });
+    options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "re-synthesizing without legitimate items" });
     options.pipeline.synthesize(caseId)
       .then(() => options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }))
       .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));

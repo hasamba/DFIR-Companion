@@ -120,9 +120,14 @@
     }
 
     function applyAiStatus(evt) {
-      if (evt.status === "analyzing") setAi("analyzing", "analyzing… " + (evt.detail || ""));
-      else if (evt.status === "idle") setAi("idle", "up to date (" + fmtTime(evt.at) + ")");
-      else if (evt.status === "error") setAi("error", "error — " + (evt.detail || "see server log"));
+      if (evt.status === "analyzing") {
+        if (evt.phase === "synthesizing") setAi("analyzing", "synthesizing findings… " + (evt.detail || ""));
+        else setAi("analyzing", "processing screenshots… " + (evt.detail || ""));
+      } else if (evt.status === "idle") {
+        setAi("idle", "idle — up to date (" + fmtTime(evt.at) + ")");
+      } else if (evt.status === "error") {
+        setAi("error", "error — " + (evt.detail || "see server log"));
+      }
     }
 
     function pollCount(caseId) {
@@ -173,17 +178,26 @@
         const kind = mark.dataset.kind, ref = mark.dataset.ref;
         const note = prompt(`Mark this ${kind} as legitimate. Reason (optional):`, "");
         if (note === null) return; // cancelled
-        document.getElementById("status").textContent = "marking legitimate & re-synthesizing…";
+        document.getElementById("status").textContent = "marking legitimate…";
         fetch(`/cases/${caseId}/legitimate`, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ kind, ref, note }) })
-          .then(r => r.json()).then(renderLegitimate).catch(() => {});
+          .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+          .then(markers => {
+            renderLegitimate(markers);
+            // The actual progress now shows in the AI status (synthesizing → idle).
+            document.getElementById("status").textContent = "marked legitimate — AI is re-synthesizing (see AI status)";
+          })
+          .catch(() => document.getElementById("status").textContent =
+            "mark failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.");
         return;
       }
       const un = e.target.closest(".unlegit-btn");
       if (un) {
         fetch(`/cases/${caseId}/legitimate/remove`, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ id: un.dataset.id }) })
-          .then(r => r.json()).then(renderLegitimate).catch(() => {});
+          .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+          .then(renderLegitimate)
+          .catch(() => document.getElementById("status").textContent = "un-mark failed — restart the companion server.");
       }
     });
 

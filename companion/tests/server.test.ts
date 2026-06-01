@@ -162,11 +162,11 @@ describe("server analysis wiring", () => {
       stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
-    const events: string[] = [];
+    const events: { status: string; phase?: string }[] = [];
     const app = createApp(store, {
       pipeline,
       windowSize: 10,
-      onAiStatus: (_caseId, e) => events.push(e.status),
+      onAiStatus: (_caseId, e) => events.push({ status: e.status, phase: e.phase }),
     });
 
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
@@ -175,11 +175,11 @@ describe("server analysis wiring", () => {
       triggerType: "navigation", imageBase64: await pngBase64(),
     });
 
-    for (let i = 0; i < 20 && !events.includes("idle"); i++) {
+    for (let i = 0; i < 20 && !events.some((e) => e.status === "idle"); i++) {
       await new Promise((r) => setTimeout(r, 25));
     }
-    expect(events[0]).toBe("analyzing");
-    expect(events).toContain("idle");
+    expect(events[0]).toEqual({ status: "analyzing", phase: "extracting" }); // processing screenshots
+    expect(events.some((e) => e.status === "idle")).toBe(true);
   });
 
   it("GET /health reports aiEnabled false without a pipeline, true with one", async () => {
