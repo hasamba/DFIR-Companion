@@ -1,0 +1,12 @@
+# Forensic evidence output — never commit captured screenshots / case data.
+# The companion writes here when DFIR_CASES_ROOT points outside companion/
+# (e.g. the default-ish ../cases). Keep it out of git.
+/cases/
+
+# Secrets / local config
+**/.env
+
+# Node
+node_modules/
+dist/
+*.timestamp-*.mjs

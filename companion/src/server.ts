@@ -1,6 +1,7 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { config as loadDotenv } from "dotenv";
-import { join } from "node:path";
+import { join, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { writeFile, readFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore } from "./storage/caseStore.js";
@@ -228,5 +229,12 @@ export function startServer(casesRoot: string, port = 4773): void {
 // (AI provider/model/key, cases root) in a file instead of typing env vars.
 if (process.argv[1] && process.argv[1].endsWith("server.ts")) {
   loadDotenv();
-  startServer(process.env.DFIR_CASES_ROOT ?? "cases");
+  const raw = process.env.DFIR_CASES_ROOT ?? "cases";
+  // Anchor a relative cases root to the companion package directory, so the SAME
+  // physical folder is used no matter which directory the server is launched from.
+  // (Otherwise "./cases" resolves against cwd and you can end up with two folders.)
+  const companionDir = fileURLToPath(new URL("../", import.meta.url)); // .../companion/
+  const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);
+  console.log(`[DFIR] cases root: ${casesRoot}`);
+  startServer(casesRoot);
 }
