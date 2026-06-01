@@ -122,6 +122,30 @@ describe("AnalysisPipeline", () => {
     expect(state.forensicTimeline).toHaveLength(2);
   });
 
+  it("synthesize uses synthesisProvider (stronger model) when provided", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish",
+      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
+    await stateStore.save(seeded);
+
+    const synthDelta = JSON.stringify({
+      findings: [{ id: "f1", severity: "High", title: "from synth model", description: "d",
+        relatedIocs: [], mitreTechniques: [], status: "open" }],
+      iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
+      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("cheap", "EXTRACTION MODEL SHOULD NOT BE CALLED FOR SYNTHESIS"),
+      synthesisProvider: new MockProvider("strong", synthDelta),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    expect(state.findings).toHaveLength(1);
+    expect(state.findings[0].title).toBe("from synth model");
+  });
+
   it("synthesize is a no-op when there is no forensic timeline", async () => {
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", "should not be called"),

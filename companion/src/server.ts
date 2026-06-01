@@ -178,21 +178,36 @@ import { WebSocketServer } from "ws";
 import { LiveHub } from "./live/hub.js";
 import { ReportWriter as ReportWriterImpl } from "./reports/reportWriter.js";
 
-export function buildProvider(): AnalyzeProvider | undefined {
-  const name = process.env.DFIR_AI_PROVIDER;
-  const model = process.env.DFIR_AI_MODEL ?? "";
-  const apiKey = process.env.DFIR_AI_KEY ?? "";
+export interface ProviderParams {
+  provider?: string;
+  model?: string;
+  apiKey?: string;
+  imageDetail?: "high" | "low" | "auto";
+}
+
+// Build a provider from explicit params (so callers can build more than one,
+// e.g. a cheap extraction model + a stronger synthesis model).
+export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | undefined {
+  const name = params.provider;
   if (!name) return undefined;
-  // Default to high-detail image tiling so small text in forensic screenshots
-  // is read at full resolution (matters for OpenAI/OpenRouter vision models).
-  const detail = process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined;
-  const imageDetail = detail ?? "high";
+  const model = params.model ?? "";
+  const apiKey = params.apiKey ?? "";
+  const imageDetail = params.imageDetail ?? "high";
   const registry = new ProviderRegistry();
   registry.register(new OpenAIProvider({ apiKey, model, imageDetail }));
   registry.register(new OpenRouterProvider({ apiKey, model, imageDetail }));
   registry.register(new OllamaCloudProvider({ apiKey, model, imageDetail }));
   registry.register(new GeminiProvider({ apiKey, model }));
   return registry.get(name);
+}
+
+export function buildProvider(): AnalyzeProvider | undefined {
+  return buildProviderFrom({
+    provider: process.env.DFIR_AI_PROVIDER,
+    model: process.env.DFIR_AI_MODEL,
+    apiKey: process.env.DFIR_AI_KEY,
+    imageDetail: process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined,
+  });
 }
 
 export function startServer(casesRoot: string, port = 4773): void {

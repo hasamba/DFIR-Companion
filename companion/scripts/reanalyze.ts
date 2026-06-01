@@ -8,6 +8,10 @@
 //   npm run reanalyze -- <caseId> --window 3       screenshots per AI call (default 4)
 //   npm run reanalyze -- <caseId> --reset --model openai/gpt-4o     re-run with another model
 //   npm run reanalyze -- <caseId> --provider gemini --model gemini-1.5-pro --key <k>
+//
+// Two-tier: a CHEAP model reads each screenshot, a STRONGER model writes the
+// findings / attacker-path synthesis (one text-only call):
+//   npm run reanalyze -- <caseId> --reset --model openai/gpt-4o-mini --synth-model openai/gpt-4o
 import { config as loadDotenv } from "dotenv";
 loadDotenv();
 
@@ -19,7 +23,7 @@ import { StateStore } from "../src/analysis/stateStore.js";
 import { AnalysisPipeline } from "../src/analysis/pipeline.js";
 import { makeImageLoader } from "../src/analysis/imageLoader.js";
 import { emptyState } from "../src/analysis/stateTypes.js";
-import { buildProvider } from "../src/server.js";
+import { buildProviderFrom } from "../src/server.js";
 import type { CaptureMetadata } from "../src/types.js";
 
 function flag(name: string): boolean {
@@ -40,19 +44,26 @@ async function main(): Promise<void> {
   const reset = flag("reset");
   const windowSize = Math.max(1, opt("window", 4));
 
-  // CLI overrides let you re-run with a different provider/model without editing .env.
-  const provOverride = strOpt("provider");
-  const modelOverride = strOpt("model");
-  const keyOverride = strOpt("key");
-  if (provOverride) process.env.DFIR_AI_PROVIDER = provOverride;
-  if (modelOverride) process.env.DFIR_AI_MODEL = modelOverride;
-  if (keyOverride) process.env.DFIR_AI_KEY = keyOverride;
+  const imageDetail = process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined;
 
-  const provider = buildProvider();
+  // Extraction model (per screenshot) — CLI overrides fall back to .env.
+  const provName = strOpt("provider") ?? process.env.DFIR_AI_PROVIDER;
+  const model = strOpt("model") ?? process.env.DFIR_AI_MODEL;
+  const apiKey = strOpt("key") ?? process.env.DFIR_AI_KEY;
+  const provider = buildProviderFrom({ provider: provName, model, apiKey, imageDetail });
   if (!provider) {
-    console.error("No AI provider configured in .env (DFIR_AI_PROVIDER). Aborting.");
+    console.error("No AI provider configured (DFIR_AI_PROVIDER / --provider). Aborting.");
     process.exit(1);
   }
+
+  // Optional stronger synthesis model — falls back to the extraction model.
+  const synthProvName = strOpt("synth-provider") ?? provName;
+  const synthModel = strOpt("synth-model") ?? model;
+  const synthKey = strOpt("synth-key") ?? apiKey;
+  const usingTwoTier = Boolean(strOpt("synth-model") || strOpt("synth-provider"));
+  const synthesisProvider = usingTwoTier
+    ? buildProviderFrom({ provider: synthProvName, model: synthModel, apiKey: synthKey, imageDetail })
+    : provider;
 
   const raw = process.env.DFIR_CASES_ROOT ?? "cases";
   const companionDir = fileURLToPath(new URL("../", import.meta.url));
@@ -60,7 +71,7 @@ async function main(): Promise<void> {
 
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
-  const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: makeImageLoader(store) });
+  const pipeline = new AnalysisPipeline({ provider, synthesisProvider, stateStore, imageLoader: makeImageLoader(store) });
 
   const logText = await readFile(store.capturesLogPath(caseId), "utf8");
   const all: CaptureMetadata[] = logText.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
@@ -71,7 +82,8 @@ async function main(): Promise<void> {
     : all.filter((c) => !c.isDuplicate);
 
   const windows = Math.ceil(pool.length / windowSize);
-  console.log(`Case "${caseId}" — provider=${provider.name} model=${process.env.DFIR_AI_MODEL}`);
+  console.log(`Case "${caseId}" — extraction: ${provName}/${model}` +
+    (usingTwoTier ? `  |  synthesis: ${synthProvName}/${synthModel}` : ""));
   console.log(`Re-analyzing ${pool.length} screenshot(s) in ${windows} window(s) of ${windowSize}` +
     `${includeAll ? " (including duplicates)" : ""}${reset ? " (state reset)" : " (merging into existing state)"}.`);
   console.log(`This makes ~${windows} AI call(s) and will use your API quota.\n`);

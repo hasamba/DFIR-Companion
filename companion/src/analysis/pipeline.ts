@@ -104,6 +104,9 @@ export const SYNTHESIS_PROMPT = [
 
 export interface PipelineOptions {
   provider: AIProvider;
+  // Optional stronger model for the holistic synthesis pass. Per-window extraction
+  // can use a cheap model while synthesis (one text-only call) uses a better one.
+  synthesisProvider?: AIProvider;
   stateStore: StateStore;
   imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage>;
   retries?: number;
@@ -177,9 +180,10 @@ export class AnalysisPipeline {
 
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
+    const synthProvider = this.opts.synthesisProvider ?? this.opts.provider;
 
     const delta = await withRetry(async () => {
-      const result = await this.opts.provider.analyze({ systemPrompt: SYNTHESIS_PROMPT, userPrompt, images: [] });
+      const result = await synthProvider.analyze({ systemPrompt: SYNTHESIS_PROMPT, userPrompt, images: [] });
       return deltaSchema.parse(JSON.parse(extractJsonText(result.rawText)));
     }, retries, backoffMs);
 

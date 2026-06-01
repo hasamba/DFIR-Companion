@@ -52,9 +52,11 @@ so you can confirm whether an AI provider is configured.
 | `--reset` | Start from an empty state before analyzing (otherwise merges into existing). | off |
 | `--all` | Include duplicate screenshots too (most thorough; more API calls). Otherwise only non-duplicates. | off |
 | `--window N` | Screenshots per AI call. | `4` |
-| `--provider NAME` | Override `DFIR_AI_PROVIDER` for this run. | from `.env` |
-| `--model ID` | Override `DFIR_AI_MODEL` for this run. | from `.env` |
+| `--provider NAME` | Override `DFIR_AI_PROVIDER` (extraction model) for this run. | from `.env` |
+| `--model ID` | Override `DFIR_AI_MODEL` (extraction model) for this run. | from `.env` |
 | `--key KEY` | Override `DFIR_AI_KEY` for this run. | from `.env` |
+| `--synth-model ID` | Use a **different (stronger) model for the synthesis pass** — findings / MITRE / attacker path. Per-screenshot extraction still uses `--model`. | = extraction model |
+| `--synth-provider NAME` / `--synth-key KEY` | Provider/key for the synthesis model (if different). | = extraction provider/key |
 | `--no-synthesis` | Skip the final synthesis pass (raw forensic timeline only, no findings/attacker path). | off |
 
 Examples:
@@ -63,7 +65,8 @@ Examples:
     npm run reanalyze -- test1 --reset                       # re-do all unique screenshots, fresh
     npm run reanalyze -- test1 --all --reset                 # include duplicates too
     npm run reanalyze -- test1 --reset --model openai/gpt-4o # try a different model
-    npm run reanalyze -- test1 --provider gemini --model gemini-1.5-pro --key <key>
+    # Two-tier (recommended): cheap model reads every screenshot, strong model writes conclusions
+    npm run reanalyze -- test1 --reset --model openai/gpt-4o-mini --synth-model openai/gpt-4o
 
 > `reanalyze` uses your API quota (~1 call per `--window` screenshots).
 
@@ -112,6 +115,13 @@ the server from a `chrome-extension://` origin.
    pass reads the full forensic timeline and produces those conclusions. It runs
    automatically at the end of `reanalyze` (skip with `--no-synthesis`), and you can
    re-run it any time — including with a different model — via `npm run synthesize`.
+
+**Two-tier model strategy (cost-effective).** Per-screenshot extraction is the
+high-volume part (one AI call per few screenshots) — use a cheap vision model there.
+Synthesis is a single text-only call over the whole timeline — point a stronger model
+at just that. Example: extract with `openai/gpt-4o-mini`, synthesize with `openai/gpt-4o`:
+
+    npm run reanalyze -- <caseId> --reset --model openai/gpt-4o-mini --synth-model openai/gpt-4o
 
 Duplicates (by perceptual hash) are still stored as evidence but skipped by the AI —
 use `reanalyze --all` to force them in.
