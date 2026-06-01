@@ -23,6 +23,21 @@
     .ai-error { background: #3a2020; color: #ff5c5c; }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
     .ai-analyzing { animation: pulse 1s ease-in-out infinite; }
+    /* Secondary action — muted by default, only lights up on hover so it reads as
+       "click to mark", not as a status tag. Hidden until you hover the row. */
+    .finding, #iocs > div { position: relative; }
+    .legit-btn {
+      float: right; font-size: 10px; padding: 1px 7px; margin-left: 8px;
+      background: transparent; color: #5b6472; border: 1px solid #2a2f3a;
+      border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity .12s, color .12s, border-color .12s;
+    }
+    .finding:hover .legit-btn, #iocs > div:hover .legit-btn, .legit-btn:focus { opacity: 1; }
+    .legit-btn:hover { color: #ffd93b; border-color: #ffd93b; }
+    .unlegit-btn {
+      font-size: 10px; padding: 1px 7px; margin-left: 6px; background: transparent;
+      color: #9aa4b2; border: 1px solid #2a2f3a; border-radius: 4px; cursor: pointer;
+    }
+    .unlegit-btn:hover { color: #6bcB77; border-color: #6bcB77; }
   </style>
 </head>
 <body>
@@ -129,8 +144,8 @@
 
     function legitBtn(kind, ref) {
       return `<button class="legit-btn" data-kind="${escAttr(kind)}" data-ref="${escAttr(ref)}" ` +
-        `style="font-size:10px;padding:1px 6px;background:#3a3320;color:#ffd93b;border:0;border-radius:8px;cursor:pointer" ` +
-        `title="Mark as legitimate (client-confirmed benign) — excluded from analysis">legit</button>`;
+        `title="Mark as a false positive — client confirmed this is benign; exclude it from analysis">` +
+        `⚑ mark legitimate</button>`;
     }
 
     function renderLegitimate(markers) {
@@ -140,7 +155,7 @@
             `<div style="margin-bottom:4px"><span style="color:#9aa4b2">${esc(m.kind)}:</span> ` +
             `<span style="text-decoration:line-through">${esc(m.ref)}</span>` +
             `${m.note ? ` — <small>${esc(m.note)}</small>` : ""} ` +
-            `<button class="unlegit-btn" data-id="${escAttr(m.id)}" style="font-size:10px;padding:1px 6px;cursor:pointer">un-mark</button></div>`
+            `<button class="unlegit-btn" data-id="${escAttr(m.id)}">un-mark</button></div>`
           ).join("")
         : "<div style='color:#9aa4b2'>Nothing marked legitimate.</div>";
     }
