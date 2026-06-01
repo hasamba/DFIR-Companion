@@ -88,6 +88,12 @@ describe("AnalysisPipeline", () => {
     expect(received).toBe("c1");
   });
 
+  it("synthesis prompt asks for granular per-technique findings (not one campaign finding)", async () => {
+    const { SYNTHESIS_PROMPT } = await import("../../src/analysis/pipeline.js");
+    expect(SYNTHESIS_PROMPT).toContain("SEPARATE finding for EACH distinct");
+    expect(SYNTHESIS_PROMPT).toMatch(/do not collapse/i);
+  });
+
   it("synthesize derives findings + attacker path from the forensic timeline", async () => {
     // Seed a forensic timeline (as per-window extraction would build) but no findings.
     const seeded = emptyState("c1");
