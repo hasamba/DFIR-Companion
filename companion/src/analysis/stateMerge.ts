@@ -1,6 +1,7 @@
 import type { AnalysisDelta } from "./responseSchema.js";
 import type { InvestigationState, Finding, IOC, Technique, ForensicEvent } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
+import { isAnalystWorkLog } from "./workLogFilter.js";
 
 export interface WindowContext {
   windowSequence: number;
@@ -96,6 +97,10 @@ export function mergeDelta(
     sourceScreenshots: [...e.sourceScreenshots],
   }));
   for (const incoming of delta.forensicEvents ?? []) {
+    // Hard guard: a weak model may narrate the analyst operating the tool
+    // ("Velociraptor Response and Monitoring session continued") as an event.
+    // Never let tool-usage narration into the forensic timeline.
+    if (isAnalystWorkLog(incoming.description)) continue;
     const existing = forensicTimeline.find((e) => e.id === incoming.id);
     if (existing) {
       existing.timestamp = incoming.timestamp || existing.timestamp;

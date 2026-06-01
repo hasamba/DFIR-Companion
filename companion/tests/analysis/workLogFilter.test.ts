@@ -16,6 +16,8 @@ const WORK_LOG = [
   "Velociraptor EventLog search executed for anomalies.",
   "Velociraptor Response and Monitoring accessed",
   "Velociraptor Response and Monitoring notebook accessed.",
+  "Velociraptor Response and Monitoring session initiated.",
+  "Velociraptor Response and Monitoring session continued.",
 ];
 
 // Genuine host/attacker events that MUST survive the filter.

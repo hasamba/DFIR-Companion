@@ -77,6 +77,21 @@ describe("mergeDelta", () => {
     expect(state.timeline[0].windowSequence).toBe(1);
   });
 
+  it("drops tool-usage narration from forensic events at merge time", () => {
+    const state = mergeDelta(emptyState("c1"), {
+      ...baseDelta,
+      forensicEvents: [
+        { id: "e1", timestamp: "2026-06-01T10:55:41Z", description: "Velociraptor Response and Monitoring session continued.",
+          severity: "Info", mitreTechniques: [], relatedFindingIds: [] },
+        { id: "e2", timestamp: "2026-06-01T10:56:13Z", description: "Suspicious Epmap Connection entry detected.",
+          severity: "High", mitreTechniques: ["T1218.011"], relatedFindingIds: [] },
+      ],
+    }, { windowSequence: 1, timestamp: "2026-06-01T10:56:13Z", sourceScreenshots: ["s.webp"] });
+
+    expect(state.forensicTimeline).toHaveLength(1);
+    expect(state.forensicTimeline[0].description).toContain("Epmap");
+  });
+
   it("merges forensic events, dedupes by id, and keeps them sorted by event time", () => {
     let state = emptyState("c1");
     // First window contributes a later event (15:00).
