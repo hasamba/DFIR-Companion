@@ -7,6 +7,7 @@ export interface GeminiOptions {
   model: string;       // e.g. "gemini-1.5-pro"
   baseUrl?: string;
   fetchFn?: FetchFn;
+  timeoutMs?: number;
 }
 
 function mapStatus(status: number): ProviderError["kind"] {
@@ -31,6 +32,7 @@ export class GeminiProvider implements AIProvider {
       parts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } });
     }
     const url = `${this.baseUrl}/models/${this.opts.model}:generateContent?key=${this.opts.apiKey}`;
+    const timeoutMs = this.opts.timeoutMs ?? 60_000;
     let res: Response;
     try {
       res = await this.fetchFn(url, {
@@ -40,9 +42,13 @@ export class GeminiProvider implements AIProvider {
           contents: [{ role: "user", parts }],
           generationConfig: { responseMimeType: "application/json" },
         }),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      throw new ProviderError(`Gemini transport error: ${(err as Error).message}`, "transport");
+      const msg = (err as Error).name === "TimeoutError"
+        ? `Gemini request timed out after ${timeoutMs}ms`
+        : `Gemini transport error: ${(err as Error).message}`;
+      throw new ProviderError(msg, "transport");
     }
     if (!res.ok) throw new ProviderError(`Gemini HTTP ${res.status}`, mapStatus(res.status));
     const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };

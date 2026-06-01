@@ -7,7 +7,8 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsx src/server.ts"
+    "dev": "tsx src/server.ts",
+    "verify:ai": "tsx scripts/verify-ai.ts"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

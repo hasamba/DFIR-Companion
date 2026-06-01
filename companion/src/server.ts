@@ -2,7 +2,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import { config as loadDotenv } from "dotenv";
 import { join, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeFile, readFile } from "node:fs/promises";
+import { writeFile, readFile, rm } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore } from "./storage/caseStore.js";
 import { ingestCapture } from "./ingest/captureIngest.js";
@@ -91,6 +91,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     });
     try {
       await options.pipeline.analyzeWindow(caseId, buf);
+      // Analysis recovered — drop any stale failure marker from a prior window.
+      await rm(join(store.stateDir(caseId), "pending_analysis.json"), { force: true });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
     } catch (err) {
       const seqs = buf.map((c) => c.sequenceNumber);

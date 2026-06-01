@@ -5,14 +5,43 @@ import type { InvestigationState } from "./stateTypes.js";
 import { deltaSchema } from "./responseSchema.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
+import { extractJsonText } from "./extractJson.js";
 
-const SYSTEM_PROMPT = [
+export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation",
   "(Velociraptor, VirusTotal, etc.) plus a summary of findings already recorded.",
-  "Return ONLY JSON matching the required schema. Update existing findings by their id;",
-  "never create a duplicate finding for a topic already listed. Open a thread for any lead",
-  "you start chasing and close it by id when resolved.",
-].join(" ");
+  "Update existing findings by their id; never create a duplicate finding for a topic already",
+  "listed. Open a thread for any lead you start chasing and close it by id when resolved.",
+  "",
+  "Return ONLY raw JSON (no markdown code fences, no prose) with EXACTLY this shape — every",
+  "finding/ioc/technique/thread MUST be an OBJECT with these keys, never a bare string:",
+  "",
+  JSON.stringify(
+    {
+      findings: [
+        {
+          id: "f1",
+          severity: "Critical|High|Medium|Low|Info",
+          title: "short title",
+          description: "what was observed and why it matters",
+          relatedIocs: ["i1"],
+          mitreTechniques: ["T1059"],
+          status: "open|confirmed|dismissed",
+        },
+      ],
+      iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
+      mitreTechniques: [{ id: "T1059", name: "Command and Scripting Interpreter" }],
+      threadsOpened: [{ id: "t1", description: "lead being chased" }],
+      threadsClosed: ["t0"],
+      timelineNote: "one sentence on what happened in this batch of screenshots",
+      summary: "running summary of the whole investigation so far",
+    },
+    null,
+    2,
+  ),
+  "",
+  "If a section has nothing new, return it as an empty array (or empty string for timelineNote/summary).",
+].join("\n");
 
 export interface PipelineOptions {
   provider: AIProvider;
@@ -57,7 +86,8 @@ export class AnalysisPipeline {
 
     const delta = await withRetry(async () => {
       const result = await this.opts.provider.analyze({ systemPrompt: SYSTEM_PROMPT, userPrompt, images });
-      return deltaSchema.parse(JSON.parse(result.rawText));
+      // Models often wrap JSON in markdown fences / prose — extract it first.
+      return deltaSchema.parse(JSON.parse(extractJsonText(result.rawText)));
     }, retries, backoffMs);
 
     const windowSequence = analyzable[analyzable.length - 1].sequenceNumber;

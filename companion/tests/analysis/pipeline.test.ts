@@ -49,6 +49,19 @@ describe("AnalysisPipeline", () => {
     expect(reloaded.findings).toHaveLength(1);
   });
 
+  it("parses a delta even when the model wraps it in a ```json markdown fence", async () => {
+    const fenced = "```json\n" + validDelta + "\n```";
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", fenced),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.analyzeWindow("c1", [capture(1)]);
+    expect(state.findings).toHaveLength(1);
+    expect(state.findings[0].title).toBe("PS abuse");
+  });
+
   it("throws on malformed AI response and leaves state unchanged", async () => {
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", "not json at all"),

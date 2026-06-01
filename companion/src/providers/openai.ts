@@ -7,6 +7,7 @@ export interface OpenAIOptions {
   model: string;
   baseUrl?: string;
   fetchFn?: FetchFn;
+  timeoutMs?: number;
 }
 
 function mapStatus(status: number): ProviderError["kind"] {
@@ -30,6 +31,7 @@ export class OpenAIProvider implements AIProvider {
     for (const img of req.images) {
       content.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.base64}` } });
     }
+    const timeoutMs = this.opts.timeoutMs ?? 60_000;
     let res: Response;
     try {
       res = await this.fetchFn(`${this.baseUrl}/chat/completions`, {
@@ -43,9 +45,13 @@ export class OpenAIProvider implements AIProvider {
             { role: "user", content },
           ],
         }),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      throw new ProviderError(`OpenAI transport error: ${(err as Error).message}`, "transport");
+      const msg = (err as Error).name === "TimeoutError"
+        ? `OpenAI request timed out after ${timeoutMs}ms`
+        : `OpenAI transport error: ${(err as Error).message}`;
+      throw new ProviderError(msg, "transport");
     }
     if (!res.ok) throw new ProviderError(`OpenAI HTTP ${res.status}`, mapStatus(res.status));
     const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
