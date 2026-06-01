@@ -43,6 +43,7 @@ so you can confirm whether an AI provider is configured.
 | `npm run coverage -- [caseId]` | Reports how many of a case's screenshots were actually analyzed vs. skipped (duplicates) vs. never analyzed. |
 | `npm run reanalyze -- <caseId> [flags]` | Re-run AI analysis over already-captured screenshots, rebuilding the investigation state, then synthesize conclusions. See flags below. |
 | `npm run synthesize -- <caseId>` | Holistic pass: read the full forensic timeline and derive findings, MITRE mapping, and the attacker-path narrative. One text-only AI call. Accepts `--provider`/`--model`/`--key` overrides. |
+| `npm run clean-timeline -- <caseId> [--apply]` | Remove analyst/tool-usage entries (Velociraptor hunts, notebooks, searches, "Response and Monitoring accessed") that don't belong in the forensic timeline. No AI calls. Dry-run preview by default; `--apply` saves. |
 
 ### `reanalyze` flags
 
@@ -125,6 +126,13 @@ at just that. Example: extract with `openai/gpt-4o-mini`, synthesize with `opena
 
 Duplicates (by perceptual hash) are still stored as evidence but skipped by the AI —
 use `reanalyze --all` to force them in.
+
+The **forensic timeline** holds real incident events (host/attacker activity recorded
+in the artifacts: executions, logons, file/registry/network changes) with their true
+event timestamps. It is NOT the analyst's work log — the act of operating Velociraptor
+(creating hunts, opening notebooks, running searches, "Response and Monitoring
+accessed") belongs in the Investigation Log, not here. The prompts exclude tool-usage
+events; for timelines built before that fix, `npm run clean-timeline` strips them.
 
 ### Text readability / OCR accuracy
 

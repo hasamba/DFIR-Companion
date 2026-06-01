@@ -11,7 +11,8 @@
     "verify:ai": "tsx scripts/verify-ai.ts",
     "coverage": "tsx scripts/coverage.ts",
     "reanalyze": "tsx scripts/reanalyze.ts",
-    "synthesize": "tsx scripts/synthesize.ts"
+    "synthesize": "tsx scripts/synthesize.ts",
+    "clean-timeline": "tsx scripts/clean-timeline.ts"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
