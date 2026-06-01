@@ -58,20 +58,37 @@
       b.style.background = aiEnabled ? "#2d6cdf" : "#555";
     }
 
+    function aiToggleUnavailable() {
+      const b = document.getElementById("aiToggle");
+      b.textContent = "AI: ?";
+      b.title = "AI control endpoint missing";
+      document.getElementById("status").textContent =
+        "AI toggle unavailable — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
+    }
+
     function loadAiToggle(caseId) {
-      fetch(`/cases/${caseId}/ai-control`).then(r => r.json())
-        .then(c => { aiEnabled = !!c.enabled; renderAiToggle(); }).catch(() => {});
+      fetch(`/cases/${caseId}/ai-control`)
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(c => { aiEnabled = !!c.enabled; renderAiToggle(); })
+        .catch(() => aiToggleUnavailable());
     }
 
     function toggleAi() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
       const next = !aiEnabled;
-      document.getElementById("status").textContent = next ? "AI on — catching up on un-analyzed screenshots…" : "AI off — capturing only";
       fetch(`/cases/${caseId}/ai-control`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ enabled: next }),
-      }).then(r => r.json()).then(c => { aiEnabled = !!c.enabled; renderAiToggle(); }).catch(() => {});
+      })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(c => {
+          aiEnabled = !!c.enabled;
+          renderAiToggle();
+          document.getElementById("status").textContent =
+            aiEnabled ? "AI on — catching up on un-analyzed screenshots…" : "AI off — capturing only";
+        })
+        .catch(() => aiToggleUnavailable());
     }
 
     function fmtTime(iso) {
