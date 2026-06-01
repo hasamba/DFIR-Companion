@@ -60,9 +60,9 @@
     <section><h2>Findings</h2><div id="findings">—</div></section>
     <section><h2>IOCs</h2><div id="iocs">—</div></section>
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
-    <section><h2>Investigation Log</h2><div id="timeline">—</div></section>
     <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>Investigation Log</h2><div id="timeline">—</div></section>
   </main>
   <script>
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
@@ -217,7 +217,7 @@
 
       const iocs = state.iocs || [];
       document.getElementById("iocs").innerHTML = iocs.length
-        ? iocs.map(i => `<div><span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}</div>`).join("")
+        ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}</div>`).join("")
         : "<div style='color:#9aa4b2'>No IOCs yet</div>";
 
       const ft = state.forensicTimeline || [];
@@ -233,14 +233,14 @@
       const openThreads = state.openThreads.filter(t => t.status === "open");
       const closedThreads = state.openThreads.filter(t => t.status === "closed");
       document.getElementById("openThreads").innerHTML =
-        openThreads.map(t => `<div>• ${esc(t.description)}</div>`).join("") || "<div style='color:#9aa4b2'>No open threads</div>";
+        openThreads.map(t => `<div>• <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("") || "<div style='color:#9aa4b2'>No open threads</div>";
       document.getElementById("closedThreads").innerHTML = closedThreads.length
         ? `<div style='margin-top:8px;color:#6bcB77'>Closed (${closedThreads.length}):</div>` +
-          closedThreads.map(t => `<div style='color:#9aa4b2;text-decoration:line-through'>✓ ${esc(t.description)}</div>`).join("")
+          closedThreads.map(t => `<div style='color:#9aa4b2;text-decoration:line-through'>✓ <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("")
         : "";
       const sorted = [...state.findings].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
       document.getElementById("findings").innerHTML =
-        sorted.map(f => `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> <strong>${esc(f.title)}</strong> ${legitBtn("finding", f.title)}<br><small>${esc(f.description)}</small></div>`).join("") || "—";
+        sorted.map(f => `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> <span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong> ${legitBtn("finding", f.title)}<br><small>${esc(f.description)}</small></div>`).join("") || "—";
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =

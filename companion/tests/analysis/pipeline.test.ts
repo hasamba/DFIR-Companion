@@ -128,6 +128,37 @@ describe("AnalysisPipeline", () => {
     expect(state.forensicTimeline).toHaveLength(2);
   });
 
+  it("synthesize back-links forensic events to the correct findings via relatedEventIds", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "SharpHound ran", severity: "High",
+        mitreTechniques: [], relatedFindingIds: ["f99"], sourceScreenshots: [] }, // stale wrong guess
+      { id: "e2", timestamp: "2026-05-20T15:00:00Z", description: "Mimikatz ran", severity: "Critical",
+        mitreTechniques: [], relatedFindingIds: ["f99"], sourceScreenshots: [] },
+    );
+    await stateStore.save(seeded);
+
+    const synthDelta = JSON.stringify({
+      findings: [
+        { id: "f1", severity: "High", title: "AD recon", description: "x", relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e1"] },
+        { id: "f2", severity: "Critical", title: "Credential dumping", description: "y", relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e2"] },
+      ],
+      iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
+      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", synthDelta),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    const e1 = state.forensicTimeline.find((e) => e.id === "e1")!;
+    const e2 = state.forensicTimeline.find((e) => e.id === "e2")!;
+    expect(e1.relatedFindingIds).toEqual(["f1"]); // corrected from stale "f99"
+    expect(e2.relatedFindingIds).toEqual(["f2"]);
+  });
+
   it("synthesize opens new threads and closes existing ones by id", async () => {
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish",

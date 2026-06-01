@@ -79,9 +79,9 @@ export function renderMarkdownReport(state: InvestigationState): string {
   if (state.iocs.length === 0) {
     lines.push("_No IOCs extracted yet._", "");
   } else {
-    lines.push("| Type | Value | First seen |", "| --- | --- | --- |");
+    lines.push("| ID | Type | Value | First seen |", "| --- | --- | --- | --- |");
     for (const i of state.iocs) {
-      lines.push(`| ${cellMd(i.type)} | ${cellMd(i.value)} | ${cellMd(i.firstSeen)} |`);
+      lines.push(`| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(i.value)} | ${cellMd(i.firstSeen)} |`);
     }
     lines.push("");
   }

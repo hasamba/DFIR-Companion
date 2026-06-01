@@ -14,6 +14,9 @@ export const deltaSchema = z.object({
     relatedIocs: z.array(z.string()),
     mitreTechniques: z.array(z.string()),
     status: z.enum(["open", "confirmed", "dismissed"]).catch("open"),
+    // Synthesis only: the forensic-event ids this finding is based on. Used to
+    // back-link events to the correct findings (extraction can't know finding ids).
+    relatedEventIds: z.array(z.string()).optional(),
   })),
   iocs: z.array(z.object({
     id: z.string().min(1),

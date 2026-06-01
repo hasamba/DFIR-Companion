@@ -64,7 +64,6 @@ export const SYSTEM_PROMPT = [
           description: "powershell.exe spawned encoded command (from prefetch run time)",
           severity: "Critical|High|Medium|Low|Info",
           mitreTechniques: ["T1059.001"],
-          relatedFindingIds: ["f1"],
         },
       ],
       threadsOpened: [{ id: "t1", description: "lead being chased" }],
@@ -103,7 +102,9 @@ export const SYNTHESIS_PROMPT = [
   "  Do NOT collapse multiple techniques into a single 'campaign' or 'overall activity' finding — the",
   "  campaign-level narrative belongs in attackerPath/summary. Aim for roughly one finding per material",
   "  technique in the timeline (often 8-20 findings for a busy case), each a CONCLUSION (not a raw log",
-  "  line) with its own severity and the MITRE techniques it maps to.",
+  "  line) with its own severity and the MITRE techniques it maps to. Also set relatedEventIds to",
+  "  the ids of the forensic-timeline events (e.g. e3, e7 — shown in brackets) that this finding is",
+  "  based on, so events link back to the right finding.",
   "- iocs: concrete indicators (ips, domains, hashes, malicious files/processes) seen in the timeline.",
   "- mitreTechniques: the ATT&CK techniques observed, aggregated.",
   "- attackerPath: a chronological narrative of the intrusion in kill-chain order (initial access →",
@@ -127,7 +128,7 @@ export const SYNTHESIS_PROMPT = [
   "",
   JSON.stringify(
     {
-      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed" }],
+      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed", relatedEventIds: ["e3", "e7"] }],
       iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
       mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses: Disable or Modify Tools" }],
       attackerPath: "Initial access at <time> via …; then execution of …; persistence via …; impact at <time>.",
@@ -223,7 +224,7 @@ export class AnalysisPipeline {
     if (state.forensicTimeline.length === 0) return state;
 
     const timelineText = state.forensicTimeline
-      .map((e) => `${e.timestamp || "(undated)"} [${e.severity}] ${e.description}`)
+      .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description}`)
       .join("\n");
     const existingFindings = state.findings.map((f) => `[${f.id}] ${f.title}`).join("\n") || "(none yet)";
     const openThreads = state.openThreads
@@ -252,7 +253,24 @@ export class AnalysisPipeline {
     const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
     const merged = mergeDelta(state, delta, { windowSequence: 0, timestamp: ts, sourceScreenshots: [] });
     // Safety net: drop anything confirmed legitimate even if the model re-introduced it.
-    const next = applyLegitimate(merged, markers);
+    const filtered = applyLegitimate(merged, markers);
+
+    // Back-link forensic events to the CORRECT findings using the synthesis output
+    // (each finding lists the event ids it's based on). Replaces extraction guesses.
+    const surviving = new Set(filtered.findings.map((f) => f.id));
+    const eventToFindings = new Map<string, string[]>();
+    for (const f of delta.findings) {
+      if (!surviving.has(f.id)) continue;
+      for (const eid of f.relatedEventIds ?? []) {
+        const arr = eventToFindings.get(eid) ?? [];
+        if (!arr.includes(f.id)) arr.push(f.id);
+        eventToFindings.set(eid, arr);
+      }
+    }
+    const next = {
+      ...filtered,
+      forensicTimeline: filtered.forensicTimeline.map((e) => ({ ...e, relatedFindingIds: eventToFindings.get(e.id) ?? [] })),
+    };
     await this.opts.stateStore.save(next);
     this.opts.onState?.(next);
     return next;
