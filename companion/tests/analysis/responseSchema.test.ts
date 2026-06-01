@@ -19,12 +19,21 @@ describe("deltaSchema", () => {
     expect(delta.findings[0].id).toBe("f1");
   });
 
-  it("rejects invalid severity", () => {
-    expect(() => deltaSchema.parse({
+  it("degrades unexpected enum values instead of rejecting the whole response", () => {
+    // A model returning a novel severity / IOC type must NOT nuke the entire synthesis.
+    const delta = deltaSchema.parse({
       findings: [{ id: "f1", severity: "Catastrophic", title: "x", description: "y",
-        relatedIocs: [], mitreTechniques: [], status: "open" }],
-      iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        relatedIocs: [], mitreTechniques: [], status: "weird" }],
+      iocs: [
+        { id: "i1", type: "malware", value: "evil.exe" },  // unlisted type
+        { id: "i2", type: "tool", value: "nxc" },
+      ],
+      mitreTechniques: [], threadsOpened: [], threadsClosed: [],
       timelineNote: "n", summary: "s",
-    })).toThrow();
+    });
+    expect(delta.findings[0].severity).toBe("Medium"); // fallback
+    expect(delta.findings[0].status).toBe("open");      // fallback
+    expect(delta.iocs.map((i) => i.type)).toEqual(["other", "other"]);
+    expect(delta.iocs.map((i) => i.value)).toEqual(["evil.exe", "nxc"]); // kept, not dropped
   });
 });

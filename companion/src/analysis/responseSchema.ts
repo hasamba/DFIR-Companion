@@ -1,18 +1,23 @@
 import { z } from "zod";
 
+// Enums use .catch(fallback) so ONE unexpected value (e.g. an IOC type of "malware")
+// maps to the fallback instead of rejecting the ENTIRE synthesis response.
+const severity = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
+const iocType = z.enum(["ip", "domain", "hash", "file", "process", "url", "other"]);
+
 export const deltaSchema = z.object({
   findings: z.array(z.object({
     id: z.string().min(1),
-    severity: z.enum(["Critical", "High", "Medium", "Low", "Info"]),
+    severity: severity.catch("Medium"),
     title: z.string().min(1),
     description: z.string(),
     relatedIocs: z.array(z.string()),
     mitreTechniques: z.array(z.string()),
-    status: z.enum(["open", "confirmed", "dismissed"]),
+    status: z.enum(["open", "confirmed", "dismissed"]).catch("open"),
   })),
   iocs: z.array(z.object({
     id: z.string().min(1),
-    type: z.enum(["ip", "domain", "hash", "file", "process", "url", "other"]),
+    type: iocType.catch("other"),
     value: z.string().min(1),
   })),
   mitreTechniques: z.array(z.object({
@@ -28,7 +33,7 @@ export const deltaSchema = z.object({
     id: z.string().min(1),
     timestamp: z.string(),                                    // event's real time as shown in the artifact
     description: z.string().min(1),
-    severity: z.enum(["Critical", "High", "Medium", "Low", "Info"]).default("Info"),
+    severity: severity.default("Info").catch("Info"),
     mitreTechniques: z.array(z.string()).default([]),
     relatedFindingIds: z.array(z.string()).default([]),
   })).optional(),
@@ -38,7 +43,7 @@ export const deltaSchema = z.object({
   keyQuestions: z.array(z.object({
     id: z.string().min(1),
     question: z.string().min(1),
-    status: z.enum(["answered", "partial", "unknown"]).default("unknown"),
+    status: z.enum(["answered", "partial", "unknown"]).default("unknown").catch("unknown"),
     answer: z.string().default(""),
     pointer: z.string().default(""),
   })).optional(),
