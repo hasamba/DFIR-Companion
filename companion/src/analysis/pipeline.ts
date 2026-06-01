@@ -6,6 +6,7 @@ import { deltaSchema } from "./responseSchema.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
 import { extractJsonText } from "./extractJson.js";
+import { applyLegitimate, buildLegitimateContext, type LegitimateStore } from "./legitimate.js";
 
 export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation",
@@ -152,6 +153,8 @@ export interface PipelineOptions {
   // Optional stronger model for the holistic synthesis pass. Per-window extraction
   // can use a cheap model while synthesis (one text-only call) uses a better one.
   synthesisProvider?: AIProvider;
+  // Client-confirmed legitimate findings/IOCs to exclude from synthesis.
+  legitimateStore?: LegitimateStore;
   stateStore: StateStore;
   imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage>;
   retries?: number;
@@ -227,10 +230,13 @@ export class AnalysisPipeline {
       .filter((t) => t.status === "open")
       .map((t) => `[${t.id}] ${t.description}`)
       .join("\n") || "(none open)";
+    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const legitimateBlock = buildLegitimateContext(markers);
     const userPrompt =
       `FORENSIC TIMELINE (${state.forensicTimeline.length} dated events):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
+      (legitimateBlock ? `${legitimateBlock}\n\n` : "") +
       `Running notes: ${state.lastSummary || "(none)"}\n\nReturn the JSON conclusions.`;
 
     const retries = this.opts.retries ?? 3;
@@ -244,7 +250,9 @@ export class AnalysisPipeline {
 
     // Anchor finding timestamps to the last real event time (fallback: existing state time).
     const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
-    const next = mergeDelta(state, delta, { windowSequence: 0, timestamp: ts, sourceScreenshots: [] });
+    const merged = mergeDelta(state, delta, { windowSequence: 0, timestamp: ts, sourceScreenshots: [] });
+    // Safety net: drop anything confirmed legitimate even if the model re-introduced it.
+    const next = applyLegitimate(merged, markers);
     await this.opts.stateStore.save(next);
     this.opts.onState?.(next);
     return next;

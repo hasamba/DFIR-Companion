@@ -47,6 +47,7 @@
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section><h2>Investigation Log</h2><div id="timeline">—</div></section>
     <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
   </main>
   <script>
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
@@ -124,6 +125,52 @@
       return String(s == null ? "" : s)
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
+    function escAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
+
+    function legitBtn(kind, ref) {
+      return `<button class="legit-btn" data-kind="${escAttr(kind)}" data-ref="${escAttr(ref)}" ` +
+        `style="font-size:10px;padding:1px 6px;background:#3a3320;color:#ffd93b;border:0;border-radius:8px;cursor:pointer" ` +
+        `title="Mark as legitimate (client-confirmed benign) — excluded from analysis">legit</button>`;
+    }
+
+    function renderLegitimate(markers) {
+      const el = document.getElementById("legitimate");
+      el.innerHTML = (markers && markers.length)
+        ? markers.map(m =>
+            `<div style="margin-bottom:4px"><span style="color:#9aa4b2">${esc(m.kind)}:</span> ` +
+            `<span style="text-decoration:line-through">${esc(m.ref)}</span>` +
+            `${m.note ? ` — <small>${esc(m.note)}</small>` : ""} ` +
+            `<button class="unlegit-btn" data-id="${escAttr(m.id)}" style="font-size:10px;padding:1px 6px;cursor:pointer">un-mark</button></div>`
+          ).join("")
+        : "<div style='color:#9aa4b2'>Nothing marked legitimate.</div>";
+    }
+
+    function loadLegitimate(caseId) {
+      fetch(`/cases/${caseId}/legitimate`).then(r => r.json()).then(renderLegitimate).catch(() => {});
+    }
+
+    // Event delegation for the dynamically-rendered legit / un-mark buttons.
+    document.addEventListener("click", (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const mark = e.target.closest(".legit-btn");
+      if (mark) {
+        const kind = mark.dataset.kind, ref = mark.dataset.ref;
+        const note = prompt(`Mark this ${kind} as legitimate. Reason (optional):`, "");
+        if (note === null) return; // cancelled
+        document.getElementById("status").textContent = "marking legitimate & re-synthesizing…";
+        fetch(`/cases/${caseId}/legitimate`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ kind, ref, note }) })
+          .then(r => r.json()).then(renderLegitimate).catch(() => {});
+        return;
+      }
+      const un = e.target.closest(".unlegit-btn");
+      if (un) {
+        fetch(`/cases/${caseId}/legitimate/remove`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: un.dataset.id }) })
+          .then(r => r.json()).then(renderLegitimate).catch(() => {});
+      }
+    });
 
     function render(state) {
       document.getElementById("summary").textContent = state.lastSummary || "—";
@@ -141,7 +188,7 @@
 
       const iocs = state.iocs || [];
       document.getElementById("iocs").innerHTML = iocs.length
-        ? iocs.map(i => `<div><span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)}</div>`).join("")
+        ? iocs.map(i => `<div><span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}</div>`).join("")
         : "<div style='color:#9aa4b2'>No IOCs yet</div>";
 
       const ft = state.forensicTimeline || [];
@@ -164,7 +211,7 @@
         : "";
       const sorted = [...state.findings].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
       document.getElementById("findings").innerHTML =
-        sorted.map(f => `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> <strong>${esc(f.title)}</strong><br><small>${esc(f.description)}</small></div>`).join("") || "—";
+        sorted.map(f => `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> <strong>${esc(f.title)}</strong> ${legitBtn("finding", f.title)}<br><small>${esc(f.description)}</small></div>`).join("") || "—";
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
@@ -181,6 +228,7 @@
       fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
       pollCount(caseId);
       loadAiToggle(caseId);
+      loadLegitimate(caseId);
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {

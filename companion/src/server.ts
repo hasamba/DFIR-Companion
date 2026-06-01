@@ -7,6 +7,7 @@ import { ZodError } from "zod";
 import { CaseStore } from "./storage/caseStore.js";
 import { ingestCapture } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
+import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
@@ -266,6 +267,57 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Client-confirmed legitimate findings/IOCs (false positives). Marking one
+  // re-runs synthesis so the AI re-derives its conclusions without it.
+  const legitimate = new LegitimateStore(store);
+
+  function resynthesizeInBackground(caseId: string): void {
+    if (!options.pipeline) return;
+    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: "re-synthesizing without legitimate items" });
+    options.pipeline.synthesize(caseId)
+      .then(() => options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }))
+      .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+  }
+
+  app.get("/cases/:id/legitimate", async (req: Request, res: Response) => {
+    try {
+      return res.status(200).json(await legitimate.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/legitimate", async (req: Request, res: Response) => {
+    try {
+      const kind = req.body?.kind === "ioc" ? "ioc" : "finding";
+      const ref = String(req.body?.ref ?? "").trim();
+      if (!ref) return res.status(400).json({ error: "ref is required" });
+      const note = String(req.body?.note ?? "");
+      const markers = await legitimate.load(req.params.id);
+      const id = markerId(kind, ref);
+      const marker: LegitimateMarker = { id, kind, ref, note, markedAt: new Date().toISOString() };
+      const next = [...markers.filter((m) => m.id !== id), marker];
+      await legitimate.save(req.params.id, next);
+      resynthesizeInBackground(req.params.id); // re-derive conclusions without it
+      return res.status(200).json(next);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/legitimate/remove", async (req: Request, res: Response) => {
+    try {
+      const id = String(req.body?.id ?? "");
+      const markers = await legitimate.load(req.params.id);
+      const next = markers.filter((m) => m.id !== id);
+      await legitimate.save(req.params.id, next);
+      resynthesizeInBackground(req.params.id);
+      return res.status(200).json(next);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // On-demand holistic synthesis: derive findings / MITRE / attacker path from the
   // forensic timeline. (Per-window capture builds the timeline; this writes the
   // conclusions.) Broadcasts the updated state to dashboard clients via onState.
@@ -309,6 +361,7 @@ export interface ProviderParams {
   model?: string;
   apiKey?: string;
   imageDetail?: "high" | "low" | "auto";
+  timeoutMs?: number;
 }
 
 // Build a provider from explicit params (so callers can build more than one,
@@ -319,11 +372,13 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
   const model = params.model ?? "";
   const apiKey = params.apiKey ?? "";
   const imageDetail = params.imageDetail ?? "high";
+  // Strong models over a large timeline can take >60s — make the request timeout tunable.
+  const timeoutMs = params.timeoutMs ?? (Number(process.env.DFIR_AI_TIMEOUT_MS) || 180_000);
   const registry = new ProviderRegistry();
-  registry.register(new OpenAIProvider({ apiKey, model, imageDetail }));
-  registry.register(new OpenRouterProvider({ apiKey, model, imageDetail }));
-  registry.register(new OllamaCloudProvider({ apiKey, model, imageDetail }));
-  registry.register(new GeminiProvider({ apiKey, model }));
+  registry.register(new OpenAIProvider({ apiKey, model, imageDetail, timeoutMs }));
+  registry.register(new OpenRouterProvider({ apiKey, model, imageDetail, timeoutMs }));
+  registry.register(new OllamaCloudProvider({ apiKey, model, imageDetail, timeoutMs }));
+  registry.register(new GeminiProvider({ apiKey, model, timeoutMs }));
   return registry.get(name);
 }
 
@@ -355,7 +410,7 @@ export function startServer(casesRoot: string, port = 4773): void {
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
   const wiredPipeline = provider
-    ? new AnalysisPipelineImpl({ provider, synthesisProvider, stateStore, imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s) })
+    ? new AnalysisPipelineImpl({ provider, synthesisProvider, stateStore, legitimateStore: new LegitimateStore(store), imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s) })
     : undefined;
 
   // Live synthesis on by default — set DFIR_AI_AUTO_SYNTHESIZE=off to disable.

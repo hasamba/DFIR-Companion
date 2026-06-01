@@ -23,6 +23,7 @@ import { StateStore } from "../src/analysis/stateStore.js";
 import { AnalysisPipeline } from "../src/analysis/pipeline.js";
 import { makeImageLoader } from "../src/analysis/imageLoader.js";
 import { emptyState } from "../src/analysis/stateTypes.js";
+import { LegitimateStore } from "../src/analysis/legitimate.js";
 import { buildProviderFrom } from "../src/server.js";
 import type { CaptureMetadata } from "../src/types.js";
 
@@ -72,7 +73,7 @@ async function main(): Promise<void> {
 
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
-  const pipeline = new AnalysisPipeline({ provider, synthesisProvider, stateStore, imageLoader: makeImageLoader(store) });
+  const pipeline = new AnalysisPipeline({ provider, synthesisProvider, stateStore, legitimateStore: new LegitimateStore(store), imageLoader: makeImageLoader(store) });
 
   const logText = await readFile(store.capturesLogPath(caseId), "utf8");
   const all: CaptureMetadata[] = logText.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));

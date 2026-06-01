@@ -14,6 +14,7 @@ import { CaseStore } from "../src/storage/caseStore.js";
 import { StateStore } from "../src/analysis/stateStore.js";
 import { AnalysisPipeline } from "../src/analysis/pipeline.js";
 import { makeImageLoader } from "../src/analysis/imageLoader.js";
+import { LegitimateStore } from "../src/analysis/legitimate.js";
 import { buildProviderFrom } from "../src/server.js";
 
 function strOpt(name: string): string | undefined {
@@ -42,7 +43,7 @@ async function main(): Promise<void> {
 
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
-  const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: makeImageLoader(store) });
+  const pipeline = new AnalysisPipeline({ provider, stateStore, legitimateStore: new LegitimateStore(store), imageLoader: makeImageLoader(store) });
 
   const before = await stateStore.load(caseId);
   console.log(`Synthesizing "${caseId}" from ${before.forensicTimeline.length} forensic events (provider=${provider.name} model=${process.env.DFIR_AI_MODEL})…`);

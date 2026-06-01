@@ -81,6 +81,9 @@ Examples:
 | `POST /captures` | Ingest a screenshot: `{ caseId, timestamp, url, tabTitle, triggerType, imageBase64 }`. |
 | `GET /cases/:id/state` | Current investigation state (JSON). |
 | `GET /cases/:id/captures/count` | Number of captures recorded for the case. |
+| `GET /cases/:id/legitimate` | List client-confirmed legitimate findings/IOCs (excluded from analysis). |
+| `POST /cases/:id/legitimate` | `{ kind: "finding"\|"ioc", ref, note }` — mark a finding/IOC legitimate; re-runs synthesis without it. The dashboard's per-item **legit** button calls this. |
+| `POST /cases/:id/legitimate/remove` | `{ id }` — un-mark; re-runs synthesis. |
 | `GET /cases/:id/ai-control` | Current AI on/off state: `{ enabled, lastAnalyzedSeq }`. |
 | `POST /cases/:id/ai-control` | `{ enabled }` — turn AI analysis on/off for the case. Evidence is always captured; when off, no AI runs. Turning it **on** backfills every screenshot captured while it was off. The dashboard's **AI: ON/OFF** button calls this. |
 | `POST /cases/:id/synthesize` | Run the synthesis pass (findings / MITRE / attacker path) from the forensic timeline; pushes the update to the dashboard. The dashboard's **Synthesize** button calls this. |
@@ -120,6 +123,12 @@ the server from a `chrome-extension://` origin.
    pass reads the full forensic timeline and produces those conclusions. It runs
    automatically at the end of `reanalyze` (skip with `--no-synthesis`), and you can
    re-run it any time — including with a different model — via `npm run synthesize`.
+
+**Confirmed-legitimate items (false positives).** When the client confirms an alert,
+tool, or IOC was their own benign activity, click **legit** on that finding/IOC in the
+dashboard (add a reason). It's stored per case (`state/legitimate.json`), synthesis is
+re-run **excluding it** (both via the prompt and a hard post-filter), and it's listed
+in the "Confirmed Legitimate (excluded from analysis)" panel where you can un-mark it.
 
 **Capture-only mode.** The dashboard's **AI: ON/OFF** button (per case) lets you
 capture screenshots as evidence without running AI. When you switch it back on, the

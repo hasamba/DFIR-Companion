@@ -181,6 +181,41 @@ describe("AnalysisPipeline", () => {
     expect(state.findings[0].title).toBe("from synth model");
   });
 
+  it("synthesize excludes client-confirmed legitimate findings/IOCs even if the model returns them", async () => {
+    const { LegitimateStore } = await import("../../src/analysis/legitimate.js");
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "SharpHound ran",
+      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
+    await stateStore.save(seeded);
+
+    const legitimateStore = new LegitimateStore(caseStore);
+    await legitimateStore.save("c1", [
+      { id: "finding:sharphound ad recon", kind: "finding", ref: "SharpHound AD recon", note: "authorized", markedAt: "" },
+      { id: "ioc:sharphound.exe", kind: "ioc", ref: "SharpHound.exe", note: "", markedAt: "" },
+    ]);
+
+    // Model still (wrongly) returns the legitimate finding + IOC.
+    const synthDelta = JSON.stringify({
+      findings: [
+        { id: "f1", severity: "High", title: "SharpHound AD recon", description: "x", relatedIocs: [], mitreTechniques: [], status: "open" },
+        { id: "f2", severity: "Critical", title: "Mimikatz credential dumping", description: "y", relatedIocs: [], mitreTechniques: [], status: "open" },
+      ],
+      iocs: [{ id: "i1", type: "process", value: "SharpHound.exe" }, { id: "i2", type: "ip", value: "10.0.0.5" }],
+      mitreTechniques: [], attackerPath: "p", summary: "s",
+      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", synthDelta),
+      legitimateStore,
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    expect(state.findings.map((f) => f.title)).toEqual(["Mimikatz credential dumping"]);
+    expect(state.iocs.map((i) => i.value)).toEqual(["10.0.0.5"]);
+  });
+
   it("synthesize is a no-op when there is no forensic timeline", async () => {
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", "should not be called"),
