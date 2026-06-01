@@ -81,6 +81,8 @@ Examples:
 | `POST /captures` | Ingest a screenshot: `{ caseId, timestamp, url, tabTitle, triggerType, imageBase64 }`. |
 | `GET /cases/:id/state` | Current investigation state (JSON). |
 | `GET /cases/:id/captures/count` | Number of captures recorded for the case. |
+| `GET /cases/:id/scope` | Current investigation time-window: `{ start, end }` (ISO or null). |
+| `POST /cases/:id/scope` | `{ start, end }` — set the window; re-synthesizes using only in-scope events. The dashboard's scope bar calls this. |
 | `GET /cases/:id/legitimate` | List client-confirmed legitimate findings/IOCs (excluded from analysis). |
 | `POST /cases/:id/legitimate` | `{ kind: "finding"\|"ioc", ref, note }` — mark a finding/IOC legitimate; re-runs synthesis without it. The dashboard's per-item **legit** button calls this. |
 | `POST /cases/:id/legitimate/remove` | `{ id }` — un-mark; re-runs synthesis. |
@@ -123,6 +125,14 @@ the server from a `chrome-extension://` origin.
    pass reads the full forensic timeline and produces those conclusions. It runs
    automatically at the end of `reanalyze` (skip with `--no-synthesis`), and you can
    re-run it any time — including with a different model — via `npm run synthesize`.
+
+**Investigation scope (time window).** The evidence often includes earlier, unrelated
+activity. Set a **from/to** window in the dashboard's scope bar — synthesis then re-runs
+using only in-scope forensic events, so findings, IOCs, attacker path, key questions, the
+timeline view, and the report all reflect only that window. The raw events are preserved
+(stored in `state/scope.json`), so widening or clearing the window restores them. Because
+synthesis is an authoritative reassessment, it now **replaces** the analytic layer each run
+rather than accumulating — so out-of-scope (or removed) conclusions drop cleanly.
 
 **Confirmed-legitimate items (false positives).** When the client confirms an alert,
 tool, or IOC was their own benign activity, click **legit** on that finding/IOC in the

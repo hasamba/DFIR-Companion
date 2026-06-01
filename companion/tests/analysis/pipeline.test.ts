@@ -247,6 +247,47 @@ describe("AnalysisPipeline", () => {
     expect(state.iocs.map((i) => i.value)).toEqual(["10.0.0.5"]);
   });
 
+  it("synthesize only sends in-scope events to the model and replaces stale findings", async () => {
+    const { ScopeStore } = await import("../../src/analysis/scope.js");
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      { id: "old", timestamp: "2024-06-01T00:00:00Z", description: "ancient event", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      { id: "in", timestamp: "2026-01-15T00:00:00Z", description: "in-scope event", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    // A stale finding from a previous (unscoped) run that must be dropped on re-synthesis.
+    seeded.findings.push({ id: "fold", severity: "Critical", title: "stale", description: "", relatedIocs: [],
+      mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
+    await stateStore.save(seeded);
+
+    const scopeStore = new ScopeStore(caseStore);
+    await scopeStore.save("c1", { start: "2026-01-01T00:00:00Z", end: "2026-12-31T00:00:00Z" });
+
+    let sentPrompt = "";
+    const provider = {
+      name: "spy",
+      analyze: async (req: { userPrompt: string }) => {
+        sentPrompt = req.userPrompt;
+        return { rawText: JSON.stringify({
+          findings: [{ id: "f1", severity: "High", title: "scoped finding", description: "x", relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["in"] }],
+          iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
+          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+        }) };
+      },
+    };
+    const pipeline = new AnalysisPipeline({
+      provider, scopeStore, stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    expect(sentPrompt).toContain("in-scope event");
+    expect(sentPrompt).not.toContain("ancient event");        // out-of-scope not sent
+    expect(state.findings.map((f) => f.title)).toEqual(["scoped finding"]); // stale "fold" replaced
+    expect(state.forensicTimeline).toHaveLength(2);            // raw events preserved
+  });
+
   it("synthesize is a no-op when there is no forensic timeline", async () => {
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", "should not be called"),

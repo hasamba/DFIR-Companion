@@ -52,6 +52,14 @@
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
     <span id="captureCount" style="font-weight:bold;">Screenshots: 0</span>
   </header>
+  <div style="padding: 6px 16px; background:#10141b; display:flex; gap:8px; align-items:center; font-size:12px; color:#9aa4b2; border-bottom:1px solid #2a2f3a;">
+    <span>Investigation scope:</span>
+    <label>from <input id="scopeStart" type="datetime-local" /></label>
+    <label>to <input id="scopeEnd" type="datetime-local" /></label>
+    <button id="applyScope" title="Re-synthesize using only events inside this window">Apply scope</button>
+    <button id="clearScope" title="Remove the time window (use all events)">Clear</button>
+    <span id="scopeInfo"></span>
+  </div>
   <main>
     <section style="grid-column: 1 / -1"><h2>Executive Summary</h2><div id="summary">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
@@ -69,6 +77,59 @@
     let ws = null;
     let countTimer = null;
     let aiEnabled = true;
+    let scope = { start: null, end: null };  // active investigation window (ISO or null)
+
+    // <input type="datetime-local"> uses local time without a zone; convert to/from ISO.
+    function isoToLocalInput(iso) {
+      if (!iso) return "";
+      const d = new Date(iso); if (isNaN(d)) return "";
+      const p = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+    function localInputToIso(v) { if (!v) return null; const d = new Date(v); return isNaN(d) ? null : d.toISOString(); }
+
+    function inScope(ts) {
+      if (!scope.start && !scope.end) return true;
+      const t = Date.parse(ts); if (isNaN(t)) return true;
+      if (scope.start && t < Date.parse(scope.start)) return false;
+      if (scope.end && t > Date.parse(scope.end)) return false;
+      return true;
+    }
+
+    function renderScopeInfo() {
+      const el = document.getElementById("scopeInfo");
+      el.textContent = (scope.start || scope.end)
+        ? `active: ${scope.start ? new Date(scope.start).toLocaleString() : "−∞"} → ${scope.end ? new Date(scope.end).toLocaleString() : "now"}`
+        : "none (all events)";
+      el.style.color = (scope.start || scope.end) ? "#ffd93b" : "#9aa4b2";
+    }
+
+    function loadScope(caseId) {
+      fetch(`/cases/${caseId}/scope`).then(r => r.json()).then(s => {
+        scope = { start: s.start || null, end: s.end || null };
+        document.getElementById("scopeStart").value = isoToLocalInput(scope.start);
+        document.getElementById("scopeEnd").value = isoToLocalInput(scope.end);
+        renderScopeInfo();
+      }).catch(() => {});
+    }
+
+    function applyScope() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const body = {
+        start: localInputToIso(document.getElementById("scopeStart").value),
+        end: localInputToIso(document.getElementById("scopeEnd").value),
+      };
+      document.getElementById("status").textContent = "applying scope & re-synthesizing…";
+      fetch(`/cases/${caseId}/scope`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(s => {
+          scope = { start: s.start || null, end: s.end || null };
+          renderScopeInfo();
+          fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
+        })
+        .catch(() => document.getElementById("status").textContent = "scope failed — restart the companion server to load the latest endpoints.");
+    }
 
     function renderAiToggle() {
       const b = document.getElementById("aiToggle");
@@ -220,7 +281,9 @@
         ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}</div>`).join("")
         : "<div style='color:#9aa4b2'>No IOCs yet</div>";
 
-      const ft = state.forensicTimeline || [];
+      // Out-of-scope events are hidden from the timeline (findings/IOCs are already
+      // scoped server-side by synthesis).
+      const ft = (state.forensicTimeline || []).filter(e => inScope(e.timestamp));
       document.getElementById("forensicTimeline").innerHTML = ft.length
         ? ft.map(e =>
             `<div class="finding"><span class="sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span> ` +
@@ -258,6 +321,7 @@
       pollCount(caseId);
       loadAiToggle(caseId);
       loadLegitimate(caseId);
+      loadScope(caseId);
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
@@ -278,6 +342,12 @@
     document.getElementById("connect").onclick = connect;
     document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
     document.getElementById("aiToggle").onclick = toggleAi;
+    document.getElementById("applyScope").onclick = applyScope;
+    document.getElementById("clearScope").onclick = () => {
+      document.getElementById("scopeStart").value = "";
+      document.getElementById("scopeEnd").value = "";
+      applyScope();
+    };
     document.getElementById("synthesize").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;

@@ -7,6 +7,7 @@ import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
 import { extractJsonText } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, type LegitimateStore } from "./legitimate.js";
+import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
 
 export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation",
@@ -156,6 +157,8 @@ export interface PipelineOptions {
   synthesisProvider?: AIProvider;
   // Client-confirmed legitimate findings/IOCs to exclude from synthesis.
   legitimateStore?: LegitimateStore;
+  // Optional investigation time-window — events outside it are excluded.
+  scopeStore?: ScopeStore;
   stateStore: StateStore;
   imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage>;
   retries?: number;
@@ -223,9 +226,18 @@ export class AnalysisPipeline {
     const state = await this.opts.stateStore.load(caseId);
     if (state.forensicTimeline.length === 0) return state;
 
-    const timelineText = state.forensicTimeline
+    // Scope: only events inside the investigation window feed synthesis, so
+    // findings/IOCs/attacker-path/questions reflect only in-scope activity.
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterEventsByScope(state.forensicTimeline, scope);
+
+    const timelineText = scopedEvents
       .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description}`)
       .join("\n");
+    const scopeNote = hasScope(scope)
+      ? `INVESTIGATION SCOPE: only consider activity from ${scope.start ?? "the beginning"} to ${scope.end ?? "now"}. ` +
+        `Events outside this window have already been removed below.\n\n`
+      : "";
     const existingFindings = state.findings.map((f) => `[${f.id}] ${f.title}`).join("\n") || "(none yet)";
     const openThreads = state.openThreads
       .filter((t) => t.status === "open")
@@ -234,7 +246,8 @@ export class AnalysisPipeline {
     const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
     const legitimateBlock = buildLegitimateContext(markers);
     const userPrompt =
-      `FORENSIC TIMELINE (${state.forensicTimeline.length} dated events):\n${timelineText}\n\n` +
+      scopeNote +
+      `FORENSIC TIMELINE (${scopedEvents.length} dated events):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
       (legitimateBlock ? `${legitimateBlock}\n\n` : "") +
@@ -251,7 +264,12 @@ export class AnalysisPipeline {
 
     // Anchor finding timestamps to the last real event time (fallback: existing state time).
     const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
-    const merged = mergeDelta(state, delta, { windowSequence: 0, timestamp: ts, sourceScreenshots: [] });
+    // Synthesis is an authoritative holistic reassessment: replace the analytic layer
+    // (findings/IOCs/techniques) rather than accumulate, so anything no longer supported
+    // by the in-scope timeline (e.g. out-of-scope or removed events) is dropped. Threads
+    // and the forensic timeline are preserved.
+    const base = { ...state, findings: [], iocs: [], mitreTechniques: [] };
+    const merged = mergeDelta(base, delta, { windowSequence: 0, timestamp: ts, sourceScreenshots: [] });
     // Safety net: drop anything confirmed legitimate even if the model re-introduced it.
     const filtered = applyLegitimate(merged, markers);
 

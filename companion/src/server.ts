@@ -8,6 +8,7 @@ import { CaseStore } from "./storage/caseStore.js";
 import { ingestCapture } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
+import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
@@ -323,6 +324,35 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Investigation time-window. Setting it re-synthesizes so out-of-scope events
+  // (and the findings/IOCs derived from them) drop out of the analysis.
+  const scopeStore = new ScopeStore(store);
+
+  app.get("/cases/:id/scope", async (req: Request, res: Response) => {
+    try {
+      return res.status(200).json(await scopeStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/scope", async (req: Request, res: Response) => {
+    try {
+      const norm = (v: unknown): string | null => {
+        const s = String(v ?? "").trim();
+        if (!s) return null;
+        const t = Date.parse(s);
+        return Number.isNaN(t) ? null : new Date(t).toISOString();
+      };
+      const scope: ScopeWindow = { start: norm(req.body?.start), end: norm(req.body?.end) };
+      await scopeStore.save(req.params.id, scope);
+      resynthesizeInBackground(req.params.id); // re-derive within the window
+      return res.status(200).json(scope);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // On-demand holistic synthesis: derive findings / MITRE / attacker path from the
   // forensic timeline. (Per-window capture builds the timeline; this writes the
   // conclusions.) Broadcasts the updated state to dashboard clients via onState.
@@ -410,12 +440,12 @@ export function startServer(casesRoot: string, port = 4773): void {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStoreImpl(store);
   const hub = new LiveHub();
-  const reportWriter = new ReportWriterImpl(store, stateStore);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store));
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
   const wiredPipeline = provider
-    ? new AnalysisPipelineImpl({ provider, synthesisProvider, stateStore, legitimateStore: new LegitimateStore(store), imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s) })
+    ? new AnalysisPipelineImpl({ provider, synthesisProvider, stateStore, legitimateStore: new LegitimateStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s) })
     : undefined;
 
   // Live synthesis on by default — set DFIR_AI_AUTO_SYNTHESIZE=off to disable.
