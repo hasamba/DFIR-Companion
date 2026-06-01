@@ -76,4 +76,39 @@ describe("mergeDelta", () => {
     expect(state.timeline[0].description).toBe("did X");
     expect(state.timeline[0].windowSequence).toBe(1);
   });
+
+  it("merges forensic events, dedupes by id, and keeps them sorted by event time", () => {
+    let state = emptyState("c1");
+    // First window contributes a later event (15:00).
+    state = mergeDelta(state, {
+      ...baseDelta,
+      forensicEvents: [{ id: "e2", timestamp: "2026-05-20T15:00:00Z", description: "encryptor ran",
+        severity: "Critical", mitreTechniques: ["T1486"], relatedFindingIds: ["f1"] }],
+      attackerPath: "phishing then ransomware",
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: ["s2.webp"] });
+
+    // Second window contributes an EARLIER event (09:00) — must sort before e2.
+    state = mergeDelta(state, {
+      ...baseDelta,
+      forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish opened",
+        severity: "High", mitreTechniques: ["T1566"], relatedFindingIds: [] }],
+    }, { windowSequence: 2, timestamp: "2026-05-28T10:05:00.000Z", sourceScreenshots: ["s1.webp"] });
+
+    expect(state.forensicTimeline).toHaveLength(2);
+    expect(state.forensicTimeline.map((e) => e.id)).toEqual(["e1", "e2"]); // chronological
+    expect(state.attackerPath).toBe("phishing then ransomware");          // preserved when new delta omits it
+
+    // Re-reporting e1 updates in place (no duplicate) and accumulates evidence.
+    state = mergeDelta(state, {
+      ...baseDelta,
+      forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish opened (confirmed)",
+        severity: "High", mitreTechniques: ["T1566.001"], relatedFindingIds: ["f2"] }],
+    }, { windowSequence: 3, timestamp: "2026-05-28T10:10:00.000Z", sourceScreenshots: ["s3.webp"] });
+
+    expect(state.forensicTimeline).toHaveLength(2);
+    const e1 = state.forensicTimeline.find((e) => e.id === "e1")!;
+    expect(e1.description).toBe("phish opened (confirmed)");
+    expect(e1.mitreTechniques).toContain("T1566.001");
+    expect(e1.sourceScreenshots).toEqual(["s1.webp", "s3.webp"]);
+  });
 });

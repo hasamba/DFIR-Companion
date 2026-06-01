@@ -1,4 +1,5 @@
-import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
+import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
+import { byEventTime } from "../analysis/forensicSort.js";
 
 function cellMd(value: string): string {
   return value.replace(/\|/g, "\\|");
@@ -15,9 +16,30 @@ export function renderMarkdownReport(state: InvestigationState): string {
   lines.push("## Executive Summary", "");
   lines.push(state.lastSummary.trim().length > 0 ? state.lastSummary : "_No summary yet._", "");
 
-  lines.push("## Timeline", "");
+  lines.push("## Attacker Path", "");
+  lines.push(state.attackerPath.trim().length > 0 ? state.attackerPath : "_Attacker path not yet reconstructed._", "");
+
+  lines.push("## Forensic Timeline", "");
+  lines.push("_Real incident events, ordered by when they actually happened._", "");
+  if (state.forensicTimeline.length === 0) {
+    lines.push("_No dated forensic events extracted yet._", "");
+  } else {
+    lines.push("| Time | Severity | Event | MITRE | Findings | Evidence |", "| --- | --- | --- | --- | --- | --- |");
+    const ordered: ForensicEvent[] = [...state.forensicTimeline].sort(byEventTime);
+    for (const e of ordered) {
+      lines.push(
+        `| ${cellMd(e.timestamp || "(undated)")} | ${e.severity} | ${cellMd(e.description)} | ` +
+        `${cellMd(e.mitreTechniques.join(", "))} | ${cellMd(e.relatedFindingIds.join(", "))} | ` +
+        `${cellMd(e.sourceScreenshots.join(", "))} |`,
+      );
+    }
+    lines.push("");
+  }
+
+  lines.push("## Investigation Log", "");
+  lines.push("_Order in which evidence was reviewed during the investigation._", "");
   if (state.timeline.length === 0) {
-    lines.push("_No timeline entries yet._", "");
+    lines.push("_No review entries yet._", "");
   } else {
     for (const t of state.timeline) {
       const shots = t.sourceScreenshots.length ? ` (evidence: ${t.sourceScreenshots.join(", ")})` : "";

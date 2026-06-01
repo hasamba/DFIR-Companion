@@ -1,5 +1,6 @@
 import type { AnalysisDelta } from "./responseSchema.js";
-import type { InvestigationState, Finding, IOC, Technique } from "./stateTypes.js";
+import type { InvestigationState, Finding, IOC, Technique, ForensicEvent } from "./stateTypes.js";
+import { byEventTime } from "./forensicSort.js";
 
 export interface WindowContext {
   windowSequence: number;
@@ -87,14 +88,46 @@ export function mergeDelta(
     });
   }
 
+  // Forensic timeline: dedupe by id, accumulate evidence, keep sorted by real time.
+  const forensicTimeline: ForensicEvent[] = state.forensicTimeline.map((e) => ({
+    ...e,
+    mitreTechniques: [...e.mitreTechniques],
+    relatedFindingIds: [...e.relatedFindingIds],
+    sourceScreenshots: [...e.sourceScreenshots],
+  }));
+  for (const incoming of delta.forensicEvents ?? []) {
+    const existing = forensicTimeline.find((e) => e.id === incoming.id);
+    if (existing) {
+      existing.timestamp = incoming.timestamp || existing.timestamp;
+      existing.description = incoming.description;
+      existing.severity = incoming.severity;
+      existing.mitreTechniques = uniq([...existing.mitreTechniques, ...incoming.mitreTechniques]);
+      existing.relatedFindingIds = uniq([...existing.relatedFindingIds, ...incoming.relatedFindingIds]);
+      existing.sourceScreenshots = uniq([...existing.sourceScreenshots, ...ctx.sourceScreenshots]);
+    } else {
+      forensicTimeline.push({
+        id: incoming.id,
+        timestamp: incoming.timestamp,
+        description: incoming.description,
+        severity: incoming.severity,
+        mitreTechniques: uniq(incoming.mitreTechniques),
+        relatedFindingIds: uniq(incoming.relatedFindingIds),
+        sourceScreenshots: uniq(ctx.sourceScreenshots),
+      });
+    }
+  }
+  forensicTimeline.sort(byEventTime);
+
   return {
     caseId: state.caseId,
     findings,
     iocs,
     openThreads,
     timeline,
+    forensicTimeline,
     mitreTechniques,
     lastSummary: delta.summary.trim().length > 0 ? delta.summary : state.lastSummary,
+    attackerPath: (delta.attackerPath ?? "").trim().length > 0 ? (delta.attackerPath as string) : state.attackerPath,
     updatedAt: ctx.timestamp,
   };
 }

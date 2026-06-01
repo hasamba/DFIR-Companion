@@ -28,7 +28,11 @@ async function main(): Promise<void> {
   const shotsDir = join(casesRoot, caseId, "screenshots");
   let files: string[];
   try {
-    files = (await readdir(shotsDir)).filter((f) => f.endsWith(".webp")).slice(0, 2);
+    const all = (await readdir(shotsDir)).filter((f) => f.endsWith(".webp")).sort();
+    // Sample from the MIDDLE of the case — early screenshots are often login/welcome
+    // screens with nothing forensic; the middle is more likely to hold real evidence.
+    const mid = Math.floor(all.length / 2);
+    files = all.slice(mid, mid + 3);
   } catch {
     console.log(`Case "${caseId}" not found under ${casesRoot}. Available: ${(await readdir(casesRoot).catch(() => [])).join(", ") || "(none)"}`);
     return;
@@ -57,7 +61,12 @@ async function main(): Promise<void> {
   console.log("\n--- After extractJsonText + schema parse ---");
   try {
     const delta = deltaSchema.parse(JSON.parse(extractJsonText(result.rawText)));
-    console.log(`PARSE OK ✓  findings=${delta.findings.length} iocs=${delta.iocs.length} summary="${delta.summary.slice(0, 80)}"`);
+    console.log(`PARSE OK ✓  findings=${delta.findings.length} iocs=${delta.iocs.length} forensicEvents=${(delta.forensicEvents ?? []).length}`);
+    for (const e of delta.forensicEvents ?? []) {
+      console.log(`    [event] ${e.timestamp} — ${e.description}`);
+    }
+    if (delta.attackerPath) console.log(`    attackerPath: ${delta.attackerPath.slice(0, 160)}`);
+    console.log(`    summary: ${delta.summary.slice(0, 120)}`);
   } catch (err) {
     console.log(`PARSE FAILED ✗  ${(err as Error).message}`);
   }

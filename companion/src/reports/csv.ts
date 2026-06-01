@@ -1,4 +1,5 @@
 import type { InvestigationState } from "../analysis/stateTypes.js";
+import { byEventTime } from "../analysis/forensicSort.js";
 
 function cell(value: string): string {
   const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
@@ -28,6 +29,17 @@ export function timelineCsv(state: InvestigationState): string {
   const header = "timestamp,windowSequence,description,sourceScreenshots";
   const rows = state.timeline.map((t) => row([
     t.timestamp, String(t.windowSequence), t.description, t.sourceScreenshots.join("|"),
+  ]));
+  return [header, ...rows].join("\n") + "\n";
+}
+
+// Forensic timeline: real incident events sorted by their true time — the
+// chronological attack story, suitable for a master-timeline export.
+export function forensicTimelineCsv(state: InvestigationState): string {
+  const header = "timestamp,severity,description,mitreTechniques,relatedFindingIds,sourceScreenshots";
+  const rows = [...state.forensicTimeline].sort(byEventTime).map((e) => row([
+    e.timestamp, e.severity, e.description,
+    e.mitreTechniques.join("|"), e.relatedFindingIds.join("|"), e.sourceScreenshots.join("|"),
   ]));
   return [header, ...rows].join("\n") + "\n";
 }

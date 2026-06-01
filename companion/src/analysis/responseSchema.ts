@@ -23,6 +23,17 @@ export const deltaSchema = z.object({
   threadsClosed: z.array(z.string()), // thread ids
   timelineNote: z.string(),
   summary: z.string(),
+  // Real incident events with their actual timestamps, extracted from the evidence.
+  forensicEvents: z.array(z.object({
+    id: z.string().min(1),
+    timestamp: z.string(),                                    // event's real time as shown in the artifact
+    description: z.string().min(1),
+    severity: z.enum(["Critical", "High", "Medium", "Low", "Info"]).default("Info"),
+    mitreTechniques: z.array(z.string()).default([]),
+    relatedFindingIds: z.array(z.string()).default([]),
+  })).optional(),
+  // Narrative reconstruction of the attacker's path (kill-chain story).
+  attackerPath: z.string().optional(),
 });
 
 export type AnalysisDelta = z.infer<typeof deltaSchema>;

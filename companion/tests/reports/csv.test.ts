@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findingsCsv, iocsCsv, timelineCsv } from "../../src/reports/csv.js";
+import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "../../src/reports/csv.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 describe("CSV renderers", () => {
@@ -25,5 +25,21 @@ describe("CSV renderers", () => {
     const state = emptyState("c1");
     expect(iocsCsv(state).trim()).toBe("id,type,value,firstSeen");
     expect(timelineCsv(state).trim()).toBe("timestamp,windowSequence,description,sourceScreenshots");
+  });
+
+  it("forensicTimelineCsv emits a header and rows ordered by event time", () => {
+    const state = emptyState("c1");
+    expect(forensicTimelineCsv(state).trim()).toBe(
+      "timestamp,severity,description,mitreTechniques,relatedFindingIds,sourceScreenshots",
+    );
+    state.forensicTimeline.push(
+      { id: "e2", timestamp: "2026-05-20T15:00:00Z", description: "later", severity: "Critical",
+        mitreTechniques: ["T1486"], relatedFindingIds: ["f1"], sourceScreenshots: ["s2.webp"] },
+      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "earlier", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    const rows = forensicTimelineCsv(state).trim().split("\n");
+    expect(rows[1]).toContain("earlier"); // 09:00 sorts before 15:00
+    expect(rows[2]).toContain("later");
   });
 });

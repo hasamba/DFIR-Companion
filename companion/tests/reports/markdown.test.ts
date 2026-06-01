@@ -17,12 +17,32 @@ describe("renderMarkdownReport", () => {
     const md = renderMarkdownReport(state);
     expect(md).toContain("## Executive Summary");
     expect(md).toContain("Host WIN-01 compromised");
-    expect(md).toContain("## Timeline");
+    expect(md).toContain("## Investigation Log");
     expect(md).toContain("Reviewed file system");
     expect(md).toContain("## Findings");
     expect(md).toContain("Ransomware");
     expect(md).toContain("## MITRE ATT&CK");
     expect(md).toContain("T1486");
+  });
+
+  it("renders the attacker path and forensic timeline ordered by event time", () => {
+    const state = emptyState("c1");
+    state.attackerPath = "Initial access via phishing, then PsExec lateral movement, then ransomware.";
+    state.forensicTimeline.push(
+      { id: "e2", timestamp: "2026-05-20T15:00:00Z", description: "Ransomware encryptor executed",
+        severity: "Critical", mitreTechniques: ["T1486"], relatedFindingIds: ["f1"], sourceScreenshots: ["s2.webp"] },
+      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "Phishing email opened",
+        severity: "High", mitreTechniques: ["T1566"], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] },
+    );
+
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("## Attacker Path");
+    expect(md).toContain("PsExec lateral movement");
+    expect(md).toContain("## Forensic Timeline");
+    expect(md).toContain("Phishing email opened");
+    expect(md).toContain("Ransomware encryptor executed");
+    // earlier event (09:00) must render before the later one (15:00)
+    expect(md.indexOf("Phishing email opened")).toBeLessThan(md.indexOf("Ransomware encryptor executed"));
   });
 
   it("escapes pipe characters in MITRE table cells", () => {

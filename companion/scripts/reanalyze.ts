@@ -6,6 +6,8 @@
 //   npm run reanalyze -- <caseId> --reset          start from an empty state first
 //   npm run reanalyze -- <caseId> --all --reset    include duplicates too (most thorough)
 //   npm run reanalyze -- <caseId> --window 3       screenshots per AI call (default 4)
+//   npm run reanalyze -- <caseId> --reset --model openai/gpt-4o     re-run with another model
+//   npm run reanalyze -- <caseId> --provider gemini --model gemini-1.5-pro --key <k>
 import { config as loadDotenv } from "dotenv";
 loadDotenv();
 
@@ -27,12 +29,24 @@ function opt(name: string, fallback: number): number {
   const i = process.argv.indexOf(`--${name}`);
   return i !== -1 && process.argv[i + 1] ? Number(process.argv[i + 1]) : fallback;
 }
+function strOpt(name: string): string | undefined {
+  const i = process.argv.indexOf(`--${name}`);
+  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : undefined;
+}
 
 async function main(): Promise<void> {
   const caseId = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "test1";
   const includeAll = flag("all");
   const reset = flag("reset");
   const windowSize = Math.max(1, opt("window", 4));
+
+  // CLI overrides let you re-run with a different provider/model without editing .env.
+  const provOverride = strOpt("provider");
+  const modelOverride = strOpt("model");
+  const keyOverride = strOpt("key");
+  if (provOverride) process.env.DFIR_AI_PROVIDER = provOverride;
+  if (modelOverride) process.env.DFIR_AI_MODEL = modelOverride;
+  if (keyOverride) process.env.DFIR_AI_KEY = keyOverride;
 
   const provider = buildProvider();
   if (!provider) {
