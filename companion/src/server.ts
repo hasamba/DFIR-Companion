@@ -27,6 +27,10 @@ export interface AppOptions {
   // Called when an AI analysis window starts / finishes / fails, so the
   // server can push a live "AI status" indicator to dashboard clients.
   onAiStatus?: (caseId: string, event: AiStatusEvent) => void;
+  // When true, run the synthesis pass automatically (debounced) after capture
+  // windows are analyzed, so the live dashboard shows findings/attacker path.
+  autoSynthesize?: boolean;
+  autoSynthesizeDebounceMs?: number;
 }
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
@@ -80,6 +84,29 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const buffers = new Map<string, CaptureMetadata[]>();
   const SIGNIFICANT = new Set(["navigation", "tab_switch"]);
 
+  // Debounced live synthesis: after capture windows are analyzed, re-derive the
+  // findings / MITRE / attacker path so the dashboard updates as you browse.
+  const autoSynth = options.autoSynthesize ?? false;
+  const synthDebounceMs = options.autoSynthesizeDebounceMs ?? 8000;
+  const synthTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const synthInFlight = new Set<string>();
+
+  function scheduleSynthesis(caseId: string): void {
+    if (!autoSynth || !options.pipeline) return;
+    const existing = synthTimers.get(caseId);
+    if (existing) clearTimeout(existing);
+    synthTimers.set(caseId, setTimeout(() => {
+      synthTimers.delete(caseId);
+      if (synthInFlight.has(caseId)) { scheduleSynthesis(caseId); return; } // busy — retry after debounce
+      synthInFlight.add(caseId);
+      options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: "synthesizing conclusions" });
+      options.pipeline!.synthesize(caseId)
+        .then(() => options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }))
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }))
+        .finally(() => synthInFlight.delete(caseId));
+    }, synthDebounceMs));
+  }
+
   async function flush(caseId: string): Promise<void> {
     const buf = buffers.get(caseId) ?? [];
     if (buf.length === 0 || !options.pipeline) return;
@@ -94,6 +121,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // Analysis recovered — drop any stale failure marker from a prior window.
       await rm(join(store.stateDir(caseId), "pending_analysis.json"), { force: true });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+      scheduleSynthesis(caseId); // live findings/attacker path
     } catch (err) {
       const seqs = buf.map((c) => c.sequenceNumber);
       await writeFile(
@@ -254,10 +282,16 @@ export function startServer(casesRoot: string, port = 4773): void {
     ? new AnalysisPipelineImpl({ provider, synthesisProvider, stateStore, imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s) })
     : undefined;
 
+  // Live synthesis on by default — set DFIR_AI_AUTO_SYNTHESIZE=off to disable.
+  const autoSynthesize = (process.env.DFIR_AI_AUTO_SYNTHESIZE ?? "on").toLowerCase() !== "off";
+  const autoSynthesizeDebounceMs = Number(process.env.DFIR_AI_AUTO_SYNTHESIZE_MS) || 8000;
+
   const app = createApp(store, {
     pipeline: wiredPipeline,
     stateStore,
     reportWriter,
+    autoSynthesize,
+    autoSynthesizeDebounceMs,
     onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
   });
 

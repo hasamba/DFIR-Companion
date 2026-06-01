@@ -119,13 +119,15 @@ the server from a `chrome-extension://` origin.
    automatically at the end of `reanalyze` (skip with `--no-synthesis`), and you can
    re-run it any time — including with a different model — via `npm run synthesize`.
 
-**Live capture vs. conclusions.** While you browse, the live server runs only the
-per-window extraction (it builds the forensic timeline + investigation log). Findings,
-MITRE and the attacker path come from the synthesis pass, which does **not** run
-automatically during live capture — click **Synthesize** on the dashboard (or
-`POST /cases/:id/synthesize`, or run `npm run synthesize`) when you want the
-conclusions. After changing server code, **restart `npm run dev`** so the live
-pipeline picks up the new prompts.
+**Live capture and conclusions.** While you browse, the per-window extraction builds
+the forensic timeline + investigation log. Findings, MITRE and the attacker path come
+from the synthesis pass, which by default now runs **automatically and debounced**
+during live capture (`DFIR_AI_AUTO_SYNTHESIZE=on`, ~8 s after the last screenshot in a
+burst) and pushes updates to the dashboard. You can also trigger it manually with the
+dashboard **Synthesize** button, `POST /cases/:id/synthesize`, or `npm run synthesize`.
+Set `DFIR_AI_AUTO_SYNTHESIZE=off` (or raise `DFIR_AI_AUTO_SYNTHESIZE_MS`) to reduce
+cost. After changing server code, **restart `npm run dev`** so the live pipeline picks
+up the new prompts.
 
 **Two-tier model strategy (cost-effective).** Per-screenshot extraction is the
 high-volume part (one AI call per few screenshots) — use a cheap vision model there.

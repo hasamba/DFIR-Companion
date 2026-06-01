@@ -109,6 +109,47 @@ describe("server analysis wiring", () => {
     expect(state.findings).toHaveLength(1);
   });
 
+  it("auto-synthesizes (debounced) after a capture window when enabled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-autosynth-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    // Per-window extraction returns a forensic event but NO findings; synthesis
+    // turns the event into a finding — so a finding only appears if auto-synth ran.
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("extract", JSON.stringify({
+        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        timelineNote: "reviewed", summary: "",
+        forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish opened",
+          severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
+      })),
+      synthesisProvider: new MockProvider("synth", JSON.stringify({
+        findings: [{ id: "f1", severity: "High", title: "synth finding", description: "d",
+          relatedIocs: [], mitreTechniques: [], status: "open" }],
+        iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
+        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app = createApp(store, { pipeline, windowSize: 10, autoSynthesize: true, autoSynthesizeDebounceMs: 10 });
+
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app).post("/captures").send({
+      caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
+      triggerType: "navigation", imageBase64: await pngBase64(),
+    });
+
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 40 && state.findings.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    expect(state.forensicTimeline.length).toBe(1);          // extraction ran
+    expect(state.findings).toHaveLength(1);                  // auto-synthesis ran
+    expect(state.findings[0].title).toBe("synth finding");
+    expect(state.attackerPath).toBe("path");
+  });
+
   it("emits AI status (analyzing then idle) around a window flush", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-ai-"));
     const store = new CaseStore(root);
