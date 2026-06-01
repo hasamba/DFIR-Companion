@@ -263,3 +263,58 @@ describe("state and report routes", () => {
     expect(res.status).toBe(501);
   });
 });
+
+describe("AI on/off control", () => {
+  function findingPipeline(stateStore: StateStore) {
+    return new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [{ id: "f1", severity: "High", title: "Hit", description: "d",
+          relatedIocs: [], mitreTechniques: [], status: "open" }],
+        iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        timelineNote: "n", summary: "s",
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+  }
+
+  it("does NOT analyze captures while AI is off, then backfills them when turned on", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-aioff-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const app = createApp(store, { pipeline: findingPipeline(stateStore), stateStore, windowSize: 1 });
+
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    // turn AI OFF
+    await request(app).post("/cases/c1/ai-control").send({ enabled: false });
+
+    // capture two screenshots while off
+    for (let i = 0; i < 2; i++) {
+      await request(app).post("/captures").send({
+        caseId: "c1", timestamp: `2026-05-28T10:0${i}:00.000Z`, url: "u", tabTitle: "t",
+        triggerType: "navigation", imageBase64: await pngBase64(),
+      });
+    }
+    // evidence stored, but nothing analyzed
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await stateStore.load("c1")).findings).toHaveLength(0);
+
+    // turn AI ON → backfill analyzes the two captured-while-off screenshots
+    await request(app).post("/cases/c1/ai-control").send({ enabled: true });
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 40 && state.findings.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    expect(state.findings).toHaveLength(1);
+  });
+
+  it("GET /cases/:id/ai-control reports the current state", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-aictl-route-"));
+    const store = new CaseStore(root);
+    const app = createApp(store, {});
+    const res = await request(app).get("/cases/c1/ai-control");
+    expect(res.status).toBe(200);
+    expect(res.body.enabled).toBe(true);
+  });
+});

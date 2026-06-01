@@ -81,6 +81,8 @@ Examples:
 | `POST /captures` | Ingest a screenshot: `{ caseId, timestamp, url, tabTitle, triggerType, imageBase64 }`. |
 | `GET /cases/:id/state` | Current investigation state (JSON). |
 | `GET /cases/:id/captures/count` | Number of captures recorded for the case. |
+| `GET /cases/:id/ai-control` | Current AI on/off state: `{ enabled, lastAnalyzedSeq }`. |
+| `POST /cases/:id/ai-control` | `{ enabled }` — turn AI analysis on/off for the case. Evidence is always captured; when off, no AI runs. Turning it **on** backfills every screenshot captured while it was off. The dashboard's **AI: ON/OFF** button calls this. |
 | `POST /cases/:id/synthesize` | Run the synthesis pass (findings / MITRE / attacker path) from the forensic timeline; pushes the update to the dashboard. The dashboard's **Synthesize** button calls this. |
 | `POST /cases/:id/report` | Write report files; returns their paths. |
 | `GET /dashboard` | Live dashboard page. |
@@ -118,6 +120,11 @@ the server from a `chrome-extension://` origin.
    pass reads the full forensic timeline and produces those conclusions. It runs
    automatically at the end of `reanalyze` (skip with `--no-synthesis`), and you can
    re-run it any time — including with a different model — via `npm run synthesize`.
+
+**Capture-only mode.** The dashboard's **AI: ON/OFF** button (per case) lets you
+capture screenshots as evidence without running AI. When you switch it back on, the
+server automatically analyzes everything captured while it was off (tracked by
+`lastAnalyzedSeq` in `state/ai-control.json`), then synthesizes.
 
 **Live capture and conclusions.** While you browse, the per-window extraction builds
 the forensic timeline + investigation log. Findings, MITRE and the attacker path come

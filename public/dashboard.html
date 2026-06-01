@@ -30,6 +30,7 @@
     <strong>DFIR Companion</strong>
     <input id="caseId" placeholder="caseId" />
     <button id="connect">Connect</button>
+    <button id="aiToggle" title="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" title="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
     <button id="generateReport">Generate Report</button>
     <span id="status">disconnected</span>
@@ -49,6 +50,29 @@
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
     let ws = null;
     let countTimer = null;
+    let aiEnabled = true;
+
+    function renderAiToggle() {
+      const b = document.getElementById("aiToggle");
+      b.textContent = aiEnabled ? "AI: ON" : "AI: OFF";
+      b.style.background = aiEnabled ? "#2d6cdf" : "#555";
+    }
+
+    function loadAiToggle(caseId) {
+      fetch(`/cases/${caseId}/ai-control`).then(r => r.json())
+        .then(c => { aiEnabled = !!c.enabled; renderAiToggle(); }).catch(() => {});
+    }
+
+    function toggleAi() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const next = !aiEnabled;
+      document.getElementById("status").textContent = next ? "AI on — catching up on un-analyzed screenshots…" : "AI off — capturing only";
+      fetch(`/cases/${caseId}/ai-control`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      }).then(r => r.json()).then(c => { aiEnabled = !!c.enabled; renderAiToggle(); }).catch(() => {});
+    }
 
     function fmtTime(iso) {
       try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
@@ -116,6 +140,7 @@
       history.replaceState(null, "", "?caseId=" + encodeURIComponent(caseId));
       fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
       pollCount(caseId);
+      loadAiToggle(caseId);
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
@@ -135,6 +160,7 @@
 
     document.getElementById("connect").onclick = connect;
     document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+    document.getElementById("aiToggle").onclick = toggleAi;
     document.getElementById("synthesize").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;

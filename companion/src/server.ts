@@ -6,6 +6,7 @@ import { writeFile, readFile, rm } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore } from "./storage/caseStore.js";
 import { ingestCapture } from "./ingest/captureIngest.js";
+import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
@@ -84,6 +85,21 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const buffers = new Map<string, CaptureMetadata[]>();
   const SIGNIFICANT = new Set(["navigation", "tab_switch"]);
 
+  // Per-case AI on/off + last-analyzed sequence (cached, persisted to disk).
+  const aiControl = new AiControlStore(store);
+  const controlCache = new Map<string, AiControl>();
+  async function getControl(caseId: string): Promise<AiControl> {
+    let c = controlCache.get(caseId);
+    if (!c) { c = await aiControl.load(caseId); controlCache.set(caseId, c); }
+    return c;
+  }
+  async function setControl(caseId: string, patch: Partial<AiControl>): Promise<AiControl> {
+    const next = { ...(await getControl(caseId)), ...patch };
+    controlCache.set(caseId, next);
+    await aiControl.save(caseId, next);
+    return next;
+  }
+
   // Debounced live synthesis: after capture windows are analyzed, re-derive the
   // findings / MITRE / attacker path so the dashboard updates as you browse.
   const autoSynth = options.autoSynthesize ?? false;
@@ -120,6 +136,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await options.pipeline.analyzeWindow(caseId, buf);
       // Analysis recovered — drop any stale failure marker from a prior window.
       await rm(join(store.stateDir(caseId), "pending_analysis.json"), { force: true });
+      const maxSeq = Math.max(...buf.map((c) => c.sequenceNumber));
+      const cur = await getControl(caseId);
+      if (maxSeq > cur.lastAnalyzedSeq) await setControl(caseId, { lastAnalyzedSeq: maxSeq });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       scheduleSynthesis(caseId); // live findings/attacker path
     } catch (err) {
@@ -134,6 +153,35 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         at: new Date().toISOString(),
         detail: (err as Error).message,
       });
+    }
+  }
+
+  // Analyze every non-duplicate capture taken since lastAnalyzedSeq — used when AI
+  // is switched back on after capturing with it off. Runs in the background.
+  async function backfill(caseId: string): Promise<void> {
+    if (!options.pipeline) return;
+    let control = await getControl(caseId);
+    let captures: CaptureMetadata[];
+    try {
+      const log = await readFile(store.capturesLogPath(caseId), "utf8");
+      captures = log.split("\n").filter((l) => l.trim().length > 0).map((l) => JSON.parse(l) as CaptureMetadata);
+    } catch {
+      return;
+    }
+    const pending = captures.filter((c) => !c.isDuplicate && c.sequenceNumber > control.lastAnalyzedSeq);
+    if (pending.length === 0) return;
+    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: `catching up on ${pending.length} screenshot(s)` });
+    try {
+      for (let i = 0; i < pending.length; i += windowSize) {
+        const win = pending.slice(i, i + windowSize);
+        await options.pipeline.analyzeWindow(caseId, win);
+        control = await setControl(caseId, { lastAnalyzedSeq: Math.max(...win.map((c) => c.sequenceNumber)) });
+      }
+      await rm(join(store.stateDir(caseId), "pending_analysis.json"), { force: true });
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+      scheduleSynthesis(caseId);
+    } catch (err) {
+      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
     }
   }
 
@@ -155,7 +203,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const metadata = await ingestCapture(store, req.body);
       res.status(201).json(metadata);
-      if (!metadata.isDuplicate && options.pipeline) {
+      // Evidence is always stored; AI analysis only runs when enabled for the case.
+      if (!metadata.isDuplicate && options.pipeline && (await getControl(metadata.caseId)).enabled) {
         const buf = buffers.get(metadata.caseId) ?? [];
         buf.push(metadata);
         buffers.set(metadata.caseId, buf);
@@ -185,6 +234,33 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const paths = await options.reportWriter.writeAll(req.params.id);
       return res.status(200).json(paths);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // AI analysis on/off per case. GET reads it; POST { enabled } sets it. Turning it
+  // ON triggers a background backfill of everything captured while it was off.
+  app.get("/cases/:id/ai-control", async (req: Request, res: Response) => {
+    try {
+      return res.status(200).json(await getControl(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/ai-control", async (req: Request, res: Response) => {
+    try {
+      const enabled = Boolean(req.body?.enabled);
+      const prev = await getControl(req.params.id);
+      const next = await setControl(req.params.id, { enabled });
+      if (!enabled) {
+        buffers.set(req.params.id, []); // drop pending buffer when pausing
+        options.onAiStatus?.(req.params.id, { status: "idle", at: new Date().toISOString(), detail: "AI paused" });
+      } else if (!prev.enabled) {
+        void backfill(req.params.id); // resumed → analyze the gap
+      }
+      return res.status(200).json(next);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
