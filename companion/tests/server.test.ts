@@ -184,4 +184,41 @@ describe("state and report routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.markdown).toMatch(/report\.md$/);
   });
+
+  it("POST /cases/:id/synthesize runs the pipeline's synthesis and returns counts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-synth-route-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    // Seed a forensic timeline so synthesize has something to work from.
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish",
+      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
+    await stateStore.save(seeded);
+
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [{ id: "f1", severity: "High", title: "conclusion", description: "d",
+          relatedIocs: [], mitreTechniques: ["T1566"], status: "open" }],
+        iocs: [], mitreTechniques: [{ id: "T1566", name: "Phishing" }],
+        attackerPath: "phish then run", summary: "s",
+        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app = createApp(store, { pipeline, stateStore });
+
+    const res = await request(app).post("/cases/c1/synthesize");
+    expect(res.status).toBe(200);
+    expect(res.body.findings).toBe(1);
+    expect(res.body.attackerPath).toBe(true);
+  });
+
+  it("POST /cases/:id/synthesize returns 501 when no pipeline is configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-synth-noai-"));
+    const app = createApp(new CaseStore(root), {});
+    const res = await request(app).post("/cases/c1/synthesize");
+    expect(res.status).toBe(501);
+  });
 });

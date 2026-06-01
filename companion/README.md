@@ -81,6 +81,7 @@ Examples:
 | `POST /captures` | Ingest a screenshot: `{ caseId, timestamp, url, tabTitle, triggerType, imageBase64 }`. |
 | `GET /cases/:id/state` | Current investigation state (JSON). |
 | `GET /cases/:id/captures/count` | Number of captures recorded for the case. |
+| `POST /cases/:id/synthesize` | Run the synthesis pass (findings / MITRE / attacker path) from the forensic timeline; pushes the update to the dashboard. The dashboard's **Synthesize** button calls this. |
 | `POST /cases/:id/report` | Write report files; returns their paths. |
 | `GET /dashboard` | Live dashboard page. |
 | `WS /ws?caseId=<id>` | Live state + AI-status push for the dashboard. |
@@ -117,6 +118,14 @@ the server from a `chrome-extension://` origin.
    pass reads the full forensic timeline and produces those conclusions. It runs
    automatically at the end of `reanalyze` (skip with `--no-synthesis`), and you can
    re-run it any time — including with a different model — via `npm run synthesize`.
+
+**Live capture vs. conclusions.** While you browse, the live server runs only the
+per-window extraction (it builds the forensic timeline + investigation log). Findings,
+MITRE and the attacker path come from the synthesis pass, which does **not** run
+automatically during live capture — click **Synthesize** on the dashboard (or
+`POST /cases/:id/synthesize`, or run `npm run synthesize`) when you want the
+conclusions. After changing server code, **restart `npm run dev`** so the live
+pipeline picks up the new prompts.
 
 **Two-tier model strategy (cost-effective).** Per-screenshot extraction is the
 high-volume part (one AI call per few screenshots) — use a cheap vision model there.

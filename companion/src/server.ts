@@ -162,6 +162,28 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // On-demand holistic synthesis: derive findings / MITRE / attacker path from the
+  // forensic timeline. (Per-window capture builds the timeline; this writes the
+  // conclusions.) Broadcasts the updated state to dashboard clients via onState.
+  app.post("/cases/:id/synthesize", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: "synthesizing conclusions" });
+    try {
+      const state = await options.pipeline.synthesize(caseId);
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+      return res.status(200).json({
+        findings: state.findings.length,
+        mitreTechniques: state.mitreTechniques.length,
+        forensicEvents: state.forensicTimeline.length,
+        attackerPath: Boolean(state.attackerPath),
+      });
+    } catch (err) {
+      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   return app;
 }
 
@@ -210,6 +232,16 @@ export function buildProvider(): AnalyzeProvider | undefined {
   });
 }
 
+// Synthesis model: dedicated DFIR_AI_SYNTH_* vars, falling back to the main model.
+export function buildSynthesisProvider(): AnalyzeProvider | undefined {
+  return buildProviderFrom({
+    provider: process.env.DFIR_AI_SYNTH_PROVIDER ?? process.env.DFIR_AI_PROVIDER,
+    model: process.env.DFIR_AI_SYNTH_MODEL ?? process.env.DFIR_AI_MODEL,
+    apiKey: process.env.DFIR_AI_SYNTH_KEY ?? process.env.DFIR_AI_KEY,
+    imageDetail: process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined,
+  });
+}
+
 export function startServer(casesRoot: string, port = 4773): void {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStoreImpl(store);
@@ -217,8 +249,9 @@ export function startServer(casesRoot: string, port = 4773): void {
   const reportWriter = new ReportWriterImpl(store, stateStore);
 
   const provider = buildProvider();
+  const synthesisProvider = buildSynthesisProvider();
   const wiredPipeline = provider
-    ? new AnalysisPipelineImpl({ provider, stateStore, imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s) })
+    ? new AnalysisPipelineImpl({ provider, synthesisProvider, stateStore, imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s) })
     : undefined;
 
   const app = createApp(store, {

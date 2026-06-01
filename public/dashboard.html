@@ -30,6 +30,7 @@
     <strong>DFIR Companion</strong>
     <input id="caseId" placeholder="caseId" />
     <button id="connect">Connect</button>
+    <button id="synthesize" title="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
     <button id="generateReport">Generate Report</button>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
@@ -134,6 +135,21 @@
 
     document.getElementById("connect").onclick = connect;
     document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+    document.getElementById("synthesize").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      document.getElementById("status").textContent = "synthesizing…";
+      fetch(`/cases/${caseId}/synthesize`, { method: "POST" })
+        .then(r => r.json())
+        .then(p => {
+          if (p.error) { document.getElementById("status").textContent = "synthesis failed: " + p.error; return; }
+          document.getElementById("status").textContent =
+            `synthesized: ${p.findings} findings, ${p.mitreTechniques} techniques` + (p.attackerPath ? ", attacker path" : "");
+          // refresh state in case the WS push was missed
+          fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
+        })
+        .catch(e => document.getElementById("status").textContent = "synthesis error: " + e.message);
+    };
     document.getElementById("generateReport").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
