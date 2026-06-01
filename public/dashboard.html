@@ -42,7 +42,7 @@
     <section style="grid-column: 1 / -1"><h2>Attacker Path</h2><div id="attackerPath">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)</h2><div id="forensicTimeline">—</div></section>
     <section><h2>Findings</h2><div id="findings">—</div></section>
-    <section><h2>Open Threads</h2><div id="openThreads">—</div></section>
+    <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section><h2>Investigation Log</h2><div id="timeline">—</div></section>
     <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
   </main>
@@ -137,8 +137,14 @@
           ).join("")
         : "—";
 
+      const openThreads = state.openThreads.filter(t => t.status === "open");
+      const closedThreads = state.openThreads.filter(t => t.status === "closed");
       document.getElementById("openThreads").innerHTML =
-        (state.openThreads.filter(t => t.status === "open").map(t => `<div>• ${esc(t.description)}</div>`).join("")) || "—";
+        openThreads.map(t => `<div>• ${esc(t.description)}</div>`).join("") || "<div style='color:#9aa4b2'>No open threads</div>";
+      document.getElementById("closedThreads").innerHTML = closedThreads.length
+        ? `<div style='margin-top:8px;color:#6bcB77'>Closed (${closedThreads.length}):</div>` +
+          closedThreads.map(t => `<div style='color:#9aa4b2;text-decoration:line-through'>✓ ${esc(t.description)}</div>`).join("")
+        : "";
       const sorted = [...state.findings].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
       document.getElementById("findings").innerHTML =
         sorted.map(f => `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> <strong>${esc(f.title)}</strong><br><small>${esc(f.description)}</small></div>`).join("") || "—";

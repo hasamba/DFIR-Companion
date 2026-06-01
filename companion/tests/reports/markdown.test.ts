@@ -60,4 +60,19 @@ describe("renderMarkdownReport", () => {
     const md = renderMarkdownReport(state);
     expect(md.indexOf("crit1")).toBeLessThan(md.indexOf("low1"));
   });
+
+  it("renders investigation threads split into open and closed", () => {
+    const state = emptyState("c1");
+    state.openThreads.push(
+      { id: "t1", description: "trace lateral movement", status: "open", openedAt: "2026-05-20T10:00:00Z", closedAt: null },
+      { id: "t2", description: "identify C2 domain", status: "closed", openedAt: "2026-05-20T10:00:00Z", closedAt: "2026-05-20T12:00:00Z" },
+    );
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("## Investigation Threads");
+    expect(md).toContain("**Open (still being chased):**");
+    expect(md).toContain("trace lateral movement");
+    expect(md).toContain("**Closed (resolved):**");
+    expect(md).toContain("identify C2 domain");
+    expect(md).toContain("closed 2026-05-20T12:00:00Z");
+  });
 });

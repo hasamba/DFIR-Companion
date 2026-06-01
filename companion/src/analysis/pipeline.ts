@@ -103,9 +103,13 @@ export const SYNTHESIS_PROMPT = [
   "- attackerPath: a chronological narrative of the intrusion in kill-chain order (initial access →",
   "  execution → persistence → priv-esc → lateral movement → C2 → exfil/impact), citing event times.",
   "- summary: a 2-3 sentence executive overview.",
+  "- threadsOpened: open an investigative thread (id + description) for each UNRESOLVED question the",
+  "  evidence raises and that still needs follow-up (e.g. 'determine how the attacker obtained the",
+  "  Administrator credential', 'identify the C2 domain'). Do not re-open a thread already listed below.",
+  "- threadsClosed: the ids of any currently-open threads (listed below) that the evidence now RESOLVES.",
   "",
-  "Return ONLY raw JSON (no markdown fences). Set forensicEvents, threadsOpened, threadsClosed to [],",
-  "and timelineNote to \"\". Every finding/ioc/technique MUST be an object, never a bare string. Shape:",
+  "Return ONLY raw JSON (no markdown fences). Set forensicEvents to [] and timelineNote to \"\".",
+  "Every finding/ioc/technique/thread MUST be an object, never a bare string. Shape:",
   "",
   JSON.stringify(
     {
@@ -114,9 +118,9 @@ export const SYNTHESIS_PROMPT = [
       mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses: Disable or Modify Tools" }],
       attackerPath: "Initial access at <time> via …; then execution of …; persistence via …; impact at <time>.",
       summary: "executive summary",
+      threadsOpened: [{ id: "t1", description: "unresolved question to chase next" }],
+      threadsClosed: ["t0"],
       forensicEvents: [],
-      threadsOpened: [],
-      threadsClosed: [],
       timelineNote: "",
     },
     null,
@@ -200,9 +204,14 @@ export class AnalysisPipeline {
       .map((e) => `${e.timestamp || "(undated)"} [${e.severity}] ${e.description}`)
       .join("\n");
     const existingFindings = state.findings.map((f) => `[${f.id}] ${f.title}`).join("\n") || "(none yet)";
+    const openThreads = state.openThreads
+      .filter((t) => t.status === "open")
+      .map((t) => `[${t.id}] ${t.description}`)
+      .join("\n") || "(none open)";
     const userPrompt =
       `FORENSIC TIMELINE (${state.forensicTimeline.length} dated events):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
+      `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
       `Running notes: ${state.lastSummary || "(none)"}\n\nReturn the JSON conclusions.`;
 
     const retries = this.opts.retries ?? 3;

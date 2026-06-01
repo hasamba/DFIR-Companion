@@ -63,6 +63,21 @@ export function renderMarkdownReport(state: InvestigationState): string {
     }
   }
 
+  lines.push("## Investigation Threads", "");
+  const openT = state.openThreads.filter((t) => t.status === "open");
+  const closedT = state.openThreads.filter((t) => t.status === "closed");
+  if (openT.length === 0 && closedT.length === 0) {
+    lines.push("_No threads opened._", "");
+  } else {
+    lines.push("**Open (still being chased):**");
+    if (openT.length === 0) lines.push("- _none_");
+    else for (const t of openT) lines.push(`- [${t.id}] ${t.description} (opened ${t.openedAt})`);
+    lines.push("", "**Closed (resolved):**");
+    if (closedT.length === 0) lines.push("- _none_");
+    else for (const t of closedT) lines.push(`- [${t.id}] ${t.description} (opened ${t.openedAt}, closed ${t.closedAt})`);
+    lines.push("");
+  }
+
   lines.push("## MITRE ATT&CK", "");
   if (state.mitreTechniques.length === 0) {
     lines.push("_No techniques mapped yet._", "");

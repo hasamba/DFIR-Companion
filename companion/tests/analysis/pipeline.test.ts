@@ -122,6 +122,35 @@ describe("AnalysisPipeline", () => {
     expect(state.forensicTimeline).toHaveLength(2);
   });
 
+  it("synthesize opens new threads and closes existing ones by id", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish",
+      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
+    seeded.openThreads.push({ id: "t0", description: "how did they get in?", status: "open",
+      openedAt: "2026-05-20T08:00:00Z", closedAt: null });
+    await stateStore.save(seeded);
+
+    const synthDelta = JSON.stringify({
+      findings: [], iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
+      forensicEvents: [], timelineNote: "",
+      threadsOpened: [{ id: "t1", description: "identify the C2 domain" }], // new lead
+      threadsClosed: ["t0"],                                               // resolved by evidence
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", synthDelta),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    const t0 = state.openThreads.find((t) => t.id === "t0")!;
+    const t1 = state.openThreads.find((t) => t.id === "t1")!;
+    expect(t0.status).toBe("closed");
+    expect(t0.closedAt).not.toBeNull();
+    expect(t1.status).toBe("open");
+    expect(t1.description).toBe("identify the C2 domain");
+  });
+
   it("synthesize uses synthesisProvider (stronger model) when provided", async () => {
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish",
