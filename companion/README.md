@@ -6,9 +6,14 @@ Localhost server that ingests browser screenshots and stores them as forensic ev
 
     cd companion
     npm install
-    DFIR_CASES_ROOT=./cases npm run dev
+    cp .env.example .env    # then edit .env to set your AI key, etc.
+    npm run dev
 
 Server listens on http://127.0.0.1:4773 (localhost only).
+
+Configuration lives in `companion/.env` (gitignored). See `.env.example` for the
+supported variables: `DFIR_CASES_ROOT`, `DFIR_AI_PROVIDER`, `DFIR_AI_MODEL`,
+`DFIR_AI_KEY`. Environment variables set in your shell still override `.env`.
 
 ## Endpoints
 

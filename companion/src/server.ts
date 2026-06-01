@@ -1,4 +1,5 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
+import { config as loadDotenv } from "dotenv";
 import { join } from "node:path";
 import { writeFile, readFile } from "node:fs/promises";
 import { ZodError } from "zod";
@@ -195,7 +196,9 @@ export function startServer(casesRoot: string, port = 4773): void {
   });
 }
 
-// Entry point when run directly.
+// Entry point when run directly. Load companion/.env so users can keep config
+// (AI provider/model/key, cases root) in a file instead of typing env vars.
 if (process.argv[1] && process.argv[1].endsWith("server.ts")) {
+  loadDotenv();
   startServer(process.env.DFIR_CASES_ROOT ?? "cases");
 }

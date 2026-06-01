@@ -10,6 +10,7 @@
     "dev": "tsx src/server.ts"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "express": "^4.19.2",
     "sharp": "^0.33.4",
     "ws": "^8.21.0",
