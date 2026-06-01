@@ -21,6 +21,18 @@ describe("OpenAIProvider", () => {
     const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
     expect(body.model).toBe("gpt-4o");
     expect(JSON.stringify(body)).toContain("data:image/webp;base64,AAAA");
+    // small forensic text needs full-resolution tiling, not a downscaled image
+    expect(body.messages[1].content[1].image_url.detail).toBe("high");
+  });
+
+  it("honours an explicit imageDetail override", async () => {
+    const fetchFn = vi.fn(async () =>
+      jsonResponse({ choices: [{ message: { content: "{}" } }] }),
+    );
+    const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn, imageDetail: "low" });
+    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [{ base64: "AAAA", mimeType: "image/png" }] });
+    const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.messages[1].content[1].image_url.detail).toBe("low");
   });
 
   it("maps 429 to a rate_limit ProviderError", async () => {

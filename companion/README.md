@@ -27,6 +27,7 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_AI_PROVIDER` | `openai` \| `openrouter` \| `ollama` \| `gemini`. Leave **unset** to run capture-only (no AI). | `openrouter` |
 | `DFIR_AI_MODEL` | Model id understood by the provider. | `google/gemini-2.0-flash-001` |
 | `DFIR_AI_KEY` | Provider API key. | `sk-...` |
+| `DFIR_AI_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high`). High tiles screenshots at full resolution for accurate small-text OCR (OpenAI/OpenRouter models). | `high` |
 
 Shell environment variables override `.env`. `GET /health` returns `{ aiEnabled }`
 so you can confirm whether an AI provider is configured.
@@ -114,6 +115,21 @@ the server from a `chrome-extension://` origin.
 
 Duplicates (by perceptual hash) are still stored as evidence but skipped by the AI —
 use `reanalyze --all` to force them in.
+
+### Text readability / OCR accuracy
+
+Screenshots are captured **lossless** (PNG) at the browser's full viewport resolution
+(typically ~2550px wide) — capture quality is not the bottleneck. Misread usernames,
+hostnames and domains usually come from (1) the vision model downscaling large images,
+and (2) model OCR strength. Mitigations:
+
+- `DFIR_AI_IMAGE_DETAIL=high` (default) tiles images at full resolution for OpenAI/
+  OpenRouter models instead of downscaling — the biggest single accuracy win.
+- Use a stronger vision model for text-heavy forensic screenshots, e.g.
+  `openai/gpt-4o` or `google/gemini-2.5-pro` rather than a fast/cheap flash model.
+  Compare cheaply on the existing timeline without re-capturing:
+  `npm run synthesize -- <caseId> --model openai/gpt-4o`
+- Zoom the page in the browser (Ctrl +) before/while capturing so source text is larger.
 
 Recommended recovery flow for a case that has screenshots but weak/empty analysis:
 

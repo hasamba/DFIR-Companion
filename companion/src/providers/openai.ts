@@ -8,6 +8,9 @@ export interface OpenAIOptions {
   baseUrl?: string;
   fetchFn?: FetchFn;
   timeoutMs?: number;
+  // "high" tiles the image at full resolution (best for reading small text in
+  // forensic screenshots); "low" downscales to one tile (cheaper, blurrier).
+  imageDetail?: "high" | "low" | "auto";
 }
 
 function mapStatus(status: number): ProviderError["kind"] {
@@ -27,9 +30,13 @@ export class OpenAIProvider implements AIProvider {
   }
 
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+    const detail = this.opts.imageDetail ?? "high";
     const content: unknown[] = [{ type: "text", text: req.userPrompt }];
     for (const img of req.images) {
-      content.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.base64}` } });
+      content.push({
+        type: "image_url",
+        image_url: { url: `data:${img.mimeType};base64,${img.base64}`, detail },
+      });
     }
     const timeoutMs = this.opts.timeoutMs ?? 60_000;
     let res: Response;

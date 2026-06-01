@@ -183,10 +183,14 @@ export function buildProvider(): AnalyzeProvider | undefined {
   const model = process.env.DFIR_AI_MODEL ?? "";
   const apiKey = process.env.DFIR_AI_KEY ?? "";
   if (!name) return undefined;
+  // Default to high-detail image tiling so small text in forensic screenshots
+  // is read at full resolution (matters for OpenAI/OpenRouter vision models).
+  const detail = process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined;
+  const imageDetail = detail ?? "high";
   const registry = new ProviderRegistry();
-  registry.register(new OpenAIProvider({ apiKey, model }));
-  registry.register(new OpenRouterProvider({ apiKey, model }));
-  registry.register(new OllamaCloudProvider({ apiKey, model }));
+  registry.register(new OpenAIProvider({ apiKey, model, imageDetail }));
+  registry.register(new OpenRouterProvider({ apiKey, model, imageDetail }));
+  registry.register(new OllamaCloudProvider({ apiKey, model, imageDetail }));
   registry.register(new GeminiProvider({ apiKey, model }));
   return registry.get(name);
 }
