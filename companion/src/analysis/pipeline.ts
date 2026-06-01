@@ -16,8 +16,10 @@ export const SYSTEM_PROMPT = [
   "CRITICAL — FORENSIC TIMELINE: forensic artifacts on screen carry REAL timestamps (process",
   "create time, file MAC times, logon time, prefetch run time, scheduled-task time, registry",
   "write time, network connection time, etc.). For every dated incident event you can read, emit",
-  "a forensicEvents entry with that ARTIFACT ROW's ACTUAL timestamp (ISO-8601 if possible,",
-  "e.g. 2026-05-20T14:03:00Z) — NOT the screenshot's capture time, NOT the page/hunt/session time.",
+  "a forensicEvents entry whose timestamp is read FROM THAT ROW's OWN time column in the image",
+  "(e.g. the 'Timestamp'/'EventTime' column of the results table), in ISO-8601 if possible.",
+  "NEVER use the screenshot capture time or the current time. If a row has no visible event time,",
+  "set its timestamp to an empty string \"\" — do NOT substitute the capture/current time.",
   "These reconstruct WHEN the attack happened on the SYSTEM(S) UNDER INVESTIGATION.",
   "",
   "IMPORTANT — Velociraptor IS the evidence source. The DATA shown inside it (notebook/query",
@@ -158,10 +160,15 @@ export class AnalysisPipeline {
     const images = await Promise.all(
       analyzable.map((c) => this.opts.imageLoader(caseId, c.screenshotFile)),
     );
+    // Note: we deliberately do NOT put the capture time on these lines — the model
+    // would otherwise copy it into forensicEvents instead of reading the artifact's
+    // own timestamp column shown in the image.
     const contextLines = analyzable
-      .map((c) => `Screenshot ${c.screenshotFile} — ${c.tabTitle} (${c.url}) at ${c.timestamp}`)
+      .map((c) => `Screenshot ${c.screenshotFile} — ${c.tabTitle} (${c.url})`)
       .join("\n");
-    const userPrompt = `${buildStateSummary(state)}\n\nNEW SCREENSHOTS:\n${contextLines}\n\nReturn the JSON delta.`;
+    const userPrompt =
+      `${buildStateSummary(state)}\n\nNEW SCREENSHOTS (read each artifact's OWN timestamp column ` +
+      `for event times — do not use any capture/current time):\n${contextLines}\n\nReturn the JSON delta.`;
 
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
