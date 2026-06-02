@@ -104,6 +104,17 @@ companion server" messages when this happens; preserve that behavior.
   per change. Work on `master` is current; create a branch for larger work.
 - Commit only when asked, or per the user's standing workflow.
 
+## Versioning & CHANGELOG (do this on every tag)
+
+- **Always keep `CHANGELOG.md` updated.** Add notable changes under `[Unreleased]`
+  (Added / Changed / Fixed) as you make them — this is a standing instruction.
+- **On every version tag:** move `[Unreleased]` → `[X.Y.Z] - YYYY-MM-DD`, bump the
+  version in **all three** of `companion/package.json`, `extension/package.json`, and
+  `extension/manifest.json` (keep them in sync), update the changelog compare links,
+  then create an annotated `vX.Y.Z` tag on that commit and push `master` + the tag.
+- SemVer: pre-1.0 (`0.x`) — new features bump the minor (`0.1 → 0.2`); fixes-only bump
+  the patch. The project is not yet stable.
+
 ## Useful scripts (in `companion/`)
 
 `npm run dev` · `npm test` · `npm run verify:ai -- <case>` (one-call model smoke test) ·
