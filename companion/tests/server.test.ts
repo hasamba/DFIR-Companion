@@ -223,6 +223,78 @@ describe("server analysis wiring", () => {
     expect((await request(evApp).get("/cases/c1/evidence/a..b.png")).status).toBe(400);     // traversal guard
   });
 
+  it("imports a generic log file: persists as evidence, extracts events, then synthesizes findings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-log-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("extract", JSON.stringify({
+        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        timelineNote: "read lines", summary: "",
+        forensicEvents: [{ id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "event from log line",
+          severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
+      })),
+      synthesisProvider: new MockProvider("synth", JSON.stringify({
+        findings: [{ id: "f1", severity: "High", title: "finding from log", description: "d",
+          relatedIocs: [], mitreTechniques: [], status: "open" }],
+        iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
+        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const logApp = createApp(store, { pipeline, stateStore });
+
+    await request(logApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const log = "May 28 09:00:01 host sshd[1]: Failed password for root from 10.0.0.5\nMay 28 09:00:02 host sshd[2]: Accepted password for admin from 10.0.0.5\n";
+    const res = await request(logApp).post("/cases/c1/import-log").send({ filename: "auth.log", text: log });
+
+    expect(res.status).toBe(202);
+    expect(res.body.lines).toBe(2);
+
+    // Evidence-first: raw file + audit line written before analysis.
+    const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
+    expect(auditLog.trim().split("\n")).toHaveLength(1);
+    const stored = await readFile(join(store.importsDir("c1"), res.body.file), "utf8");
+    expect(stored).toBe(log);
+
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 60 && state.findings.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    expect(state.forensicTimeline.length).toBeGreaterThanOrEqual(1);
+    expect(state.findings).toHaveLength(1);
+    expect(state.findings[0].title).toBe("finding from log");
+  });
+
+  it("rejects a log import with empty text (no non-empty lines)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-log-empty-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", "should not be called"),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const emptyApp = createApp(store, { pipeline, stateStore });
+    await request(emptyApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+
+    // text empty string → 400 from the early guard
+    const res1 = await request(emptyApp).post("/cases/c1/import-log").send({ filename: "x.log", text: "" });
+    expect(res1.status).toBe(400);
+
+    // text non-empty but all-whitespace lines → 400 from the parser guard
+    const res2 = await request(emptyApp).post("/cases/c1/import-log").send({ filename: "x.log", text: "   \n   \n" });
+    expect(res2.status).toBe(400);
+  });
+
+  it("rejects a log import when no AI pipeline is configured", async () => {
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const res = await request(app).post("/cases/c1/import-log").send({ filename: "x.log", text: "line\n" });
+    expect(res.status).toBe(501);
+  });
+
   it("rejects a CSV import when no AI pipeline is configured", async () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const res = await request(app).post("/cases/c1/import-csv").send({ filename: "x.csv", csv: "a,b\n1,2\n" });

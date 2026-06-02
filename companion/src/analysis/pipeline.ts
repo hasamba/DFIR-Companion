@@ -9,6 +9,7 @@ import { extractJsonText } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, type LegitimateStore } from "./legitimate.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
 import { parseCsv, chunk, chunkToCsvText } from "./csvImport.js";
+import { parseLogLines, linesToText } from "./logImport.js";
 
 export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation",
@@ -115,6 +116,53 @@ export const CSV_SYSTEM_PROMPT = [
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: "read N rows of <artifact> (time column: <col>)",
+      attackerPath: "",
+      summary: "",
+    },
+    null,
+    2,
+  ),
+].join("\n");
+
+// Generic log-line extraction (firewall, syslog, sshd/auth.log, IIS/nginx/Apache
+// access, Windows event-log .txt exports, application logs). Each LINE is the
+// evidence — the model picks out whichever timestamp format the source uses
+// (RFC 3164 syslog "May 28 09:00:01", ISO-8601, IIS "yyyy-MM-dd HH:mm:ss",
+// Apache "[28/May/2026:09:00:01 +0000]", epoch seconds, etc.).
+export const LOG_SYSTEM_PROMPT = [
+  "You are a DFIR analyst assistant. You are given LINES from a log file uploaded as evidence",
+  "(typical sources: firewall logs — Cisco ASA, pfSense, iptables, Palo Alto, Fortinet; syslog;",
+  "Windows event-log text exports; sshd / auth.log; Apache/IIS/nginx access logs; application",
+  "logs), plus a summary of findings already recorded.",
+  "",
+  "Each non-empty line IS the evidence. For EVERY line that represents real host/attacker/network",
+  "activity, emit a forensicEvents entry whose 'timestamp' is read FROM THAT LINE — accept any",
+  "format the log uses (RFC 3164 syslog 'May 28 09:00:01', ISO-8601, IIS 'yyyy-MM-dd HH:mm:ss',",
+  "Apache '[28/May/2026:09:00:01 +0000]', epoch seconds, etc.) and convert to ISO-8601 when",
+  "possible. Syslog lines without a year — assume the most recent plausible year given the rest",
+  "of the evidence already recorded; if you can't tell, leave the year out rather than guessing",
+  "wrong. If a line has NO usable time, set timestamp to \"\" — NEVER substitute the current time.",
+  "Give each event a severity and map it to MITRE technique ids where clear.",
+  "",
+  "Also surface concrete IOCs present in the lines (source/destination ips, domains, hashes,",
+  "URLs, suspicious user names, suspicious process or file names). Do NOT invent findings or an",
+  "attacker-path here — those are produced later by a holistic synthesis pass; your job is to",
+  "faithfully extract the dated forensic events and IOCs. Set timelineNote to one short sentence",
+  "naming the log source you inferred (e.g. 'pfSense filter log', 'sshd auth.log', 'IIS access').",
+  "",
+  "Return ONLY raw JSON (no markdown fences). Every event/ioc MUST be an OBJECT. Shape:",
+  "",
+  JSON.stringify(
+    {
+      findings: [],
+      iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
+      mitreTechniques: [{ id: "T1110", name: "Brute Force" }],
+      forensicEvents: [
+        { id: "e1", timestamp: "2026-05-20T14:03:00Z", description: "what happened (cite the line's key fields)", severity: "Critical|High|Medium|Low|Info", mitreTechniques: ["T1110.001"] },
+      ],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "read N line(s) of <inferred log source>",
       attackerPath: "",
       summary: "",
     },
@@ -322,6 +370,60 @@ export class AnalysisPipeline {
         windowSequence: -(b + 1), // negative: distinguishes import batches from capture windows
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label], // evidence traceability: the CSV file
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(b + 1, batches.length);
+    }
+    return state;
+  }
+
+  // Import an uploaded generic log file (firewall logs, syslog, sshd, IIS, etc.)
+  // as evidence: extract dated forensic events + IOCs from each line, batch by
+  // batch, into the timeline — the same delta the screenshot and CSV paths
+  // produce. Findings/TTPs/attacker-path come afterwards from synthesize().
+  async analyzeLog(
+    caseId: string,
+    logText: string,
+    opts: {
+      label: string;             // evidence label shown as the event source (stored filename)
+      idPrefix: string;          // unique per import (e.g. "l3") so event ids never collide
+      importedAt: string;        // ISO time used for timeline/firstSeen context
+      linesPerBatch?: number;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const { lines } = parseLogLines(logText);
+    if (lines.length === 0) return this.opts.stateStore.load(caseId);
+
+    const batches = chunk(lines, Math.max(1, opts.linesPerBatch ?? 200));
+    const retries = this.opts.retries ?? 3;
+    const backoffMs = this.opts.backoffMs ?? 500;
+
+    let state = await this.opts.stateStore.load(caseId);
+    let evSeq = 0; // running counter → globally unique forensic-event ids for this import
+
+    for (let b = 0; b < batches.length; b++) {
+      const linesChunk = linesToText(batches[b]);
+      const userPrompt =
+        `${buildStateSummary(state)}\n\nLOG LINES (source: ${opts.label}; batch ${b + 1}/${batches.length}). ` +
+        `Read each line's OWN time for event times — do not use the current time:\n\n${linesChunk}\n\n` +
+        `Return the JSON delta.`;
+
+      const delta = await withRetry(async () => {
+        const result = await this.opts.provider.analyze({ systemPrompt: LOG_SYSTEM_PROMPT, userPrompt, images: [] });
+        return deltaSchema.parse(JSON.parse(extractJsonText(result.rawText)));
+      }, retries, backoffMs);
+
+      const renumbered = {
+        ...delta,
+        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}` })),
+      };
+
+      state = mergeDelta(state, renumbered, {
+        windowSequence: -(b + 1),
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
       });
       await this.opts.stateStore.save(state);
       this.opts.onState?.(state);

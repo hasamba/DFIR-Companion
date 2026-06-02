@@ -10,6 +10,7 @@ import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { parseCsv } from "./analysis/csvImport.js";
+import { parseLogLines } from "./analysis/logImport.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
@@ -52,6 +53,7 @@ function evidenceContentType(file: string): string {
     case ".jpeg": return "image/jpeg";
     case ".gif": return "image/gif";
     case ".csv":
+    case ".log":
     case ".txt": return "text/plain; charset=utf-8";
     case ".json": return "application/json; charset=utf-8";
     default: return "application/octet-stream";
@@ -437,6 +439,55 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `CSV import — batch ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a generic log file (firewall, syslog, sshd, IIS/Apache/nginx access,
+  // application logs — anything line-oriented, typically .log or .txt) as evidence.
+  // Same evidence-first pattern as import-csv: persist + audit, then analyze in the
+  // background (line-batched). The CSV path stays specialized for tabular exports.
+  app.post("/cases/:id/import-log", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text : "";
+    const originalName = String(req.body?.filename ?? "import.log");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    try {
+      // Validate and split lines up-front so we can reject empty files with a 400
+      // (mirrors the CSV "no rows" check) — and so we report line count back to the UI.
+      const { lines } = parseLogLines(text);
+      if (lines.length === 0) return res.status(400).json({ error: "log file has no non-empty lines" });
+
+      const seq = await store.nextImportSeq(caseId);
+      // Preserve the original extension (.log / .txt / etc.) so it round-trips through
+      // the evidence endpoint with the right content-type.
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.log");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: lines.length, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, lines: lines.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${lines.length} log line(s)` });
+      void options.pipeline.analyzeLog(caseId, text, {
+        label: storedName,
+        idPrefix: `l${seq}`,
+        importedAt,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `log import — batch ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })

@@ -314,6 +314,48 @@ describe("AnalysisPipeline", () => {
     expect(state.forensicTimeline.every((e) => e.sourceScreenshots.includes("0001_results.csv"))).toBe(true);
   });
 
+  it("analyzeLog extracts forensic events from log lines and renumbers ids across batches", async () => {
+    // Mirrors the CSV path: each batch independently emits "e1"; the import must
+    // renumber so chunked log batches accumulate instead of overwriting.
+    const oneEvent = JSON.stringify({
+      findings: [], iocs: [{ id: "i1", type: "ip", value: "10.0.0.5" }], mitreTechniques: [],
+      threadsOpened: [], threadsClosed: [], timelineNote: "read lines", attackerPath: "", summary: "",
+      forensicEvents: [{ id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "line event",
+        severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", oneEvent),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const log = [
+      "May 28 09:00:01 host sshd[1]: Failed password for root from 10.0.0.5",
+      "May 28 09:00:02 host sshd[2]: Failed password for admin from 10.0.0.5",
+      "May 28 09:00:03 host sshd[3]: Accepted password for admin from 10.0.0.5",
+    ].join("\n") + "\n";
+    const state = await pipeline.analyzeLog("c1", log, {
+      label: "0001_auth.log", idPrefix: "l1", importedAt: "2026-06-01T00:00:00Z", linesPerBatch: 2,
+    });
+
+    // 3 lines / 2 per batch = 2 batches → 2 events with distinct ids, both sourced from the log.
+    expect(state.forensicTimeline).toHaveLength(2);
+    expect(new Set(state.forensicTimeline.map((e) => e.id)).size).toBe(2);
+    expect(state.forensicTimeline.every((e) => e.sourceScreenshots.includes("0001_auth.log"))).toBe(true);
+  });
+
+  it("analyzeLog is a no-op for an empty log file", async () => {
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", "should not be called"),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const state = await pipeline.analyzeLog("c1", "\n\n   \n", {
+      label: "x.log", idPrefix: "l1", importedAt: "2026-06-01T00:00:00Z",
+    });
+    expect(state.forensicTimeline).toHaveLength(0);
+  });
+
   it("analyzeCsv is a no-op for a header-only CSV (no data rows)", async () => {
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", "should not be called"),

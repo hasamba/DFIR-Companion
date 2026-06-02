@@ -81,6 +81,7 @@ Examples:
 | `POST /cases` | Create a case: `{ caseId, name, investigator, aiProvider }`. |
 | `POST /captures` | Ingest a screenshot: `{ caseId, timestamp, url, tabTitle, triggerType, imageBase64 }`. |
 | `POST /cases/:id/import-csv` | Import a CSV result export (e.g. a Velociraptor artifact): `{ filename, csv }`. Persists the raw CSV as evidence, extracts dated forensic events + IOCs from the rows, then synthesizes. Returns `202 { accepted, file, rows }`; progress streams over the WS. The dashboard's **Import CSV** button calls this. |
+| `POST /cases/:id/import-log` | Import a generic log file (firewall — Cisco ASA, pfSense, iptables, Palo Alto, Fortinet; syslog; sshd / auth.log; IIS / Apache / nginx access; Windows event-log text exports; application logs — anything line-oriented, typically `.log` or `.txt`): `{ filename, text }`. Persists the raw file as evidence, extracts dated forensic events + IOCs from each line (any timestamp format the source uses — ISO-8601, RFC 3164 syslog, Apache, IIS, epoch…), then synthesizes. Returns `202 { accepted, file, lines }`; progress streams over the WS. The dashboard's **Import Log** button calls this. |
 | `GET /cases/:id/state` | Current investigation state (JSON). |
 | `GET /cases/:id/evidence/:file` | Serve a piece of evidence (a screenshot or an imported CSV) by filename. Sandboxed to the case's `screenshots/` and `imports/` dirs (no path separators or `..`). The dashboard links findings/events to this so a click opens the artifact. |
 | `GET /cases/:id/captures/count` | Number of captures recorded for the case. |
@@ -105,8 +106,9 @@ the server from a `chrome-extension://` origin.
       case.json
       screenshots/000001_<ts>_<tab-title>.webp   evidence (raw screenshots; title is slugified — OS-reserved chars stripped, capped at 60 chars; falls back to 000001_<ts>.webp when the title has no safe characters)
       imports/0001_<name>.csv             evidence (raw uploaded CSV result exports)
+      imports/0002_<name>.log             evidence (raw uploaded log files — firewall, syslog, sshd, IIS/Apache/nginx, app logs)
       metadata/captures.jsonl             append-only audit trail
-      metadata/imports.jsonl              append-only CSV-import audit trail
+      metadata/imports.jsonl              append-only import audit trail (CSV + log uploads share the same sequence)
       state/
         investigation.json                accumulating findings/timeline/forensic events
         pending_analysis.json             written if an analysis window fails (auto-cleared on success)

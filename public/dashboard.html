@@ -64,6 +64,8 @@
     <button id="synthesize" title="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
     <input id="csvFile" type="file" accept=".csv,text/csv" style="display:none" />
     <button id="importCsv" title="Upload a CSV of results (e.g. a Velociraptor export) to analyze into IOCs, TTPs and the timeline">Import CSV</button>
+    <input id="logFile" type="file" accept=".log,.txt,text/plain" style="display:none" />
+    <button id="importLog" title="Upload a generic log file (firewall, syslog, sshd, IIS/Apache/nginx, application logs — .log or .txt). Each line is analyzed for forensic events and IOCs.">Import Log</button>
     <button id="generateReport">Generate Report</button>
     <button id="toggleAll" title="Collapse or expand all sections">Collapse all</button>
     <span id="status">disconnected</span>
@@ -521,6 +523,37 @@
       } catch (err) {
         document.getElementById("status").textContent =
           "CSV import failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
+      }
+      e.target.value = ""; // allow re-selecting the same file
+    };
+    // Generic log import (.log / .txt — firewall, syslog, sshd, IIS/Apache/nginx,
+    // application logs). Mirrors the CSV path: POST text, server persists +
+    // analyzes line-by-line, dashboard sees live updates over the WS.
+    document.getElementById("importLog").onclick = () => {
+      if (!document.getElementById("caseId").value.trim()) {
+        document.getElementById("status").textContent = "enter/connect a Case ID first";
+        return;
+      }
+      document.getElementById("logFile").click();
+    };
+    document.getElementById("logFile").onchange = async (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      const file = e.target.files && e.target.files[0];
+      if (!caseId || !file) return;
+      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
+      try {
+        const text = await file.text();
+        const r = await fetch(`/cases/${caseId}/import-log`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ filename: file.name, text: text }),
+        });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const p = await r.json();
+        document.getElementById("status").textContent =
+          `imported ${p.lines} line(s) from ${file.name} — AI is analyzing them (see AI status)`;
+      } catch (err) {
+        document.getElementById("status").textContent =
+          "Log import failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
       }
       e.target.value = ""; // allow re-selecting the same file
     };

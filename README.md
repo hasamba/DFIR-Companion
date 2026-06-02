@@ -1,7 +1,7 @@
 # DFIR Companion
 
 A localhost digital-forensics / incident-response companion. A browser extension
-captures screenshots of your investigation (Velociraptor, SecurityOnion, Splunk4DFIR, VirusTotal, etc.) as
+captures screenshots of your investigation (Velociraptor, EDR/SIEM Dashbaord, SecurityOnion, Splunk4DFIR, VolWeb, VirusTotal, etc.) as
 evidence; a local server stores them, runs **windowed AI vision analysis** into an
 accumulating per-case investigation state, and serves a **live dashboard** plus
 exportable reports.
