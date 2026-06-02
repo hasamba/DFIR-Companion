@@ -63,6 +63,10 @@ const INCIDENT_SIGNAL: RegExp[] = [
   /\b(?:defender|sysmon|amsi|edr|xdr|antivirus|quarantine(?:d)?|threat\s+(?:detected|name))\b/i, // detection products / verdicts
   /\b(?:crowdstrike|falcon|sentinelone|carbon\s*black|cylance|cortex\s*xdr|\bIOA\b|malicious\s+file|parent\s+process\s+killed|process\s+(?:blocked|killed|terminated|quarantined))\b/i, // EDR/XDR detections & responses
   /\b(?:logon|logged on|logon type|authentication|kerberos|ntlm|tgt|tgs|golden ticket|privilege escalation|persistence|lateral movement|exfil\w*|command and control)\b/i, // ATT&CK-ish activity
+  /\bT\d{4}(?:\.\d{3})?\b/,                                       // MITRE ATT&CK technique id (e.g. T1059, T1110.001)
+  /\b(?:notable event|correlation (?:search|rule)|detection rule|sigma rule|rule (?:triggered|fired|matched)|alert (?:fired|triggered|raised)|offense|brute[\s-]?force)\b/i, // SIEM alert content (NOT bare tool names — "Access to Splunk" must still drop)
+  /\b(?:powershell|wmic|certutil|rundll32|regsvr32|mshta|bitsadmin|schtasks|wscript|cscript|net1?|reg)\.exe\b/i, // LOLBins (also caught by .exe; listed for clarity)
+  /\bpowershell\b(?:\.exe)?[^.]*\b(?:-enc|encodedcommand|-nop|-noprofile|downloadstring|iex|invoke-expression|frombase64)\b/i, // suspicious PowerShell even without .exe
 ];
 
 export function hasIncidentSignal(description: string): boolean {

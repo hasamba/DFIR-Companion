@@ -13,14 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **EDR/XDR detections now reliably enter the timeline & findings.** The extraction prompt was
-  Velociraptor-centric and the "navigating a dashboard isn't an event" rule was making the model
-  dismiss a CrowdStrike/Defender-for-Endpoint/SentinelOne *detections console* as navigation.
-  Generalized the evidence sources, added an explicit "EDR detection = evidence (extract each
-  detection as an event + finding)" rule with a CrowdStrike example, and narrowed the navigation
-  exclusion to bare empty tool pages. Added EDR terms (CrowdStrike, Falcon, SentinelOne, IOA,
-  "malicious file", "parent process killed") to the incident-signal allowlist so these are never
-  dropped by the work-log filter.
+- **EDR/XDR _and_ SIEM detections now reliably enter the timeline & findings.** The extraction
+  prompt was Velociraptor-centric and the "navigating a dashboard isn't an event" rule was making
+  the model dismiss a CrowdStrike/Defender-for-Endpoint/SentinelOne *detections console* — and
+  equally a Splunk/Elastic/Sentinel/QRadar *alerts console* — as navigation. Generalized the
+  evidence sources, added an explicit "EDR/XDR & SIEM detection = evidence (extract each detection/
+  alert/notable/offense as an event + finding)" rule with CrowdStrike and Splunk/Elastic examples,
+  and narrowed the navigation exclusion to bare empty tool pages. Extended the incident-signal
+  allowlist (EDR vendors, IOA/"malicious file"/"parent process killed", MITRE technique ids like
+  T1110, SIEM alert content — notable event / correlation rule / sigma / offense / brute force,
+  and common LOLBins) so a real detection is never dropped, while bare navigation ("Access to
+  Splunk") still is.
 
 ## [0.2.0] - 2026-06-02
 

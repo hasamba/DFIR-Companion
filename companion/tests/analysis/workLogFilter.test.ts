@@ -36,6 +36,10 @@ const WORK_LOG = [
   "Access to VolWeb observed",
   "Kibana dashboard opened",
   "Timesketch timeline viewed",
+  // Bare SIEM navigation (no alert content) must still drop.
+  "Access to Splunk",
+  "Splunk search dashboard viewed",
+  "Access to Elastic",
 ];
 
 // Genuine host/attacker events that MUST survive the filter.
@@ -59,6 +63,11 @@ const REAL_EVENTS = [
   // CrowdStrike Falcon EDR detections — real malicious findings, must survive.
   "CrowdStrike flagged ShadowMark.exe (High, Malicious File / AI IOA) run by ADATUMLAB\\Srv on ALCLIENT04: /action:add /target:sac1$; parent process killed",
   "CrowdStrike High detection: powershell.exe on ALCLIENT04 by Srv, AI Powered IOA via Malicious File",
+  // SIEM alerts / notables (Splunk, Elastic, QRadar, Sigma) — evidence, must survive.
+  "SIEM rule 'Brute Force - Multiple Failed Logons' fired for ADATUMLAB\\jdoe on ALCLIENT07 from 10.0.0.5",
+  "Splunk notable: T1059 PowerShell encoded command on ALCLIENT07",
+  "Elastic Security alert: suspicious powershell -enc downloadstring on HOST01",
+  "QRadar offense: lateral movement detected to DC01",
 ];
 
 function ev(description: string): ForensicEvent {
