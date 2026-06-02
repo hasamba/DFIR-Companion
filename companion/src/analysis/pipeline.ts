@@ -6,7 +6,7 @@ import { deltaSchema } from "./responseSchema.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
 import { extractJsonText } from "./extractJson.js";
-import { applyLegitimate, buildLegitimateContext, type LegitimateStore } from "./legitimate.js";
+import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
 import { parseCsv, chunk, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines, linesToText } from "./logImport.js";
@@ -438,10 +438,17 @@ export class AnalysisPipeline {
     const state = await this.opts.stateStore.load(caseId);
     if (state.forensicTimeline.length === 0) return state;
 
+    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+
     // Scope: only events inside the investigation window feed synthesis, so
     // findings/IOCs/attacker-path/questions reflect only in-scope activity.
+    // Then drop events the client confirmed legitimate so the model never derives
+    // conclusions from benign activity (the raw events stay in state — reversible).
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterEventsByScope(state.forensicTimeline, scope);
+    const scopedEvents = filterLegitimateEvents(
+      filterEventsByScope(state.forensicTimeline, scope),
+      markers,
+    );
 
     const timelineText = scopedEvents
       .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description}`)
@@ -455,7 +462,6 @@ export class AnalysisPipeline {
       .filter((t) => t.status === "open")
       .map((t) => `[${t.id}] ${t.description}`)
       .join("\n") || "(none open)";
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
     const legitimateBlock = buildLegitimateContext(markers);
     const userPrompt =
       scopeNote +

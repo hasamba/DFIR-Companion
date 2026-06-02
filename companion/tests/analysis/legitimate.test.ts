@@ -3,10 +3,10 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { applyLegitimate, buildLegitimateContext, markerId, LegitimateStore, type LegitimateMarker } from "../../src/analysis/legitimate.js";
+import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, legitimateEventIds, markerId, LegitimateStore, type LegitimateKind, type LegitimateMarker } from "../../src/analysis/legitimate.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
-function marker(kind: "finding" | "ioc", ref: string, note = ""): LegitimateMarker {
+function marker(kind: LegitimateKind, ref: string, note = ""): LegitimateMarker {
   return { id: markerId(kind, ref), kind, ref, note, markedAt: "2026-05-28T10:00:00Z" };
 }
 
@@ -33,11 +33,55 @@ describe("applyLegitimate", () => {
     expect(filtered.findings.map((f) => f.title)).toEqual(["Mimikatz credential dumping"]);
   });
 
-  it("buildLegitimateContext lists markers for the prompt, empty when none", () => {
+  it("buildLegitimateContext lists finding/ioc markers, empty when none", () => {
     expect(buildLegitimateContext([])).toBe("");
     const ctx = buildLegitimateContext([marker("finding", "SharpHound recon", "authorized")]);
     expect(ctx).toContain("CONFIRMED LEGITIMATE");
     expect(ctx).toContain("SharpHound recon");
+  });
+
+  it("buildLegitimateContext omits event markers (their events are already removed from the prompt)", () => {
+    const ctx = buildLegitimateContext([marker("event", "m1e5", "client's own admin action")]);
+    expect(ctx).toBe("");
+    const mixed = buildLegitimateContext([
+      marker("event", "m1e5"),
+      marker("ioc", "10.0.0.5", "client jump box"),
+    ]);
+    expect(mixed).toContain("10.0.0.5");
+    expect(mixed).not.toContain("m1e5");
+  });
+
+  it("leaves the forensic timeline untouched (events are filtered separately, not stripped from state)", () => {
+    const state = emptyState("c1");
+    state.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "a", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    const filtered = applyLegitimate(state, [marker("event", "e1")]);
+    expect(filtered.forensicTimeline).toHaveLength(1); // preserved — evidence is never deleted here
+  });
+});
+
+describe("filterLegitimateEvents / legitimateEventIds", () => {
+  const events = [
+    { id: "e1", description: "logon" },
+    { id: "e2", description: "process create" },
+    { id: "e3", description: "file write" },
+  ];
+
+  it("removes events whose id is marked legitimate, case-insensitively", () => {
+    const out = filterLegitimateEvents(events, [marker("event", "E2"), marker("ioc", "x")]);
+    expect(out.map((e) => e.id)).toEqual(["e1", "e3"]);
+  });
+
+  it("returns a copy unchanged when there are no event markers", () => {
+    const out = filterLegitimateEvents(events, [marker("finding", "foo")]);
+    expect(out).toEqual(events);
+    expect(out).not.toBe(events); // copy, not the same reference
+  });
+
+  it("legitimateEventIds collects only event-kind refs, lowercased", () => {
+    const ids = legitimateEventIds([marker("event", "E1"), marker("event", "e2"), marker("ioc", "e3")]);
+    expect(ids).toEqual(new Set(["e1", "e2"]));
   });
 });
 

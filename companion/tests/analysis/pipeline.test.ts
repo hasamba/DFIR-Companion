@@ -314,6 +314,44 @@ describe("AnalysisPipeline", () => {
     expect(state.forensicTimeline.every((e) => e.sourceScreenshots.includes("0001_results.csv"))).toBe(true);
   });
 
+  it("synthesize hides client-confirmed legitimate events from the model but preserves them in state", async () => {
+    const { LegitimateStore, markerId } = await import("../../src/analysis/legitimate.js");
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "attacker process create", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "client admin maintenance task", severity: "Medium",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    await stateStore.save(seeded);
+
+    const legitimateStore = new LegitimateStore(caseStore);
+    await legitimateStore.save("c1", [
+      { id: markerId("event", "e2"), kind: "event", ref: "e2", note: "client's own admin", markedAt: "2026-05-28T10:00:00Z", label: "client admin maintenance task" },
+    ]);
+
+    let sentPrompt = "";
+    const provider = {
+      name: "spy",
+      analyze: async (req: { userPrompt: string }) => {
+        sentPrompt = req.userPrompt;
+        return { rawText: JSON.stringify({
+          findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "s",
+          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+        }) };
+      },
+    };
+    const pipeline = new AnalysisPipeline({
+      provider, legitimateStore, stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    expect(sentPrompt).toContain("attacker process create");        // legit-untouched event still sent
+    expect(sentPrompt).not.toContain("client admin maintenance task"); // legit event excluded from input
+    expect(state.forensicTimeline.map((e) => e.id)).toEqual(["e1", "e2"]); // both preserved (reversible)
+  });
+
   it("analyzeLog extracts forensic events from log lines and renumbers ids across batches", async () => {
     // Mirrors the CSV path: each batch independently emits "e1"; the import must
     // renumber so chunked log batches accumulate instead of overwriting.

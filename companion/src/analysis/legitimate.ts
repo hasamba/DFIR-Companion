@@ -3,22 +3,51 @@ import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { InvestigationState } from "./stateTypes.js";
 
-// A finding or IOC the client has confirmed is legitimate (benign activity they
-// performed). The AI must exclude these from findings/IOCs/attacker-path entirely.
+// A kind of thing the client has confirmed is legitimate (benign activity they
+// performed). The AI must exclude these from analysis entirely.
+//   - "finding" : matched by the finding title/keyword
+//   - "ioc"     : matched by the exact IOC value
+//   - "event"   : matched by the forensic event id — the raw event is PRESERVED in
+//                 state (it's evidence) but hidden from the timeline view and
+//                 excluded from synthesis input, so un-marking fully restores it.
+export type LegitimateKind = "finding" | "ioc" | "event";
+
 export interface LegitimateMarker {
   id: string;                  // natural key: `${kind}:${ref}`
-  kind: "finding" | "ioc";
-  ref: string;                 // the IOC value, or the finding title/keyword to exclude
+  kind: LegitimateKind;
+  ref: string;                 // IOC value | finding title/keyword | forensic event id
   note: string;                // why it's legitimate (e.g. "client's red-team ran this")
   markedAt: string;
+  label?: string;              // optional human-readable label (e.g. an event's description) for display
 }
 
-export function markerId(kind: "finding" | "ioc", ref: string): string {
+export function markerId(kind: LegitimateKind, ref: string): string {
   return `${kind}:${ref.trim().toLowerCase()}`;
+}
+
+// The set of forensic event ids the client confirmed legitimate (lowercased).
+export function legitimateEventIds(markers: LegitimateMarker[]): Set<string> {
+  return new Set(
+    markers.filter((m) => m.kind === "event").map((m) => m.ref.trim().toLowerCase()),
+  );
+}
+
+// Drop forensic events the client confirmed legitimate, matched by event id. Pure
+// and reversible: callers filter a COPY for the view/synthesis input; the raw
+// timeline in persisted state is never mutated, so un-marking restores the event.
+export function filterLegitimateEvents<T extends { id: string }>(
+  events: readonly T[],
+  markers: LegitimateMarker[],
+): T[] {
+  const ids = legitimateEventIds(markers);
+  if (ids.size === 0) return [...events];
+  return events.filter((e) => !ids.has(e.id.trim().toLowerCase()));
 }
 
 // Drop findings/IOCs the client confirmed legitimate. IOCs match by exact value;
 // findings match when the marker ref appears in (or equals) the finding title.
+// Forensic events are handled separately (filterLegitimateEvents) so the raw
+// evidence is preserved rather than stripped from saved state.
 export function applyLegitimate(state: InvestigationState, markers: LegitimateMarker[]): InvestigationState {
   if (markers.length === 0) return state;
   const iocRefs = new Set(markers.filter((m) => m.kind === "ioc").map((m) => m.ref.trim().toLowerCase()));
@@ -32,10 +61,13 @@ export function applyLegitimate(state: InvestigationState, markers: LegitimateMa
   return { ...state, iocs, findings };
 }
 
-// A prompt block telling the model what to treat as benign.
+// A prompt block telling the model what to treat as benign. Only finding/IOC
+// markers are listed — legitimate EVENTS are already removed from the timeline
+// the model is given, so naming their (opaque) ids here would add no signal.
 export function buildLegitimateContext(markers: LegitimateMarker[]): string {
-  if (markers.length === 0) return "";
-  const lines = markers.map((m) => `- ${m.kind}: ${m.ref}${m.note ? ` — ${m.note}` : ""}`).join("\n");
+  const relevant = markers.filter((m) => m.kind === "finding" || m.kind === "ioc");
+  if (relevant.length === 0) return "";
+  const lines = relevant.map((m) => `- ${m.kind}: ${m.ref}${m.note ? ` — ${m.note}` : ""}`).join("\n");
   return (
     "CONFIRMED LEGITIMATE BY THE CLIENT (benign activity the client performed). Do NOT report these " +
     "as findings or IOCs, and EXCLUDE them from the attacker path, key questions, and severity:\n" +

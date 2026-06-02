@@ -104,6 +104,7 @@
     let aiEnabled = true;
     let scope = { start: null, end: null };  // active investigation window (ISO or null)
     let lastState = null;                    // last raw state from server, for re-render on scope change
+    let legitMarkers = [];                    // confirmed-legitimate markers; events here are hidden from the timeline
 
     // <input type="datetime-local"> uses local time without a zone; convert to/from ISO.
     function isoToLocalInput(iso) {
@@ -291,8 +292,9 @@
     }
     function escAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
 
-    function legitBtn(kind, ref) {
-      return `<button class="legit-btn" data-kind="${escAttr(kind)}" data-ref="${escAttr(ref)}" ` +
+    function legitBtn(kind, ref, label) {
+      const labelAttr = label != null ? ` data-label="${escAttr(label)}"` : "";
+      return `<button class="legit-btn" data-kind="${escAttr(kind)}" data-ref="${escAttr(ref)}"${labelAttr} ` +
         `title="Mark as a false positive — client confirmed this is benign; exclude it from analysis">` +
         `⚑ mark legitimate</button>`;
     }
@@ -310,15 +312,25 @@
     }
 
     function renderLegitimate(markers) {
+      legitMarkers = markers || [];
       const el = document.getElementById("legitimate");
-      el.innerHTML = (markers && markers.length)
-        ? markers.map(m =>
-            `<div style="margin-bottom:4px"><span style="color:#9aa4b2">${esc(m.kind)}:</span> ` +
-            `<span style="text-decoration:line-through">${esc(m.ref)}</span>` +
-            `${m.note ? ` — <small>${esc(m.note)}</small>` : ""} ` +
-            `<button class="unlegit-btn" data-id="${escAttr(m.id)}">un-mark</button></div>`
-          ).join("")
+      // For event markers, prefer the human-readable label (the event description)
+      // over the opaque event id stored as ref.
+      el.innerHTML = (legitMarkers.length)
+        ? legitMarkers.map(m => {
+            const shown = (m.kind === "event" && m.label) ? m.label : m.ref;
+            return `<div style="margin-bottom:4px"><span style="color:#9aa4b2">${esc(m.kind)}:</span> ` +
+              `<span style="text-decoration:line-through">${esc(shown)}</span>` +
+              `${m.note ? ` — <small>${esc(m.note)}</small>` : ""} ` +
+              `<button class="unlegit-btn" data-id="${escAttr(m.id)}">un-mark</button></div>`;
+          }).join("")
         : "<div style='color:#9aa4b2'>Nothing marked legitimate.</div>";
+      // Legit events are hidden from the timeline — re-render it with the new set.
+      if (lastState) render(lastState);
+    }
+    // Event ids the client confirmed legitimate (hidden from the forensic timeline view).
+    function legitEventIdSet() {
+      return new Set(legitMarkers.filter(m => m.kind === "event").map(m => String(m.ref).trim().toLowerCase()));
     }
 
     function loadLegitimate(caseId) {
@@ -331,12 +343,13 @@
       if (!caseId) return;
       const mark = e.target.closest(".legit-btn");
       if (mark) {
-        const kind = mark.dataset.kind, ref = mark.dataset.ref;
-        const note = prompt(`Mark this ${kind} as legitimate. Reason (optional):`, "");
+        const kind = mark.dataset.kind, ref = mark.dataset.ref, label = mark.dataset.label;
+        const what = kind === "event" ? "forensic event" : kind;
+        const note = prompt(`Mark this ${what} as legitimate (benign — exclude from analysis). Reason (optional):`, "");
         if (note === null) return; // cancelled
         document.getElementById("status").textContent = "marking legitimate…";
         fetch(`/cases/${caseId}/legitimate`, { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ kind, ref, note }) })
+          body: JSON.stringify({ kind, ref, note, ...(label != null ? { label } : {}) }) })
           .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
           .then(markers => {
             renderLegitimate(markers);
@@ -392,7 +405,10 @@
         : "<div style='color:#9aa4b2'>No IOCs yet</div>";
 
       // Already scope-projected above (events + findings/IOCs/MITRE consistently).
-      const ft = state.forensicTimeline || [];
+      // Then hide events the client confirmed legitimate (preserved in state; just
+      // not shown here and excluded from synthesis — un-mark restores them).
+      const legitIds = legitEventIdSet();
+      const ft = (state.forensicTimeline || []).filter(e => !legitIds.has(String(e.id).trim().toLowerCase()));
       // Aggregate each finding's evidence from the events that back it: synthesis-made
       // findings carry no sourceScreenshots themselves, but their events do.
       const evByFinding = {};
@@ -404,7 +420,7 @@
       document.getElementById("forensicTimeline").innerHTML = ft.length
         ? ft.map(e =>
             `<div class="finding"><span class="sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span> ` +
-            `<strong>${esc(e.description)}</strong>` +
+            `<strong>${esc(e.description)}</strong> ${legitBtn("event", e.id, e.description)}` +
             `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${esc(e.mitreTechniques.join(", "))}</small>` : ""}` +
             `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +
             `${evidenceLinks(state.caseId, e.sourceScreenshots)}</div>`

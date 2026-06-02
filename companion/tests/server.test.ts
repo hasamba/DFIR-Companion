@@ -289,6 +289,37 @@ describe("server analysis wiring", () => {
     expect(res2.status).toBe(400);
   });
 
+  it("marks a forensic event legitimate (kind=event), storing its label and re-synthesizing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-legit-ev-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "client admin task", severity: "Medium",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await stateStore.save(seeded);
+
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        timelineNote: "", summary: "", forensicEvents: [],
+      })),
+      stateStore,
+      legitimateStore: new (await import("../src/analysis/legitimate.js")).LegitimateStore(store),
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const legitApp = createApp(store, { pipeline, stateStore });
+
+    const res = await request(legitApp).post("/cases/c1/legitimate")
+      .send({ kind: "event", ref: "e1", note: "client's own admin", label: "client admin task" });
+    expect(res.status).toBe(200);
+    const stored = res.body.find((m: { kind: string }) => m.kind === "event");
+    expect(stored).toMatchObject({ kind: "event", ref: "e1", label: "client admin task" });
+    expect(stored.id).toBe("event:e1");
+  });
+
   it("rejects a log import when no AI pipeline is configured", async () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const res = await request(app).post("/cases/c1/import-log").send({ filename: "x.log", text: "line\n" });

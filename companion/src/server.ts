@@ -343,13 +343,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   app.post("/cases/:id/legitimate", async (req: Request, res: Response) => {
     try {
-      const kind = req.body?.kind === "ioc" ? "ioc" : "finding";
+      const rawKind = req.body?.kind;
+      const kind: LegitimateMarker["kind"] =
+        rawKind === "ioc" ? "ioc" : rawKind === "event" ? "event" : "finding";
       const ref = String(req.body?.ref ?? "").trim();
       if (!ref) return res.status(400).json({ error: "ref is required" });
       const note = String(req.body?.note ?? "");
+      // Optional human-readable label (e.g. a forensic event's description) so the
+      // "Confirmed Legitimate" panel can show something meaningful for opaque ids.
+      const label = req.body?.label != null ? String(req.body.label) : undefined;
       const markers = await legitimate.load(req.params.id);
       const id = markerId(kind, ref);
-      const marker: LegitimateMarker = { id, kind, ref, note, markedAt: new Date().toISOString() };
+      const marker: LegitimateMarker = { id, kind, ref, note, markedAt: new Date().toISOString(), ...(label ? { label } : {}) };
       const next = [...markers.filter((m) => m.id !== id), marker];
       await legitimate.save(req.params.id, next);
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it
@@ -585,7 +590,7 @@ export function startServer(casesRoot: string, port = 4773): void {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStoreImpl(store);
   const hub = new LiveHub();
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store));
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store));
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();

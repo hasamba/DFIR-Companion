@@ -87,8 +87,8 @@ Examples:
 | `GET /cases/:id/captures/count` | Number of captures recorded for the case. |
 | `GET /cases/:id/scope` | Current investigation time-window: `{ start, end }` (ISO or null). |
 | `POST /cases/:id/scope` | `{ start, end }` — set the window; re-synthesizes using only in-scope events. The dashboard's scope bar calls this. |
-| `GET /cases/:id/legitimate` | List client-confirmed legitimate findings/IOCs (excluded from analysis). |
-| `POST /cases/:id/legitimate` | `{ kind: "finding"\|"ioc", ref, note }` — mark a finding/IOC legitimate; re-runs synthesis without it. The dashboard's per-item **legit** button calls this. |
+| `GET /cases/:id/legitimate` | List client-confirmed legitimate findings/IOCs/events (excluded from analysis). |
+| `POST /cases/:id/legitimate` | `{ kind: "finding"\|"ioc"\|"event", ref, note, label? }` — mark a finding (ref = title), IOC (ref = value), or **forensic event** (ref = event id; `label` = its description for display) legitimate; re-runs synthesis without it. The dashboard's per-item **⚑ mark legitimate** button calls this. Legit **events** are hidden from the timeline and excluded from synthesis input but the raw event is preserved in state, so un-marking restores it. |
 | `POST /cases/:id/legitimate/remove` | `{ id }` — un-mark; re-runs synthesis. |
 | `GET /cases/:id/ai-control` | Current AI on/off state: `{ enabled, lastAnalyzedSeq }`. |
 | `POST /cases/:id/ai-control` | `{ enabled }` — turn AI analysis on/off for the case. Evidence is always captured; when off, no AI runs. Turning it **on** backfills every screenshot captured while it was off. The dashboard's **AI: ON/OFF** button calls this. |
@@ -142,10 +142,14 @@ synthesis is an authoritative reassessment, it now **replaces** the analytic lay
 rather than accumulating — so out-of-scope (or removed) conclusions drop cleanly.
 
 **Confirmed-legitimate items (false positives).** When the client confirms an alert,
-tool, or IOC was their own benign activity, click **legit** on that finding/IOC in the
-dashboard (add a reason). It's stored per case (`state/legitimate.json`), synthesis is
-re-run **excluding it** (both via the prompt and a hard post-filter), and it's listed
-in the "Confirmed Legitimate (excluded from analysis)" panel where you can un-mark it.
+tool, IOC, or a specific forensic-timeline event was their own benign activity, click
+**⚑ mark legitimate** on that finding / IOC / **event** in the dashboard (add a reason).
+It's stored per case (`state/legitimate.json`), synthesis is re-run **excluding it**, and
+it's listed in the "Confirmed Legitimate (excluded from analysis)" panel where you can
+un-mark it. Findings/IOCs are dropped via both the prompt and a hard post-filter.
+A legitimate **event** is hidden from the timeline view and excluded from the synthesis
+input — but the raw event stays in state (it's evidence), so un-marking fully restores
+it. Reports honor all of these exclusions too.
 
 **Capture-only mode.** The dashboard's **AI: ON/OFF** button (per case) lets you
 capture screenshots as evidence without running AI. When you switch it back on, the
