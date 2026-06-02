@@ -56,6 +56,9 @@ const REAL_EVENTS = [
   "Velociraptor EventLog shows Defender alert for Rubeus.exe, observed at 12:25",
   "VolWeb shows lsass.exe memory dump created at 12:30",
   "Antivirus Password Dumper Detection: Rubeus.exe flagged on ALClient022",
+  // CrowdStrike Falcon EDR detections — real malicious findings, must survive.
+  "CrowdStrike flagged ShadowMark.exe (High, Malicious File / AI IOA) run by ADATUMLAB\\Srv on ALCLIENT04: /action:add /target:sac1$; parent process killed",
+  "CrowdStrike High detection: powershell.exe on ALCLIENT04 by Srv, AI Powered IOA via Malicious File",
 ];
 
 function ev(description: string): ForensicEvent {

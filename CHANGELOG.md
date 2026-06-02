@@ -12,7 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+- **EDR/XDR detections now reliably enter the timeline & findings.** The extraction prompt was
+  Velociraptor-centric and the "navigating a dashboard isn't an event" rule was making the model
+  dismiss a CrowdStrike/Defender-for-Endpoint/SentinelOne *detections console* as navigation.
+  Generalized the evidence sources, added an explicit "EDR detection = evidence (extract each
+  detection as an event + finding)" rule with a CrowdStrike example, and narrowed the navigation
+  exclusion to bare empty tool pages. Added EDR terms (CrowdStrike, Falcon, SentinelOne, IOA,
+  "malicious file", "parent process killed") to the incident-signal allowlist so these are never
+  dropped by the work-log filter.
 
 ## [0.2.0] - 2026-06-02
 

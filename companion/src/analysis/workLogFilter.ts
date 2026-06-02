@@ -60,7 +60,8 @@ const INCIDENT_SIGNAL: RegExp[] = [
   /\b\d{1,3}(?:\.\d{1,3}){3}\b/,                                  // IPv4
   /\b[a-f0-9]{32,64}\b/i,                                         // md5/sha1/sha256 hash
   /\b(?:malware|trojan|ransomware|virus|virtool|backdoor|rootkit|webshell|keylogger|exploit|payload|implant|beacon|c2|cobalt\s*strike|mimikatz|rubeus|kekeo|lsass|wce|procdump|psexec|bloodhound|sharphound)\b/i, // threat/tooling
-  /\b(?:defender|sysmon|amsi|edr|antivirus|quarantine(?:d)?|threat\s+(?:detected|name))\b/i, // detection products / verdicts
+  /\b(?:defender|sysmon|amsi|edr|xdr|antivirus|quarantine(?:d)?|threat\s+(?:detected|name))\b/i, // detection products / verdicts
+  /\b(?:crowdstrike|falcon|sentinelone|carbon\s*black|cylance|cortex\s*xdr|\bIOA\b|malicious\s+file|parent\s+process\s+killed|process\s+(?:blocked|killed|terminated|quarantined))\b/i, // EDR/XDR detections & responses
   /\b(?:logon|logged on|logon type|authentication|kerberos|ntlm|tgt|tgs|golden ticket|privilege escalation|persistence|lateral movement|exfil\w*|command and control)\b/i, // ATT&CK-ish activity
 ];
 
