@@ -598,5 +598,19 @@ if (process.argv[1] && process.argv[1].endsWith("server.ts")) {
   const companionDir = fileURLToPath(new URL("../", import.meta.url)); // .../companion/
   const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);
   console.log(`[DFIR] cases root: ${casesRoot}`);
-  startServer(casesRoot);
+
+  // Port can be overridden via DFIR_PORT (1-65535). Invalid → fall back to default
+  // with a warning so a typo doesn't silently bind the wrong port.
+  const DEFAULT_PORT = 4773;
+  const rawPort = process.env.DFIR_PORT;
+  let port = DEFAULT_PORT;
+  if (rawPort !== undefined && rawPort !== "") {
+    const parsed = Number(rawPort);
+    if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 65535) {
+      port = parsed;
+    } else {
+      console.warn(`[DFIR] ignoring invalid DFIR_PORT="${rawPort}" — using default ${DEFAULT_PORT}.`);
+    }
+  }
+  startServer(casesRoot, port);
 }

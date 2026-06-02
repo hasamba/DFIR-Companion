@@ -24,6 +24,7 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | Variable | Meaning | Example |
 | --- | --- | --- |
 | `DFIR_CASES_ROOT` | Where case folders are written. Relative paths resolve against `companion/`, so the same folder is used no matter where you launch from. | `./cases` or `../cases` |
+| `DFIR_PORT` | Port the localhost server binds to. Default `4773`. Must be 1–65535; invalid values fall back to the default with a warning. Change this if 4773 is taken, or to run multiple companions side-by-side. The extension and dashboard must use the same port. | `4773` or `4774` |
 | `DFIR_AI_PROVIDER` | `openai` \| `openrouter` \| `ollama` \| `gemini`. Leave **unset** to run capture-only (no AI). | `openrouter` |
 | `DFIR_AI_MODEL` | Model id understood by the provider. | `google/gemini-2.0-flash-001` |
 | `DFIR_AI_KEY` | Provider API key. | `sk-...` |

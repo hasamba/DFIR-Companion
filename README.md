@@ -90,6 +90,7 @@ All companion behavior is configured via env vars. Shell vars override `.env`.
 | Variable | Required | Default | Meaning |
 | --- | --- | --- | --- |
 | `DFIR_CASES_ROOT` | no | `./cases` | Where case folders are written. Relative paths resolve against `companion/`. |
+| `DFIR_PORT` | no | `4773` | Port the localhost server binds to (1–65535). Change to avoid `EADDRINUSE` or run multiple companions in parallel. The extension and dashboard must use the same port. |
 | `DFIR_AI_PROVIDER` | no (capture-only if unset) | — | `openai` \| `openrouter` \| `ollama` \| `gemini`. |
 | `DFIR_AI_MODEL` | when provider set | — | Model id understood by the provider (e.g. `gpt-4o`, `openai/gpt-4o-mini`, `google/gemini-2.0-flash-001`). |
 | `DFIR_AI_KEY` | when provider set | — | Provider API key. |
@@ -105,6 +106,7 @@ Example `.env` (two-tier):
 
 ```
 DFIR_CASES_ROOT=./cases
+DFIR_PORT=4773
 DFIR_AI_PROVIDER=openrouter
 DFIR_AI_MODEL=openai/gpt-4o-mini          # cheap extraction (per screenshot)
 DFIR_AI_KEY=sk-or-...
