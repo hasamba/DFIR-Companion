@@ -30,6 +30,26 @@ const TOOL_PATTERNS: RegExp[] = [
 // Our own application / dashboard is never the system under investigation.
 const OWN_TOOL = /\b(dfir companion|companion dashboard)\b/i;
 
+// DFIR / SOC tools and UIs the analyst VIEWS evidence through. Navigating to or
+// "accessing"/"observing" one of these is the analyst's workflow, not a real
+// incident event. (The DATA shown inside them — process rows, logons, etc. — is
+// still extracted as events; it's only the act of opening the UI that's excluded.)
+// Named DFIR/SOC viewing tools + "dashboard". Deliberately excludes generic nouns
+// like "console"/"portal" that can appear in REAL attacker events (e.g. "cmd.exe
+// console opened"). Extend the named list as new tools show up rather than widening
+// to generic UI words.
+const VIEWER_TOOL =
+  "velociraptor|volweb|volatility|timesketch|timeline explorer|elastic(?:search)?|kibana|" +
+  "splunk|graylog|grafana|arkime|moloch|thehive|the hive|cortex|misp|autopsy|hayabusa|chainsaw|" +
+  "wazuh|security onion|securityonion|virustotal|syslog dashboard|dashboard";
+
+// Pure navigation / "access observed" narration — no concrete artifact, often stamped
+// with the screenshot capture time. Matches in EITHER word order.
+const NAVIGATION: RegExp[] = [
+  new RegExp(`\\baccess(?:ed)?(?:\\s+to)?\\b[^.]*\\b(?:${VIEWER_TOOL})\\b`, "i"), // "Access to VolWeb", "accessed the Splunk console"
+  new RegExp(`\\b(?:${VIEWER_TOOL})\\b[^.]*\\b(?:access(?:ed)?|observed|opened|viewed|navigat\\w*|loaded|displayed)\\b`, "i"), // "VolWeb access observed"
+];
+
 // Analyst-process verbs paired with a tool/UI noun, matched in EITHER order.
 const PROCESS_NARRATION: RegExp[] = [
   OWN_TOOL,
@@ -47,11 +67,13 @@ const PROCESS_NARRATION: RegExp[] = [
   /\banaly[sz]\w*\b[^.]*\b(completed|continued|ongoing|performed|reached|stage)\w*\b/i,
 ];
 
-// True when an event describes analyst/tool usage or investigation-process narration
-// rather than a real incident event on the system(s) under investigation.
+// True when an event describes analyst/tool usage, investigation-process narration,
+// or tool/UI navigation rather than a real incident event on the system(s) under
+// investigation.
 export function isAnalystWorkLog(description: string): boolean {
   return TOOL_PATTERNS.some((re) => re.test(description))
-    || PROCESS_NARRATION.some((re) => re.test(description));
+    || PROCESS_NARRATION.some((re) => re.test(description))
+    || NAVIGATION.some((re) => re.test(description));
 }
 
 export function partitionWorkLog(events: ForensicEvent[]): { keep: ForensicEvent[]; removed: ForensicEvent[] } {

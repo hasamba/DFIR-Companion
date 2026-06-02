@@ -27,6 +27,15 @@ const WORK_LOG = [
   "Further data analyzed in Velociraptor.",
   "Ongoing analysis completed in Velociraptor.",
   "Final analysis stages reached in Velociraptor.",
+  // Tool/UI navigation narration (latest report): "Access to <tool>" / "<tool> access observed".
+  "DFIR Companion dashboard access observed",
+  "Access to DFIR Companion Dashboard",
+  "Access to Syslog Dashboard - Elastic",
+  "Access to VolWeb",
+  "VolWeb access observed",
+  "Access to VolWeb observed",
+  "Kibana dashboard opened",
+  "Timesketch timeline viewed",
 ];
 
 // Genuine host/attacker events that MUST survive the filter.
@@ -37,6 +46,10 @@ const REAL_EVENTS = [
   "Microsoft Defender real-time protection disabled",
   "velociraptor.exe process created on the host",
   "Scheduled task 'Updater' created to run payload.exe",
+  // Genuine "access" events that name a concrete artifact must SURVIVE (no viewer-tool noun).
+  "Unauthorized access to \\\\FILESERVER\\HR share by user jdoe",
+  "Successful network logon to DC01 from 192.168.1.50",
+  "cmd.exe console opened by SYSTEM",
 ];
 
 function ev(description: string): ForensicEvent {
