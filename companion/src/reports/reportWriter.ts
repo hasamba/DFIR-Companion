@@ -2,7 +2,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { StateStore } from "../analysis/stateStore.js";
-import { filterEventsByScope, NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
+import { NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
+import { projectScope } from "../analysis/scopeProject.js";
 import { renderMarkdownReport } from "./markdown.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
 
@@ -24,10 +25,11 @@ export class ReportWriter {
 
   async writeAll(caseId: string): Promise<ReportPaths> {
     const loaded = await this.state.load(caseId);
-    // Reports respect the investigation scope: the forensic timeline export shows
-    // only in-scope events (findings/IOCs are already scoped by synthesis).
+    // Reports respect the investigation scope deterministically: drop out-of-scope
+    // events AND the findings/IOCs/MITRE supported only by them — so a report is
+    // scope-consistent even if AI re-synthesis hasn't run (or kept stale items).
     const scope = this.scope ? await this.scope.load(caseId) : NO_SCOPE;
-    const state = { ...loaded, forensicTimeline: filterEventsByScope(loaded.forensicTimeline, scope) };
+    const state = projectScope(loaded, scope);
     const dir = this.cases.reportsDir(caseId);
     const paths: ReportPaths = {
       markdown: join(dir, "report.md"),

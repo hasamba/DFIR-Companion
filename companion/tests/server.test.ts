@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -148,6 +148,85 @@ describe("server analysis wiring", () => {
     expect(state.findings).toHaveLength(1);                  // auto-synthesis ran
     expect(state.findings[0].title).toBe("synth finding");
     expect(state.attackerPath).toBe("path");
+  });
+
+  it("imports a CSV: persists it as evidence, extracts events, then synthesizes findings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-csv-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      // Extraction (per CSV batch) returns a forensic event but no findings…
+      provider: new MockProvider("extract", JSON.stringify({
+        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        timelineNote: "read rows", summary: "",
+        forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "process from CSV row",
+          severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
+      })),
+      // …synthesis turns the timeline into a finding.
+      synthesisProvider: new MockProvider("synth", JSON.stringify({
+        findings: [{ id: "f1", severity: "High", title: "finding from CSV", description: "d",
+          relatedIocs: [], mitreTechniques: [], status: "open" }],
+        iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
+        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const csvApp = createApp(store, { pipeline, stateStore });
+
+    await request(csvApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const csv = "Timestamp,Process,PID\n2026-05-20T09:00:00Z,mimikatz.exe,1234\n2026-05-20T09:01:00Z,rubeus.exe,5678\n";
+    const res = await request(csvApp).post("/cases/c1/import-csv").send({ filename: "results.csv", csv });
+
+    expect(res.status).toBe(202);
+    expect(res.body.rows).toBe(2);
+
+    // Evidence-first: the raw CSV + an audit line are written before analysis.
+    const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
+    expect(auditLog.trim().split("\n")).toHaveLength(1);
+    const stored = await readFile(join(store.importsDir("c1"), res.body.file), "utf8");
+    expect(stored).toBe(csv);
+
+    // Background: extraction then synthesis populate the state.
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 60 && state.findings.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    expect(state.forensicTimeline.length).toBeGreaterThanOrEqual(1); // extracted from rows
+    expect(state.findings).toHaveLength(1);                          // synthesized
+    expect(state.findings[0].title).toBe("finding from CSV");
+  });
+
+  it("serves screenshot + CSV evidence by filename and blocks traversal/invalid names", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-ev-"));
+    const store = new CaseStore(root);
+    const evApp = createApp(store);
+    await request(evApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+
+    // Screenshot evidence → served with an image content-type.
+    const png = Buffer.from(await pngBase64(), "base64");
+    await store.saveScreenshot("c1", "000001_x.png", png);
+    const shot = await request(evApp).get("/cases/c1/evidence/000001_x.png");
+    expect(shot.status).toBe(200);
+    expect(shot.headers["content-type"]).toContain("image/png");
+
+    // Imported CSV evidence → served as text so a click opens it in a tab.
+    await store.saveImport("c1", "0001_results.csv", "a,b\n1,2\n");
+    const csv = await request(evApp).get("/cases/c1/evidence/0001_results.csv");
+    expect(csv.status).toBe(200);
+    expect(csv.headers["content-type"]).toContain("text/plain");
+    expect(csv.text).toContain("a,b");
+
+    expect((await request(evApp).get("/cases/c1/evidence/missing.png")).status).toBe(404);
+    expect((await request(evApp).get("/cases/c1/evidence/bad@name.png")).status).toBe(400); // bad charset
+    expect((await request(evApp).get("/cases/c1/evidence/a..b.png")).status).toBe(400);     // traversal guard
+  });
+
+  it("rejects a CSV import when no AI pipeline is configured", async () => {
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const res = await request(app).post("/cases/c1/import-csv").send({ filename: "x.csv", csv: "a,b\n1,2\n" });
+    expect(res.status).toBe(501);
   });
 
   it("emits AI status (analyzing then idle) around a window flush", async () => {

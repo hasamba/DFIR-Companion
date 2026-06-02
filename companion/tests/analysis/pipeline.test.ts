@@ -288,6 +288,44 @@ describe("AnalysisPipeline", () => {
     expect(state.forensicTimeline).toHaveLength(2);            // raw events preserved
   });
 
+  it("analyzeCsv extracts forensic events from rows and keeps event ids unique across batches", async () => {
+    // Each batch independently emits an event with id "e1"; the import must renumber
+    // them so chunked CSVs accumulate instead of overwriting (merge dedupes by id).
+    const oneEvent = JSON.stringify({
+      findings: [], iocs: [{ id: "i1", type: "process", value: "mimikatz.exe" }], mitreTechniques: [],
+      threadsOpened: [], threadsClosed: [], timelineNote: "read rows", attackerPath: "", summary: "",
+      forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "row event",
+        severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", oneEvent),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const csv = "Time,Process\n09:00,a.exe\n09:01,b.exe\n09:02,c.exe\n"; // 3 rows
+    const state = await pipeline.analyzeCsv("c1", csv, {
+      label: "0001_results.csv", idPrefix: "m1", importedAt: "2026-06-01T00:00:00Z", rowsPerBatch: 2,
+    });
+
+    // 3 rows / 2 per batch = 2 batches → 2 events with distinct ids, both from the CSV.
+    expect(state.forensicTimeline).toHaveLength(2);
+    expect(new Set(state.forensicTimeline.map((e) => e.id)).size).toBe(2);
+    expect(state.forensicTimeline.every((e) => e.sourceScreenshots.includes("0001_results.csv"))).toBe(true);
+  });
+
+  it("analyzeCsv is a no-op for a header-only CSV (no data rows)", async () => {
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", "should not be called"),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const state = await pipeline.analyzeCsv("c1", "Time,Process\n", {
+      label: "x.csv", idPrefix: "m1", importedAt: "2026-06-01T00:00:00Z",
+    });
+    expect(state.forensicTimeline).toHaveLength(0);
+  });
+
   it("synthesize is a no-op when there is no forensic timeline", async () => {
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", "should not be called"),

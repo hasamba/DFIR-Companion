@@ -5,10 +5,25 @@
   <title>DFIR Companion Dashboard</title>
   <style>
     body { font-family: system-ui, sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
-    header { padding: 12px 16px; background: #161a22; display: flex; gap: 12px; align-items: center; }
+    header { padding: 10px 16px; background: #161a22; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+    /* Scope controls live in the header; a thin divider sets them apart and they
+       wrap to a second line only when there isn't room on the first. */
+    .scope-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: #9aa4b2;
+      padding-left: 12px; margin-left: 4px; border-left: 1px solid #2a2f3a; }
+    .scope-group input[type="datetime-local"] { font-size: 12px; padding: 4px; }
+    .scope-group button { padding: 4px 9px; font-size: 12px; }
+    .scope-preset { background: transparent; color: #9aa4b2; border: 1px solid #2a2f3a; }
+    .scope-preset:hover { color: #ffd93b; border-color: #ffd93b; }
     main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
     section { background: #161a22; border-radius: 8px; padding: 12px; }
-    h2 { margin: 0 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: #9aa4b2; }
+    /* Click a section's header to collapse/expand it; state persists across reloads. */
+    h2 { margin: 0 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: #9aa4b2;
+      cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+    h2:hover { color: #cbd3df; }
+    h2 .chev { font-size: 10px; color: #6aa9ff; transition: transform .12s; }
+    section.collapsed h2 { margin-bottom: 0; }
+    section.collapsed h2 .chev { transform: rotate(-90deg); }
+    section.collapsed > :not(h2) { display: none; }
     .sev-Critical { color: #ff5c5c; } .sev-High { color: #ff9f43; }
     .sev-Medium { color: #ffd93b; } .sev-Low { color: #6bcB77; } .sev-Info { color: #6aa9ff; }
     .finding { border-left: 3px solid #2a2f3a; padding: 6px 10px; margin-bottom: 8px; }
@@ -47,26 +62,34 @@
     <button id="connect">Connect</button>
     <button id="aiToggle" title="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" title="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
+    <input id="csvFile" type="file" accept=".csv,text/csv" style="display:none" />
+    <button id="importCsv" title="Upload a CSV of results (e.g. a Velociraptor export) to analyze into IOCs, TTPs and the timeline">Import CSV</button>
     <button id="generateReport">Generate Report</button>
+    <button id="toggleAll" title="Collapse or expand all sections">Collapse all</button>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
     <span id="captureCount" style="font-weight:bold;">Screenshots: 0</span>
+    <div class="scope-group">
+      <span style="color:#cbd3df;">Scope:</span>
+      <button class="scope-preset" data-hours="1" title="Last hour of activity">1h</button>
+      <button class="scope-preset" data-hours="24" title="Last 24 hours of activity">24h</button>
+      <button class="scope-preset" data-hours="168" title="Last 7 days of activity">7d</button>
+      <button class="scope-preset" data-hours="720" title="Last 30 days of activity">30d</button>
+      <label>from <input id="scopeStart" type="datetime-local" /></label>
+      <label>to <input id="scopeEnd" type="datetime-local" /></label>
+      <button id="applyScope" title="Re-synthesize using only events inside this window">Apply</button>
+      <button id="clearScope" title="Remove the time window (use all events)">Clear</button>
+      <span id="scopeInfo"></span>
+    </div>
   </header>
-  <div style="padding: 6px 16px; background:#10141b; display:flex; gap:8px; align-items:center; font-size:12px; color:#9aa4b2; border-bottom:1px solid #2a2f3a;">
-    <span>Investigation scope:</span>
-    <label>from <input id="scopeStart" type="datetime-local" /></label>
-    <label>to <input id="scopeEnd" type="datetime-local" /></label>
-    <button id="applyScope" title="Re-synthesize using only events inside this window">Apply scope</button>
-    <button id="clearScope" title="Remove the time window (use all events)">Clear</button>
-    <span id="scopeInfo"></span>
-  </div>
   <main>
     <section style="grid-column: 1 / -1"><h2>Executive Summary</h2><div id="summary">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attacker Path</h2><div id="attackerPath">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)</h2><div id="forensicTimeline">—</div></section>
     <section><h2>Findings</h2><div id="findings">—</div></section>
     <section><h2>IOCs</h2><div id="iocs">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
@@ -78,6 +101,7 @@
     let countTimer = null;
     let aiEnabled = true;
     let scope = { start: null, end: null };  // active investigation window (ISO or null)
+    let lastState = null;                    // last raw state from server, for re-render on scope change
 
     // <input type="datetime-local"> uses local time without a zone; convert to/from ISO.
     function isoToLocalInput(iso) {
@@ -94,6 +118,46 @@
       if (scope.start && t < Date.parse(scope.start)) return false;
       if (scope.end && t > Date.parse(scope.end)) return false;
       return true;
+    }
+
+    // Deterministic scope projection — the client-side mirror of the server's
+    // projectScope(). Drops out-of-scope events AND the findings/IOCs/MITRE backed
+    // ONLY by them, so the dashboard is scope-consistent instantly, without waiting
+    // on (or depending on) AI re-synthesis. "No links → can't prove out of scope → keep".
+    function projectScope(state) {
+      if (!scope.start && !scope.end) return state;
+      const events = state.forensicTimeline || [];
+      const forensicTimeline = events.filter(e => inScope(e.timestamp));
+
+      const backedIn = new Set(), backedOut = new Set();
+      for (const e of events) {
+        const tgt = inScope(e.timestamp) ? backedIn : backedOut;
+        for (const fid of (e.relatedFindingIds || [])) tgt.add(fid);
+      }
+      const findings = (state.findings || []).filter(f => backedIn.has(f.id) || !backedOut.has(f.id));
+      const surviving = new Set(findings.map(f => f.id));
+
+      const citedBySurviving = new Set(), citedByAny = new Set();
+      for (const f of (state.findings || [])) for (const iid of (f.relatedIocs || [])) {
+        citedByAny.add(iid);
+        if (surviving.has(f.id)) citedBySurviving.add(iid);
+      }
+      const iocs = (state.iocs || []).filter(i => citedBySurviving.has(i.id) || !citedByAny.has(i.id));
+
+      const mitreTechniques = (state.mitreTechniques || [])
+        .map(t => ({ ...t, findingIds: (t.findingIds || []).filter(id => surviving.has(id)) }))
+        .filter((t, idx) => t.findingIds.length > 0 || (state.mitreTechniques[idx].findingIds || []).length === 0);
+
+      return { ...state, forensicTimeline, findings, iocs, mitreTechniques };
+    }
+
+    // The latest forensic event time anchors the relative-scope presets (DFIR data
+    // is historical, so "last 24h" means the last 24h of ACTIVITY, not of wall-clock).
+    function latestEventMs() {
+      const events = (lastState && lastState.forensicTimeline) || [];
+      let max = NaN;
+      for (const e of events) { const t = Date.parse(e.timestamp); if (!isNaN(t)) max = isNaN(max) ? t : Math.max(max, t); }
+      return isNaN(max) ? Date.now() : max;
     }
 
     function renderScopeInfo() {
@@ -126,6 +190,11 @@
         .then(s => {
           scope = { start: s.start || null, end: s.end || null };
           renderScopeInfo();
+          // The view is scope-consistent immediately (client-side projection); AI
+          // re-synthesis continues in the background and is reported via AI status.
+          document.getElementById("status").textContent = (scope.start || scope.end)
+            ? "scope applied — AI re-synthesizing in background (see AI status)"
+            : "scope cleared — AI re-synthesizing in background (see AI status)";
           fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
         })
         .catch(() => document.getElementById("status").textContent = "scope failed — restart the companion server to load the latest endpoints.");
@@ -186,8 +255,20 @@
         else setAi("analyzing", "processing screenshots… " + (evt.detail || ""));
       } else if (evt.status === "idle") {
         setAi("idle", "idle — up to date (" + fmtTime(evt.at) + ")");
+        clearTransientStatus();  // re-synthesis finished → drop the "…re-synthesizing" line
       } else if (evt.status === "error") {
         setAi("error", "error — " + (evt.detail || "see server log"));
+        clearTransientStatus();
+      }
+    }
+
+    // Reset the #status line to the normal connected state, but only when it is
+    // showing a transient background-work message (so we don't clobber e.g. a
+    // "report written: …" notice).
+    function clearTransientStatus() {
+      const el = document.getElementById("status");
+      if (/synthesiz|applying scope|marking legitimate|import/i.test(el.textContent)) {
+        el.textContent = ws && ws.readyState === 1 ? "connected (live)" : "disconnected";
       }
     }
 
@@ -212,6 +293,18 @@
       return `<button class="legit-btn" data-kind="${escAttr(kind)}" data-ref="${escAttr(ref)}" ` +
         `title="Mark as a false positive — client confirmed this is benign; exclude it from analysis">` +
         `⚑ mark legitimate</button>`;
+    }
+
+    // Clickable links to the underlying evidence (screenshot or imported CSV). Each
+    // opens the artifact in a new tab via GET /cases/:id/evidence/:file.
+    function evidenceLinks(caseId, files) {
+      const list = Array.from(new Set((files || []).filter(Boolean)));
+      if (!caseId || !list.length) return "";
+      const links = list.map(fn =>
+        `<a href="/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(fn)}" ` +
+        `target="_blank" rel="noopener" style="color:#6aa9ff" title="Open evidence: ${escAttr(fn)}">📎 ${esc(fn)}</a>`
+      ).join(" · ");
+      return `<br><small style="color:#9aa4b2">evidence: ${links}</small>`;
     }
 
     function renderLegitimate(markers) {
@@ -262,9 +355,24 @@
       }
     });
 
-    function render(state) {
+    function render(rawState) {
+      // Keep the raw state so scope-preset clicks can re-project without a refetch.
+      lastState = rawState;
+      const state = projectScope(rawState);
       document.getElementById("summary").textContent = state.lastSummary || "—";
       document.getElementById("attackerPath").textContent = state.attackerPath || "—";
+
+      const PRIO = { critical: "#ff5c5c", high: "#ff9f43", medium: "#ffd93b", low: "#6bcB77" };
+      const ns = state.nextSteps || [];
+      document.getElementById("nextSteps").innerHTML = ns.length
+        ? ns.map(s => {
+            const color = PRIO[s.priority] || "#9aa4b2";
+            return `<div class="finding" style="border-left-color:${color}">` +
+              `<strong style="color:${color}">[${esc(String(s.priority || "").toUpperCase())}]</strong> ${esc(s.action)}` +
+              `${s.rationale ? `<br><small>${esc(s.rationale)}</small>` : ""}` +
+              `${s.pointer ? `<br><small style="color:#6aa9ff">→ ${esc(s.pointer)}</small>` : ""}</div>`;
+          }).join("")
+        : "<div style='color:#9aa4b2'>Not assessed yet — run Synthesize.</div>";
 
       const QMARK = { answered: "✅", partial: "🟡", unknown: "❓" };
       const kq = state.keyQuestions || [];
@@ -281,15 +389,23 @@
         ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}</div>`).join("")
         : "<div style='color:#9aa4b2'>No IOCs yet</div>";
 
-      // Out-of-scope events are hidden from the timeline (findings/IOCs are already
-      // scoped server-side by synthesis).
-      const ft = (state.forensicTimeline || []).filter(e => inScope(e.timestamp));
+      // Already scope-projected above (events + findings/IOCs/MITRE consistently).
+      const ft = state.forensicTimeline || [];
+      // Aggregate each finding's evidence from the events that back it: synthesis-made
+      // findings carry no sourceScreenshots themselves, but their events do.
+      const evByFinding = {};
+      for (const e of ft) {
+        for (const fid of (e.relatedFindingIds || [])) {
+          (evByFinding[fid] = evByFinding[fid] || []).push(...(e.sourceScreenshots || []));
+        }
+      }
       document.getElementById("forensicTimeline").innerHTML = ft.length
         ? ft.map(e =>
             `<div class="finding"><span class="sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span> ` +
             `<strong>${esc(e.description)}</strong>` +
             `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${esc(e.mitreTechniques.join(", "))}</small>` : ""}` +
-            `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}</div>`
+            `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +
+            `${evidenceLinks(state.caseId, e.sourceScreenshots)}</div>`
           ).join("")
         : "—";
 
@@ -303,7 +419,12 @@
         : "";
       const sorted = [...state.findings].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
       document.getElementById("findings").innerHTML =
-        sorted.map(f => `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> <span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong> ${legitBtn("finding", f.title)}<br><small>${esc(f.description)}</small></div>`).join("") || "—";
+        sorted.map(f => {
+          const evidence = [...(f.sourceScreenshots || []), ...(evByFinding[f.id] || [])];
+          return `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> ` +
+            `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong> ${legitBtn("finding", f.title)}` +
+            `<br><small>${esc(f.description)}</small>${evidenceLinks(state.caseId, evidence)}</div>`;
+        }).join("") || "—";
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
@@ -348,6 +469,16 @@
       document.getElementById("scopeEnd").value = "";
       applyScope();
     };
+    // Relative presets: window = [latest activity − N hours, latest activity].
+    document.querySelectorAll(".scope-preset").forEach(btn => {
+      btn.onclick = () => {
+        const hours = Number(btn.dataset.hours);
+        const anchor = latestEventMs();
+        document.getElementById("scopeStart").value = isoToLocalInput(new Date(anchor - hours * 3600_000).toISOString());
+        document.getElementById("scopeEnd").value = isoToLocalInput(new Date(anchor).toISOString());
+        applyScope();
+      };
+    });
     document.getElementById("synthesize").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
@@ -363,6 +494,36 @@
         })
         .catch(e => document.getElementById("status").textContent = "synthesis error: " + e.message);
     };
+    // CSV import: read the file locally, POST its text; the server persists it as
+    // evidence and analyzes it (events → IOCs/TTPs/findings) with live WS updates.
+    document.getElementById("importCsv").onclick = () => {
+      if (!document.getElementById("caseId").value.trim()) {
+        document.getElementById("status").textContent = "enter/connect a Case ID first";
+        return;
+      }
+      document.getElementById("csvFile").click();
+    };
+    document.getElementById("csvFile").onchange = async (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      const file = e.target.files && e.target.files[0];
+      if (!caseId || !file) return;
+      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
+      try {
+        const text = await file.text();
+        const r = await fetch(`/cases/${caseId}/import-csv`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ filename: file.name, csv: text }),
+        });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const p = await r.json();
+        document.getElementById("status").textContent =
+          `imported ${p.rows} row(s) from ${file.name} — AI is analyzing them (see AI status)`;
+      } catch (err) {
+        document.getElementById("status").textContent =
+          "CSV import failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
+      }
+      e.target.value = ""; // allow re-selecting the same file
+    };
     document.getElementById("generateReport").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
@@ -370,6 +531,54 @@
         .then(r => r.json())
         .then(p => document.getElementById("status").textContent = `report written: ${p.markdown}`);
     };
+
+    // ── Collapsible sections ──────────────────────────────────────────────────
+    // Click a section header to collapse/expand it; state is keyed by the section's
+    // content-div id and persisted so your layout survives reloads. render() only
+    // rewrites the inner divs (not the <section>/<h2>), so collapse state sticks.
+    const COLLAPSE_KEY = "dfir.collapsed";
+    const sections = () => [...document.querySelectorAll("main > section")];
+    const sectionKey = (sec) => { const el = sec.querySelector("[id]"); return el ? el.id : ""; };
+    const loadCollapsed = () => { try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "{}"); } catch { return {}; } };
+    const saveCollapsed = (map) => localStorage.setItem(COLLAPSE_KEY, JSON.stringify(map));
+
+    function updateToggleAllLabel() {
+      const anyOpen = sections().some(s => !s.classList.contains("collapsed"));
+      document.getElementById("toggleAll").textContent = anyOpen ? "Collapse all" : "Expand all";
+    }
+
+    function setupCollapsible() {
+      const collapsed = loadCollapsed();
+      sections().forEach(sec => {
+        const h2 = sec.querySelector("h2");
+        if (!h2) return;
+        const key = sectionKey(sec);
+        if (!h2.querySelector(".chev")) h2.insertAdjacentHTML("afterbegin", '<span class="chev">▾</span>');
+        if (key && collapsed[key]) sec.classList.add("collapsed");
+        h2.onclick = () => {
+          sec.classList.toggle("collapsed");
+          const map = loadCollapsed();
+          if (key) map[key] = sec.classList.contains("collapsed");
+          saveCollapsed(map);
+          updateToggleAllLabel();
+        };
+      });
+      updateToggleAllLabel();
+    }
+
+    document.getElementById("toggleAll").onclick = () => {
+      const collapseAll = sections().some(s => !s.classList.contains("collapsed")); // collapse if anything is open
+      const map = loadCollapsed();
+      sections().forEach(sec => {
+        sec.classList.toggle("collapsed", collapseAll);
+        const key = sectionKey(sec);
+        if (key) map[key] = collapseAll;
+      });
+      saveCollapsed(map);
+      updateToggleAllLabel();
+    };
+
+    setupCollapsible();
 
     // On load, restore the case from the URL (?caseId=) or last session and reconnect.
     (function restore() {

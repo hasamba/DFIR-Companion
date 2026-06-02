@@ -64,8 +64,60 @@ describe("mergeDelta", () => {
     }, { windowSequence: 2, timestamp: "2026-05-28T10:01:00.000Z", sourceScreenshots: [] });
 
     expect(state.iocs).toHaveLength(1);
+    expect(state.iocs[0].id).toBe("i001"); // canonical 3-digit id
     expect(state.openThreads[0].status).toBe("closed");
     expect(state.openThreads[0].closedAt).toBe("2026-05-28T10:01:00.000Z");
+  });
+
+  it("assigns canonical 3-digit ids and remaps finding.relatedIocs even when the model reuses ids", () => {
+    // The vision model often groups its output per-finding and emits i1/i2/i3
+    // multiple times with different values. We must give each unique-value IOC
+    // its own id and rewrite the finding's relatedIocs to match.
+    const state = mergeDelta(emptyState("c1"), {
+      ...baseDelta,
+      iocs: [
+        { id: "i1", type: "file", value: "Bubeus.exe" },
+        { id: "i2", type: "file", value: "SharpHound.exe" },
+        { id: "i1", type: "file", value: "Rubeus.exe" },     // model reused i1
+        { id: "i2", type: "file", value: "mimikatz.exe" },   // model reused i2
+        { id: "i1", type: "file", value: "Bubeus.exe" },     // duplicate value → dropped
+      ],
+      findings: [
+        { id: "f1", severity: "High", title: "credential dumping", description: "...",
+          relatedIocs: ["i1", "i2"], // refers to the FIRST i1/i2 the model emitted in the same response
+          mitreTechniques: [], status: "confirmed" },
+        { id: "f2", severity: "High", title: "AD recon", description: "...",
+          relatedIocs: ["i2"], // ambiguous in the model's view; remapped to the *first* matching emission
+          mitreTechniques: [], status: "open" },
+      ],
+    }, { windowSequence: 1, timestamp: "2026-06-01T10:00:00.000Z", sourceScreenshots: [] });
+
+    expect(state.iocs.map((i) => i.id)).toEqual(["i001", "i002", "i003", "i004"]);
+    expect(state.iocs.map((i) => i.value)).toEqual([
+      "Bubeus.exe", "SharpHound.exe", "Rubeus.exe", "mimikatz.exe",
+    ]);
+    // First i1 = Bubeus → i001; first i2 = SharpHound → i002. relatedIocs rewritten.
+    const f1 = state.findings.find((f) => f.id === "f1")!;
+    expect(f1.relatedIocs).toEqual(["i001", "i002"]);
+  });
+
+  it("continues IOC numbering from the highest existing canonical id", () => {
+    let state = emptyState("c1");
+    state = mergeDelta(state, {
+      ...baseDelta,
+      iocs: [
+        { id: "i1", type: "ip", value: "10.0.0.5" },
+        { id: "i2", type: "ip", value: "10.0.0.6" },
+      ],
+    }, { windowSequence: 1, timestamp: "2026-06-01T10:00:00.000Z", sourceScreenshots: [] });
+    expect(state.iocs.map((i) => i.id)).toEqual(["i001", "i002"]);
+
+    state = mergeDelta(state, {
+      ...baseDelta,
+      iocs: [{ id: "i1", type: "ip", value: "10.0.0.7" }], // new value, model reused i1
+    }, { windowSequence: 2, timestamp: "2026-06-01T10:01:00.000Z", sourceScreenshots: [] });
+
+    expect(state.iocs.map((i) => i.id)).toEqual(["i001", "i002", "i003"]);
   });
 
   it("appends a timeline entry per window", () => {
@@ -102,6 +154,33 @@ describe("mergeDelta", () => {
     // A per-window delta with no keyQuestions must NOT wipe them.
     state = mergeDelta(state, { ...baseDelta }, { windowSequence: 3, timestamp: "2026-05-28T10:10:00.000Z", sourceScreenshots: [] });
     expect(state.keyQuestions).toHaveLength(1);
+  });
+
+  it("replaces next steps wholesale when synthesis provides them, keeps them otherwise", () => {
+    let state = emptyState("c1");
+    state = mergeDelta(state, {
+      ...baseDelta,
+      nextSteps: [
+        { id: "n1", priority: "high", action: "Pull $MFT on ALClient07", rationale: "confirm execution", pointer: "event e3" },
+      ],
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+    expect(state.nextSteps).toHaveLength(1);
+    expect(state.nextSteps[0].priority).toBe("high");
+
+    // A later synthesis re-prioritizes (replace, not append).
+    state = mergeDelta(state, {
+      ...baseDelta,
+      nextSteps: [
+        { id: "n2", priority: "critical", action: "Sandbox-detonate Bubeus.exe", rationale: "find C2", pointer: "ioc i2" },
+      ],
+    }, { windowSequence: 2, timestamp: "2026-05-28T10:05:00.000Z", sourceScreenshots: [] });
+    expect(state.nextSteps).toHaveLength(1);
+    expect(state.nextSteps[0].priority).toBe("critical");
+    expect(state.nextSteps[0].action).toBe("Sandbox-detonate Bubeus.exe");
+
+    // A per-window delta with no nextSteps must NOT wipe them.
+    state = mergeDelta(state, { ...baseDelta }, { windowSequence: 3, timestamp: "2026-05-28T10:10:00.000Z", sourceScreenshots: [] });
+    expect(state.nextSteps).toHaveLength(1);
   });
 
   it("drops tool-usage narration from forensic events at merge time", () => {

@@ -1,6 +1,7 @@
 import { CompanionClient } from "./companionClient.js";
 import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
+import { setActionIcon } from "./actionIcon.js";
 import { DEFAULT_SETTINGS, type Settings, type TriggerType } from "./types.js";
 
 const ALARM = "dfir-capture-timer";
@@ -54,6 +55,8 @@ async function rescheduleAlarm(): Promise<void> {
   if (settings.running) {
     await chrome.alarms.create(ALARM, { periodInMinutes: Math.max(settings.intervalSeconds, 5) / 60 });
   }
+  // Keep the toolbar icon in sync with capture state (recording dot vs idle ring).
+  await setActionIcon(settings.running).catch(() => {});
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {

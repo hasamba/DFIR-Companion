@@ -31,6 +31,17 @@ export function renderMarkdownReport(state: InvestigationState): string {
     lines.push("");
   }
 
+  lines.push("## Recommended Next Steps", "");
+  if (state.nextSteps.length === 0) {
+    lines.push("_None recommended yet — run synthesis._", "");
+  } else {
+    lines.push("| Priority | Action | Why it matters | Where / what to collect |", "| --- | --- | --- | --- |");
+    for (const s of state.nextSteps) {
+      lines.push(`| ${s.priority.toUpperCase()} | ${cellMd(s.action)} | ${cellMd(s.rationale || "—")} | ${cellMd(s.pointer || "—")} |`);
+    }
+    lines.push("");
+  }
+
   lines.push("## Forensic Timeline", "");
   lines.push("_Real incident events, ordered by when they actually happened._", "");
   if (state.forensicTimeline.length === 0) {

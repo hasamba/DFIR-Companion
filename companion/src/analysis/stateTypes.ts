@@ -68,6 +68,18 @@ export interface InvestigationQuestion {
   pointer: string;             // where to look: finding ids / event times / screenshots, or what to collect next
 }
 
+export type StepPriority = "critical" | "high" | "medium" | "low";
+
+// A concrete, prioritized recommendation for what to do NEXT — the most valuable
+// thing to validate or find out given everything currently known about the case.
+export interface NextStep {
+  id: string;
+  priority: StepPriority;
+  action: string;              // what to do, e.g. "Pull Security.evtx 4624/4672 on ALClient07"
+  rationale: string;           // why it matters now — what it confirms or rules out
+  pointer: string;             // concrete artifact/host/finding to act on, or data to collect
+}
+
 export interface InvestigationState {
   caseId: string;
   findings: Finding[];
@@ -77,6 +89,7 @@ export interface InvestigationState {
   forensicTimeline: ForensicEvent[];   // real incident events, sorted by their true time
   mitreTechniques: Technique[];
   keyQuestions: InvestigationQuestion[]; // standard DFIR questions + current answers
+  nextSteps: NextStep[];               // AI-recommended next investigative actions, most important first
   lastSummary: string;
   attackerPath: string;                // narrative reconstruction of the attacker's path
   updatedAt: string;
@@ -92,6 +105,7 @@ export function emptyState(caseId: string): InvestigationState {
     forensicTimeline: [],
     mitreTechniques: [],
     keyQuestions: [],
+    nextSteps: [],
     lastSummary: "",
     attackerPath: "",
     updatedAt: new Date(0).toISOString(),

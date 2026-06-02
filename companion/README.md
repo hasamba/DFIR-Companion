@@ -79,7 +79,9 @@ Examples:
 | `GET /health` | Reachability + `{ ok, aiEnabled }`. |
 | `POST /cases` | Create a case: `{ caseId, name, investigator, aiProvider }`. |
 | `POST /captures` | Ingest a screenshot: `{ caseId, timestamp, url, tabTitle, triggerType, imageBase64 }`. |
+| `POST /cases/:id/import-csv` | Import a CSV result export (e.g. a Velociraptor artifact): `{ filename, csv }`. Persists the raw CSV as evidence, extracts dated forensic events + IOCs from the rows, then synthesizes. Returns `202 { accepted, file, rows }`; progress streams over the WS. The dashboard's **Import CSV** button calls this. |
 | `GET /cases/:id/state` | Current investigation state (JSON). |
+| `GET /cases/:id/evidence/:file` | Serve a piece of evidence (a screenshot or an imported CSV) by filename. Sandboxed to the case's `screenshots/` and `imports/` dirs (no path separators or `..`). The dashboard links findings/events to this so a click opens the artifact. |
 | `GET /cases/:id/captures/count` | Number of captures recorded for the case. |
 | `GET /cases/:id/scope` | Current investigation time-window: `{ start, end }` (ISO or null). |
 | `POST /cases/:id/scope` | `{ start, end }` — set the window; re-synthesizes using only in-scope events. The dashboard's scope bar calls this. |
@@ -101,7 +103,9 @@ the server from a `chrome-extension://` origin.
     cases/<caseId>/
       case.json
       screenshots/000001_<ts>.webp        evidence (raw screenshots)
+      imports/0001_<name>.csv             evidence (raw uploaded CSV result exports)
       metadata/captures.jsonl             append-only audit trail
+      metadata/imports.jsonl              append-only CSV-import audit trail
       state/
         investigation.json                accumulating findings/timeline/forensic events
         pending_analysis.json             written if an analysis window fails (auto-cleared on success)

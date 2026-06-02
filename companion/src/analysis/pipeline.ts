@@ -8,6 +8,7 @@ import { mergeDelta } from "./stateMerge.js";
 import { extractJsonText } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, type LegitimateStore } from "./legitimate.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
+import { parseCsv, chunk, chunkToCsvText } from "./csvImport.js";
 
 export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation",
@@ -80,6 +81,48 @@ export const SYSTEM_PROMPT = [
   "If a section has nothing new, return it as an empty array (or empty string for text fields).",
 ].join("\n");
 
+// Extraction prompt for an imported CSV (a Velociraptor/EDR result export). Like
+// SYSTEM_PROMPT but the evidence is structured ROWS, not screenshots: each row is a
+// forensic record and we want its real timestamp read from the row's own time column.
+export const CSV_SYSTEM_PROMPT = [
+  "You are a DFIR analyst assistant. You are given ROWS from a CSV export of forensic results",
+  "(typically a Velociraptor artifact or EDR query: process listings, Windows event-log rows,",
+  "netstat, prefetch, $MFT, scheduled tasks, services, shellbags, AmCache, UserAssist, etc.),",
+  "plus a summary of findings already recorded.",
+  "",
+  "Each data row IS the evidence. For EVERY row that represents real host/attacker activity, emit a",
+  "forensicEvents entry whose 'timestamp' is read FROM THAT ROW's OWN time column — pick the most",
+  "relevant time field present (e.g. Mtime/Btime/Ctime/Atime, Timestamp, EventTime, Created /",
+  "CreationTime, StartTime, RunTime, LastRun, FirstSeen, _ts). Convert to ISO-8601 if possible.",
+  "If a row has NO usable event time, set timestamp to \"\" — NEVER substitute the current time.",
+  "Give each event a severity and map it to MITRE technique ids where clear.",
+  "",
+  "Also surface concrete IOCs present in the rows (ips, domains, hashes, malicious file/process",
+  "names, URLs). Do NOT invent findings or an attacker-path here — those are produced later by a",
+  "holistic synthesis pass; your job is to faithfully extract the dated forensic events and IOCs.",
+  "Set timelineNote to one short sentence naming the artifact and the columns you read.",
+  "",
+  "Return ONLY raw JSON (no markdown fences). Every event/ioc MUST be an OBJECT. Shape:",
+  "",
+  JSON.stringify(
+    {
+      findings: [],
+      iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
+      mitreTechniques: [{ id: "T1059", name: "Command and Scripting Interpreter" }],
+      forensicEvents: [
+        { id: "e1", timestamp: "2026-05-20T14:03:00Z", description: "what happened (cite the row's key columns)", severity: "Critical|High|Medium|Low|Info", mitreTechniques: ["T1059.001"] },
+      ],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "read N rows of <artifact> (time column: <col>)",
+      attackerPath: "",
+      summary: "",
+    },
+    null,
+    2,
+  ),
+].join("\n");
+
 // Holistic synthesis: turn the accumulated forensic timeline into analytic
 // conclusions (findings, MITRE, attacker path). Findings/attacker-path need the
 // WHOLE picture, which a single window can't see — so this runs once over the
@@ -123,6 +166,13 @@ export const SYNTHESIS_PROMPT = [
   "  mechanisms; privilege escalation; credential access; lateral movement (from→to); command & control;",
   "  data exfiltration; impact; which USER accounts are compromised; which HOSTS are compromised;",
   "  incident timeframe / earliest and latest activity (dwell time).",
+  "- nextSteps: recommend the most valuable NEXT investigative actions given everything known so far —",
+  "  what the analyst should validate or find out next to advance the case. Order them by 'priority'",
+  "  ('critical' | 'high' | 'medium' | 'low'), most important first. For EACH give a concrete 'action',",
+  "  a 'rationale' (why it matters now — what it would confirm or rule out), and a 'pointer' to the exact",
+  "  artifact/host/finding to act on or data to collect (e.g. 'pull Security.evtx 4624/4672 on ALClient07',",
+  "  'sandbox-detonate Bubeus.exe', 'check web proxy logs for the C2 domain'). Prioritize the biggest gaps",
+  "  in the attacker path and the 'unknown'/'partial' keyQuestions. Return 3-7 steps.",
   "",
   "Return ONLY raw JSON (no markdown fences). Set forensicEvents to [] and timelineNote to \"\".",
   "Every finding/ioc/technique/thread/question MUST be an object, never a bare string. Shape:",
@@ -141,6 +191,10 @@ export const SYNTHESIS_PROMPT = [
         { id: "q_lateral_movement", question: "Was there lateral movement, and from/to which hosts?", status: "partial", answer: "…", pointer: "events on ALClient07; confirm with logon 4624 on the target" },
         { id: "q_compromised_users", question: "Which user accounts are compromised?", status: "answered", answer: "…", pointer: "finding f5; Mimikatz output" },
         { id: "q_compromised_hosts", question: "Which hosts are compromised?", status: "answered", answer: "…", pointer: "…" },
+      ],
+      nextSteps: [
+        { id: "n1", priority: "critical", action: "Pull Security.evtx (4624/4672/4688) on ALClient07 and timeline ±15m around the first execution", rationale: "Confirms the initial access vector and whether lateral movement preceded execution", pointer: "event e3 / finding f1; collect from ALClient07" },
+        { id: "n2", priority: "high", action: "Sandbox-detonate Bubeus.exe and capture network IOCs", rationale: "Establishes C2 infrastructure still unknown in the timeline", pointer: "ioc i2; submit hash, watch for the C2 domain" },
       ],
       forensicEvents: [],
       timelineNote: "",
@@ -218,6 +272,62 @@ export class AnalysisPipeline {
     await this.opts.stateStore.save(next);
     this.opts.onState?.(next);
     return next;
+  }
+
+  // Import an uploaded CSV (e.g. a Velociraptor result export) as evidence: extract
+  // dated forensic events + IOCs from the rows, batch by batch, into the timeline —
+  // the same delta the screenshot path produces. Findings/TTPs/attacker-path come
+  // afterwards from synthesize() (call it after this resolves), exactly like capture.
+  async analyzeCsv(
+    caseId: string,
+    csvText: string,
+    opts: {
+      label: string;             // evidence label shown as the event source (stored filename)
+      idPrefix: string;          // unique per import (e.g. "m3") so event ids never collide
+      importedAt: string;        // ISO time used for timeline/firstSeen context
+      rowsPerBatch?: number;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const { headers, rows } = parseCsv(csvText);
+    if (rows.length === 0) return this.opts.stateStore.load(caseId);
+
+    const batches = chunk(rows, Math.max(1, opts.rowsPerBatch ?? 50));
+    const retries = this.opts.retries ?? 3;
+    const backoffMs = this.opts.backoffMs ?? 500;
+
+    let state = await this.opts.stateStore.load(caseId);
+    let evSeq = 0; // running counter → globally unique forensic-event ids for this import
+
+    for (let b = 0; b < batches.length; b++) {
+      const csvChunk = chunkToCsvText(headers, batches[b]);
+      const userPrompt =
+        `${buildStateSummary(state)}\n\nCSV ARTIFACT ROWS (source: ${opts.label}; batch ${b + 1}/${batches.length}). ` +
+        `Read each row's OWN time column for event times — do not use the current time:\n\n${csvChunk}\n\n` +
+        `Return the JSON delta.`;
+
+      const delta = await withRetry(async () => {
+        const result = await this.opts.provider.analyze({ systemPrompt: CSV_SYSTEM_PROMPT, userPrompt, images: [] });
+        return deltaSchema.parse(JSON.parse(extractJsonText(result.rawText)));
+      }, retries, backoffMs);
+
+      // Renumber event ids so chunked imports don't overwrite each other (merge
+      // dedupes forensic events by id, and each batch independently emits e1, e2…).
+      const renumbered = {
+        ...delta,
+        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}` })),
+      };
+
+      state = mergeDelta(state, renumbered, {
+        windowSequence: -(b + 1), // negative: distinguishes import batches from capture windows
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label], // evidence traceability: the CSV file
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(b + 1, batches.length);
+    }
+    return state;
   }
 
   // Holistic pass: read the whole forensic timeline and produce findings, MITRE

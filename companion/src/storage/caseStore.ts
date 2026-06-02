@@ -1,6 +1,6 @@
 import { mkdir, writeFile, appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { CaseMeta, CaptureMetadata } from "../types.js";
+import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 
 export interface CreateCaseInput {
   caseId: string;
@@ -27,8 +27,14 @@ export class CaseStore {
   reportsDir(caseId: string): string {
     return join(this.caseDir(caseId), "reports");
   }
+  importsDir(caseId: string): string {
+    return join(this.caseDir(caseId), "imports");
+  }
   capturesLogPath(caseId: string): string {
     return join(this.metadataDir(caseId), "captures.jsonl");
+  }
+  importsLogPath(caseId: string): string {
+    return join(this.metadataDir(caseId), "imports.jsonl");
   }
   caseMetaPath(caseId: string): string {
     return join(this.caseDir(caseId), "case.json");
@@ -47,6 +53,7 @@ export class CaseStore {
       this.metadataDir(input.caseId),
       this.stateDir(input.caseId),
       this.reportsDir(input.caseId),
+      this.importsDir(input.caseId),
     ]) {
       await mkdir(dir, { recursive: true });
     }
@@ -70,6 +77,31 @@ export class CaseStore {
       const log = await readFile(this.capturesLogPath(caseId), "utf8");
       const lines = log.split("\n").filter((l) => l.trim().length > 0);
       return lines.length + 1;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return 1;
+      throw err;
+    }
+  }
+
+  // Persist an uploaded CSV verbatim as evidence (mkdirs for cases created before
+  // the imports/ dir existed). Returns the stored absolute path.
+  async saveImport(caseId: string, filename: string, text: string): Promise<string> {
+    await mkdir(this.importsDir(caseId), { recursive: true });
+    const path = join(this.importsDir(caseId), filename);
+    await writeFile(path, text, "utf8");
+    return path;
+  }
+
+  async appendImport(caseId: string, metadata: ImportMetadata): Promise<ImportMetadata> {
+    await mkdir(this.metadataDir(caseId), { recursive: true });
+    await appendFile(this.importsLogPath(caseId), JSON.stringify(metadata) + "\n", "utf8");
+    return metadata;
+  }
+
+  async nextImportSeq(caseId: string): Promise<number> {
+    try {
+      const log = await readFile(this.importsLogPath(caseId), "utf8");
+      return log.split("\n").filter((l) => l.trim().length > 0).length + 1;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return 1;
       throw err;

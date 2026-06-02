@@ -13,7 +13,10 @@ export class StateStore {
   async load(caseId: string): Promise<InvestigationState> {
     try {
       const raw = await readFile(this.path(caseId), "utf8");
-      return JSON.parse(raw) as InvestigationState;
+      const parsed = JSON.parse(raw) as Partial<InvestigationState>;
+      // Normalize over a fresh empty state so cases persisted before a field was
+      // introduced (e.g. nextSteps, keyQuestions) still load with that field present.
+      return { ...emptyState(caseId), ...parsed, caseId };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptyState(caseId);
       throw err;

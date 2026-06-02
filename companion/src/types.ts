@@ -20,6 +20,18 @@ export interface CaseMeta {
   aiProvider: string | null;
 }
 
+// Audit record for an uploaded CSV result set (e.g. a Velociraptor export),
+// appended to metadata/imports.jsonl before any analysis (evidence-first).
+export interface ImportMetadata {
+  caseId: string;
+  sequenceNumber: number;
+  importedAt: string;       // ISO-8601
+  filename: string;         // stored filename within imports/
+  originalName: string;     // the user's original file name
+  rows: number;             // data rows (excluding header)
+  bytes: number;            // raw CSV byte length
+}
+
 // Payload the extension POSTs to the ingest endpoint.
 export interface IngestPayload {
   caseId: string;

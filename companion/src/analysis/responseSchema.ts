@@ -50,6 +50,14 @@ export const deltaSchema = z.object({
     answer: z.string().default(""),
     pointer: z.string().default(""),
   })).optional(),
+  // Prioritized recommendations for the most valuable next investigative actions.
+  nextSteps: z.array(z.object({
+    id: z.string().min(1),
+    priority: z.enum(["critical", "high", "medium", "low"]).default("medium").catch("medium"),
+    action: z.string().min(1),
+    rationale: z.string().default(""),
+    pointer: z.string().default(""),
+  })).optional(),
 });
 
 export type AnalysisDelta = z.infer<typeof deltaSchema>;

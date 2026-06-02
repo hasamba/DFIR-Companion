@@ -77,6 +77,20 @@ describe("renderMarkdownReport", () => {
     expect(md).toContain("10.0.0.5");
   });
 
+  it("renders recommended next steps with priority, action and pointer", () => {
+    const state = emptyState("c1");
+    state.nextSteps.push(
+      { id: "n1", priority: "critical", action: "Pull Security.evtx on ALClient07", rationale: "confirm initial access", pointer: "event e3" },
+      { id: "n2", priority: "high", action: "Detonate Bubeus.exe", rationale: "find C2", pointer: "ioc i2" },
+    );
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("## Recommended Next Steps");
+    expect(md).toContain("CRITICAL");
+    expect(md).toContain("Pull Security.evtx on ALClient07");
+    expect(md).toContain("confirm initial access");
+    expect(md).toContain("Detonate Bubeus.exe");
+  });
+
   it("renders investigation threads split into open and closed", () => {
     const state = emptyState("c1");
     state.openThreads.push(

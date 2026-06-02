@@ -9,6 +9,7 @@ import { ingestCapture } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
+import { parseCsv } from "./analysis/csvImport.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
@@ -38,6 +39,23 @@ export interface AppOptions {
   // windows are analyzed, so the live dashboard shows findings/attacker path.
   autoSynthesize?: boolean;
   autoSynthesizeDebounceMs?: number;
+}
+
+// Content type for an evidence file served back to the dashboard. CSVs/text are
+// served as text/plain so a click opens them in a tab rather than downloading.
+function evidenceContentType(file: string): string {
+  const ext = file.slice(file.lastIndexOf(".")).toLowerCase();
+  switch (ext) {
+    case ".webp": return "image/webp";
+    case ".png": return "image/png";
+    case ".jpg":
+    case ".jpeg": return "image/jpeg";
+    case ".gif": return "image/gif";
+    case ".csv":
+    case ".txt": return "text/plain; charset=utf-8";
+    case ".json": return "application/json; charset=utf-8";
+    default: return "application/octet-stream";
+  }
 }
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
@@ -236,6 +254,34 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Serve a piece of evidence (a screenshot or an imported CSV) by filename so the
+  // dashboard can link findings/events straight to the artifact they came from.
+  // Strictly sandboxed: only a bare filename within the case's screenshots/ or
+  // imports/ dir is allowed (no path separators, no "..").
+  app.get("/cases/:id/evidence/:file", async (req: Request, res: Response) => {
+    const file = req.params.file;
+    if (!/^[A-Za-z0-9._-]+$/.test(file) || file.includes("..")) {
+      return res.status(400).json({ error: "invalid evidence filename" });
+    }
+    const candidates = [
+      join(store.screenshotsDir(req.params.id), file),
+      join(store.importsDir(req.params.id), file),
+    ];
+    for (const path of candidates) {
+      try {
+        const buf = await readFile(path);
+        res.type(evidenceContentType(file));
+        res.setHeader("Cache-Control", "private, max-age=300");
+        return res.send(buf);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          return res.status(500).json({ error: (err as Error).message });
+        }
+      }
+    }
+    return res.status(404).json({ error: "evidence not found" });
+  });
+
   app.post("/cases/:id/report", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
@@ -348,6 +394,54 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await scopeStore.save(req.params.id, scope);
       resynthesizeInBackground(req.params.id); // re-derive within the window
       return res.status(200).json(scope);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a CSV result export (e.g. a Velociraptor artifact) as evidence and analyze
+  // it like captured screenshots: extract dated forensic events + IOCs into the
+  // timeline, then synthesize findings/TTPs/attacker-path. Evidence-first: the raw
+  // CSV is persisted + audit-logged BEFORE any analysis; analysis runs in background.
+  app.post("/cases/:id/import-csv", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const csv = typeof req.body?.csv === "string" ? req.body.csv : "";
+    const originalName = String(req.body?.filename ?? "import.csv");
+    if (!csv.trim()) return res.status(400).json({ error: "csv is required" });
+
+    try {
+      const { rows } = parseCsv(csv);
+      if (rows.length === 0) return res.status(400).json({ error: "CSV has no data rows" });
+
+      // Evidence-first: persist the raw CSV + append the audit line before analysis.
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.csv");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, csv);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: rows.length, bytes: Buffer.byteLength(csv, "utf8"),
+      });
+
+      // Acknowledge immediately; the dashboard watches AI status + state over the WS.
+      res.status(202).json({ accepted: true, file: storedName, rows: rows.length });
+
+      // Background: extract events from the rows, then synthesize conclusions.
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${rows.length} CSV row(s)` });
+      void options.pipeline.analyzeCsv(caseId, csv, {
+        label: storedName,
+        idPrefix: `m${seq}`,
+        importedAt,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `CSV import — batch ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
