@@ -39,6 +39,11 @@ export const deltaSchema = z.object({
     severity: severity.default("Info").catch("Info"),
     mitreTechniques: z.array(z.string()).default([]),
     relatedFindingIds: z.array(z.string()).default([]),
+    // Aggregation: when one event represents many collapsed occurrences (e.g. "20
+    // failed logins"), count is the number of occurrences and endTimestamp the time
+    // of the last one. Absent/1 means a single discrete event.
+    count: z.number().int().positive().optional(),
+    endTimestamp: z.string().optional(),
   })).optional(),
   // Narrative reconstruction of the attacker's path (kill-chain story).
   attackerPath: z.string().optional(),

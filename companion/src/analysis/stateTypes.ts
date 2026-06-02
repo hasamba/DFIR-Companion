@@ -48,6 +48,8 @@ export interface ForensicEvent {
   mitreTechniques: string[];
   relatedFindingIds: string[];
   sourceScreenshots: string[];
+  count?: number;               // occurrences when this event aggregates many collapsed lines (e.g. 20); absent ⇒ 1
+  endTimestamp?: string;        // time of the last occurrence when aggregated (timestamp is the first)
 }
 
 export interface Technique {

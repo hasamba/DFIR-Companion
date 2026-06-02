@@ -36,9 +36,9 @@ export function timelineCsv(state: InvestigationState): string {
 // Forensic timeline: real incident events sorted by their true time — the
 // chronological attack story, suitable for a master-timeline export.
 export function forensicTimelineCsv(state: InvestigationState): string {
-  const header = "timestamp,severity,description,mitreTechniques,relatedFindingIds,sourceScreenshots";
+  const header = "timestamp,endTimestamp,count,severity,description,mitreTechniques,relatedFindingIds,sourceScreenshots";
   const rows = [...state.forensicTimeline].sort(byEventTime).map((e) => row([
-    e.timestamp, e.severity, e.description,
+    e.timestamp, e.endTimestamp ?? "", String(e.count ?? 1), e.severity, e.description,
     e.mitreTechniques.join("|"), e.relatedFindingIds.join("|"), e.sourceScreenshots.join("|"),
   ]));
   return [header, ...rows].join("\n") + "\n";

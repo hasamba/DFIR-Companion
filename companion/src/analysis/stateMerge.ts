@@ -137,6 +137,8 @@ export function mergeDelta(
       existing.mitreTechniques = uniq([...existing.mitreTechniques, ...incoming.mitreTechniques]);
       existing.relatedFindingIds = uniq([...existing.relatedFindingIds, ...incoming.relatedFindingIds]);
       existing.sourceScreenshots = uniq([...existing.sourceScreenshots, ...ctx.sourceScreenshots]);
+      if (incoming.count !== undefined) existing.count = incoming.count;
+      if (incoming.endTimestamp !== undefined) existing.endTimestamp = incoming.endTimestamp;
     } else {
       forensicTimeline.push({
         id: incoming.id,
@@ -146,6 +148,8 @@ export function mergeDelta(
         mitreTechniques: uniq(incoming.mitreTechniques),
         relatedFindingIds: uniq(incoming.relatedFindingIds),
         sourceScreenshots: uniq(ctx.sourceScreenshots),
+        ...(incoming.count !== undefined ? { count: incoming.count } : {}),
+        ...(incoming.endTimestamp !== undefined ? { endTimestamp: incoming.endTimestamp } : {}),
       });
     }
   }

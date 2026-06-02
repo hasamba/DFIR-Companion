@@ -47,11 +47,16 @@ export function renderMarkdownReport(state: InvestigationState): string {
   if (state.forensicTimeline.length === 0) {
     lines.push("_No dated forensic events extracted yet._", "");
   } else {
-    lines.push("| Time | Severity | Event | MITRE | Findings | Evidence |", "| --- | --- | --- | --- | --- | --- |");
+    lines.push("| Time | Count | Severity | Event | MITRE | Findings | Evidence |", "| --- | --- | --- | --- | --- | --- | --- |");
     const ordered: ForensicEvent[] = [...state.forensicTimeline].sort(byEventTime);
     for (const e of ordered) {
+      // Show a time span for aggregated events, and ×N when more than one occurrence.
+      const time = e.endTimestamp && e.endTimestamp !== e.timestamp
+        ? `${e.timestamp || "(undated)"} → ${e.endTimestamp}`
+        : (e.timestamp || "(undated)");
+      const count = e.count && e.count > 1 ? `×${e.count}` : "";
       lines.push(
-        `| ${cellMd(e.timestamp || "(undated)")} | ${e.severity} | ${cellMd(e.description)} | ` +
+        `| ${cellMd(time)} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
         `${cellMd(e.mitreTechniques.join(", "))} | ${cellMd(e.relatedFindingIds.join(", "))} | ` +
         `${cellMd(e.sourceScreenshots.join(", "))} |`,
       );

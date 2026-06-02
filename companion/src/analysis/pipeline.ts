@@ -9,7 +9,8 @@ import { extractJsonText } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
 import { parseCsv, chunk, chunkToCsvText } from "./csvImport.js";
-import { parseLogLines, linesToText } from "./logImport.js";
+import { parseLogLines } from "./logImport.js";
+import { aggregateLogLines } from "./logAggregate.js";
 
 export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation",
@@ -130,25 +131,42 @@ export const CSV_SYSTEM_PROMPT = [
 // (RFC 3164 syslog "May 28 09:00:01", ISO-8601, IIS "yyyy-MM-dd HH:mm:ss",
 // Apache "[28/May/2026:09:00:01 +0000]", epoch seconds, etc.).
 export const LOG_SYSTEM_PROMPT = [
-  "You are a DFIR analyst assistant. You are given LINES from a log file uploaded as evidence",
-  "(typical sources: firewall logs — Cisco ASA, pfSense, iptables, Palo Alto, Fortinet; syslog;",
-  "Windows event-log text exports; sshd / auth.log; Apache/IIS/nginx access logs; application",
-  "logs), plus a summary of findings already recorded.",
+  "You are a DFIR analyst assistant triaging a log file uploaded as evidence (typical sources:",
+  "firewall logs — Cisco ASA, pfSense, iptables, Palo Alto, Fortinet; syslog; Windows event-log",
+  "text exports; sshd / auth.log; Apache/IIS/nginx access logs; VPN/IKE; application logs).",
   "",
-  "Each non-empty line IS the evidence. For EVERY line that represents real host/attacker/network",
-  "activity, emit a forensicEvents entry whose 'timestamp' is read FROM THAT LINE — accept any",
-  "format the log uses (RFC 3164 syslog 'May 28 09:00:01', ISO-8601, IIS 'yyyy-MM-dd HH:mm:ss',",
-  "Apache '[28/May/2026:09:00:01 +0000]', epoch seconds, etc.) and convert to ISO-8601 when",
-  "possible. Syslog lines without a year — assume the most recent plausible year given the rest",
-  "of the evidence already recorded; if you can't tell, leave the year out rather than guessing",
-  "wrong. If a line has NO usable time, set timestamp to \"\" — NEVER substitute the current time.",
+  "The raw log has already been DEDUPLICATED for you: identical recurring lines are collapsed into",
+  "PATTERNS. Each pattern below shows ×<count> (how many times it occurred), the first and last time",
+  "it was seen, and one example line. Treat each pattern as ONE candidate event representing all of",
+  "its occurrences — do NOT emit one event per occurrence.",
+  "",
+  "BE SELECTIVE. A forensic timeline is for SECURITY-RELEVANT activity, not routine operations.",
+  "Emit a forensicEvents entry ONLY for patterns that are suspicious, anomalous, or investigation-",
+  "worthy, e.g.: authentication failures / brute force, blocked or denied traffic from unusual",
+  "sources, port/host scans, IDS/IPS or AV hits, privilege changes, account or config changes,",
+  "unexpected outbound connections / beaconing / data transfer, malware indicators, or an abnormal",
+  "VOLUME of failures suggesting brute force or DoS.",
+  "",
+  "SKIP routine operational noise — do NOT emit events for it: normal VPN/IPsec rekeying, IKE",
+  "keying attempts and retransmission/timeout chatter, heartbeats, successful benign connections,",
+  "and informational/debug lines. A high ×count alone does NOT make a pattern suspicious; benign",
+  "infrastructure noise (e.g. a tunnel repeatedly re-keying) should be skipped even at high volume.",
+  "If NOTHING in this batch is security-relevant, return an empty forensicEvents array — that is the",
+  "correct, expected answer for a clean/noisy operational log.",
+  "",
+  "For each event you DO emit, AGGREGATE the whole pattern into one entry:",
+  "  - 'timestamp'    = the pattern's FIRST occurrence time (convert to ISO-8601 when possible;",
+  "                     if there is no usable time set it to \"\" — NEVER use the current time),",
+  "  - 'endTimestamp' = the pattern's LAST occurrence time (omit if same as first / single event),",
+  "  - 'count'        = the pattern's ×<count> occurrence number (copy it verbatim),",
+  "  - 'description'  = an aggregate summary that STATES THE COUNT and time span, e.g.",
+  "                     '20 failed SSH logins for root from 1.2.3.4 between 09:00:01 and 09:04:12'.",
   "Give each event a severity and map it to MITRE technique ids where clear.",
   "",
-  "Also surface concrete IOCs present in the lines (source/destination ips, domains, hashes,",
-  "URLs, suspicious user names, suspicious process or file names). Do NOT invent findings or an",
-  "attacker-path here — those are produced later by a holistic synthesis pass; your job is to",
-  "faithfully extract the dated forensic events and IOCs. Set timelineNote to one short sentence",
-  "naming the log source you inferred (e.g. 'pfSense filter log', 'sshd auth.log', 'IIS access').",
+  "Also surface concrete IOCs present in the suspicious patterns (source/destination ips, domains,",
+  "hashes, URLs, suspicious user/process/file names). Do NOT invent findings or an attacker path —",
+  "those come from a later holistic synthesis pass. Set timelineNote to one short sentence naming",
+  "the log source you inferred (e.g. 'pfSense filter log', 'sshd auth.log', 'strongSwan IKE log').",
   "",
   "Return ONLY raw JSON (no markdown fences). Every event/ioc MUST be an OBJECT. Shape:",
   "",
@@ -158,11 +176,11 @@ export const LOG_SYSTEM_PROMPT = [
       iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
       mitreTechniques: [{ id: "T1110", name: "Brute Force" }],
       forensicEvents: [
-        { id: "e1", timestamp: "2026-05-20T14:03:00Z", description: "what happened (cite the line's key fields)", severity: "Critical|High|Medium|Low|Info", mitreTechniques: ["T1110.001"] },
+        { id: "e1", timestamp: "2026-05-20T14:03:00Z", endTimestamp: "2026-05-20T14:07:55Z", count: 20, description: "20 failed logins for 'admin' from 1.2.3.4 (possible brute force)", severity: "Critical|High|Medium|Low|Info", mitreTechniques: ["T1110.001"] },
       ],
       threadsOpened: [],
       threadsClosed: [],
-      timelineNote: "read N line(s) of <inferred log source>",
+      timelineNote: "triaged N pattern(s) of <inferred log source>",
       attackerPath: "",
       summary: "",
     },
@@ -379,9 +397,12 @@ export class AnalysisPipeline {
   }
 
   // Import an uploaded generic log file (firewall logs, syslog, sshd, IIS, etc.)
-  // as evidence: extract dated forensic events + IOCs from each line, batch by
-  // batch, into the timeline — the same delta the screenshot and CSV paths
-  // produce. Findings/TTPs/attacker-path come afterwards from synthesize().
+  // as evidence. Logs are mostly repetition, so we DEDUPLICATE deterministically
+  // first (aggregateLogLines collapses near-identical lines into counted patterns),
+  // then ask the model to triage the PATTERNS — emitting one aggregated forensic
+  // event only for the security-relevant ones and skipping routine noise. This
+  // keeps the timeline signal-rich and cuts the analysis to ~one AI call.
+  // Findings/TTPs/attacker-path come afterwards from synthesize().
   async analyzeLog(
     caseId: string,
     logText: string,
@@ -389,14 +410,16 @@ export class AnalysisPipeline {
       label: string;             // evidence label shown as the event source (stored filename)
       idPrefix: string;          // unique per import (e.g. "l3") so event ids never collide
       importedAt: string;        // ISO time used for timeline/firstSeen context
-      linesPerBatch?: number;
+      patternsPerBatch?: number; // how many distinct patterns to triage per AI call
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
     const { lines } = parseLogLines(logText);
     if (lines.length === 0) return this.opts.stateStore.load(caseId);
 
-    const batches = chunk(lines, Math.max(1, opts.linesPerBatch ?? 200));
+    // Collapse the raw lines into distinct, counted patterns (most frequent first).
+    const templates = aggregateLogLines(lines);
+    const batches = chunk(templates, Math.max(1, opts.patternsPerBatch ?? 120));
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
 
@@ -404,10 +427,19 @@ export class AnalysisPipeline {
     let evSeq = 0; // running counter → globally unique forensic-event ids for this import
 
     for (let b = 0; b < batches.length; b++) {
-      const linesChunk = linesToText(batches[b]);
+      // Present each pattern with its occurrence count, time span, and an example.
+      const patternText = batches[b]
+        .map((t, i) =>
+          `[p${i + 1}] ×${t.count}` +
+          (t.firstTimestamp ? ` first=${t.firstTimestamp}` : "") +
+          (t.lastTimestamp && t.lastTimestamp !== t.firstTimestamp ? ` last=${t.lastTimestamp}` : "") +
+          `\n     e.g. ${t.example}`,
+        )
+        .join("\n");
       const userPrompt =
-        `${buildStateSummary(state)}\n\nLOG LINES (source: ${opts.label}; batch ${b + 1}/${batches.length}). ` +
-        `Read each line's OWN time for event times — do not use the current time:\n\n${linesChunk}\n\n` +
+        `${buildStateSummary(state)}\n\nDEDUPLICATED LOG PATTERNS (source: ${opts.label}; ` +
+        `batch ${b + 1}/${batches.length}; ${lines.length} raw line(s) → ${templates.length} pattern(s)). ` +
+        `Emit an aggregated event ONLY for security-relevant patterns; skip routine noise:\n\n${patternText}\n\n` +
         `Return the JSON delta.`;
 
       const delta = await withRetry(async () => {

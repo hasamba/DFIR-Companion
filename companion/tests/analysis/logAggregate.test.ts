@@ -1,0 +1,78 @@
+import { describe, it, expect } from "vitest";
+import { aggregateLogLines, templateizeLine, splitLeadingTimestamp } from "../../src/analysis/logAggregate.js";
+
+describe("splitLeadingTimestamp", () => {
+  it("strips an ISO-8601 timestamp", () => {
+    const { timestamp, rest } = splitLeadingTimestamp("2026-05-19T00:00:13Z starting keying attempt 269");
+    expect(timestamp).toBe("2026-05-19T00:00:13Z");
+    expect(rest).toBe("starting keying attempt 269");
+  });
+
+  it("strips an RFC 3164 syslog timestamp", () => {
+    const { timestamp, rest } = splitLeadingTimestamp("May 28 09:00:01 host sshd[1]: Failed password");
+    expect(timestamp).toBe("May 28 09:00:01");
+    expect(rest).toBe("host sshd[1]: Failed password");
+  });
+
+  it("strips an Apache bracketed timestamp", () => {
+    const { timestamp } = splitLeadingTimestamp("[28/May/2026:09:00:01 +0000] GET /");
+    expect(timestamp).toBe("[28/May/2026:09:00:01 +0000]");
+  });
+
+  it("returns empty timestamp + original line when none present", () => {
+    const { timestamp, rest } = splitLeadingTimestamp("no time here just text");
+    expect(timestamp).toBe("");
+    expect(rest).toBe("no time here just text");
+  });
+});
+
+describe("templateizeLine", () => {
+  it("masks digit runs, #ids and hex but PRESERVES IP addresses", () => {
+    expect(templateizeLine("Failed password for root from 10.0.0.5 port 22"))
+      .toBe("Failed password for root from 10.0.0.5 port N");
+    expect(templateizeLine("initiating Main Mode to replace #871204 for 'S_REF_Ips2office_0'."))
+      .toBe("initiating Main Mode to replace #N for 'S_REF_IpsNoffice_N'.");
+    expect(templateizeLine("dropped 0xDEADBEEF flags")).toBe("dropped HEX flags");
+  });
+
+  it("groups lines that differ only by volatile numbers into the same template", () => {
+    const a = templateizeLine("starting keying attempt 269 of an unlimited number for 'S_REF_Ips2asihome_0'.");
+    const b = templateizeLine("starting keying attempt 1315 of an unlimited number for 'S_REF_Ips2asihome_0'.");
+    expect(a).toBe(b);
+  });
+
+  it("keeps different message structures (and different IPs) as distinct templates", () => {
+    expect(templateizeLine("Failed password from 1.1.1.1"))
+      .not.toBe(templateizeLine("Failed password from 2.2.2.2"));
+  });
+});
+
+describe("aggregateLogLines", () => {
+  it("collapses repeated lines into counted patterns, most frequent first", () => {
+    const lines = [
+      ...Array.from({ length: 20 }, (_, i) => `May 28 09:00:${String(i).padStart(2, "0")} sshd: Failed password for root from 10.0.0.5`),
+      "May 28 09:05:00 sshd: Accepted password for admin from 10.0.0.9",
+    ];
+    const out = aggregateLogLines(lines);
+    expect(out).toHaveLength(2);
+    expect(out[0].count).toBe(20);            // most frequent first
+    expect(out[1].count).toBe(1);
+    expect(out[0].firstTimestamp).toBe("May 28 09:00:00");
+    expect(out[0].lastTimestamp).toBe("May 28 09:00:19");
+    expect(out[0].example).toContain("Failed password");
+  });
+
+  it("respects maxTemplates, keeping the most frequent", () => {
+    const lines = [
+      "a 1", "a 2", "a 3",   // template "a N" ×3
+      "b 1", "b 2",          // template "b N" ×2
+      "c 1",                 // template "c N" ×1
+    ];
+    const out = aggregateLogLines(lines, { maxTemplates: 2 });
+    expect(out.map((t) => t.count)).toEqual([3, 2]);
+  });
+
+  it("returns [] for no lines", () => {
+    expect(aggregateLogLines([])).toEqual([]);
+  });
+});

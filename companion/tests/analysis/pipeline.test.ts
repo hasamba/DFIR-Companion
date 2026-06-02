@@ -352,34 +352,62 @@ describe("AnalysisPipeline", () => {
     expect(state.forensicTimeline.map((e) => e.id)).toEqual(["e1", "e2"]); // both preserved (reversible)
   });
 
-  it("analyzeLog extracts forensic events from log lines and renumbers ids across batches", async () => {
-    // Mirrors the CSV path: each batch independently emits "e1"; the import must
-    // renumber so chunked log batches accumulate instead of overwriting.
-    const oneEvent = JSON.stringify({
-      findings: [], iocs: [{ id: "i1", type: "ip", value: "10.0.0.5" }], mitreTechniques: [],
-      threadsOpened: [], threadsClosed: [], timelineNote: "read lines", attackerPath: "", summary: "",
-      forensicEvents: [{ id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "line event",
-        severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
-    });
+  it("analyzeLog deduplicates repetitive lines into counted patterns before the AI sees them", async () => {
+    // 20 near-identical failed-login lines (only the attempt number/time vary) must
+    // collapse into ONE pattern with ×20, so the model is asked to triage 1 pattern,
+    // not 20 lines — and the prompt carries the occurrence count.
+    let sentPrompt = "";
+    const provider = {
+      name: "spy",
+      analyze: async (req: { userPrompt: string }) => {
+        sentPrompt = req.userPrompt;
+        return { rawText: JSON.stringify({
+          findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "",
+          threadsOpened: [], threadsClosed: [], timelineNote: "sshd auth.log",
+          forensicEvents: [{ id: "e1", timestamp: "2026-05-28T09:00:00Z", endTimestamp: "2026-05-28T09:00:19Z",
+            count: 20, description: "20 failed SSH logins for root from 10.0.0.5", severity: "High",
+            mitreTechniques: ["T1110"], relatedFindingIds: [] }],
+        }) };
+      },
+    };
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", oneEvent),
-      stateStore,
+      provider, stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 
-    const log = [
-      "May 28 09:00:01 host sshd[1]: Failed password for root from 10.0.0.5",
-      "May 28 09:00:02 host sshd[2]: Failed password for admin from 10.0.0.5",
-      "May 28 09:00:03 host sshd[3]: Accepted password for admin from 10.0.0.5",
-    ].join("\n") + "\n";
+    const log = Array.from({ length: 20 }, (_, i) =>
+      `May 28 09:00:${String(i).padStart(2, "0")} host sshd[${1000 + i}]: Failed password for root from 10.0.0.5`,
+    ).join("\n") + "\n";
     const state = await pipeline.analyzeLog("c1", log, {
-      label: "0001_auth.log", idPrefix: "l1", importedAt: "2026-06-01T00:00:00Z", linesPerBatch: 2,
+      label: "0001_auth.log", idPrefix: "l1", importedAt: "2026-06-01T00:00:00Z",
     });
 
-    // 3 lines / 2 per batch = 2 batches → 2 events with distinct ids, both sourced from the log.
-    expect(state.forensicTimeline).toHaveLength(2);
-    expect(new Set(state.forensicTimeline.map((e) => e.id)).size).toBe(2);
-    expect(state.forensicTimeline.every((e) => e.sourceScreenshots.includes("0001_auth.log"))).toBe(true);
+    expect(sentPrompt).toContain("×20");                       // pattern collapsed with its count
+    expect(sentPrompt).toContain("20 raw line(s) → 1 pattern(s)");
+    // One aggregated event, carrying the count + span, sourced from the log.
+    expect(state.forensicTimeline).toHaveLength(1);
+    expect(state.forensicTimeline[0].count).toBe(20);
+    expect(state.forensicTimeline[0].endTimestamp).toBe("2026-05-28T09:00:19Z");
+    expect(state.forensicTimeline[0].sourceScreenshots).toContain("0001_auth.log");
+  });
+
+  it("analyzeLog lets the model skip routine noise (empty forensicEvents ⇒ nothing added)", async () => {
+    // A pure VPN-rekeying log: the model returns NO events; the timeline stays empty.
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        timelineNote: "strongSwan IKE log", attackerPath: "", summary: "", forensicEvents: [],
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const log = Array.from({ length: 50 }, (_, i) =>
+      `2026-05-19T00:00:${String(i % 60).padStart(2, "0")}Z starting keying attempt ${i} for 'S_REF_Ips2office_0'.`,
+    ).join("\n") + "\n";
+    const state = await pipeline.analyzeLog("c1", log, {
+      label: "0002_ipsec.log", idPrefix: "l2", importedAt: "2026-06-01T00:00:00Z",
+    });
+    expect(state.forensicTimeline).toHaveLength(0); // noise skipped, timeline not polluted
   });
 
   it("analyzeLog is a no-op for an empty log file", async () => {

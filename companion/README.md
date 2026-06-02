@@ -81,7 +81,7 @@ Examples:
 | `POST /cases` | Create a case: `{ caseId, name, investigator, aiProvider }`. |
 | `POST /captures` | Ingest a screenshot: `{ caseId, timestamp, url, tabTitle, triggerType, imageBase64 }`. |
 | `POST /cases/:id/import-csv` | Import a CSV result export (e.g. a Velociraptor artifact): `{ filename, csv }`. Persists the raw CSV as evidence, extracts dated forensic events + IOCs from the rows, then synthesizes. Returns `202 { accepted, file, rows }`; progress streams over the WS. The dashboard's **Import CSV** button calls this. |
-| `POST /cases/:id/import-log` | Import a generic log file (firewall — Cisco ASA, pfSense, iptables, Palo Alto, Fortinet; syslog; sshd / auth.log; IIS / Apache / nginx access; Windows event-log text exports; application logs — anything line-oriented, typically `.log` or `.txt`): `{ filename, text }`. Persists the raw file as evidence, extracts dated forensic events + IOCs from each line (any timestamp format the source uses — ISO-8601, RFC 3164 syslog, Apache, IIS, epoch…), then synthesizes. Returns `202 { accepted, file, lines }`; progress streams over the WS. The dashboard's **Import Log** button calls this. |
+| `POST /cases/:id/import-log` | Import a generic log file (firewall — Cisco ASA, pfSense, iptables, Palo Alto, Fortinet; syslog; sshd / auth.log; IIS / Apache / nginx access; Windows event-log text exports; VPN/IKE; application logs — anything line-oriented, typically `.log` or `.txt`): `{ filename, text }`. Persists the raw file as evidence, then **deduplicates** the lines into counted patterns and asks the AI to triage them, adding **only security-relevant** events to the timeline (routine noise like VPN rekeying/retransmissions is skipped). Repeated activity is **collapsed into one aggregated event** carrying an occurrence `count` and first→last time span (e.g. "20 failed logins…"). Any timestamp format is read (ISO-8601, RFC 3164 syslog, Apache, IIS, epoch…). Returns `202 { accepted, file, lines }`; progress streams over the WS. The dashboard's **Import Log** button calls this. |
 | `GET /cases/:id/state` | Current investigation state (JSON). |
 | `GET /cases/:id/evidence/:file` | Serve a piece of evidence (a screenshot or an imported CSV) by filename. Sandboxed to the case's `screenshots/` and `imports/` dirs (no path separators or `..`). The dashboard links findings/events to this so a click opens the artifact. |
 | `GET /cases/:id/captures/count` | Number of captures recorded for the case. |
@@ -150,6 +150,23 @@ un-mark it. Findings/IOCs are dropped via both the prompt and a hard post-filter
 A legitimate **event** is hidden from the timeline view and excluded from the synthesis
 input — but the raw event stays in state (it's evidence), so un-marking fully restores
 it. Reports honor all of these exclusions too.
+
+**Log import (firewall / syslog / VPN / access logs).** Log files are mostly
+repetition, so importing one does **not** add a timeline row per line. The raw lines
+are first **deduplicated deterministically** into distinct patterns (volatile tokens —
+sequence numbers, IDs, ports, the trailing `_N` of identifiers — are masked; source IP
+addresses are kept), each with an occurrence count and first/last time. The AI then
+**triages the patterns** and adds timeline events only for the **security-relevant**
+ones (auth failures / brute force, blocked traffic, scans, IDS/IPS hits, config/account
+changes, beaconing/exfil, abnormal failure volume). Routine operational noise — VPN/IPsec
+rekeying, IKE retransmissions, heartbeats, successful benign connections — is **skipped**,
+even at high volume. Each emitted event is an **aggregate**: it carries a `count` and a
+first→last span and reads like "20 failed SSH logins for root from 1.2.3.4 between …".
+The dashboard shows a `×N` badge; reports include `count`/`endTimestamp` columns. A pure
+operational log can legitimately yield **zero** timeline events — that's the correct,
+signal-first outcome. (To re-process a log you imported before this behavior existed,
+`npm run reanalyze -- <case> --reset` to clear the old per-line events, then re-upload the
+log file from the dashboard.)
 
 **Capture-only mode.** The dashboard's **AI: ON/OFF** button (per case) lets you
 capture screenshots as evidence without running AI. When you switch it back on, the

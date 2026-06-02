@@ -30,16 +30,19 @@ describe("CSV renderers", () => {
   it("forensicTimelineCsv emits a header and rows ordered by event time", () => {
     const state = emptyState("c1");
     expect(forensicTimelineCsv(state).trim()).toBe(
-      "timestamp,severity,description,mitreTechniques,relatedFindingIds,sourceScreenshots",
+      "timestamp,endTimestamp,count,severity,description,mitreTechniques,relatedFindingIds,sourceScreenshots",
     );
     state.forensicTimeline.push(
-      { id: "e2", timestamp: "2026-05-20T15:00:00Z", description: "later", severity: "Critical",
+      { id: "e2", timestamp: "2026-05-20T15:00:00Z", endTimestamp: "2026-05-20T15:30:00Z", count: 12,
+        description: "later", severity: "Critical",
         mitreTechniques: ["T1486"], relatedFindingIds: ["f1"], sourceScreenshots: ["s2.webp"] },
       { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "earlier", severity: "High",
         mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
     );
     const rows = forensicTimelineCsv(state).trim().split("\n");
     expect(rows[1]).toContain("earlier"); // 09:00 sorts before 15:00
+    expect(rows[1]).toContain(`,"1",`);   // default count = 1 when absent
     expect(rows[2]).toContain("later");
+    expect(rows[2]).toContain(`,"12",`);  // aggregated count surfaced
   });
 });
