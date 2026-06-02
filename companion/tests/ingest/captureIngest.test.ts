@@ -59,6 +59,24 @@ describe("ingestCapture", () => {
     expect(second.sequenceNumber).toBe(2);
   });
 
+  it("includes the slugified tab title in the screenshot filename", async () => {
+    const img = await pngBase64(10, 20, 30);
+    const meta = await ingestCapture(
+      store,
+      payload({ imageBase64: img, tabTitle: "Velociraptor — Hunts" }),
+    );
+    expect(meta.screenshotFile).toMatch(/^000001_.*_Velociraptor-Hunts\.webp$/);
+    const onDisk = await readFile(join(store.screenshotsDir("c1"), meta.screenshotFile));
+    expect(onDisk.length).toBeGreaterThan(0);
+  });
+
+  it("falls back to seq+timestamp when the title has no safe characters", async () => {
+    const img = await pngBase64(40, 50, 60);
+    const meta = await ingestCapture(store, payload({ imageBase64: img, tabTitle: "💀💀" }));
+    // No trailing underscore, no title segment at all.
+    expect(meta.screenshotFile).toMatch(/^000001_[^_]+\.webp$/);
+  });
+
   it("rejects an invalid payload (missing url)", async () => {
     const bad = payload({ imageBase64: await pngBase64(1, 1, 1) });
     delete (bad as Record<string, unknown>).url;

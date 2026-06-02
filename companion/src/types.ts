@@ -9,7 +9,7 @@ export interface CaptureMetadata {
   triggerType: TriggerType;
   perceptualHash: string;   // hex string
   isDuplicate: boolean;
-  screenshotFile: string;   // relative filename within screenshots/, e.g. "000123_<ts>.webp"
+  screenshotFile: string;   // relative filename within screenshots/, e.g. "000123_<ts>_<tab-title>.webp" (title slugified; omitted when empty / no safe chars)
 }
 
 export interface CaseMeta {

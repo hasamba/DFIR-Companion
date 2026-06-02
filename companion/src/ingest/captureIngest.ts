@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { CaptureMetadata } from "../types.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { computeHash, isDuplicate } from "../dedup/perceptualHash.js";
+import { slugifyTitle } from "./titleSlug.js";
 
 const DUP_THRESHOLD = 5;
 
@@ -33,7 +34,14 @@ export async function ingestCapture(
 
   const sequenceNumber = await store.nextSequenceNumber(payload.caseId);
   const tsSafe = payload.timestamp.replace(/[:.]/g, "-");
-  const screenshotFile = `${String(sequenceNumber).padStart(6, "0")}_${tsSafe}.webp`;
+  // Include the captured window's tab title in the filename so evidence is
+  // self-describing on disk. Slug strips OS-reserved chars and caps length;
+  // an empty/all-unsafe title is omitted cleanly (no dangling underscore).
+  const titleSlug = slugifyTitle(payload.tabTitle);
+  const seq = String(sequenceNumber).padStart(6, "0");
+  const screenshotFile = titleSlug
+    ? `${seq}_${tsSafe}_${titleSlug}.webp`
+    : `${seq}_${tsSafe}.webp`;
 
   // Evidence first: write the image before recording metadata.
   await store.saveScreenshot(payload.caseId, screenshotFile, bytes);

@@ -103,7 +103,7 @@ the server from a `chrome-extension://` origin.
 
     cases/<caseId>/
       case.json
-      screenshots/000001_<ts>.webp        evidence (raw screenshots)
+      screenshots/000001_<ts>_<tab-title>.webp   evidence (raw screenshots; title is slugified — OS-reserved chars stripped, capped at 60 chars; falls back to 000001_<ts>.webp when the title has no safe characters)
       imports/0001_<name>.csv             evidence (raw uploaded CSV result exports)
       metadata/captures.jsonl             append-only audit trail
       metadata/imports.jsonl              append-only CSV-import audit trail
