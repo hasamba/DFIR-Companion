@@ -18,6 +18,15 @@ const WORK_LOG = [
   "Velociraptor Response and Monitoring notebook accessed.",
   "Velociraptor Response and Monitoring session initiated.",
   "Velociraptor Response and Monitoring session continued.",
+  // Investigation-process narration the model stamped with capture time (reported again
+  // by the user). The tool noun comes AFTER the verb, or there is no concrete artifact.
+  "Surveying the DFIR Companion Dashboard for investigation context.",
+  "Performed initial data collection with Velociraptor.",
+  "Continued data collection with Velociraptor.",
+  "Data collection continued with Velociraptor.",
+  "Further data analyzed in Velociraptor.",
+  "Ongoing analysis completed in Velociraptor.",
+  "Final analysis stages reached in Velociraptor.",
 ];
 
 // Genuine host/attacker events that MUST survive the filter.
