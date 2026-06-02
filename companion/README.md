@@ -168,6 +168,15 @@ signal-first outcome. (To re-process a log you imported before this behavior exi
 `npm run reanalyze -- <case> --reset` to clear the old per-line events, then re-upload the
 log file from the dashboard.)
 
+**High-severity rows become findings.** If an artifact row carries its own
+Severity / Level / Criticality column reading **Critical**, **High**, or **Severe**
+(e.g. a Microsoft Defender or EDR detection), it is treated as a finding by default —
+the extraction and synthesis prompts are told a high-severity row is ~90% of the time a
+finding. As a deterministic safety net, after each synthesis any in-scope, non-legitimate
+**Critical/High** forensic event that synthesis left without a finding gets one
+auto-created and linked (id prefix `f-auto-`, badged **AUTO** in the dashboard) so a
+severe detection can never be silently missed. Refine or mark it legitimate as needed.
+
 **Capture-only mode.** The dashboard's **AI: ON/OFF** button (per case) lets you
 capture screenshots as evidence without running AI. When you switch it back on, the
 server automatically analyzes everything captured while it was off (tracked by

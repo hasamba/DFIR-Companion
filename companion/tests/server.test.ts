@@ -124,7 +124,7 @@ describe("server analysis wiring", () => {
       })),
       synthesisProvider: new MockProvider("synth", JSON.stringify({
         findings: [{ id: "f1", severity: "High", title: "synth finding", description: "d",
-          relatedIocs: [], mitreTechniques: [], status: "open" }],
+          relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e1"] }],
         iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
         forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
       })),
@@ -160,7 +160,7 @@ describe("server analysis wiring", () => {
         findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
         timelineNote: "read rows", summary: "",
         forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "process from CSV row",
-          severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
+          severity: "Medium", mitreTechniques: [], relatedFindingIds: [] }], // Medium: isolates this test from the high-severity backfill
       })),
       // …synthesis turns the timeline into a finding.
       synthesisProvider: new MockProvider("synth", JSON.stringify({
@@ -232,7 +232,7 @@ describe("server analysis wiring", () => {
         findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
         timelineNote: "read lines", summary: "",
         forensicEvents: [{ id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "event from log line",
-          severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
+          severity: "Medium", mitreTechniques: [], relatedFindingIds: [] }], // Medium: isolates this test from the high-severity backfill
       })),
       synthesisProvider: new MockProvider("synth", JSON.stringify({
         findings: [{ id: "f1", severity: "High", title: "finding from log", description: "d",
@@ -422,7 +422,7 @@ describe("state and report routes", () => {
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", JSON.stringify({
         findings: [{ id: "f1", severity: "High", title: "conclusion", description: "d",
-          relatedIocs: [], mitreTechniques: ["T1566"], status: "open" }],
+          relatedIocs: [], mitreTechniques: ["T1566"], status: "open", relatedEventIds: ["e1"] }],
         iocs: [], mitreTechniques: [{ id: "T1566", name: "Phishing" }],
         attackerPath: "phish then run", summary: "s",
         forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",

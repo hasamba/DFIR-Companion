@@ -107,7 +107,8 @@ describe("AnalysisPipeline", () => {
 
     const synthDelta = JSON.stringify({
       findings: [{ id: "f1", severity: "Critical", title: "Defender disabled to evade detection",
-        description: "AV turned off before payload", relatedIocs: [], mitreTechniques: ["T1562.001"], status: "confirmed" }],
+        description: "AV turned off before payload", relatedIocs: [], mitreTechniques: ["T1562.001"], status: "confirmed",
+        relatedEventIds: ["e1", "e2"] }],
       iocs: [], mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses" }],
       attackerPath: "Phishing at 09:00, then Defender disabled at 15:00 to enable execution.",
       summary: "Phishing-led intrusion with defense evasion.",
@@ -126,6 +127,33 @@ describe("AnalysisPipeline", () => {
     expect(state.attackerPath).toContain("Phishing");
     // synthesis must not wipe the forensic timeline it read from
     expect(state.forensicTimeline).toHaveLength(2);
+  });
+
+  it("synthesize backfills a finding for a Critical event the model left uncovered", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-26T12:25:36Z", description: "Microsoft Defender flagged Rubeus.exe (Severe)",
+        severity: "Critical", mitreTechniques: ["T1003"], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] },
+    );
+    await stateStore.save(seeded);
+
+    // The synthesis model returns NO findings (the failure the user reported).
+    const emptyDelta = JSON.stringify({
+      findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "",
+      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", emptyDelta),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    // The Critical Defender detection must not be silently lost — a finding is auto-created and linked.
+    expect(state.findings).toHaveLength(1);
+    expect(state.findings[0]).toMatchObject({ id: "f-auto-e1", severity: "Critical" });
+    expect(state.findings[0].title).toContain("Rubeus.exe");
+    expect(state.forensicTimeline[0].relatedFindingIds).toEqual(["f-auto-e1"]);
   });
 
   it("synthesize back-links forensic events to the correct findings via relatedEventIds", async () => {
@@ -196,7 +224,7 @@ describe("AnalysisPipeline", () => {
 
     const synthDelta = JSON.stringify({
       findings: [{ id: "f1", severity: "High", title: "from synth model", description: "d",
-        relatedIocs: [], mitreTechniques: [], status: "open" }],
+        relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e1"] }],
       iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
       forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
     });
@@ -215,8 +243,10 @@ describe("AnalysisPipeline", () => {
   it("synthesize excludes client-confirmed legitimate findings/IOCs even if the model returns them", async () => {
     const { LegitimateStore } = await import("../../src/analysis/legitimate.js");
     const seeded = emptyState("c1");
+    // Medium severity: this test is about finding/IOC legit-filtering, not the
+    // high-severity backfill (which would auto-add a finding for an uncovered High event).
     seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "SharpHound ran",
-      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
+      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
     await stateStore.save(seeded);
 
     const legitimateStore = new LegitimateStore(caseStore);

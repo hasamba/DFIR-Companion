@@ -7,6 +7,7 @@ import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
 import { extractJsonText } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
+import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
 import { parseCsv, chunk, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
@@ -39,6 +40,14 @@ export const SYSTEM_PROMPT = [
   "    'Microsoft Defender flagged VirTool:Win32/Kekeo (Rubeus.exe) for user ADATUMLAB\\\\srv at",
   "    C:\\\\Users\\\\srv\\\\Downloads\\\\Rubeus.exe'. Add IOCs (Rubeus.exe, the threat name) and a",
   "    finding (credential-theft tool / Kekeo). NEVER drop a malware/threat detection.",
+  "",
+  "SEVERITY/LEVEL COLUMN — STRONG FINDING SIGNAL. If a row has its own Severity / Level / Criticality",
+  "/ Risk / Confidence column and it reads Critical, High, or Severe (or a high numeric score), treat",
+  "it as important by default (~90% of the time it IS a finding): (a) ALWAYS emit it as a forensicEvent",
+  "with that severity mapped to ours (Severe→Critical, High→High), and (b) ALSO raise a finding for it",
+  "in this response — do not wait for the synthesis pass. Only skip the finding if the row is clearly",
+  "benign/expected (e.g. an informational rule the client confirmed legitimate). Never silently drop a",
+  "Critical/High row.",
   "",
   "DESCRIBE EACH EVENT BY WHAT HAPPENED ON THE SYSTEM, not by the tool you saw it in. Write the",
   "artifact's own facts. WRONG: 'Velociraptor EventLog shows a Defender alert…'. RIGHT: 'Microsoft",
@@ -113,16 +122,22 @@ export const CSV_SYSTEM_PROMPT = [
   "If a row has NO usable event time, set timestamp to \"\" — NEVER substitute the current time.",
   "Give each event a severity and map it to MITRE technique ids where clear.",
   "",
+  "SEVERITY/LEVEL COLUMN — STRONG FINDING SIGNAL. If a row has its own Severity / Level / Criticality",
+  "/ Risk column reading Critical, High, or Severe (or a high numeric score), treat it as important by",
+  "default (~90% of the time it IS a finding): ALWAYS emit the forensicEvent with that severity",
+  "(Severe→Critical), AND also raise a finding for it in this response. Never silently drop a",
+  "Critical/High row — only skip the finding if the row is clearly benign/expected.",
+  "",
   "Also surface concrete IOCs present in the rows (ips, domains, hashes, malicious file/process",
-  "names, URLs). Do NOT invent findings or an attacker-path here — those are produced later by a",
-  "holistic synthesis pass; your job is to faithfully extract the dated forensic events and IOCs.",
-  "Set timelineNote to one short sentence naming the artifact and the columns you read.",
+  "names, URLs). Set timelineNote to one short sentence naming the artifact and the columns you read.",
   "",
   "Return ONLY raw JSON (no markdown fences). Every event/ioc MUST be an OBJECT. Shape:",
   "",
   JSON.stringify(
     {
-      findings: [],
+      findings: [
+        { id: "f1", severity: "Critical|High|Medium|Low|Info", title: "short title (raise for any Critical/High row)", description: "what was detected and why it matters", relatedIocs: ["i1"], mitreTechniques: ["T1059"], status: "open" },
+      ],
       iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
       mitreTechniques: [{ id: "T1059", name: "Command and Scripting Interpreter" }],
       forensicEvents: [
@@ -229,6 +244,10 @@ export const SYNTHESIS_PROMPT = [
   "  line) with its own severity and the MITRE techniques it maps to. Also set relatedEventIds to",
   "  the ids of the forensic-timeline events (e.g. e3, e7 — shown in brackets) that this finding is",
   "  based on, so events link back to the right finding.",
+  "  IMPORTANT — every [Critical] and [High] severity event in the timeline below MUST be covered by a",
+  "  finding (its event id appears in some finding's relatedEventIds). A high-severity artifact row —",
+  "  e.g. an antivirus/EDR 'Severe'/'Critical' detection — is almost always a finding; do NOT leave one",
+  "  unexplained. Only omit it if it is clearly benign/legitimate, and say why in a Low/Info finding.",
   "- iocs: concrete indicators (ips, domains, hashes, malicious files/processes) seen in the timeline.",
   "- mitreTechniques: the ATT&CK techniques observed, aggregated.",
   "- attackerPath: a chronological narrative of the intrusion in kill-chain order (initial access →",
@@ -549,10 +568,18 @@ export class AnalysisPipeline {
         eventToFindings.set(eid, arr);
       }
     }
-    const next = {
+    const linked = {
       ...filtered,
       forensicTimeline: filtered.forensicTimeline.map((e) => ({ ...e, relatedFindingIds: eventToFindings.get(e.id) ?? [] })),
     };
+
+    // Heuristic safety net: a Critical/High artifact row is almost always a finding.
+    // Any in-scope, non-legitimate high-severity event that synthesis left WITHOUT a
+    // finding gets one auto-created, so a severe detection can never be silently
+    // missed. Restricted to the events synthesis actually considered (scopedEvents).
+    const eligibleIds = new Set(scopedEvents.map((e) => e.id));
+    const next = backfillHighSeverityFindings(linked, eligibleIds, ts);
+
     await this.opts.stateStore.save(next);
     this.opts.onState?.(next);
     return next;

@@ -444,8 +444,12 @@
       document.getElementById("findings").innerHTML =
         sorted.map(f => {
           const evidence = [...(f.sourceScreenshots || []), ...(evByFinding[f.id] || [])];
+          // Auto-flagged findings (from a Critical/High artifact row synthesis didn't cover)
+          // carry the f-auto- id prefix — badge them so the analyst knows to review/refine.
+          const auto = String(f.id).startsWith("f-auto-")
+            ? ` <span title="Auto-flagged from a ${esc(f.severity)}-severity artifact row — review and refine" style="background:#2a2233;color:#c79bff;border:1px solid #4a3a5a;border-radius:4px;padding:0 6px;font-size:10px">AUTO</span>` : "";
           return `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> ` +
-            `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong> ${legitBtn("finding", f.title)}` +
+            `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>${evidenceLinks(state.caseId, evidence)}</div>`;
         }).join("") || "—";
       document.getElementById("timeline").innerHTML =
