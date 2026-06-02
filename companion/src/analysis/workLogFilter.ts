@@ -47,8 +47,26 @@ const VIEWER_TOOL =
 // with the screenshot capture time. Matches in EITHER word order.
 const NAVIGATION: RegExp[] = [
   new RegExp(`\\baccess(?:ed)?(?:\\s+to)?\\b[^.]*\\b(?:${VIEWER_TOOL})\\b`, "i"), // "Access to VolWeb", "accessed the Splunk console"
-  new RegExp(`\\b(?:${VIEWER_TOOL})\\b[^.]*\\b(?:access(?:ed)?|observed|opened|viewed|navigat\\w*|loaded|displayed)\\b`, "i"), // "VolWeb access observed"
+  new RegExp(`\\b(?:${VIEWER_TOOL})\\b[^.]*\\b(?:access(?:ed)?|opened|viewed|navigat\\w*|browsed)\\b`, "i"), // "VolWeb access observed"
 ];
+
+// STRONG incident signals. If a description carries any of these, it describes real
+// host/attacker activity and must be KEPT even if a work-log/navigation pattern also
+// matches (e.g. the model wrote "Velociraptor EventLog shows Defender flagged
+// Rubeus.exe … observed"). Missing a real threat is far worse than leaving noise, so
+// this allowlist OVERRIDES the work-log filter. Tuned to avoid common tool-chrome words.
+const INCIDENT_SIGNAL: RegExp[] = [
+  /\.(?:exe|dll|ps1|psm1|bat|cmd|vbs|js|jse|wsf|hta|scr|lnk|msi|sys|dmp|com|jar|py|sh|elf|bin|iso|img)\b/i, // executable/script/artifact file
+  /\b\d{1,3}(?:\.\d{1,3}){3}\b/,                                  // IPv4
+  /\b[a-f0-9]{32,64}\b/i,                                         // md5/sha1/sha256 hash
+  /\b(?:malware|trojan|ransomware|virus|virtool|backdoor|rootkit|webshell|keylogger|exploit|payload|implant|beacon|c2|cobalt\s*strike|mimikatz|rubeus|kekeo|lsass|wce|procdump|psexec|bloodhound|sharphound)\b/i, // threat/tooling
+  /\b(?:defender|sysmon|amsi|edr|antivirus|quarantine(?:d)?|threat\s+(?:detected|name))\b/i, // detection products / verdicts
+  /\b(?:logon|logged on|logon type|authentication|kerberos|ntlm|tgt|tgs|golden ticket|privilege escalation|persistence|lateral movement|exfil\w*|command and control)\b/i, // ATT&CK-ish activity
+];
+
+export function hasIncidentSignal(description: string): boolean {
+  return INCIDENT_SIGNAL.some((re) => re.test(description));
+}
 
 // Analyst-process verbs paired with a tool/UI noun, matched in EITHER order.
 const PROCESS_NARRATION: RegExp[] = [
@@ -69,8 +87,12 @@ const PROCESS_NARRATION: RegExp[] = [
 
 // True when an event describes analyst/tool usage, investigation-process narration,
 // or tool/UI navigation rather than a real incident event on the system(s) under
-// investigation.
+// investigation. A description carrying STRONG incident signal (a malware name, an
+// exe/script path, an IP, a hash, a logon, a Defender/EDR verdict) is NEVER treated as
+// work log — the incident allowlist overrides, so we don't drop real evidence that
+// merely mentions the tool it was seen in.
 export function isAnalystWorkLog(description: string): boolean {
+  if (hasIncidentSignal(description)) return false;
   return TOOL_PATTERNS.some((re) => re.test(description))
     || PROCESS_NARRATION.some((re) => re.test(description))
     || NAVIGATION.some((re) => re.test(description));

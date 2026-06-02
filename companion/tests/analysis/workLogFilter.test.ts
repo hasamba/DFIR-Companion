@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isAnalystWorkLog, partitionWorkLog } from "../../src/analysis/workLogFilter.js";
+import { isAnalystWorkLog, partitionWorkLog, hasIncidentSignal } from "../../src/analysis/workLogFilter.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 // Real lines the user reported as wrongly appearing in the forensic timeline.
@@ -50,6 +50,12 @@ const REAL_EVENTS = [
   "Unauthorized access to \\\\FILESERVER\\HR share by user jdoe",
   "Successful network logon to DC01 from 192.168.1.50",
   "cmd.exe console opened by SYSTEM",
+  // Real threats must survive EVEN IF the model phrases them with the tool name /
+  // "observed" — the incident-signal allowlist overrides the work-log filter.
+  "Microsoft Defender flagged VirTool:Win32/Kekeo (Rubeus.exe) for ADATUMLAB\\srv",
+  "Velociraptor EventLog shows Defender alert for Rubeus.exe, observed at 12:25",
+  "VolWeb shows lsass.exe memory dump created at 12:30",
+  "Antivirus Password Dumper Detection: Rubeus.exe flagged on ALClient022",
 ];
 
 function ev(description: string): ForensicEvent {
@@ -64,6 +70,14 @@ describe("workLogFilter", () => {
 
   it("does NOT flag genuine host/attacker events", () => {
     for (const d of REAL_EVENTS) expect(isAnalystWorkLog(d), d).toBe(false);
+  });
+
+  it("incident signal (malware/exe/IP/logon/Defender) overrides the work-log filter", () => {
+    expect(hasIncidentSignal("Rubeus.exe flagged by Defender")).toBe(true);
+    expect(hasIncidentSignal("logon to DC01 from 10.0.0.5")).toBe(true);
+    expect(hasIncidentSignal("Surveying the DFIR Companion Dashboard")).toBe(false);
+    // A real threat phrased with the tool name + "observed" is NOT work log.
+    expect(isAnalystWorkLog("Velociraptor EventLog shows Defender flagged Rubeus.exe, observed")).toBe(false);
   });
 
   it("partitions a mixed timeline into keep vs removed", () => {
