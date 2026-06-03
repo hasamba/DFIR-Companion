@@ -8,6 +8,7 @@ import { mergeDelta } from "./stateMerge.js";
 import { extractJsonText } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
+import { correlateEvents } from "./correlate.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
 import { parseCsv, chunk, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
@@ -392,7 +393,9 @@ export class AnalysisPipeline {
     }, retries, backoffMs);
 
     const windowSequence = analyzable[analyzable.length - 1].sequenceNumber;
-    const next = mergeDelta(state, delta, {
+    // Tag each event's source (for cross-source correlation/corroboration) unless the model named one.
+    const tagged = { ...delta, forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, sources: e.sources?.length ? e.sources : ["screenshot"] })) };
+    const next = mergeDelta(state, tagged, {
       windowSequence,
       timestamp: analyzable[analyzable.length - 1].timestamp,
       sourceScreenshots: analyzable.map((c) => c.screenshotFile),
@@ -443,7 +446,7 @@ export class AnalysisPipeline {
       // dedupes forensic events by id, and each batch independently emits e1, e2…).
       const renumbered = {
         ...delta,
-        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}` })),
+        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : ["CSV import"] })),
       };
 
       state = mergeDelta(state, renumbered, {
@@ -511,7 +514,7 @@ export class AnalysisPipeline {
 
       const renumbered = {
         ...delta,
-        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}` })),
+        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : ["Log import"] })),
       };
 
       state = mergeDelta(state, renumbered, {
@@ -575,8 +578,20 @@ export class AnalysisPipeline {
   // Holistic pass: read the whole forensic timeline and produce findings, MITRE
   // mapping, and the attacker-path narrative. Text-only (no images), one call.
   async synthesize(caseId: string): Promise<InvestigationState> {
-    const state = await this.opts.stateStore.load(caseId);
-    if (state.forensicTimeline.length === 0) return state;
+    const loaded = await this.opts.stateStore.load(caseId);
+    if (loaded.forensicTimeline.length === 0) return loaded;
+
+    // Cross-source correlation FIRST: collapse events that describe the same artifact
+    // (same hash, or same path within a time window) reported by different tools — e.g.
+    // a Velociraptor alert and a THOR alert about one downloaded file — into a single
+    // corroborated event. This dedups the timeline AND means one finding (with both tools
+    // as evidence) instead of two. Idempotent, so repeated synthesis is stable. The
+    // correlated timeline is persisted below.
+    const windowSeconds = Number(process.env.DFIR_CORRELATE_WINDOW_S);
+    const state: InvestigationState = {
+      ...loaded,
+      forensicTimeline: correlateEvents(loaded.forensicTimeline, Number.isFinite(windowSeconds) ? { windowSeconds } : {}),
+    };
 
     const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
 

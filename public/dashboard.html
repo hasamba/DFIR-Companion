@@ -426,7 +426,10 @@
               ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
             const badge = (e.count && e.count > 1)
               ? ` <span title="${esc(e.count)} occurrences collapsed into one event" style="background:#3a2f1a;color:#ffd93b;border:1px solid #5a4a1a;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">×${esc(e.count)}</span>` : "";
-            return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge} ` +
+            // Corroboration: the same artifact flagged by 2+ tools/sources raises confidence.
+            const corro = (e.sources && e.sources.length > 1)
+              ? ` <span title="Corroborated by ${e.sources.length} sources: ${escAttr(e.sources.join(", "))}" style="background:#13331f;color:#6bcB77;border:1px solid #1f5a35;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">⊕ ${esc(e.sources.length)} sources</span>` : "";
+            return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge}${corro} ` +
               `<strong>${esc(e.description)}</strong> ${legitBtn("event", e.id, e.description)}` +
               `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${esc(e.mitreTechniques.join(", "))}</small>` : ""}` +
               `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +

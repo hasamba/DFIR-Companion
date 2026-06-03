@@ -50,6 +50,12 @@ export interface ForensicEvent {
   sourceScreenshots: string[];
   count?: number;               // occurrences when this event aggregates many collapsed lines (e.g. 20); absent ⇒ 1
   endTimestamp?: string;        // time of the last occurrence when aggregated (timestamp is the first)
+  // Structured identifiers used to CORRELATE the same real-world artifact across tools
+  // (e.g. a Velociraptor alert and a THOR alert about the same downloaded file).
+  sha256?: string;
+  md5?: string;
+  path?: string;                // file path the event concerns (normalized lowercased for matching)
+  sources?: string[];           // distinct tools/imports that reported this event (corroboration)
 }
 
 export interface Technique {

@@ -44,6 +44,11 @@ export const deltaSchema = z.object({
     // of the last one. Absent/1 means a single discrete event.
     count: z.number().int().positive().optional(),
     endTimestamp: z.string().optional(),
+    // Correlation identifiers (let the model tie an event to a concrete file/hash).
+    sha256: z.string().optional(),
+    md5: z.string().optional(),
+    path: z.string().optional(),
+    sources: z.array(z.string()).optional(),
   })).optional(),
   // Narrative reconstruction of the attacker's path (kill-chain story).
   attackerPath: z.string().optional(),

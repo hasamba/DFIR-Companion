@@ -129,6 +129,38 @@ describe("AnalysisPipeline", () => {
     expect(state.forensicTimeline).toHaveLength(2);
   });
 
+  it("synthesize correlates the same artifact from two sources into one event + one finding", async () => {
+    const HASH = "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef";
+    const seeded = emptyState("c1");
+    // Same downloaded file reported by two tools (shared hash, same created time).
+    seeded.forensicTimeline.push(
+      { id: "m1e1", timestamp: "2026-05-26T08:35:23Z", description: `Velociraptor: downloaded evil.exe, sha256 ${HASH}`,
+        severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["0001_velo.csv"], sources: ["CSV import"] },
+      { id: "t2e5", timestamp: "2026-05-26T08:35:23Z", description: "THOR Alert [Filescan]: Malware file found — C:\\Tools\\evil.exe",
+        severity: "Critical", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["0002_thor.json"], sources: ["THOR"], sha256: HASH },
+    );
+    await stateStore.save(seeded);
+
+    // Model returns NO findings → the backfill creates exactly ONE (for the merged event).
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "",
+        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    // Two source events collapsed into one corroborated timeline event…
+    expect(state.forensicTimeline).toHaveLength(1);
+    expect(state.forensicTimeline[0].severity).toBe("Critical");           // most severe wins
+    expect(state.forensicTimeline[0].sources).toEqual(expect.arrayContaining(["CSV import", "THOR"]));
+    expect(state.forensicTimeline[0].sourceScreenshots).toEqual(expect.arrayContaining(["0001_velo.csv", "0002_thor.json"]));
+    // …and exactly ONE finding (not two) backs both tools' evidence.
+    expect(state.findings).toHaveLength(1);
+  });
+
   it("synthesize backfills a finding for a Critical event the model left uncovered", async () => {
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push(

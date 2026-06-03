@@ -30,7 +30,7 @@ describe("CSV renderers", () => {
   it("forensicTimelineCsv emits a header and rows ordered by event time", () => {
     const state = emptyState("c1");
     expect(forensicTimelineCsv(state).trim()).toBe(
-      "timestamp,endTimestamp,count,severity,description,mitreTechniques,relatedFindingIds,sourceScreenshots",
+      "timestamp,endTimestamp,count,severity,description,mitreTechniques,sources,relatedFindingIds,sourceScreenshots",
     );
     state.forensicTimeline.push(
       { id: "e2", timestamp: "2026-05-20T15:00:00Z", endTimestamp: "2026-05-20T15:30:00Z", count: 12,

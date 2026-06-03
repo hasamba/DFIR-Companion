@@ -139,6 +139,10 @@ export function mergeDelta(
       existing.sourceScreenshots = uniq([...existing.sourceScreenshots, ...ctx.sourceScreenshots]);
       if (incoming.count !== undefined) existing.count = incoming.count;
       if (incoming.endTimestamp !== undefined) existing.endTimestamp = incoming.endTimestamp;
+      if (incoming.sha256) existing.sha256 = incoming.sha256;
+      if (incoming.md5) existing.md5 = incoming.md5;
+      if (incoming.path) existing.path = incoming.path;
+      if (incoming.sources?.length) existing.sources = uniq([...(existing.sources ?? []), ...incoming.sources]);
     } else {
       forensicTimeline.push({
         id: incoming.id,
@@ -150,6 +154,10 @@ export function mergeDelta(
         sourceScreenshots: uniq(ctx.sourceScreenshots),
         ...(incoming.count !== undefined ? { count: incoming.count } : {}),
         ...(incoming.endTimestamp !== undefined ? { endTimestamp: incoming.endTimestamp } : {}),
+        ...(incoming.sha256 ? { sha256: incoming.sha256 } : {}),
+        ...(incoming.md5 ? { md5: incoming.md5 } : {}),
+        ...(incoming.path ? { path: incoming.path } : {}),
+        ...(incoming.sources?.length ? { sources: uniq(incoming.sources) } : {}),
       });
     }
   }

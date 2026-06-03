@@ -1,0 +1,146 @@
+// Deterministic cross-source correlation: the same real-world artifact is often
+// reported by more than one tool (e.g. a Velociraptor alert AND a THOR alert about the
+// same downloaded file). Without correlation each tool produces its own timeline event
+// and (via synthesis/backfill) its own finding — duplicating the same fact. This pass
+// groups events that describe the SAME artifact and merges them into one canonical
+// event that carries every tool as a source (corroboration raises confidence).
+//
+// Matching (per the chosen policy): two events correlate if they share a file HASH
+// (sha256/md5 — exact), OR the same normalized file PATH with event timestamps within a
+// small window (default ±2s; tools often differ by sub-second). Hashes are read from the
+// structured fields first, then extracted from the description text as a fallback so a
+// hash-bearing AI-extracted event still matches a structured THOR event.
+
+import type { ForensicEvent, Severity } from "./stateTypes.js";
+
+export interface CorrelateOptions {
+  windowSeconds?: number; // path+time match tolerance (default 2)
+}
+
+const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+
+const SHA256_RE = /\b[a-f0-9]{64}\b/i;
+const MD5_RE = /\b[a-f0-9]{32}\b/i;
+// Windows ("C:\…") or UNC ("\\host\…") or Unix ("/usr/…") paths.
+const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|\/(?:[\w.\-]+\/)+[\w.\-]+/;
+
+function eventHashes(e: ForensicEvent): string[] {
+  const out = new Set<string>();
+  if (e.sha256) out.add(e.sha256.toLowerCase());
+  if (e.md5) out.add(e.md5.toLowerCase());
+  // Fallback: pull a hash out of the description (e.g. an AI-extracted Velociraptor row).
+  const s256 = SHA256_RE.exec(e.description); if (s256) out.add(s256[0].toLowerCase());
+  // Only treat a bare 32-hex as MD5 if no sha256 present in the text (avoid matching part of a sha).
+  if (!s256) { const m = MD5_RE.exec(e.description); if (m) out.add(m[0].toLowerCase()); }
+  return [...out];
+}
+
+function eventPath(e: ForensicEvent): string | undefined {
+  const p = e.path ?? PATH_RE.exec(e.description)?.[0];
+  return p ? p.trim().toLowerCase() : undefined;
+}
+
+function epoch(ts: string): number | undefined {
+  if (!ts) return undefined;
+  const t = Date.parse(ts);
+  return Number.isNaN(t) ? undefined : t;
+}
+
+// Union-find over event indices.
+class DSU {
+  private parent: number[];
+  constructor(n: number) { this.parent = Array.from({ length: n }, (_, i) => i); }
+  find(x: number): number { while (this.parent[x] !== x) { this.parent[x] = this.parent[this.parent[x]]; x = this.parent[x]; } return x; }
+  union(a: number, b: number): void { const ra = this.find(a), rb = this.find(b); if (ra !== rb) this.parent[Math.max(ra, rb)] = Math.min(ra, rb); }
+}
+
+function worse(a: Severity, b: Severity): Severity {
+  return SEV_RANK[a] <= SEV_RANK[b] ? a : b;
+}
+
+// Merge a group of events (≥1) into one canonical event. The lowest-index event's id is
+// kept (stable); severity is the most severe; evidence/links/sources are unioned; the
+// most detailed description wins, annotated with the corroborating sources.
+function mergeGroup(events: ForensicEvent[]): ForensicEvent {
+  const primary = [...events].sort((a, b) =>
+    (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || (b.description.length - a.description.length))[0];
+  const uniq = <T,>(xs: T[]): T[] => [...new Set(xs)];
+  const sources = uniq(events.flatMap((e) => e.sources ?? ["unknown source"]));
+  const times = events.map((e) => e.timestamp).filter(Boolean).sort();
+  const ends = events.map((e) => e.endTimestamp || e.timestamp).filter(Boolean).sort();
+
+  const merged: ForensicEvent = {
+    ...primary,
+    severity: events.reduce<Severity>((acc, e) => worse(acc, e.severity), "Info"),
+    timestamp: times[0] ?? primary.timestamp,
+    mitreTechniques: uniq(events.flatMap((e) => e.mitreTechniques)),
+    relatedFindingIds: uniq(events.flatMap((e) => e.relatedFindingIds)),
+    sourceScreenshots: uniq(events.flatMap((e) => e.sourceScreenshots)),
+    sources,
+    sha256: events.find((e) => e.sha256)?.sha256,
+    md5: events.find((e) => e.md5)?.md5,
+    path: primary.path ?? events.find((e) => e.path)?.path,
+  };
+  const lastEnd = ends[ends.length - 1];
+  if (lastEnd && lastEnd !== merged.timestamp) merged.endTimestamp = lastEnd;
+  if (events.length > 1 && sources.length > 1) {
+    merged.description = `${primary.description} [corroborated by ${sources.length} sources: ${sources.join(", ")}]`;
+  }
+  return merged;
+}
+
+// Group events that describe the same artifact and merge each group into one event.
+// Idempotent: re-running on already-merged events is a no-op (a merged event's keys
+// only match itself). Preserves input order and ids for events that don't correlate,
+// so callers/tests that don't rely on correlation see unchanged output.
+export function correlateEvents(events: readonly ForensicEvent[], opts: CorrelateOptions = {}): ForensicEvent[] {
+  const windowMs = (opts.windowSeconds ?? 2) * 1000;
+  const n = events.length;
+  if (n < 2) return [...events];
+  const dsu = new DSU(n);
+
+  // 1) Same hash → union.
+  const byHash = new Map<string, number>();
+  events.forEach((e, i) => {
+    for (const h of eventHashes(e)) {
+      const prev = byHash.get(h);
+      if (prev !== undefined) dsu.union(prev, i);
+      else byHash.set(h, i);
+    }
+  });
+
+  // 2) Same normalized path with timestamps within the window → union.
+  const byPath = new Map<string, number[]>();
+  events.forEach((e, i) => {
+    const p = eventPath(e);
+    if (p) (byPath.get(p) ?? byPath.set(p, []).get(p)!).push(i);
+  });
+  for (const idxs of byPath.values()) {
+    if (idxs.length < 2) continue;
+    const dated = idxs.map((i) => ({ i, t: epoch(events[i].timestamp) }))
+      .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
+    for (let k = 1; k < dated.length; k++) {
+      const a = dated[k - 1], b = dated[k];
+      // Undated events on the same path correlate too (no time to disprove); dated ones
+      // must be within the window.
+      if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= windowMs) dsu.union(a.i, b.i);
+    }
+  }
+
+  // Collect groups, preserving first-appearance order.
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const r = dsu.find(i);
+    (groups.get(r) ?? groups.set(r, []).get(r)!).push(i);
+  }
+  const out: ForensicEvent[] = [];
+  const emitted = new Set<number>();
+  for (let i = 0; i < n; i++) {
+    const r = dsu.find(i);
+    if (emitted.has(r)) continue;
+    emitted.add(r);
+    const members = groups.get(r)!;
+    out.push(members.length === 1 ? events[members[0]] : mergeGroup(members.map((m) => events[m])));
+  }
+  return out;
+}

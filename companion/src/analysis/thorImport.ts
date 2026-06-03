@@ -39,6 +39,10 @@ export interface ThorEvent {
   mitreTechniques: string[];
   count?: number;        // when identical findings were collapsed
   endTimestamp?: string;
+  sha256?: string;       // correlation keys — let the same artifact match across tools
+  md5?: string;
+  path?: string;
+  sources?: string[];
 }
 
 export interface ThorIoc {
@@ -151,13 +155,23 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
     const sig = [module, str(row.message), firstStr(row, ["process_name", "image_file", "file", "entry"]),
       firstStr(row, ["rulename_1", "matched_1", "reason_1"])].join("|").toLowerCase();
 
+    const sha256 = firstStr(row, ["sha256", "image_sha256", "archive_sha256", "sha256_1"]).toLowerCase() || undefined;
+    const md5 = firstStr(row, ["md5", "image_md5", "archive_md5", "md5_1"]).toLowerCase() || undefined;
+    const path = (firstStr(row, ["file", "image_file", "image_path", "filepath", "path"]) || undefined)?.trim();
+
     const existing = bySig.get(sig);
     if (existing) {
       existing.count = (existing.count ?? 1) + 1;
       if (timestamp && (!existing.endTimestamp || timestamp > existing.endTimestamp)) existing.endTimestamp = timestamp;
       if (timestamp && timestamp < existing.timestamp) existing.timestamp = timestamp;
     } else {
-      bySig.set(sig, { id: "", timestamp, description, severity, mitreTechniques: pickTechniques(row) });
+      bySig.set(sig, {
+        id: "", timestamp, description, severity, mitreTechniques: pickTechniques(row),
+        ...(sha256 && /^[a-f0-9]{64}$/.test(sha256) ? { sha256 } : {}),
+        ...(md5 && /^[a-f0-9]{32}$/.test(md5) ? { md5 } : {}),
+        ...(path ? { path } : {}),
+        sources: ["THOR"],
+      });
       order.push(sig);
     }
     collectIocs(row, iocSink);

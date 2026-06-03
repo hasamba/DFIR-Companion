@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Cross-source correlation** — the same real-world artifact reported by different tools
+  (e.g. a Velociraptor alert and a THOR alert about one downloaded file) is now merged into a
+  single corroborated forensic event instead of two duplicates. Matching is deterministic:
+  a shared file **hash** (sha256/md5, read from structured fields or extracted from the
+  description), OR the same **path within a time window** (`DFIR_CORRELATE_WINDOW_S`, default
+  2s). The merged event takes the most-severe level, unions every tool as a `source`, and so
+  drives **one finding** (with both tools as evidence) rather than two. The dashboard shows a
+  `⊕ N sources` corroboration badge; reports gain a `sources` column. Forensic events gained
+  optional `sha256`/`md5`/`path`/`sources` fields (THOR populates them).
 - **THOR (Nextron) scanner import** — `POST /cases/:id/import-thor` and an **Import THOR**
   dashboard button accept a THOR JSON-Lines report (`thor --jsonfile`). Findings map
   **deterministically** to the timeline + IOCs (no AI extraction call): `level` → severity
