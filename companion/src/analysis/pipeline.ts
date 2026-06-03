@@ -12,6 +12,7 @@ import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scop
 import { parseCsv, chunk, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines } from "./logAggregate.js";
+import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
 
 export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation. The",
@@ -525,6 +526,52 @@ export class AnalysisPipeline {
     return state;
   }
 
+  // Import a THOR (Nextron) scanner report in JSON-Lines format. Unlike the CSV/log
+  // paths this is DETERMINISTIC — THOR's JSON is structured and stable, so each
+  // finding maps straight to a forensic event + IOCs with NO AI extraction call.
+  // Scan-lifecycle/info noise (module init, "Info" level) is dropped by default.
+  // Findings/attacker-path still come from a later synthesize().
+  async importThor(
+    caseId: string,
+    jsonText: string,
+    opts: {
+      label: string;
+      idPrefix: string;          // unique per import (e.g. "t3") so ids never collide
+      importedAt: string;
+      thor?: ThorImportOptions;  // filtering overrides (dropInfo, dropLifecycleModules…)
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsed = parseThorReport(jsonText, opts.thor);
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    // Assign stable, collision-free ids and validate the delta against the schema
+    // (fills defaults like relatedFindingIds). No model call — purely structural.
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({ ...e, id: `${opts.idPrefix}e${i + 1}` })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `THOR import: ${parsed.kept} finding(s) kept, ${parsed.dropped} info/lifecycle row(s) dropped` +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
   // Holistic pass: read the whole forensic timeline and produce findings, MITRE
   // mapping, and the attacker-path narrative. Text-only (no images), one call.
   async synthesize(caseId: string): Promise<InvestigationState> {
@@ -575,11 +622,14 @@ export class AnalysisPipeline {
 
     // Anchor finding timestamps to the last real event time (fallback: existing state time).
     const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
-    // Synthesis is an authoritative holistic reassessment: replace the analytic layer
-    // (findings/IOCs/techniques) rather than accumulate, so anything no longer supported
-    // by the in-scope timeline (e.g. out-of-scope or removed events) is dropped. Threads
-    // and the forensic timeline are preserved.
-    const base = { ...state, findings: [], iocs: [], mitreTechniques: [] };
+    // Synthesis is an authoritative holistic reassessment: replace the CONCLUSIONS
+    // (findings, MITRE techniques) rather than accumulate, so anything no longer
+    // supported by the in-scope timeline (e.g. out-of-scope or removed events) is
+    // dropped. IOCs are OBSERVED INDICATORS (often from deterministic imports like THOR
+    // — 100s of hashes the text-only synthesis can't re-derive), so they are PRESERVED
+    // and merged (deduped by value); scope/legitimate still filter them at projection.
+    // Threads and the forensic timeline are also preserved.
+    const base = { ...state, findings: [], mitreTechniques: [] };
     const merged = mergeDelta(base, delta, { windowSequence: 0, timestamp: ts, sourceScreenshots: [] });
     // Safety net: drop anything confirmed legitimate even if the model re-introduced it.
     const filtered = applyLegitimate(merged, markers);

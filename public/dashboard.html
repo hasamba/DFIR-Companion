@@ -66,6 +66,8 @@
     <button id="importCsv" title="Upload a CSV of results (e.g. a Velociraptor export) to analyze into IOCs, TTPs and the timeline">Import CSV</button>
     <input id="logFile" type="file" accept=".log,.txt,text/plain" style="display:none" />
     <button id="importLog" title="Upload a generic log file (firewall, syslog, sshd, IIS/Apache/nginx, application logs — .log or .txt). Each line is analyzed for forensic events and IOCs.">Import Log</button>
+    <input id="thorFile" type="file" accept=".json,.jsonl,application/json,text/plain" style="display:none" />
+    <button id="importThor" title="Upload a THOR (Nextron) scanner report in JSON-Lines format (thor --jsonfile). Findings map deterministically to the timeline + IOCs; scan info/lifecycle noise is dropped automatically.">Import THOR</button>
     <button id="generateReport">Generate Report</button>
     <button id="toggleAll" title="Collapse or expand all sections">Collapse all</button>
     <span id="status">disconnected</span>
@@ -579,6 +581,40 @@
       } catch (err) {
         document.getElementById("status").textContent =
           "Log import failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
+      }
+      e.target.value = ""; // allow re-selecting the same file
+    };
+    // THOR (Nextron) scanner report import (JSON-Lines). Deterministic mapping on the
+    // server; scan info/lifecycle noise is dropped automatically.
+    document.getElementById("importThor").onclick = () => {
+      if (!document.getElementById("caseId").value.trim()) {
+        document.getElementById("status").textContent = "enter/connect a Case ID first";
+        return;
+      }
+      document.getElementById("thorFile").click();
+    };
+    document.getElementById("thorFile").onchange = async (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      const file = e.target.files && e.target.files[0];
+      if (!caseId || !file) return;
+      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
+      try {
+        const text = await file.text();
+        const r = await fetch(`/cases/${caseId}/import-thor`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ filename: file.name, json: text }),
+        });
+        if (!r.ok) {
+          let msg = "HTTP " + r.status;
+          try { msg = (await r.json()).error || msg; } catch {}
+          throw new Error(msg);
+        }
+        const p = await r.json();
+        document.getElementById("status").textContent =
+          `THOR: kept ${p.findings} finding(s), dropped ${p.dropped} info/lifecycle row(s) — synthesizing (see AI status)`;
+      } catch (err) {
+        document.getElementById("status").textContent =
+          "THOR import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
       }
       e.target.value = ""; // allow re-selecting the same file
     };

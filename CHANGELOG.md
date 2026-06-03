@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **THOR (Nextron) scanner import** — `POST /cases/:id/import-thor` and an **Import THOR**
+  dashboard button accept a THOR JSON-Lines report (`thor --jsonfile`). Findings map
+  **deterministically** to the timeline + IOCs (no AI extraction call): `level` → severity
+  (Alert→Critical / Warning→High / Notice→Medium), each finding's own artifact time is read
+  (process create / file mtime, not the scan time), hashes/files/processes/IPs become IOCs,
+  and identical findings collapse with a count. Scan noise is dropped by default —
+  `level:"Info"` rows and lifecycle modules (`Init`, `Startup`, `Control`, `ThorDB`, `Report`)
+  — e.g. a 1416-line report reduces to ~177 real findings.
+
+### Changed
+- **Synthesis now preserves IOCs** instead of wiping them. IOCs are observed indicators
+  (often hundreds of hashes from a deterministic import like THOR that the text-only
+  synthesis can't re-derive), so they are kept and merged (deduped by value); scope and
+  legitimate filtering still apply at projection. Findings/MITRE/attacker-path are still
+  replaced each synthesis.
+
 ### Fixed
 - **EDR/XDR _and_ SIEM detections now reliably enter the timeline & findings.** The extraction
   prompt was Velociraptor-centric and the "navigating a dashboard isn't an event" rule was making

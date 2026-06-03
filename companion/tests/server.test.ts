@@ -289,6 +289,73 @@ describe("server analysis wiring", () => {
     expect(res2.status).toBe(400);
   });
 
+  it("imports a THOR JSON report: drops info/lifecycle noise, maps findings to the timeline, then synthesizes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-thor-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      // No per-finding AI extraction (THOR mapping is deterministic); synthesis still runs.
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [{ id: "f1", severity: "Critical", title: "Mimikatz present", description: "d",
+          relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: [] }],
+        iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
+        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const thorApp = createApp(store, { pipeline, stateStore });
+    await request(thorApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+
+    const jsonl = [
+      JSON.stringify({ time: "t", hostname: "WIN11", level: "Info", module: "Init", message: "startup noise" }),
+      JSON.stringify({ time: "t", hostname: "WIN11", level: "Alert", module: "Filescan", message: "Malware file found",
+        file: "C:\\Tools\\mimikatz.exe", modified: "2025-03-14T21:18:18Z", reason_1: "YARA Powerkatz",
+        sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef" }),
+    ].join("\n") + "\n";
+    const res = await request(thorApp).post("/cases/c1/import-thor").send({ filename: "WIN11_thor.json", json: jsonl });
+
+    expect(res.status).toBe(202);
+    expect(res.body.findings).toBe(1);   // the Alert
+    expect(res.body.dropped).toBe(1);    // the Init/Info line
+
+    // Evidence-first: raw report + audit line written.
+    const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
+    expect(auditLog.trim().split("\n")).toHaveLength(1);
+
+    // Deterministic mapping populated the timeline; background synthesis adds findings.
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 60 && state.findings.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    expect(state.forensicTimeline.length).toBe(1);
+    expect(state.forensicTimeline[0].severity).toBe("Critical");
+    expect(state.forensicTimeline[0].timestamp).toBe("2025-03-14T21:18:18Z"); // artifact time, not scan time
+    expect(state.iocs.some((i) => i.value.includes("mimikatz.exe"))).toBe(true);
+    expect(state.findings.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("rejects a THOR import that has only info/lifecycle rows (no findings)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-thor-empty-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", "should not be called"),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app2 = createApp(store, { pipeline, stateStore });
+    await request(app2).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+
+    const onlyNoise = [
+      JSON.stringify({ time: "t", hostname: "H", level: "Info", module: "Init", message: "x" }),
+      JSON.stringify({ time: "t", hostname: "H", level: "Info", module: "Startup", message: "y" }),
+    ].join("\n");
+    const res = await request(app2).post("/cases/c1/import-thor").send({ filename: "t.json", json: onlyNoise });
+    expect(res.status).toBe(400);
+  });
+
   it("marks a forensic event legitimate (kind=event), storing its label and re-synthesizing", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-legit-ev-"));
     const store = new CaseStore(root);

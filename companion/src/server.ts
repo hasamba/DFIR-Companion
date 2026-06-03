@@ -11,6 +11,7 @@ import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/leg
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { parseCsv } from "./analysis/csvImport.js";
 import { parseLogLines } from "./analysis/logImport.js";
+import { parseThorReport } from "./analysis/thorImport.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
@@ -493,6 +494,56 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `log import — batch ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a THOR (Nextron) scanner report (JSON-Lines from `thor --jsonfile`).
+  // Evidence-first like the CSV/log paths; mapping is DETERMINISTIC (no AI extraction),
+  // dropping scan-lifecycle/info noise. Synthesis (findings/attacker path) runs after.
+  app.post("/cases/:id/import-thor", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const json = typeof req.body?.json === "string" ? req.body.json
+      : typeof req.body?.text === "string" ? req.body.text : "";
+    const originalName = String(req.body?.filename ?? "thor.json");
+    if (!json.trim()) return res.status(400).json({ error: "json is required" });
+
+    try {
+      // Parse up-front: reject a file with no real findings (only info/lifecycle rows),
+      // and report kept/dropped counts back to the UI.
+      const preview = parseThorReport(json);
+      if (preview.total === 0) return res.status(400).json({ error: "no parseable THOR JSON lines" });
+      if (preview.kept === 0) {
+        return res.status(400).json({ error: `THOR report has no findings after dropping ${preview.dropped} info/lifecycle row(s)` });
+      }
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "thor.json");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, json);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(json, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, findings: preview.kept, dropped: preview.dropped, total: preview.total });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} THOR finding(s)` });
+      void options.pipeline.importThor(caseId, json, {
+        label: storedName,
+        idPrefix: `t${seq}`,
+        importedAt,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `THOR import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
