@@ -22,7 +22,20 @@ describe("correlateEvents", () => {
     expect(out[0].severity).toBe("Critical");          // most severe wins
     expect(out[0].sources).toEqual(expect.arrayContaining(["CSV import", "THOR"]));
     expect(out[0].sourceScreenshots).toEqual(expect.arrayContaining(["0001_velo.csv", "0002_thor.json"]));
-    expect(out[0].description).toContain("corroborated by 2 sources");
+    // Corroboration is conveyed via the sources field, NOT by mutating the description.
+    expect(out[0].description).not.toContain("corroborated");
+  });
+
+  it("never invents 'unknown source' for a source-less event, and self-heals a legacy note", () => {
+    // An event from a build before `sources` existed (no sources) merged with a THOR event.
+    const legacy = ev({ id: "old", description: "Malware file found — evil.exe [corroborated by 2 sources: unknown source, THOR]",
+      sha256: "c".repeat(64), timestamp: "2025-01-01T00:00:00Z" }); // no sources field
+    const thor = ev({ id: "new", description: "Malware file found — evil.exe",
+      sha256: "c".repeat(64), timestamp: "2025-01-01T00:00:00Z", sources: ["THOR"] });
+    const out = correlateEvents([legacy, thor]);
+    expect(out).toHaveLength(1);
+    expect(out[0].sources).toEqual(["THOR"]);              // only the real source, no "unknown source"
+    expect(out[0].description).not.toContain("corroborated"); // legacy note stripped
   });
 
   it("merges same path within the time window, keeps distinct paths separate", () => {

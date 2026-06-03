@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   further — on that report, 177 → 154 (Warning+) → 22 (Alert only).
 
 ### Fixed (continued)
+- **Correlation no longer shows a bogus "2 sources" / "unknown source".** A source-less event
+  (from a build before the `sources` field existed) was being labelled `unknown source` and
+  counted toward corroboration, so a single-tool (THOR-only) event wrongly showed `⊕ 2 sources`.
+  Source-less events now contribute no source; the badge counts only real tools. Also stopped
+  mutating the event description with a `[corroborated by …]` note (it was ugly and, worse,
+  changed the dedup key so re-imports stopped collapsing) — corroboration is shown only via the
+  `sources` field/badge. Old polluted descriptions self-heal on the next merge/synthesis.
 - **Tolerate truncated AI JSON responses.** A large synthesis (e.g. from a THOR import)
   could exceed `max_tokens` and get cut off mid-array → `Expected ',' or ']' after array
   element` parse error. The parser now repairs a truncated response (trims to the last

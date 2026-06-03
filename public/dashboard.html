@@ -426,11 +426,15 @@
               ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
             const badge = (e.count && e.count > 1)
               ? ` <span title="${esc(e.count)} occurrences collapsed into one event" style="background:#3a2f1a;color:#ffd93b;border:1px solid #5a4a1a;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">×${esc(e.count)}</span>` : "";
-            // Corroboration: the same artifact flagged by 2+ tools/sources raises confidence.
-            const corro = (e.sources && e.sources.length > 1)
-              ? ` <span title="Corroborated by ${e.sources.length} sources: ${escAttr(e.sources.join(", "))}" style="background:#13331f;color:#6bcB77;border:1px solid #1f5a35;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">⊕ ${esc(e.sources.length)} sources</span>` : "";
+            // Corroboration: the same artifact flagged by 2+ REAL tools raises confidence.
+            // Ignore the legacy "unknown source" placeholder so it never inflates the count.
+            const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
+            const corro = (realSrc.length > 1)
+              ? ` <span title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}" style="background:#13331f;color:#6bcB77;border:1px solid #1f5a35;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">⊕ ${esc(realSrc.length)} sources</span>` : "";
+            // Strip any legacy "[corroborated by N sources: …]" note from old state for display.
+            const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
             return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge}${corro} ` +
-              `<strong>${esc(e.description)}</strong> ${legitBtn("event", e.id, e.description)}` +
+              `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}` +
               `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${esc(e.mitreTechniques.join(", "))}</small>` : ""}` +
               `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +
               `${evidenceLinks(state.caseId, e.sourceScreenshots)}</div>`;
