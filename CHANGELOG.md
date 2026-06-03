@@ -13,15 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Cross-source correlation** — the same real-world artifact reported by different tools
-  (e.g. a Velociraptor alert and a THOR alert about one downloaded file) is now merged into a
-  single corroborated forensic event instead of two duplicates. Matching is deterministic:
-  a shared file **hash** (sha256/md5, read from structured fields or extracted from the
-  description), OR the same **path within a time window** (`DFIR_CORRELATE_WINDOW_S`, default
-  2s). The merged event takes the most-severe level, unions every tool as a `source`, and so
-  drives **one finding** (with both tools as evidence) rather than two. The dashboard shows a
-  `⊕ N sources` corroboration badge; reports gain a `sources` column. Forensic events gained
-  optional `sha256`/`md5`/`path`/`sources` fields (THOR populates them). Sources show the
+- **Cross-source correlation & duplicate collapsing** — the same real-world artifact is now
+  merged into a single forensic event instead of duplicating. Three deterministic match rules:
+  an **exact duplicate** (same event time + description — collapses **re-imports of the same
+  file** and any event type), a shared file **hash** (sha256/md5, from structured fields or
+  extracted from the description), or the same **path within a time window**
+  (`DFIR_CORRELATE_WINDOW_S`, default 2s). Correlation runs on **every merge** (so importing a
+  report twice no longer doubles the timeline — not just during synthesis). The merged event
+  takes the most-severe level and unions every tool as a `source`, so two tools flagging one
+  file drive **one finding** (with both as evidence). The dashboard shows a `⊕ N sources`
+  corroboration badge; reports gain a `sources` column. Forensic events gained optional
+  `sha256`/`md5`/`path`/`sources` fields (THOR populates them; sources show the real tool name). Sources show the
   **real tool name** — detected from the import filename or the captured browser tab title
   (e.g. "Velociraptor", "CrowdStrike Falcon", "Splunk", "Sysmon") rather than the generic
   import type — so corroboration reads "Velociraptor + THOR".

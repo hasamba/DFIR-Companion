@@ -353,15 +353,23 @@ describe("AnalysisPipeline", () => {
   it("analyzeCsv extracts forensic events from rows and keeps event ids unique across batches", async () => {
     // Each batch independently emits an event with id "e1"; the import must renumber
     // them so chunked CSVs accumulate instead of overwriting (merge dedupes by id).
-    const oneEvent = JSON.stringify({
-      findings: [], iocs: [{ id: "i1", type: "process", value: "mimikatz.exe" }], mitreTechniques: [],
-      threadsOpened: [], threadsClosed: [], timelineNote: "read rows", attackerPath: "", summary: "",
-      forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "row event",
-        severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
-    });
+    // Each batch returns a DISTINCT event (different time/description) so they are
+    // genuinely separate events, not collapsed by duplicate-correlation.
+    let call = 0;
+    const provider = {
+      name: "spy",
+      analyze: async () => {
+        call += 1;
+        return { rawText: JSON.stringify({
+          findings: [], iocs: [{ id: "i1", type: "process", value: "mimikatz.exe" }], mitreTechniques: [],
+          threadsOpened: [], threadsClosed: [], timelineNote: "read rows", attackerPath: "", summary: "",
+          forensicEvents: [{ id: "e1", timestamp: `2026-05-20T09:0${call}:00Z`, description: `row event ${call}`,
+            severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
+        }) };
+      },
+    };
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", oneEvent),
-      stateStore,
+      provider, stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 
@@ -374,6 +382,25 @@ describe("AnalysisPipeline", () => {
     expect(state.forensicTimeline).toHaveLength(2);
     expect(new Set(state.forensicTimeline.map((e) => e.id)).size).toBe(2);
     expect(state.forensicTimeline.every((e) => e.sourceScreenshots.includes("0001_results.csv"))).toBe(true);
+  });
+
+  it("analyzeCsv deduplicates an identical event re-imported (e.g. the same file twice)", async () => {
+    // The SAME extracted event across two imports must NOT double the timeline.
+    const sameEvent = JSON.stringify({
+      findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+      timelineNote: "read rows", attackerPath: "", summary: "",
+      forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "mimikatz.exe dropped",
+        severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", sameEvent), stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const csv = "Time,Process\n09:00,mimikatz.exe\n";
+    await pipeline.analyzeCsv("c1", csv, { label: "0001_a.csv", idPrefix: "m1", importedAt: "2026-06-01T00:00:00Z" });
+    const state = await pipeline.analyzeCsv("c1", csv, { label: "0002_a.csv", idPrefix: "m2", importedAt: "2026-06-01T00:01:00Z" });
+    expect(state.forensicTimeline).toHaveLength(1);            // collapsed, not doubled
+    expect(state.forensicTimeline[0].sourceScreenshots).toEqual(expect.arrayContaining(["0001_a.csv", "0002_a.csv"]));
   });
 
   it("synthesize hides client-confirmed legitimate events from the model but preserves them in state", async () => {

@@ -2,6 +2,7 @@ import type { AnalysisDelta } from "./responseSchema.js";
 import type { InvestigationState, Finding, IOC, Technique, ForensicEvent } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { isAnalystWorkLog } from "./workLogFilter.js";
+import { correlateEvents } from "./correlate.js";
 
 export interface WindowContext {
   windowSequence: number;
@@ -161,7 +162,10 @@ export function mergeDelta(
       });
     }
   }
-  forensicTimeline.sort(byEventTime);
+  // Collapse duplicates / cross-source matches immediately (so re-importing the same
+  // report, or two tools flagging one artifact, never doubles the timeline) — not only
+  // during synthesis. Idempotent.
+  const correlated = correlateEvents(forensicTimeline).sort(byEventTime);
 
   // Key questions are a holistic reassessment — replace wholesale when synthesis
   // provides them; otherwise keep the existing set (per-window deltas omit them).
@@ -181,7 +185,7 @@ export function mergeDelta(
     iocs,
     openThreads,
     timeline,
-    forensicTimeline,
+    forensicTimeline: correlated,
     mitreTechniques,
     keyQuestions,
     nextSteps,

@@ -26,9 +26,9 @@ describe("correlateEvents", () => {
   });
 
   it("merges same path within the time window, keeps distinct paths separate", () => {
-    const a = ev({ id: "a", path: "c:\\users\\srv\\m.exe", timestamp: "2026-05-26T12:00:00Z", sources: ["THOR"] });
-    const b = ev({ id: "b", path: "c:\\users\\srv\\m.exe", timestamp: "2026-05-26T12:00:01Z", sources: ["CSV import"] });
-    const c = ev({ id: "c", path: "c:\\users\\srv\\other.exe", timestamp: "2026-05-26T12:00:00Z", sources: ["THOR"] });
+    const a = ev({ id: "a", description: "m.exe by THOR", path: "c:\\users\\srv\\m.exe", timestamp: "2026-05-26T12:00:00Z", sources: ["THOR"] });
+    const b = ev({ id: "b", description: "m.exe by Velo", path: "c:\\users\\srv\\m.exe", timestamp: "2026-05-26T12:00:01Z", sources: ["CSV import"] });
+    const c = ev({ id: "c", description: "other.exe", path: "c:\\users\\srv\\other.exe", timestamp: "2026-05-26T12:00:00Z", sources: ["THOR"] });
     const out = correlateEvents([a, b, c], { windowSeconds: 2 });
     expect(out).toHaveLength(2);                        // a+b merge, c separate
     const merged = out.find((e) => e.sources && e.sources.length === 2)!;
@@ -54,6 +54,19 @@ describe("correlateEvents", () => {
     const twice = correlateEvents(once);
     expect(twice).toHaveLength(1);
     expect(twice[0].id).toBe(once[0].id);
+  });
+
+  it("collapses exact duplicates (same time + description) — the re-imported-file case", () => {
+    // Same THOR finding imported 3 times → 3 events with identical time+description but no
+    // shared id (different import prefixes). Must collapse to one.
+    const dup = (id: string, src: string) => ev({
+      id, description: "THOR Notice [Filescan]: Suspicious file found — C:\\Tools\\NirSoft\\lsasecretsdump.exe",
+      timestamp: "2009-11-29T10:25:34Z", severity: "Medium", sources: ["THOR"], sourceScreenshots: [src],
+    });
+    const out = correlateEvents([dup("t4e1", "0004.json"), dup("t5e1", "0005.json"), dup("t6e1", "0006.json")]);
+    expect(out).toHaveLength(1);
+    expect(out[0].sourceScreenshots).toEqual(expect.arrayContaining(["0004.json", "0005.json", "0006.json"]));
+    expect(out[0].sources).toEqual(["THOR"]); // same source, not falsely "3 sources"
   });
 
   it("leaves unrelated events untouched and in order (ids preserved)", () => {
