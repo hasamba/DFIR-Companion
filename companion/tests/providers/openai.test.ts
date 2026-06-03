@@ -25,6 +25,17 @@ describe("OpenAIProvider", () => {
     expect(body.messages[1].content[1].image_url.detail).toBe("high");
   });
 
+  it("sends max_tokens when set (bounds cost / avoids OpenRouter 402), omits it otherwise", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    const withCap = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn, maxTokens: 8192 });
+    await withCap.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string).max_tokens).toBe(8192);
+
+    const noCap = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
+    await noCap.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(JSON.parse((fetchFn.mock.calls[1][1] as RequestInit).body as string).max_tokens).toBeUndefined();
+  });
+
   it("honours an explicit imageDetail override", async () => {
     const fetchFn = vi.fn(async () =>
       jsonResponse({ choices: [{ message: { content: "{}" } }] }),

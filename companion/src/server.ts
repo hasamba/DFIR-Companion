@@ -598,6 +598,7 @@ export interface ProviderParams {
   apiKey?: string;
   imageDetail?: "high" | "low" | "auto";
   timeoutMs?: number;
+  maxTokens?: number;
 }
 
 // Build a provider from explicit params (so callers can build more than one,
@@ -610,11 +611,15 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
   const imageDetail = params.imageDetail ?? "high";
   // Strong models over a large timeline can take >60s — make the request timeout tunable.
   const timeoutMs = params.timeoutMs ?? (Number(process.env.DFIR_AI_TIMEOUT_MS) || 180_000);
+  // Bound completion tokens. Without this, OpenRouter reserves the model's full max
+  // output for its per-request credit check and can 402 a large request (e.g. THOR
+  // synthesis) even when the account has credits. Tunable via DFIR_AI_MAX_TOKENS.
+  const maxTokens = params.maxTokens ?? (Number(process.env.DFIR_AI_MAX_TOKENS) || 8192);
   const registry = new ProviderRegistry();
-  registry.register(new OpenAIProvider({ apiKey, model, imageDetail, timeoutMs }));
-  registry.register(new OpenRouterProvider({ apiKey, model, imageDetail, timeoutMs }));
-  registry.register(new OllamaCloudProvider({ apiKey, model, imageDetail, timeoutMs }));
-  registry.register(new GeminiProvider({ apiKey, model, timeoutMs }));
+  registry.register(new OpenAIProvider({ apiKey, model, imageDetail, timeoutMs, maxTokens }));
+  registry.register(new OpenRouterProvider({ apiKey, model, imageDetail, timeoutMs, maxTokens }));
+  registry.register(new OllamaCloudProvider({ apiKey, model, imageDetail, timeoutMs, maxTokens }));
+  registry.register(new GeminiProvider({ apiKey, model, timeoutMs, maxTokens }));
   return registry.get(name);
 }
 

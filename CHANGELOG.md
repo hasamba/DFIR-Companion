@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — e.g. a 1416-line report reduces to ~177 real findings.
 
 ### Changed
+- **Bounded AI requests to fix spurious OpenRouter `HTTP 402`.** Provider calls now send
+  `max_tokens` (default 8192, `DFIR_AI_MAX_TOKENS`) — without it OpenRouter reserves the
+  model's full max output in its per-request credit check and can 402 a large request
+  (e.g. THOR synthesis) even when the account has credits. The synthesis prompt is also
+  capped to the most-severe N events (default 300, `DFIR_AI_SYNTH_MAX_EVENTS`) and echoes
+  at most 150 existing findings, keeping big imports affordable and within context. The
+  Critical/High safety net still creates findings for any event omitted from the prompt.
 - **Synthesis now preserves IOCs** instead of wiping them. IOCs are observed indicators
   (often hundreds of hashes from a deterministic import like THOR that the text-only
   synthesis can't re-derive), so they are kept and merged (deduped by value); scope and

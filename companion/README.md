@@ -31,6 +31,11 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_AI_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high`). High tiles screenshots at full resolution for accurate small-text OCR (OpenAI/OpenRouter models). | `high` |
 | `DFIR_AI_SYNTH_PROVIDER` / `DFIR_AI_SYNTH_MODEL` / `DFIR_AI_SYNTH_KEY` | Optional **synthesis** model (findings / MITRE / attacker path). The vars above are the cheap per-screenshot **extraction** model; point a stronger model here for the one text-only synthesis call. Unset → reuses the extraction model. | `google/gemini-2.5-pro` |
 
+Other AI tunables: `DFIR_AI_TIMEOUT_MS` (per-request timeout, default 180000),
+`DFIR_AI_MAX_TOKENS` (max completion tokens, default 8192 — also stops OpenRouter from
+402-ing a large request by over-reserving credit), and `DFIR_AI_SYNTH_MAX_EVENTS`
+(events fed to the synthesis prompt, default 300, most-severe first).
+
 Shell environment variables override `.env`. `GET /health` returns `{ aiEnabled }`
 so you can confirm whether an AI provider is configured.
 

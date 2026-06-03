@@ -8,6 +8,7 @@ export interface GeminiOptions {
   baseUrl?: string;
   fetchFn?: FetchFn;
   timeoutMs?: number;
+  maxTokens?: number;  // cap on output tokens (maxOutputTokens)
 }
 
 export class GeminiProvider implements AIProvider {
@@ -33,7 +34,10 @@ export class GeminiProvider implements AIProvider {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           contents: [{ role: "user", parts }],
-          generationConfig: { responseMimeType: "application/json" },
+          generationConfig: {
+            responseMimeType: "application/json",
+            ...(this.opts.maxTokens ? { maxOutputTokens: this.opts.maxTokens } : {}),
+          },
         }),
         signal: AbortSignal.timeout(timeoutMs),
       });

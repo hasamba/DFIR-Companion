@@ -8,6 +8,10 @@ export interface OpenAIOptions {
   baseUrl?: string;
   fetchFn?: FetchFn;
   timeoutMs?: number;
+  // Cap on completion tokens. Bounds cost AND keeps OpenRouter's per-request
+  // affordability check (credits >= (input + max_output) * price) from reserving the
+  // model's full max output — the usual cause of a 402 on a large (e.g. THOR) request.
+  maxTokens?: number;
   // "high" tiles the image at full resolution (best for reading small text in
   // forensic screenshots); "low" downscales to one tile (cheaper, blurrier).
   imageDetail?: "high" | "low" | "auto";
@@ -40,6 +44,7 @@ export class OpenAIProvider implements AIProvider {
         body: JSON.stringify({
           model: this.opts.model,
           response_format: { type: "json_object" },
+          ...(this.opts.maxTokens ? { max_tokens: this.opts.maxTokens } : {}),
           messages: [
             { role: "system", content: req.systemPrompt },
             { role: "user", content },

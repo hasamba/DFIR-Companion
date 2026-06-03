@@ -590,14 +590,29 @@ export class AnalysisPipeline {
       markers,
     );
 
-    const timelineText = scopedEvents
-      .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description}`)
+    // Bound the prompt for large imports (e.g. THOR: hundreds of events + auto-findings).
+    // Send the MOST SEVERE events (then most recent) up to a cap, and truncate each
+    // description — this keeps the request affordable (avoids OpenRouter 402 on a giant
+    // request) and inside the model's context. The deterministic high-severity backfill
+    // still creates findings for any Critical/High event NOT shown here (eligibleIds below
+    // is the full scoped set), so capping the prompt never loses a severe detection.
+    const SYNTH_MAX_EVENTS = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const SEV_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+    const promptEvents = [...scopedEvents]
+      .sort((a, b) => (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || (b.timestamp || "").localeCompare(a.timestamp || ""))
+      .slice(0, SYNTH_MAX_EVENTS);
+    const timelineText = promptEvents
+      .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`)
       .join("\n");
+    const truncatedNote = scopedEvents.length > promptEvents.length
+      ? ` — showing the ${promptEvents.length} most severe; ${scopedEvents.length - promptEvents.length} lower-severity event(s) omitted from this prompt but still in the case`
+      : "";
     const scopeNote = hasScope(scope)
       ? `INVESTIGATION SCOPE: only consider activity from ${scope.start ?? "the beginning"} to ${scope.end ?? "now"}. ` +
         `Events outside this window have already been removed below.\n\n`
       : "";
-    const existingFindings = state.findings.map((f) => `[${f.id}] ${f.title}`).join("\n") || "(none yet)";
+    // Cap the existing-findings echo too (a big import can produce 100s of auto-findings).
+    const existingFindings = state.findings.slice(0, 150).map((f) => `[${f.id}] ${f.title}`).join("\n") || "(none yet)";
     const openThreads = state.openThreads
       .filter((t) => t.status === "open")
       .map((t) => `[${t.id}] ${t.description}`)
@@ -605,7 +620,7 @@ export class AnalysisPipeline {
     const legitimateBlock = buildLegitimateContext(markers);
     const userPrompt =
       scopeNote +
-      `FORENSIC TIMELINE (${scopedEvents.length} dated events):\n${timelineText}\n\n` +
+      `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
       (legitimateBlock ? `${legitimateBlock}\n\n` : "") +
