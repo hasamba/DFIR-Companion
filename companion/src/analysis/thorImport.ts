@@ -21,11 +21,19 @@ const LEVEL_SEVERITY: Record<string, Severity> = {
   Info: "Info",
 };
 
+// THOR level ordering (higher = more severe) for the minLevel floor.
+export type ThorLevel = "Alert" | "Warning" | "Notice";
+const LEVEL_RANK: Record<string, number> = { Alert: 3, Warning: 2, Notice: 1, Info: 0 };
+const levelRank = (level: string): number => LEVEL_RANK[level] ?? 1;
+
 export interface ThorImportOptions {
   // Drop `level: "Info"` rows (scan progress / informational). Default true.
   dropInfo?: boolean;
   // Drop lifecycle/app-status modules (Init, Startup, Control, ThorDB, Report). Default true.
   dropLifecycleModules?: boolean;
+  // Minimum THOR level to import. "Notice" keeps Alert+Warning+Notice (default), "Warning"
+  // drops Notice, "Alert" keeps only Alerts. Independent of dropInfo (Info is below Notice).
+  minLevel?: ThorLevel;
   // Safety cap on emitted events (most-severe kept first). Default 2000.
   maxEvents?: number;
 }
@@ -147,6 +155,7 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
     const level = str(row.level);
     const module = str(row.module);
     if (dropInfo && level === "Info") { dropped++; continue; }
+    if (opts.minLevel && levelRank(level) < LEVEL_RANK[opts.minLevel]) { dropped++; continue; }
     if (dropLifecycle && LIFECYCLE_MODULES.has(module)) { dropped++; continue; }
 
     const severity = LEVEL_SEVERITY[level] ?? "Medium";

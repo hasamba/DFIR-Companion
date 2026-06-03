@@ -71,6 +71,19 @@ describe("parseThorReport", () => {
     expect(r.events[0].count).toBe(3);
   });
 
+  it("minLevel floor: 'Warning' drops Notice, 'Alert' keeps only Alerts", () => {
+    const notice = { time: "t", hostname: "H", level: "Notice", module: "Filescan", message: "noteworthy", file: "C:\\n.txt" };
+    const all = jsonl(PROC_ALERT, FILE_WARN, notice);
+
+    expect(parseThorReport(all).kept).toBe(3);                       // default: Alert+Warning+Notice
+    const warn = parseThorReport(all, { minLevel: "Warning" });
+    expect(warn.kept).toBe(2);                                        // Notice dropped
+    expect(warn.events.map((e) => e.severity).sort()).toEqual(["Critical", "High"]);
+    const alert = parseThorReport(all, { minLevel: "Alert" });
+    expect(alert.kept).toBe(1);                                       // only the Alert
+    expect(alert.events[0].severity).toBe("Critical");
+  });
+
   it("keeps Info / lifecycle when filters are disabled", () => {
     const r = parseThorReport(jsonl(INIT, STARTUP, PROC_ALERT), { dropInfo: false, dropLifecycleModules: false });
     expect(r.kept).toBe(3);

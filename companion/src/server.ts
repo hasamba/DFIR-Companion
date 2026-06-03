@@ -515,10 +515,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const originalName = String(req.body?.filename ?? "thor.json");
     if (!json.trim()) return res.status(400).json({ error: "json is required" });
 
+    // Optional severity floor: keep only Alert / Alert+Warning / Alert+Warning+Notice.
+    const rawLevel = String(req.body?.minLevel ?? "").trim().toLowerCase();
+    const minLevel = rawLevel === "alert" ? "Alert" : rawLevel === "warning" ? "Warning" : rawLevel === "notice" ? "Notice" : undefined;
+    const thorOpts = minLevel ? { minLevel } as const : undefined;
+
     try {
       // Parse up-front: reject a file with no real findings (only info/lifecycle rows),
       // and report kept/dropped counts back to the UI.
-      const preview = parseThorReport(json);
+      const preview = parseThorReport(json, thorOpts);
       if (preview.total === 0) return res.status(400).json({ error: "no parseable THOR JSON lines" });
       if (preview.kept === 0) {
         return res.status(400).json({ error: `THOR report has no findings after dropping ${preview.dropped} info/lifecycle row(s)` });
@@ -541,6 +546,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         label: storedName,
         idPrefix: `t${seq}`,
         importedAt,
+        thor: thorOpts,
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `THOR import — ${done}/${total}`,

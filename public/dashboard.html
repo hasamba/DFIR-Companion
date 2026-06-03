@@ -600,12 +600,16 @@
       const caseId = document.getElementById("caseId").value.trim();
       const file = e.target.files && e.target.files[0];
       if (!caseId || !file) return;
+      // Severity floor: alert (only alerts) / warning (alerts+warnings) / notice (all, default).
+      const ans = prompt("THOR — minimum severity to import?\n  alert   = only Alerts\n  warning = Alerts + Warnings\n  notice  = all findings (default)", "notice");
+      if (ans === null) { e.target.value = ""; return; } // cancelled
+      const minLevel = ans.trim().toLowerCase();
       document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
       try {
         const text = await file.text();
         const r = await fetch(`/cases/${caseId}/import-thor`, {
           method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, json: text }),
+          body: JSON.stringify({ filename: file.name, json: text, minLevel }),
         });
         if (!r.ok) {
           let msg = "HTTP " + r.status;

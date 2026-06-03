@@ -32,7 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (process create / file mtime, not the scan time), hashes/files/processes/IPs become IOCs,
   and identical findings collapse with a count. Scan noise is dropped by default —
   `level:"Info"` rows and lifecycle modules (`Init`, `Startup`, `Control`, `ThorDB`, `Report`)
-  — e.g. a 1416-line report reduces to ~177 real findings.
+  — e.g. a 1416-line report reduces to ~177 real findings. An optional **severity floor**
+  (`minLevel`: `alert` / `warning` / `notice`, prompted in the dashboard) trims volume
+  further — on that report, 177 → 154 (Warning+) → 22 (Alert only).
 
 ### Fixed (continued)
 - **Tolerate truncated AI JSON responses.** A large synthesis (e.g. from a THOR import)
