@@ -614,7 +614,7 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
   // Bound completion tokens. Without this, OpenRouter reserves the model's full max
   // output for its per-request credit check and can 402 a large request (e.g. THOR
   // synthesis) even when the account has credits. Tunable via DFIR_AI_MAX_TOKENS.
-  const maxTokens = params.maxTokens ?? (Number(process.env.DFIR_AI_MAX_TOKENS) || 8192);
+  const maxTokens = params.maxTokens ?? (Number(process.env.DFIR_AI_MAX_TOKENS) || 16000);
   const registry = new ProviderRegistry();
   registry.register(new OpenAIProvider({ apiKey, model, imageDetail, timeoutMs, maxTokens }));
   registry.register(new OpenRouterProvider({ apiKey, model, imageDetail, timeoutMs, maxTokens }));

@@ -5,7 +5,7 @@ import type { InvestigationState } from "./stateTypes.js";
 import { deltaSchema } from "./responseSchema.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
-import { extractJsonText } from "./extractJson.js";
+import { parseJsonLoose } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
 import { correlateEvents } from "./correlate.js";
@@ -390,7 +390,7 @@ export class AnalysisPipeline {
     const delta = await withRetry(async () => {
       const result = await this.opts.provider.analyze({ systemPrompt: SYSTEM_PROMPT, userPrompt, images });
       // Models often wrap JSON in markdown fences / prose — extract it first.
-      return deltaSchema.parse(JSON.parse(extractJsonText(result.rawText)));
+      return deltaSchema.parse(parseJsonLoose(result.rawText));
     }, retries, backoffMs);
 
     const windowSequence = analyzable[analyzable.length - 1].sequenceNumber;
@@ -442,7 +442,7 @@ export class AnalysisPipeline {
 
       const delta = await withRetry(async () => {
         const result = await this.opts.provider.analyze({ systemPrompt: CSV_SYSTEM_PROMPT, userPrompt, images: [] });
-        return deltaSchema.parse(JSON.parse(extractJsonText(result.rawText)));
+        return deltaSchema.parse(parseJsonLoose(result.rawText));
       }, retries, backoffMs);
 
       // Renumber event ids so chunked imports don't overwrite each other (merge
@@ -512,7 +512,7 @@ export class AnalysisPipeline {
 
       const delta = await withRetry(async () => {
         const result = await this.opts.provider.analyze({ systemPrompt: LOG_SYSTEM_PROMPT, userPrompt, images: [] });
-        return deltaSchema.parse(JSON.parse(extractJsonText(result.rawText)));
+        return deltaSchema.parse(parseJsonLoose(result.rawText));
       }, retries, backoffMs);
 
       const renumbered = {
@@ -650,7 +650,7 @@ export class AnalysisPipeline {
 
     const delta = await withRetry(async () => {
       const result = await synthProvider.analyze({ systemPrompt: SYNTHESIS_PROMPT, userPrompt, images: [] });
-      return deltaSchema.parse(JSON.parse(extractJsonText(result.rawText)));
+      return deltaSchema.parse(parseJsonLoose(result.rawText));
     }, retries, backoffMs);
 
     // Anchor finding timestamps to the last real event time (fallback: existing state time).

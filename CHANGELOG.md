@@ -34,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `level:"Info"` rows and lifecycle modules (`Init`, `Startup`, `Control`, `ThorDB`, `Report`)
   — e.g. a 1416-line report reduces to ~177 real findings.
 
+### Fixed (continued)
+- **Tolerate truncated AI JSON responses.** A large synthesis (e.g. from a THOR import)
+  could exceed `max_tokens` and get cut off mid-array → `Expected ',' or ']' after array
+  element` parse error. The parser now repairs a truncated response (trims to the last
+  complete object, closes open brackets) so the findings that did arrive are kept — and the
+  high-severity backfill fills any dropped finding. Also raised the default `max_tokens`
+  16000 (from 8192) to reduce truncation while staying bounded against the 402 issue.
+
 ### Changed
 - **Bounded AI requests to fix spurious OpenRouter `HTTP 402`.** Provider calls now send
   `max_tokens` (default 8192, `DFIR_AI_MAX_TOKENS`) — without it OpenRouter reserves the

@@ -21,3 +21,49 @@ export function extractJsonText(raw: string): string {
   // Nothing JSON-like found; return as-is so the caller's parse error is honest.
   return text;
 }
+
+// Given a (possibly truncated) JSON string, compute the closing brackets needed to
+// balance any still-open arrays/objects, respecting string literals and escapes.
+function neededClosers(s: string): string {
+  const stack: string[] = [];
+  let inStr = false;
+  let esc = false;
+  for (const c of s) {
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") stack.push("}");
+    else if (c === "[") stack.push("]");
+    else if (c === "}" || c === "]") stack.pop();
+  }
+  return stack.reverse().join("");
+}
+
+// Best-effort repair of a TRUNCATED JSON response (the usual cause: the model hit its
+// max_tokens limit mid-array). Cut back to the last complete object (last "}"), drop a
+// dangling comma, and append the closers needed to balance still-open structures. The
+// result parses to a partial-but-valid object — and since the response schema makes most
+// fields optional/defaulted, a partial findings/events array is still useful (and the
+// deterministic high-severity backfill fills any finding the truncation dropped).
+export function repairTruncatedJson(s: string): string {
+  const lastBrace = s.lastIndexOf("}");
+  if (lastBrace === -1) return s;
+  const prefix = s.slice(0, lastBrace + 1).replace(/,\s*$/, "");
+  return prefix + neededClosers(prefix);
+}
+
+// Parse model JSON tolerantly: strip fences/prose, then on a parse failure attempt the
+// truncation repair before giving up. Returns the parsed value or throws if even the
+// repair can't parse (so the caller's retry/error path still fires).
+export function parseJsonLoose(raw: string): unknown {
+  const cleaned = extractJsonText(raw);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    return JSON.parse(repairTruncatedJson(cleaned));
+  }
+}
