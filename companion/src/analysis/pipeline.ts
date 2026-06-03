@@ -9,6 +9,7 @@ import { extractJsonText } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
 import { correlateEvents } from "./correlate.js";
+import { detectTool } from "./toolDetect.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
 import { parseCsv, chunk, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
@@ -393,8 +394,10 @@ export class AnalysisPipeline {
     }, retries, backoffMs);
 
     const windowSequence = analyzable[analyzable.length - 1].sequenceNumber;
-    // Tag each event's source (for cross-source correlation/corroboration) unless the model named one.
-    const tagged = { ...delta, forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, sources: e.sources?.length ? e.sources : ["screenshot"] })) };
+    // Tag each event's source for correlation/corroboration: detect the real tool from the
+    // captured tab titles (e.g. "Velociraptor", "CrowdStrike Falcon"), else generic "screenshot".
+    const winSource = detectTool(analyzable.map((c) => c.tabTitle).join(" ")) ?? "screenshot";
+    const tagged = { ...delta, forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, sources: e.sources?.length ? e.sources : [winSource] })) };
     const next = mergeDelta(state, tagged, {
       windowSequence,
       timestamp: analyzable[analyzable.length - 1].timestamp,
@@ -446,7 +449,7 @@ export class AnalysisPipeline {
       // dedupes forensic events by id, and each batch independently emits e1, e2…).
       const renumbered = {
         ...delta,
-        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : ["CSV import"] })),
+        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "CSV import"] })),
       };
 
       state = mergeDelta(state, renumbered, {
@@ -514,7 +517,7 @@ export class AnalysisPipeline {
 
       const renumbered = {
         ...delta,
-        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : ["Log import"] })),
+        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "Log import"] })),
       };
 
       state = mergeDelta(state, renumbered, {

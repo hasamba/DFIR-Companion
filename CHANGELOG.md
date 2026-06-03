@@ -21,7 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2s). The merged event takes the most-severe level, unions every tool as a `source`, and so
   drives **one finding** (with both tools as evidence) rather than two. The dashboard shows a
   `⊕ N sources` corroboration badge; reports gain a `sources` column. Forensic events gained
-  optional `sha256`/`md5`/`path`/`sources` fields (THOR populates them).
+  optional `sha256`/`md5`/`path`/`sources` fields (THOR populates them). Sources show the
+  **real tool name** — detected from the import filename or the captured browser tab title
+  (e.g. "Velociraptor", "CrowdStrike Falcon", "Splunk", "Sysmon") rather than the generic
+  import type — so corroboration reads "Velociraptor + THOR".
 - **THOR (Nextron) scanner import** — `POST /cases/:id/import-thor` and an **Import THOR**
   dashboard button accept a THOR JSON-Lines report (`thor --jsonfile`). Findings map
   **deterministically** to the timeline + IOCs (no AI extraction call): `level` → severity
