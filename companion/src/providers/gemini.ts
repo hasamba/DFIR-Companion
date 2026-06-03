@@ -1,4 +1,4 @@
-import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, ProviderError } from "./provider.js";
+import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, ProviderError, httpErrorKind, httpErrorMessage } from "./provider.js";
 
 type FetchFn = typeof fetch;
 
@@ -8,13 +8,6 @@ export interface GeminiOptions {
   baseUrl?: string;
   fetchFn?: FetchFn;
   timeoutMs?: number;
-}
-
-function mapStatus(status: number): ProviderError["kind"] {
-  if (status === 401 || status === 403) return "auth";
-  if (status === 429) return "rate_limit";
-  if (status === 408 || status >= 500) return "transport";
-  return "other";
 }
 
 export class GeminiProvider implements AIProvider {
@@ -50,7 +43,10 @@ export class GeminiProvider implements AIProvider {
         : `Gemini transport error: ${(err as Error).message}`;
       throw new ProviderError(msg, "transport");
     }
-    if (!res.ok) throw new ProviderError(`Gemini HTTP ${res.status}`, mapStatus(res.status));
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new ProviderError(httpErrorMessage("Gemini", res.status, body), httpErrorKind(res.status));
+    }
     const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
     const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new ProviderError("Gemini returned no content", "other");

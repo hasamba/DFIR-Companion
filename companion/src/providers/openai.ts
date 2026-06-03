@@ -1,4 +1,4 @@
-import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, ProviderError } from "./provider.js";
+import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, ProviderError, httpErrorKind, httpErrorMessage } from "./provider.js";
 
 type FetchFn = typeof fetch;
 
@@ -11,13 +11,6 @@ export interface OpenAIOptions {
   // "high" tiles the image at full resolution (best for reading small text in
   // forensic screenshots); "low" downscales to one tile (cheaper, blurrier).
   imageDetail?: "high" | "low" | "auto";
-}
-
-function mapStatus(status: number): ProviderError["kind"] {
-  if (status === 401 || status === 403) return "auth";
-  if (status === 429) return "rate_limit";
-  if (status === 408 || status >= 500) return "transport";
-  return "other";
 }
 
 export class OpenAIProvider implements AIProvider {
@@ -60,7 +53,10 @@ export class OpenAIProvider implements AIProvider {
         : `OpenAI transport error: ${(err as Error).message}`;
       throw new ProviderError(msg, "transport");
     }
-    if (!res.ok) throw new ProviderError(`OpenAI HTTP ${res.status}`, mapStatus(res.status));
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new ProviderError(httpErrorMessage(this.name === "openrouter" ? "OpenRouter" : "OpenAI", res.status, body), httpErrorKind(res.status));
+    }
     const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     const text = json.choices?.[0]?.message?.content;
     if (!text) throw new ProviderError("OpenAI returned no content", "other");

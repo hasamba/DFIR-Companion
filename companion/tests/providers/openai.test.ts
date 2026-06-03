@@ -41,4 +41,16 @@ describe("OpenAIProvider", () => {
     await expect(p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }))
       .rejects.toMatchObject({ kind: "rate_limit" } as Partial<ProviderError>);
   });
+
+  it("maps 402 to a 'billing' ProviderError with an actionable message", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ error: { message: "Insufficient credit balance" } }, 402));
+    const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
+    await expect(p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }))
+      .rejects.toMatchObject({ kind: "billing" } as Partial<ProviderError>);
+    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }).catch((e: ProviderError) => {
+      expect(e.message).toContain("payment required");
+      expect(e.message).toContain("out of credits");
+      expect(e.message).toContain("Insufficient credit balance"); // provider body echoed
+    });
+  });
 });
