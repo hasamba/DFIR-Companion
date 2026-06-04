@@ -124,7 +124,7 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   asset/MITRE) are tagged `manual`, re-synthesized into findings, and survive re-analysis; manual IOCs are
   deduped and enriched.
 - **MITRE techniques link to [attack.mitre.org](https://attack.mitre.org/)** everywhere they appear
-  (findings, timeline, MITRE section, the report, and the IRIS export) — sub-techniques included.
+  (findings, timeline, MITRE section, the report, and the IRIS push) — sub-techniques included.
 - **Compromised assets + asset↔IoC graph** — events carry the affected **host** (from THOR / CSV /
   screenshots); the dashboard lists compromised hosts/users and draws an interactive **asset ↔ IoC graph**
   (which IoC touched each asset, and per asset all its IoCs) with Host/Account/Service toggles,
@@ -134,8 +134,8 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   (findings, IOCs incl. enrichment, capture timeline, forensic timeline incl. count/sources) + full
   JSON state export. Export from the dashboard as Markdown or HTML, or **export just the incident
   timeline as CSV** with one click.
-- **Export to DFIR-IRIS** — push a case into a [DFIR-IRIS](https://dfir-iris.org/) instance with one
-  click (dashboard **Export to IRIS** button, or `npm run iris:export -- <caseId>`). It **find-or-creates
+- **Push to DFIR-IRIS** — push a case into a [DFIR-IRIS](https://dfir-iris.org/) instance with one
+  click (dashboard **Push to IRIS** button, or `npm run iris:push -- <caseId>`). It **find-or-creates
   the IRIS case by name** (= the Companion case id) — re-exporting an existing case *updates* it — and
   maps **assets → assets**, **IOCs → IOCs** (type/TLP resolved at runtime, with threat-intel verdicts as
   description/tags), **forensic timeline → timeline** (events **auto-categorized** by MITRE tactic and

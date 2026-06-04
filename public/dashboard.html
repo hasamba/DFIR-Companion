@@ -140,7 +140,7 @@
     <button id="importShots" title="Import external screenshots (PNG/JPEG/WebP) from another tool — select multiple at once. Each is stored as evidence and analyzed (when AI is on), exactly like the extension's captures.">Import Screenshots</button>
     <button id="generateReport" title="Write the report (Markdown + HTML) and CSVs; then export via the links that appear">Generate Report</button>
     <button id="exportTimelineCsv" title="Download just the incident (forensic) timeline as CSV">Export Timeline CSV</button>
-    <button id="exportIris" title="Export this case to DFIR-IRIS: creates the case (or updates it if it already exists), pushing assets, IOCs, timeline, the executive summary as the case summary, and every other section as notes" style="display:none">Export to IRIS</button>
+    <button id="pushIris" title="Push this case to DFIR-IRIS: creates the case (or updates it if it already exists), pushing assets, IOCs, timeline, the executive summary as the case summary, and every other section as notes" style="display:none">Push to IRIS</button>
     <span id="reportLinks" class="report-links"></span>
     <button id="toggleAll" title="Collapse or expand all sections">Collapse all</button>
     <span id="status">disconnected</span>
@@ -1406,20 +1406,20 @@
       });
     };
 
-    // ── Export to DFIR-IRIS ───────────────────────────────────────────────────
+    // ── Push to DFIR-IRIS ───────────────────────────────────────────────────
     // The button is shown only when the server has an IRIS target configured
     // (GET /iris/status). Clicking pushes the case and reports a per-section summary.
     fetch("/iris/status").then(r => r.json()).then(s => {
-      if (s && s.configured) document.getElementById("exportIris").style.display = "";
+      if (s && s.configured) document.getElementById("pushIris").style.display = "";
     }).catch(() => {});
-    document.getElementById("exportIris").onclick = () => {
+    document.getElementById("pushIris").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
-      const btn = document.getElementById("exportIris");
+      const btn = document.getElementById("pushIris");
       btn.disabled = true;
-      document.getElementById("status").textContent = "exporting to IRIS…";
+      document.getElementById("status").textContent = "pushing to IRIS…";
       document.getElementById("reportLinks").innerHTML = "";
-      fetch(`/cases/${encodeURIComponent(caseId)}/export/iris`, { method: "POST" })
+      fetch(`/cases/${encodeURIComponent(caseId)}/push/iris`, { method: "POST" })
         .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
         .then(res => {
           const verb = res.created ? "created" : "updated";
@@ -1432,9 +1432,9 @@
             document.getElementById("reportLinks").innerHTML =
               `<a href="${escAttr(res.caseUrl)}" target="_blank" rel="noopener">Open in IRIS</a>`;
           }
-          if (res.warnings && res.warnings.length) console.warn("IRIS export warnings:", res.warnings);
+          if (res.warnings && res.warnings.length) console.warn("IRIS push warnings:", res.warnings);
         })
-        .catch(e => document.getElementById("status").textContent = "IRIS export failed: " + e.message)
+        .catch(e => document.getElementById("status").textContent = "IRIS push failed: " + e.message)
         .finally(() => { btn.disabled = false; });
     };
 

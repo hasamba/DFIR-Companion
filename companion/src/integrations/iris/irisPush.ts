@@ -1,6 +1,6 @@
-// Orchestrates a full Companion → DFIR-IRIS export. Find-or-create the case by name, then
+// Orchestrates a full Companion → DFIR-IRIS push. Find-or-create the case by name, then
 // push: assets→assets, IOCs→IOCs, forensic timeline→timeline, executive summary→case summary,
-// and every other section→notes. Idempotent: re-exporting an existing case adds only what's
+// and every other section→notes. Idempotent: re-pushing an existing case adds only what's
 // missing (assets by name, IOCs by value, events by title+time) and cleanly replaces the
 // Companion notes + summary — so the spec's "if exists update, else create" holds end to end.
 //
@@ -43,14 +43,14 @@ export interface IrisClientLike {
   addNote(cid: number, directoryId: number, title: string, content: string): Promise<number>;
 }
 
-export interface IrisExportInput {
+export interface IrisPushInput {
   caseName: string;                    // = the Companion case id (used as the IRIS case name)
   state: InvestigationState;
   meta?: ReportMeta;
   assetGraph?: AssetGraph;             // defaults to buildAssetGraph(state)
 }
 
-export interface IrisExportOptions {
+export interface IrisPushOptions {
   customerId?: number;                 // IRIS customer id (default 1 — seeded IrisInitialClient)
   classificationId?: number;           // IRIS case classification id (default 1)
   baseUrl?: string;                    // to build a clickable case URL in the result
@@ -59,7 +59,7 @@ export interface IrisExportOptions {
 
 interface SectionCount { added: number; existing: number; skipped: number }
 
-export interface IrisExportResult {
+export interface IrisPushResult {
   caseId: number;
   caseName: string;
   created: boolean;                    // true = the case was newly created
@@ -75,11 +75,11 @@ export interface IrisExportResult {
 
 const NOTES_DIR = "DFIR Companion";
 
-export async function exportCaseToIris(
+export async function pushCaseToIris(
   client: IrisClientLike,
-  input: IrisExportInput,
-  options: IrisExportOptions = {},
-): Promise<IrisExportResult> {
+  input: IrisPushInput,
+  options: IrisPushOptions = {},
+): Promise<IrisPushResult> {
   const meta = input.meta ?? emptyReportMeta();
   const graph = input.assetGraph ?? buildAssetGraph(input.state);
   const warnings: string[] = [];
@@ -161,7 +161,7 @@ export async function exportCaseToIris(
   try {
     for (const e of await client.listEvents(cid)) seenEvents.add(`${e.title}|${e.date}`);
   } catch {
-    warnings.push("timeline: could not list existing events — re-export may duplicate events");
+    warnings.push("timeline: could not list existing events — re-push may duplicate events");
   }
   let categoryByName = new Map<string, number>();
   try { categoryByName = await client.eventCategoryMap(); } catch (err) { warnings.push(`event categories: ${(err as Error).message}`); }
@@ -200,7 +200,7 @@ export async function exportCaseToIris(
     } catch (err) { warnings.push(`task status: ${(err as Error).message}`); }
     const seenTasks = new Set<string>();
     try { for (const t of await client.listTasks(cid)) seenTasks.add(t.title); }
-    catch { warnings.push("tasks: could not list existing tasks — re-export may duplicate"); }
+    catch { warnings.push("tasks: could not list existing tasks — re-push may duplicate"); }
     for (const step of input.state.nextSteps) {
       const body = mapNextStepTask(step);
       const title = String(body.task_title);

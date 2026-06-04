@@ -1,5 +1,5 @@
 // Pure mappers: Companion investigation data → DFIR-IRIS request bodies and note markdown.
-// No I/O — every function is deterministic and unit-tested. The orchestrator (irisExport.ts)
+// No I/O — every function is deterministic and unit-tested. The orchestrator (irisPush.ts)
 // wires these to the live IrisClient. IRIS type IDs vary per install, so callers pass a
 // resolved name→id map (built at runtime from the client's iocTypeMap/assetTypeMap).
 
@@ -262,7 +262,7 @@ export function buildNotes(state: InvestigationState, meta: ReportMeta): IrisNot
   if (state.findings.length) push("Findings", findingsNote(state.findings));
   if (state.mitreTechniques.length) push("MITRE ATT&CK", mitreNote(state.mitreTechniques));
   if (state.keyQuestions.length) push("Key Investigative Questions", questionsNote(state.keyQuestions));
-  // Recommended Next Steps are exported as IRIS tasks (not notes) — see exportCaseToIris.
+  // Recommended Next Steps are pushed as IRIS tasks (not notes) — see pushCaseToIris.
   if (state.openThreads.length) push("Open Threads", threadsNote(state.openThreads));
 
   // Human-authored report-meta sections.

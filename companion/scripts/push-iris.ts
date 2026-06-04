@@ -1,8 +1,8 @@
-// Export a case to DFIR-IRIS from the command line. Find-or-create the IRIS case by name
+// Push a case to DFIR-IRIS from the command line. Find-or-create the IRIS case by name
 // (= the Companion case id), then push assets→assets, IOCs→IOCs, forensic timeline→timeline,
 // executive summary→case summary, and every other section→notes. Reads DFIR_IRIS_* from .env.
 //
-//   npm run iris:export -- <caseId>
+//   npm run iris:push -- <caseId>
 import { config as loadDotenv } from "dotenv";
 loadDotenv();
 
@@ -11,13 +11,13 @@ import { fileURLToPath } from "node:url";
 import { CaseStore } from "../src/storage/caseStore.js";
 import { StateStore } from "../src/analysis/stateStore.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
-import { exportCaseToIris } from "../src/integrations/iris/irisExport.js";
-import { buildIrisClient, irisExportOptions } from "../src/server.js";
+import { pushCaseToIris } from "../src/integrations/iris/irisPush.js";
+import { buildIrisClient, irisPushOptions } from "../src/server.js";
 
 async function main(): Promise<void> {
   const caseId = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : undefined;
   if (!caseId) {
-    console.error("usage: npm run iris:export -- <caseId>");
+    console.error("usage: npm run iris:push -- <caseId>");
     process.exit(2);
   }
 
@@ -37,8 +37,8 @@ async function main(): Promise<void> {
   const state = await stateStore.load(caseId);
   const meta = await reportMetaStore.load(caseId);
 
-  console.log(`Exporting "${caseId}" to ${process.env.DFIR_IRIS_URL} …`);
-  const res = await exportCaseToIris(client, { caseName: caseId, state, meta }, irisExportOptions());
+  console.log(`Pushing "${caseId}" to ${process.env.DFIR_IRIS_URL} …`);
+  const res = await pushCaseToIris(client, { caseName: caseId, state, meta }, irisPushOptions());
 
   console.log(`\nIRIS case #${res.caseId} ${res.created ? "CREATED" : "UPDATED"} ("${res.caseName}")`);
   console.log(`  assets:   +${res.assets.added}  (${res.assets.existing} existing, ${res.assets.skipped} skipped)`);
@@ -54,4 +54,4 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => { console.error("iris export error:", (e as Error).message); process.exit(1); });
+main().catch((e) => { console.error("iris push error:", (e as Error).message); process.exit(1); });

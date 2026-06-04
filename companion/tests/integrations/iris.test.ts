@@ -3,7 +3,7 @@ import {
   irisEventDate, mapIoc, mapAsset, mapEvent, mapNextStepTask, buildNotes, executiveSummaryMarkdown,
 } from "../../src/integrations/iris/irisMap.js";
 import { tacticForTechniques } from "../../src/integrations/iris/mitreTactics.js";
-import { exportCaseToIris, type IrisClientLike } from "../../src/integrations/iris/irisExport.js";
+import { pushCaseToIris, type IrisClientLike } from "../../src/integrations/iris/irisPush.js";
 import { emptyState, type InvestigationState, type IOC, type ForensicEvent, type NextStep } from "../../src/analysis/stateTypes.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 import type { GraphAsset } from "../../src/analysis/assetGraph.js";
@@ -189,10 +189,10 @@ function sampleState(): InvestigationState {
   };
 }
 
-describe("exportCaseToIris", () => {
+describe("pushCaseToIris", () => {
   it("creates the case when missing and pushes assets, IOCs, timeline, summary and notes", async () => {
     const m = new MockIris();
-    const res = await exportCaseToIris(m, { caseName: "Case Alpha", state: sampleState() }, { baseUrl: "https://iris.example.org/" });
+    const res = await pushCaseToIris(m, { caseName: "Case Alpha", state: sampleState() }, { baseUrl: "https://iris.example.org/" });
     expect(m.pinged).toBe(true);
     expect(res.created).toBe(true);
     expect(res.caseId).toBe(1);
@@ -211,7 +211,7 @@ describe("exportCaseToIris", () => {
   it("dedupes a next-step task that already exists in IRIS (by title)", async () => {
     const m = new MockIris();
     m.existingTasks = [{ id: 9, title: "[critical] Isolate DC01" }];
-    const res = await exportCaseToIris(m, { caseName: "Case Alpha", state: sampleState() });
+    const res = await pushCaseToIris(m, { caseName: "Case Alpha", state: sampleState() });
     expect(res.tasks.existing).toBe(1);
     expect(res.tasks.added).toBe(0);
     expect(m.addedTasks).toHaveLength(0);
@@ -221,7 +221,7 @@ describe("exportCaseToIris", () => {
     const m = new MockIris();
     m.cases.push({ caseId: 42, caseName: "Case Alpha" });
     m.existingIocs = [{ id: 5, value: "8.8.8.8" }];     // already in IRIS
-    const res = await exportCaseToIris(m, { caseName: "Case Alpha", state: sampleState() });
+    const res = await pushCaseToIris(m, { caseName: "Case Alpha", state: sampleState() });
     expect(res.created).toBe(false);
     expect(res.caseId).toBe(42);
     expect(res.iocs.existing).toBe(1);                  // 8.8.8.8 skipped
@@ -229,10 +229,10 @@ describe("exportCaseToIris", () => {
     expect(m.addedIocs.map((b) => b.ioc_value)).toEqual(["evil.com"]);
   });
 
-  it("clean-replaces the managed notes directory on re-export", async () => {
+  it("clean-replaces the managed notes directory on re-push", async () => {
     const m = new MockIris();
-    m.dirs.push({ id: 77, name: "DFIR Companion" });    // pre-existing from a prior export
-    await exportCaseToIris(m, { caseName: "Case Alpha", state: sampleState() });
+    m.dirs.push({ id: 77, name: "DFIR Companion" });    // pre-existing from a prior push
+    await pushCaseToIris(m, { caseName: "Case Alpha", state: sampleState() });
     expect(m.deletedDirs).toContain(77);                // old dir removed before re-adding
     expect(m.dirs.some((d) => d.name === "DFIR Companion")).toBe(true);
   });
@@ -240,7 +240,7 @@ describe("exportCaseToIris", () => {
   it("records a warning and skips an IOC with no mappable IRIS type", async () => {
     const m = new MockIris();
     const state = { ...emptyState("Case Beta"), iocs: [ioc({ value: "mystery", type: "other" })] };
-    const res = await exportCaseToIris(m, { caseName: "Case Beta", state });
+    const res = await pushCaseToIris(m, { caseName: "Case Beta", state });
     expect(res.iocs.skipped).toBe(1);
     expect(res.iocs.added).toBe(0);
     expect(res.warnings.some((w) => w.includes("mystery"))).toBe(true);

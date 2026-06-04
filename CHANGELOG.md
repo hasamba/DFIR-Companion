@@ -28,15 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MITRE techniques link to attack.mitre.org.** Every technique id in the dashboard (findings, timeline,
   MITRE section), the report, and the IRIS notes is now a link to its official ATT&CK page (sub-techniques
   resolve to `…/Txxxx/yyy/`). Tactic names resolve to their `TAxxxx` tactic pages too.
-- **Export a case to DFIR-IRIS.** New **Export to IRIS** dashboard button (and `npm run iris:export --
-  <caseId>` / `POST /cases/:id/export/iris`) that pushes a case into a [DFIR-IRIS](https://dfir-iris.org/)
+- **Push a case to DFIR-IRIS.** New **Push to IRIS** dashboard button (and `npm run iris:push --
+  <caseId>` / `POST /cases/:id/push/iris`) that pushes a case into a [DFIR-IRIS](https://dfir-iris.org/)
   instance. It **find-or-creates the IRIS case by name** (= the Companion case id) — re-exporting an
   existing case *updates* it — and maps **assets→assets**, **IOCs→IOCs** (IRIS type/TLP resolved at
   runtime; threat-intel verdicts become the description/tags), **forensic timeline→timeline** (events
   linked to their IRIS assets/IOCs), the **executive summary→case summary**, and **all other
   sections→notes** (attacker path, findings, MITRE, key questions, next steps, BIA, recommendations…).
   Idempotent — assets dedupe by name, IOCs by value, events by title+time; the summary and the managed
-  "DFIR Companion" notes directory are refreshed each export. Uses the v1 IRIS REST API with an injectable
+  "DFIR Companion" notes directory are refreshed each push. Uses the v1 IRIS REST API with an injectable
   `fetchFn` (self-signed / internal-CA IRIS supported via `DFIR_IRIS_CA` / `DFIR_IRIS_INSECURE`).
   Configure with `DFIR_IRIS_URL` + `DFIR_IRIS_KEY` (+ optional `DFIR_IRIS_CUSTOMER_ID` /
   `DFIR_IRIS_CLASSIFICATION_ID`); the button hides itself when IRIS isn't configured.
