@@ -3,3 +3,4 @@ cases/
 dist/
 *.timestamp-*.mjs
 .env
+prompts/

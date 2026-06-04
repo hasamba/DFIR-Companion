@@ -179,4 +179,11 @@ opt-in per case (`enrich-control`), sends indicators to third parties. Providers
 `npm run dev` · `npm test` · `npm run verify:ai -- <case>` (one-call model smoke test) ·
 `npm run coverage -- <case>` (how many screenshots were analyzed) ·
 `npm run reanalyze -- <case> [--reset --all --model … --synth-model …]` ·
-`npm run synthesize -- <case> [--model …]` · `npm run clean-timeline -- <case> [--apply]`.
+`npm run synthesize -- <case> [--model …]` · `npm run clean-timeline -- <case> [--apply]` ·
+`npm run prompts:eject -- [dir]` (write the 4 default prompts to files for customizing).
+
+**Customizable prompts.** The four prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
+consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`,
+which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH>_PROMPT` inline, or `…_PROMPT_FILE` —
+re-read each call, so file edits apply with no restart; bad file → warn + fall back to default).
+When you change a prompt's wording, keep the example JSON shape it dictates in sync with `responseSchema.ts`.

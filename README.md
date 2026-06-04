@@ -106,6 +106,9 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 
 ### Ops
 - **Configurable** — port (`DFIR_PORT`), cases root, all behavior via `DFIR_*` env vars.
+- **Customizable AI prompts** — override the extraction / CSV / log / synthesis prompts via env
+  (`DFIR_AI_*_PROMPT` or `*_PROMPT_FILE`); file edits apply with no restart. `npm run prompts:eject`
+  dumps the defaults to start from.
 - **CLI scripts** — `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline` (see below).
 
 ## Repository layout

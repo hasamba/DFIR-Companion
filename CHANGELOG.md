@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Customizable AI prompts** — override any of the four built-in prompts (`SYSTEM` per-screenshot
+  extraction, `CSV`, `LOG`, `SYNTH` holistic synthesis) from `companion/.env`: `DFIR_AI_<NAME>_PROMPT`
+  for inline text, or `DFIR_AI_<NAME>_PROMPT_FILE` to point at a file. The file is re-read on every
+  AI call, so editing it applies on the next analysis with **no server restart**; an empty/unreadable
+  file falls back to the built-in prompt with a warning. `npm run prompts:eject` writes the four
+  defaults to `./prompts` to start from.
+
 ## [0.4.0] - 2026-06-04
 
 ### Added

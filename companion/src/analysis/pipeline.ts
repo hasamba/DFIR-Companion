@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { AIProvider, AnalyzeImage } from "../providers/provider.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
@@ -343,6 +344,36 @@ export const SYNTHESIS_PROMPT = [
   ),
 ].join("\n");
 
+// --- User-overridable prompts -------------------------------------------------------
+// Each of the four prompts above is the built-in DEFAULT. A user can override any of them
+// from the environment (`companion/.env`), in priority order:
+//   DFIR_AI_<NAME>_PROMPT       inline text (read at startup — restart to apply)
+//   DFIR_AI_<NAME>_PROMPT_FILE  path to a file (re-read on each AI call — edit it and the
+//                               change applies on the next analysis, no restart needed)
+// <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
+// and falls back to the built-in prompt, so a typo never breaks analysis.
+// `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH", fallback: string): string {
+  const inline = process.env[`DFIR_AI_${name}_PROMPT`];
+  if (inline && inline.trim().length > 0) return inline;
+  const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
+  if (file && file.trim().length > 0) {
+    try {
+      const text = readFileSync(file, "utf8");
+      if (text.trim().length > 0) return text;
+      console.warn(`[DFIR] ${name} prompt file "${file}" is empty — using the built-in prompt.`);
+    } catch (err) {
+      console.warn(`[DFIR] could not read ${name} prompt file "${file}": ${(err as Error).message} — using the built-in prompt.`);
+    }
+  }
+  return fallback;
+}
+
+export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROMPT);
+export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
+export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
+export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS_PROMPT);
+
 export interface PipelineOptions {
   provider: AIProvider;
   // Optional stronger model for the holistic synthesis pass. Per-window extraction
@@ -397,7 +428,7 @@ export class AnalysisPipeline {
     const backoffMs = this.opts.backoffMs ?? 500;
 
     const delta = await withRetry(async () => {
-      const result = await this.opts.provider.analyze({ systemPrompt: SYSTEM_PROMPT, userPrompt, images });
+      const result = await this.opts.provider.analyze({ systemPrompt: getSystemPrompt(), userPrompt, images });
       // Models often wrap JSON in markdown fences / prose — extract it first.
       return deltaSchema.parse(parseJsonLoose(result.rawText));
     }, retries, backoffMs);
@@ -450,7 +481,7 @@ export class AnalysisPipeline {
         `Return the JSON delta.`;
 
       const delta = await withRetry(async () => {
-        const result = await this.opts.provider.analyze({ systemPrompt: CSV_SYSTEM_PROMPT, userPrompt, images: [] });
+        const result = await this.opts.provider.analyze({ systemPrompt: getCsvPrompt(), userPrompt, images: [] });
         return deltaSchema.parse(parseJsonLoose(result.rawText));
       }, retries, backoffMs);
 
@@ -520,7 +551,7 @@ export class AnalysisPipeline {
         `Return the JSON delta.`;
 
       const delta = await withRetry(async () => {
-        const result = await this.opts.provider.analyze({ systemPrompt: LOG_SYSTEM_PROMPT, userPrompt, images: [] });
+        const result = await this.opts.provider.analyze({ systemPrompt: getLogPrompt(), userPrompt, images: [] });
         return deltaSchema.parse(parseJsonLoose(result.rawText));
       }, retries, backoffMs);
 
@@ -658,7 +689,7 @@ export class AnalysisPipeline {
     const synthProvider = this.opts.synthesisProvider ?? this.opts.provider;
 
     const delta = await withRetry(async () => {
-      const result = await synthProvider.analyze({ systemPrompt: SYNTHESIS_PROMPT, userPrompt, images: [] });
+      const result = await synthProvider.analyze({ systemPrompt: getSynthesisPrompt(), userPrompt, images: [] });
       return deltaSchema.parse(parseJsonLoose(result.rawText));
     }, retries, backoffMs);
 

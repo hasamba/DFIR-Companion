@@ -42,6 +42,13 @@ private CA (verification stays on), or `DFIR_MISP_INSECURE` / `DFIR_YETI_INSECUR
 skip verification for a lab (insecure — logs a warning). Each is scoped to that one provider
 via an injected undici dispatcher; VirusTotal/AbuseIPDB and the AI calls keep the verified store.
 
+Custom AI prompts: override any of the four built-in prompts — `SYSTEM` (per-screenshot
+extraction), `CSV`, `LOG`, `SYNTH` (holistic synthesis) — via env. Set `DFIR_AI_<NAME>_PROMPT`
+for inline text, or `DFIR_AI_<NAME>_PROMPT_FILE` to point at a file. The **file** is re-read on
+each AI call, so editing it applies on the next analysis with **no restart**; an unreadable/empty
+file falls back to the built-in prompt with a warning. `npm run prompts:eject` writes the four
+defaults to `./prompts` so you can start from them.
+
 Shell environment variables override `.env`. `GET /health` returns `{ aiEnabled }`
 so you can confirm whether an AI provider is configured.
 
@@ -57,6 +64,7 @@ so you can confirm whether an AI provider is configured.
 | `npm run reanalyze -- <caseId> [flags]` | Re-run AI analysis over already-captured screenshots, rebuilding the investigation state, then synthesize conclusions. See flags below. |
 | `npm run synthesize -- <caseId>` | Holistic pass: read the full forensic timeline and derive findings, MITRE mapping, and the attacker-path narrative. One text-only AI call. Accepts `--provider`/`--model`/`--key` overrides. |
 | `npm run clean-timeline -- <caseId> [--apply]` | Remove analyst/tool-usage entries (Velociraptor hunts, notebooks, searches, "Response and Monitoring accessed") that don't belong in the forensic timeline. No AI calls. Dry-run preview by default; `--apply` saves. |
+| `npm run prompts:eject -- [dir]` | Write the four built-in AI prompts (`system`/`csv`/`log`/`synthesis`) to files (default `./prompts`) so you can customize them, then point the `DFIR_AI_*_PROMPT_FILE` env vars at them. |
 
 ### `reanalyze` flags
 

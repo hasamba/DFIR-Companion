@@ -12,7 +12,8 @@
     "coverage": "tsx scripts/coverage.ts",
     "reanalyze": "tsx scripts/reanalyze.ts",
     "synthesize": "tsx scripts/synthesize.ts",
-    "clean-timeline": "tsx scripts/clean-timeline.ts"
+    "clean-timeline": "tsx scripts/clean-timeline.ts",
+    "prompts:eject": "tsx scripts/eject-prompts.ts"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

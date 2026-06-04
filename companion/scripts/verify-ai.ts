@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { buildProvider } from "../src/server.js";
 import { extractJsonText } from "../src/analysis/extractJson.js";
 import { deltaSchema } from "../src/analysis/responseSchema.js";
-import { SYSTEM_PROMPT } from "../src/analysis/pipeline.js";
+import { getSystemPrompt } from "../src/analysis/pipeline.js";
 
 function strOpt(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -60,7 +60,7 @@ async function main(): Promise<void> {
 
   console.log(`Sending ${images.length} screenshot(s) to the model…`);
   const result = await provider.analyze({
-    systemPrompt: SYSTEM_PROMPT,
+    systemPrompt: getSystemPrompt(),
     userPrompt: "No findings yet. NEW SCREENSHOTS:\n(forensic captures attached)\n\nReturn the JSON delta.",
     images,
   });
