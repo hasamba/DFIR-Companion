@@ -68,6 +68,7 @@ export interface ForensicEvent {
   sha256?: string;
   md5?: string;
   path?: string;                // file path the event concerns (normalized lowercased for matching)
+  asset?: string;               // host/computer/FQDN this event pertains to (the affected asset)
   sources?: string[];           // distinct tools/imports that reported this event (corroboration)
   // Process-chain fields (for RockyRaccoon parent→child validation). processName/parentName
   // are filled by importers that know them (e.g. THOR ProcessCheck); chainCheck is set by

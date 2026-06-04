@@ -1,0 +1,161 @@
+import type { InvestigationState, IOC, ForensicEvent, Severity } from "./stateTypes.js";
+
+// Derives the asset ↔ IoC graph from the investigation state. An "asset" is a victim
+// entity an event happened on: a HOST (from each event's `asset` field — populated by THOR,
+// CSV/Velociraptor imports and the vision model) or an ACCOUNT (extracted from event text:
+// DOMAIN\user or user@domain). An edge means "this IoC was seen in an event on this asset",
+// so per asset you get all its IoCs and per IoC all the assets it touched. Pure + deterministic.
+//
+// v1: hosts and accounts. Services are a future asset type (no extractor yet).
+
+export type AssetType = "host" | "account" | "service" | "other";
+
+export interface GraphAsset {
+  id: string;               // stable id, e.g. "host:alclient07"
+  name: string;             // display name
+  type: AssetType;
+  compromised: boolean;     // has a finding, or a Critical/High event
+  iocIds: string[];         // connected IoC ids
+  findingIds: string[];
+  eventCount: number;
+  maxSeverity: Severity;
+}
+
+export interface GraphIoc {
+  id: string;
+  type: string;
+  value: string;
+  verdict?: string;         // worst threat-intel verdict, if enriched
+  assetIds: string[];       // connected asset ids
+}
+
+export interface AssetGraphEdge { asset: string; ioc: string; }
+
+export interface AssetGraph {
+  assets: GraphAsset[];
+  iocs: GraphIoc[];         // only IoCs connected to ≥1 asset
+  edges: AssetGraphEdge[];
+}
+
+const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+function worse(a: Severity, b: Severity): Severity { return SEV_RANK[b] < SEV_RANK[a] ? b : a; }
+
+function basename(p: string): string {
+  return (p.split(/[\\/]/).pop() || p).toLowerCase();
+}
+
+const VERDICT_ORDER = ["malicious", "suspicious", "harmless", "unknown"];
+function worstVerdict(i: IOC): string | undefined {
+  let best: string | undefined;
+  for (const e of i.enrichments ?? []) {
+    if (best === undefined || VERDICT_ORDER.indexOf(e.verdict) < VERDICT_ORDER.indexOf(best)) best = e.verdict;
+  }
+  return best;
+}
+
+// DOMAIN\user — guarded so it doesn't match file-path segments (C:\Users\srv). UPN/email accounts.
+const NETBIOS_ACCT = /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
+const UPN_ACCT = /([A-Za-z0-9._-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
+const PATH_DOMAINS = /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
+
+function extractAccounts(text: string): string[] {
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  NETBIOS_ACCT.lastIndex = 0;
+  while ((m = NETBIOS_ACCT.exec(text))) {
+    if (PATH_DOMAINS.test(m[1])) continue;           // skip path segments masquerading as DOMAIN\user
+    out.add(`${m[1]}\\${m[2]}`);
+  }
+  UPN_ACCT.lastIndex = 0;
+  while ((m = UPN_ACCT.exec(text))) out.add(m[1]);
+  return [...out];
+}
+
+export function buildAssetGraph(state: InvestigationState): AssetGraph {
+  const iocs = state.iocs;
+  const byId = new Map(iocs.map((i) => [i.id, i] as const));
+  const byValue = new Map<string, IOC>();
+  for (const i of iocs) byValue.set(i.value.toLowerCase(), i);
+  const findingById = new Map(state.findings.map((f) => [f.id, f] as const));
+
+  const assetMap = new Map<string, GraphAsset>();
+  const edgeSet = new Set<string>();
+  const edges: AssetGraphEdge[] = [];
+
+  function ensureAsset(type: AssetType, name: string): GraphAsset {
+    const id = `${type}:${name.toLowerCase()}`;
+    let a = assetMap.get(id);
+    if (!a) {
+      a = { id, name, type, compromised: false, iocIds: [], findingIds: [], eventCount: 0, maxSeverity: "Info" };
+      assetMap.set(id, a);
+    }
+    return a;
+  }
+  function link(a: GraphAsset, ioc: IOC): void {
+    const key = `${a.id}|${ioc.id}`;
+    if (edgeSet.has(key)) return;
+    edgeSet.add(key);
+    edges.push({ asset: a.id, ioc: ioc.id });
+    a.iocIds.push(ioc.id);
+  }
+
+  // Which IoCs an event references: structured fields, IoCs from its findings, and IoC
+  // values that appear in the event description.
+  function referencedIocs(e: ForensicEvent): IOC[] {
+    const found = new Map<string, IOC>();
+    const add = (i?: IOC) => { if (i) found.set(i.id, i); };
+    if (e.sha256) add(byValue.get(e.sha256.toLowerCase()));
+    if (e.md5) add(byValue.get(e.md5.toLowerCase()));
+    if (e.path) { add(byValue.get(e.path.toLowerCase())); add(byValue.get(basename(e.path))); }
+    if (e.processName) add(byValue.get(e.processName.toLowerCase()));
+    for (const fid of e.relatedFindingIds) {
+      const f = findingById.get(fid);
+      if (f) for (const iid of f.relatedIocs) add(byId.get(iid));
+    }
+    const desc = e.description.toLowerCase();
+    for (const i of iocs) {
+      const v = i.value.toLowerCase();
+      if (v.length >= 4 && desc.includes(v)) add(i);
+    }
+    return [...found.values()];
+  }
+
+  for (const e of state.forensicTimeline) {
+    const assetsForEvent: GraphAsset[] = [];
+    if (e.asset && e.asset.trim()) assetsForEvent.push(ensureAsset("host", e.asset.trim()));
+    for (const acct of extractAccounts(e.description)) assetsForEvent.push(ensureAsset("account", acct));
+    if (assetsForEvent.length === 0) continue;
+
+    const refIocs = referencedIocs(e);
+    for (const a of assetsForEvent) {
+      a.eventCount++;
+      a.maxSeverity = worse(a.maxSeverity, e.severity);
+      for (const fid of e.relatedFindingIds) if (!a.findingIds.includes(fid)) a.findingIds.push(fid);
+      for (const ioc of refIocs) link(a, ioc);
+    }
+  }
+
+  for (const a of assetMap.values()) {
+    a.compromised = a.findingIds.length > 0 || a.maxSeverity === "Critical" || a.maxSeverity === "High";
+  }
+
+  const iocAssetIds = new Map<string, string[]>();
+  for (const edge of edges) {
+    const arr = iocAssetIds.get(edge.ioc) ?? [];
+    arr.push(edge.asset);
+    iocAssetIds.set(edge.ioc, arr);
+  }
+  const graphIocs: GraphIoc[] = [];
+  for (const [iid, assetIds] of iocAssetIds) {
+    const i = byId.get(iid);
+    if (i) graphIocs.push({ id: i.id, type: i.type, value: i.value, verdict: worstVerdict(i), assetIds });
+  }
+
+  const assets = [...assetMap.values()].sort((a, b) =>
+    (Number(b.compromised) - Number(a.compromised)) ||
+    (SEV_RANK[a.maxSeverity] - SEV_RANK[b.maxSeverity]) ||
+    a.name.localeCompare(b.name));
+  graphIocs.sort((a, b) => a.value.localeCompare(b.value));
+
+  return { assets, iocs: graphIocs, edges };
+}

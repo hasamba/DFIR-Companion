@@ -582,6 +582,26 @@ describe("state and report routes", () => {
     expect((await request(app).get("/cases/c1/report/secrets.txt")).status).toBe(400);
   });
 
+  it("derives the asset ↔ IoC graph on demand", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-asset-graph-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore);
+    const app = createApp(store, { stateStore, reportWriter });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "" });
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "", description: "beacon to 10.0.0.5", severity: "High",
+      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WIN-01" });
+    await stateStore.save(seeded);
+
+    const res = await request(app).get("/cases/c1/asset-graph");
+    expect(res.status).toBe(200);
+    expect(res.body.assets.some((a: { name: string }) => a.name === "WIN-01")).toBe(true);
+    expect(res.body.edges.length).toBeGreaterThan(0);
+    expect(res.body.iocs.some((i: { value: string }) => i.value === "10.0.0.5")).toBe(true);
+  });
+
   it("exports just the incident timeline as CSV on demand (no full report needed)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-timeline-csv-"));
     const store = new CaseStore(root);

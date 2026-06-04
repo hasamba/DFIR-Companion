@@ -95,6 +95,7 @@ function mergeGroup(events: ForensicEvent[]): ForensicEvent {
     sha256: events.find((e) => e.sha256)?.sha256,
     md5: events.find((e) => e.md5)?.md5,
     path: primary.path ?? events.find((e) => e.path)?.path,
+    asset: primary.asset ?? events.find((e) => e.asset)?.asset,
   };
   const lastEnd = ends[ends.length - 1];
   if (lastEnd && lastEnd !== merged.timestamp) merged.endTimestamp = lastEnd;

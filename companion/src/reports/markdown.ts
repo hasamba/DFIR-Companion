@@ -2,6 +2,7 @@ import type { InvestigationState, Severity, ForensicEvent } from "../analysis/st
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
+import { buildAssetGraph } from "../analysis/assetGraph.js";
 
 // Renders report.md following the AnttiKurittu incident-report-template structure
 // (https://github.com/AnttiKurittu/incident-report-template). Technical sections are
@@ -193,7 +194,23 @@ function investigation(state: InvestigationState, lines: string[]): void {
   lines.push("### 4.1 Attacker path", "");
   lines.push(state.attackerPath.trim().length > 0 ? state.attackerPath : "_Attacker path not yet reconstructed._", "");
 
-  lines.push("### 4.2 Findings", "");
+  // 4.2 Compromised assets — the victim hosts/accounts and the IoCs that touched each.
+  lines.push("### 4.2 Compromised assets", "");
+  const graph = buildAssetGraph(state);
+  const compromised = graph.assets.filter((a) => a.compromised);
+  if (compromised.length === 0) {
+    lines.push("_No compromised assets identified yet._", "");
+  } else {
+    const iocValue = new Map(graph.iocs.map((i) => [i.id, i.value] as const));
+    lines.push("| Asset | Type | Max severity | Related IoCs |", "| --- | --- | --- | --- |");
+    for (const a of compromised) {
+      const iocs = a.iocIds.map((id) => iocValue.get(id) ?? id).join(", ") || "—";
+      lines.push(`| ${cellMd(a.name)} | ${a.type} | ${a.maxSeverity} | ${cellMd(iocs)} |`);
+    }
+    lines.push("");
+  }
+
+  lines.push("### 4.3 Findings", "");
   if (state.findings.length === 0) {
     lines.push("_No findings yet._", "");
   } else {
@@ -208,7 +225,7 @@ function investigation(state: InvestigationState, lines: string[]): void {
     }
   }
 
-  lines.push("### 4.3 Indicators of compromise", "");
+  lines.push("### 4.4 Indicators of compromise", "");
   if (state.iocs.length === 0) {
     lines.push("_No IOCs extracted yet._", "");
   } else {
@@ -219,7 +236,7 @@ function investigation(state: InvestigationState, lines: string[]): void {
     lines.push("");
   }
 
-  lines.push("### 4.4 MITRE ATT&CK", "");
+  lines.push("### 4.5 MITRE ATT&CK", "");
   if (state.mitreTechniques.length === 0) {
     lines.push("_No techniques mapped yet._", "");
   } else {
@@ -230,7 +247,7 @@ function investigation(state: InvestigationState, lines: string[]): void {
     lines.push("");
   }
 
-  lines.push("### 4.5 Key investigative questions", "");
+  lines.push("### 4.6 Key investigative questions", "");
   if (state.keyQuestions.length === 0) {
     lines.push("_Not assessed yet — run synthesis._", "");
   } else {

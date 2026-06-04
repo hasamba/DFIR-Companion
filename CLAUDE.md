@@ -76,8 +76,10 @@ double), shared hash, or same path within a time window. The merged event unions
 
 **State** = `InvestigationState` (`analysis/stateTypes.ts`), persisted per case in
 `cases/<id>/state/investigation.json`. `ForensicEvent` carries optional structured fields
-(`count`, `endTimestamp`, `sha256`/`md5`/`path`, `sources`, `processName`/`parentName`,
-`chainCheck`); `IOC` carries optional `enrichments[]`. Side files in `state/`:
+(`count`, `endTimestamp`, `sha256`/`md5`/`path`, `asset` (the affected host), `sources`,
+`processName`/`parentName`, `chainCheck`); `IOC` carries optional `enrichments[]`. The
+**asset ↔ IoC graph** (`analysis/assetGraph.ts`, pure) derives compromised assets (hosts from
+`event.asset`; accounts from `DOMAIN\user`/UPN in event text) and the IoCs that touched each. Side files in `state/`:
 `ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (enrichment
 on/off, **default off**), `pending_analysis.json`, `report-meta.json` (human-authored report
 sections — title page, distribution, BIA, glossary, recommendations…).

@@ -30,6 +30,16 @@
     button { background: #2d6cdf; color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
     input { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; padding: 6px; border-radius: 6px; }
     #status { font-size: 12px; color: #9aa4b2; }
+    /* Compromised assets + asset↔IoC graph */
+    .asset-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; color: #9aa4b2; margin-bottom: 8px; }
+    .asset-controls label { display: flex; align-items: center; gap: 4px; }
+    .asset-controls button { padding: 3px 9px; font-size: 12px; }
+    .asset-hint { margin-left: auto; color: #ffd93b; }
+    .asset-graph { overflow: auto; max-height: 460px; border: 1px solid #2a2f3a; border-radius: 6px; background: #0f1115; }
+    .asset-graph svg text { fill: #cbd3df; font-size: 11px; }
+    .asset-node { cursor: pointer; }
+    .asset-subhead { font-size: 12px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 6px; }
+    .asset-badge { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 11px; margin-left: 6px; background: #2a2f3a; color: #cbd3df; }
     .report-links { font-size: 12px; }
     .report-links a { color: #6aa9ff; text-decoration: none; }
     .report-links a:hover { text-decoration: underline; }
@@ -108,6 +118,22 @@
     <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attacker Path</h2><div id="attackerPath">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)</h2><div id="forensicTimeline">—</div></section>
+    <section style="grid-column: 1 / -1">
+      <h2>Compromised Assets &amp; IoC Graph</h2>
+      <div id="assetPanel">
+        <div class="asset-controls">
+          <span>Show:</span>
+          <label><input type="checkbox" class="asset-type-toggle" value="host" checked> Hosts</label>
+          <label><input type="checkbox" class="asset-type-toggle" value="account" checked> Accounts</label>
+          <label><input type="checkbox" class="asset-type-toggle" value="service" checked> Services</label>
+          <button id="assetTypeAll" type="button" title="Show all asset types">All</button>
+          <span id="assetFocusHint" class="asset-hint"></span>
+        </div>
+        <div id="assetGraph" class="asset-graph">—</div>
+        <h3 class="asset-subhead">Known compromised assets</h3>
+        <div id="assetList">—</div>
+      </div>
+    </section>
     <section><h2>Findings</h2><div id="findings">—</div></section>
     <section><h2>IOCs</h2><div id="iocs">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
@@ -284,6 +310,98 @@
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
         .then(m => { fillReportMeta(m); st.textContent = "saved ✓"; setTimeout(() => st.textContent = "", 2500); })
         .catch(e => st.textContent = "save failed: " + e.message + " — restart the companion server if this 404s");
+    }
+
+    // --- Compromised assets + asset↔IoC graph -------------------------------------
+    let assetGraphData = null;                              // { assets, iocs, edges }
+    let assetFocus = null;                                  // focused node id, or null
+    let assetGraphTimer = null;
+    const assetTypesEnabled = new Set(["host", "account", "service"]);
+
+    function truncate(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+    function loadAssetGraph(caseId) {
+      fetch(`/cases/${caseId}/asset-graph`).then(r => r.json()).then(g => {
+        assetGraphData = g; assetFocus = null; renderAssetGraph();
+      }).catch(() => {});
+    }
+    // State changes (imports / synthesis) re-derive the graph — debounced.
+    function scheduleAssetGraphReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(assetGraphTimer);
+      assetGraphTimer = setTimeout(() => loadAssetGraph(caseId), 800);
+    }
+
+    function renderAssetList() {
+      const el = document.getElementById("assetList");
+      if (!assetGraphData) { el.textContent = "—"; return; }
+      const comp = assetGraphData.assets.filter(a => a.compromised && assetTypesEnabled.has(a.type));
+      if (!comp.length) { el.innerHTML = "<em style='color:#9aa4b2'>No compromised assets identified.</em>"; return; }
+      const iocName = new Map(assetGraphData.iocs.map(i => [i.id, i.value]));
+      el.innerHTML = comp.map(a => {
+        const iocs = a.iocIds.map(id => esc(iocName.get(id) || id)).join(", ") || "—";
+        return `<div class="finding"><strong>${esc(a.name)}</strong><span class="asset-badge">${esc(a.type)}</span> `
+          + `<span class="sev-${esc(a.maxSeverity)}">${esc(a.maxSeverity)}</span><br>`
+          + `<span style="color:#9aa4b2;font-size:12px">IoCs (${a.iocIds.length}): ${iocs}</span></div>`;
+      }).join("");
+    }
+
+    function renderAssetGraph() {
+      renderAssetList();
+      const el = document.getElementById("assetGraph");
+      if (!assetGraphData || !assetGraphData.assets.length) {
+        el.innerHTML = "<div style='padding:16px;color:#9aa4b2'>No assets yet — import evidence (THOR/CSV) or run Synthesize. Hosts come from each event's affected asset.</div>";
+        return;
+      }
+      const assets = assetGraphData.assets.filter(a => assetTypesEnabled.has(a.type));
+      const assetIds = new Set(assets.map(a => a.id));
+      const iocs = assetGraphData.iocs.filter(i => i.assetIds.some(id => assetIds.has(id)));
+      const iocIds = new Set(iocs.map(i => i.id));
+      const edges = assetGraphData.edges.filter(e => assetIds.has(e.asset) && iocIds.has(e.ioc));
+      if (!assets.length) { el.innerHTML = "<div style='padding:16px;color:#9aa4b2'>No assets of the selected type(s).</div>"; return; }
+
+      // Neighbour map for click-to-focus.
+      const neighbors = new Map();
+      const addN = (a, b) => { let s = neighbors.get(a); if (!s) { s = new Set(); neighbors.set(a, s); } s.add(b); };
+      edges.forEach(e => { addN(e.asset, e.ioc); addN(e.ioc, e.asset); });
+      const related = (id) => !assetFocus || id === assetFocus || (neighbors.get(assetFocus) && neighbors.get(assetFocus).has(id));
+
+      const rowH = 26, padY = 20;
+      const leftW = 160, rightW = 240, gap = 240;
+      const width = leftW + gap + rightW;
+      const aX = leftW, bX = leftW + gap;
+      const rows = Math.max(assets.length, iocs.length);
+      const height = padY * 2 + Math.max(1, rows - 1) * rowH;
+      const aPos = new Map(); assets.forEach((a, i) => aPos.set(a.id, padY + i * rowH));
+      const iPos = new Map(); iocs.forEach((i, k) => iPos.set(i.id, padY + k * rowH));
+
+      const iocColor = (v) => v === "malicious" ? "#ff5c5c" : v === "suspicious" ? "#ff9f43" : "#6aa9ff";
+      let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`;
+      for (const e of edges) {
+        const vis = related(e.asset) && related(e.ioc) && (!assetFocus || e.asset === assetFocus || e.ioc === assetFocus);
+        svg += `<line x1="${aX}" y1="${aPos.get(e.asset)}" x2="${bX}" y2="${iPos.get(e.ioc)}" stroke="#3a4456" stroke-width="1" opacity="${vis ? 0.85 : 0.05}"/>`;
+      }
+      for (const a of assets) {
+        const y = aPos.get(a.id);
+        svg += `<g class="asset-node" data-id="${escAttr(a.id)}" opacity="${related(a.id) ? 1 : 0.1}">`
+          + `<text x="${aX - 12}" y="${y + 4}" text-anchor="end">${esc(truncate(a.name, 20))}</text>`
+          + `<circle cx="${aX}" cy="${y}" r="6" fill="${a.compromised ? "#ff5c5c" : "#6aa9ff"}" stroke="#0f1115" stroke-width="1.5"/></g>`;
+      }
+      for (const i of iocs) {
+        const y = iPos.get(i.id);
+        svg += `<g class="asset-node" data-id="${escAttr(i.id)}" opacity="${related(i.id) ? 1 : 0.1}">`
+          + `<circle cx="${bX}" cy="${y}" r="5" fill="${iocColor(i.verdict)}" stroke="#0f1115" stroke-width="1.5"/>`
+          + `<text x="${bX + 12}" y="${y + 4}">${esc(truncate(i.value, 28))} <tspan fill="#6b7585">(${esc(i.type)})</tspan></text></g>`;
+      }
+      svg += `</svg>`;
+      el.innerHTML = svg;
+      el.querySelectorAll(".asset-node").forEach(n => n.addEventListener("click", () => {
+        const id = n.getAttribute("data-id");
+        assetFocus = (assetFocus === id) ? null : id;
+        document.getElementById("assetFocusHint").textContent = assetFocus ? "showing related only — click the node again to reset" : "";
+        renderAssetGraph();
+      }));
     }
 
     function applyScope() {
@@ -645,6 +763,7 @@
       loadLegitimate(caseId);
       loadScope(caseId);
       loadReportMeta(caseId);
+      loadAssetGraph(caseId);
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
@@ -657,11 +776,20 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") render(msg.state);
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
       };
     }
 
+    document.querySelectorAll(".asset-type-toggle").forEach(cb => cb.onchange = () => {
+      if (cb.checked) assetTypesEnabled.add(cb.value); else assetTypesEnabled.delete(cb.value);
+      assetFocus = null; renderAssetGraph();
+    });
+    document.getElementById("assetTypeAll").onclick = () => {
+      document.querySelectorAll(".asset-type-toggle").forEach(cb => cb.checked = true);
+      assetTypesEnabled.clear(); ["host", "account", "service"].forEach(t => assetTypesEnabled.add(t));
+      assetFocus = null; renderAssetGraph();
+    };
     document.getElementById("saveReportMeta").onclick = saveReportMeta;
     document.getElementById("connect").onclick = connect;
     document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });

@@ -31,6 +31,8 @@ describe("parseThorReport", () => {
     expect(r.dropped).toBe(3);              // Init(Notice but lifecycle), Startup(Info), Autoruns(Info)
     expect(r.hostname).toBe("WIN11");
     expect(r.events.map((e) => e.severity)).toEqual(["Critical", "High"]); // Alert→Critical sorts first
+    // Each event carries its scanned host as the affected asset (for the asset graph).
+    expect(r.events.every((e) => e.asset === "WIN11")).toBe(true);
   });
 
   it("maps THOR level to severity (Alert→Critical, Warning→High, Notice→Medium)", () => {

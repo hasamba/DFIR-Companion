@@ -20,9 +20,9 @@ describe("renderMarkdownReport", () => {
     expect(md).toContain("## 2 Executive summary");
     expect(md).toContain("Host WIN-01 compromised");
     expect(md).toContain("### 3.1 Incident timeline");
-    expect(md).toContain("### 4.2 Findings");
+    expect(md).toContain("### 4.3 Findings");
     expect(md).toContain("Ransomware");
-    expect(md).toContain("### 4.4 MITRE ATT&CK");
+    expect(md).toContain("### 4.5 MITRE ATT&CK");
     expect(md).toContain("T1486");
     // The investigation timeline and the attachments section are no longer in the report.
     expect(md).not.toContain("Investigation timeline");
@@ -86,6 +86,24 @@ describe("renderMarkdownReport", () => {
     expect(md2).toContain("**Investigator:** Solo Investigator");
     expect(md2).toContain("## 1.2 Distribution list");
     expect(md2).toContain("| Ellie | CISO | email |");
+  });
+
+  it("lists compromised assets with their related IoCs (4.2)", () => {
+    const s = emptyState("c1");
+    const hash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    s.iocs.push({ id: "i1", type: "hash", value: hash, firstSeen: "" });
+    s.findings.push({ id: "f1", severity: "Critical", title: "RW", description: "", relatedIocs: ["i1"],
+      sourceScreenshots: [], mitreTechniques: [], firstSeen: "", lastUpdated: "", status: "confirmed" });
+    s.forensicTimeline.push({ id: "e1", timestamp: "", description: "encryptor", severity: "Critical",
+      mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [], asset: "WIN-01", sha256: hash });
+
+    const md = renderMarkdownReport(s);
+    expect(md).toContain("### 4.2 Compromised assets");
+    expect(md).toContain("| WIN-01 | host |");
+    expect(md).toContain(hash);                              // related IoC value listed
+
+    // Empty case shows the placeholder, not a table.
+    expect(renderMarkdownReport(emptyState("c9"))).toContain("_No compromised assets identified yet._");
   });
 
   it("includes the Business Impact Analysis only when the investigator writes one", () => {
@@ -186,10 +204,10 @@ describe("renderMarkdownReport", () => {
     state.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "2026-05-20T09:00:00Z" });
 
     const md = renderMarkdownReport(state);
-    expect(md).toContain("### 4.5 Key investigative questions");
+    expect(md).toContain("### 4.6 Key investigative questions");
     expect(md).toContain("What was the initial access vector?");
     expect(md).toContain("collect 4624 logs on targets");
-    expect(md).toContain("### 4.3 Indicators of compromise");
+    expect(md).toContain("### 4.4 Indicators of compromise");
     expect(md).toContain("10.0.0.5");
   });
 

@@ -9,6 +9,7 @@ import { renderMarkdownReport } from "./markdown.js";
 import { renderHtmlReport } from "./html.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
+import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 
 export interface ReportPaths {
@@ -48,6 +49,11 @@ export class ReportWriter {
   // full report. Uses the same scope/legitimate filtering so it matches the report's 3.1.
   async incidentTimelineCsv(caseId: string): Promise<string> {
     return forensicTimelineCsv(await this.loadFilteredState(caseId));
+  }
+
+  // The asset ↔ IoC graph for the case (same scope/legitimate filtering as the report).
+  async assetGraph(caseId: string): Promise<AssetGraph> {
+    return buildAssetGraph(await this.loadFilteredState(caseId));
   }
 
   async writeAll(caseId: string): Promise<ReportPaths> {

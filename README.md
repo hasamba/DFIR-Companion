@@ -87,6 +87,10 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 ### Dashboard & reports
 - **Live dashboard** over WebSocket — collapsible sections, scope bar, clickable evidence links, and
   badges (`×N` aggregate, `⊕ N sources`, `AUTO`, enrichment verdicts, `⚠ unusual parent`).
+- **Compromised assets + asset↔IoC graph** — events carry the affected **host** (from THOR / CSV /
+  screenshots); the dashboard lists compromised assets and draws an interactive **asset ↔ IoC graph**
+  (which IoC touched each asset, and per asset all its IoCs) with Host/Account/Service toggles and
+  click-to-focus. A *Compromised assets* section also appears in the report.
 - **Reports** — Markdown **and HTML** report (standalone, print-friendly → Save-as-PDF) + CSVs
   (findings, IOCs incl. enrichment, capture timeline, forensic timeline incl. count/sources) + full
   JSON state export. Export from the dashboard as Markdown or HTML, or **export just the incident
@@ -389,6 +393,9 @@ into the **Features** section (and `CHANGELOG.md`) once shipped.
 - [ ] Per-provider enrichment throttle (so RockyRaccoon's tight rate limit doesn't slow VT/AbuseIPDB).
 - [ ] Configurable companion host/port in the **extension** (currently `127.0.0.1:4773`).
 - [ ] `_execute_action` hotkey to open the extension popup.
+- [ ] Embed the interactive **asset ↔ IoC graph** in the HTML report export (currently dashboard-only).
+- [ ] Manual editing of assets and asset↔IoC links (currently auto-derived).
+- [ ] **Service**-type asset extraction, and asset↔asset (lateral-movement) edges in the graph.
 
 ## Tests
 

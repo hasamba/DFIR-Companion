@@ -50,6 +50,7 @@ export interface ThorEvent {
   sha256?: string;       // correlation keys — let the same artifact match across tools
   md5?: string;
   path?: string;
+  asset?: string;        // the scanned host this finding came from
   sources?: string[];
   processName?: string;  // for parent→child chain validation (ProcessCheck rows)
   parentName?: string;
@@ -175,17 +176,21 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
     const processName = firstStr(row, ["process_name", "image_name"]) ? baseName(firstStr(row, ["process_name", "image_name"])) : undefined;
     const parentName = firstStr(row, ["parent"]) ? baseName(firstStr(row, ["parent"])) : undefined;
 
+    const host = str(row.hostname).trim() || hostname;
+
     const existing = bySig.get(sig);
     if (existing) {
       existing.count = (existing.count ?? 1) + 1;
       if (timestamp && (!existing.endTimestamp || timestamp > existing.endTimestamp)) existing.endTimestamp = timestamp;
       if (timestamp && timestamp < existing.timestamp) existing.timestamp = timestamp;
+      if (!existing.asset && host) existing.asset = host;
     } else {
       bySig.set(sig, {
         id: "", timestamp, description, severity, mitreTechniques: pickTechniques(row),
         ...(sha256 && /^[a-f0-9]{64}$/.test(sha256) ? { sha256 } : {}),
         ...(md5 && /^[a-f0-9]{32}$/.test(md5) ? { md5 } : {}),
         ...(path ? { path } : {}),
+        ...(host ? { asset: host } : {}),
         ...(processName ? { processName } : {}),
         ...(parentName ? { parentName } : {}),
         sources: ["THOR"],

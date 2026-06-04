@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Compromised assets + asset↔IoC graph** — forensic events now carry the **affected host**
+  (`asset`), populated deterministically from THOR (scanned hostname) and from CSV/Velociraptor
+  imports + screenshots via the model. A new `assetGraph` module derives the victim **assets**
+  (hosts, plus accounts parsed from `DOMAIN\user`/UPN) and the **IoCs that touched each**. The
+  dashboard gains a **Compromised Assets** section and an interactive **asset ↔ IoC graph** with
+  per-type toggles (Host / Account / Service) and click-a-node-to-focus / click-again-to-reset; the
+  report gets a **Compromised assets** section (4.2). New endpoint `GET /cases/:id/asset-graph`.
+  _Deferred:_ embedding the interactive graph in the HTML export, manual asset/link editing, and
+  service-type extraction.
 - **Keyboard shortcut to toggle capture** (extension) — `Ctrl+Shift+S` (macOS `Cmd+Shift+S`)
   starts/stops screenshot capture without opening the popup. Turning it on takes one capture
   immediately and flashes the toolbar badge `REC`/`off`; the popup shows the current binding and

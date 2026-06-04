@@ -33,4 +33,13 @@ describe("dashboard.html", () => {
     expect(html).toContain('id="exportTimelineCsv"');
     expect(html).toContain("/incident-timeline.csv");
   });
+
+  it("wires the compromised-assets section + asset↔IoC graph with type toggles", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="assetGraph"');
+    expect(html).toContain('id="assetList"');
+    expect(html).toContain('class="asset-type-toggle"');
+    expect(html).toContain('value="account"');
+    expect(html).toContain("/asset-graph");
+  });
 });

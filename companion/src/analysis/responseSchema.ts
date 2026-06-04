@@ -48,6 +48,7 @@ export const deltaSchema = z.object({
     sha256: z.string().optional(),
     md5: z.string().optional(),
     path: z.string().optional(),
+    asset: z.string().optional(),                             // host/computer/FQDN the event pertains to
     sources: z.array(z.string()).optional(),
     processName: z.string().optional(),
     parentName: z.string().optional(),
