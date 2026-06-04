@@ -11,6 +11,7 @@ import type { GraphAsset } from "../../analysis/assetGraph.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
 import type { IrisAssetBody, IrisIocBody, IrisEventBody, IrisTaskBody } from "./irisClient.js";
 import { tacticForTechniques } from "./mitreTactics.js";
+import { attackTechniqueMd, attackTechniqueUrl } from "../../analysis/attack.js";
 
 const TAG = "dfir-companion";
 
@@ -230,14 +231,18 @@ export interface IrisNote { title: string; content: string }
 function findingsNote(findings: readonly Finding[]): string {
   return findings.map((f) =>
     `### [${f.severity}] ${f.title}\n\n${f.description}\n` +
-    (f.mitreTechniques.length ? `\n**MITRE:** ${f.mitreTechniques.join(", ")}` : "") +
+    (f.mitreTechniques.length ? `\n**MITRE:** ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}` : "") +
     (f.relatedIocs.length ? `\n**Related IOCs:** ${f.relatedIocs.join(", ")}` : "") +
     `\n**Status:** ${f.status}`,
   ).join("\n\n---\n\n");
 }
 
 function mitreNote(techniques: readonly Technique[]): string {
-  return techniques.map((t) => `- **${t.id}** ${t.name}${t.findingIds.length ? ` (${t.findingIds.length} finding(s))` : ""}`).join("\n");
+  return techniques.map((t) => {
+    const url = attackTechniqueUrl(t.id);
+    const label = url ? `[${t.id}](${url})` : t.id;
+    return `- **${label}** ${t.name}${t.findingIds.length ? ` (${t.findingIds.length} finding(s))` : ""}`;
+  }).join("\n");
 }
 
 function questionsNote(qs: readonly InvestigationQuestion[]): string {

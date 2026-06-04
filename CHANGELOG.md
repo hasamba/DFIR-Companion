@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Manually add an event or IOC the AI missed.** The Forensic Timeline and IOCs sections each have a
+  collapsible **+ Add … manually** form. A manual **event** (time, description, severity, optional asset /
+  MITRE techniques) is appended to the timeline (kept sorted), tagged `sources: ["manual"]`, and
+  re-synthesized so it weaves into findings/MITRE (a high-severity one earns a finding via the backfill).
+  A manual **IOC** (type + value) is appended (deduped by value) and enriched if enrichment is on. Backed
+  by `POST /cases/:id/events` and `POST /cases/:id/iocs` with validated input.
+- **MITRE techniques link to attack.mitre.org.** Every technique id in the dashboard (findings, timeline,
+  MITRE section), the report, and the IRIS notes is now a link to its official ATT&CK page (sub-techniques
+  resolve to `…/Txxxx/yyy/`). Tactic names resolve to their `TAxxxx` tactic pages too.
 - **Export a case to DFIR-IRIS.** New **Export to IRIS** dashboard button (and `npm run iris:export --
   <caseId>` / `POST /cases/:id/export/iris`) that pushes a case into a [DFIR-IRIS](https://dfir-iris.org/)
   instance. It **find-or-creates the IRIS case by name** (= the Companion case id) — re-exporting an

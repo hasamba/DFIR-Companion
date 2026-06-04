@@ -30,6 +30,8 @@ import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
 import { CommentsStore } from "./analysis/comments.js";
+import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
+import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
 import { exportCaseToIris, type IrisExportOptions } from "./integrations/iris/irisExport.js";
 
@@ -583,6 +585,51 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it
       return res.status(200).json(next);
     } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Manually add a forensic event the AI didn't catch. Appended to the timeline (kept sorted by
+  // event time), then re-synthesized so it weaves into findings/MITRE (a high-severity manual
+  // event earns a finding via the backfill). Synthesis preserves the timeline, so it survives.
+  app.post("/cases/:id/events", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const event = buildManualEvent(req.body);
+      const state = await options.stateStore.load(caseId);
+      const forensicTimeline = [...state.forensicTimeline, event].sort(byEventTime);
+      const next = { ...state, forensicTimeline, updatedAt: new Date().toISOString() };
+      await options.stateStore.save(next);
+      options.onState?.(next);
+      resynthesizeInBackground(caseId);
+      logLine(`[manual] ${caseId} added event ${event.id} (${event.severity})`);
+      return res.status(201).json(event);
+    } catch (err) {
+      if (err instanceof ZodError) return res.status(400).json({ error: err.issues.map((i) => i.message).join("; ") });
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Manually add an IOC the AI didn't catch. Appended to the case IOCs (deduped by value) and
+  // enriched if enrichment is enabled for the case.
+  app.post("/cases/:id/iocs", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const ioc = buildManualIoc(req.body);
+      const state = await options.stateStore.load(caseId);
+      if (state.iocs.some((i) => i.value.toLowerCase() === ioc.value.toLowerCase())) {
+        return res.status(409).json({ error: `IOC already exists: ${ioc.value}` });
+      }
+      const next = { ...state, iocs: [...state.iocs, ioc], updatedAt: new Date().toISOString() };
+      await options.stateStore.save(next);
+      options.onState?.(next);
+      autoEnrichIfEnabled(caseId);
+      logLine(`[manual] ${caseId} added ioc ${ioc.id} (${ioc.type})`);
+      return res.status(201).json(ioc);
+    } catch (err) {
+      if (err instanceof ZodError) return res.status(400).json({ error: err.issues.map((i) => i.message).join("; ") });
       return res.status(500).json({ error: (err as Error).message });
     }
   });

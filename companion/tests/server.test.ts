@@ -849,3 +849,45 @@ describe("AI on/off control", () => {
     expect(res.body.enabled).toBe(true);
   });
 });
+
+describe("manual entry (events / IOCs the AI didn't catch)", () => {
+  async function freshApp() {
+    const root = await mkdtemp(join(tmpdir(), "dfir-manual-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const app = createApp(store, { stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    return { app, stateStore };
+  }
+
+  it("POST /cases/:id/events appends a manual forensic event (sorted, tagged manual)", async () => {
+    const { app, stateStore } = await freshApp();
+    const res = await request(app).post("/cases/c1/events").send({
+      timestamp: "2026-06-04T10:00:00Z", description: "manual logon to DC01", severity: "High",
+      asset: "DC01", mitreTechniques: "T1059.001",
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.id).toMatch(/^manual-/);
+    expect(res.body.sources).toEqual(["manual"]);
+    const state = await stateStore.load("c1");
+    const e = state.forensicTimeline.find((x) => x.description === "manual logon to DC01");
+    expect(e).toBeTruthy();
+    expect(e!.mitreTechniques).toEqual(["T1059.001"]);
+  });
+
+  it("POST /cases/:id/events returns 400 on an invalid body (no description)", async () => {
+    const { app } = await freshApp();
+    const res = await request(app).post("/cases/c1/events").send({ timestamp: "2026-06-04T10:00:00Z" });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /cases/:id/iocs appends a manual IOC and rejects a duplicate value", async () => {
+    const { app, stateStore } = await freshApp();
+    const r1 = await request(app).post("/cases/c1/iocs").send({ type: "ip", value: "8.8.8.8" });
+    expect(r1.status).toBe(201);
+    const r2 = await request(app).post("/cases/c1/iocs").send({ type: "ip", value: "8.8.8.8" });
+    expect(r2.status).toBe(409);
+    const state = await stateStore.load("c1");
+    expect(state.iocs.filter((i) => i.value === "8.8.8.8")).toHaveLength(1);
+  });
+});

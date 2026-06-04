@@ -3,6 +3,7 @@ import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
 import { buildAssetGraph } from "../analysis/assetGraph.js";
+import { attackTechniqueMd } from "../analysis/attack.js";
 
 // Renders report.md following the AnttiKurittu incident-report-template structure
 // (https://github.com/AnttiKurittu/incident-report-template). Technical sections are
@@ -182,7 +183,7 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
     const count = e.count && e.count > 1 ? `×${e.count}` : "";
     lines.push(
       `| ${cellMd(time)} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
-      `${cellMd(e.mitreTechniques.join(", "))} | ${cellMd(e.relatedFindingIds.join(", "))} |`,
+      `${e.mitreTechniques.map(attackTechniqueMd).join(", ")} | ${cellMd(e.relatedFindingIds.join(", "))} |`,
     );
   }
   lines.push("");
@@ -219,7 +220,7 @@ function investigation(state: InvestigationState, lines: string[]): void {
       lines.push(`#### [${f.severity}] ${f.title} (${f.id})`);
       lines.push(f.description || "_no description_");
       if (f.relatedIocs.length) lines.push(`- IOCs: ${f.relatedIocs.join(", ")}`);
-      if (f.mitreTechniques.length) lines.push(`- MITRE: ${f.mitreTechniques.join(", ")}`);
+      if (f.mitreTechniques.length) lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);
       if (f.sourceScreenshots.length) lines.push(`- Evidence: ${f.sourceScreenshots.join(", ")}`);
       lines.push(`- Status: ${f.status} | First seen: ${f.firstSeen} | Updated: ${f.lastUpdated}`, "");
     }
@@ -242,7 +243,7 @@ function investigation(state: InvestigationState, lines: string[]): void {
   } else {
     lines.push("| Technique | Name | Findings |", "| --- | --- | --- |");
     for (const t of state.mitreTechniques) {
-      lines.push(`| ${cellMd(t.id)} | ${cellMd(t.name)} | ${cellMd(t.findingIds.join(", "))} |`);
+      lines.push(`| ${attackTechniqueMd(t.id)} | ${cellMd(t.name)} | ${cellMd(t.findingIds.join(", "))} |`);
     }
     lines.push("");
   }

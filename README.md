@@ -113,6 +113,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Live dashboard** over WebSocket — **collapsible, drag-to-reorder sections** (order + collapse state
   persist per browser), scope bar, clickable evidence links, and badges (`×N` aggregate, `⊕ N sources`,
   `AUTO`, enrichment verdicts, `⚠ unusual parent`).
+- **Manual add** — a **+ Add event / + Add IOC manually** form on the timeline and IOC sections lets the
+  analyst record something the AI didn't catch. Manual events (time, description, severity, optional
+  asset/MITRE) are tagged `manual`, re-synthesized into findings, and survive re-analysis; manual IOCs are
+  deduped and enriched.
+- **MITRE techniques link to [attack.mitre.org](https://attack.mitre.org/)** everywhere they appear
+  (findings, timeline, MITRE section, the report, and the IRIS export) — sub-techniques included.
 - **Compromised assets + asset↔IoC graph** — events carry the affected **host** (from THOR / CSV /
   screenshots); the dashboard lists compromised hosts/users and draws an interactive **asset ↔ IoC graph**
   (which IoC touched each asset, and per asset all its IoCs) with Host/Account/Service toggles,

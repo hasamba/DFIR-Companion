@@ -29,6 +29,13 @@
     section.collapsed h2 { margin-bottom: 0; }
     section.collapsed h2 .chev { transform: rotate(-90deg); }
     section.collapsed > :not(h2) { display: none; }
+    .manual-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 10px; font-size: 12px; }
+    .manual-form input, .manual-form select { font-size: 12px; padding: 4px; background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 4px; }
+    .manual-form button { padding: 4px 10px; font-size: 12px; }
+    .manual-form summary { cursor: pointer; color: #6aa9ff; font-size: 12px; list-style: none; }
+    .manual-add { margin: 0 0 10px; }
+    .manual-add[open] summary { margin-bottom: 8px; }
+    .manual-msg { color: #9aa4b2; font-size: 12px; }
     .sev-Critical { color: #ff5c5c; } .sev-High { color: #ff9f43; }
     .sev-Medium { color: #ffd93b; } .sev-Low { color: #6bcB77; } .sev-Info { color: #6aa9ff; }
     .finding { border-left: 3px solid #2a2f3a; padding: 6px 10px; margin-bottom: 8px; }
@@ -189,7 +196,19 @@
     <section style="grid-column: 1 / -1"><h2>Executive Summary</h2><div id="summary">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attacker Path</h2><div id="attackerPath">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)</h2><div id="forensicTimeline">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)</h2>
+      <details class="manual-add"><summary>+ Add event manually</summary>
+        <form class="manual-form" onsubmit="return false">
+          <input id="meTime" type="datetime-local" title="Event time (defaults to now if blank)" />
+          <input id="meDesc" placeholder="what happened" style="flex:1; min-width:220px" />
+          <select id="meSev" title="Severity"><option>Critical</option><option>High</option><option selected>Medium</option><option>Low</option><option>Info</option></select>
+          <input id="meAsset" placeholder="asset / host (optional)" style="max-width:150px" />
+          <input id="meMitre" placeholder="MITRE e.g. T1059.001 (optional)" style="max-width:190px" />
+          <button id="addEventBtn">Add event</button>
+          <span id="addEventMsg" class="manual-msg"></span>
+        </form>
+      </details>
+      <div id="forensicTimeline">—</div></section>
     <section style="grid-column: 1 / -1">
       <h2>Compromised Assets &amp; IoC Graph</h2>
       <div id="assetPanel">
@@ -224,7 +243,16 @@
       </div>
     </section>
     <section><h2>Findings</h2><div id="findings">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>IOCs</h2><div id="iocs">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>IOCs</h2>
+      <details class="manual-add"><summary>+ Add IOC manually</summary>
+        <form class="manual-form" onsubmit="return false">
+          <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
+          <input id="miValue" placeholder="indicator value" style="flex:1; min-width:240px" />
+          <button id="addIocBtn">Add IOC</button>
+          <span id="addIocMsg" class="manual-msg"></span>
+        </form>
+      </details>
+      <div id="iocs">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
@@ -826,6 +854,18 @@
     function verdictColor(v) {
       return v === "malicious" ? "#ff6b6b" : v === "suspicious" ? "#ffd93b" : v === "harmless" ? "#6bcB77" : "#9aa4b2";
     }
+    // Link a MITRE technique id (T1059 / T1059.001) to its attack.mitre.org page.
+    function attackUrl(id) {
+      const m = /^T(\d{4})(?:\.(\d{3}))?$/.exec(String(id).trim().toUpperCase());
+      if (!m) return null;
+      return m[2] ? `https://attack.mitre.org/techniques/T${m[1]}/${m[2]}/` : `https://attack.mitre.org/techniques/T${m[1]}/`;
+    }
+    function mitreLinks(ids) {
+      return (ids || []).map(id => {
+        const u = attackUrl(id);
+        return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" style="color:#6aa9ff">${esc(id)}</a>` : esc(id);
+      }).join(", ");
+    }
     function enrichBadges(ioc) {
       if (!ioc.enrichments) return ""; // not enriched yet
       if (!ioc.enrichments.length) return ` <span style="color:#5b6472;font-size:11px">· checked, no intel</span>`;
@@ -982,7 +1022,7 @@
             return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge}${corro}${chain} ` +
               `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)} ${commentChip("event", e.id)}` +
               `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}` +
-              `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${esc(e.mitreTechniques.join(", "))}</small>` : ""}` +
+              `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
               `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +
               `${evidenceLinks(state.caseId, e.sourceScreenshots)}</div>`;
           }).join("")
@@ -1006,12 +1046,14 @@
             ? ` <span title="Auto-flagged from a ${esc(f.severity)}-severity artifact row — review and refine" style="background:#2a2233;color:#c79bff;border:1px solid #4a3a5a;border-radius:4px;padding:0 6px;font-size:10px">AUTO</span>` : "";
           return `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> ` +
             `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)} ${commentChip("finding", f.id)}` +
-            `<br><small>${esc(f.description)}</small>${evidenceLinks(state.caseId, evidence)}</div>`;
+            `<br><small>${esc(f.description)}</small>` +
+            `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
+            `${evidenceLinks(state.caseId, evidence)}</div>`;
         }).join("") || "—";
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
-        state.mitreTechniques.map(m => `<div>${esc(m.id)} — ${esc(m.name)} (${esc(m.findingIds.join(", "))})</div>`).join("") || "—";
+        state.mitreTechniques.map(m => `<div>${mitreLinks([m.id])} — ${esc(m.name)} (${esc(m.findingIds.join(", "))})</div>`).join("") || "—";
     }
 
     function connect() {
@@ -1310,6 +1352,47 @@
       window.location.href = `/cases/${encodeURIComponent(caseId)}/incident-timeline.csv`;
     };
 
+    // ── Manual add (event / IOC the AI didn't catch) ──────────────────────────
+    // POST to the case; the server appends + re-synthesizes/enriches and broadcasts the new
+    // state over the WS, which re-renders the list. We just clear the form + show a status.
+    function postManual(url, body, msgId, onOk) {
+      const el = document.getElementById(msgId);
+      el.textContent = "saving…";
+      fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then(() => { el.textContent = "added ✓"; if (onOk) onOk(); setTimeout(() => { el.textContent = ""; }, 2500); })
+        .catch(e => { el.textContent = "failed: " + e.message; });
+    }
+    document.getElementById("addEventBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const desc = document.getElementById("meDesc").value.trim();
+      if (!desc) { document.getElementById("addEventMsg").textContent = "description required"; return; }
+      const tIn = document.getElementById("meTime").value;
+      const body = {
+        timestamp: tIn ? new Date(tIn).toISOString() : new Date().toISOString(),
+        description: desc,
+        severity: document.getElementById("meSev").value,
+        asset: document.getElementById("meAsset").value.trim(),
+        mitreTechniques: document.getElementById("meMitre").value.trim(),
+      };
+      postManual(`/cases/${encodeURIComponent(caseId)}/events`, body, "addEventMsg", () => {
+        document.getElementById("meDesc").value = "";
+        document.getElementById("meAsset").value = "";
+        document.getElementById("meMitre").value = "";
+      });
+    };
+    document.getElementById("addIocBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const value = document.getElementById("miValue").value.trim();
+      if (!value) { document.getElementById("addIocMsg").textContent = "value required"; return; }
+      const body = { type: document.getElementById("miType").value, value };
+      postManual(`/cases/${encodeURIComponent(caseId)}/iocs`, body, "addIocMsg", () => {
+        document.getElementById("miValue").value = "";
+      });
+    };
+
     // ── Export to DFIR-IRIS ───────────────────────────────────────────────────
     // The button is shown only when the server has an IRIS target configured
     // (GET /iris/status). Clicking pushes the case and reports a per-section summary.
@@ -1348,7 +1431,9 @@
     // rewrites the inner divs (not the <section>/<h2>), so collapse state sticks.
     const COLLAPSE_KEY = "dfir.collapsed";
     const sections = () => [...document.querySelectorAll("main > section")];
-    const sectionKey = (sec) => { const el = sec.querySelector("[id]"); return el ? el.id : ""; };
+    // Prefer the section's DIRECT-child content div as its key, so nested controls (e.g. the
+    // manual add-entry forms with their own input ids) don't shadow it.
+    const sectionKey = (sec) => { const el = sec.querySelector(":scope > [id]") || sec.querySelector("[id]"); return el ? el.id : ""; };
     const loadCollapsed = () => { try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "{}"); } catch { return {}; } };
     const saveCollapsed = (map) => localStorage.setItem(COLLAPSE_KEY, JSON.stringify(map));
 
