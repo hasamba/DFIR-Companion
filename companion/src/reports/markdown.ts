@@ -121,9 +121,11 @@ function executiveSummary(state: InvestigationState, meta: ReportMeta, lines: st
   lines.push(humanOr(meta.executiveSummary, derived.length > 0 ? derived : TODO), "");
 }
 
+// 2.1 — human-only and optional: omitted entirely when the investigator hasn't written one.
 function businessImpact(meta: ReportMeta, lines: string[]): void {
+  if (meta.businessImpact.trim().length === 0) return;
   lines.push("## 2.1 Business Impact Analysis", "");
-  lines.push(humanOr(meta.businessImpact), "");
+  lines.push(meta.businessImpact.trim(), "");
 }
 
 function investigationLimitations(meta: ReportMeta, lines: string[]): void {

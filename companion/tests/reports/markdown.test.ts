@@ -37,7 +37,6 @@ describe("renderMarkdownReport", () => {
       "## 1.3 Disclaimer and reading guide",
       "## 1.4 Intended audience",
       "## 2 Executive summary",
-      "## 2.1 Business Impact Analysis",
       "## 2.2 Investigation limitations",
       "## 2.3 Investigation goals and targets",
       "## 2.4 Glossary of terms",
@@ -55,6 +54,8 @@ describe("renderMarkdownReport", () => {
     expect(md).not.toContain("**Incident ID:**");
     // Distribution list is optional — omitted entirely when empty.
     expect(md).not.toContain("## 1.2 Distribution list");
+    // Business Impact Analysis is human-only and optional — omitted when not written.
+    expect(md).not.toContain("## 2.1 Business Impact Analysis");
     // Revisions auto-seed a 1.0 row even with no human input.
     expect(md).toContain("| 1.0 |");
   });
@@ -81,6 +82,15 @@ describe("renderMarkdownReport", () => {
     expect(md2).toContain("**Investigator:** Solo Investigator");
     expect(md2).toContain("## 1.2 Distribution list");
     expect(md2).toContain("| Ellie | CISO | email |");
+  });
+
+  it("includes the Business Impact Analysis only when the investigator writes one", () => {
+    expect(renderMarkdownReport(emptyState("c1"))).not.toContain("## 2.1 Business Impact Analysis");
+    const meta = emptyReportMeta();
+    meta.businessImpact = "Email and file services were down for 6 hours.";
+    const md = renderMarkdownReport(emptyState("c1"), meta);
+    expect(md).toContain("## 2.1 Business Impact Analysis");
+    expect(md).toContain("Email and file services were down for 6 hours.");
   });
 
   it("auto-calculates the glossary from the report text unless overridden", () => {
