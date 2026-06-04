@@ -35,8 +35,10 @@ const glossarySchema = z.object({
 export const reportMetaSchema = z.object({
   // 0 Title page
   organization: z.string().catch(""),
-  incidentId: z.string().catch(""),
-  investigator: z.string().catch(""),
+  incidentId: z.string().catch(""),             // optional — omitted from the report when blank
+  investigators: z.array(z.string()).catch([]), // one or more investigators
+  reviewer: z.string().catch(""),               // optional report reviewer
+  incidentManager: z.string().catch(""),        // optional incident manager
   restrictions: z.string().catch(""),          // e.g. "CONFIDENTIAL / TLP:AMBER"
   // 1.1 Report revisions
   revisions: z.array(revisionSchema).catch([]),
@@ -54,7 +56,8 @@ export const reportMetaSchema = z.object({
   investigationLimitations: z.string().catch(""),
   // 2.3 Investigation goals and targets (research questions, freeform markdown)
   investigationGoals: z.string().catch(""),
-  // 2.4 Glossary of terms
+  // 2.4 Glossary of terms — auto-derived from the report text when left empty (see
+  // glossary.ts); a non-empty value here overrides the automatic glossary.
   glossary: z.array(glossarySchema).catch([]),
   // 5 Conclusions (overrides the derived conclusion when set) + recommendations
   conclusions: z.string().catch(""),

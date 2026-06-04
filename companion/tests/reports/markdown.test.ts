@@ -34,7 +34,6 @@ describe("renderMarkdownReport", () => {
     const md = renderMarkdownReport(emptyState("c9"));
     for (const heading of [
       "## 1.1 Report revisions",
-      "## 1.2 Distribution list",
       "## 1.3 Disclaimer and reading guide",
       "## 1.4 Intended audience",
       "## 2 Executive summary",
@@ -52,8 +51,53 @@ describe("renderMarkdownReport", () => {
     }
     // Empty human-only sections get the to-be-completed placeholder.
     expect(md).toContain("To be completed by the investigator");
-    // Title page falls back to the case id when no incident id is set.
-    expect(md).toContain("**Incident ID:** c9");
+    // Incident ID is optional — omitted entirely when not set (no case-id fallback).
+    expect(md).not.toContain("**Incident ID:**");
+    // Distribution list is optional — omitted entirely when empty.
+    expect(md).not.toContain("## 1.2 Distribution list");
+    // Revisions auto-seed a 1.0 row even with no human input.
+    expect(md).toContain("| 1.0 |");
+  });
+
+  it("makes incident ID and distribution optional, and supports multiple people", () => {
+    const meta = emptyReportMeta();
+    meta.investigators = ["Jane Doe", "John Roe"];
+    meta.reviewer = "Riley Reviewer";
+    meta.incidentManager = "Morgan Manager";
+
+    const md = renderMarkdownReport(emptyState("c1"), meta);
+    expect(md).toContain("**Investigators:** Jane Doe, John Roe");
+    expect(md).toContain("**Reviewer:** Riley Reviewer");
+    expect(md).toContain("**Incident manager:** Morgan Manager");
+    expect(md).not.toContain("**Incident ID:**");
+
+    // With an incident id and a single investigator, the label is singular and the line shows.
+    const meta2 = emptyReportMeta();
+    meta2.incidentId = "INC-42";
+    meta2.investigators = ["Solo Investigator"];
+    meta2.distribution = [{ name: "Ellie", role: "CISO", method: "email" }];
+    const md2 = renderMarkdownReport(emptyState("c1"), meta2);
+    expect(md2).toContain("**Incident ID:** INC-42");
+    expect(md2).toContain("**Investigator:** Solo Investigator");
+    expect(md2).toContain("## 1.2 Distribution list");
+    expect(md2).toContain("| Ellie | CISO | email |");
+  });
+
+  it("auto-calculates the glossary from the report text unless overridden", () => {
+    const state = emptyState("c1");
+    state.attackerPath = "Initial access via phishing, credentials dumped from LSASS, then ransomware deployed.";
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("## 2.4 Glossary of terms");
+    expect(md).toContain("| LSASS |");
+    expect(md).toContain("| phishing |");
+    expect(md).toContain("| ransomware |");
+
+    // A human glossary overrides the auto-derived one.
+    const meta = emptyReportMeta();
+    meta.glossary = [{ term: "CUSTOM", explanation: "only this" }];
+    const overridden = renderMarkdownReport(state, meta);
+    expect(overridden).toContain("| CUSTOM | only this |");
+    expect(overridden).not.toContain("| LSASS |");
   });
 
   it("lets human ReportMeta override the executive summary and add recommendations", () => {
@@ -61,7 +105,7 @@ describe("renderMarkdownReport", () => {
     state.lastSummary = "AI-generated summary that should be overridden.";
     const meta = emptyReportMeta();
     meta.organization = "ExampleCorp";
-    meta.investigator = "Jane Doe";
+    meta.investigators = ["Jane Doe"];
     meta.executiveSummary = "Human-authored executive summary.";
     meta.recommendations = ["Deploy EDR to all endpoints", "Rotate domain admin credentials"];
     meta.glossary = [{ term: "EDR", explanation: "Endpoint Detection and Response" }];

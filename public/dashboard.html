@@ -116,10 +116,12 @@
         <p class="rm-hint">Human-authored sections of the incident report (AnttiKurittu template). Saved per case and merged into <code>report.md</code> when you click <em>Generate Report</em>. Leave a field blank to use the auto-derived value or a "to be completed" placeholder.</p>
         <div class="rm-grid">
           <label>Organization <input id="rm-organization" /></label>
-          <label>Incident ID <input id="rm-incidentId" placeholder="INC-123456" /></label>
-          <label>Investigator <input id="rm-investigator" /></label>
+          <label>Incident ID (optional — omitted if blank) <input id="rm-incidentId" placeholder="INC-123456" /></label>
+          <label>Reviewer (optional) <input id="rm-reviewer" /></label>
+          <label>Incident manager (optional) <input id="rm-incidentManager" /></label>
           <label>Restrictions / TLP <input id="rm-restrictions" placeholder="CONFIDENTIAL / TLP:AMBER" /></label>
         </div>
+        <label>Investigator(s) — one per line<textarea id="rm-investigators" rows="2" placeholder="Jane Doe"></textarea></label>
         <label class="rm-check"><input type="checkbox" id="rm-includeDisclaimer" checked /> Include the standard disclaimer &amp; reading guide (timestamps, probability &amp; confidence scales)</label>
         <label>Intended audience (1.4)<textarea id="rm-intendedAudience" rows="2" placeholder="Blank = default technical-audience text"></textarea></label>
         <label>Executive summary (2) — overrides the AI summary<textarea id="rm-executiveSummary" rows="3"></textarea></label>
@@ -130,8 +132,8 @@
         <label>Attachments note (6)<textarea id="rm-attachmentsNote" rows="2"></textarea></label>
         <label>Recommendations (5) — one per line<textarea id="rm-recommendations" rows="3" placeholder="Deploy EDR to all endpoints"></textarea></label>
         <label>Report revisions (1.1) — one per line: <code>version | date | author | comments</code><textarea id="rm-revisions" rows="2" placeholder="1.0 | 2026-06-04 | Jane Doe | Release version"></textarea></label>
-        <label>Distribution list (1.2) — one per line: <code>name | role | method</code><textarea id="rm-distribution" rows="2" placeholder="Ellie Example | CISO | email"></textarea></label>
-        <label>Glossary (2.4) — one per line: <code>term | explanation</code><textarea id="rm-glossary" rows="2" placeholder="EDR | Endpoint Detection and Response"></textarea></label>
+        <label>Distribution list (1.2, optional — omitted if blank) — one per line: <code>name | role | method</code><textarea id="rm-distribution" rows="2" placeholder="Ellie Example | CISO | email"></textarea></label>
+        <label>Glossary (2.4) — auto-calculated from the report; fill only to override. one per line: <code>term | explanation</code><textarea id="rm-glossary" rows="2" placeholder="(auto) EDR | Endpoint Detection and Response"></textarea></label>
         <div><button id="saveReportMeta">Save report details</button> <span id="rmStatus" style="color:#9aa4b2; font-size:12px;"></span></div>
       </div>
     </section>
@@ -237,7 +239,9 @@
     function fillReportMeta(m) {
       const v = (id, val) => document.getElementById(id).value = val || "";
       v("rm-organization", m.organization); v("rm-incidentId", m.incidentId);
-      v("rm-investigator", m.investigator); v("rm-restrictions", m.restrictions);
+      v("rm-investigators", (m.investigators || []).join("\n"));
+      v("rm-reviewer", m.reviewer); v("rm-incidentManager", m.incidentManager);
+      v("rm-restrictions", m.restrictions);
       document.getElementById("rm-includeDisclaimer").checked = m.includeDisclaimer !== false;
       v("rm-intendedAudience", m.intendedAudience); v("rm-executiveSummary", m.executiveSummary);
       v("rm-businessImpact", m.businessImpact); v("rm-investigationLimitations", m.investigationLimitations);
@@ -259,7 +263,9 @@
       const g = (id) => document.getElementById(id).value;
       const body = {
         organization: g("rm-organization"), incidentId: g("rm-incidentId"),
-        investigator: g("rm-investigator"), restrictions: g("rm-restrictions"),
+        investigators: linesToArray(g("rm-investigators")),
+        reviewer: g("rm-reviewer"), incidentManager: g("rm-incidentManager"),
+        restrictions: g("rm-restrictions"),
         includeDisclaimer: document.getElementById("rm-includeDisclaimer").checked,
         intendedAudience: g("rm-intendedAudience"), executiveSummary: g("rm-executiveSummary"),
         businessImpact: g("rm-businessImpact"), investigationLimitations: g("rm-investigationLimitations"),

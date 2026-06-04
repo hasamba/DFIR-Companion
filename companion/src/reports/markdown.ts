@@ -1,6 +1,7 @@
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
 import { byEventTime } from "../analysis/forensicSort.js";
-import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
+import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
+import { deriveGlossary } from "./glossary.js";
 
 // Renders report.md following the AnttiKurittu incident-report-template structure
 // (https://github.com/AnttiKurittu/incident-report-template). Technical sections are
@@ -29,33 +30,45 @@ const DEFAULT_AUDIENCE =
   "personnel and others working in roles related to the technical environment. The executive " +
   "summary, conclusions and recommendations are written for all stakeholders.";
 
+function trimmedList(values: string[]): string[] {
+  return values.map((v) => v.trim()).filter((v) => v.length > 0);
+}
+
 function titlePage(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
   lines.push("# Incident Investigation Report", "");
   lines.push(`**Organization:** ${humanOr(meta.organization, "_(organization not set)_")}`, "");
-  lines.push(`**Incident ID:** ${humanOr(meta.incidentId, state.caseId)}`, "");
-  lines.push(`**Investigator:** ${humanOr(meta.investigator, "_(investigator not set)_")}`, "");
+  // Incident ID is optional — omit the line entirely when blank.
+  if (meta.incidentId.trim().length > 0) lines.push(`**Incident ID:** ${meta.incidentId.trim()}`, "");
+  const investigators = trimmedList(meta.investigators);
+  const label = investigators.length > 1 ? "Investigators" : "Investigator";
+  lines.push(`**${label}:** ${investigators.length > 0 ? investigators.join(", ") : "_(investigator not set)_"}`, "");
+  if (meta.reviewer.trim().length > 0) lines.push(`**Reviewer:** ${meta.reviewer.trim()}`, "");
+  if (meta.incidentManager.trim().length > 0) lines.push(`**Incident manager:** ${meta.incidentManager.trim()}`, "");
   lines.push(`**Restrictions:** ${humanOr(meta.restrictions, "CONFIDENTIAL / TLP:AMBER")}`, "");
 }
 
-function revisions(meta: ReportMeta, lines: string[]): void {
+// 1.1 — human revisions when provided; otherwise auto-seed a single "1.0" row dated from the
+// case's last update and authored by the investigators, so the report always has a version line.
+function defaultRevision(state: InvestigationState, meta: ReportMeta): ReportRevision {
+  // Treat the epoch default (a case with no recorded activity yet) as "no date".
+  const date = state.updatedAt && !state.updatedAt.startsWith("1970-01-01") ? state.updatedAt.slice(0, 10) : "";
+  return { version: "1.0", date, author: trimmedList(meta.investigators).join(", "), comments: "Initial report" };
+}
+
+function revisions(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
   lines.push("## 1.1 Report revisions", "");
-  if (meta.revisions.length === 0) {
-    lines.push(TODO, "");
-    return;
-  }
+  const rows = meta.revisions.length > 0 ? meta.revisions : [defaultRevision(state, meta)];
   lines.push("| Version | Published date | Author | Comments |", "| --- | --- | --- | --- |");
-  for (const r of meta.revisions) {
+  for (const r of rows) {
     lines.push(`| ${cellMd(r.version)} | ${cellMd(r.date)} | ${cellMd(r.author)} | ${cellMd(r.comments)} |`);
   }
   lines.push("");
 }
 
+// 1.2 — optional: when no recipients are listed the whole section is omitted.
 function distribution(meta: ReportMeta, lines: string[]): void {
+  if (meta.distribution.length === 0) return;
   lines.push("## 1.2 Distribution list", "");
-  if (meta.distribution.length === 0) {
-    lines.push(TODO, "");
-    return;
-  }
   lines.push("| Name | Role | Method |", "| --- | --- | --- |");
   for (const d of meta.distribution) {
     lines.push(`| ${cellMd(d.name)} | ${cellMd(d.role)} | ${cellMd(d.method)} |`);
@@ -135,14 +148,16 @@ function investigationGoals(state: InvestigationState, meta: ReportMeta, lines: 
   lines.push(TODO, "");
 }
 
-function glossary(meta: ReportMeta, lines: string[]): void {
+// 2.4 — auto-derived from the report text; a human-authored glossary overrides it.
+function glossary(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
   lines.push("## 2.4 Glossary of terms", "");
-  if (meta.glossary.length === 0) {
+  const entries = meta.glossary.length > 0 ? meta.glossary : deriveGlossary(state);
+  if (entries.length === 0) {
     lines.push(TODO, "");
     return;
   }
   lines.push("| Term | Explanation |", "| --- | --- |");
-  for (const g of meta.glossary) {
+  for (const g of entries) {
     lines.push(`| ${cellMd(g.term)} | ${cellMd(g.explanation)} |`);
   }
   lines.push("");
@@ -320,7 +335,7 @@ export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta
   const lines: string[] = [];
 
   titlePage(state, meta, lines);
-  revisions(meta, lines);
+  revisions(state, meta, lines);
   distribution(meta, lines);
   if (meta.includeDisclaimer) disclaimer(lines);
   intendedAudience(meta, lines);
@@ -329,7 +344,7 @@ export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta
   businessImpact(meta, lines);
   investigationLimitations(meta, lines);
   investigationGoals(state, meta, lines);
-  glossary(meta, lines);
+  glossary(state, meta, lines);
 
   lines.push("## 3 Timeline of events", "");
   incidentTimeline(state, lines);

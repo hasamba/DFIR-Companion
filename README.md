@@ -92,9 +92,11 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template)
   (title page → executive summary → BIA, limitations, goals, glossary → incident/investigation
   timelines → investigation → conclusions/recommendations → attachments). Technical sections
-  auto-fill from the case; human-authored sections (title page, distribution, BIA, recommendations,
-  glossary…) are filled in the dashboard **Report Details** panel, persist per case, override the
-  derived content, and show a "to be completed" placeholder until filled.
+  auto-fill from the case (incl. an **auto-calculated glossary** from a curated DFIR dictionary);
+  human-authored sections (title page with **multiple investigators / reviewer / incident manager**,
+  optional incident ID + distribution, BIA, recommendations…) are filled in the dashboard
+  **Report Details** panel, persist per case, override the derived content, and show a
+  "to be completed" placeholder until filled.
 
 ### Ops
 - **Configurable** — port (`DFIR_PORT`), cases root, all behavior via `DFIR_*` env vars.

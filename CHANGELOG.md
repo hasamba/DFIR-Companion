@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Report Details** panel (persisted per case in `state/report-meta.json`), override the derived
   content where provided, and show a "to be completed" placeholder where empty. New endpoints
   `GET`/`PUT /cases/:id/report-meta`.
+  - Title page supports **multiple investigators** plus an optional **reviewer** and **incident manager**.
+  - **Incident ID** and the **distribution list** are optional — omitted from the report when left blank.
+  - **Glossary** is **auto-calculated** from the report text against a curated DFIR dictionary; a
+    human-authored glossary overrides it.
+  - **Report revisions** auto-seed a `1.0` row (dated from the case, authored by the investigators)
+    when none are entered.
 
 ## [0.3.0] - 2026-06-04
 
