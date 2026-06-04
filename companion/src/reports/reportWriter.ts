@@ -9,6 +9,7 @@ import { renderMarkdownReport } from "./markdown.js";
 import { renderHtmlReport } from "./html.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
+import type { InvestigationState } from "../analysis/stateTypes.js";
 
 export interface ReportPaths {
   markdown: string;
@@ -29,20 +30,28 @@ export class ReportWriter {
     private readonly reportMeta?: ReportMetaStore,
   ) {}
 
-  async writeAll(caseId: string): Promise<ReportPaths> {
+  // Load the case state with the same deterministic report filters applied: drop
+  // out-of-scope events (and the findings/IOCs/MITRE supported only by them) and exclude
+  // client-confirmed legitimate items — so every export is scope/legit-consistent even if
+  // AI re-synthesis hasn't run. Shared by the full report and single-section exports.
+  private async loadFilteredState(caseId: string): Promise<InvestigationState> {
     const loaded = await this.state.load(caseId);
-    // Reports respect the investigation scope deterministically: drop out-of-scope
-    // events AND the findings/IOCs/MITRE supported only by them — so a report is
-    // scope-consistent even if AI re-synthesis hasn't run (or kept stale items).
     const scoped = projectScope(loaded, this.scope ? await this.scope.load(caseId) : NO_SCOPE);
-    // Then exclude client-confirmed legitimate items: drop legit forensic events
-    // from the timeline (matching the dashboard view) and, as a safety net, any
-    // findings/IOCs matching legit markers the AI may not have re-derived away.
     const markers = this.legitimate ? await this.legitimate.load(caseId) : [];
-    const state = applyLegitimate(
+    return applyLegitimate(
       { ...scoped, forensicTimeline: filterLegitimateEvents(scoped.forensicTimeline, markers) },
       markers,
     );
+  }
+
+  // Export just the incident (forensic) timeline as CSV, on demand — without writing the
+  // full report. Uses the same scope/legitimate filtering so it matches the report's 3.1.
+  async incidentTimelineCsv(caseId: string): Promise<string> {
+    return forensicTimelineCsv(await this.loadFilteredState(caseId));
+  }
+
+  async writeAll(caseId: string): Promise<ReportPaths> {
+    const state = await this.loadFilteredState(caseId);
     const dir = this.cases.reportsDir(caseId);
     const paths: ReportPaths = {
       markdown: join(dir, "report.md"),

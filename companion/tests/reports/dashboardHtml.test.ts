@@ -27,4 +27,10 @@ describe("dashboard.html", () => {
     expect(html).toContain("/report/report.html");
     expect(html).toContain("/report/report.md?download=1");
   });
+
+  it("offers a one-click incident-timeline CSV export", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="exportTimelineCsv"');
+    expect(html).toContain("/incident-timeline.csv");
+  });
 });

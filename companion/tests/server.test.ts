@@ -582,6 +582,26 @@ describe("state and report routes", () => {
     expect((await request(app).get("/cases/c1/report/secrets.txt")).status).toBe(400);
   });
 
+  it("exports just the incident timeline as CSV on demand (no full report needed)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-timeline-csv-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore);
+    const app = createApp(store, { stateStore, reportWriter });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "Phishing email opened",
+      severity: "High", mitreTechniques: ["T1566"], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
+    await stateStore.save(seeded);
+
+    const res = await request(app).get("/cases/c1/incident-timeline.csv");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/csv");
+    expect(res.headers["content-disposition"]).toContain('attachment; filename="incident-timeline.csv"');
+    expect(res.text).toContain("timestamp,endTimestamp,count,severity,description");
+    expect(res.text).toContain("Phishing email opened");
+  });
+
   it("GET/PUT /cases/:id/report-meta round-trips and flows into the generated report", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-report-meta-route-"));
     const store = new CaseStore(root);

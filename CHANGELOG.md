@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Report trimmed to the essentials: the **incident timeline drops its Evidence column**, and the
     **investigation timeline**, **investigation threads**, the conclusions' **answered-questions**
     block, and the **attachments** section are no longer included.
+  - **One-click incident-timeline CSV export** — an *Export Timeline CSV* button (and
+    `GET /cases/:id/incident-timeline.csv`) downloads just the incident (forensic) timeline,
+    generated on demand with the same scope/legitimate filtering as the report.
 
 ## [0.3.0] - 2026-06-04
 

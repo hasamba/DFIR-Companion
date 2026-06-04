@@ -110,6 +110,7 @@ Examples:
 | `POST /cases/:id/synthesize` | Run the synthesis pass (findings / MITRE / attacker path) from the forensic timeline; pushes the update to the dashboard. The dashboard's **Synthesize** button calls this. |
 | `POST /cases/:id/report` | Write report files; returns their paths. `report.md` **and** `report.html` follow the [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template): technical sections auto-fill from the case, human-authored sections come from report metadata (below). |
 | `GET /cases/:id/report/report.md` · `…/report.html` | Serve a generated report for export (view or download). `?download=1` forces a save dialog; `404` until the report has been generated. The HTML export is standalone and print-friendly; raw HTML in untrusted data is escaped. |
+| `GET /cases/:id/incident-timeline.csv` | Export **just the incident (forensic) timeline** as CSV, generated on demand (same scope/legitimate filtering as the report) — no full report needed. The dashboard's **Export Timeline CSV** button calls this. |
 | `GET /cases/:id/report-meta` | Human-authored report metadata (title page, distribution, BIA, limitations, glossary, recommendations…) for the case, or defaults. Stored in `state/report-meta.json`. |
 | `PUT /cases/:id/report-meta` | Replace the report metadata with a normalized payload (unknown keys dropped, wrong-typed fields defaulted). The dashboard's **Report Details** panel calls this; values merge into `report.md` on generation. |
 | `GET /dashboard` | Live dashboard page. |

@@ -89,7 +89,8 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   badges (`×N` aggregate, `⊕ N sources`, `AUTO`, enrichment verdicts, `⚠ unusual parent`).
 - **Reports** — Markdown **and HTML** report (standalone, print-friendly → Save-as-PDF) + CSVs
   (findings, IOCs incl. enrichment, capture timeline, forensic timeline incl. count/sources) + full
-  JSON state export. Export from the dashboard as Markdown or HTML.
+  JSON state export. Export from the dashboard as Markdown or HTML, or **export just the incident
+  timeline as CSV** with one click.
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template)
   (title page → executive summary → BIA, limitations, goals, glossary → incident/investigation
   timelines → investigation → conclusions/recommendations → attachments). Technical sections

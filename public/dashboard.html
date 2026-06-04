@@ -84,6 +84,7 @@
     <input id="thorFile" type="file" accept=".json,.jsonl,application/json,text/plain" style="display:none" />
     <button id="importThor" title="Upload a THOR (Nextron) scanner report in JSON-Lines format (thor --jsonfile). Findings map deterministically to the timeline + IOCs; scan info/lifecycle noise is dropped automatically.">Import THOR</button>
     <button id="generateReport" title="Write the report (Markdown + HTML) and CSVs; then export via the links that appear">Generate Report</button>
+    <button id="exportTimelineCsv" title="Download just the incident (forensic) timeline as CSV">Export Timeline CSV</button>
     <span id="reportLinks" class="report-links"></span>
     <button id="toggleAll" title="Collapse or expand all sections">Collapse all</button>
     <span id="status">disconnected</span>
@@ -813,6 +814,12 @@
             ` · <a href="/cases/${c}/report/report.md?download=1">Download Markdown</a>`;
         })
         .catch(e => document.getElementById("status").textContent = "report failed: " + e.message);
+    };
+    document.getElementById("exportTimelineCsv").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      // Content-Disposition: attachment on the endpoint triggers a download without navigating away.
+      window.location.href = `/cases/${encodeURIComponent(caseId)}/incident-timeline.csv`;
     };
 
     // ── Collapsible sections ──────────────────────────────────────────────────

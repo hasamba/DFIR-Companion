@@ -345,6 +345,21 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Export just the incident (forensic) timeline as CSV, generated on demand from the
+  // current state (same scope/legitimate filtering as the report) — no full report needed.
+  app.get("/cases/:id/incident-timeline.csv", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const csv = await options.reportWriter.incidentTimelineCsv(req.params.id);
+      res.type("text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="incident-timeline.csv"');
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(csv);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Human-authored report metadata (title page, distribution, BIA, limitations, glossary,
   // recommendations…). GET returns the stored values (or defaults); PUT replaces them with a
   // normalized payload. These merge into report.md alongside the auto-derived sections.
