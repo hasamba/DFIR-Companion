@@ -34,12 +34,18 @@
     .asset-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; color: #9aa4b2; margin-bottom: 8px; }
     .asset-controls label { display: flex; align-items: center; gap: 4px; }
     .asset-controls button { padding: 3px 9px; font-size: 12px; }
+    .asset-controls select { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 6px; padding: 3px; font-size: 12px; }
+    .asset-ctrl-sep { width: 1px; align-self: stretch; background: #2a2f3a; margin: 0 4px; }
     .asset-hint { margin-left: auto; color: #ffd93b; }
     .asset-graph { overflow: auto; max-height: 460px; border: 1px solid #2a2f3a; border-radius: 6px; background: #0f1115; }
     .asset-graph svg text { fill: #cbd3df; font-size: 11px; }
     .asset-node { cursor: pointer; }
+    /* Fullscreen: the wrapper fills the screen and the graph grows to fit. */
+    .asset-graph-wrap:fullscreen { background: #11161d; padding: 12px; display: flex; flex-direction: column; }
+    .asset-graph-wrap:fullscreen .asset-graph { flex: 1; max-height: none; }
     .asset-subhead { font-size: 12px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 6px; }
-    .asset-badge { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 11px; margin-left: 6px; background: #2a2f3a; color: #cbd3df; }
+    .asset-chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px;
+      font-size: 12px; background: #0f1115; border: 1px solid #2a2f3a; color: #e6e6e6; }
     .report-links { font-size: 12px; }
     .report-links a { color: #6aa9ff; text-decoration: none; }
     .report-links a:hover { text-decoration: underline; }
@@ -121,15 +127,26 @@
     <section style="grid-column: 1 / -1">
       <h2>Compromised Assets &amp; IoC Graph</h2>
       <div id="assetPanel">
-        <div class="asset-controls">
-          <span>Show:</span>
-          <label><input type="checkbox" class="asset-type-toggle" value="host" checked> Hosts</label>
-          <label><input type="checkbox" class="asset-type-toggle" value="account" checked> Accounts</label>
-          <label><input type="checkbox" class="asset-type-toggle" value="service" checked> Services</label>
-          <button id="assetTypeAll" type="button" title="Show all asset types">All</button>
-          <span id="assetFocusHint" class="asset-hint"></span>
+        <div id="assetGraphWrap" class="asset-graph-wrap">
+          <div class="asset-controls">
+            <span>Show:</span>
+            <label><input type="checkbox" class="asset-type-toggle" value="host" checked> Hosts</label>
+            <label><input type="checkbox" class="asset-type-toggle" value="account" checked> Accounts</label>
+            <label><input type="checkbox" class="asset-type-toggle" value="service" checked> Services</label>
+            <button id="assetTypeAll" type="button" title="Show all asset types">All</button>
+            <span class="asset-ctrl-sep"></span>
+            <label>Layout
+              <select id="assetLayout" title="Graph layout">
+                <option value="horizontal">Horizontal</option>
+                <option value="vertical">Vertical</option>
+                <option value="radial">Radial</option>
+              </select>
+            </label>
+            <button id="assetFullscreen" type="button" title="Enlarge the graph to full screen">⤢ Fullscreen</button>
+            <span id="assetFocusHint" class="asset-hint"></span>
+          </div>
+          <div id="assetGraph" class="asset-graph">—</div>
         </div>
-        <div id="assetGraph" class="asset-graph">—</div>
         <h3 class="asset-subhead">Known compromised assets</h3>
         <div id="assetList">—</div>
       </div>
@@ -316,6 +333,7 @@
     let assetGraphData = null;                              // { assets, iocs, edges }
     let assetFocus = null;                                  // focused node id, or null
     let assetGraphTimer = null;
+    let assetLayout = "horizontal";                         // "horizontal" | "vertical" | "radial"
     const assetTypesEnabled = new Set(["host", "account", "service"]);
 
     function truncate(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
@@ -333,18 +351,58 @@
       assetGraphTimer = setTimeout(() => loadAssetGraph(caseId), 800);
     }
 
+    // "Known compromised assets" — names only, just hosts and users (no details).
     function renderAssetList() {
       const el = document.getElementById("assetList");
       if (!assetGraphData) { el.textContent = "—"; return; }
-      const comp = assetGraphData.assets.filter(a => a.compromised && assetTypesEnabled.has(a.type));
-      if (!comp.length) { el.innerHTML = "<em style='color:#9aa4b2'>No compromised assets identified.</em>"; return; }
-      const iocName = new Map(assetGraphData.iocs.map(i => [i.id, i.value]));
-      el.innerHTML = comp.map(a => {
-        const iocs = a.iocIds.map(id => esc(iocName.get(id) || id)).join(", ") || "—";
-        return `<div class="finding"><strong>${esc(a.name)}</strong><span class="asset-badge">${esc(a.type)}</span> `
-          + `<span class="sev-${esc(a.maxSeverity)}">${esc(a.maxSeverity)}</span><br>`
-          + `<span style="color:#9aa4b2;font-size:12px">IoCs (${a.iocIds.length}): ${iocs}</span></div>`;
-      }).join("");
+      const comp = assetGraphData.assets.filter(a =>
+        a.compromised && (a.type === "host" || a.type === "account") && assetTypesEnabled.has(a.type));
+      if (!comp.length) { el.innerHTML = "<em style='color:#9aa4b2'>No compromised hosts or users identified.</em>"; return; }
+      const chips = (names) => names.map(n => `<span class="asset-chip">${esc(n)}</span>`).join(" ");
+      const group = (label, names) => names.length
+        ? `<div style="margin-bottom:8px"><div class="asset-subhead" style="margin:0 0 4px">${label}</div>${chips(names)}</div>` : "";
+      el.innerHTML = group("Hosts", comp.filter(a => a.type === "host").map(a => a.name))
+        + group("Users", comp.filter(a => a.type === "account").map(a => a.name));
+    }
+
+    function isAssetFullscreen() { return document.fullscreenElement === document.getElementById("assetGraphWrap"); }
+
+    // Compute node positions for the chosen layout. Returns intrinsic canvas size +
+    // per-node position and label placement, so drawing is layout-agnostic.
+    function assetLayoutPositions(assets, iocs, layout) {
+      const pos = new Map(), lab = new Map();
+      const n = Math.max(assets.length, iocs.length, 1);
+      let W, H;
+      if (layout === "vertical") {
+        W = Math.max(640, 60 + n * 72); H = 360;
+        const topY = 70, botY = H - 60;
+        const spread = (arr, y, up) => arr.forEach((it, i) => {
+          const x = arr.length === 1 ? W / 2 : 40 + i * ((W - 80) / (arr.length - 1));
+          pos.set(it.id, { x, y });
+          lab.set(it.id, { x, y: up ? y - 12 : y + 14, anchor: "end", rotate: -40 });
+        });
+        spread(assets, topY, true); spread(iocs, botY, false);
+      } else if (layout === "radial") {
+        const d = Math.max(440, 140 + n * 26); W = d; H = d;
+        const cx = W / 2, cy = H / 2, r = d / 2 - 90;
+        const arc = (arr, a0, a1) => arr.forEach((it, i) => {
+          const t = (arr.length === 1 ? (a0 + a1) / 2 : a0 + i * ((a1 - a0) / (arr.length - 1))) * Math.PI / 180;
+          pos.set(it.id, { x: cx + r * Math.cos(t), y: cy + r * Math.sin(t) });
+          lab.set(it.id, { x: cx + (r + 10) * Math.cos(t), y: cy + (r + 10) * Math.sin(t) + 4, anchor: Math.cos(t) < 0 ? "end" : "start", rotate: 0 });
+        });
+        arc(assets, 100, 260);   // assets on the left arc
+        arc(iocs, -80, 80);      // IoCs on the right arc
+      } else {                   // horizontal (two columns)
+        W = 660; H = 40 + Math.max(1, n - 1) * 26 + 40;
+        const aX = 150, bX = W - 230;
+        const col = (arr, x, isAsset) => arr.forEach((it, i) => {
+          const y = arr.length === 1 ? H / 2 : 20 + i * ((H - 40) / (arr.length - 1));
+          pos.set(it.id, { x, y });
+          lab.set(it.id, { x: isAsset ? x - 12 : x + 12, y: y + 4, anchor: isAsset ? "end" : "start", rotate: 0 });
+        });
+        col(assets, aX, true); col(iocs, bX, false);
+      }
+      return { pos, lab, W, H };
     }
 
     function renderAssetGraph() {
@@ -361,39 +419,34 @@
       const edges = assetGraphData.edges.filter(e => assetIds.has(e.asset) && iocIds.has(e.ioc));
       if (!assets.length) { el.innerHTML = "<div style='padding:16px;color:#9aa4b2'>No assets of the selected type(s).</div>"; return; }
 
-      // Neighbour map for click-to-focus.
       const neighbors = new Map();
       const addN = (a, b) => { let s = neighbors.get(a); if (!s) { s = new Set(); neighbors.set(a, s); } s.add(b); };
       edges.forEach(e => { addN(e.asset, e.ioc); addN(e.ioc, e.asset); });
       const related = (id) => !assetFocus || id === assetFocus || (neighbors.get(assetFocus) && neighbors.get(assetFocus).has(id));
 
-      const rowH = 26, padY = 20;
-      const leftW = 160, rightW = 240, gap = 240;
-      const width = leftW + gap + rightW;
-      const aX = leftW, bX = leftW + gap;
-      const rows = Math.max(assets.length, iocs.length);
-      const height = padY * 2 + Math.max(1, rows - 1) * rowH;
-      const aPos = new Map(); assets.forEach((a, i) => aPos.set(a.id, padY + i * rowH));
-      const iPos = new Map(); iocs.forEach((i, k) => iPos.set(i.id, padY + k * rowH));
-
+      const { pos, lab, W, H } = assetLayoutPositions(assets, iocs, assetLayout);
       const iocColor = (v) => v === "malicious" ? "#ff5c5c" : v === "suspicious" ? "#ff9f43" : "#6aa9ff";
-      let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`;
+      const fs = isAssetFullscreen();
+      const sizeAttrs = fs
+        ? `width="100%" height="100%" preserveAspectRatio="xMidYMid meet"`
+        : `width="${W}" height="${H}"`;
+
+      let svg = `<svg ${sizeAttrs} viewBox="0 0 ${W} ${H}">`;
       for (const e of edges) {
+        const p = pos.get(e.asset), q = pos.get(e.ioc);
         const vis = related(e.asset) && related(e.ioc) && (!assetFocus || e.asset === assetFocus || e.ioc === assetFocus);
-        svg += `<line x1="${aX}" y1="${aPos.get(e.asset)}" x2="${bX}" y2="${iPos.get(e.ioc)}" stroke="#3a4456" stroke-width="1" opacity="${vis ? 0.85 : 0.05}"/>`;
+        svg += `<line x1="${p.x.toFixed(1)}" y1="${p.y.toFixed(1)}" x2="${q.x.toFixed(1)}" y2="${q.y.toFixed(1)}" stroke="#3a4456" stroke-width="1" opacity="${vis ? 0.85 : 0.05}"/>`;
       }
-      for (const a of assets) {
-        const y = aPos.get(a.id);
-        svg += `<g class="asset-node" data-id="${escAttr(a.id)}" opacity="${related(a.id) ? 1 : 0.1}">`
-          + `<text x="${aX - 12}" y="${y + 4}" text-anchor="end">${esc(truncate(a.name, 20))}</text>`
-          + `<circle cx="${aX}" cy="${y}" r="6" fill="${a.compromised ? "#ff5c5c" : "#6aa9ff"}" stroke="#0f1115" stroke-width="1.5"/></g>`;
-      }
-      for (const i of iocs) {
-        const y = iPos.get(i.id);
-        svg += `<g class="asset-node" data-id="${escAttr(i.id)}" opacity="${related(i.id) ? 1 : 0.1}">`
-          + `<circle cx="${bX}" cy="${y}" r="5" fill="${iocColor(i.verdict)}" stroke="#0f1115" stroke-width="1.5"/>`
-          + `<text x="${bX + 12}" y="${y + 4}">${esc(truncate(i.value, 28))} <tspan fill="#6b7585">(${esc(i.type)})</tspan></text></g>`;
-      }
+      const node = (it, fill, r, isIoc) => {
+        const p = pos.get(it.id), l = lab.get(it.id);
+        const label = isIoc ? `${esc(truncate(it.value, 26))} <tspan fill="#6b7585">(${esc(it.type)})</tspan>` : esc(truncate(it.name, 20));
+        const rot = l.rotate ? ` transform="rotate(${l.rotate} ${l.x.toFixed(1)} ${l.y.toFixed(1)})"` : "";
+        return `<g class="asset-node" data-id="${escAttr(it.id)}" opacity="${related(it.id) ? 1 : 0.1}">`
+          + `<text x="${l.x.toFixed(1)}" y="${l.y.toFixed(1)}" text-anchor="${l.anchor}"${rot}>${label}</text>`
+          + `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r}" fill="${fill}" stroke="#0f1115" stroke-width="1.5"/></g>`;
+      };
+      for (const a of assets) svg += node(a, a.compromised ? "#ff5c5c" : "#6aa9ff", 6, false);
+      for (const i of iocs) svg += node(i, iocColor(i.verdict), 5, true);
       svg += `</svg>`;
       el.innerHTML = svg;
       el.querySelectorAll(".asset-node").forEach(n => n.addEventListener("click", () => {
@@ -790,6 +843,14 @@
       assetTypesEnabled.clear(); ["host", "account", "service"].forEach(t => assetTypesEnabled.add(t));
       assetFocus = null; renderAssetGraph();
     };
+    document.getElementById("assetLayout").onchange = (e) => { assetLayout = e.target.value; renderAssetGraph(); };
+    document.getElementById("assetFullscreen").onclick = () => {
+      const wrap = document.getElementById("assetGraphWrap");
+      if (isAssetFullscreen()) document.exitFullscreen();
+      else if (wrap.requestFullscreen) wrap.requestFullscreen();
+    };
+    // Re-render on enter/exit fullscreen so the SVG switches between scroll and fit-to-screen.
+    document.addEventListener("fullscreenchange", () => { if (assetGraphData) renderAssetGraph(); });
     document.getElementById("saveReportMeta").onclick = saveReportMeta;
     document.getElementById("connect").onclick = connect;
     document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });

@@ -42,4 +42,13 @@ describe("dashboard.html", () => {
     expect(html).toContain('value="account"');
     expect(html).toContain("/asset-graph");
   });
+
+  it("offers fullscreen and layout (horizontal/vertical/radial) controls for the graph", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="assetFullscreen"');
+    expect(html).toContain('id="assetLayout"');
+    expect(html).toContain('value="vertical"');
+    expect(html).toContain('value="radial"');
+    expect(html).toContain("requestFullscreen");
+  });
 });
