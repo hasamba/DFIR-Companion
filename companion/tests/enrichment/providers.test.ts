@@ -4,6 +4,7 @@ import { MalwareBazaarProvider } from "../../src/enrichment/malwarebazaar.js";
 import { AbuseIpdbProvider } from "../../src/enrichment/abuseipdb.js";
 import { MispProvider } from "../../src/enrichment/misp.js";
 import { RockyRaccoonProvider } from "../../src/enrichment/rockyraccoon.js";
+import { YetiProvider } from "../../src/enrichment/yeti.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -164,5 +165,59 @@ describe("RockyRaccoonProvider (process intel)", () => {
     expect(bad).toMatchObject({ observed: false });
     expect(bad!.note).toContain("NOT observed");
     expect(bad!.note).toContain("explorer.exe");
+  });
+});
+
+describe("YetiProvider", () => {
+  // A fetch mock that routes the two-step auth + search by URL.
+  function yetiFetch(searchBody: unknown, searchStatus = 200) {
+    return vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/api/v2/auth/api-token")) {
+        expect((init!.headers as Record<string, string>)["x-yeti-apikey"]).toBe("apikey123");
+        return jsonResponse({ access_token: "jwt-abc" });
+      }
+      if (url.endsWith("/api/v2/observables/search")) {
+        expect((init!.headers as Record<string, string>).authorization).toBe("Bearer jwt-abc");
+        return searchStatus === 200 ? jsonResponse(searchBody) : new Response("", { status: searchStatus });
+      }
+      throw new Error("unexpected url " + url);
+    });
+  }
+
+  it("exchanges the API key for a JWT then searches; a tracked malware tag is malicious", async () => {
+    const fetchFn = yetiFetch({ total: 2, observables: [
+      { id: "obs-1", value: "evil.com", type: "hostname", tags: { malware: {}, "tlp:amber": {} }, context: [{ source: "OSINT feed" }] },
+    ] });
+    const yeti = new YetiProvider({ baseUrl: "https://yeti.example.org/", apiKey: "apikey123", fetchFn });
+    const r = await yeti.lookup("domain", "evil.com");
+    expect(r).toMatchObject({ source: "YETI", verdict: "malicious" });
+    expect(r!.score).toContain("tracked");
+    expect(r!.score).toContain("OSINT feed");
+    expect(r!.tags).toEqual(expect.arrayContaining(["malware", "tlp:amber"]));
+    expect(r!.link).toBe("https://yeti.example.org/observables/obs-1");
+  });
+
+  it("a tracked-but-benign-tagged observable is suspicious; unknown → null; not process", async () => {
+    const tracked = new YetiProvider({ baseUrl: "https://y", apiKey: "apikey123", fetchFn: yetiFetch({ observables: [{ id: "x", tags: ["watchlist"] }] }) });
+    expect((await tracked.lookup("ip", "1.2.3.4"))!.verdict).toBe("suspicious");
+
+    const unknown = new YetiProvider({ baseUrl: "https://y", apiKey: "apikey123", fetchFn: yetiFetch({ observables: [], total: 0 }) });
+    expect(await unknown.lookup("ip", "8.8.8.8")).toBeNull();
+
+    expect(tracked.supports("process")).toBe(false);
+    expect(tracked.supports("hash")).toBe(true);
+  });
+
+  it("refreshes the token once on a 401 from search", async () => {
+    let searchCalls = 0;
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/auth/api-token")) return jsonResponse({ access_token: "jwt-abc" });
+      searchCalls += 1;
+      return searchCalls === 1 ? new Response("", { status: 401 }) : jsonResponse({ observables: [{ id: "z", tags: ["malware"] }] });
+    });
+    const yeti = new YetiProvider({ baseUrl: "https://y", apiKey: "apikey123", fetchFn });
+    const r = await yeti.lookup("hash", "abc");
+    expect(r!.verdict).toBe("malicious");
+    expect(searchCalls).toBe(2);                 // retried after refreshing the token
   });
 });

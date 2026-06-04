@@ -20,8 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chain seen". Deduplicated per distinct (parent,child) pair, throttled/capped/cached like IOC
   enrichment. THOR import now captures `processName`/`parentName` (basenames) on events.
 - **Threat-intel IOC enrichment** — look up the case's IOCs (hashes/IPs/domains/URLs) on
-  **VirusTotal** (hash/IP/domain/URL), **MalwareBazaar** (hash), **AbuseIPDB** (IP), and **MISP**
-  (your own instance — `DFIR_MISP_URL` + `DFIR_MISP_KEY`), and **RockyRaccoon** (Windows
+  **VirusTotal** (hash/IP/domain/URL), **MalwareBazaar** (hash), **AbuseIPDB** (IP), **MISP**
+  (your own instance — `DFIR_MISP_URL` + `DFIR_MISP_KEY`), **YETI** (your own instance, two-step
+  JWT auth — `DFIR_YETI_URL` + `DFIR_YETI_KEY`), and **RockyRaccoon** (Windows
   **process** behavioral intel — prevalence / LOLBIN / risk level / expected parent / ATT&CK,
   `DFIR_ROCKYRACCOON_KEY`; the first source that can enrich the process IOCs we extract),
   annotating each IOC with a verdict (malicious/suspicious/harmless/unknown), score, classification tags, and a

@@ -20,6 +20,7 @@ import { MalwareBazaarProvider } from "./enrichment/malwarebazaar.js";
 import { AbuseIpdbProvider } from "./enrichment/abuseipdb.js";
 import { MispProvider } from "./enrichment/misp.js";
 import { RockyRaccoonProvider, type ParentChildResult } from "./enrichment/rockyraccoon.js";
+import { YetiProvider } from "./enrichment/yeti.js";
 import { validateProcessChains, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { InvestigationState } from "./analysis/stateTypes.js";
@@ -778,6 +779,7 @@ export function buildEnrichmentProviders(): EnrichmentProvider[] {
   if (process.env.DFIR_ABUSEIPDB_KEY) providers.push(new AbuseIpdbProvider({ apiKey: process.env.DFIR_ABUSEIPDB_KEY }));
   if (process.env.DFIR_MISP_URL && process.env.DFIR_MISP_KEY) providers.push(new MispProvider({ baseUrl: process.env.DFIR_MISP_URL, apiKey: process.env.DFIR_MISP_KEY }));
   if (process.env.DFIR_ROCKYRACCOON_KEY) providers.push(new RockyRaccoonProvider({ apiKey: process.env.DFIR_ROCKYRACCOON_KEY }));
+  if (process.env.DFIR_YETI_URL && process.env.DFIR_YETI_KEY) providers.push(new YetiProvider({ baseUrl: process.env.DFIR_YETI_URL, apiKey: process.env.DFIR_YETI_KEY }));
   return providers;
 }
 
