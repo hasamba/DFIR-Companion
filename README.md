@@ -122,6 +122,15 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   (findings, IOCs incl. enrichment, capture timeline, forensic timeline incl. count/sources) + full
   JSON state export. Export from the dashboard as Markdown or HTML, or **export just the incident
   timeline as CSV** with one click.
+- **Export to DFIR-IRIS** — push a case into a [DFIR-IRIS](https://dfir-iris.org/) instance with one
+  click (dashboard **Export to IRIS** button, or `npm run iris:export -- <caseId>`). It **find-or-creates
+  the IRIS case by name** (= the Companion case id) — re-exporting an existing case *updates* it — and
+  maps **assets → assets**, **IOCs → IOCs** (type/TLP resolved at runtime, with threat-intel verdicts as
+  description/tags), **forensic timeline → timeline** (events linked to their assets/IOCs), the
+  **executive summary → case summary**, and **every other section → notes** (attacker path, findings,
+  MITRE, key questions, next steps, BIA, recommendations…). Idempotent: assets dedupe by name, IOCs by
+  value, events by title+time; the summary and Companion notes are refreshed each run. Configure with
+  `DFIR_IRIS_URL` + `DFIR_IRIS_KEY` (self-signed/internal-CA supported via `DFIR_IRIS_CA`/`_INSECURE`).
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template)
   (title page → executive summary → BIA, limitations, goals, glossary → incident/investigation
   timelines → investigation → conclusions/recommendations → attachments). Technical sections

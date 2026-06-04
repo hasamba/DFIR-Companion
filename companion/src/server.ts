@@ -30,6 +30,8 @@ import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
 import { CommentsStore } from "./analysis/comments.js";
+import { IrisClient } from "./integrations/iris/irisClient.js";
+import { exportCaseToIris, type IrisExportOptions } from "./integrations/iris/irisExport.js";
 
 // Server console logging — every line is prefixed with an ISO-8601 timestamp so the local
 // log can be correlated with case events and outbound threat-intel API calls. This is a
@@ -83,6 +85,10 @@ export interface AppOptions {
   // Broadcast a fresh investigation state to dashboard clients (for routes that change
   // state outside the AI pipeline, e.g. enrichment).
   onState?: (state: InvestigationState) => void;
+  // DFIR-IRIS export: a configured client (when DFIR_IRIS_URL/KEY are set) + mapping options
+  // (customer/classification ids, base URL for the case link).
+  irisClient?: IrisClient;
+  irisOptions?: IrisExportOptions;
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -409,6 +415,32 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json(saved);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Whether a DFIR-IRIS export target is configured (so the dashboard can show/hide the button).
+  app.get("/iris/status", (_req: Request, res: Response) => {
+    res.status(200).json({ configured: !!options.irisClient, baseUrl: options.irisOptions?.baseUrl });
+  });
+
+  // Export a case to DFIR-IRIS: find-or-create the case by name, then push assets→assets,
+  // IOCs→IOCs, forensic timeline→timeline, executive summary→case summary, everything else→notes.
+  app.post("/cases/:id/export/iris", async (req: Request, res: Response) => {
+    if (!options.irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const state = await options.stateStore.load(caseId);
+      const meta = options.reportMetaStore ? await options.reportMetaStore.load(caseId) : undefined;
+      logLine(`[iris] ${caseId} export START`);
+      const result = await exportCaseToIris(options.irisClient, { caseName: caseId, state, meta }, options.irisOptions);
+      logLine(`[iris] ${caseId} export DONE -> case ${result.caseId} (${result.created ? "created" : "updated"}); ` +
+        `assets +${result.assets.added}/${result.assets.existing}, iocs +${result.iocs.added}/${result.iocs.existing}, ` +
+        `timeline +${result.timeline.added}/${result.timeline.existing}, notes ${result.notes}, warnings ${result.warnings.length}`);
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[iris] ${caseId} export ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
     }
   });
 
@@ -981,7 +1013,7 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
 // self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
 // DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
-function tlsFetchFor(name: "MISP" | "YETI") {
+function tlsFetchFor(name: "MISP" | "YETI" | "IRIS") {
   return buildTlsFetch({
     caCertPath: process.env[`DFIR_${name}_CA`],
     insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
@@ -991,6 +1023,24 @@ function tlsFetchFor(name: "MISP" | "YETI") {
 
 function isEnvFlag(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test(value ?? "");
+}
+
+// Build the DFIR-IRIS export client from env (DFIR_IRIS_URL + DFIR_IRIS_KEY). Returns
+// undefined when not configured, which hides the dashboard's "Export to IRIS" button.
+// TLS trust for a self-hosted IRIS honors DFIR_IRIS_CA / DFIR_IRIS_INSECURE.
+export function buildIrisClient(): IrisClient | undefined {
+  const baseUrl = process.env.DFIR_IRIS_URL;
+  const apiKey = process.env.DFIR_IRIS_KEY;
+  if (!baseUrl || !apiKey) return undefined;
+  return new IrisClient({ baseUrl, apiKey, fetchFn: tlsFetchFor("IRIS") });
+}
+
+export function irisExportOptions(): IrisExportOptions {
+  return {
+    baseUrl: process.env.DFIR_IRIS_URL,
+    customerId: Number(process.env.DFIR_IRIS_CUSTOMER_ID) || undefined,
+    classificationId: Number(process.env.DFIR_IRIS_CLASSIFICATION_ID) || undefined,
+  };
 }
 
 export function buildEnrichmentProviders(): EnrichmentProvider[] {
@@ -1036,6 +1086,8 @@ export function startServer(casesRoot: string, port = 4773): void {
     enrichmentProviders: buildEnrichmentProviders(),
     enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,
     enrichMaxIocs: Number(process.env.DFIR_ENRICH_MAX) || undefined,
+    irisClient: buildIrisClient(),
+    irisOptions: irisExportOptions(),
   });
 
   // Serve the dashboard.

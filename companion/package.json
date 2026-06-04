@@ -14,7 +14,8 @@
     "synthesize": "tsx scripts/synthesize.ts",
     "clean-timeline": "tsx scripts/clean-timeline.ts",
     "prompts:eject": "tsx scripts/eject-prompts.ts",
-    "yeti": "tsx scripts/yeti-lookup.ts"
+    "yeti": "tsx scripts/yeti-lookup.ts",
+    "iris:export": "tsx scripts/export-iris.ts"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
