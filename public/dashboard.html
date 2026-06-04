@@ -223,7 +223,7 @@
       </div>
     </section>
     <section><h2>Findings</h2><div id="findings">—</div></section>
-    <section><h2>IOCs</h2><div id="iocs">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>IOCs</h2><div id="iocs">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
@@ -831,7 +831,7 @@
       return " " + ioc.enrichments.map(e => {
         const c = verdictColor(e.verdict);
         const tags = e.tags && e.tags.length ? ` — ${esc(e.tags.slice(0, 3).join(", "))}` : "";
-        const inner = `<span style="color:${c};border:1px solid ${c};border-radius:4px;padding:0 6px;font-size:11px">` +
+        const inner = `<span style="display:inline-block;vertical-align:middle;color:${c};border:1px solid ${c};border-radius:4px;padding:0 6px;font-size:11px;white-space:normal;word-break:break-word">` +
           `${esc(e.source)}: ${esc(e.verdict)}${e.score ? ` (${esc(e.score)})` : ""}${tags}</span>`;
         return e.link ? `<a href="${escAttr(e.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner;
       }).join(" ");

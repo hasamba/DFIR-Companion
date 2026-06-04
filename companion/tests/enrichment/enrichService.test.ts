@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { enrichIocs } from "../../src/enrichment/enrichService.js";
+import { enrichIocs, type EnrichLookupEvent } from "../../src/enrichment/enrichService.js";
 import type { EnrichmentProvider, EnrichmentResult, IocKind } from "../../src/enrichment/provider.js";
 import type { IOC } from "../../src/analysis/stateTypes.js";
 
@@ -133,9 +133,57 @@ describe("enrichIocs", () => {
   });
 
   it("counts provider errors without aborting the run", async () => {
-    const failing: EnrichmentProvider = { name: "X", supports: () => true, lookup: async () => { throw new Error("boom"); } };
+    const failing: EnrichmentProvider = { name: "X", scope: "external", supports: () => true, lookup: async () => { throw new Error("boom"); } };
     const { iocs: out, summary } = await enrichIocs([ioc({ value: "h1", type: "hash" })], { providers: [failing], sleep: noSleep, now });
     expect(summary.errors).toBe(1);
-    expect(out[0].enrichments).toEqual([]); // checked, no results (error swallowed)
+    // An errored provider is NOT cached as "checked": no enrichments written, not in enrichedBy,
+    // so a later run (after the outage clears / URL is fixed) retries it instead of caching the failure.
+    expect(out[0].enrichments).toBeUndefined();
+    expect(out[0].enrichedBy ?? []).not.toContain("X");
+  });
+
+  it("retries an errored provider on the next run (failure is not cached), and keeps a prior hit through a later error", async () => {
+    const calls: string[] = [];
+    let mode: "error" | "ok" = "error";
+    const flaky: EnrichmentProvider = {
+      name: "Flaky", scope: "local", supports: () => true,
+      lookup: async (k, v) => { calls.push(`${k}:${v}`); if (mode === "error") throw new Error("temporarily down"); return { source: "Flaky", verdict: "malicious" }; },
+    };
+    // First run: provider errors → not recorded as checked.
+    const r1 = await enrichIocs([ioc({ value: "h1", type: "hash" })], { providers: [flaky], sleep: noSleep, now });
+    expect(r1.iocs[0].enrichedBy ?? []).not.toContain("Flaky");
+
+    // Second run (no force): because it wasn't cached, it's queried again — now it succeeds.
+    calls.length = 0; mode = "ok";
+    const r2 = await enrichIocs(r1.iocs, { providers: [flaky], sleep: noSleep, now });
+    expect(calls).toEqual(["hash:h1"]);                          // retried without force
+    expect(r2.iocs[0].enrichedBy).toEqual(["Flaky"]);
+    expect(r2.iocs[0].enrichments!.map((e) => e.source)).toEqual(["Flaky"]);
+
+    // Third run with force: provider errors again → prior hit is preserved, not wiped.
+    calls.length = 0; mode = "error";
+    const r3 = await enrichIocs(r2.iocs, { providers: [flaky], sleep: noSleep, now, force: true });
+    expect(r3.iocs[0].enrichments!.map((e) => e.source)).toEqual(["Flaky"]); // last-known hit kept
+  });
+
+  it("emits an onLookup event per provider call with hit / miss / error outcome", async () => {
+    const calls: string[] = [];
+    const hit = fakeProvider("Hitter", ["hash"], { source: "Hitter", verdict: "malicious" }, calls);
+    const miss = fakeProvider("Misser", ["hash"], null, calls);
+    const fail: EnrichmentProvider = {
+      name: "Failer", scope: "external", supports: () => true,
+      lookup: async () => { throw new Error("upstream 500"); },
+    };
+    const events: EnrichLookupEvent[] = [];
+    await enrichIocs([ioc({ value: "h1", type: "hash" })], {
+      providers: [hit, miss, fail], sleep: noSleep, now,
+      monotonic: () => 0,                       // deterministic 0ms duration
+      onLookup: (e) => events.push(e),
+    });
+    expect(events).toEqual([
+      { provider: "Hitter", kind: "hash", value: "h1", outcome: "hit", detail: "malicious", ms: 0 },
+      { provider: "Misser", kind: "hash", value: "h1", outcome: "miss", detail: undefined, ms: 0 },
+      { provider: "Failer", kind: "hash", value: "h1", outcome: "error", detail: "upstream 500", ms: 0 },
+    ]);
   });
 });

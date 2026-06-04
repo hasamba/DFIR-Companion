@@ -12,7 +12,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Timestamped server log + per-call enrichment audit lines.** Every server console line now starts
+  with an ISO-8601 timestamp (e.g. `2026-06-04T17:54:26Z [req] POST /captures -> 201`). Each outbound
+  threat-intel API call is logged as `[enrich] <case> <provider> <kind> <indicator> -> hit|miss|error
+  (<detail>) <ms>` — so you can watch exactly which provider (MISP / YETI / …) was hit, for which
+  indicator, the result/verdict (or the error message), and the latency. Each enrichment run also logs a
+  `START`/`DONE` summary line. The pure `enrichService` exposes this via an injectable `onLookup` hook;
+  the previously-swallowed provider error message is now surfaced.
+
 ### Fixed
+- **A failed enrichment call is no longer cached as "checked."** Previously every provider in a run was
+  recorded in the IOC's `enrichedBy` — even ones whose call *threw* — so a transient outage or a
+  misconfiguration (e.g. an `https://` URL on a plain-HTTP YETI host) permanently suppressed that
+  provider until a forced re-run. Now only providers whose call **succeeded** (hit or miss) are recorded;
+  an errored provider stays un-checked and is retried automatically on the next run. A provider's
+  last-known hit is also preserved if a later (forced) re-query errors, instead of being wiped.
 - **`EPERM` on state save in a synced folder.** When `cases/` lives inside Dropbox / OneDrive (or
   with some antivirus), the client briefly locks `investigation.json` while syncing, so the atomic
   `rename(tmp → target)` failed with `EPERM` mid-analysis. All per-case writes now go through a shared

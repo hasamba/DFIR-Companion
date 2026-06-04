@@ -12,7 +12,7 @@ import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { parseCsv } from "./analysis/csvImport.js";
 import { parseLogLines } from "./analysis/logImport.js";
 import { parseThorReport } from "./analysis/thorImport.js";
-import { enrichIocs } from "./enrichment/enrichService.js";
+import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
 import type { EnrichmentProvider } from "./enrichment/provider.js";
 import { VirusTotalProvider } from "./enrichment/virustotal.js";
@@ -30,6 +30,20 @@ import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
 import { CommentsStore } from "./analysis/comments.js";
+
+// Server console logging — every line is prefixed with an ISO-8601 timestamp so the local
+// log can be correlated with case events and outbound threat-intel API calls. This is a
+// localhost single-user tool, so the console IS the log; these helpers are the one place
+// that formatting lives.
+function ts(): string { return new Date().toISOString(); }
+function logLine(msg: string): void { console.log(`${ts()} ${msg}`); }
+function warnLine(msg: string): void { console.warn(`${ts()} ${msg}`); }
+function errLine(msg: string): void { console.error(`${ts()} ${msg}`); }
+
+// Truncate a long indicator (e.g. a SHA-256) for a readable one-line log entry.
+function shortValue(value: string): string {
+  return value.length > 24 ? `${value.slice(0, 24)}…` : value;
+}
 
 export type AiStatus = "analyzing" | "idle" | "error";
 // What the AI is actually doing, so the dashboard can say "processing screenshots"
@@ -111,7 +125,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Log each request and its final status (useful for a local single-user tool).
   app.use((req: Request, res: Response, next: NextFunction) => {
     res.on("finish", () => {
-      console.log(`[req] ${req.method} ${req.url} -> ${res.statusCode}`);
+      logLine(`[req] ${req.method} ${req.url} -> ${res.statusCode}`);
     });
     next();
   });
@@ -449,6 +463,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (providers.length === 0) return;     // nothing enabled for this case
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `enriching IOCs (${providers.map((p) => p.name).join(", ")})` });
       const state = await options.stateStore!.load(caseId);
+      logLine(`[enrich] ${caseId} START providers=[${providers.map((p) => p.name).join(", ")}] force=${force} iocs=${state.iocs.length}`);
       const { iocs, summary } = await enrichIocs(state.iocs, {
         providers,
         delayMs: options.enrichDelayMs,
@@ -458,7 +473,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `enriching IOC ${done}/${total}`,
         }),
+        // One audit line per outbound threat-intel API call: which provider, indicator, result.
+        onLookup: (e: EnrichLookupEvent) => logLine(
+          `[enrich] ${caseId} ${e.provider} ${e.kind} ${shortValue(e.value)} -> ${e.outcome}${e.detail ? ` (${e.detail})` : ""} ${e.ms}ms`,
+        ),
       });
+      logLine(`[enrich] ${caseId} DONE queried=${summary.queried} hits=${summary.withHits} errors=${summary.errors} skipped=${summary.skipped}`);
       // Re-load + write only the iocs so we don't clobber a concurrent state change.
       const latest = await options.stateStore!.load(caseId);
       const byValue = new Map(iocs.map((i) => [i.value, i]));
@@ -965,7 +985,7 @@ function tlsFetchFor(name: "MISP" | "YETI") {
   return buildTlsFetch({
     caCertPath: process.env[`DFIR_${name}_CA`],
     insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
-    onWarn: (m) => console.warn(`[DFIR] ${name}: ${m}`),
+    onWarn: (m) => warnLine(`[DFIR] ${name}: ${m}`),
   });
 }
 
@@ -1025,7 +1045,7 @@ export function startServer(casesRoot: string, port = 4773): void {
   });
 
   const server = app.listen(port, "127.0.0.1", () => {
-    console.log(`DFIR companion on http://127.0.0.1:${port} (dashboard at /dashboard)`);
+    logLine(`DFIR companion on http://127.0.0.1:${port} (dashboard at /dashboard)`);
   });
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.
@@ -1060,7 +1080,7 @@ if (process.argv[1] && process.argv[1].endsWith("server.ts")) {
   // (Otherwise "./cases" resolves against cwd and you can end up with two folders.)
   const companionDir = fileURLToPath(new URL("../", import.meta.url)); // .../companion/
   const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);
-  console.log(`[DFIR] cases root: ${casesRoot}`);
+  logLine(`[DFIR] cases root: ${casesRoot}`);
 
   // Port can be overridden via DFIR_PORT (1-65535). Invalid → fall back to default
   // with a warning so a typo doesn't silently bind the wrong port.
@@ -1072,7 +1092,7 @@ if (process.argv[1] && process.argv[1].endsWith("server.ts")) {
     if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 65535) {
       port = parsed;
     } else {
-      console.warn(`[DFIR] ignoring invalid DFIR_PORT="${rawPort}" — using default ${DEFAULT_PORT}.`);
+      warnLine(`[DFIR] ignoring invalid DFIR_PORT="${rawPort}" — using default ${DEFAULT_PORT}.`);
     }
   }
   startServer(casesRoot, port);
