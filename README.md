@@ -191,6 +191,9 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
 
 ## Quick start
 
+> **Prerequisite:** [Node.js](https://nodejs.org/) **20 or later** (which ships with `npm`).
+> Check with `node --version`. Everything below uses `npm`, so no other runtime is needed.
+
 1. **Companion** (the server):
 
    ```
