@@ -11,3 +11,7 @@ node_modules/
 dist/
 *.timestamp-*.mjs
 .gstack/
+
+# Local planning / process scratch (not part of the shipped project)
+.planning/
+docs/superpowers/
