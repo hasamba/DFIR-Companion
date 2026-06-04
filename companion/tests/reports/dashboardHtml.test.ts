@@ -51,4 +51,12 @@ describe("dashboard.html", () => {
     expect(html).toContain('value="radial"');
     expect(html).toContain("requestFullscreen");
   });
+
+  it("offers zoom in/out/fit buttons and mouse-wheel zoom for the graph", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="assetZoomIn"');
+    expect(html).toContain('id="assetZoomOut"');
+    expect(html).toContain('id="assetZoomReset"');
+    expect(html).toContain('addEventListener("wheel"');
+  });
 });

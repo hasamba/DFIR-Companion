@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imports + screenshots via the model. A new `assetGraph` module derives the victim **assets**
   (hosts, plus accounts parsed from `DOMAIN\user`/UPN) and the **IoCs that touched each**. The
   dashboard gains a **Compromised Assets** section (names only — hosts and users) and an interactive
-  **asset ↔ IoC graph** with per-type toggles (Host / Account / Service), **Fullscreen** and
-  **Horizontal / Vertical / Radial** layout options, and click-a-node-to-focus / click-again-to-reset;
+  **asset ↔ IoC graph** with per-type toggles (Host / Account / Service), **Fullscreen**,
+  **Horizontal / Vertical / Radial** layouts, **zoom** (in/out/fit buttons + mouse-wheel), and
+  click-a-node-to-focus / click-again-to-reset;
   the report gets a **Compromised assets** section (4.2). New endpoint `GET /cases/:id/asset-graph`.
   _Deferred:_ embedding the interactive graph in the HTML export, manual asset/link editing, and
   service-type extraction.
