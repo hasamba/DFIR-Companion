@@ -165,8 +165,12 @@ opt-in per case (`enrich-control`), sends indicators to third parties. Providers
   (Added / Changed / Fixed) as you make them — this is a standing instruction.
 - **On every version tag:** move `[Unreleased]` → `[X.Y.Z] - YYYY-MM-DD`, bump the
   version in **all three** of `companion/package.json`, `extension/package.json`, and
-  `extension/manifest.json` (keep them in sync), update the changelog compare links,
-  then create an annotated `vX.Y.Z` tag on that commit and push `master` + the tag.
+  `extension/manifest.json` (keep them in sync; also bump the root `version` in both
+  `package-lock.json` files), update the changelog compare links, then create an annotated
+  `vX.Y.Z` tag on that commit and push `master` + the tag.
+- **Then publish a GitHub Release** (a bare tag is shown truncated on GitHub's Tags page; a
+  Release renders the full Markdown notes). Use the matching `CHANGELOG` section as the body:
+  `gh release create vX.Y.Z --title vX.Y.Z --notes-file <section.md> --latest`.
 - SemVer: pre-1.0 (`0.x`) — new features bump the minor (`0.1 → 0.2`); fixes-only bump
   the patch. The project is not yet stable.
 
