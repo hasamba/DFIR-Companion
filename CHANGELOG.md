@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`npm run yeti -- <indicator>` CLI lookup.** Quickly check one or more indicators (IP / domain / hash /
+  URL) against your YETI instance from the command line, using the same auth + search path as the
+  companion (reads `DFIR_YETI_*` from `.env`, so no key copy-pasting). Prints verdict, tags, and the
+  observable link — handy for confirming YETI connectivity and triaging indicators outside a case.
 - **Timestamped server log + per-call enrichment audit lines.** Every server console line now starts
   with an ISO-8601 timestamp (e.g. `2026-06-04T17:54:26Z [req] POST /captures -> 201`). Each outbound
   threat-intel API call is logged as `[enrich] <case> <provider> <kind> <indicator> -> hit|miss|error
@@ -22,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the previously-swallowed provider error message is now surfaced.
 
 ### Fixed
+- **YETI tags are now parsed correctly (v2 object shape).** YETI v2 returns an observable's tags as an
+  array of objects (`{ name, fresh, … }`), but the provider stringified them — so badges showed
+  `[object Object]` and, worse, the malicious-tag check ran against that string and **never matched**, so
+  a YETI hit was always capped at `suspicious` and could never escalate to `malicious`. The parser now
+  reads each tag's `name` (still tolerating the legacy string / dict shapes), so real tag names show and
+  a `malware`/`trojan`/`c2`/… tag correctly escalates the verdict.
 - **A failed enrichment call is no longer cached as "checked."** Previously every provider in a run was
   recorded in the IOC's `enrichedBy` — even ones whose call *threw* — so a transient outage or a
   misconfiguration (e.g. an `https://` URL on a plain-HTTP YETI host) permanently suppressed that

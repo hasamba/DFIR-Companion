@@ -7,20 +7,29 @@ export interface YetiOptions {
   timeoutMs?: number;
 }
 
+interface YetiTag { name?: string }
 interface YetiObservable {
   id?: string;
   value?: string;
   type?: string;
-  tags?: Record<string, unknown> | string[];
+  tags?: Record<string, unknown> | Array<string | YetiTag>;
   context?: Array<Record<string, unknown>>;
 }
 
 // Tag names that indicate the observable is known-bad (vs merely tracked).
 const MALICIOUS_TAGS = /\b(malware|malicious|c2|c&c|botnet|trojan|ransom\w*|phishing|exploit|apt|backdoor|stealer)\b/i;
 
+// YETI v2 returns tags as an array of objects ({ name, fresh, expires, … }); also tolerate a
+// plain string[] or a { tagName: meta } dict. Extracting the names is what makes the malicious-tag
+// check work (mapping objects with String() yields "[object Object]", which never matches).
 function tagNames(tags: YetiObservable["tags"]): string[] {
   if (!tags) return [];
-  return Array.isArray(tags) ? tags.map(String) : Object.keys(tags);
+  if (Array.isArray(tags)) {
+    return tags
+      .map((t) => (typeof t === "string" ? t : t?.name ?? ""))
+      .filter((n): n is string => n.length > 0);
+  }
+  return Object.keys(tags);
 }
 
 // YETI (Your Everyday Threat Intelligence) — self-hosted intel platform. Searches your

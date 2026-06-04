@@ -208,6 +208,28 @@ describe("YetiProvider", () => {
     expect(tracked.supports("hash")).toBe(true);
   });
 
+  it("parses YETI v2 object-shaped tags (array of { name }) — names extracted, malicious tag escalates", async () => {
+    // Real YETI v2 returns tags as objects, not strings/dicts. Verify we read `.name`
+    // (so the verdict can escalate and the badge shows real names, not "[object Object]").
+    const fetchFn = yetiFetch({ total: 1, observables: [
+      { id: "obs-9", value: "1.2.3.4", type: "ip",
+        tags: [{ name: "blocklist", fresh: true }, { name: "trojan", fresh: true }] },
+    ] });
+    const yeti = new YetiProvider({ baseUrl: "https://y", apiKey: "apikey123", fetchFn });
+    const r = await yeti.lookup("ip", "1.2.3.4");
+    expect(r!.tags).toEqual(expect.arrayContaining(["blocklist", "trojan"]));
+    expect(r!.tags).not.toContain("[object Object]");
+    expect(r!.verdict).toBe("malicious");          // "trojan" matches the malicious-tag set
+  });
+
+  it("object tags with only benign names stay suspicious", async () => {
+    const fetchFn = yetiFetch({ total: 1, observables: [{ id: "o", tags: [{ name: "blocklist" }] }] });
+    const yeti = new YetiProvider({ baseUrl: "https://y", apiKey: "apikey123", fetchFn });
+    const r = await yeti.lookup("ip", "9.9.9.9");
+    expect(r!.tags).toEqual(["blocklist"]);
+    expect(r!.verdict).toBe("suspicious");
+  });
+
   it("refreshes the token once on a 401 from search", async () => {
     let searchCalls = 0;
     const fetchFn = vi.fn(async (url: string) => {
