@@ -23,11 +23,14 @@ For each case the AI builds and keeps up to date:
 - **Findings** — granular, per-technique analytic conclusions, each with severity and
   MITRE ATT&CK mapping.
 - **IOCs**, **MITRE ATT&CK** coverage, and an **attacker-path** narrative (kill chain).
+- **Compromised assets** — the victim hosts and user accounts, with an interactive
+  **asset ↔ IoC graph** showing which indicators touched each.
 - **Key investigative questions** — initial access, lateral movement, compromised
   users/hosts, exfiltration, dwell time… each with an answer and a pointer to where to
   find/confirm it (or what to collect next).
 - **Investigation threads** — open leads and resolved ones.
-- **Reports** — Markdown + CSV + JSON exports.
+- **Reports** — a full incident-report in **Markdown and HTML** (print-to-PDF ready), plus
+  CSV and JSON exports.
 
 ## Features
 
@@ -66,6 +69,10 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Severity-aware findings** — a Critical/High artifact row becomes a finding by default; a
   deterministic safety net auto-creates one (`AUTO` badge) for any high-severity event synthesis missed.
 - **Live auto-synthesis** — debounced re-synthesis during capture so the dashboard stays current.
+- **Efficient, grounded synthesis** — skips the AI call when nothing relevant changed (skip-if-unchanged);
+  picks events *stratified* (all Critical/High + earliest initial-access + an even time-spread) for better
+  kill-chain coverage than top-N-by-severity; and prepends a compact *compromised assets ← IoCs* +
+  *threat-intel verdicts* digest so findings and the attacker path are grounded, not inferred.
 
 ### Correlation & deduplication
 - **Cross-source correlation** — the same artifact reported by different tools (e.g. Velociraptor +
@@ -99,12 +106,14 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   (`DFIR_MISP_INSECURE` / `DFIR_YETI_INSECURE`). Scoped per provider — never relaxes the other lookups.
 
 ### Dashboard & reports
-- **Live dashboard** over WebSocket — collapsible sections, scope bar, clickable evidence links, and
-  badges (`×N` aggregate, `⊕ N sources`, `AUTO`, enrichment verdicts, `⚠ unusual parent`).
+- **Live dashboard** over WebSocket — **collapsible, drag-to-reorder sections** (order + collapse state
+  persist per browser), scope bar, clickable evidence links, and badges (`×N` aggregate, `⊕ N sources`,
+  `AUTO`, enrichment verdicts, `⚠ unusual parent`).
 - **Compromised assets + asset↔IoC graph** — events carry the affected **host** (from THOR / CSV /
-  screenshots); the dashboard lists compromised assets and draws an interactive **asset ↔ IoC graph**
-  (which IoC touched each asset, and per asset all its IoCs) with Host/Account/Service toggles and
-  click-to-focus. A *Compromised assets* section also appears in the report.
+  screenshots); the dashboard lists compromised hosts/users and draws an interactive **asset ↔ IoC graph**
+  (which IoC touched each asset, and per asset all its IoCs) with Host/Account/Service toggles,
+  **fullscreen**, **horizontal / vertical / radial** layouts, **zoom** (buttons + mouse-wheel), and
+  click-a-node-to-focus. A *Compromised assets* section also appears in the report.
 - **Reports** — Markdown **and HTML** report (standalone, print-friendly → Save-as-PDF) + CSVs
   (findings, IOCs incl. enrichment, capture timeline, forensic timeline incl. count/sources) + full
   JSON state export. Export from the dashboard as Markdown or HTML, or **export just the incident
@@ -120,9 +129,9 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 
 ### Ops
 - **Configurable** — port (`DFIR_PORT`), cases root, all behavior via `DFIR_*` env vars.
-- **Customizable AI prompts** — override the extraction / CSV / log / synthesis prompts via env
-  (`DFIR_AI_*_PROMPT` or `*_PROMPT_FILE`); file edits apply with no restart. `npm run prompts:eject`
-  dumps the defaults to start from.
+- **Customizable AI prompts** — override any of the five prompts (extraction / CSV / log / synthesis /
+  ask) via env (`DFIR_AI_*_PROMPT` or `*_PROMPT_FILE`); file edits apply with no restart.
+  `npm run prompts:eject` dumps the defaults to start from.
 - **CLI scripts** — `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline` (see below).
 
 ## Repository layout
