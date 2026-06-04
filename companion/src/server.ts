@@ -13,6 +13,7 @@ import { parseCsv } from "./analysis/csvImport.js";
 import { parseLogLines } from "./analysis/logImport.js";
 import { parseThorReport } from "./analysis/thorImport.js";
 import { enrichIocs } from "./enrichment/enrichService.js";
+import { EnrichControlStore } from "./enrichment/enrichControl.js";
 import type { EnrichmentProvider } from "./enrichment/provider.js";
 import { VirusTotalProvider } from "./enrichment/virustotal.js";
 import { MalwareBazaarProvider } from "./enrichment/malwarebazaar.js";
@@ -157,7 +158,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       synthInFlight.add(caseId);
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "synthesizing conclusions" });
       options.pipeline!.synthesize(caseId)
-        .then(() => options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }))
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); autoEnrichIfEnabled(caseId); })
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }))
         .finally(() => synthInFlight.delete(caseId));
     }, synthDebounceMs));
@@ -339,11 +340,48 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // re-runs synthesis so the AI re-derives its conclusions without it.
   const legitimate = new LegitimateStore(store);
 
+  // Threat-intel enrichment is OFF by default (OPSEC). When the analyst turns it on it
+  // enriches the current IOCs and — via autoEnrichIfEnabled below — any IOCs added later.
+  const enrichControl = new EnrichControlStore(store);
+
+  function enrichInBackground(caseId: string, force = false): void {
+    const providers = options.enrichmentProviders ?? [];
+    if (providers.length === 0 || !options.stateStore) return;
+    options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: "enriching IOCs (threat intel)" });
+    void (async () => {
+      const state = await options.stateStore!.load(caseId);
+      const { iocs, summary } = await enrichIocs(state.iocs, {
+        providers,
+        delayMs: options.enrichDelayMs,
+        maxIocs: options.enrichMaxIocs,
+        force,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `enriching IOC ${done}/${total}`,
+        }),
+      });
+      // Re-load + write only the iocs so we don't clobber a concurrent state change.
+      const latest = await options.stateStore!.load(caseId);
+      const byValue = new Map(iocs.map((i) => [i.value, i]));
+      const merged = { ...latest, iocs: latest.iocs.map((i) => byValue.get(i.value) ?? i), updatedAt: new Date().toISOString() };
+      await options.stateStore!.save(merged);
+      options.onState?.(merged);
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})` });
+    })().catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+  }
+
+  // After IOCs change (synthesis/import), enrich the new ones if the toggle is on. The
+  // cache means already-enriched IOCs are skipped, so this only queries fresh indicators.
+  function autoEnrichIfEnabled(caseId: string): void {
+    if ((options.enrichmentProviders?.length ?? 0) === 0) return;
+    enrichControl.load(caseId).then((c) => { if (c.enabled) enrichInBackground(caseId); }).catch(() => {});
+  }
+
   function resynthesizeInBackground(caseId: string): void {
     if (!options.pipeline) return;
     options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "re-synthesizing without legitimate items" });
     options.pipeline.synthesize(caseId)
-      .then(() => options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }))
+      .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); autoEnrichIfEnabled(caseId); })
       .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
   }
 
@@ -573,44 +611,49 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // Threat-intel enrichment: look up the case's IOCs (hashes/IPs/domains/URLs) on the
-  // configured providers (VirusTotal, MalwareBazaar, AbuseIPDB) and annotate them.
-  // Cached on the IOC (skips already-enriched unless ?force); throttled; runs in the
-  // background and broadcasts state updates so badges appear live on the dashboard.
-  // ⚠ OPSEC: this sends indicators to third-party services — only enable for IOCs you
-  // are comfortable querying externally.
+  // Threat-intel enrichment toggle (per case, default OFF for OPSEC). GET reads the
+  // current state. POST { enabled } turns it on/off; turning it ON enriches the current
+  // IOCs immediately AND auto-enriches any IOCs added later (imports/synthesis).
+  // ⚠ Enrichment sends indicators to third-party services (VirusTotal/MalwareBazaar/
+  // AbuseIPDB) — that's why it is off until the analyst opts in.
+  app.get("/cases/:id/enrich-control", async (req: Request, res: Response) => {
+    try {
+      const control = await enrichControl.load(req.params.id);
+      return res.status(200).json({ ...control, available: (options.enrichmentProviders?.length ?? 0) > 0, providers: (options.enrichmentProviders ?? []).map((p) => p.name) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/enrich-control", async (req: Request, res: Response) => {
+    const providers = options.enrichmentProviders ?? [];
+    if (providers.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_ABUSEIPDB_KEY)" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    const enabled = req.body?.enabled === true;
+    try {
+      await enrichControl.save(caseId, { enabled });
+      // Turning it ON kicks off enrichment of the IOCs already in the list (force=false
+      // skips ones already enriched). Future IOCs are handled by autoEnrichIfEnabled.
+      if (enabled) enrichInBackground(caseId);
+      return res.status(200).json({ enabled, providers: providers.map((p) => p.name) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Manual one-shot re-scan (e.g. force re-query). Honors the same providers; does NOT
+  // change the toggle. `{ force: true }` re-queries already-enriched IOCs.
   app.post("/cases/:id/enrich", async (req: Request, res: Response) => {
     const providers = options.enrichmentProviders ?? [];
-    if (providers.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_ABUSEIPDB_KEY / DFIR_MB_KEY)" });
+    if (providers.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_ABUSEIPDB_KEY)" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     const force = req.body?.force === true || req.query.force === "true";
-
     try {
       const state = await options.stateStore.load(caseId);
-      res.status(202).json({ accepted: true, iocs: state.iocs.length, providers: providers.map((p) => p.name) });
-
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: "enriching IOCs (threat intel)" });
-      void (async () => {
-        const { iocs, summary } = await enrichIocs(state.iocs, {
-          providers,
-          delayMs: options.enrichDelayMs,
-          maxIocs: options.enrichMaxIocs,
-          force,
-          onProgress: (done, total) => options.onAiStatus?.(caseId, {
-            status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-            detail: `enriching IOC ${done}/${total}`,
-          }),
-        });
-        // Re-load + write only the iocs so we don't clobber a concurrent state change.
-        const latest = await options.stateStore!.load(caseId);
-        const byValue = new Map(iocs.map((i) => [i.value, i]));
-        const merged = { ...latest, iocs: latest.iocs.map((i) => byValue.get(i.value) ?? i), updatedAt: new Date().toISOString() };
-        await options.stateStore!.save(merged);
-        options.onState?.(merged);
-        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})` });
-      })().catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
-      return;
+      enrichInBackground(caseId, force);
+      return res.status(202).json({ accepted: true, iocs: state.iocs.length, providers: providers.map((p) => p.name) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

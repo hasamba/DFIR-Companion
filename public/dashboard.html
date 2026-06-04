@@ -62,7 +62,7 @@
     <button id="connect">Connect</button>
     <button id="aiToggle" title="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" title="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
-    <button id="enrichIocs" title="Look up the case's IOCs (hashes/IPs/domains/URLs) on VirusTotal, MalwareBazaar and AbuseIPDB. ⚠ sends indicators to third-party services.">Enrich IOCs</button>
+    <button id="enrichToggle" title="Threat-intel enrichment (VirusTotal / MalwareBazaar / AbuseIPDB). Default OFF. When ON, enriches the current IOCs and auto-enriches new ones. ⚠ sends indicators to third-party services.">Enrich: …</button>
     <input id="csvFile" type="file" accept=".csv,text/csv" style="display:none" />
     <button id="importCsv" title="Upload a CSV of results (e.g. a Velociraptor export) to analyze into IOCs, TTPs and the timeline">Import CSV</button>
     <input id="logFile" type="file" accept=".log,.txt,text/plain" style="display:none" />
@@ -243,6 +243,40 @@
             aiEnabled ? "AI on — catching up on un-analyzed screenshots…" : "AI off — capturing only";
         })
         .catch(() => aiToggleUnavailable());
+    }
+
+    // ── Threat-intel enrichment toggle (default OFF for OPSEC) ─────────────────
+    let enrichEnabled = false;
+    let enrichAvailable = false;
+    function renderEnrichToggle() {
+      const b = document.getElementById("enrichToggle");
+      if (!enrichAvailable) { b.textContent = "Enrich: n/a"; b.style.background = "#3a3a3a"; b.title = "No enrichment provider configured — set DFIR_VT_KEY / DFIR_ABUSEIPDB_KEY / DFIR_MB_KEY and restart."; return; }
+      b.textContent = enrichEnabled ? "Enrich: ON" : "Enrich: OFF";
+      b.style.background = enrichEnabled ? "#1f8a4c" : "#555";
+    }
+    function loadEnrichToggle(caseId) {
+      fetch(`/cases/${caseId}/enrich-control`)
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(c => { enrichEnabled = !!c.enabled; enrichAvailable = !!c.available; renderEnrichToggle(); })
+        .catch(() => { enrichAvailable = false; renderEnrichToggle(); });
+    }
+    function toggleEnrich() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !enrichAvailable) return;
+      const next = !enrichEnabled;
+      if (next && !confirm("Turn ON threat-intel enrichment?\n\n⚠ OPSEC: this sends the case's IOCs (hashes/IPs/domains/URLs) to third-party services (VirusTotal / MalwareBazaar / AbuseIPDB), now and as new IOCs are found. Only enable if that's acceptable for this investigation.")) return;
+      fetch(`/cases/${caseId}/enrich-control`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(c => {
+          enrichEnabled = !!c.enabled;
+          renderEnrichToggle();
+          document.getElementById("status").textContent =
+            enrichEnabled ? `Enrichment ON via ${(c.providers || []).join(", ")} — checking IOCs (see AI status)` : "Enrichment OFF";
+        })
+        .catch(() => document.getElementById("status").textContent = "enrich toggle failed — restart the companion server (`npm run dev`).");
     }
 
     function fmtTime(iso) {
@@ -494,6 +528,7 @@
       fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
       pollCount(caseId);
       loadAiToggle(caseId);
+      loadEnrichToggle(caseId);
       loadLegitimate(caseId);
       loadScope(caseId);
 
@@ -547,20 +582,7 @@
         })
         .catch(e => document.getElementById("status").textContent = "synthesis error: " + e.message);
     };
-    document.getElementById("enrichIocs").onclick = () => {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      if (!confirm("Enrich IOCs against VirusTotal / MalwareBazaar / AbuseIPDB?\n\n⚠ This sends the case's hashes/IPs/domains/URLs to third-party services. Only proceed if that's acceptable for this investigation.")) return;
-      document.getElementById("status").textContent = "enriching IOCs…";
-      fetch(`/cases/${caseId}/enrich`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then(async r => {
-          if (!r.ok) { let m = "HTTP " + r.status; try { m = (await r.json()).error || m; } catch {} throw new Error(m); }
-          return r.json();
-        })
-        .then(p => document.getElementById("status").textContent =
-          `enriching ${p.iocs} IOC(s) via ${(p.providers || []).join(", ")} — results appear as badges (see AI status)`)
-        .catch(e => document.getElementById("status").textContent = "enrich failed (" + e.message + ") — set DFIR_VT_KEY/DFIR_ABUSEIPDB_KEY and restart `npm run dev`.");
-    };
+    document.getElementById("enrichToggle").onclick = toggleEnrich;
     // CSV import: read the file locally, POST its text; the server persists it as
     // evidence and analyzes it (events → IOCs/TTPs/findings) with live WS updates.
     document.getElementById("importCsv").onclick = () => {

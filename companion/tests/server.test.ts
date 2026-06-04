@@ -431,6 +431,39 @@ describe("server analysis wiring", () => {
     expect(res.status).toBe(501);
   });
 
+  it("enrichment toggle is OFF by default and enriches current IOCs when turned ON", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-enrichtoggle-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.iocs.push({ id: "i1", type: "hash", value: "abc123", firstSeen: "t0" });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(seeded);
+
+    const provider = { name: "VirusTotal", supports: () => true, lookup: async () => ({ source: "VirusTotal", verdict: "malicious" as const }) };
+    const app2 = createApp(store, { stateStore, enrichmentProviders: [provider], enrichDelayMs: 0 });
+
+    // Default OFF.
+    const get0 = await request(app2).get("/cases/c1/enrich-control");
+    expect(get0.status).toBe(200);
+    expect(get0.body).toMatchObject({ enabled: false, available: true });
+
+    // Turn ON → enriches the existing IOC in the background.
+    const on = await request(app2).post("/cases/c1/enrich-control").send({ enabled: true });
+    expect(on.status).toBe(200);
+    expect(on.body.enabled).toBe(true);
+
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 40 && !state.iocs[0].enrichments; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    expect(state.iocs[0].enrichments?.[0]).toMatchObject({ source: "VirusTotal", verdict: "malicious" });
+
+    // Persisted ON.
+    expect((await request(app2).get("/cases/c1/enrich-control")).body.enabled).toBe(true);
+  });
+
   it("rejects a log import when no AI pipeline is configured", async () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const res = await request(app).post("/cases/c1/import-log").send({ filename: "x.log", text: "line\n" });
