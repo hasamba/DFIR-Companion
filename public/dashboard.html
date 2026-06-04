@@ -35,10 +35,13 @@
     .manual-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 10px; font-size: 12px; }
     .manual-form input, .manual-form select { font-size: 12px; padding: 4px; background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 4px; }
     .manual-form button { padding: 4px 10px; font-size: 12px; }
-    .manual-form summary { cursor: pointer; color: #6aa9ff; font-size: 12px; list-style: none; }
     .manual-add { margin: 0 0 10px; }
-    .manual-add[open] summary { margin-bottom: 8px; }
     .manual-msg { color: #9aa4b2; font-size: 12px; }
+    /* (+) button next to a section heading that toggles the manual add-entry form. */
+    h2 .add-toggle { margin-left: 8px; padding: 0 7px; font-size: 14px; line-height: 1.3; font-weight: 700;
+      color: #6aa9ff; background: transparent; border: 1px solid #2a3340; border-radius: 4px; cursor: pointer;
+      vertical-align: middle; text-transform: none; }
+    h2 .add-toggle:hover, h2 .add-toggle.active { color: #ffd93b; border-color: #ffd93b; }
     .sev-Critical { color: #ff5c5c; } .sev-High { color: #ff9f43; }
     .sev-Medium { color: #ffd93b; } .sev-Low { color: #6bcB77; } .sev-Info { color: #6aa9ff; }
     .finding { border-left: 3px solid #2a2f3a; padding: 6px 10px; margin-bottom: 8px; }
@@ -199,8 +202,8 @@
     <section style="grid-column: 1 / -1"><h2>Executive Summary</h2><div id="summary">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attacker Path</h2><div id="attackerPath">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)</h2>
-      <details class="manual-add"><summary>+ Add event manually</summary>
+    <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)<button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button></h2>
+      <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <input id="meTime" type="datetime-local" title="Event time (defaults to now if blank)" />
           <input id="meDesc" placeholder="what happened" style="flex:1; min-width:220px" />
@@ -210,7 +213,7 @@
           <button id="addEventBtn">Add event</button>
           <span id="addEventMsg" class="manual-msg"></span>
         </form>
-      </details>
+      </div>
       <div id="forensicTimeline">—</div></section>
     <section style="grid-column: 1 / -1">
       <h2>Compromised Assets &amp; IoC Graph</h2>
@@ -246,15 +249,15 @@
       </div>
     </section>
     <section><h2>Findings</h2><div id="findings">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>IOCs</h2>
-      <details class="manual-add"><summary>+ Add IOC manually</summary>
+    <section style="grid-column: 1 / -1"><h2>IOCs<button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+      <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
           <input id="miValue" placeholder="indicator value" style="flex:1; min-width:240px" />
           <button id="addIocBtn">Add IOC</button>
           <span id="addIocMsg" class="manual-msg"></span>
         </form>
-      </details>
+      </div>
       <div id="iocs">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
@@ -1405,6 +1408,27 @@
         document.getElementById("miValue").value = "";
       });
     };
+    // The (+) next to a section heading toggles that section's manual add-entry form. We stop the
+    // click from bubbling to the h2 (which would collapse the section), and expand the section if
+    // it was collapsed so the form is visible.
+    document.querySelectorAll(".add-toggle").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        const sec = btn.closest("section");
+        const wrap = sec && sec.querySelector(".manual-add");
+        if (!wrap) return;
+        const show = wrap.hasAttribute("hidden");
+        if (show) {
+          wrap.removeAttribute("hidden");
+          sec.classList.remove("collapsed");
+          const first = wrap.querySelector("input, select");
+          if (first) first.focus();
+        } else {
+          wrap.setAttribute("hidden", "");
+        }
+        btn.classList.toggle("active", show);
+      });
+    });
 
     // ── Push to DFIR-IRIS ───────────────────────────────────────────────────
     // The button is shown only when the server has an IRIS target configured
