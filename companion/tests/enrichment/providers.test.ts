@@ -3,6 +3,7 @@ import { VirusTotalProvider } from "../../src/enrichment/virustotal.js";
 import { MalwareBazaarProvider } from "../../src/enrichment/malwarebazaar.js";
 import { AbuseIpdbProvider } from "../../src/enrichment/abuseipdb.js";
 import { MispProvider } from "../../src/enrichment/misp.js";
+import { RockyRaccoonProvider } from "../../src/enrichment/rockyraccoon.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -107,10 +108,61 @@ describe("MispProvider", () => {
     expect((await misp.lookup("ip", "1.2.3.4"))!.verdict).toBe("suspicious");
   });
 
-  it("returns null when the indicator is not present on the instance, supports all kinds", async () => {
+  it("returns null when the indicator is not present on the instance, and does not support process names", async () => {
     const misp = new MispProvider({ baseUrl: "https://m", apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ response: { Attribute: [] } })) });
     expect(await misp.lookup("domain", "evil.test")).toBeNull();
     expect(misp.supports("hash")).toBe(true);
-    expect(misp.supports("url")).toBe(true);
+    expect(misp.supports("process")).toBe(false);
+  });
+});
+
+describe("RockyRaccoonProvider (process intel)", () => {
+  it("only supports process IOCs and flags a LOLBIN as suspicious with context", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({
+      process_name: "powershell.exe",
+      classification: { category: "Scripting", is_lolbin: true, risk_level: "high", expected_parent: "explorer.exe" },
+      intel: { mitre_techniques: ["T1059.001"] },
+      executions: { total: 2847103, confidence: "high" },
+    }));
+    const rr = new RockyRaccoonProvider({ apiKey: "et_live_x", fetchFn });
+    expect(rr.supports("process")).toBe(true);
+    expect(rr.supports("hash")).toBe(false);
+    const r = await rr.lookup("process", "powershell.exe");
+    expect(r).toMatchObject({ source: "RockyRaccoon", verdict: "suspicious" });
+    expect(r!.tags).toEqual(expect.arrayContaining(["Scripting", "LOLBIN", "T1059.001"]));
+    expect(r!.score).toContain("2.8M executions");
+    expect(r!.score).toContain("expected parent explorer.exe");
+    // Bearer auth + basename extraction from a path.
+    expect((fetchFn.mock.calls[0][1] as RequestInit).headers).toMatchObject({ Authorization: "Bearer et_live_x" });
+  });
+
+  it("marks a common low-risk process harmless and an unknown process as 'uncommon'", async () => {
+    const low = new RockyRaccoonProvider({ apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ classification: { risk_level: "low" }, executions: { total: 45821093 } })) });
+    expect((await low.lookup("process", "svchost.exe"))!.verdict).toBe("harmless");
+
+    const nf = new RockyRaccoonProvider({ apiKey: "k", fetchFn: vi.fn(async () => new Response("", { status: 404 })) });
+    const r = await nf.lookup("process", "weird-thing.exe");
+    expect(r).toMatchObject({ verdict: "unknown" });
+    expect(r!.score).toContain("uncommon");
+  });
+
+  it("extracts the basename when a full path is passed", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ classification: { risk_level: "low" } }));
+    const rr = new RockyRaccoonProvider({ apiKey: "k", fetchFn });
+    await rr.lookup("process", "C:\\Windows\\System32\\svchost.exe");
+    expect(fetchFn.mock.calls[0][0]).toContain("/v1/process/svchost.exe");
+  });
+
+  it("checkParentChild reports observed vs anomalous relationships", async () => {
+    const seen = new RockyRaccoonProvider({ apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ observed: true, percentage: 98.7 })) });
+    const ok = await seen.checkParentChild("services.exe", "svchost.exe");
+    expect(ok).toMatchObject({ observed: true });
+    expect(ok!.note).toContain("98.7%");
+
+    const anomalous = new RockyRaccoonProvider({ apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ observed: false, common_parents: [{ parent: "explorer.exe", percentage: 80 }] })) });
+    const bad = await anomalous.checkParentChild("excel.exe", "powershell.exe");
+    expect(bad).toMatchObject({ observed: false });
+    expect(bad!.note).toContain("NOT observed");
+    expect(bad!.note).toContain("explorer.exe");
   });
 });

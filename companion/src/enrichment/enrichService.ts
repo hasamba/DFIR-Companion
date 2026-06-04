@@ -24,7 +24,7 @@ export interface EnrichSummary {
 }
 
 // Most-valuable kinds first so the per-run cap spends lookups where they matter.
-const KIND_PRIORITY: Record<IocKind, number> = { hash: 0, ip: 1, domain: 2, url: 3 };
+const KIND_PRIORITY: Record<IocKind, number> = { hash: 0, ip: 1, process: 2, domain: 3, url: 4 };
 
 export async function enrichIocs(
   iocs: readonly IOC[],

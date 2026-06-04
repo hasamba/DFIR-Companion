@@ -37,7 +37,7 @@ export class MispProvider implements EnrichmentProvider {
     this.base = opts.baseUrl.replace(/\/+$/, "");
   }
 
-  supports(_kind: IocKind): boolean { return true; } // attributes can be any kind
+  supports(kind: IocKind): boolean { return kind !== "process"; } // attribute values: hash/ip/domain/url (not bare process names)
 
   async lookup(_kind: IocKind, value: string): Promise<EnrichmentResult | null> {
     const res = await this.fetchFn(`${this.base}/attributes/restSearch`, {

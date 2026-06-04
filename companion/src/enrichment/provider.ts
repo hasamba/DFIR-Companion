@@ -3,7 +3,7 @@
 // configured from env (DFIR_VT_KEY etc.). A provider looks up ONE indicator and returns
 // a normalized verdict, or null when the indicator is unknown to that source.
 
-export type IocKind = "hash" | "ip" | "domain" | "url";
+export type IocKind = "hash" | "ip" | "domain" | "url" | "process";
 export type Verdict = "malicious" | "suspicious" | "harmless" | "unknown";
 
 export interface EnrichmentResult {
@@ -34,6 +34,7 @@ export function iocKind(type: string): IocKind | undefined {
     case "ip": return "ip";
     case "domain": return "domain";
     case "url": return "url";
+    case "process": return "process";
     default: return undefined;
   }
 }

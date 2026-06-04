@@ -15,8 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Threat-intel IOC enrichment** — look up the case's IOCs (hashes/IPs/domains/URLs) on
   **VirusTotal** (hash/IP/domain/URL), **MalwareBazaar** (hash), **AbuseIPDB** (IP), and **MISP**
-  (your own instance, any IOC kind — `DFIR_MISP_URL` + `DFIR_MISP_KEY`), annotating
-  each IOC with a verdict (malicious/suspicious/harmless/unknown), score, classification tags, and a
+  (your own instance — `DFIR_MISP_URL` + `DFIR_MISP_KEY`), and **RockyRaccoon** (Windows
+  **process** behavioral intel — prevalence / LOLBIN / risk level / expected parent / ATT&CK,
+  `DFIR_ROCKYRACCOON_KEY`; the first source that can enrich the process IOCs we extract),
+  annotating each IOC with a verdict (malicious/suspicious/harmless/unknown), score, classification tags, and a
   permalink — shown as colored badges on the dashboard and in the IOC CSV. **OPSEC-first: it is a
   per-case toggle, default OFF** (`GET/POST /cases/:id/enrich-control`, **Enrich: ON/OFF** button) —
   nothing is queried until the analyst opts in (with a confirm prompt). Turning it **on** enriches the

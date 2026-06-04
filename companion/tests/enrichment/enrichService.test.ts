@@ -20,7 +20,7 @@ const noSleep = async () => {};
 const now = () => "2026-06-04T00:00:00Z";
 
 describe("enrichIocs", () => {
-  it("enriches enrichable IOCs and skips non-enrichable types (file/process/other)", async () => {
+  it("enriches enrichable IOCs (hash/ip/domain/url/process) and skips file/other", async () => {
     const calls: string[] = [];
     const vt = fakeProvider("VirusTotal", ["hash", "ip", "domain", "url"],
       { source: "VirusTotal", verdict: "malicious", score: "9/70" }, calls);
@@ -28,7 +28,7 @@ describe("enrichIocs", () => {
       ioc({ value: "deadbeef", type: "hash" }),
       ioc({ value: "1.2.3.4", type: "ip" }),
       ioc({ value: "C:\\evil.exe", type: "file" }),     // not enrichable
-      ioc({ value: "explorer.exe", type: "process" }),  // not enrichable
+      ioc({ value: "weird", type: "other" }),           // not enrichable
     ];
     const { iocs: out, summary } = await enrichIocs(iocs, { providers: [vt], sleep: noSleep, now });
     expect(summary.enrichable).toBe(2);
@@ -36,7 +36,16 @@ describe("enrichIocs", () => {
     expect(summary.withHits).toBe(2);
     expect(out[0].enrichments).toEqual([{ source: "VirusTotal", verdict: "malicious", score: "9/70", fetchedAt: now() }]);
     expect(out[2].enrichments).toBeUndefined();          // file untouched
-    expect(out[3].enrichments).toBeUndefined();          // process untouched
+    expect(out[3].enrichments).toBeUndefined();          // other untouched
+  });
+
+  it("routes a process IOC only to providers that support 'process'", async () => {
+    const calls: string[] = [];
+    const vt = fakeProvider("VirusTotal", ["hash", "ip", "domain", "url"], { source: "VirusTotal", verdict: "malicious" }, calls);
+    const rr = fakeProvider("RockyRaccoon", ["process"], { source: "RockyRaccoon", verdict: "suspicious", score: "LOLBIN" }, calls);
+    const { iocs: out } = await enrichIocs([ioc({ value: "powershell.exe", type: "process" })], { providers: [vt, rr], sleep: noSleep, now });
+    expect(calls).toEqual(["RockyRaccoon:process:powershell.exe"]);   // VT not called for a process
+    expect(out[0].enrichments!.map((e) => e.source)).toEqual(["RockyRaccoon"]);
   });
 
   it("routes each IOC only to providers that support its kind", async () => {

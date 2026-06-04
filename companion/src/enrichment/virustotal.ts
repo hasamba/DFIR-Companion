@@ -6,14 +6,14 @@ export interface VirusTotalOptions {
   timeoutMs?: number;
 }
 
-// VirusTotal v3. One object type per IOC kind.
-const PATH: Record<IocKind, (v: string) => string> = {
+// VirusTotal v3. One object type per IOC kind (process isn't lookup-able on VT).
+const PATH: Partial<Record<IocKind, (v: string) => string>> = {
   hash: (v) => `files/${encodeURIComponent(v)}`,
   ip: (v) => `ip_addresses/${encodeURIComponent(v)}`,
   domain: (v) => `domains/${encodeURIComponent(v)}`,
   url: (v) => `urls/${urlId(v)}`,
 };
-const GUI: Record<IocKind, string> = { hash: "file", ip: "ip-address", domain: "domain", url: "url" };
+const GUI: Partial<Record<IocKind, string>> = { hash: "file", ip: "ip-address", domain: "domain", url: "url" };
 
 // VT addresses a URL by the unpadded base64url of the URL string.
 function urlId(url: string): string {
@@ -37,10 +37,12 @@ export class VirusTotalProvider implements EnrichmentProvider {
     this.fetchFn = opts.fetchFn ?? fetch;
   }
 
-  supports(): boolean { return true; } // hash | ip | domain | url
+  supports(kind: IocKind): boolean { return kind !== "process"; } // hash | ip | domain | url
 
   async lookup(kind: IocKind, value: string): Promise<EnrichmentResult | null> {
-    const url = `https://www.virustotal.com/api/v3/${PATH[kind](value)}`;
+    const pathFor = PATH[kind];
+    if (!pathFor) return null; // unsupported kind (e.g. process)
+    const url = `https://www.virustotal.com/api/v3/${pathFor(value)}`;
     const res = await this.fetchFn(url, {
       headers: { "x-apikey": this.opts.apiKey },
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
@@ -68,7 +70,7 @@ export class VirusTotalProvider implements EnrichmentProvider {
       detections,
       total,
       tags: [...tags],
-      link: `https://www.virustotal.com/gui/${GUI[kind]}/${encodeURIComponent(id)}`,
+      link: `https://www.virustotal.com/gui/${GUI[kind] ?? "search"}/${encodeURIComponent(id)}`,
     };
   }
 }
