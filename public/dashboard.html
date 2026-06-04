@@ -292,6 +292,7 @@
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
     let ws = null;
     let countTimer = null;
+    let countUpdate = null;   // current capture-count poll fn (set by pollCount)
     let aiEnabled = true;
     let scope = { start: null, end: null };  // active investigation window (ISO or null)
     let lastState = null;                    // last raw state from server, for re-render on scope change
@@ -829,15 +830,24 @@
       }
     }
 
+    // Poll the capture count (new screenshots arrive via the extension, not the WS) every 5s while
+    // the tab is VISIBLE; pause entirely when it's hidden — background tabs were just emitting an
+    // idle GET/min (browser-throttled) for no benefit. Resumes (and refreshes once) on re-focus.
+    function startCount() { if (!countTimer && countUpdate && !document.hidden) countTimer = setInterval(countUpdate, 5000); }
+    function stopCount() { if (countTimer) { clearInterval(countTimer); countTimer = null; } }
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopCount();
+      else { if (countUpdate) countUpdate(); startCount(); }
+    });
     function pollCount(caseId) {
-      if (countTimer) clearInterval(countTimer);
-      const update = () =>
+      stopCount();
+      countUpdate = () =>
         fetch(`/cases/${caseId}/captures/count`)
           .then(r => r.json())
           .then(d => document.getElementById("captureCount").textContent = `Screenshots: ${d.count}`)
           .catch(() => {});
-      update();
-      countTimer = setInterval(update, 3000);
+      countUpdate();
+      startCount();
     }
 
     function esc(s) {
