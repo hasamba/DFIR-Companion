@@ -1,53 +1,62 @@
 {
   "version": "1.0",
-  "timestamp": "2026-06-01T13:11:13.072Z",
-  "phase": null,
-  "phase_name": "n/a — non-GSD project (built from docs/superpowers/plans/, then extended)",
-  "phase_dir": null,
-  "plan": null,
-  "task": null,
-  "total_tasks": null,
-  "status": "paused",
-  "context_type": "default",
-  "context_note": "This project does NOT use the GSD .planning/phases structure. It was implemented from the 4 plans in docs/superpowers/plans/ (all done) and then extended with many features. There is no active phase/plan/task; work is paused at a clean, fully-committed checkpoint.",
+  "timestamp": "2026-06-04T08:26:05.376Z",
+  "context": "default",
+  "project": "DFIR Companion",
   "branch": "master",
-  "head_commit": "0e5babc",
-  "tests": { "companion": "89 passing", "extension": "10 passing", "build": "clean (tsc + vite)" },
-  "completed_tasks": [
-    {"id": 1, "name": "Plan 1 companion core (evidence path)", "status": "done"},
-    {"id": 2, "name": "Plan 2 analysis pipeline + AI providers", "status": "done"},
-    {"id": 3, "name": "Plan 3 reports + dashboard", "status": "done"},
-    {"id": 4, "name": "Plan 4 MV3 capture extension", "status": "done"},
-    {"id": 5, "name": "Integration fixes (CORS, Private Network Access, /health, fetch binding) for extension↔server", "status": "done"},
-    {"id": 6, "name": "Forensic timeline (real event timestamps) + attacker-path summary", "status": "done"},
-    {"id": 7, "name": "Two-tier models (cheap extraction + strong synthesis) via .env + CLI", "status": "done"},
-    {"id": 8, "name": "Holistic synthesis pass + granular per-technique findings", "status": "done"},
-    {"id": 9, "name": "Key investigative questions (status + answer + where-to-find pointers)", "status": "done"},
-    {"id": 10, "name": "IOC panel + investigation threads (open/closed) in dashboard & report", "status": "done"},
-    {"id": 11, "name": "AI on/off toggle (capture-only mode) with backfill on resume", "status": "done"},
-    {"id": 12, "name": "Mark findings/IOCs legitimate (false positives) — excluded from synthesis", "status": "done"},
-    {"id": 13, "name": "Investigation time-window scope — re-synthesize within window, drop out-of-scope everywhere", "status": "done"},
-    {"id": 14, "name": "AI status phase indicator (extracting vs synthesizing vs idle)", "status": "done"},
-    {"id": 15, "name": "Robustness: extractJsonText fences, lenient .catch() enums, tunable AI timeout (180s), live auto-synthesis", "status": "done"},
-    {"id": 16, "name": "Show finding/IOC/thread ids; back-link forensic events to correct findings; dashboard reorder", "status": "done"},
-    {"id": 17, "name": "Project README.md + CLAUDE.md", "status": "done"}
+  "released": "v0.3.0",
+  "status": "paused_clean",
+  "working_tree": "clean (everything committed + pushed)",
+  "completed_this_session": [
+    "Full CLI reference in root README",
+    "Configurable server port (DFIR_PORT)",
+    "Captured tab title baked into screenshot filenames",
+    "Mark-legitimate for forensic timeline events (reversible)",
+    "Generic log import: deterministic dedup into counted patterns + AI triage",
+    "Keep analyst tool-usage / UI navigation out of the timeline (workLogFilter) + incident-signal allowlist override",
+    "EDR/XDR + SIEM detection consoles treated as evidence (CrowdStrike/Defender/SentinelOne/Splunk/Elastic/Sentinel/QRadar)",
+    "Severity-aware findings + deterministic high-severity backfill (AUTO badge)",
+    "THOR (Nextron) JSON import (deterministic) + severity floor (minLevel)",
+    "Cross-source correlation + dedup in mergeDelta (hash/path+time/exact-dup) with real tool-name sources",
+    "Synthesis now PRESERVES IOCs (only findings/MITRE replaced)",
+    "Threat-intel IOC enrichment, OPSEC opt-in toggle default OFF: VirusTotal, MalwareBazaar, AbuseIPDB, MISP, YETI, RockyRaccoon",
+    "RockyRaccoon process-chain (parent->child) validation on the timeline",
+    "OpenRouter 402 fix: bounded max_tokens (DFIR_AI_MAX_TOKENS)",
+    "Truncated-JSON repair (parseJsonLoose) for cut-off AI responses",
+    "Actionable provider error messages (402 billing / 401 auth / 429 rate limit)",
+    "Extension capture hotkey Ctrl+Shift+S",
+    "CLAUDE.md updated for v0.3.x architecture",
+    "Root README Features catalogue + Todo/Roadmap"
   ],
-  "remaining_tasks": [],
-  "blockers": [
-    {"description": "The live `npm run dev` server only has code from when it started — many features were added since the user last restarted, so endpoints (e.g. /legitimate, /scope, /ai-control) 404 until restart.", "type": "human_action", "workaround": "Restart: stop process on 127.0.0.1:4773, then `cd companion && npm run dev`. Dashboard now shows 'restart the companion server' on 404."}
+  "remaining_tasks": [
+    {"id": 1, "name": "Per-provider enrichment throttle (RockyRaccoon's tight limit vs VT/AbuseIPDB)", "status": "not_started"},
+    {"id": 2, "name": "Configurable companion host/port in the extension (hardcoded 127.0.0.1:4773)", "status": "not_started"},
+    {"id": 3, "name": "Optional self-signed / internal-CA TLS support for MISP / YETI", "status": "not_started"},
+    {"id": 4, "name": "_execute_action hotkey to open the extension popup", "status": "not_started"}
   ],
+  "blockers": [],
   "human_actions_pending": [
-    {"action": "Restart the companion server to load all features added this session", "context": "User was live-testing on cases test1–test4; their running server is several commits stale.", "blocking": false},
-    {"action": "Optionally set DFIR_AI_SYNTH_MODEL to a strong model (gemini-2.5-pro / gpt-4o) and DFIR_AI_MODEL to a cheap one (gpt-4o-mini) for best granular results", "context": "Two-tier model strategy; synthesis is one text-only call so a strong model there is cheap.", "blocking": false}
+    {"action": "Set provider API keys in companion/.env to use enrichment", "context": "DFIR_VT_KEY / DFIR_ABUSEIPDB_KEY / DFIR_MB_KEY / DFIR_MISP_URL+KEY / DFIR_YETI_URL+KEY / DFIR_ROCKYRACCOON_KEY; enrichment is OFF by default", "blocking": false},
+    {"action": "Verify YETI search body shape against the user's instance /docs", "context": "POST /api/v2/observables/search uses {query:{value},count,page}; may differ per YETI version", "blocking": false},
+    {"action": "Restart `npm run dev` after any companion/src change", "context": "server loads code once at startup", "blocking": false}
   ],
   "decisions": [
-    {"decision": "Two-phase analysis: cheap model extracts forensic events per-window; strong model synthesizes holistically", "rationale": "Findings/attacker-path need the whole timeline; extraction is high-volume so keep it cheap."},
-    {"decision": "Synthesis REPLACES the analytic layer (findings/IOCs/MITRE) instead of merging", "rationale": "Required so out-of-scope or stale conclusions drop cleanly; also avoids accumulation drift."},
-    {"decision": "Schema enums use .catch(fallback) and JSON is extracted via extractJsonText", "rationale": "One unexpected model value (e.g. IOC type 'malware') or a markdown fence must not reject the whole synthesis."},
-    {"decision": "Extraction must not guess finding ids or use capture time; synthesis back-links events→findings via relatedEventIds and reads each event's own timestamp column", "rationale": "Findings don't exist at extraction; capture time != event time."},
-    {"decision": "Per-case side-stores (ai-control, legitimate, scope) as atomic JSON files; pure filters unit-tested separately", "rationale": "Keeps state user-curatable and non-destructive (raw events preserved)."}
+    {"decision": "Enrichment is opt-in per case, default OFF", "rationale": "OPSEC — sending indicators to third parties can tip off an adversary"},
+    {"decision": "THOR import is fully deterministic (no AI extraction)", "rationale": "structured JSON; reliable + free + instant"},
+    {"decision": "Synthesis preserves IOCs (only findings/MITRE replaced)", "rationale": "IOCs are observed indicators (100s from imports) the text-only pass can't re-derive"},
+    {"decision": "Correlation runs inside mergeDelta", "rationale": "dedup must be universal/immediate, not synthesis-dependent"},
+    {"decision": "max_tokens default 16000 + parseJsonLoose repair", "rationale": "balance OpenRouter 402 (too high) vs truncation (too low)"}
   ],
-  "uncommitted_files": [],
-  "next_action": "No work is mid-flight. If resuming feature work, read CLAUDE.md first (esp. 'restart the dev server' gotcha), then run `cd companion && npm test` and `cd extension && npm test` to confirm green. User-facing next step: restart the companion server and reload the dashboard.",
-  "context_notes": "Long iterative session: implemented the 4 plans then repeatedly extended/repaired based on the user's live testing on Velociraptor screenshots. Most issues traced to (a) a stale running server, (b) weak/slow AI models, (c) over-strict parsing. All fixed and documented in CLAUDE.md. Tree is clean on master; 89 companion + 10 extension tests green."
+  "anti_patterns": [
+    {"pattern": "New ForensicEvent/IOC field dropped on merge", "severity": "blocking", "mitigation": "wire through stateTypes.ts + responseSchema.ts (optional) + stateMerge.ts BOTH branches + correlate.ts mergeGroup"},
+    {"pattern": "NUL bytes injected into files by some Write/Edit ops", "severity": "advisory", "mitigation": "if Edit fails to match, check via cat -v for ^@; strip with perl -i -pe s/\\x00//g"},
+    {"pattern": "max_tokens too low truncates large synthesis", "severity": "advisory", "mitigation": "parseJsonLoose repairs it + backfill covers omitted findings; raise DFIR_AI_MAX_TOKENS if many findings dropped"}
+  ],
+  "infrastructure": {
+    "tests": "companion 222 green, extension 10 green",
+    "build": "tsc clean both projects",
+    "dev_server": "may not be running; restart after companion/src changes"
+  },
+  "next_action": "Pick a Todo item from README (per-provider throttle is the most-requested), or start a new feature the user requests. No in-flight work to finish.",
+  "context_notes": "Long feature session, all committed and pushed, v0.3.0 tagged. Nothing half-done. README has a Features catalogue (keep current) + Todo list. CLAUDE.md documents the architecture and the field-carry-through gotcha."
 }
