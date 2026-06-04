@@ -52,6 +52,15 @@ describe("dashboard.html", () => {
     expect(html).toContain("requestFullscreen");
   });
 
+  it("wires the Ask-the-AI panel (ask + add-to-open-questions)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="askInput"');
+    expect(html).toContain('id="askBtn"');
+    expect(html).toContain('id="askAnswer"');
+    expect(html).toContain("/ask");
+    expect(html).toContain("/questions");
+  });
+
   it("offers a multi-file external-screenshot import that posts to /captures", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="importShots"');

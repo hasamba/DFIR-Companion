@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on corroborated structure, not blind inference.
 
 ### Added
+- **Ask the AI about the case** — a dashboard panel (and `POST /cases/:id/ask`) to ask free-form
+  questions ("was data exfiltrated?", "was a USB connected?"). Single-shot, grounded in the case's
+  evidence digest (assets, IOCs+verdicts, attacker path, findings, timeline); returns an answer + a
+  status (answered/partial/unknown) and, when unknown, **concrete collection guidance** — which
+  artifact to examine and where (registry keys, event-log channels, log sources, Velociraptor
+  artifacts). An **Add to open questions** button (`POST /cases/:id/questions`) pins the question to
+  the case's key questions; synthesis preserves pinned questions and **auto-answers them** once the
+  evidence supports it (race-safe: a question added during a synthesis is re-merged at save time).
+  `ASK` joins the customizable prompts.
 - **Import external screenshots** (dashboard) — an *Import Screenshots* button with **multi-select**
   sends each image (PNG/JPEG/WebP) through the same `POST /captures` ingest path the extension uses,
   so they're stored as evidence, logged in `captures.jsonl`, and analyzed (when AI is on). The batch

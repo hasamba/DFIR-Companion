@@ -582,6 +582,38 @@ describe("state and report routes", () => {
     expect((await request(app).get("/cases/c1/report/secrets.txt")).status).toBe(400);
   });
 
+  it("POST /cases/:id/ask answers a question, and /questions pins it to the case", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-ask-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({ answer: "No evidence of exfiltration.", status: "unknown", pointer: "Check egress proxy/firewall logs.", relatedEventIds: [] })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app = createApp(store, { pipeline, stateStore });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "", description: "evt", severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+    await stateStore.save(seeded);
+
+    const ask = await request(app).post("/cases/c1/ask").send({ question: "Was data exfiltrated?" });
+    expect(ask.status).toBe(200);
+    expect(ask.body.status).toBe("unknown");
+    expect(ask.body.pointer).toContain("egress");
+
+    expect((await request(app).post("/cases/c1/ask").send({ question: "" })).status).toBe(400); // empty question
+
+    const add = await request(app).post("/cases/c1/questions")
+      .send({ question: "Was data exfiltrated?", status: "unknown", pointer: ask.body.pointer });
+    expect(add.status).toBe(201);
+    expect(add.body.pinned).toBe(true);
+    expect(add.body.id).toMatch(/^aq\d+$/);
+
+    const state = await request(app).get("/cases/c1/state");
+    expect(state.body.keyQuestions.some((q: { pinned?: boolean }) => q.pinned)).toBe(true);
+  });
+
   it("derives the asset ↔ IoC graph on demand", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-asset-graph-"));
     const store = new CaseStore(root);

@@ -161,6 +161,52 @@ describe("AnalysisPipeline", () => {
     expect(analyze).toHaveBeenCalledTimes(3);
   });
 
+  it("ask answers a free-form question from the case evidence (and returns a collection pointer when unknown)", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "USBSTOR device connected",
+      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+    await stateStore.save(seeded);
+
+    const answered = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({ answer: "Yes, a USB device was connected.", status: "answered", pointer: "", relatedEventIds: ["e1"] })),
+      stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+    const a = await answered.ask("c1", "Was a USB connected?");
+    expect(a.status).toBe("answered");
+    expect(a.answer).toContain("USB");
+    expect(a.relatedEventIds).toContain("e1");
+
+    const unknown = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({ answer: "No evidence in the case.", status: "unknown", pointer: "Check proxy/firewall egress logs and netflow.", relatedEventIds: [] })),
+      stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+    const b = await unknown.ask("c1", "Was data exfiltrated?");
+    expect(b.status).toBe("unknown");
+    expect(b.pointer).toContain("egress");
+  });
+
+  it("synthesis preserves analyst-pinned questions even when the model omits them", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "x", severity: "High",
+      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+    seeded.keyQuestions.push({ id: "aq1", question: "Was a USB connected?", status: "unknown", answer: "", pointer: "check USBSTOR", pinned: true });
+    await stateStore.save(seeded);
+
+    // Delta whose keyQuestions do NOT include aq1 — it must survive anyway.
+    const delta = JSON.stringify({
+      findings: [], iocs: [], mitreTechniques: [],
+      keyQuestions: [{ id: "q1", question: "Initial access vector?", status: "unknown", answer: "", pointer: "" }],
+      attackerPath: "x", summary: "s", forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+    });
+    const pipeline = new AnalysisPipeline({ provider: new MockProvider("mock", delta), stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+
+    const state = await pipeline.synthesize("c1", { force: true });
+    const aq = state.keyQuestions.find((q) => q.id === "aq1");
+    expect(aq).toBeTruthy();
+    expect(aq!.pinned).toBe(true);                       // kept even though the model dropped it
+    expect(state.keyQuestions.some((q) => q.id === "q1")).toBe(true); // model's own questions still there
+  });
+
   it("synthesize correlates the same artifact from two sources into one event + one finding", async () => {
     const HASH = "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef";
     const seeded = emptyState("c1");

@@ -42,8 +42,8 @@ private CA (verification stays on), or `DFIR_MISP_INSECURE` / `DFIR_YETI_INSECUR
 skip verification for a lab (insecure — logs a warning). Each is scoped to that one provider
 via an injected undici dispatcher; VirusTotal/AbuseIPDB and the AI calls keep the verified store.
 
-Custom AI prompts: override any of the four built-in prompts — `SYSTEM` (per-screenshot
-extraction), `CSV`, `LOG`, `SYNTH` (holistic synthesis) — via env. Set `DFIR_AI_<NAME>_PROMPT`
+Custom AI prompts: override any of the five built-in prompts — `SYSTEM` (per-screenshot
+extraction), `CSV`, `LOG`, `SYNTH` (holistic synthesis), `ASK` (case Q&A) — via env. Set `DFIR_AI_<NAME>_PROMPT`
 for inline text, or `DFIR_AI_<NAME>_PROMPT_FILE` to point at a file. The **file** is re-read on
 each AI call, so editing it applies on the next analysis with **no restart**; an unreadable/empty
 file falls back to the built-in prompt with a warning. `npm run prompts:eject` writes the four
@@ -116,6 +116,8 @@ Examples:
 | `POST /cases/:id/enrich-control` | `{ enabled }` — turn enrichment **on/off** for the case (default **off** for OPSEC). Turning it **on** enriches the IOCs already in the list AND auto-enriches IOCs added later (imports/synthesis). The dashboard's **Enrich: ON/OFF** toggle calls this. Stored in `state/enrich-control.json`. |
 | `POST /cases/:id/enrich` | Manual one-shot IOC enrichment (does not change the toggle). Looks up the case's IOCs (hashes/IPs/domains/URLs) on the configured providers — **VirusTotal** (`DFIR_VT_KEY`), **MalwareBazaar** (`DFIR_MB_KEY`), **AbuseIPDB** (`DFIR_ABUSEIPDB_KEY`), **MISP** (`DFIR_MISP_URL` + `DFIR_MISP_KEY`), **RockyRaccoon** (`DFIR_ROCKYRACCOON_KEY`, **process** names — prevalence / LOLBIN / risk / expected parent / ATT&CK), **YETI** (`DFIR_YETI_URL` + `DFIR_YETI_KEY`, your own instance) — and annotates each with a verdict/score/link. Cached on the IOC (skips already-enriched unless `{ force: true }`); throttled (`DFIR_ENRICH_DELAY_MS`) and capped (`DFIR_ENRICH_MAX`, hashes/IPs first). `501` if no provider key is set. **⚠ OPSEC: sends indicators to third-party services.** |
 | `POST /cases/:id/synthesize` | Run the synthesis pass (findings / MITRE / attacker path) from the forensic timeline; pushes the update to the dashboard. The dashboard's **Synthesize** button calls this. |
+| `POST /cases/:id/ask` | `{ question }` → ask the AI a free-form question about the case ("was data exfiltrated?", "was a USB connected?"). Single-shot, no state change; returns `{ answer, status (answered/partial/unknown), pointer (which artifact to collect/where), relatedEventIds }`. |
+| `POST /cases/:id/questions` | `{ question, answer?, status?, pointer? }` → add an analyst question to the case's key questions, **pinned** (preserved across synthesis, which answers it once the evidence supports it). The dashboard's **Add to open questions** button calls this. |
 | `POST /cases/:id/report` | Write report files; returns their paths. `report.md` **and** `report.html` follow the [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template): technical sections auto-fill from the case, human-authored sections come from report metadata (below). |
 | `GET /cases/:id/report/report.md` · `…/report.html` | Serve a generated report for export (view or download). `?download=1` forces a save dialog; `404` until the report has been generated. The HTML export is standalone and print-friendly; raw HTML in untrusted data is escaped. |
 | `GET /cases/:id/incident-timeline.csv` | Export **just the incident (forensic) timeline** as CSV, generated on demand (same scope/legitimate filtering as the report) — no full report needed. The dashboard's **Export Timeline CSV** button calls this. |

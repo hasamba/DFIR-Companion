@@ -75,6 +75,10 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   from analysis and reports.
 - **Per-case AI on/off** — capture-only mode; backfills when turned back on.
 - **Threads, key questions, next steps** — open/closed leads and standard DFIR questions with pointers.
+- **Ask the AI about the case** — free-form Q&A ("was data exfiltrated?", "was a USB connected?")
+  grounded in everything known; when the answer is unknown it tells you **which artifact to collect
+  and where**. One click pins the question to the case's open questions, and synthesis auto-answers
+  it once the evidence arrives.
 
 ### Threat-intel enrichment (OPSEC opt-in — **default OFF**)
 - **Sources** — VirusTotal (hash/IP/domain/URL), MalwareBazaar (hash), AbuseIPDB (IP), **MISP** and

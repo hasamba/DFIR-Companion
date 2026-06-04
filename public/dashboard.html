@@ -47,6 +47,9 @@
     .asset-subhead { font-size: 12px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 6px; }
     .asset-chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px;
       font-size: 12px; background: #0f1115; border: 1px solid #2a2f3a; color: #e6e6e6; }
+    /* Ask the AI panel */
+    .ask-row { display: flex; gap: 8px; margin-bottom: 10px; }
+    .ask-row input { flex: 1; }
     .report-links { font-size: 12px; }
     .report-links a { color: #6aa9ff; text-decoration: none; }
     .report-links a:hover { text-decoration: underline; }
@@ -162,6 +165,14 @@
     </section>
     <section><h2>Findings</h2><div id="findings">—</div></section>
     <section><h2>IOCs</h2><div id="iocs">—</div></section>
+    <section style="grid-column: 1 / -1">
+      <h2>Ask the AI about this case</h2>
+      <div class="ask-row">
+        <input id="askInput" placeholder="e.g. Was data exfiltrated? Was a USB connected? Any signs of persistence?" />
+        <button id="askBtn">Ask</button>
+      </div>
+      <div id="askAnswer"></div>
+    </section>
     <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
@@ -486,6 +497,44 @@
       }));
     }
 
+    // --- Ask the AI about this case ----------------------------------------------
+    function askStatusBadge(s) {
+      const m = { answered: ["#1e3a2a", "#6bcB77"], partial: ["#3a3320", "#ffd93b"], unknown: ["#2a2f3a", "#9aa4b2"] };
+      const [bg, fg] = m[s] || m.unknown;
+      return `<span style="background:${bg};color:${fg};padding:1px 8px;border-radius:10px;font-size:11px">${esc(s || "unknown")}</span>`;
+    }
+    function doAsk() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const q = document.getElementById("askInput").value.trim();
+      if (!caseId) { document.getElementById("askAnswer").innerHTML = "<div style='color:#9aa4b2'>connect to a case first</div>"; return; }
+      if (!q) return;
+      const box = document.getElementById("askAnswer");
+      box.innerHTML = "<div style='color:#9aa4b2'>thinking…</div>";
+      fetch(`/cases/${caseId}/ask`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: q }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(a => {
+          const events = (a.relatedEventIds || []).map(esc).join(", ");
+          box.innerHTML =
+            `<div class="finding">` +
+            `<div>${askStatusBadge(a.status)} <strong>${esc(q)}</strong></div>` +
+            `<div style="margin:6px 0">${esc(a.answer || "(no answer)")}</div>` +
+            (a.pointer ? `<div style="color:#6aa9ff"><small>→ where to look: ${esc(a.pointer)}</small></div>` : "") +
+            (events ? `<div style="color:#9aa4b2"><small>cited events: ${events}</small></div>` : "") +
+            `<div style="margin-top:8px"><button id="askAddBtn" title="Add this to the case's open Key Investigative Questions (with the collection pointer); synthesis will answer it once the evidence supports it">Add to open questions</button> <span id="askAddStatus" style="color:#9aa4b2;font-size:12px"></span></div>` +
+            `</div>`;
+          document.getElementById("askAddBtn").onclick = () => {
+            const st = document.getElementById("askAddStatus");
+            st.textContent = "adding…";
+            fetch(`/cases/${caseId}/questions`, { method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ question: q, answer: a.answer || "", status: a.status || "unknown", pointer: a.pointer || "" }) })
+              .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+              .then(() => { st.textContent = "added to Key Investigative Questions ✓"; document.getElementById("askAddBtn").disabled = true; })
+              .catch(e => st.textContent = "failed: " + e.message);
+          };
+        })
+        .catch(e => box.innerHTML = `<div style="color:#ff9f43">ask failed: ${esc(e.message)} — restart the companion server if this 404s</div>`);
+    }
+
     function applyScope() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
@@ -749,7 +798,7 @@
       const kq = state.keyQuestions || [];
       document.getElementById("keyQuestions").innerHTML = kq.length
         ? kq.map(q =>
-            `<div class="finding"><strong>${QMARK[q.status] || "❓"} ${esc(q.question)}</strong>` +
+            `<div class="finding"><strong>${q.pinned ? "📌 " : ""}${QMARK[q.status] || "❓"} ${esc(q.question)}</strong>` +
             `<br><small>${esc(q.answer || "unknown")}</small>` +
             `${q.pointer ? `<br><small style="color:#6aa9ff">→ ${esc(q.pointer)}</small>` : ""}</div>`
           ).join("")
@@ -894,6 +943,8 @@
       setTimeout(fitAssetZoom, 60);   // wait for the fullscreen relayout before measuring
     });
     document.getElementById("saveReportMeta").onclick = saveReportMeta;
+    document.getElementById("askBtn").onclick = doAsk;
+    document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
     document.getElementById("connect").onclick = connect;
     document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
     document.getElementById("aiToggle").onclick = toggleAi;

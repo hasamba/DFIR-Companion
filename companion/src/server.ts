@@ -24,7 +24,7 @@ import { YetiProvider } from "./enrichment/yeti.js";
 import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
-import type { InvestigationState } from "./analysis/stateTypes.js";
+import type { InvestigationState, InvestigationQuestion, QuestionStatus } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
@@ -781,6 +781,48 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       });
     } catch (err) {
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Ask the AI a free-form question about the case ("was data exfiltrated?"). Single-shot,
+  // no state change — returns a grounded answer + status + collection guidance (`pointer`).
+  app.post("/cases/:id/ask", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
+    if (!question) return res.status(400).json({ error: "question is required" });
+    try {
+      const answer = await options.pipeline.ask(req.params.id, question);
+      return res.status(200).json(answer);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Add an analyst question to the case's open key questions (e.g. from Ask, when unknown).
+  // It's pinned, so synthesis preserves it and answers it once the evidence supports it.
+  app.post("/cases/:id/questions", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
+    if (!question) return res.status(400).json({ error: "question is required" });
+    const statusIn = String(req.body?.status ?? "unknown");
+    const status: QuestionStatus = statusIn === "answered" || statusIn === "partial" ? statusIn : "unknown";
+    try {
+      const state = await options.stateStore.load(req.params.id);
+      const nums = state.keyQuestions.map((q) => Number(/^aq(\d+)$/.exec(q.id)?.[1])).filter((n) => !Number.isNaN(n));
+      const newQuestion: InvestigationQuestion = {
+        id: `aq${(nums.length ? Math.max(...nums) : 0) + 1}`,
+        question,
+        status,
+        answer: typeof req.body?.answer === "string" ? req.body.answer : "",
+        pointer: typeof req.body?.pointer === "string" ? req.body.pointer : "",
+        pinned: true,
+      };
+      const next = { ...state, keyQuestions: [...state.keyQuestions, newQuestion] };
+      await options.stateStore.save(next);
+      options.onState?.(next);
+      return res.status(201).json(newQuestion);
+    } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });

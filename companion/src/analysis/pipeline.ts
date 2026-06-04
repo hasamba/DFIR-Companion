@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import type { AIProvider, AnalyzeImage } from "../providers/provider.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
-import type { InvestigationState } from "./stateTypes.js";
-import { deltaSchema } from "./responseSchema.js";
+import type { InvestigationState, InvestigationQuestion } from "./stateTypes.js";
+import { deltaSchema, askSchema, type AskAnswer } from "./responseSchema.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
 import { parseJsonLoose } from "./extractJson.js";
@@ -355,7 +355,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -371,10 +371,42 @@ function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH", fallback: strin
   return fallback;
 }
 
+// Answer a free-form analyst question about ONE case using only its evidence digest.
+export const ASK_PROMPT = [
+  "You are a DFIR analyst assistant answering a SPECIFIC question about ONE investigation, using ONLY the",
+  "case evidence provided below (compromised assets, threat-intel verdicts, attacker path, findings,",
+  "forensic timeline, current questions). Do NOT invent evidence — if the case doesn't show it, say so.",
+  "",
+  "Pick a status:",
+  "- 'answered': the case evidence clearly settles it. Give the answer and cite the supporting event ids",
+  "  in relatedEventIds.",
+  "- 'partial': suggestive but incomplete evidence. State what is known and what is missing.",
+  "- 'unknown': the case has no evidence either way.",
+  "",
+  "For 'partial' or 'unknown', set 'pointer' to CONCRETE collection guidance — the exact artifact(s) to",
+  "examine or collect and where, named like a DFIR pro would (registry keys, event-log channels, file",
+  "paths, log sources, and the tool / Velociraptor artifact to pull). Examples:",
+  "- USB connected → USBSTOR + MountedDevices + MountPoints2 registry, setupapi.dev.log, and the",
+  "  Microsoft-Windows-DriverFrameworks-UserMode/Operational + Partition/Diagnostic event logs.",
+  "- Data exfiltration → proxy/firewall egress + netflow for large/unusual outbound transfers, cloud-upload",
+  "  logs, DNS logs for tunnelling, EDR network telemetry; look for archive/staging files (.zip/.rar/.7z).",
+  "- Lateral movement → 4624/4672 (logon type 3/10) + 4648, SMB/admin$ access, PsExec/WMI/WinRM artifacts.",
+  "Tailor it to the question and keep 'answer' to a few sentences.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({
+    answer: "concise answer grounded in the evidence (or what's missing)",
+    status: "answered|partial|unknown",
+    pointer: "which artifact to examine/collect and where (required for partial/unknown)",
+    relatedEventIds: ["e1"],
+  }, null, 2),
+].join("\n");
+
 export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROMPT);
 export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
 export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS_PROMPT);
+export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
 
 export interface PipelineOptions {
   provider: AIProvider;
@@ -390,6 +422,18 @@ export interface PipelineOptions {
   retries?: number;
   backoffMs?: number;
   onState?: (state: InvestigationState) => void;
+}
+
+// Keep analyst-pinned questions across a synthesis. The model is told about them and may
+// answer one (same id) — keep that, flagged pinned; if it dropped one, re-add the original.
+function mergePinnedQuestions(pinned: InvestigationQuestion[], current: InvestigationQuestion[]): InvestigationQuestion[] {
+  if (pinned.length === 0) return current;
+  const byId = new Map(current.map((q) => [q.id, q]));
+  for (const p of pinned) {
+    const cur = byId.get(p.id);
+    byId.set(p.id, cur ? { ...cur, pinned: true } : p);
+  }
+  return [...byId.values()];
 }
 
 async function withRetry<T>(fn: () => Promise<T>, retries: number, backoffMs: number): Promise<T> {
@@ -628,6 +672,36 @@ export class AnalysisPipeline {
 
   // Holistic pass: read the whole forensic timeline and produce findings, MITRE
   // mapping, and the attacker-path narrative. Text-only (no images), one call.
+  // Answer a free-form analyst question about the case from its evidence (single-shot, no
+  // state change). Returns a grounded answer + status + collection guidance (`pointer`).
+  async ask(caseId: string, question: string): Promise<AskAnswer> {
+    const loaded = await this.opts.stateStore.load(caseId);
+    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+
+    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const timelineText = selectSynthesisEvents(scopedEvents, max)
+      .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`)
+      .join("\n") || "(no events yet)";
+    const findingsText = loaded.findings.slice(0, 150).map((f) => `[${f.id}] [${f.severity}] ${f.title}`).join("\n") || "(none)";
+    const questionsText = loaded.keyQuestions.map((q) => `- ${q.question}${q.answer ? ` → ${q.answer}` : " (open)"}`).join("\n") || "(none)";
+
+    const userPrompt =
+      buildSynthesisContext(loaded, scopedEvents) +
+      `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
+      `FINDINGS:\n${findingsText}\n\n` +
+      `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
+      `CURRENT QUESTIONS:\n${questionsText}\n\n` +
+      `ANALYST QUESTION: ${question.trim()}\n\nAnswer it as JSON.`;
+
+    const provider = this.opts.synthesisProvider ?? this.opts.provider;
+    return withRetry(async () => {
+      const result = await provider.analyze({ systemPrompt: getAskPrompt(), userPrompt, images: [] });
+      return askSchema.parse(parseJsonLoose(result.rawText));
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
   async synthesize(caseId: string, opts: { force?: boolean } = {}): Promise<InvestigationState> {
     const loaded = await this.opts.stateStore.load(caseId);
     if (loaded.forensicTimeline.length === 0) return loaded;
@@ -699,9 +773,19 @@ export class AnalysisPipeline {
     // Compact, corroborated context (compromised assets + threat-intel verdicts) so the
     // model grounds findings/attacker-path in structure instead of inferring blind.
     const contextBlock = buildSynthesisContext(state, scopedEvents);
+    // Analyst-pinned open questions: tell the model to address each (answer when the evidence
+    // now supports it) and keep them. They're re-merged into the output below so they persist.
+    const pinnedQuestions = state.keyQuestions.filter((q) => q.pinned);
+    const pinnedBlock = pinnedQuestions.length
+      ? `OPEN QUESTIONS TO ADDRESS (include EACH in keyQuestions with the SAME id; answer with ` +
+        `status/answer + supporting relatedEventIds if the evidence now supports it, else status ` +
+        `"unknown" with a 'pointer' to the artifact to collect):\n` +
+        pinnedQuestions.map((q) => `[${q.id}] ${q.question}`).join("\n") + "\n\n"
+      : "";
     const userPrompt =
       scopeNote +
       contextBlock +
+      pinnedBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
@@ -753,7 +837,14 @@ export class AnalysisPipeline {
     // finding gets one auto-created, so a severe detection can never be silently
     // missed. Restricted to the events synthesis actually considered (scopedEvents).
     const eligibleIds = new Set(scopedEvents.map((e) => e.id));
-    const next = backfillHighSeverityFindings(linked, eligibleIds, ts);
+    const backfilled = backfillHighSeverityFindings(linked, eligibleIds, ts);
+    // Preserve analyst-pinned questions (synthesis replaces keyQuestions wholesale). Re-read
+    // the LATEST state here, not the pre-AI snapshot, so a question added DURING the
+    // seconds-long AI call isn't clobbered by this write (read-modify-write race).
+    const pinnedNow = (await this.opts.stateStore.load(caseId)).keyQuestions.filter((q) => q.pinned);
+    const next = pinnedNow.length
+      ? { ...backfilled, keyQuestions: mergePinnedQuestions(pinnedNow, backfilled.keyQuestions) }
+      : backfilled;
 
     await this.opts.stateStore.save(next);
     this.lastSynthHash.set(caseId, synthHash);   // remember these inputs so an identical re-run skips the AI call

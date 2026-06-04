@@ -103,6 +103,7 @@ export interface InvestigationQuestion {
   status: QuestionStatus;
   answer: string;              // current best answer, or "" if unknown
   pointer: string;             // where to look: finding ids / event times / screenshots, or what to collect next
+  pinned?: boolean;            // analyst-added (via Ask) — preserved across synthesis, which may answer it later
 }
 
 export type StepPriority = "critical" | "high" | "medium" | "low";
