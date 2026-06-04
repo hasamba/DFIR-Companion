@@ -1138,15 +1138,26 @@ export function startServer(casesRoot: string, port = 4773): void {
     irisOptions: irisExportOptions(),
   });
 
-  // Serve the app logo (the dashboard favicon; also requested as /favicon.ico by browsers).
-  app.get(["/dfir-companion-logo.jpg", "/favicon.ico"], async (_req, res) => {
-    try {
-      const buf = await readFile(new URL("../../public/dfir-companion-logo.jpg", import.meta.url));
-      res.type("image/jpeg").set("Cache-Control", "public, max-age=86400").send(buf);
-    } catch {
-      res.status(404).end();
-    }
-  });
+  // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
+  // filenames only; browsers that auto-request /favicon.ico get the crisp 32px PNG.
+  const iconFiles: Record<string, string> = {
+    "/dfir-companion-logo.jpg": "image/jpeg",
+    "/favicon-16.png": "image/png",
+    "/favicon-32.png": "image/png",
+    "/apple-touch-icon.png": "image/png",
+    "/favicon.ico": "image/png",            // alias → favicon-32.png
+  };
+  for (const [route, type] of Object.entries(iconFiles)) {
+    app.get(route, async (_req, res) => {
+      const file = route === "/favicon.ico" ? "/favicon-32.png" : route;
+      try {
+        const buf = await readFile(new URL("../../public" + file, import.meta.url));
+        res.type(type).set("Cache-Control", "public, max-age=86400").send(buf);
+      } catch {
+        res.status(404).end();
+      }
+    });
+  }
 
   // Serve the dashboard.
   app.get("/dashboard", async (_req, res) => {

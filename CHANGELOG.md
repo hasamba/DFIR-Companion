@@ -13,8 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Project logo + dashboard favicon.** Added the DFIR Companion logo to the top of the README and as the
-  dashboard favicon (served by the companion at `/dfir-companion-logo.jpg` and `/favicon.ico`).
+- **Project logo + crisp dashboard favicons.** Added the DFIR Companion logo to the top of the README, and
+  generated sharp **16/32 px favicons + a 180 px apple-touch-icon** from it (cropped to the emblem,
+  Lanczos-downsampled via `npm run icons`). The companion serves them (`/favicon-32.png`,
+  `/apple-touch-icon.png`, `/favicon.ico`, `/dfir-companion-logo.jpg`) and the dashboard links them.
 - **Manually add an event or IOC the AI missed.** The Forensic Timeline and IOCs sections each have a
   collapsible **+ Add … manually** form. A manual **event** (time, description, severity, optional asset /
   MITRE techniques) is appended to the timeline (kept sorted), tagged `sources: ["manual"]`, and
