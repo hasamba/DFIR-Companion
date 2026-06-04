@@ -12,7 +12,13 @@ import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { parseCsv } from "./analysis/csvImport.js";
 import { parseLogLines } from "./analysis/logImport.js";
 import { parseThorReport } from "./analysis/thorImport.js";
+import { enrichIocs } from "./enrichment/enrichService.js";
+import type { EnrichmentProvider } from "./enrichment/provider.js";
+import { VirusTotalProvider } from "./enrichment/virustotal.js";
+import { MalwareBazaarProvider } from "./enrichment/malwarebazaar.js";
+import { AbuseIpdbProvider } from "./enrichment/abuseipdb.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
+import type { InvestigationState } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
@@ -41,6 +47,13 @@ export interface AppOptions {
   // windows are analyzed, so the live dashboard shows findings/attacker path.
   autoSynthesize?: boolean;
   autoSynthesizeDebounceMs?: number;
+  // Threat-intel enrichment providers (VirusTotal, MalwareBazaar, AbuseIPDB…).
+  enrichmentProviders?: EnrichmentProvider[];
+  enrichDelayMs?: number;
+  enrichMaxIocs?: number;
+  // Broadcast a fresh investigation state to dashboard clients (for routes that change
+  // state outside the AI pipeline, e.g. enrichment).
+  onState?: (state: InvestigationState) => void;
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -93,7 +106,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: Boolean(options.pipeline) });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: Boolean(options.pipeline), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0 });
   });
 
   // How many captures have been recorded for a case (counts the audit-log lines).
@@ -560,6 +573,49 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Threat-intel enrichment: look up the case's IOCs (hashes/IPs/domains/URLs) on the
+  // configured providers (VirusTotal, MalwareBazaar, AbuseIPDB) and annotate them.
+  // Cached on the IOC (skips already-enriched unless ?force); throttled; runs in the
+  // background and broadcasts state updates so badges appear live on the dashboard.
+  // ⚠ OPSEC: this sends indicators to third-party services — only enable for IOCs you
+  // are comfortable querying externally.
+  app.post("/cases/:id/enrich", async (req: Request, res: Response) => {
+    const providers = options.enrichmentProviders ?? [];
+    if (providers.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_ABUSEIPDB_KEY / DFIR_MB_KEY)" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    const force = req.body?.force === true || req.query.force === "true";
+
+    try {
+      const state = await options.stateStore.load(caseId);
+      res.status(202).json({ accepted: true, iocs: state.iocs.length, providers: providers.map((p) => p.name) });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: "enriching IOCs (threat intel)" });
+      void (async () => {
+        const { iocs, summary } = await enrichIocs(state.iocs, {
+          providers,
+          delayMs: options.enrichDelayMs,
+          maxIocs: options.enrichMaxIocs,
+          force,
+          onProgress: (done, total) => options.onAiStatus?.(caseId, {
+            status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+            detail: `enriching IOC ${done}/${total}`,
+          }),
+        });
+        // Re-load + write only the iocs so we don't clobber a concurrent state change.
+        const latest = await options.stateStore!.load(caseId);
+        const byValue = new Map(iocs.map((i) => [i.value, i]));
+        const merged = { ...latest, iocs: latest.iocs.map((i) => byValue.get(i.value) ?? i), updatedAt: new Date().toISOString() };
+        await options.stateStore!.save(merged);
+        options.onState?.(merged);
+        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})` });
+      })().catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // On-demand holistic synthesis: derive findings / MITRE / attacker path from the
   // forensic timeline. (Per-window capture builds the timeline; this writes the
   // conclusions.) Broadcasts the updated state to dashboard clients via onState.
@@ -648,6 +704,16 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
   });
 }
 
+// Build the threat-intel enrichment providers from env. Each is added only when its key
+// is present (MalwareBazaar needs DFIR_MB_KEY for its API). Empty array → enrichment off.
+export function buildEnrichmentProviders(): EnrichmentProvider[] {
+  const providers: EnrichmentProvider[] = [];
+  if (process.env.DFIR_VT_KEY) providers.push(new VirusTotalProvider({ apiKey: process.env.DFIR_VT_KEY }));
+  if (process.env.DFIR_MB_KEY) providers.push(new MalwareBazaarProvider({ apiKey: process.env.DFIR_MB_KEY }));
+  if (process.env.DFIR_ABUSEIPDB_KEY) providers.push(new AbuseIpdbProvider({ apiKey: process.env.DFIR_ABUSEIPDB_KEY }));
+  return providers;
+}
+
 export function startServer(casesRoot: string, port = 4773): void {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStoreImpl(store);
@@ -671,6 +737,10 @@ export function startServer(casesRoot: string, port = 4773): void {
     autoSynthesize,
     autoSynthesizeDebounceMs,
     onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
+    onState: (s) => hub.broadcast(s),
+    enrichmentProviders: buildEnrichmentProviders(),
+    enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,
+    enrichMaxIocs: Number(process.env.DFIR_ENRICH_MAX) || undefined,
   });
 
   // Serve the dashboard.

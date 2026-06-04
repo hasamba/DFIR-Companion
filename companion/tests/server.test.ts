@@ -387,6 +387,50 @@ describe("server analysis wiring", () => {
     expect(stored.id).toBe("event:e1");
   });
 
+  it("enriches IOCs via configured providers and annotates them in state", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-enrich-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.iocs.push(
+      { id: "i1", type: "hash", value: "deadbeefdeadbeef", firstSeen: "t0" },
+      { id: "i2", type: "file", value: "C:\\evil.exe", firstSeen: "t0" }, // not enrichable
+    );
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(seeded);
+
+    const provider = {
+      name: "VirusTotal",
+      supports: () => true,
+      lookup: async () => ({ source: "VirusTotal", verdict: "malicious" as const, score: "60/72" }),
+    };
+    const app2 = createApp(store, { stateStore, enrichmentProviders: [provider], enrichDelayMs: 0 });
+
+    const res = await request(app2).post("/cases/c1/enrich").send({});
+    expect(res.status).toBe(202);
+    expect(res.body.iocs).toBe(2);
+    expect(res.body.providers).toEqual(["VirusTotal"]);
+
+    // Background enrichment annotates the hash (not the file) — poll until it lands.
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 40 && !state.iocs[0].enrichments; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    expect(state.iocs[0].enrichments).toEqual([{ source: "VirusTotal", verdict: "malicious", score: "60/72", fetchedAt: expect.any(String) }]);
+    expect(state.iocs[1].enrichments).toBeUndefined(); // file path not enrichable
+  });
+
+  it("returns 501 for enrich when no providers are configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-noenrich-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app2 = createApp(store, { stateStore });
+    const res = await request(app2).post("/cases/c1/enrich").send({});
+    expect(res.status).toBe(501);
+  });
+
   it("rejects a log import when no AI pipeline is configured", async () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const res = await request(app).post("/cases/c1/import-log").send({ filename: "x.log", text: "line\n" });

@@ -20,8 +20,13 @@ export function findingsCsv(state: InvestigationState): string {
 }
 
 export function iocsCsv(state: InvestigationState): string {
-  const header = "id,type,value,firstSeen";
-  const rows = state.iocs.map((i) => row([i.id, i.type, i.value, i.firstSeen]));
+  const header = "id,type,value,firstSeen,enrichment";
+  const rows = state.iocs.map((i) => {
+    const intel = (i.enrichments ?? [])
+      .map((e) => `${e.source}:${e.verdict}${e.score ? ` (${e.score})` : ""}`)
+      .join(" | ");
+    return row([i.id, i.type, i.value, i.firstSeen, intel]);
+  });
   return [header, ...rows].join("\n") + "\n";
 }
 

@@ -62,6 +62,7 @@
     <button id="connect">Connect</button>
     <button id="aiToggle" title="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" title="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
+    <button id="enrichIocs" title="Look up the case's IOCs (hashes/IPs/domains/URLs) on VirusTotal, MalwareBazaar and AbuseIPDB. ⚠ sends indicators to third-party services.">Enrich IOCs</button>
     <input id="csvFile" type="file" accept=".csv,text/csv" style="display:none" />
     <button id="importCsv" title="Upload a CSV of results (e.g. a Velociraptor export) to analyze into IOCs, TTPs and the timeline">Import CSV</button>
     <input id="logFile" type="file" accept=".log,.txt,text/plain" style="display:none" />
@@ -301,6 +302,22 @@
         `⚑ mark legitimate</button>`;
     }
 
+    // Threat-intel enrichment badges for an IOC (VirusTotal / MalwareBazaar / AbuseIPDB).
+    function verdictColor(v) {
+      return v === "malicious" ? "#ff6b6b" : v === "suspicious" ? "#ffd93b" : v === "harmless" ? "#6bcB77" : "#9aa4b2";
+    }
+    function enrichBadges(ioc) {
+      if (!ioc.enrichments) return ""; // not enriched yet
+      if (!ioc.enrichments.length) return ` <span style="color:#5b6472;font-size:11px">· checked, no intel</span>`;
+      return " " + ioc.enrichments.map(e => {
+        const c = verdictColor(e.verdict);
+        const tags = e.tags && e.tags.length ? ` — ${esc(e.tags.slice(0, 3).join(", "))}` : "";
+        const inner = `<span style="color:${c};border:1px solid ${c};border-radius:4px;padding:0 6px;font-size:11px">` +
+          `${esc(e.source)}: ${esc(e.verdict)}${e.score ? ` (${esc(e.score)})` : ""}${tags}</span>`;
+        return e.link ? `<a href="${escAttr(e.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner;
+      }).join(" ");
+    }
+
     // Clickable links to the underlying evidence (screenshot or imported CSV). Each
     // opens the artifact in a new tab via GET /cases/:id/evidence/:file.
     function evidenceLinks(caseId, files) {
@@ -403,7 +420,7 @@
 
       const iocs = state.iocs || [];
       document.getElementById("iocs").innerHTML = iocs.length
-        ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}</div>`).join("")
+        ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}</div>`).join("")
         : "<div style='color:#9aa4b2'>No IOCs yet</div>";
 
       // Already scope-projected above (events + findings/IOCs/MITRE consistently).
@@ -529,6 +546,20 @@
           fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
         })
         .catch(e => document.getElementById("status").textContent = "synthesis error: " + e.message);
+    };
+    document.getElementById("enrichIocs").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      if (!confirm("Enrich IOCs against VirusTotal / MalwareBazaar / AbuseIPDB?\n\n⚠ This sends the case's hashes/IPs/domains/URLs to third-party services. Only proceed if that's acceptable for this investigation.")) return;
+      document.getElementById("status").textContent = "enriching IOCs…";
+      fetch(`/cases/${caseId}/enrich`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(async r => {
+          if (!r.ok) { let m = "HTTP " + r.status; try { m = (await r.json()).error || m; } catch {} throw new Error(m); }
+          return r.json();
+        })
+        .then(p => document.getElementById("status").textContent =
+          `enriching ${p.iocs} IOC(s) via ${(p.providers || []).join(", ")} — results appear as badges (see AI status)`)
+        .catch(e => document.getElementById("status").textContent = "enrich failed (" + e.message + ") — set DFIR_VT_KEY/DFIR_ABUSEIPDB_KEY and restart `npm run dev`.");
     };
     // CSV import: read the file locally, POST its text; the server persists it as
     // evidence and analyzes it (events → IOCs/TTPs/findings) with live WS updates.

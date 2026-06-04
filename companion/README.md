@@ -98,6 +98,7 @@ Examples:
 | `POST /cases/:id/legitimate/remove` | `{ id }` — un-mark; re-runs synthesis. |
 | `GET /cases/:id/ai-control` | Current AI on/off state: `{ enabled, lastAnalyzedSeq }`. |
 | `POST /cases/:id/ai-control` | `{ enabled }` — turn AI analysis on/off for the case. Evidence is always captured; when off, no AI runs. Turning it **on** backfills every screenshot captured while it was off. The dashboard's **AI: ON/OFF** button calls this. |
+| `POST /cases/:id/enrich` | **Threat-intel IOC enrichment.** Looks up the case's IOCs (hashes/IPs/domains/URLs) on the configured providers — **VirusTotal** (`DFIR_VT_KEY`), **MalwareBazaar** (`DFIR_MB_KEY`), **AbuseIPDB** (`DFIR_ABUSEIPDB_KEY`) — and annotates each IOC with a verdict/score/link. Cached on the IOC (skips already-enriched unless `{ force: true }`); throttled (`DFIR_ENRICH_DELAY_MS`) and capped (`DFIR_ENRICH_MAX`, hashes/IPs first). Runs in the background; badges appear live on the dashboard. `501` if no provider key is set. **⚠ OPSEC: sends indicators to third-party services.** The dashboard's **Enrich IOCs** button calls this. |
 | `POST /cases/:id/synthesize` | Run the synthesis pass (findings / MITRE / attacker path) from the forensic timeline; pushes the update to the dashboard. The dashboard's **Synthesize** button calls this. |
 | `POST /cases/:id/report` | Write report files; returns their paths. |
 | `GET /dashboard` | Live dashboard page. |

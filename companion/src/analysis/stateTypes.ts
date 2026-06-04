@@ -2,11 +2,24 @@ export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
 export type FindingStatus = "open" | "confirmed" | "dismissed";
 export type ThreadStatus = "open" | "closed";
 
+// One threat-intel lookup result for an IOC (VirusTotal, MalwareBazaar, AbuseIPDB…).
+export interface IocEnrichment {
+  source: string;                                              // "VirusTotal" | "MalwareBazaar" | "AbuseIPDB"
+  verdict: "malicious" | "suspicious" | "harmless" | "unknown";
+  score?: string;                                              // human summary, e.g. "52/73 detections", "100% abuse"
+  detections?: number;                                         // malicious engine count (where applicable)
+  total?: number;
+  tags?: string[];                                             // malware family / classification labels
+  link?: string;                                               // permalink to the report
+  fetchedAt: string;                                           // ISO time the lookup was made
+}
+
 export interface IOC {
   id: string;
   type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "other";
   value: string;
   firstSeen: string;
+  enrichments?: IocEnrichment[];                               // threat-intel lookups (added by the enrich pass)
 }
 
 export interface Finding {

@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Threat-intel IOC enrichment** — `POST /cases/:id/enrich` and an **Enrich IOCs** dashboard
+  button look up the case's IOCs (hashes/IPs/domains/URLs) on **VirusTotal** (hash/IP/domain/URL),
+  **MalwareBazaar** (hash), and **AbuseIPDB** (IP), annotating each IOC with a verdict
+  (malicious/suspicious/harmless/unknown), score, classification tags, and a permalink — shown as
+  colored badges on the dashboard and in the IOC CSV. Keys are per-provider env vars
+  (`DFIR_VT_KEY`, `DFIR_MB_KEY`, `DFIR_ABUSEIPDB_KEY`); results are cached on the IOC, throttled
+  (`DFIR_ENRICH_DELAY_MS`), and capped (`DFIR_ENRICH_MAX`, hashes/IPs first). Providers use an
+  injectable fetch (no network in tests). **⚠ OPSEC: enrichment sends indicators to third-party
+  services** — it's opt-in (off unless a key is set, with a confirm prompt).
 - **Cross-source correlation & duplicate collapsing** — the same real-world artifact is now
   merged into a single forensic event instead of duplicating. Three deterministic match rules:
   an **exact duplicate** (same event time + description — collapses **re-imports of the same
