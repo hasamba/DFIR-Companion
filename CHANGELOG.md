@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.3.0] - 2026-06-04
+
 ### Added
 - **Process-chain validation (RockyRaccoon)** — when enrichment is on, parent→child process
   relationships on the forensic timeline (e.g. THOR ProcessCheck's process + parent) are checked
@@ -159,6 +163,7 @@ Initial baseline.
   report exports.
 - Scripts: `dev`, `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hasamba/DFIR-Companion/releases/tag/v0.1.0
