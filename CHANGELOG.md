@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   private CA (verification stays on), or set `DFIR_MISP_INSECURE` / `DFIR_YETI_INSECURE` to skip
   verification for a lab (insecure; logs a warning). Scoped per provider via an injected
   undici dispatcher — the VirusTotal/AbuseIPDB/AI calls keep the default verified trust store.
+- **Full incident-report template** — `report.md` now follows the
+  [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template)
+  structure (title page, revisions, distribution, disclaimer/reading guide, intended audience,
+  executive summary, business impact, limitations, goals, glossary, incident + investigation
+  timelines, investigation, conclusions/recommendations, attachments). Technical sections are
+  auto-filled from the investigation state; human-authored sections are edited in a new dashboard
+  **Report Details** panel (persisted per case in `state/report-meta.json`), override the derived
+  content where provided, and show a "to be completed" placeholder where empty. New endpoints
+  `GET`/`PUT /cases/:id/report-meta`.
 
 ## [0.3.0] - 2026-06-04
 

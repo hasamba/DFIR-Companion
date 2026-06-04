@@ -28,6 +28,7 @@ import type { InvestigationState } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
+import { ReportMetaStore } from "./reports/reportMeta.js";
 
 export type AiStatus = "analyzing" | "idle" | "error";
 // What the AI is actually doing, so the dashboard can say "processing screenshots"
@@ -46,6 +47,9 @@ export interface AppOptions {
   windowSize?: number;
   stateStore?: StateStore;
   reportWriter?: ReportWriter;
+  // Human-authored report metadata (title page, distribution, BIA, glossary, recommendations…)
+  // edited from the dashboard and merged into report.md.
+  reportMetaStore?: ReportMetaStore;
   // Called when an AI analysis window starts / finishes / fails, so the
   // server can push a live "AI status" indicator to dashboard clients.
   onAiStatus?: (caseId: string, event: AiStatusEvent) => void;
@@ -309,6 +313,28 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const paths = await options.reportWriter.writeAll(req.params.id);
       return res.status(200).json(paths);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Human-authored report metadata (title page, distribution, BIA, limitations, glossary,
+  // recommendations…). GET returns the stored values (or defaults); PUT replaces them with a
+  // normalized payload. These merge into report.md alongside the auto-derived sections.
+  app.get("/cases/:id/report-meta", async (req: Request, res: Response) => {
+    if (!options.reportMetaStore) return res.status(501).json({ error: "report metadata not configured" });
+    try {
+      return res.status(200).json(await options.reportMetaStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.put("/cases/:id/report-meta", async (req: Request, res: Response) => {
+    if (!options.reportMetaStore) return res.status(501).json({ error: "report metadata not configured" });
+    try {
+      const saved = await options.reportMetaStore.save(req.params.id, req.body);
+      return res.status(200).json(saved);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -803,7 +829,8 @@ export function startServer(casesRoot: string, port = 4773): void {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStoreImpl(store);
   const hub = new LiveHub();
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store));
+  const reportMetaStore = new ReportMetaStore(store);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore);
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
@@ -819,6 +846,7 @@ export function startServer(casesRoot: string, port = 4773): void {
     pipeline: wiredPipeline,
     stateStore,
     reportWriter,
+    reportMetaStore,
     autoSynthesize,
     autoSynthesizeDebounceMs,
     onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),

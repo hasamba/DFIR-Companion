@@ -11,6 +11,7 @@ import { AnalysisPipeline } from "../src/analysis/pipeline.js";
 import { StateStore } from "../src/analysis/stateStore.js";
 import { MockProvider } from "../src/providers/provider.js";
 import { ReportWriter } from "../src/reports/reportWriter.js";
+import { ReportMetaStore } from "../src/reports/reportMeta.js";
 
 let app: ReturnType<typeof createApp>;
 
@@ -550,6 +551,45 @@ describe("state and report routes", () => {
     const res = await request(app).post("/cases/c1/report");
     expect(res.status).toBe(200);
     expect(res.body.markdown).toMatch(/report\.md$/);
+  });
+
+  it("GET/PUT /cases/:id/report-meta round-trips and flows into the generated report", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-report-meta-route-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportMetaStore = new ReportMetaStore(store);
+    const reportWriter = new ReportWriter(store, stateStore, undefined, undefined, reportMetaStore);
+    const app = createApp(store, { stateStore, reportWriter, reportMetaStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+
+    // Defaults before anything is saved.
+    const initial = await request(app).get("/cases/c1/report-meta");
+    expect(initial.status).toBe(200);
+    expect(initial.body.includeDisclaimer).toBe(true);
+    expect(initial.body.organization).toBe("");
+
+    // Save human-authored fields (unknown keys are dropped by normalization).
+    const put = await request(app).put("/cases/c1/report-meta").send({
+      organization: "ExampleCorp",
+      executiveSummary: "Human-authored summary.",
+      recommendations: ["Deploy EDR everywhere"],
+      bogus: "dropped",
+    });
+    expect(put.status).toBe(200);
+    expect(put.body.organization).toBe("ExampleCorp");
+    expect(put.body).not.toHaveProperty("bogus");
+
+    // Reload reflects the save.
+    const reloaded = await request(app).get("/cases/c1/report-meta");
+    expect(reloaded.body.executiveSummary).toBe("Human-authored summary.");
+
+    // The generated report.md includes the human fields.
+    const gen = await request(app).post("/cases/c1/report");
+    expect(gen.status).toBe(200);
+    const md = await readFile(gen.body.markdown, "utf8");
+    expect(md).toContain("**Organization:** ExampleCorp");
+    expect(md).toContain("Human-authored summary.");
+    expect(md).toContain("Deploy EDR everywhere");
   });
 
   it("POST /cases/:id/synthesize runs the pipeline's synthesis and returns counts", async () => {

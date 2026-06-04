@@ -6,6 +6,7 @@ import { NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
 import { projectScope } from "../analysis/scopeProject.js";
 import { applyLegitimate, filterLegitimateEvents, type LegitimateStore } from "../analysis/legitimate.js";
 import { renderMarkdownReport } from "./markdown.js";
+import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
 
 export interface ReportPaths {
@@ -23,6 +24,7 @@ export class ReportWriter {
     private readonly state: StateStore,
     private readonly scope?: ScopeStore,
     private readonly legitimate?: LegitimateStore,
+    private readonly reportMeta?: ReportMetaStore,
   ) {}
 
   async writeAll(caseId: string): Promise<ReportPaths> {
@@ -48,7 +50,8 @@ export class ReportWriter {
       forensicTimelineCsv: join(dir, "forensic-timeline.csv"),
       stateJson: join(dir, "state-export.json"),
     };
-    await writeFile(paths.markdown, renderMarkdownReport(state), "utf8");
+    const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
+    await writeFile(paths.markdown, renderMarkdownReport(state, meta), "utf8");
     await writeFile(paths.findingsCsv, findingsCsv(state), "utf8");
     await writeFile(paths.iocsCsv, iocsCsv(state), "utf8");
     await writeFile(paths.timelineCsv, timelineCsv(state), "utf8");

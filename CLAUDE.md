@@ -79,10 +79,11 @@ double), shared hash, or same path within a time window. The merged event unions
 (`count`, `endTimestamp`, `sha256`/`md5`/`path`, `sources`, `processName`/`parentName`,
 `chainCheck`); `IOC` carries optional `enrichments[]`. Side files in `state/`:
 `ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (enrichment
-on/off, **default off**), `pending_analysis.json`.
+on/off, **default off**), `pending_analysis.json`, `report-meta.json` (human-authored report
+sections — title page, distribution, BIA, glossary, recommendations…).
 
 **Per-case stores** follow the same pattern (atomic temp-file rename): `AiControlStore`,
-`LegitimateStore`, `ScopeStore`, `EnrichControlStore`. Pure filters/transforms live next to
+`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`. Pure filters/transforms live next to
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`) and are unit-tested independently of I/O.
 

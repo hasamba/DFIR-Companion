@@ -1,5 +1,12 @@
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
 import { byEventTime } from "../analysis/forensicSort.js";
+import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
+
+// Renders report.md following the AnttiKurittu incident-report-template structure
+// (https://github.com/AnttiKurittu/incident-report-template). Technical sections are
+// auto-filled from the investigation state; human-authored sections come from ReportMeta
+// (edited in the dashboard) and override/supplement the derived content. Where neither a
+// human value nor derivable data exists, a clearly marked placeholder shows what to fill.
 
 function cellMd(value: string): string {
   return value.replace(/\|/g, "\\|");
@@ -9,80 +16,189 @@ const SEVERITY_ORDER: Record<Severity, number> = {
   Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4,
 };
 
-export function renderMarkdownReport(state: InvestigationState): string {
-  const lines: string[] = [];
-  lines.push(`# Incident Report — ${state.caseId}`, "");
+const TODO = "> _To be completed by the investigator — edit in the dashboard → **Report details**._";
 
-  lines.push("## Executive Summary", "");
-  lines.push(state.lastSummary.trim().length > 0 ? state.lastSummary : "_No summary yet._", "");
+// A human value if present, otherwise a fallback (a derived value or the TODO placeholder).
+function humanOr(value: string, fallback = TODO): string {
+  const v = value.trim();
+  return v.length > 0 ? v : fallback;
+}
 
-  lines.push("## Attacker Path", "");
-  lines.push(state.attackerPath.trim().length > 0 ? state.attackerPath : "_Attacker path not yet reconstructed._", "");
+const DEFAULT_AUDIENCE =
+  "This report is written for a *technical audience* such as system administrators, security " +
+  "personnel and others working in roles related to the technical environment. The executive " +
+  "summary, conclusions and recommendations are written for all stakeholders.";
 
-  lines.push("## Key Investigative Questions", "");
-  if (state.keyQuestions.length === 0) {
-    lines.push("_Not assessed yet — run synthesis._", "");
-  } else {
-    const mark = (s: string) => (s === "answered" ? "✅" : s === "partial" ? "🟡" : "❓");
-    lines.push("| | Question | Answer | Where to find it |", "| --- | --- | --- | --- |");
-    for (const q of state.keyQuestions) {
-      lines.push(`| ${mark(q.status)} | ${cellMd(q.question)} | ${cellMd(q.answer || "_unknown_")} | ${cellMd(q.pointer || "—")} |`);
-    }
-    lines.push("");
+function titlePage(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
+  lines.push("# Incident Investigation Report", "");
+  lines.push(`**Organization:** ${humanOr(meta.organization, "_(organization not set)_")}`, "");
+  lines.push(`**Incident ID:** ${humanOr(meta.incidentId, state.caseId)}`, "");
+  lines.push(`**Investigator:** ${humanOr(meta.investigator, "_(investigator not set)_")}`, "");
+  lines.push(`**Restrictions:** ${humanOr(meta.restrictions, "CONFIDENTIAL / TLP:AMBER")}`, "");
+}
+
+function revisions(meta: ReportMeta, lines: string[]): void {
+  lines.push("## 1.1 Report revisions", "");
+  if (meta.revisions.length === 0) {
+    lines.push(TODO, "");
+    return;
   }
-
-  lines.push("## Recommended Next Steps", "");
-  if (state.nextSteps.length === 0) {
-    lines.push("_None recommended yet — run synthesis._", "");
-  } else {
-    lines.push("| Priority | Action | Why it matters | Where / what to collect |", "| --- | --- | --- | --- |");
-    for (const s of state.nextSteps) {
-      lines.push(`| ${s.priority.toUpperCase()} | ${cellMd(s.action)} | ${cellMd(s.rationale || "—")} | ${cellMd(s.pointer || "—")} |`);
-    }
-    lines.push("");
+  lines.push("| Version | Published date | Author | Comments |", "| --- | --- | --- | --- |");
+  for (const r of meta.revisions) {
+    lines.push(`| ${cellMd(r.version)} | ${cellMd(r.date)} | ${cellMd(r.author)} | ${cellMd(r.comments)} |`);
   }
+  lines.push("");
+}
 
-  lines.push("## Forensic Timeline", "");
+function distribution(meta: ReportMeta, lines: string[]): void {
+  lines.push("## 1.2 Distribution list", "");
+  if (meta.distribution.length === 0) {
+    lines.push(TODO, "");
+    return;
+  }
+  lines.push("| Name | Role | Method |", "| --- | --- | --- |");
+  for (const d of meta.distribution) {
+    lines.push(`| ${cellMd(d.name)} | ${cellMd(d.role)} | ${cellMd(d.method)} |`);
+  }
+  lines.push("");
+}
+
+function disclaimer(lines: string[]): void {
+  lines.push("## 1.3 Disclaimer and reading guide", "");
+  lines.push(
+    "This report has been written based on the facts found during an investigation into a cyber " +
+    "security incident. All findings are based on the materials delivered for inspection and " +
+    "discovered during the investigation, and are subject to change if new evidence is found.",
+    "",
+  );
+  lines.push("### Timestamps", "");
+  lines.push(
+    "Unless otherwise stated, all timestamps are in Coordinated Universal Time (UTC) following the " +
+    "ISO 8601 format (`YYYY-MM-DDTHH:MM:SSZ`). A trailing `Z` denotes UTC; deviations are shown " +
+    "explicitly (e.g. `UTC+2`).",
+    "",
+  );
+  lines.push("### Statements of probability", "");
+  lines.push("| Chance | Wording |", "| --- | --- |");
+  lines.push("| 1–10% | Very Unlikely / Almost certainly not |");
+  lines.push("| 11–40% | Unlikely / Improbable |");
+  lines.push("| 41–60% | Even Chance |");
+  lines.push("| 61–90% | Probably / Likely |");
+  lines.push("| 90–99% | Very Likely / Almost Certainly |", "");
+  lines.push("### Statements of confidence", "");
+  lines.push("| Confidence | Meaning |", "| --- | --- |");
+  lines.push("| High | Strong, plentiful evidence; nothing contradicts the conclusion. |");
+  lines.push("| Medium | Sufficient evidence, but other evidence could question it. |");
+  lines.push("| Low | Missing evidence and open questions; logical but easily disproven. |", "");
+  lines.push(
+    "Conclusions, theories and interpretations of fact are presented separately from material " +
+    "findings as the investigator's educated opinion, not as material fact.",
+    "",
+  );
+}
+
+function intendedAudience(meta: ReportMeta, lines: string[]): void {
+  lines.push("## 1.4 Intended audience", "");
+  lines.push(humanOr(meta.intendedAudience, DEFAULT_AUDIENCE), "");
+}
+
+function executiveSummary(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
+  lines.push("## 2 Executive summary", "");
+  const derived = state.lastSummary.trim();
+  lines.push(humanOr(meta.executiveSummary, derived.length > 0 ? derived : TODO), "");
+}
+
+function businessImpact(meta: ReportMeta, lines: string[]): void {
+  lines.push("## 2.1 Business Impact Analysis", "");
+  lines.push(humanOr(meta.businessImpact), "");
+}
+
+function investigationLimitations(meta: ReportMeta, lines: string[]): void {
+  lines.push("## 2.2 Investigation limitations", "");
+  lines.push(humanOr(meta.investigationLimitations), "");
+}
+
+// 2.3 — human research questions if provided, else derive a starter list from the standard
+// DFIR key questions the synthesis pass tracks.
+function investigationGoals(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
+  lines.push("## 2.3 Investigation goals and targets", "");
+  if (meta.investigationGoals.trim().length > 0) {
+    lines.push(meta.investigationGoals.trim(), "");
+    return;
+  }
+  if (state.keyQuestions.length > 0) {
+    lines.push("Derived from the investigation's key questions:", "");
+    for (const q of state.keyQuestions) lines.push(`- ${q.question}`);
+    lines.push("");
+    return;
+  }
+  lines.push(TODO, "");
+}
+
+function glossary(meta: ReportMeta, lines: string[]): void {
+  lines.push("## 2.4 Glossary of terms", "");
+  if (meta.glossary.length === 0) {
+    lines.push(TODO, "");
+    return;
+  }
+  lines.push("| Term | Explanation |", "| --- | --- |");
+  for (const g of meta.glossary) {
+    lines.push(`| ${cellMd(g.term)} | ${cellMd(g.explanation)} |`);
+  }
+  lines.push("");
+}
+
+function incidentTimeline(state: InvestigationState, lines: string[]): void {
+  lines.push("### 3.1 Incident timeline", "");
   lines.push("_Real incident events, ordered by when they actually happened._", "");
   if (state.forensicTimeline.length === 0) {
     lines.push("_No dated forensic events extracted yet._", "");
-  } else {
-    lines.push("| Time | Count | Severity | Event | MITRE | Findings | Evidence |", "| --- | --- | --- | --- | --- | --- | --- |");
-    const ordered: ForensicEvent[] = [...state.forensicTimeline].sort(byEventTime);
-    for (const e of ordered) {
-      // Show a time span for aggregated events, and ×N when more than one occurrence.
-      const time = e.endTimestamp && e.endTimestamp !== e.timestamp
-        ? `${e.timestamp || "(undated)"} → ${e.endTimestamp}`
-        : (e.timestamp || "(undated)");
-      const count = e.count && e.count > 1 ? `×${e.count}` : "";
-      lines.push(
-        `| ${cellMd(time)} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
-        `${cellMd(e.mitreTechniques.join(", "))} | ${cellMd(e.relatedFindingIds.join(", "))} | ` +
-        `${cellMd(e.sourceScreenshots.join(", "))} |`,
-      );
-    }
-    lines.push("");
+    return;
   }
+  lines.push("| Time | Count | Severity | Event | MITRE | Findings | Evidence |", "| --- | --- | --- | --- | --- | --- | --- |");
+  const ordered: ForensicEvent[] = [...state.forensicTimeline].sort(byEventTime);
+  for (const e of ordered) {
+    const time = e.endTimestamp && e.endTimestamp !== e.timestamp
+      ? `${e.timestamp || "(undated)"} → ${e.endTimestamp}`
+      : (e.timestamp || "(undated)");
+    const count = e.count && e.count > 1 ? `×${e.count}` : "";
+    lines.push(
+      `| ${cellMd(time)} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
+      `${cellMd(e.mitreTechniques.join(", "))} | ${cellMd(e.relatedFindingIds.join(", "))} | ` +
+      `${cellMd(e.sourceScreenshots.join(", "))} |`,
+    );
+  }
+  lines.push("");
+}
 
-  lines.push("## Investigation Log", "");
+function investigationTimeline(state: InvestigationState, lines: string[]): void {
+  lines.push("### 3.2 Investigation timeline", "");
   lines.push("_Order in which evidence was reviewed during the investigation._", "");
   if (state.timeline.length === 0) {
     lines.push("_No review entries yet._", "");
-  } else {
-    for (const t of state.timeline) {
-      const shots = t.sourceScreenshots.length ? ` (evidence: ${t.sourceScreenshots.join(", ")})` : "";
-      lines.push(`- **${t.timestamp}** — ${t.description}${shots}`);
-    }
-    lines.push("");
+    return;
   }
+  lines.push("| Time | Event | Evidence |", "| --- | --- | --- |");
+  for (const t of state.timeline) {
+    const shots = t.sourceScreenshots.length ? t.sourceScreenshots.join(", ") : "—";
+    lines.push(`| ${cellMd(t.timestamp)} | ${cellMd(t.description)} | ${cellMd(shots)} |`);
+  }
+  lines.push("");
+}
 
-  lines.push("## Findings", "");
+function investigation(state: InvestigationState, lines: string[]): void {
+  lines.push("## 4 Investigation", "");
+
+  lines.push("### 4.1 Attacker path", "");
+  lines.push(state.attackerPath.trim().length > 0 ? state.attackerPath : "_Attacker path not yet reconstructed._", "");
+
+  lines.push("### 4.2 Findings", "");
   if (state.findings.length === 0) {
     lines.push("_No findings yet._", "");
   } else {
     const sorted = [...state.findings].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
     for (const f of sorted) {
-      lines.push(`### [${f.severity}] ${f.title} (${f.id})`);
+      lines.push(`#### [${f.severity}] ${f.title} (${f.id})`);
       lines.push(f.description || "_no description_");
       if (f.relatedIocs.length) lines.push(`- IOCs: ${f.relatedIocs.join(", ")}`);
       if (f.mitreTechniques.length) lines.push(`- MITRE: ${f.mitreTechniques.join(", ")}`);
@@ -91,7 +207,7 @@ export function renderMarkdownReport(state: InvestigationState): string {
     }
   }
 
-  lines.push("## Indicators of Compromise (IOCs)", "");
+  lines.push("### 4.3 Indicators of compromise", "");
   if (state.iocs.length === 0) {
     lines.push("_No IOCs extracted yet._", "");
   } else {
@@ -102,7 +218,18 @@ export function renderMarkdownReport(state: InvestigationState): string {
     lines.push("");
   }
 
-  lines.push("## Investigation Threads", "");
+  lines.push("### 4.4 MITRE ATT&CK", "");
+  if (state.mitreTechniques.length === 0) {
+    lines.push("_No techniques mapped yet._", "");
+  } else {
+    lines.push("| Technique | Name | Findings |", "| --- | --- | --- |");
+    for (const t of state.mitreTechniques) {
+      lines.push(`| ${cellMd(t.id)} | ${cellMd(t.name)} | ${cellMd(t.findingIds.join(", "))} |`);
+    }
+    lines.push("");
+  }
+
+  lines.push("### 4.5 Investigation threads", "");
   const openT = state.openThreads.filter((t) => t.status === "open");
   const closedT = state.openThreads.filter((t) => t.status === "closed");
   if (openT.length === 0 && closedT.length === 0) {
@@ -117,16 +244,100 @@ export function renderMarkdownReport(state: InvestigationState): string {
     lines.push("");
   }
 
-  lines.push("## MITRE ATT&CK", "");
-  if (state.mitreTechniques.length === 0) {
-    lines.push("_No techniques mapped yet._", "");
+  lines.push("### 4.6 Key investigative questions", "");
+  if (state.keyQuestions.length === 0) {
+    lines.push("_Not assessed yet — run synthesis._", "");
   } else {
-    lines.push("| Technique | Name | Findings |", "| --- | --- | --- |");
-    for (const t of state.mitreTechniques) {
-      lines.push(`| ${cellMd(t.id)} | ${cellMd(t.name)} | ${cellMd(t.findingIds.join(", "))} |`);
+    const mark = (s: string) => (s === "answered" ? "✅" : s === "partial" ? "🟡" : "❓");
+    lines.push("| | Question | Answer | Where to find it |", "| --- | --- | --- | --- |");
+    for (const q of state.keyQuestions) {
+      lines.push(`| ${mark(q.status)} | ${cellMd(q.question)} | ${cellMd(q.answer || "_unknown_")} | ${cellMd(q.pointer || "—")} |`);
     }
     lines.push("");
   }
+}
+
+function conclusions(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
+  lines.push("## 5 Conclusions and recommendations", "");
+
+  if (meta.conclusions.trim().length > 0) {
+    lines.push(meta.conclusions.trim(), "");
+  } else {
+    // Derive a starting conclusion from the attacker path + answered key questions.
+    const answered = state.keyQuestions.filter((q) => q.status === "answered" && q.answer.trim().length > 0);
+    if (state.attackerPath.trim().length === 0 && answered.length === 0) {
+      lines.push(TODO, "");
+    } else {
+      if (state.attackerPath.trim().length > 0) lines.push(state.attackerPath.trim(), "");
+      if (answered.length > 0) {
+        lines.push("**Answered investigation questions:**");
+        for (const q of answered) lines.push(`- ${q.question} — ${q.answer}`);
+        lines.push("");
+      }
+    }
+  }
+
+  lines.push("### Recommendations", "");
+  const recs = meta.recommendations.map((r) => r.trim()).filter((r) => r.length > 0);
+  if (recs.length > 0) {
+    lines.push("| Recommendation |", "| --- |");
+    for (const r of recs) lines.push(`| ${cellMd(r)} |`);
+    lines.push("");
+  } else if (state.nextSteps.length > 0) {
+    // Fall back to the AI-recommended next steps as draft recommendations.
+    lines.push("_Draft recommendations from the recommended next steps — review and finalize._", "");
+    lines.push("| Priority | Action | Why it matters | Where / what to collect |", "| --- | --- | --- | --- |");
+    for (const s of state.nextSteps) {
+      lines.push(`| ${s.priority.toUpperCase()} | ${cellMd(s.action)} | ${cellMd(s.rationale || "—")} | ${cellMd(s.pointer || "—")} |`);
+    }
+    lines.push("");
+  } else {
+    lines.push(TODO, "");
+  }
+}
+
+// 6 — gather the distinct evidence files referenced anywhere in the case as an attachment
+// index, plus any human note.
+function attachments(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
+  lines.push("## 6 Attachments", "");
+  if (meta.attachmentsNote.trim().length > 0) lines.push(meta.attachmentsNote.trim(), "");
+
+  const referenced = new Set<string>();
+  for (const e of state.forensicTimeline) for (const s of e.sourceScreenshots) referenced.add(s);
+  for (const f of state.findings) for (const s of f.sourceScreenshots) referenced.add(s);
+  for (const t of state.timeline) for (const s of t.sourceScreenshots) referenced.add(s);
+
+  if (referenced.size > 0) {
+    lines.push("Evidence referenced in this report:", "");
+    for (const r of [...referenced].sort()) lines.push(`- \`${r}\``);
+    lines.push("");
+  } else if (meta.attachmentsNote.trim().length === 0) {
+    lines.push(TODO, "");
+  }
+}
+
+export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta()): string {
+  const lines: string[] = [];
+
+  titlePage(state, meta, lines);
+  revisions(meta, lines);
+  distribution(meta, lines);
+  if (meta.includeDisclaimer) disclaimer(lines);
+  intendedAudience(meta, lines);
+
+  executiveSummary(state, meta, lines);
+  businessImpact(meta, lines);
+  investigationLimitations(meta, lines);
+  investigationGoals(state, meta, lines);
+  glossary(meta, lines);
+
+  lines.push("## 3 Timeline of events", "");
+  incidentTimeline(state, lines);
+  investigationTimeline(state, lines);
+
+  investigation(state, lines);
+  conclusions(state, meta, lines);
+  attachments(state, meta, lines);
 
   return lines.join("\n");
 }

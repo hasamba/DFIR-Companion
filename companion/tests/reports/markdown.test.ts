@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { renderMarkdownReport } from "../../src/reports/markdown.js";
+import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 describe("renderMarkdownReport", () => {
-  it("renders all four sections", () => {
+  it("renders the derived technical sections under the template structure", () => {
     const state = emptyState("c1");
     state.lastSummary = "Host WIN-01 compromised via phishing.";
     state.findings.push({ id: "f1", severity: "Critical", title: "Ransomware", description: "encryptor dropped",
@@ -15,17 +16,76 @@ describe("renderMarkdownReport", () => {
     state.mitreTechniques.push({ id: "T1486", name: "Data Encrypted for Impact", findingIds: ["f1"] });
 
     const md = renderMarkdownReport(state);
-    expect(md).toContain("## Executive Summary");
+    expect(md).toContain("# Incident Investigation Report");
+    expect(md).toContain("## 2 Executive summary");
     expect(md).toContain("Host WIN-01 compromised");
-    expect(md).toContain("## Investigation Log");
+    expect(md).toContain("### 3.2 Investigation timeline");
     expect(md).toContain("Reviewed file system");
-    expect(md).toContain("## Findings");
+    expect(md).toContain("### 4.2 Findings");
     expect(md).toContain("Ransomware");
-    expect(md).toContain("## MITRE ATT&CK");
+    expect(md).toContain("### 4.4 MITRE ATT&CK");
     expect(md).toContain("T1486");
+    // Attachments auto-indexes referenced evidence files.
+    expect(md).toContain("## 6 Attachments");
+    expect(md).toContain("`000005_t.webp`");
   });
 
-  it("renders the attacker path and forensic timeline ordered by event time", () => {
+  it("includes every template chapter and shows placeholders for empty human sections", () => {
+    const md = renderMarkdownReport(emptyState("c9"));
+    for (const heading of [
+      "## 1.1 Report revisions",
+      "## 1.2 Distribution list",
+      "## 1.3 Disclaimer and reading guide",
+      "## 1.4 Intended audience",
+      "## 2 Executive summary",
+      "## 2.1 Business Impact Analysis",
+      "## 2.2 Investigation limitations",
+      "## 2.3 Investigation goals and targets",
+      "## 2.4 Glossary of terms",
+      "## 3 Timeline of events",
+      "### 3.1 Incident timeline",
+      "## 4 Investigation",
+      "## 5 Conclusions and recommendations",
+      "## 6 Attachments",
+    ]) {
+      expect(md).toContain(heading);
+    }
+    // Empty human-only sections get the to-be-completed placeholder.
+    expect(md).toContain("To be completed by the investigator");
+    // Title page falls back to the case id when no incident id is set.
+    expect(md).toContain("**Incident ID:** c9");
+  });
+
+  it("lets human ReportMeta override the executive summary and add recommendations", () => {
+    const state = emptyState("c1");
+    state.lastSummary = "AI-generated summary that should be overridden.";
+    const meta = emptyReportMeta();
+    meta.organization = "ExampleCorp";
+    meta.investigator = "Jane Doe";
+    meta.executiveSummary = "Human-authored executive summary.";
+    meta.recommendations = ["Deploy EDR to all endpoints", "Rotate domain admin credentials"];
+    meta.glossary = [{ term: "EDR", explanation: "Endpoint Detection and Response" }];
+
+    const md = renderMarkdownReport(state, meta);
+    expect(md).toContain("**Organization:** ExampleCorp");
+    expect(md).toContain("**Investigator:** Jane Doe");
+    expect(md).toContain("Human-authored executive summary.");
+    expect(md).not.toContain("AI-generated summary that should be overridden.");
+    expect(md).toContain("Deploy EDR to all endpoints");
+    expect(md).toContain("| EDR | Endpoint Detection and Response |");
+  });
+
+  it("renders the disclaimer by default and omits it when turned off", () => {
+    const withDisclaimer = renderMarkdownReport(emptyState("c1"));
+    expect(withDisclaimer).toContain("Statements of probability");
+
+    const meta = emptyReportMeta();
+    meta.includeDisclaimer = false;
+    const without = renderMarkdownReport(emptyState("c1"), meta);
+    expect(without).not.toContain("Statements of probability");
+  });
+
+  it("renders the attacker path and incident timeline ordered by event time", () => {
     const state = emptyState("c1");
     state.attackerPath = "Initial access via phishing, then PsExec lateral movement, then ransomware.";
     state.forensicTimeline.push(
@@ -36,12 +96,10 @@ describe("renderMarkdownReport", () => {
     );
 
     const md = renderMarkdownReport(state);
-    expect(md).toContain("## Attacker Path");
+    expect(md).toContain("### 4.1 Attacker path");
     expect(md).toContain("PsExec lateral movement");
-    expect(md).toContain("## Forensic Timeline");
+    expect(md).toContain("### 3.1 Incident timeline");
     expect(md).toContain("Phishing email opened");
-    expect(md).toContain("Ransomware encryptor executed");
-    // earlier event (09:00) must render before the later one (15:00)
     expect(md.indexOf("Phishing email opened")).toBeLessThan(md.indexOf("Ransomware encryptor executed"));
   });
 
@@ -61,7 +119,7 @@ describe("renderMarkdownReport", () => {
     expect(md.indexOf("crit1")).toBeLessThan(md.indexOf("low1"));
   });
 
-  it("renders key investigative questions and an IOC section", () => {
+  it("renders key investigative questions and the IOC section", () => {
     const state = emptyState("c1");
     state.keyQuestions.push(
       { id: "q1", question: "What was the initial access vector?", status: "answered", answer: "phishing email", pointer: "finding f3" },
@@ -70,24 +128,23 @@ describe("renderMarkdownReport", () => {
     state.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "2026-05-20T09:00:00Z" });
 
     const md = renderMarkdownReport(state);
-    expect(md).toContain("## Key Investigative Questions");
+    expect(md).toContain("### 4.6 Key investigative questions");
     expect(md).toContain("What was the initial access vector?");
-    expect(md).toContain("collect 4624 logs on targets");   // pointer for an unknown
-    expect(md).toContain("## Indicators of Compromise (IOCs)");
+    expect(md).toContain("collect 4624 logs on targets");
+    expect(md).toContain("### 4.3 Indicators of compromise");
     expect(md).toContain("10.0.0.5");
   });
 
-  it("renders recommended next steps with priority, action and pointer", () => {
+  it("falls back to recommended next steps as draft recommendations when none are authored", () => {
     const state = emptyState("c1");
     state.nextSteps.push(
       { id: "n1", priority: "critical", action: "Pull Security.evtx on ALClient07", rationale: "confirm initial access", pointer: "event e3" },
       { id: "n2", priority: "high", action: "Detonate Bubeus.exe", rationale: "find C2", pointer: "ioc i2" },
     );
     const md = renderMarkdownReport(state);
-    expect(md).toContain("## Recommended Next Steps");
+    expect(md).toContain("## 5 Conclusions and recommendations");
     expect(md).toContain("CRITICAL");
     expect(md).toContain("Pull Security.evtx on ALClient07");
-    expect(md).toContain("confirm initial access");
     expect(md).toContain("Detonate Bubeus.exe");
   });
 
@@ -98,7 +155,7 @@ describe("renderMarkdownReport", () => {
       { id: "t2", description: "identify C2 domain", status: "closed", openedAt: "2026-05-20T10:00:00Z", closedAt: "2026-05-20T12:00:00Z" },
     );
     const md = renderMarkdownReport(state);
-    expect(md).toContain("## Investigation Threads");
+    expect(md).toContain("### 4.5 Investigation threads");
     expect(md).toContain("**Open (still being chased):**");
     expect(md).toContain("trace lateral movement");
     expect(md).toContain("**Closed (resolved):**");
