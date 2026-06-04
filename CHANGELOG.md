@@ -12,7 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **Keyboard shortcut to toggle capture** (extension) — `Ctrl+Shift+S` (macOS `Cmd+Shift+S`)
+  starts/stops screenshot capture without opening the popup. Turning it on takes one capture
+  immediately and flashes the toolbar badge `REC`/`off`; the popup shows the current binding and
+  a **rebind** link to `chrome://extensions/shortcuts`.
 
 ## [0.3.0] - 2026-06-04
 

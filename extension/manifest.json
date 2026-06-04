@@ -7,6 +7,12 @@
   "host_permissions": ["http://127.0.0.1:4773/*", "<all_urls>"],
   "background": { "service_worker": "serviceWorker.js", "type": "module" },
   "action": { "default_popup": "popup.html" },
+  "commands": {
+    "toggle-capture": {
+      "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
+      "description": "Toggle DFIR screenshot capture on/off"
+    }
+  },
   "content_scripts": [
     { "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_idle" }
   ]

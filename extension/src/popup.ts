@@ -53,6 +53,26 @@ async function showLastCapture(): Promise<void> {
   }
 }
 
+// Show the actual keyboard shortcut bound to toggle-capture (it may be unset if it
+// conflicted at install), and wire the "rebind" link to Chrome's shortcuts page.
+async function showHotkey(): Promise<void> {
+  const keysEl = document.getElementById("hotkeyKeys");
+  try {
+    const cmds = await chrome.commands.getAll();
+    const toggle = cmds.find((c) => c.name === "toggle-capture");
+    if (keysEl) keysEl.textContent = toggle?.shortcut || "(not set)";
+  } catch {
+    /* commands API unavailable — leave the default hint */
+  }
+  const rebind = document.getElementById("rebind");
+  if (rebind) {
+    rebind.onclick = (e) => {
+      e.preventDefault();
+      void chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
+    };
+  }
+}
+
 async function init() {
   const s = await load();
   $("caseId").value = s.caseId;
@@ -61,6 +81,7 @@ async function init() {
   $("dedupThreshold").value = String(s.dedupThreshold);
   await refreshStatus(s);
   await showLastCapture();
+  await showHotkey();
 
   document.getElementById("createCase")!.onclick = async () => {
     const f = readForm(s.running);

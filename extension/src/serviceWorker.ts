@@ -59,6 +59,20 @@ async function rescheduleAlarm(): Promise<void> {
   await setActionIcon(settings.running).catch(() => {});
 }
 
+// Flip capture on/off (used by the keyboard shortcut). Persists the same settings shape
+// the popup writes, reschedules the alarm + icon, and flashes the toolbar badge so the
+// hotkey has a visible effect. When turning ON, take one capture immediately so the
+// shortcut feels responsive instead of waiting for the next timer tick.
+async function toggleCapture(): Promise<void> {
+  const settings = await getSettings();
+  const next: Settings = { ...settings, running: !settings.running };
+  await chrome.storage.local.set({ settings: next });
+  await rescheduleAlarm();
+  await chrome.action.setBadgeText({ text: next.running ? "REC" : "off" });
+  await chrome.action.setBadgeBackgroundColor({ color: next.running ? "#cc3333" : "#777777" });
+  if (next.running) void captureActiveTab("timer");
+}
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM) void captureActiveTab("timer");
 });
@@ -72,3 +86,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 chrome.runtime.onInstalled.addListener(() => void rescheduleAlarm());
 chrome.runtime.onStartup.addListener(() => void rescheduleAlarm());
+// Keyboard shortcut (default Ctrl+Shift+S / Cmd+Shift+S) to toggle capture on/off.
+chrome.commands?.onCommand.addListener((command) => {
+  if (command === "toggle-capture") void toggleCapture();
+});
