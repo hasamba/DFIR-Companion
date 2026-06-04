@@ -1,0 +1,40 @@
+import { describe, it, expect } from "vitest";
+import { renderHtmlReport } from "../../src/reports/html.js";
+import { emptyReportMeta } from "../../src/reports/reportMeta.js";
+import { emptyState } from "../../src/analysis/stateTypes.js";
+
+describe("renderHtmlReport", () => {
+  it("produces a standalone HTML document from the markdown report", () => {
+    const state = emptyState("c1");
+    state.lastSummary = "Host compromised via phishing.";
+    state.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "2026-05-20T09:00:00Z" });
+
+    const html = renderHtmlReport(state);
+    expect(html.startsWith("<!doctype html>")).toBe(true);
+    expect(html).toContain("<title>Incident Report — c1</title>");
+    expect(html).toContain("<h1>Incident Investigation Report</h1>");
+    expect(html).toContain("Host compromised via phishing.");
+    expect(html).toContain("<table>");        // the IOC markdown table is converted to HTML
+    expect(html).toContain("10.0.0.5");
+    expect(html.trim().endsWith("</html>")).toBe(true);
+  });
+
+  it("uses the incident id in the document title when set", () => {
+    const meta = emptyReportMeta();
+    meta.incidentId = "INC-42";
+    const html = renderHtmlReport(emptyState("c1"), meta);
+    expect(html).toContain("<title>Incident Report — INC-42</title>");
+  });
+
+  it("escapes raw HTML from untrusted investigation text so it can't become live markup", () => {
+    const state = emptyState("c1");
+    state.findings.push({
+      id: "f1", severity: "High", title: "XSS attempt",
+      description: "<script>alert(document.cookie)</script>",
+      relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open",
+    });
+    const html = renderHtmlReport(state);
+    expect(html).not.toContain("<script>");        // the document contains no real <script> tag
+    expect(html).toContain("&lt;script&gt;");       // the attacker-controlled text is rendered inert
+  });
+});

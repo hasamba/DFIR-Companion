@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     human-authored glossary overrides it.
   - **Report revisions** auto-seed a `1.0` row (dated from the case, authored by the investigators)
     when none are entered.
+  - **Export as Markdown or HTML** — `report.html` is generated alongside `report.md` (standalone,
+    print-friendly, "Print → Save as PDF"). The dashboard shows Open-HTML / Download-HTML /
+    Download-Markdown links after generation. Served via `GET /cases/:id/report/report.{md,html}`
+    (`?download=1` forces a save). Raw HTML in untrusted DFIR data is escaped in the HTML export.
 
 ## [0.3.0] - 2026-06-04
 

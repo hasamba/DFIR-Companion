@@ -551,6 +551,35 @@ describe("state and report routes", () => {
     const res = await request(app).post("/cases/c1/report");
     expect(res.status).toBe(200);
     expect(res.body.markdown).toMatch(/report\.md$/);
+    expect(res.body.html).toMatch(/report\.html$/);
+  });
+
+  it("serves the generated report for export as HTML or Markdown (with optional download)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-report-file-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore);
+    const app = createApp(store, { stateStore, reportWriter });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+
+    // Before generation the file doesn't exist yet.
+    expect((await request(app).get("/cases/c1/report/report.html")).status).toBe(404);
+
+    await request(app).post("/cases/c1/report");
+
+    const html = await request(app).get("/cases/c1/report/report.html");
+    expect(html.status).toBe(200);
+    expect(html.headers["content-type"]).toContain("text/html");
+    expect(html.text).toContain("<!doctype html>");
+    expect(html.headers["content-disposition"]).toBeUndefined(); // inline view
+
+    const dl = await request(app).get("/cases/c1/report/report.md?download=1");
+    expect(dl.status).toBe(200);
+    expect(dl.headers["content-type"]).toContain("text/markdown");
+    expect(dl.headers["content-disposition"]).toContain('attachment; filename="report.md"');
+
+    // Only known report files are served.
+    expect((await request(app).get("/cases/c1/report/secrets.txt")).status).toBe(400);
   });
 
   it("GET/PUT /cases/:id/report-meta round-trips and flows into the generated report", async () => {

@@ -143,7 +143,9 @@ opt-in per case (`enrich-control`), sends indicators to third parties. Providers
    the fields and tag `sources`.
 4. Surface it in `public/dashboard.html` (plain JS; `esc()` all AI/user text in `innerHTML`;
    fail loudly with a "restart the server" message on a 404).
-5. Reflect it in reports (`reports/markdown.ts`, `reports/csv.ts`) when relevant.
+5. Reflect it in reports (`reports/markdown.ts`, `reports/csv.ts`) when relevant. `report.md` is the
+   single source of truth; the HTML export (`reports/html.ts`) renders that Markdown via `marked`
+   (raw HTML escaped) — so a Markdown change flows to HTML automatically.
 6. Update `companion/README.md` + `.env.example` + `CHANGELOG.md [Unreleased]` + the **Features
    list in the root `README.md`** (and remove the item from its **Todo / Roadmap** if it was
    listed there), then run both test suites. Keeping the root README Features section current is a

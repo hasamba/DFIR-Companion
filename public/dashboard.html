@@ -30,6 +30,9 @@
     button { background: #2d6cdf; color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
     input { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; padding: 6px; border-radius: 6px; }
     #status { font-size: 12px; color: #9aa4b2; }
+    .report-links { font-size: 12px; }
+    .report-links a { color: #6aa9ff; text-decoration: none; }
+    .report-links a:hover { text-decoration: underline; }
     #aiStatus { font-size: 12px; padding: 3px 8px; border-radius: 10px; }
     .ai-unknown { background: #2a2f3a; color: #9aa4b2; }
     .ai-off { background: #2a2f3a; color: #9aa4b2; }
@@ -80,7 +83,8 @@
     <button id="importLog" title="Upload a generic log file (firewall, syslog, sshd, IIS/Apache/nginx, application logs — .log or .txt). Each line is analyzed for forensic events and IOCs.">Import Log</button>
     <input id="thorFile" type="file" accept=".json,.jsonl,application/json,text/plain" style="display:none" />
     <button id="importThor" title="Upload a THOR (Nextron) scanner report in JSON-Lines format (thor --jsonfile). Findings map deterministically to the timeline + IOCs; scan info/lifecycle noise is dropped automatically.">Import THOR</button>
-    <button id="generateReport">Generate Report</button>
+    <button id="generateReport" title="Write the report (Markdown + HTML) and CSVs; then export via the links that appear">Generate Report</button>
+    <span id="reportLinks" class="report-links"></span>
     <button id="toggleAll" title="Collapse or expand all sections">Collapse all</button>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
@@ -798,9 +802,20 @@
     document.getElementById("generateReport").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
+      document.getElementById("status").textContent = "generating report…";
+      document.getElementById("reportLinks").innerHTML = "";
       fetch(`/cases/${caseId}/report`, { method: "POST" })
-        .then(r => r.json())
-        .then(p => document.getElementById("status").textContent = `report written: ${p.markdown}`);
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => {
+          document.getElementById("status").textContent = "report written — export:";
+          const c = encodeURIComponent(caseId);
+          // Export options: view the HTML, or download either format.
+          document.getElementById("reportLinks").innerHTML =
+            `<a href="/cases/${c}/report/report.html" target="_blank" rel="noopener">Open HTML</a>` +
+            ` · <a href="/cases/${c}/report/report.html?download=1">Download HTML</a>` +
+            ` · <a href="/cases/${c}/report/report.md?download=1">Download Markdown</a>`;
+        })
+        .catch(e => document.getElementById("status").textContent = "report failed: " + e.message);
     };
 
     // ── Collapsible sections ──────────────────────────────────────────────────

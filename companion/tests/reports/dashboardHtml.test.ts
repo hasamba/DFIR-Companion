@@ -20,4 +20,11 @@ describe("dashboard.html", () => {
     expect(html).toContain("/report-meta");
     expect(html).not.toContain('id="rm-investigator"'); // replaced by the plural field
   });
+
+  it("offers Markdown and HTML export links after generating the report", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="reportLinks"');
+    expect(html).toContain("/report/report.html");
+    expect(html).toContain("/report/report.md?download=1");
+  });
 });

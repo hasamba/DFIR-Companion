@@ -30,6 +30,11 @@ describe("ReportWriter", () => {
     const md = await readFile(paths.markdown, "utf8");
     expect(md).toContain("summary text");
 
+    expect(paths.html).toMatch(/report\.html$/);
+    const html = await readFile(paths.html, "utf8");
+    expect(html).toContain("<!doctype html>");
+    expect(html).toContain("summary text");
+
     const findings = await readFile(paths.findingsCsv, "utf8");
     expect(findings).toContain("id,severity,title");
 

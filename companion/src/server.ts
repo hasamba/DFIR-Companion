@@ -318,6 +318,33 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Serve a generated report file for viewing or download (export as Markdown or HTML).
+  // Only the known report artifacts are served; `?download=1` forces a save dialog.
+  app.get("/cases/:id/report/:file", async (req: Request, res: Response) => {
+    const types: Record<string, string> = {
+      "report.md": "text/markdown; charset=utf-8",
+      "report.html": "text/html; charset=utf-8",
+    };
+    const file = req.params.file;
+    if (!Object.prototype.hasOwnProperty.call(types, file)) {
+      return res.status(400).json({ error: "unknown report file" });
+    }
+    try {
+      const buf = await readFile(join(store.reportsDir(req.params.id), file));
+      res.type(types[file]);
+      if (req.query.download !== undefined) {
+        res.setHeader("Content-Disposition", `attachment; filename="${file}"`);
+      }
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(buf);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return res.status(404).json({ error: "report not generated yet — POST /cases/:id/report first" });
+      }
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Human-authored report metadata (title page, distribution, BIA, limitations, glossary,
   // recommendations…). GET returns the stored values (or defaults); PUT replaces them with a
   // normalized payload. These merge into report.md alongside the auto-derived sections.
