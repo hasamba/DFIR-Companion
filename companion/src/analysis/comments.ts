@@ -1,8 +1,9 @@
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
+import { atomicWrite } from "../storage/atomicWrite.js";
 
 // Investigator comments attached to any case entity (a forensic event, finding, IOC, key
 // question, asset…), so investigators can collaborate. Kept in a per-case side file
@@ -45,10 +46,7 @@ export class CommentsStore {
   }
 
   private async save(caseId: string, comments: Comment[]): Promise<void> {
-    const target = this.path(caseId);
-    const tmp = target + ".tmp";
-    await writeFile(tmp, JSON.stringify(comments, null, 2), "utf8");
-    await rename(tmp, target);
+    await atomicWrite(this.path(caseId), JSON.stringify(comments, null, 2));
   }
 
   // Append a comment (server-assigned id + createdAt). Author/text are trimmed; author

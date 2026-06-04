@@ -1,4 +1,5 @@
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { atomicWrite } from "../storage/atomicWrite.js";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 
@@ -30,9 +31,6 @@ export class AiControlStore {
   }
 
   async save(caseId: string, control: AiControl): Promise<void> {
-    const target = this.path(caseId);
-    const tmp = target + ".tmp";
-    await writeFile(tmp, JSON.stringify(control, null, 2), "utf8");
-    await rename(tmp, target); // atomic replace
+    await atomicWrite(this.path(caseId), JSON.stringify(control, null, 2));
   }
 }

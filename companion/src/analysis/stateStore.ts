@@ -1,6 +1,7 @@
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
+import { atomicWrite } from "../storage/atomicWrite.js";
 import { type InvestigationState, emptyState } from "./stateTypes.js";
 
 export class StateStore {
@@ -24,9 +25,8 @@ export class StateStore {
   }
 
   async save(state: InvestigationState): Promise<void> {
-    const target = this.path(state.caseId);
-    const tmp = target + ".tmp";
-    await writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-    await rename(tmp, target); // atomic replace
+    // Atomic write with retry — a Dropbox/OneDrive-synced cases/ dir can briefly lock
+    // investigation.json and make the rename throw EPERM.
+    await atomicWrite(this.path(state.caseId), JSON.stringify(state, null, 2));
   }
 }

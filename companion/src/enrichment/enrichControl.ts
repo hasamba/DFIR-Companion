@@ -1,6 +1,7 @@
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
+import { atomicWrite } from "../storage/atomicWrite.js";
 
 // Per-case threat-intel enrichment control. Instead of a single on/off, the case stores the
 // explicit set of ENABLED provider names. OPSEC default = local providers only (your own
@@ -50,9 +51,6 @@ export class EnrichControlStore {
   }
 
   async save(caseId: string, control: EnrichControl): Promise<void> {
-    const target = this.path(caseId);
-    const tmp = target + ".tmp";
-    await writeFile(tmp, JSON.stringify(control, null, 2), "utf8");
-    await rename(tmp, target); // atomic replace
+    await atomicWrite(this.path(caseId), JSON.stringify(control, null, 2));
   }
 }

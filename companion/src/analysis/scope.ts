@@ -1,4 +1,5 @@
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { atomicWrite } from "../storage/atomicWrite.js";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { ForensicEvent } from "./stateTypes.js";
@@ -50,9 +51,6 @@ export class ScopeStore {
   }
 
   async save(caseId: string, scope: ScopeWindow): Promise<void> {
-    const target = this.path(caseId);
-    const tmp = target + ".tmp";
-    await writeFile(tmp, JSON.stringify(scope, null, 2), "utf8");
-    await rename(tmp, target);
+    await atomicWrite(this.path(caseId), JSON.stringify(scope, null, 2));
   }
 }

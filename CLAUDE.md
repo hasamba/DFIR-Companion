@@ -93,7 +93,10 @@ selection — the enabled provider names; **default = local-only** (MISP/YETI), 
 sections — title page, distribution, BIA, glossary, recommendations…), `comments.json`
 (investigator comments on entities — never wiped by synthesis).
 
-**Per-case stores** follow the same pattern (atomic temp-file rename): `AiControlStore`,
+**Per-case stores** follow the same pattern (atomic temp-file rename via `storage/atomicWrite.ts` —
+which **retries the rename through a transient `EPERM`/`EBUSY`/`EACCES` lock**, since `cases/` may live
+in a synced folder where Dropbox/OneDrive/AV briefly locks the file mid-rename; route every new store's
+save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
 `LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`. Pure filters/transforms live next to
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`) and are unit-tested independently of I/O.

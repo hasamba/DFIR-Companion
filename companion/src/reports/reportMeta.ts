@@ -1,4 +1,5 @@
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { atomicWrite } from "../storage/atomicWrite.js";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -100,10 +101,7 @@ export class ReportMetaStore {
   // normalized value actually written so callers can echo it back to the UI.
   async save(caseId: string, meta: unknown): Promise<ReportMeta> {
     const normalized = normalizeReportMeta(meta);
-    const target = this.path(caseId);
-    const tmp = target + ".tmp";
-    await writeFile(tmp, JSON.stringify(normalized, null, 2), "utf8");
-    await rename(tmp, target);
+    await atomicWrite(this.path(caseId), JSON.stringify(normalized, null, 2));
     return normalized;
   }
 }

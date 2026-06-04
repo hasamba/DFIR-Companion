@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`EPERM` on state save in a synced folder.** When `cases/` lives inside Dropbox / OneDrive (or
+  with some antivirus), the client briefly locks `investigation.json` while syncing, so the atomic
+  `rename(tmp → target)` failed with `EPERM` mid-analysis. All per-case writes now go through a shared
+  `atomicWrite` that **retries the rename through a transient lock** (`EPERM`/`EBUSY`/`EACCES`) with a
+  short backoff. (Tip: for best results, point `DFIR_CASES_ROOT` at a path **outside** your synced
+  folder — case data is local/gitignored anyway.)
+
 ### Changed
 - **Per-source enrichment selection (OPSEC).** Enrichment is no longer all-or-nothing: each source is
   **local** (your own MISP / YETI instance — queries stay on-box) or **external** (VirusTotal, AbuseIPDB,
