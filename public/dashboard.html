@@ -804,7 +804,7 @@
       fetch(`/cases/${caseId}/report`, { method: "POST" })
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
         .then(() => {
-          document.getElementById("status").textContent = "report written — export:";
+          document.getElementById("status").textContent = "report written";
           const c = encodeURIComponent(caseId);
           // Export options: view the HTML, or download either format.
           document.getElementById("reportLinks").innerHTML =
