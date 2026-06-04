@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-04
+
 ### Changed
 - **Synthesis is cheaper and smarter.** (1) **Skip-if-unchanged** — the live, debounced synthesis
   no longer re-calls the model when the in-scope timeline / IOCs / scope / legitimate markers are
@@ -251,7 +253,8 @@ Initial baseline.
   report exports.
 - Scripts: `dev`, `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.1.0...v0.2.0
