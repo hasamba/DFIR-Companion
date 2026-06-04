@@ -51,6 +51,8 @@ export interface ThorEvent {
   md5?: string;
   path?: string;
   sources?: string[];
+  processName?: string;  // for parent→child chain validation (ProcessCheck rows)
+  parentName?: string;
 }
 
 export interface ThorIoc {
@@ -167,6 +169,11 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
     const sha256 = firstStr(row, ["sha256", "image_sha256", "archive_sha256", "sha256_1"]).toLowerCase() || undefined;
     const md5 = firstStr(row, ["md5", "image_md5", "archive_md5", "md5_1"]).toLowerCase() || undefined;
     const path = (firstStr(row, ["file", "image_file", "image_path", "filepath", "path"]) || undefined)?.trim();
+    // ProcessCheck rows carry the process + parent (a path) — capture both as basenames
+    // so parent→child chain validation (RockyRaccoon) can run on the event.
+    const baseName = (s: string): string => s.trim().split(/[\\/]/).pop() || s.trim();
+    const processName = firstStr(row, ["process_name", "image_name"]) ? baseName(firstStr(row, ["process_name", "image_name"])) : undefined;
+    const parentName = firstStr(row, ["parent"]) ? baseName(firstStr(row, ["parent"])) : undefined;
 
     const existing = bySig.get(sig);
     if (existing) {
@@ -179,6 +186,8 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
         ...(sha256 && /^[a-f0-9]{64}$/.test(sha256) ? { sha256 } : {}),
         ...(md5 && /^[a-f0-9]{32}$/.test(md5) ? { md5 } : {}),
         ...(path ? { path } : {}),
+        ...(processName ? { processName } : {}),
+        ...(parentName ? { parentName } : {}),
         sources: ["THOR"],
       });
       order.push(sig);

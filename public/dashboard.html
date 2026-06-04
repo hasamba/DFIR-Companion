@@ -482,10 +482,20 @@
             const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
             const corro = (realSrc.length > 1)
               ? ` <span title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}" style="background:#13331f;color:#6bcB77;border:1px solid #1f5a35;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">⊕ ${esc(realSrc.length)} sources</span>` : "";
+            // Process-chain validation (RockyRaccoon): flag an anomalous parent→child.
+            let chain = "";
+            if (e.chainCheck) {
+              const cc = e.chainCheck;
+              const col = cc.observed ? "#6bcB77" : "#ff6b6b";
+              const label = cc.observed ? "⛓ chain seen" : "⚠ unusual parent";
+              const inner = `<span title="${escAttr(cc.note || "")}" style="color:${col};border:1px solid ${col};border-radius:4px;padding:0 6px;font-size:11px">${label}</span>`;
+              chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner);
+            }
             // Strip any legacy "[corroborated by N sources: …]" note from old state for display.
             const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
-            return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge}${corro} ` +
+            return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge}${corro}${chain} ` +
               `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}` +
+              `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}` +
               `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${esc(e.mitreTechniques.join(", "))}</small>` : ""}` +
               `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +
               `${evidenceLinks(state.caseId, e.sourceScreenshots)}</div>`;

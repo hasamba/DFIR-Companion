@@ -49,6 +49,8 @@ export const deltaSchema = z.object({
     md5: z.string().optional(),
     path: z.string().optional(),
     sources: z.array(z.string()).optional(),
+    processName: z.string().optional(),
+    parentName: z.string().optional(),
   })).optional(),
   // Narrative reconstruction of the attacker's path (kill-chain story).
   attackerPath: z.string().optional(),

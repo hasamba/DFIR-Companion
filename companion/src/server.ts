@@ -19,7 +19,8 @@ import { VirusTotalProvider } from "./enrichment/virustotal.js";
 import { MalwareBazaarProvider } from "./enrichment/malwarebazaar.js";
 import { AbuseIpdbProvider } from "./enrichment/abuseipdb.js";
 import { MispProvider } from "./enrichment/misp.js";
-import { RockyRaccoonProvider } from "./enrichment/rockyraccoon.js";
+import { RockyRaccoonProvider, type ParentChildResult } from "./enrichment/rockyraccoon.js";
+import { validateProcessChains, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { InvestigationState } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
@@ -365,10 +366,29 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // Re-load + write only the iocs so we don't clobber a concurrent state change.
       const latest = await options.stateStore!.load(caseId);
       const byValue = new Map(iocs.map((i) => [i.value, i]));
-      const merged = { ...latest, iocs: latest.iocs.map((i) => byValue.get(i.value) ?? i), updatedAt: new Date().toISOString() };
+      let merged = { ...latest, iocs: latest.iocs.map((i) => byValue.get(i.value) ?? i), updatedAt: new Date().toISOString() };
+
+      // Process-chain validation: if a RockyRaccoon provider is present, validate
+      // parent→child relationships on the forensic timeline (anomalous chains are a
+      // strong signal). Uses the same throttle/cap as IOC enrichment.
+      const rocky = providers.find((p): p is EnrichmentProvider & { checkParentChild: (p: string, c: string) => Promise<ParentChildResult | null> } =>
+        typeof (p as { checkParentChild?: unknown }).checkParentChild === "function");
+      let chainSummary: ChainSummary | undefined;
+      if (rocky) {
+        const { events, summary: cs } = await validateProcessChains(merged.forensicTimeline, {
+          check: (p, c) => rocky.checkParentChild(p, c),
+          delayMs: options.enrichDelayMs,
+          maxChecks: options.enrichMaxIocs,
+          force,
+        });
+        merged = { ...merged, forensicTimeline: events };
+        chainSummary = cs;
+      }
+
       await options.stateStore!.save(merged);
       options.onState?.(merged);
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})` });
+      const chainNote = chainSummary ? `; chains ${chainSummary.anomalies} anomalous/${chainSummary.checked}` : "";
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}` });
     })().catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
   }
 

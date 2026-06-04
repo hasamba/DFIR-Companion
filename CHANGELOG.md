@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Process-chain validation (RockyRaccoon)** — when enrichment is on, parent→child process
+  relationships on the forensic timeline (e.g. THOR ProcessCheck's process + parent) are checked
+  against ~346M execution events. An **unobserved chain** (like `excel.exe → powershell.exe`) is
+  flagged on the event with a red "⚠ unusual parent" badge + note; a seen chain gets a green "⛓
+  chain seen". Deduplicated per distinct (parent,child) pair, throttled/capped/cached like IOC
+  enrichment. THOR import now captures `processName`/`parentName` (basenames) on events.
 - **Threat-intel IOC enrichment** — look up the case's IOCs (hashes/IPs/domains/URLs) on
   **VirusTotal** (hash/IP/domain/URL), **MalwareBazaar** (hash), **AbuseIPDB** (IP), and **MISP**
   (your own instance — `DFIR_MISP_URL` + `DFIR_MISP_KEY`), and **RockyRaccoon** (Windows

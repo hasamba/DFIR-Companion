@@ -69,6 +69,21 @@ export interface ForensicEvent {
   md5?: string;
   path?: string;                // file path the event concerns (normalized lowercased for matching)
   sources?: string[];           // distinct tools/imports that reported this event (corroboration)
+  // Process-chain fields (for RockyRaccoon parent→child validation). processName/parentName
+  // are filled by importers that know them (e.g. THOR ProcessCheck); chainCheck is set by
+  // the validation pass when enrichment is on.
+  processName?: string;
+  parentName?: string;
+  chainCheck?: ProcessChainCheck;
+}
+
+// Result of validating a parent→child process relationship against behavioral intel
+// (RockyRaccoon). `observed: false` on a real chain is an anomaly worth surfacing.
+export interface ProcessChainCheck {
+  observed: boolean;
+  note: string;                 // human summary, e.g. "excel.exe → powershell.exe NOT observed"
+  link?: string;
+  checkedAt: string;
 }
 
 export interface Technique {

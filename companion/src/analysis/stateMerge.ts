@@ -144,6 +144,8 @@ export function mergeDelta(
       if (incoming.md5) existing.md5 = incoming.md5;
       if (incoming.path) existing.path = incoming.path;
       if (incoming.sources?.length) existing.sources = uniq([...(existing.sources ?? []), ...incoming.sources]);
+      if (incoming.processName) existing.processName = incoming.processName;
+      if (incoming.parentName) existing.parentName = incoming.parentName;
     } else {
       forensicTimeline.push({
         id: incoming.id,
@@ -159,6 +161,8 @@ export function mergeDelta(
         ...(incoming.md5 ? { md5: incoming.md5 } : {}),
         ...(incoming.path ? { path: incoming.path } : {}),
         ...(incoming.sources?.length ? { sources: uniq(incoming.sources) } : {}),
+        ...(incoming.processName ? { processName: incoming.processName } : {}),
+        ...(incoming.parentName ? { parentName: incoming.parentName } : {}),
       });
     }
   }

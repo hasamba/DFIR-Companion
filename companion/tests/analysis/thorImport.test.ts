@@ -89,6 +89,17 @@ describe("parseThorReport", () => {
     expect(r.kept).toBe(3);
   });
 
+  it("captures process + parent basenames from a ProcessCheck row (for chain validation)", () => {
+    const proc = {
+      time: "2026-06-03T09:43:07Z", hostname: "WIN11", level: "Alert", module: "ProcessCheck",
+      message: "Malicious process found", process_name: "powershell.exe",
+      parent: "C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
+    };
+    const r = parseThorReport(jsonl(proc));
+    expect(r.events[0].processName).toBe("powershell.exe");
+    expect(r.events[0].parentName).toBe("EXCEL.EXE");        // basename of the parent path
+  });
+
   it("ignores unparseable lines without throwing", () => {
     const r = parseThorReport("not json\n" + JSON.stringify(PROC_ALERT) + "\n{bad\n");
     expect(r.kept).toBe(1);
