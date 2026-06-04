@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/dfir-companion-logo.jpg" alt="DFIR Companion logo" width="240" />
+</p>
+
 # DFIR Companion
 
 > **AI-assisted DFIR triage — on your machine.** Turns investigation screenshots and imported

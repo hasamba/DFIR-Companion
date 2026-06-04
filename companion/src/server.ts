@@ -1138,6 +1138,16 @@ export function startServer(casesRoot: string, port = 4773): void {
     irisOptions: irisExportOptions(),
   });
 
+  // Serve the app logo (the dashboard favicon; also requested as /favicon.ico by browsers).
+  app.get(["/dfir-companion-logo.jpg", "/favicon.ico"], async (_req, res) => {
+    try {
+      const buf = await readFile(new URL("../../public/dfir-companion-logo.jpg", import.meta.url));
+      res.type("image/jpeg").set("Cache-Control", "public, max-age=86400").send(buf);
+    } catch {
+      res.status(404).end();
+    }
+  });
+
   // Serve the dashboard.
   app.get("/dashboard", async (_req, res) => {
     const html = await readFile(new URL("../../public/dashboard.html", import.meta.url), "utf8");
