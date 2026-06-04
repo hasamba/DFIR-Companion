@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { VirusTotalProvider } from "../../src/enrichment/virustotal.js";
 import { MalwareBazaarProvider } from "../../src/enrichment/malwarebazaar.js";
 import { AbuseIpdbProvider } from "../../src/enrichment/abuseipdb.js";
+import { MispProvider } from "../../src/enrichment/misp.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -76,5 +77,40 @@ describe("AbuseIpdbProvider", () => {
   it("maps a zero score to harmless", async () => {
     const ab = new AbuseIpdbProvider({ apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ data: { abuseConfidenceScore: 0 } })) });
     expect((await ab.lookup("ip", "8.8.8.8"))!.verdict).toBe("harmless");
+  });
+});
+
+describe("MispProvider", () => {
+  it("reports a matched attribute (to_ids) as malicious with event tags + link", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({
+      response: { Attribute: [
+        { type: "sha256", value: "abcd", to_ids: true, event_id: "42",
+          Event: { id: "42", info: "TrickBot campaign", threat_level_id: "1" },
+          Tag: [{ name: "tlp:amber" }, { name: "malware:trickbot" }] },
+      ] },
+    }));
+    const misp = new MispProvider({ baseUrl: "https://misp.example.org/", apiKey: "k", fetchFn });
+    const r = await misp.lookup("hash", "abcd");
+    expect(r).toMatchObject({ source: "MISP", verdict: "malicious", detections: 1 });
+    expect(r!.score).toContain("TrickBot campaign");
+    expect(r!.tags).toEqual(expect.arrayContaining(["tlp:amber", "malware:trickbot"]));
+    expect(r!.link).toBe("https://misp.example.org/events/view/42");
+    // Auth header sent, trailing slash on baseUrl normalized.
+    const init = fetchFn.mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>).Authorization).toBe("k");
+    expect(fetchFn.mock.calls[0][0]).toBe("https://misp.example.org/attributes/restSearch");
+  });
+
+  it("treats a match without to_ids / high threat level as suspicious", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ response: { Attribute: [{ type: "ip-dst", value: "1.2.3.4", to_ids: false, Event: { id: "7", threat_level_id: "3" } }] } }));
+    const misp = new MispProvider({ baseUrl: "https://m", apiKey: "k", fetchFn });
+    expect((await misp.lookup("ip", "1.2.3.4"))!.verdict).toBe("suspicious");
+  });
+
+  it("returns null when the indicator is not present on the instance, supports all kinds", async () => {
+    const misp = new MispProvider({ baseUrl: "https://m", apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ response: { Attribute: [] } })) });
+    expect(await misp.lookup("domain", "evil.test")).toBeNull();
+    expect(misp.supports("hash")).toBe(true);
+    expect(misp.supports("url")).toBe(true);
   });
 });

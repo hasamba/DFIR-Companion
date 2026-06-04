@@ -18,6 +18,7 @@ import type { EnrichmentProvider } from "./enrichment/provider.js";
 import { VirusTotalProvider } from "./enrichment/virustotal.js";
 import { MalwareBazaarProvider } from "./enrichment/malwarebazaar.js";
 import { AbuseIpdbProvider } from "./enrichment/abuseipdb.js";
+import { MispProvider } from "./enrichment/misp.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { InvestigationState } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
@@ -754,6 +755,7 @@ export function buildEnrichmentProviders(): EnrichmentProvider[] {
   if (process.env.DFIR_VT_KEY) providers.push(new VirusTotalProvider({ apiKey: process.env.DFIR_VT_KEY }));
   if (process.env.DFIR_MB_KEY) providers.push(new MalwareBazaarProvider({ apiKey: process.env.DFIR_MB_KEY }));
   if (process.env.DFIR_ABUSEIPDB_KEY) providers.push(new AbuseIpdbProvider({ apiKey: process.env.DFIR_ABUSEIPDB_KEY }));
+  if (process.env.DFIR_MISP_URL && process.env.DFIR_MISP_KEY) providers.push(new MispProvider({ baseUrl: process.env.DFIR_MISP_URL, apiKey: process.env.DFIR_MISP_KEY }));
   return providers;
 }
 
