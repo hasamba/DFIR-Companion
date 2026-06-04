@@ -143,7 +143,10 @@ opt-in per case (`enrich-control`), sends indicators to third parties. Providers
 4. Surface it in `public/dashboard.html` (plain JS; `esc()` all AI/user text in `innerHTML`;
    fail loudly with a "restart the server" message on a 404).
 5. Reflect it in reports (`reports/markdown.ts`, `reports/csv.ts`) when relevant.
-6. Update `companion/README.md` + `.env.example` + `CHANGELOG.md [Unreleased]`, run both test suites.
+6. Update `companion/README.md` + `.env.example` + `CHANGELOG.md [Unreleased]` + the **Features
+   list in the root `README.md`** (and remove the item from its **Todo / Roadmap** if it was
+   listed there), then run both test suites. Keeping the root README Features section current is a
+   standing instruction — it's the living catalogue of what the tool does.
 
 ## Git
 

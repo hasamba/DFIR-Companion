@@ -25,6 +25,72 @@ For each case the AI builds and keeps up to date:
 - **Investigation threads** — open leads and resolved ones.
 - **Reports** — Markdown + CSV + JSON exports.
 
+## Features
+
+A living catalogue of what the tool does today. (Keep this updated as features land.)
+
+### Capture & evidence
+- **MV3 browser extension** — timer + event-driven capture (navigation, tab switch, click);
+  lossless full-resolution PNG; offline queue + auto-sync; per-case Start/Stop; **`Ctrl+Shift+S`
+  hotkey** to toggle capture; captured tab title baked into the screenshot filename.
+- **Evidence-first ingest** — screenshot written to disk + append-only `captures.jsonl` audit
+  line **before** any analysis; perceptual-hash duplicate detection.
+- **Localhost only** — server binds `127.0.0.1`; CORS + Private-Network-Access so the
+  `chrome-extension://` origin can reach it.
+
+### Evidence import (beyond screenshots)
+- **CSV import** — Velociraptor / EDR result exports → forensic events + IOCs.
+- **Generic log import** — firewall / syslog / sshd / IIS·Apache·nginx / VPN. Repetitive lines
+  are **deduplicated into counted patterns**, then the AI **triages only the suspicious ones**
+  (aggregated "20× …" with a time span) so the timeline stays signal-rich.
+- **THOR (Nextron) import** — JSON-Lines, **deterministic** (no AI call). Drops scan info/
+  lifecycle noise, optional **severity floor** (`minLevel`), maps level → severity, reads each
+  finding's own artifact time.
+
+### AI analysis
+- **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only
+  **synthesis** → findings, IOCs, MITRE ATT&CK, attacker path, key questions, next steps, threads.
+- **Providers** — OpenAI, OpenRouter, Ollama, Gemini; optional **two-tier** (cheap extraction +
+  strong synthesis); high-detail image tiling for small-text OCR; tunable timeout; **bounded
+  `max_tokens`** + **truncation-tolerant JSON parsing** (no more spurious OpenRouter 402 / parse errors).
+- **EDR/XDR + SIEM consoles are evidence** — CrowdStrike, Defender, SentinelOne, Splunk, Elastic,
+  Sentinel, QRadar detections are extracted; analyst tool-operation / UI navigation is filtered out,
+  with an **incident-signal allowlist** so a real detection is never dropped.
+- **Severity-aware findings** — a Critical/High artifact row becomes a finding by default; a
+  deterministic safety net auto-creates one (`AUTO` badge) for any high-severity event synthesis missed.
+- **Live auto-synthesis** — debounced re-synthesis during capture so the dashboard stays current.
+
+### Correlation & deduplication
+- **Cross-source correlation** — the same artifact reported by different tools (e.g. Velociraptor +
+  THOR on one file) collapses into **one corroborated event** (shared hash / same path within a time
+  window / exact duplicate), tagged with the **real tool names** as sources. Runs on every merge;
+  importing the same report twice never doubles the timeline.
+
+### Investigation workflow
+- **Scope** — set a from/to time window; everything re-projects to it deterministically.
+- **Mark legitimate** — flag a finding / IOC / **forensic event** as benign (reversible); excluded
+  from analysis and reports.
+- **Per-case AI on/off** — capture-only mode; backfills when turned back on.
+- **Threads, key questions, next steps** — open/closed leads and standard DFIR questions with pointers.
+
+### Threat-intel enrichment (OPSEC opt-in — **default OFF**)
+- **Sources** — VirusTotal (hash/IP/domain/URL), MalwareBazaar (hash), AbuseIPDB (IP), **MISP** and
+  **YETI** (your own instances), **RockyRaccoon** (Windows **process** intel — prevalence / LOLBIN /
+  risk / expected parent / ATT&CK).
+- **Process-chain validation** — RockyRaccoon parent→child check flags an anomalous chain
+  (e.g. `excel.exe → powershell.exe`) on the timeline.
+- **Per-case toggle**, cached on the IOC, throttled, capped; verdict/score/tags/link badges; IOC CSV column.
+
+### Dashboard & reports
+- **Live dashboard** over WebSocket — collapsible sections, scope bar, clickable evidence links, and
+  badges (`×N` aggregate, `⊕ N sources`, `AUTO`, enrichment verdicts, `⚠ unusual parent`).
+- **Reports** — Markdown report + CSVs (findings, IOCs incl. enrichment, capture timeline, forensic
+  timeline incl. count/sources) + full JSON state export.
+
+### Ops
+- **Configurable** — port (`DFIR_PORT`), cases root, all behavior via `DFIR_*` env vars.
+- **CLI scripts** — `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline` (see below).
+
 ## Repository layout
 
 ```
@@ -301,6 +367,16 @@ npm run reanalyze -- mycase --reset \
   --model openai/gpt-4o-mini \
   --synth-model google/gemini-2.5-pro
 ```
+
+## Todo / Roadmap
+
+Ideas and planned work, not yet committed. Add to this list as new ideas come up; move items
+into the **Features** section (and `CHANGELOG.md`) once shipped.
+
+- [ ] Per-provider enrichment throttle (so RockyRaccoon's tight rate limit doesn't slow VT/AbuseIPDB).
+- [ ] Configurable companion host/port in the **extension** (currently `127.0.0.1:4773`).
+- [ ] Optional self-signed / internal-CA TLS support for MISP / YETI instances.
+- [ ] `_execute_action` hotkey to open the extension popup.
 
 ## Tests
 
