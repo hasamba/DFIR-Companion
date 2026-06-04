@@ -402,6 +402,8 @@ into the **Features** section (and `CHANGELOG.md`) once shipped.
 - [ ] Embed the interactive **asset ↔ IoC graph** in the HTML report export (currently dashboard-only).
 - [ ] Manual editing of assets and asset↔IoC links (currently auto-derived).
 - [ ] **Service**-type asset extraction, and asset↔asset (lateral-movement) edges in the graph.
+- [ ] **Prompt caching** for the synthesis/extraction prompts (provider-layer change to `AIProvider`)
+  to cut token cost on repeated calls — the static system prompt prefix is re-sent every synthesis.
 
 ## Tests
 
