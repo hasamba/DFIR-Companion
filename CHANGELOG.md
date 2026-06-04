@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Synthesis is cheaper and smarter.** (1) **Skip-if-unchanged** — the live, debounced synthesis
+  no longer re-calls the model when the in-scope timeline / IOCs / scope / legitimate markers are
+  identical to the last run (the explicit **Synthesize** button still forces a run). (2) **Stratified
+  event selection** — instead of "top-N by severity", the prompt keeps all Critical/High events, the
+  earliest (initial-access) events, and an even time-spread sample, in chronological order, for better
+  kill-chain coverage. (3) **Grounded context** — a compact *compromised assets ← IoCs* and
+  *threat-intel verdicts* digest is added to the synthesis prompt so findings/attacker-path are based
+  on corroborated structure, not blind inference.
+
 ### Added
 - **Import external screenshots** (dashboard) — an *Import Screenshots* button with **multi-select**
   sends each image (PNG/JPEG/WebP) through the same `POST /captures` ingest path the extension uses,

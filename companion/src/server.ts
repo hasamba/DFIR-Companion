@@ -770,7 +770,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const caseId = req.params.id;
     options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: "synthesizing conclusions" });
     try {
-      const state = await options.pipeline.synthesize(caseId);
+      // Explicit user action → force, so it always runs even if inputs are unchanged.
+      const state = await options.pipeline.synthesize(caseId, { force: true });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       return res.status(200).json({
         findings: state.findings.length,

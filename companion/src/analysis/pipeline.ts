@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { AIProvider, AnalyzeImage } from "../providers/provider.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
@@ -16,6 +17,7 @@ import { parseCsv, chunk, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
+import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 
 export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation. The",
@@ -406,6 +408,12 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number, backoffMs: nu
 export class AnalysisPipeline {
   constructor(private readonly opts: PipelineOptions) {}
 
+  // Hash of the last successfully-synthesized inputs per case. The live, debounced
+  // synthesis fires after every capture window; this lets us skip the (expensive) AI call
+  // when nothing that affects the output has changed since the last run. In-memory: a
+  // fresh process (or an explicit `force`) always synthesizes.
+  private readonly lastSynthHash = new Map<string, string>();
+
   async analyzeWindow(caseId: string, captures: CaptureMetadata[]): Promise<InvestigationState> {
     const analyzable = captures.filter((c) => !c.isDuplicate);
     if (analyzable.length === 0) return this.opts.stateStore.load(caseId);
@@ -620,7 +628,7 @@ export class AnalysisPipeline {
 
   // Holistic pass: read the whole forensic timeline and produce findings, MITRE
   // mapping, and the attacker-path narrative. Text-only (no images), one call.
-  async synthesize(caseId: string): Promise<InvestigationState> {
+  async synthesize(caseId: string, opts: { force?: boolean } = {}): Promise<InvestigationState> {
     const loaded = await this.opts.stateStore.load(caseId);
     if (loaded.forensicTimeline.length === 0) return loaded;
 
@@ -655,10 +663,22 @@ export class AnalysisPipeline {
     // still creates findings for any Critical/High event NOT shown here (eligibleIds below
     // is the full scoped set), so capping the prompt never loses a severe detection.
     const SYNTH_MAX_EVENTS = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
-    const SEV_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
-    const promptEvents = [...scopedEvents]
-      .sort((a, b) => (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || (b.timestamp || "").localeCompare(a.timestamp || ""))
-      .slice(0, SYNTH_MAX_EVENTS);
+    // Stratified selection: all Critical/High + the earliest (initial-access) + an even
+    // time-spread sample, chronologically — better kill-chain coverage than severity-only.
+    const promptEvents = selectSynthesisEvents(scopedEvents, SYNTH_MAX_EVENTS);
+
+    // Skip-if-unchanged: hash only the STABLE INPUTS to synthesis — the in-scope timeline,
+    // the IOCs (value + intel verdicts), the scope, and the legitimate markers. NOT the
+    // findings / MITRE / threads / summary, which synthesis itself rewrites (including those
+    // would make two consecutive runs hash differently and never skip). If the inputs are
+    // identical to the last successful run for this case, return the saved state — no AI call.
+    const synthHash = createHash("sha1").update(JSON.stringify({
+      ev: scopedEvents.map((e) => [e.id, e.severity, e.timestamp, e.description]),
+      io: state.iocs.map((i) => [i.id, i.value, (i.enrichments ?? []).map((e) => e.verdict).join(",")]),
+      sc: scope, lg: markers.map((m) => m.id),
+    })).digest("hex");
+    if (!opts.force && this.lastSynthHash.get(caseId) === synthHash) return loaded;
+
     const timelineText = promptEvents
       .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`)
       .join("\n");
@@ -676,8 +696,12 @@ export class AnalysisPipeline {
       .map((t) => `[${t.id}] ${t.description}`)
       .join("\n") || "(none open)";
     const legitimateBlock = buildLegitimateContext(markers);
+    // Compact, corroborated context (compromised assets + threat-intel verdicts) so the
+    // model grounds findings/attacker-path in structure instead of inferring blind.
+    const contextBlock = buildSynthesisContext(state, scopedEvents);
     const userPrompt =
       scopeNote +
+      contextBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
@@ -732,6 +756,7 @@ export class AnalysisPipeline {
     const next = backfillHighSeverityFindings(linked, eligibleIds, ts);
 
     await this.opts.stateStore.save(next);
+    this.lastSynthHash.set(caseId, synthHash);   // remember these inputs so an identical re-run skips the AI call
     this.opts.onState?.(next);
     return next;
   }

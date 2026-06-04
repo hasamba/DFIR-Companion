@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,6 +127,38 @@ describe("AnalysisPipeline", () => {
     expect(state.attackerPath).toContain("Phishing");
     // synthesis must not wipe the forensic timeline it read from
     expect(state.forensicTimeline).toHaveLength(2);
+  });
+
+  it("skips the AI call when nothing changed since the last synthesis (and re-runs on change or force)", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish opened",
+      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+    await stateStore.save(seeded);
+
+    const synthDelta = JSON.stringify({
+      findings: [], iocs: [], mitreTechniques: [], attackerPath: "x", summary: "s",
+      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+    });
+    const provider = new MockProvider("mock", synthDelta);
+    const analyze = vi.spyOn(provider, "analyze");
+    const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+
+    await pipeline.synthesize("c1");
+    expect(analyze).toHaveBeenCalledTimes(1);   // first run
+
+    await pipeline.synthesize("c1");
+    expect(analyze).toHaveBeenCalledTimes(1);   // unchanged inputs → skipped
+
+    await pipeline.synthesize("c1", { force: true });
+    expect(analyze).toHaveBeenCalledTimes(2);   // force always runs
+
+    // A real change to the timeline re-runs synthesis.
+    const next = await stateStore.load("c1");
+    next.forensicTimeline.push({ id: "e2", timestamp: "2026-05-20T10:00:00Z", description: "new event",
+      severity: "Critical", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+    await stateStore.save(next);
+    await pipeline.synthesize("c1");
+    expect(analyze).toHaveBeenCalledTimes(3);
   });
 
   it("synthesize correlates the same artifact from two sources into one event + one finding", async () => {

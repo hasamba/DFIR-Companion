@@ -60,7 +60,14 @@ companion server" messages when this happens; preserve that behavior.
    — often 100s from a deterministic import the text-only pass can't re-derive). After the
    model returns, `synthesize` runs `correlateEvents` (dedup/merge), the **high-severity
    backfill** (`highSeverityFindings.ts` — every uncovered Critical/High event gets a
-   finding), and the scope/legitimate filters.
+   finding), and the scope/legitimate filters. Efficiency/quality (`synthSelect.ts`):
+   **skip-if-unchanged** (an in-memory hash of the STABLE inputs — scoped events, IOCs+verdicts,
+   scope, legit — skips the AI call when nothing changed; `synthesize(caseId, { force })` and the
+   Synthesize button bypass it); **`selectSynthesisEvents`** picks events stratified (all
+   Critical/High + earliest/initial-access + even time-spread, chronological) instead of
+   severity-only top-N; **`buildSynthesisContext`** prepends a compact *compromised assets ← IoCs* +
+   *threat-intel verdicts* digest to ground the model. The hash must stay keyed to INPUTS only —
+   never findings/threads/summary, which synthesis rewrites (or it would never skip).
 
 **Evidence import (deterministic + AI).** Besides screenshots, the pipeline ingests:
 CSV (`analyzeCsv`), generic logs (`analyzeLog` — `logAggregate.ts` collapses repetitive

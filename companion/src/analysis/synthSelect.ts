@@ -1,0 +1,70 @@
+import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
+import { byEventTime } from "./forensicSort.js";
+import { buildAssetGraph } from "./assetGraph.js";
+
+const SEV_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+
+// How many of the earliest events to always keep (initial-access context).
+const EARLIEST_KEEP = 15;
+
+// Pick the events that best inform synthesis when the timeline exceeds the prompt budget.
+// Severity-only "top N" can bury the kill chain — early low-severity initial-access events
+// drop out, and one noisy host crowds out everything else. This keeps ALL Critical/High
+// events, the earliest events, and an even time-spread sample of the rest, returned in
+// CHRONOLOGICAL order so the model reads the attack as a story.
+export function selectSynthesisEvents(events: ForensicEvent[], max: number): ForensicEvent[] {
+  const byTime = [...events].sort(byEventTime);
+  if (events.length <= max || max <= 0) return byTime;
+
+  const chosen = new Set<string>();
+  byTime.slice(0, EARLIEST_KEEP).forEach((e) => chosen.add(e.id));                 // initial-access context
+  for (const e of events) if (e.severity === "Critical" || e.severity === "High") chosen.add(e.id);
+
+  if (chosen.size < max) {                                                          // even time-spread fill of the rest
+    const rest = byTime.filter((e) => !chosen.has(e.id));
+    const slots = max - chosen.size;
+    if (rest.length <= slots) {
+      rest.forEach((e) => chosen.add(e.id));
+    } else {
+      const step = rest.length / slots;
+      for (let i = 0; i < slots; i++) chosen.add(rest[Math.min(rest.length - 1, Math.floor(i * step))].id);
+    }
+  }
+
+  let selected = byTime.filter((e) => chosen.has(e.id));
+  if (selected.length > max) {                                                      // too many Critical/High — keep severest, then earliest
+    selected = [...selected]
+      .sort((a, b) => (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || byEventTime(a, b))
+      .slice(0, max)
+      .sort(byEventTime);
+  }
+  return selected;
+}
+
+// A compact context digest for the synthesis prompt: the compromised assets (host/account
+// and the IoCs seen on each) and third-party threat-intel verdicts. Grounds the model's
+// findings and attacker path in corroborated structure instead of inferring blind. Returns
+// "" when there's nothing to add, so it costs no tokens on a bare case.
+export function buildSynthesisContext(state: InvestigationState, scopedEvents: ForensicEvent[]): string {
+  const graph = buildAssetGraph({ ...state, forensicTimeline: scopedEvents });
+  const iocVal = new Map(graph.iocs.map((i) => [i.id, i.value] as const));
+
+  const assetLines = graph.assets.filter((a) => a.compromised).slice(0, 25).map((a) => {
+    const iocs = a.iocIds.map((id) => iocVal.get(id) || id).slice(0, 8).join(", ");
+    return `- ${a.name} (${a.type})${iocs ? ` ← ${iocs}` : ""}`;
+  });
+
+  const verdictLines = state.iocs
+    .filter((i) => (i.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"))
+    .slice(0, 25)
+    .map((i) => {
+      const e = (i.enrichments ?? []).find((x) => x.verdict === "malicious")
+        ?? (i.enrichments ?? []).find((x) => x.verdict === "suspicious");
+      return `- ${i.value} = ${e?.verdict}${e?.source ? ` (${e.source}${e.score ? ` ${e.score}` : ""})` : ""}`;
+    });
+
+  let block = "";
+  if (assetLines.length) block += `COMPROMISED ASSETS (host/account ← IoCs seen on it):\n${assetLines.join("\n")}\n\n`;
+  if (verdictLines.length) block += `THREAT-INTEL VERDICTS (third-party):\n${verdictLines.join("\n")}\n\n`;
+  return block;
+}
