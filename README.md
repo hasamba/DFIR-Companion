@@ -4,6 +4,8 @@
 
 # DFIR Companion
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+
 > **AI-assisted DFIR triage — on your machine.** Turns investigation screenshots and imported
 > artifacts into a forensic timeline, findings, IOCs, an asset↔IoC graph, and shareable reports;
 > ask the case questions in plain English and collaborate with other investigators.
@@ -458,4 +460,16 @@ into the **Features** section (and `CHANGELOG.md`) once shipped.
 cd companion && npm test     # server unit tests
 cd extension && npm test     # extension unit tests
 ```
+
+## License
+
+DFIR Companion is free software, licensed under the **GNU Affero General Public License v3.0**
+(`AGPL-3.0-only`). See [`LICENSE`](LICENSE) for the full text.
+
+Copyright © 2026 Yaniv Radunsky.
+
+In short: you're free to use, study, modify, and share it — but if you distribute a modified
+version **or run a modified version as a network service**, you must make your complete source
+code available to its users under the same license. (This is the DFIR-tooling norm — Velociraptor,
+MISP, and TheHive are AGPL too.)
 

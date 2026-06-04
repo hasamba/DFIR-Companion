@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **License: GNU AGPL-3.0.** Added a top-level `LICENSE` (GNU Affero General Public License v3.0), set
+  `"license": "AGPL-3.0-only"` in both `package.json` files, and a License section + badge in the README.
 - **Project logo + crisp dashboard favicons.** Added the DFIR Companion logo to the top of the README, and
   generated sharp **16/32 px favicons + a 180 px apple-touch-icon** from it (cropped to the emblem,
   Lanczos-downsampled via `npm run icons`). The companion serves them (`/favicon-32.png`,
