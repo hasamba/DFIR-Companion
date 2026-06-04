@@ -62,8 +62,6 @@ export const reportMetaSchema = z.object({
   // 5 Conclusions (overrides the derived conclusion when set) + recommendations
   conclusions: z.string().catch(""),
   recommendations: z.array(z.string()).catch([]),
-  // 6 Attachments — optional human note (referenced evidence is listed automatically)
-  attachmentsNote: z.string().catch(""),
 });
 
 export type ReportRevision = z.infer<typeof revisionSchema>;

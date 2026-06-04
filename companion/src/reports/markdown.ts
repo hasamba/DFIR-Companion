@@ -172,7 +172,7 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
     lines.push("_No dated forensic events extracted yet._", "");
     return;
   }
-  lines.push("| Time | Count | Severity | Event | MITRE | Findings | Evidence |", "| --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("| Time | Count | Severity | Event | MITRE | Findings |", "| --- | --- | --- | --- | --- | --- |");
   const ordered: ForensicEvent[] = [...state.forensicTimeline].sort(byEventTime);
   for (const e of ordered) {
     const time = e.endTimestamp && e.endTimestamp !== e.timestamp
@@ -181,24 +181,8 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
     const count = e.count && e.count > 1 ? `×${e.count}` : "";
     lines.push(
       `| ${cellMd(time)} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
-      `${cellMd(e.mitreTechniques.join(", "))} | ${cellMd(e.relatedFindingIds.join(", "))} | ` +
-      `${cellMd(e.sourceScreenshots.join(", "))} |`,
+      `${cellMd(e.mitreTechniques.join(", "))} | ${cellMd(e.relatedFindingIds.join(", "))} |`,
     );
-  }
-  lines.push("");
-}
-
-function investigationTimeline(state: InvestigationState, lines: string[]): void {
-  lines.push("### 3.2 Investigation timeline", "");
-  lines.push("_Order in which evidence was reviewed during the investigation._", "");
-  if (state.timeline.length === 0) {
-    lines.push("_No review entries yet._", "");
-    return;
-  }
-  lines.push("| Time | Event | Evidence |", "| --- | --- | --- |");
-  for (const t of state.timeline) {
-    const shots = t.sourceScreenshots.length ? t.sourceScreenshots.join(", ") : "—";
-    lines.push(`| ${cellMd(t.timestamp)} | ${cellMd(t.description)} | ${cellMd(shots)} |`);
   }
   lines.push("");
 }
@@ -246,22 +230,7 @@ function investigation(state: InvestigationState, lines: string[]): void {
     lines.push("");
   }
 
-  lines.push("### 4.5 Investigation threads", "");
-  const openT = state.openThreads.filter((t) => t.status === "open");
-  const closedT = state.openThreads.filter((t) => t.status === "closed");
-  if (openT.length === 0 && closedT.length === 0) {
-    lines.push("_No threads opened._", "");
-  } else {
-    lines.push("**Open (still being chased):**");
-    if (openT.length === 0) lines.push("- _none_");
-    else for (const t of openT) lines.push(`- [${t.id}] ${t.description} (opened ${t.openedAt})`);
-    lines.push("", "**Closed (resolved):**");
-    if (closedT.length === 0) lines.push("- _none_");
-    else for (const t of closedT) lines.push(`- [${t.id}] ${t.description} (opened ${t.openedAt}, closed ${t.closedAt})`);
-    lines.push("");
-  }
-
-  lines.push("### 4.6 Key investigative questions", "");
+  lines.push("### 4.5 Key investigative questions", "");
   if (state.keyQuestions.length === 0) {
     lines.push("_Not assessed yet — run synthesis._", "");
   } else {
@@ -279,19 +248,11 @@ function conclusions(state: InvestigationState, meta: ReportMeta, lines: string[
 
   if (meta.conclusions.trim().length > 0) {
     lines.push(meta.conclusions.trim(), "");
+  } else if (state.attackerPath.trim().length > 0) {
+    // Derive a starting conclusion from the reconstructed attacker path.
+    lines.push(state.attackerPath.trim(), "");
   } else {
-    // Derive a starting conclusion from the attacker path + answered key questions.
-    const answered = state.keyQuestions.filter((q) => q.status === "answered" && q.answer.trim().length > 0);
-    if (state.attackerPath.trim().length === 0 && answered.length === 0) {
-      lines.push(TODO, "");
-    } else {
-      if (state.attackerPath.trim().length > 0) lines.push(state.attackerPath.trim(), "");
-      if (answered.length > 0) {
-        lines.push("**Answered investigation questions:**");
-        for (const q of answered) lines.push(`- ${q.question} — ${q.answer}`);
-        lines.push("");
-      }
-    }
+    lines.push(TODO, "");
   }
 
   lines.push("### Recommendations", "");
@@ -313,26 +274,6 @@ function conclusions(state: InvestigationState, meta: ReportMeta, lines: string[
   }
 }
 
-// 6 — gather the distinct evidence files referenced anywhere in the case as an attachment
-// index, plus any human note.
-function attachments(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
-  lines.push("## 6 Attachments", "");
-  if (meta.attachmentsNote.trim().length > 0) lines.push(meta.attachmentsNote.trim(), "");
-
-  const referenced = new Set<string>();
-  for (const e of state.forensicTimeline) for (const s of e.sourceScreenshots) referenced.add(s);
-  for (const f of state.findings) for (const s of f.sourceScreenshots) referenced.add(s);
-  for (const t of state.timeline) for (const s of t.sourceScreenshots) referenced.add(s);
-
-  if (referenced.size > 0) {
-    lines.push("Evidence referenced in this report:", "");
-    for (const r of [...referenced].sort()) lines.push(`- \`${r}\``);
-    lines.push("");
-  } else if (meta.attachmentsNote.trim().length === 0) {
-    lines.push(TODO, "");
-  }
-}
-
 export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta()): string {
   const lines: string[] = [];
 
@@ -350,11 +291,9 @@ export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta
 
   lines.push("## 3 Timeline of events", "");
   incidentTimeline(state, lines);
-  investigationTimeline(state, lines);
 
   investigation(state, lines);
   conclusions(state, meta, lines);
-  attachments(state, meta, lines);
 
   return lines.join("\n");
 }

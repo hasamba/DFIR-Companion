@@ -19,15 +19,16 @@ describe("renderMarkdownReport", () => {
     expect(md).toContain("# Incident Investigation Report");
     expect(md).toContain("## 2 Executive summary");
     expect(md).toContain("Host WIN-01 compromised");
-    expect(md).toContain("### 3.2 Investigation timeline");
-    expect(md).toContain("Reviewed file system");
+    expect(md).toContain("### 3.1 Incident timeline");
     expect(md).toContain("### 4.2 Findings");
     expect(md).toContain("Ransomware");
     expect(md).toContain("### 4.4 MITRE ATT&CK");
     expect(md).toContain("T1486");
-    // Attachments auto-indexes referenced evidence files.
-    expect(md).toContain("## 6 Attachments");
-    expect(md).toContain("`000005_t.webp`");
+    // The investigation timeline and the attachments section are no longer in the report.
+    expect(md).not.toContain("Investigation timeline");
+    expect(md).not.toContain("## 6 Attachments");
+    // The incident timeline no longer carries an Evidence column.
+    expect(md).not.toContain("| Time | Count | Severity | Event | MITRE | Findings | Evidence |");
   });
 
   it("includes every template chapter and shows placeholders for empty human sections", () => {
@@ -44,7 +45,6 @@ describe("renderMarkdownReport", () => {
       "### 3.1 Incident timeline",
       "## 4 Investigation",
       "## 5 Conclusions and recommendations",
-      "## 6 Attachments",
     ]) {
       expect(md).toContain(heading);
     }
@@ -56,6 +56,10 @@ describe("renderMarkdownReport", () => {
     expect(md).not.toContain("## 1.2 Distribution list");
     // Business Impact Analysis is human-only and optional — omitted when not written.
     expect(md).not.toContain("## 2.1 Business Impact Analysis");
+    // These sections were dropped from the report entirely.
+    expect(md).not.toContain("Investigation timeline");
+    expect(md).not.toContain("Investigation threads");
+    expect(md).not.toContain("## 6 Attachments");
     // Revisions auto-seed a 1.0 row even with no human input.
     expect(md).toContain("| 1.0 |");
   });
@@ -182,7 +186,7 @@ describe("renderMarkdownReport", () => {
     state.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "2026-05-20T09:00:00Z" });
 
     const md = renderMarkdownReport(state);
-    expect(md).toContain("### 4.6 Key investigative questions");
+    expect(md).toContain("### 4.5 Key investigative questions");
     expect(md).toContain("What was the initial access vector?");
     expect(md).toContain("collect 4624 logs on targets");
     expect(md).toContain("### 4.3 Indicators of compromise");
@@ -202,18 +206,24 @@ describe("renderMarkdownReport", () => {
     expect(md).toContain("Detonate Bubeus.exe");
   });
 
-  it("renders investigation threads split into open and closed", () => {
+  it("does not render investigation threads (removed from the report)", () => {
     const state = emptyState("c1");
     state.openThreads.push(
       { id: "t1", description: "trace lateral movement", status: "open", openedAt: "2026-05-20T10:00:00Z", closedAt: null },
       { id: "t2", description: "identify C2 domain", status: "closed", openedAt: "2026-05-20T10:00:00Z", closedAt: "2026-05-20T12:00:00Z" },
     );
     const md = renderMarkdownReport(state);
-    expect(md).toContain("### 4.5 Investigation threads");
-    expect(md).toContain("**Open (still being chased):**");
-    expect(md).toContain("trace lateral movement");
-    expect(md).toContain("**Closed (resolved):**");
-    expect(md).toContain("identify C2 domain");
-    expect(md).toContain("closed 2026-05-20T12:00:00Z");
+    expect(md).not.toContain("Investigation threads");
+    expect(md).not.toContain("trace lateral movement");
+    expect(md).not.toContain("identify C2 domain");
+  });
+
+  it("does not render the answered-questions block in conclusions", () => {
+    const state = emptyState("c1");
+    state.keyQuestions.push(
+      { id: "q1", question: "What was the initial access vector?", status: "answered", answer: "phishing email", pointer: "f3" },
+    );
+    const md = renderMarkdownReport(state);
+    expect(md).not.toContain("Answered investigation questions");
   });
 });

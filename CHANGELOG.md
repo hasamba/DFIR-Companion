@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     print-friendly, "Print → Save as PDF"). The dashboard shows Open-HTML / Download-HTML /
     Download-Markdown links after generation. Served via `GET /cases/:id/report/report.{md,html}`
     (`?download=1` forces a save). Raw HTML in untrusted DFIR data is escaped in the HTML export.
+  - Report trimmed to the essentials: the **incident timeline drops its Evidence column**, and the
+    **investigation timeline**, **investigation threads**, the conclusions' **answered-questions**
+    block, and the **attachments** section are no longer included.
 
 ## [0.3.0] - 2026-06-04
 

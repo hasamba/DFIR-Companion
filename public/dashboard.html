@@ -133,7 +133,6 @@
         <label>Investigation limitations (2.2)<textarea id="rm-investigationLimitations" rows="3"></textarea></label>
         <label>Investigation goals / research questions (2.3) — blank = derive from key questions<textarea id="rm-investigationGoals" rows="3"></textarea></label>
         <label>Conclusions (5) — overrides the derived conclusion<textarea id="rm-conclusions" rows="3"></textarea></label>
-        <label>Attachments note (6)<textarea id="rm-attachmentsNote" rows="2"></textarea></label>
         <label>Recommendations (5) — one per line<textarea id="rm-recommendations" rows="3" placeholder="Deploy EDR to all endpoints"></textarea></label>
         <label>Report revisions (1.1) — one per line: <code>version | date | author | comments</code><textarea id="rm-revisions" rows="2" placeholder="1.0 | 2026-06-04 | Jane Doe | Release version"></textarea></label>
         <label>Distribution list (1.2, optional — omitted if blank) — one per line: <code>name | role | method</code><textarea id="rm-distribution" rows="2" placeholder="Ellie Example | CISO | email"></textarea></label>
@@ -250,7 +249,6 @@
       v("rm-intendedAudience", m.intendedAudience); v("rm-executiveSummary", m.executiveSummary);
       v("rm-businessImpact", m.businessImpact); v("rm-investigationLimitations", m.investigationLimitations);
       v("rm-investigationGoals", m.investigationGoals); v("rm-conclusions", m.conclusions);
-      v("rm-attachmentsNote", m.attachmentsNote);
       v("rm-recommendations", (m.recommendations || []).join("\n"));
       document.getElementById("rm-revisions").value = rowsToText(m.revisions, ["version", "date", "author", "comments"]);
       document.getElementById("rm-distribution").value = rowsToText(m.distribution, ["name", "role", "method"]);
@@ -274,7 +272,6 @@
         intendedAudience: g("rm-intendedAudience"), executiveSummary: g("rm-executiveSummary"),
         businessImpact: g("rm-businessImpact"), investigationLimitations: g("rm-investigationLimitations"),
         investigationGoals: g("rm-investigationGoals"), conclusions: g("rm-conclusions"),
-        attachmentsNote: g("rm-attachmentsNote"),
         recommendations: linesToArray(g("rm-recommendations")),
         revisions: parseRows(g("rm-revisions"), ["version", "date", "author", "comments"]),
         distribution: parseRows(g("rm-distribution"), ["name", "role", "method"]),
