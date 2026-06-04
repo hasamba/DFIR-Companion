@@ -1,7 +1,11 @@
 # DFIR Companion
 
+> **AI-assisted DFIR triage — on your machine.** Turns investigation screenshots and imported
+> artifacts into a forensic timeline, findings, IOCs, an asset↔IoC graph, and shareable reports;
+> ask the case questions in plain English and collaborate with other investigators.
+
 A localhost digital-forensics / incident-response companion. A browser extension
-captures screenshots of your investigation (Velociraptor, EDR/SIEM Dashbaord, SecurityOnion, Splunk4DFIR, VolWeb, VirusTotal, etc.) as
+captures screenshots of your investigation (Velociraptor, EDR/SIEM dashboards, Security Onion, Splunk4DFIR, VolWeb, VirusTotal, etc.) as
 evidence; a local server stores them, runs **windowed AI vision analysis** into an
 accumulating per-case investigation state, and serves a **live dashboard** plus
 exportable reports.
