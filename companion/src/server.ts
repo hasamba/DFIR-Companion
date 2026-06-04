@@ -436,7 +436,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const result = await exportCaseToIris(options.irisClient, { caseName: caseId, state, meta }, options.irisOptions);
       logLine(`[iris] ${caseId} export DONE -> case ${result.caseId} (${result.created ? "created" : "updated"}); ` +
         `assets +${result.assets.added}/${result.assets.existing}, iocs +${result.iocs.added}/${result.iocs.existing}, ` +
-        `timeline +${result.timeline.added}/${result.timeline.existing}, notes ${result.notes}, warnings ${result.warnings.length}`);
+        `timeline +${result.timeline.added}/${result.timeline.existing}, tasks +${result.tasks.added}/${result.tasks.existing}, ` +
+        `notes ${result.notes}, warnings ${result.warnings.length}`);
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[iris] ${caseId} export ERROR: ${(err as Error).message}`);

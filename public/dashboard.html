@@ -1329,7 +1329,8 @@
           const verb = res.created ? "created" : "updated";
           document.getElementById("status").textContent =
             `IRIS case #${res.caseId} ${verb}: assets +${res.assets.added} (${res.assets.existing} existing), ` +
-            `IOCs +${res.iocs.added} (${res.iocs.existing} existing), timeline +${res.timeline.added}, notes ${res.notes}` +
+            `IOCs +${res.iocs.added} (${res.iocs.existing} existing), timeline +${res.timeline.added}, ` +
+            `tasks +${res.tasks.added}, notes ${res.notes}` +
             (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
           if (res.caseUrl) {
             document.getElementById("reportLinks").innerHTML =

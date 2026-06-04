@@ -1,18 +1,25 @@
 import { describe, it, expect } from "vitest";
 import {
-  irisEventDate, mapIoc, mapAsset, mapEvent, buildNotes, executiveSummaryMarkdown,
+  irisEventDate, mapIoc, mapAsset, mapEvent, mapNextStepTask, buildNotes, executiveSummaryMarkdown,
 } from "../../src/integrations/iris/irisMap.js";
+import { tacticForTechniques } from "../../src/integrations/iris/mitreTactics.js";
 import { exportCaseToIris, type IrisClientLike } from "../../src/integrations/iris/irisExport.js";
-import { emptyState, type InvestigationState, type IOC, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { emptyState, type InvestigationState, type IOC, type ForensicEvent, type NextStep } from "../../src/analysis/stateTypes.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 import type { GraphAsset } from "../../src/analysis/assetGraph.js";
 import type {
-  IrisCaseCreate, IrisCaseRef, IrisAssetRef, IrisIocRef, IrisEventRef, IrisDirRef,
-  IrisAssetBody, IrisIocBody, IrisEventBody,
+  IrisCaseCreate, IrisCaseRef, IrisAssetRef, IrisIocRef, IrisEventRef, IrisDirRef, IrisTaskRef,
+  IrisAssetBody, IrisIocBody, IrisEventBody, IrisTaskBody,
 } from "../../src/integrations/iris/irisClient.js";
 
 const IOC_TYPES = new Map<string, number>([["ip-dst", 5], ["domain", 9], ["md5", 20], ["sha256", 22], ["url", 30], ["filename", 40]]);
 const ASSET_TYPES = new Map<string, number>([["windows - computer", 9], ["account", 1]]);
+// IRIS event categories (MITRE tactics) name→id, and task statuses, as a stock install seeds them.
+const CATEGORY_MAP = new Map<string, number>([
+  ["unspecified", 1], ["execution", 5], ["persistence", 6], ["privilege escalation", 7],
+  ["credential access", 9], ["lateral movement", 11], ["impact", 15],
+]);
+const STATUS_MAP = new Map<string, number>([["to do", 1], ["in progress", 2], ["done", 4]]);
 
 function ioc(over: Partial<IOC> & { value: string; type: IOC["type"] }): IOC {
   return { id: over.value, firstSeen: "2026-06-04T00:00:00Z", ...over };
@@ -65,7 +72,7 @@ describe("irisMap", () => {
   });
 
   it("maps a forensic event, links assets/IOCs, flags high severity into summary, skips no-timestamp", () => {
-    const ctx = { assetByName: new Map([["dc01", 7]]), iocByValue: new Map([["8.8.8.8", 3]]) };
+    const ctx = { assetByName: new Map([["dc01", 7]]), iocByValue: new Map([["8.8.8.8", 3]]), categoryByName: CATEGORY_MAP };
     const e = mapEvent(event({
       timestamp: "2026-06-04T13:00:00Z", description: "C2 beacon to 8.8.8.8", severity: "High",
       asset: "DC01", mitreTechniques: ["T1071"], sources: ["THOR"],
@@ -76,6 +83,44 @@ describe("irisMap", () => {
     expect(e.event_iocs).toEqual([3]);                  // value appears in description
     expect(String(e.event_content)).toContain("Sources: THOR");
     expect(mapEvent(event({ timestamp: "bad", description: "x" }), ctx)).toBeNull();
+  });
+
+  it("keeps the full event title (no 150-char truncation) and only trims a runaway line", () => {
+    const long = "THOR Warning [Filescan]: Malware file found — C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules\\Exfiltration\\Invoke-TokenManipulation.ps1 (owner: BUILTIN\\Administrators)";
+    const e = mapEvent(event({ timestamp: "2026-06-04T13:00:00Z", description: long }), { assetByName: new Map(), iocByValue: new Map() })!;
+    expect(e.event_title).toBe(long);                   // 168 chars — kept in full (was cut at 150)
+    const runaway = "x ".repeat(400);                   // 800 chars
+    const e2 = mapEvent(event({ timestamp: "2026-06-04T13:00:00Z", description: runaway }), { assetByName: new Map(), iocByValue: new Map() })!;
+    expect((e2.event_title as string).length).toBeLessThanOrEqual(301);
+    expect(e2.event_title as string).toMatch(/…$/);
+  });
+
+  it("auto-assigns the event category from MITRE technique → tactic, and links finding IOCs", () => {
+    const ctx = {
+      assetByName: new Map<string, number>(), iocByValue: new Map([["mimikatz.exe", 9]]), categoryByName: CATEGORY_MAP,
+      findingIocValues: () => ["mimikatz.exe"],          // linked via the event's finding, not its text
+    };
+    const e = mapEvent(event({
+      timestamp: "2026-06-04T13:00:00Z", description: "LSASS access observed", mitreTechniques: ["T1003.001"],
+      relatedFindingIds: ["f1"],
+    }), ctx)!;
+    expect(e.event_category_id).toBe("9");              // T1003 → Credential Access → id 9
+    expect(e.event_iocs).toEqual([9]);                  // pulled in via the finding link
+  });
+
+  it("derives a tactic from techniques (priority) and from keywords when no technique is present", () => {
+    expect(tacticForTechniques(["T1059.001"])).toBe("Execution");
+    expect(tacticForTechniques(["T1083", "T1486"])).toBe("Impact");        // worst stage wins
+    expect(tacticForTechniques([], "Trigona ransomware encrypted files")).toBe("Impact");
+    expect(tacticForTechniques([], "nothing notable here")).toBeUndefined();
+  });
+
+  it("maps a next step to an IRIS task body (title ≥2 chars, priority tag)", () => {
+    const step: NextStep = { id: "s1", priority: "critical", action: "Isolate DC01", rationale: "Active C2", pointer: "host DC01" };
+    const t = mapNextStepTask(step);
+    expect(t.task_title).toBe("[critical] Isolate DC01");
+    expect(String(t.task_description)).toContain("Active C2");
+    expect(String(t.task_tags)).toContain("critical");
   });
 
   it("builds notes only for non-empty sections; summary override beats the AI summary", () => {
@@ -99,10 +144,12 @@ class MockIris implements IrisClientLike {
   addedAssets: IrisAssetBody[] = [];
   addedIocs: IrisIocBody[] = [];
   addedEvents: IrisEventBody[] = [];
+  addedTasks: IrisTaskBody[] = [];
   addedNotes: { dir: number; title: string }[] = [];
   existingAssets: IrisAssetRef[] = [];
   existingIocs: IrisIocRef[] = [];
   existingEvents: IrisEventRef[] = [];
+  existingTasks: IrisTaskRef[] = [];
   dirs: IrisDirRef[] = [];
   deletedDirs: number[] = [];
   summary?: string;
@@ -115,12 +162,16 @@ class MockIris implements IrisClientLike {
   async setSummary(_cid: number, md: string) { this.summary = md; }
   async iocTypeMap() { return IOC_TYPES; }
   async assetTypeMap() { return ASSET_TYPES; }
+  async eventCategoryMap() { return CATEGORY_MAP; }
+  async taskStatusMap() { return STATUS_MAP; }
   async listAssets() { return this.existingAssets; }
   async addAsset(_cid: number, body: IrisAssetBody) { this.addedAssets.push(body); return this.seq++; }
   async listIocs() { return this.existingIocs; }
   async addIoc(_cid: number, body: IrisIocBody) { this.addedIocs.push(body); return this.seq++; }
   async listEvents() { return this.existingEvents; }
   async addEvent(_cid: number, body: IrisEventBody) { this.addedEvents.push(body); return this.seq++; }
+  async listTasks() { return this.existingTasks; }
+  async addTask(_cid: number, body: IrisTaskBody) { this.addedTasks.push(body); return this.seq++; }
   async listDirectories() { return this.dirs; }
   async addDirectory(_cid: number, name: string) { const d = { id: this.seq++, name }; this.dirs.push(d); return d.id; }
   async deleteDirectory(_cid: number, id: number) { this.deletedDirs.push(id); this.dirs = this.dirs.filter((d) => d.id !== id); }
@@ -132,6 +183,7 @@ function sampleState(): InvestigationState {
     ...emptyState("Case Alpha"),
     iocs: [ioc({ value: "8.8.8.8", type: "ip" }), ioc({ value: "evil.com", type: "domain" })],
     forensicTimeline: [event({ timestamp: "2026-06-04T10:00:00Z", description: "logon to DC01", asset: "DC01", severity: "High" })],
+    nextSteps: [{ id: "s1", priority: "critical", action: "Isolate DC01", rationale: "Active C2", pointer: "DC01" }],
     attackerPath: "phish → exec",
     lastSummary: "Two hosts compromised.",
   };
@@ -148,8 +200,21 @@ describe("exportCaseToIris", () => {
     expect(res.iocs.added).toBe(2);
     expect(res.assets.added).toBe(1);                   // DC01 host derived from the event
     expect(res.timeline.added).toBe(1);
+    expect(res.tasks.added).toBe(1);                    // the one recommended next step → a task
+    expect(m.addedTasks[0].task_title).toBe("[critical] Isolate DC01");
+    expect(m.addedTasks[0].task_status_id).toBe(1);     // "To do"
+    expect(m.addedTasks[0].task_assignees_id).toEqual([]);
     expect(res.notes).toBeGreaterThanOrEqual(1);        // Attacker Path note
     expect(res.caseUrl).toBe("https://iris.example.org/case?cid=1");
+  });
+
+  it("dedupes a next-step task that already exists in IRIS (by title)", async () => {
+    const m = new MockIris();
+    m.existingTasks = [{ id: 9, title: "[critical] Isolate DC01" }];
+    const res = await exportCaseToIris(m, { caseName: "Case Alpha", state: sampleState() });
+    expect(res.tasks.existing).toBe(1);
+    expect(res.tasks.added).toBe(0);
+    expect(m.addedTasks).toHaveLength(0);
   });
 
   it("updates an existing case (matched by name) and dedupes already-present IOCs", async () => {

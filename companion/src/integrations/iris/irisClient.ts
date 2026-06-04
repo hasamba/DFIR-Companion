@@ -23,6 +23,7 @@ export interface IrisAssetRef { id: number; name: string }
 export interface IrisIocRef { id: number; value: string }
 export interface IrisEventRef { id: number; title: string; date: string }
 export interface IrisDirRef { id: number; name: string }
+export interface IrisTaskRef { id: number; title: string }
 
 export interface IrisCaseCreate {
   case_name: string;
@@ -37,6 +38,7 @@ export interface IrisCaseCreate {
 export type IrisAssetBody = Record<string, unknown>;
 export type IrisIocBody = Record<string, unknown>;
 export type IrisEventBody = Record<string, unknown>;
+export type IrisTaskBody = Record<string, unknown>;
 
 interface Envelope<T = unknown> { status?: string; message?: string; data?: T }
 
@@ -138,6 +140,22 @@ export class IrisClient {
     return m;
   }
 
+  // Timeline event categories (MITRE tactics) — name (lowercased) → id, for auto-categorizing events.
+  async eventCategoryMap(): Promise<Map<string, number>> {
+    const rows = await this.request<Array<Record<string, unknown>>>("GET", "/manage/event-categories/list");
+    const m = new Map<string, number>();
+    for (const r of rows ?? []) m.set(String(r.name ?? "").toLowerCase(), Number(r.id));
+    return m;
+  }
+
+  // Task statuses — status_name (lowercased) → id (1 = "To do" on a stock install).
+  async taskStatusMap(): Promise<Map<string, number>> {
+    const rows = await this.request<Array<Record<string, unknown>>>("GET", "/manage/task-status/list");
+    const m = new Map<string, number>();
+    for (const r of rows ?? []) m.set(String(r.status_name ?? "").toLowerCase(), Number(r.id));
+    return m;
+  }
+
   // ---- assets --------------------------------------------------------------
 
   async listAssets(cid: number): Promise<IrisAssetRef[]> {
@@ -183,6 +201,25 @@ export class IrisClient {
     );
     const rows = Array.isArray(data) ? data : data.timeline ?? [];
     return rows.map((r) => ({ id: Number(r.event_id), title: String(r.event_title ?? ""), date: String(r.event_date ?? "") }));
+  }
+
+  // ---- tasks ---------------------------------------------------------------
+
+  async listTasks(cid: number): Promise<IrisTaskRef[]> {
+    const data = await this.request<{ tasks?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
+      "GET", "/case/tasks/list", { cid },
+    );
+    const rows = Array.isArray(data) ? data : data.tasks ?? [];
+    return rows.map((r) => ({ id: Number(r.task_id), title: String(r.task_title ?? "") }));
+  }
+
+  // Add a task. The v1 endpoint requires the `task_assignees_id` KEY to be present, but an empty
+  // array is accepted (creates an unassigned task) — so no real user id is needed.
+  async addTask(cid: number, body: IrisTaskBody): Promise<number> {
+    const data = await this.request<Record<string, unknown>>("POST", "/case/tasks/add", {
+      cid, body: { task_assignees_id: [], custom_attributes: {}, ...body, cid },
+    });
+    return Number(data.task_id);
   }
 
   // ---- notes (directories are the current API; groups were removed at 2.0.1) ----

@@ -9,7 +9,8 @@ import type {
 } from "../../analysis/stateTypes.js";
 import type { GraphAsset } from "../../analysis/assetGraph.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
-import type { IrisAssetBody, IrisIocBody, IrisEventBody } from "./irisClient.js";
+import type { IrisAssetBody, IrisIocBody, IrisEventBody, IrisTaskBody } from "./irisClient.js";
+import { tacticForTechniques } from "./mitreTactics.js";
 
 const TAG = "dfir-companion";
 
@@ -134,9 +135,20 @@ function firstLine(s: string): string {
   return (s.split(/\r?\n/)[0] ?? s).trim();
 }
 
-// Resolve which IRIS IOC ids an event references (by structured hash/path fields and by value
-// appearing in the description), using a lowercased value→id map of already-created IOCs.
-function eventIocIds(event: ForensicEvent, iocByValue: ReadonlyMap<string, number>): number[] {
+// IRIS event_title is an unbounded Text column, so we keep the full first line; we only trim
+// a runaway one-line description (on a word boundary, with an ellipsis) to keep the row sane.
+function eventTitle(description: string, max = 300): string {
+  const line = firstLine(description);
+  if (line.length <= max) return line || "(event)";
+  const cut = line.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+}
+
+// Resolve which IRIS IOC ids an event references: by structured hash/path/process fields, by
+// value appearing in the description, and (extraValues) by IOCs linked through the event's
+// findings — all looked up in a lowercased value→id map of already-created IOCs.
+function eventIocIds(event: ForensicEvent, iocByValue: ReadonlyMap<string, number>, extraValues: readonly string[] = []): number[] {
   const ids = new Set<number>();
   const tryAdd = (v?: string) => { if (v) { const id = iocByValue.get(v.toLowerCase()); if (id !== undefined) ids.add(id); } };
   tryAdd(event.sha256);
@@ -144,20 +156,27 @@ function eventIocIds(event: ForensicEvent, iocByValue: ReadonlyMap<string, numbe
   tryAdd(event.path);
   if (event.path) tryAdd(event.path.split(/[\\/]/).pop());
   tryAdd(event.processName);
+  for (const v of extraValues) tryAdd(v);
   const desc = event.description.toLowerCase();
   for (const [value, id] of iocByValue) if (value.length >= 5 && desc.includes(value)) ids.add(id);
   return [...ids];
 }
 
 export interface MapEventContext {
-  assetByName: ReadonlyMap<string, number>;   // lowercased asset name → iris asset id
-  iocByValue: ReadonlyMap<string, number>;     // lowercased ioc value → iris ioc id
+  assetByName: ReadonlyMap<string, number>;          // lowercased asset name → iris asset id
+  iocByValue: ReadonlyMap<string, number>;            // lowercased ioc value → iris ioc id
+  categoryByName?: ReadonlyMap<string, number>;       // lowercased IRIS event-category name → id (MITRE tactics)
+  findingIocValues?: (event: ForensicEvent) => string[]; // IOC values linked to the event via its findings
 }
 
-// Build an IRIS add-event body, or null when the event has no parseable timestamp.
+// Build an IRIS add-event body, or null when the event has no parseable timestamp. The event
+// category (MITRE tactic) is auto-assigned from the event's techniques/description.
 export function mapEvent(event: ForensicEvent, ctx: MapEventContext): IrisEventBody | null {
   const date = irisEventDate(event.timestamp);
   if (!date) return null;
+
+  const tactic = tacticForTechniques(event.mitreTechniques, event.description);
+  const categoryId = (tactic && ctx.categoryByName?.get(tactic.toLowerCase())) ?? 1; // 1 = Unspecified
 
   const parts: string[] = [event.description];
   if (event.count && event.count > 1) parts.push(`Occurrences: ${event.count}${event.endTimestamp ? ` (until ${event.endTimestamp})` : ""}`);
@@ -171,17 +190,31 @@ export function mapEvent(event: ForensicEvent, ctx: MapEventContext): IrisEventB
   const assetIds = event.asset ? [ctx.assetByName.get(event.asset.trim().toLowerCase())].filter((x): x is number => x !== undefined) : [];
 
   return {
-    event_title: firstLine(event.description).slice(0, 150) || "(event)",
+    event_title: eventTitle(event.description),
     event_date: date,
     event_tz: "+00:00",
     event_content: parts.join("\n"),
     event_in_graph: true,
     event_in_summary: event.severity === "Critical" || event.severity === "High",
-    event_category_id: "1",
+    event_category_id: String(categoryId),
     event_color: SEV_COLOR[event.severity],
     event_tags: [TAG, event.severity.toLowerCase(), ...(event.mitreTechniques ?? [])].join(","),
     event_assets: assetIds,
-    event_iocs: eventIocIds(event, ctx.iocByValue),
+    event_iocs: eventIocIds(event, ctx.iocByValue, ctx.findingIocValues?.(event)),
+  };
+}
+
+// ---- tasks (Recommended Next Steps → IRIS tasks) ---------------------------
+
+// Build the title/description/tags of an IRIS task from a recommended next step. The caller
+// adds task_status_id (resolved "To do") and task_assignees_id ([] = unassigned).
+export function mapNextStepTask(step: NextStep): IrisTaskBody {
+  const title = `[${step.priority}] ${step.action}`.trim();
+  const description = [step.rationale, step.pointer ? `Where: ${step.pointer}` : ""].filter(Boolean).join("\n\n");
+  return {
+    task_title: title.length >= 2 ? title : `${title} (next step)`,   // IRIS requires ≥2 chars
+    task_description: description,
+    task_tags: [TAG, step.priority].join(","),
   };
 }
 
@@ -211,10 +244,6 @@ function questionsNote(qs: readonly InvestigationQuestion[]): string {
   return qs.map((q) => `### ${q.question}\n\n- **Status:** ${q.status}\n- **Answer:** ${q.answer || "—"}\n- **Pointer:** ${q.pointer || "—"}`).join("\n\n");
 }
 
-function nextStepsNote(steps: readonly NextStep[]): string {
-  return steps.map((s) => `- **[${s.priority}]** ${s.action}\n  - _Why:_ ${s.rationale}\n  - _Where:_ ${s.pointer}`).join("\n");
-}
-
 function threadsNote(threads: readonly Thread[]): string {
   return threads.map((t) => `- [${t.status}] ${t.description} _(opened ${t.openedAt}${t.closedAt ? `, closed ${t.closedAt}` : ""})_`).join("\n");
 }
@@ -228,7 +257,7 @@ export function buildNotes(state: InvestigationState, meta: ReportMeta): IrisNot
   if (state.findings.length) push("Findings", findingsNote(state.findings));
   if (state.mitreTechniques.length) push("MITRE ATT&CK", mitreNote(state.mitreTechniques));
   if (state.keyQuestions.length) push("Key Investigative Questions", questionsNote(state.keyQuestions));
-  if (state.nextSteps.length) push("Recommended Next Steps", nextStepsNote(state.nextSteps));
+  // Recommended Next Steps are exported as IRIS tasks (not notes) — see exportCaseToIris.
   if (state.openThreads.length) push("Open Threads", threadsNote(state.openThreads));
 
   // Human-authored report-meta sections.

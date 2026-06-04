@@ -7,16 +7,16 @@
 // The IRIS client is injected as a structural interface so this is unit-testable with a mock
 // (no network), matching the enrichment-service pattern.
 
-import type { InvestigationState } from "../../analysis/stateTypes.js";
+import type { InvestigationState, ForensicEvent } from "../../analysis/stateTypes.js";
 import { buildAssetGraph, type AssetGraph } from "../../analysis/assetGraph.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
 import { emptyReportMeta } from "../../reports/reportMeta.js";
 import {
-  mapAsset, mapIoc, mapEvent, buildNotes, executiveSummaryMarkdown,
+  mapAsset, mapIoc, mapEvent, mapNextStepTask, buildNotes, executiveSummaryMarkdown,
 } from "./irisMap.js";
 import type {
-  IrisCaseCreate, IrisCaseRef, IrisAssetRef, IrisIocRef, IrisEventRef, IrisDirRef,
-  IrisAssetBody, IrisIocBody, IrisEventBody,
+  IrisCaseCreate, IrisCaseRef, IrisAssetRef, IrisIocRef, IrisEventRef, IrisDirRef, IrisTaskRef,
+  IrisAssetBody, IrisIocBody, IrisEventBody, IrisTaskBody,
 } from "./irisClient.js";
 
 // Structural subset of IrisClient used here — lets tests pass a lightweight mock.
@@ -27,12 +27,16 @@ export interface IrisClientLike {
   setSummary(caseId: number, markdown: string): Promise<void>;
   iocTypeMap(): Promise<Map<string, number>>;
   assetTypeMap(): Promise<Map<string, number>>;
+  eventCategoryMap(): Promise<Map<string, number>>;
+  taskStatusMap(): Promise<Map<string, number>>;
   listAssets(cid: number): Promise<IrisAssetRef[]>;
   addAsset(cid: number, body: IrisAssetBody): Promise<number>;
   listIocs(cid: number): Promise<IrisIocRef[]>;
   addIoc(cid: number, body: IrisIocBody): Promise<number>;
   listEvents(cid: number): Promise<IrisEventRef[]>;
   addEvent(cid: number, body: IrisEventBody): Promise<number>;
+  listTasks(cid: number): Promise<IrisTaskRef[]>;
+  addTask(cid: number, body: IrisTaskBody): Promise<number>;
   listDirectories(cid: number): Promise<IrisDirRef[]>;
   addDirectory(cid: number, name: string): Promise<number>;
   deleteDirectory(cid: number, directoryId: number): Promise<void>;
@@ -62,6 +66,7 @@ export interface IrisExportResult {
   assets: SectionCount;
   iocs: SectionCount;
   timeline: SectionCount;
+  tasks: SectionCount;
   notes: number;
   summaryUpdated: boolean;
   caseUrl?: string;
@@ -81,6 +86,7 @@ export async function exportCaseToIris(
   const assets: SectionCount = { added: 0, existing: 0, skipped: 0 };
   const iocs: SectionCount = { added: 0, existing: 0, skipped: 0 };
   const timeline: SectionCount = { added: 0, existing: 0, skipped: 0 };
+  const tasks: SectionCount = { added: 0, existing: 0, skipped: 0 };
 
   // 1. Connectivity / auth (fatal).
   await client.ping();
@@ -149,14 +155,27 @@ export async function exportCaseToIris(
     }
   }
 
-  // 7. Timeline (dedupe by title+date; best-effort listing).
+  // 7. Timeline (dedupe by title+date; best-effort listing). Events are auto-categorized by
+  // MITRE tactic (categoryByName) and linked to the IOCs referenced via their findings.
   const seenEvents = new Set<string>();
   try {
     for (const e of await client.listEvents(cid)) seenEvents.add(`${e.title}|${e.date}`);
   } catch {
     warnings.push("timeline: could not list existing events — re-export may duplicate events");
   }
-  const ctx = { assetByName, iocByValue };
+  let categoryByName = new Map<string, number>();
+  try { categoryByName = await client.eventCategoryMap(); } catch (err) { warnings.push(`event categories: ${(err as Error).message}`); }
+  const findingById = new Map(input.state.findings.map((f) => [f.id, f]));
+  const iocById = new Map(input.state.iocs.map((i) => [i.id, i]));
+  const findingIocValues = (e: ForensicEvent): string[] => {
+    const out: string[] = [];
+    for (const fid of e.relatedFindingIds) {
+      const f = findingById.get(fid);
+      if (f) for (const iid of f.relatedIocs) { const i = iocById.get(iid); if (i) out.push(i.value); }
+    }
+    return out;
+  };
+  const ctx = { assetByName, iocByValue, categoryByName, findingIocValues };
   for (const event of input.state.forensicTimeline) {
     const body = mapEvent(event, ctx);
     if (!body) { timeline.skipped += 1; continue; }     // unparseable timestamp
@@ -172,7 +191,32 @@ export async function exportCaseToIris(
     }
   }
 
-  // 8. Notes — clean-replace the managed directory so notes reflect current state.
+  // 8. Recommended Next Steps → IRIS tasks (dedupe by title; status "To do").
+  if (input.state.nextSteps.length) {
+    let statusId = 1;
+    try {
+      const statuses = await client.taskStatusMap();
+      statusId = statuses.get("to do") ?? statuses.get("open") ?? [...statuses.values()][0] ?? 1;
+    } catch (err) { warnings.push(`task status: ${(err as Error).message}`); }
+    const seenTasks = new Set<string>();
+    try { for (const t of await client.listTasks(cid)) seenTasks.add(t.title); }
+    catch { warnings.push("tasks: could not list existing tasks — re-export may duplicate"); }
+    for (const step of input.state.nextSteps) {
+      const body = mapNextStepTask(step);
+      const title = String(body.task_title);
+      if (seenTasks.has(title)) { tasks.existing += 1; continue; }
+      try {
+        await client.addTask(cid, { ...body, task_status_id: statusId, task_assignees_id: [] });
+        seenTasks.add(title);
+        tasks.added += 1;
+      } catch (err) {
+        tasks.skipped += 1;
+        warnings.push(`task "${title}": ${(err as Error).message}`);
+      }
+    }
+  }
+
+  // 9. Notes — clean-replace the managed directory so notes reflect current state.
   let notes = 0;
   const dirName = options.notesDirectory ?? NOTES_DIR;
   try {
@@ -194,6 +238,7 @@ export async function exportCaseToIris(
     assets,
     iocs,
     timeline,
+    tasks,
     notes,
     summaryUpdated,
     caseUrl: options.baseUrl ? `${options.baseUrl.replace(/\/+$/, "")}/case?cid=${cid}` : undefined,

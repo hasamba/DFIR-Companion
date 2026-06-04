@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fetchFn` (self-signed / internal-CA IRIS supported via `DFIR_IRIS_CA` / `DFIR_IRIS_INSECURE`).
   Configure with `DFIR_IRIS_URL` + `DFIR_IRIS_KEY` (+ optional `DFIR_IRIS_CUSTOMER_ID` /
   `DFIR_IRIS_CLASSIFICATION_ID`); the button hides itself when IRIS isn't configured.
+  - **Recommended Next Steps → IRIS tasks** (status "To do", priority tag), deduped by title — instead of a note.
+  - **Timeline events are auto-categorized** by mapping each event's MITRE technique → ATT&CK tactic →
+    IRIS event category (with a keyword fallback for events that carry no technique id, e.g. many THOR hits).
+  - **Event titles are no longer truncated** (IRIS `event_title` is unbounded) — only a runaway one-line
+    description is trimmed on a word boundary.
+  - **Richer event↔IOC linking** — events now also link the IOCs referenced through their findings, not
+    just IOCs whose value appears in the event text.
 - **`npm run yeti -- <indicator>` CLI lookup.** Quickly check one or more indicators (IP / domain / hash /
   URL) against your YETI instance from the command line, using the same auth + search path as the
   companion (reads `DFIR_YETI_*` from `.env`, so no key copy-pasting). Prints verdict, tags, and the
