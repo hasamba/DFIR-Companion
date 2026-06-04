@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on corroborated structure, not blind inference.
 
 ### Added
+- **Investigator comments (collaboration)** — attach comments to any case entity (forensic event,
+  finding, IOC, key question, thread) via a 💬 chip that opens a thread to read/add/delete comments.
+  Each comment carries an author (a per-browser "your name" field) and timestamp. Stored per case in
+  `state/comments.json` (never wiped by synthesis); changes broadcast over the WS so collaborators see
+  them live. Endpoints `GET`/`POST /cases/:id/comments` and `DELETE /cases/:id/comments/:commentId`.
 - **Drag-to-reorder dashboard sections** — each section header has a ⠿ grip; drag to reorder, and
   the layout persists per-browser (localStorage) across reloads. Default order now leads with
   **Ask the AI** (first), with Compromised Assets above Investigation Threads.

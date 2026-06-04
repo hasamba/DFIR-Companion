@@ -89,10 +89,11 @@ double), shared hash, or same path within a time window. The merged event unions
 `event.asset`; accounts from `DOMAIN\user`/UPN in event text) and the IoCs that touched each. Side files in `state/`:
 `ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (enrichment
 on/off, **default off**), `pending_analysis.json`, `report-meta.json` (human-authored report
-sections — title page, distribution, BIA, glossary, recommendations…).
+sections — title page, distribution, BIA, glossary, recommendations…), `comments.json`
+(investigator comments on entities — never wiped by synthesis).
 
 **Per-case stores** follow the same pattern (atomic temp-file rename): `AiControlStore`,
-`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`. Pure filters/transforms live next to
+`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`. Pure filters/transforms live next to
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`) and are unit-tested independently of I/O.
 

@@ -29,6 +29,7 @@ import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
+import { CommentsStore } from "./analysis/comments.js";
 
 export type AiStatus = "analyzing" | "idle" | "error";
 // What the AI is actually doing, so the dashboard can say "processing screenshots"
@@ -50,6 +51,10 @@ export interface AppOptions {
   // Human-authored report metadata (title page, distribution, BIA, glossary, recommendations…)
   // edited from the dashboard and merged into report.md.
   reportMetaStore?: ReportMetaStore;
+  // Investigator comments on case entities (collaboration). onComments pings dashboard
+  // clients over the WS to re-fetch when a comment is added/removed.
+  commentsStore?: CommentsStore;
+  onComments?: (caseId: string) => void;
   // Called when an AI analysis window starts / finishes / fails, so the
   // server can push a live "AI status" indicator to dashboard clients.
   onAiStatus?: (caseId: string, event: AiStatusEvent) => void;
@@ -827,6 +832,47 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Investigator comments on case entities (collaboration). GET lists them; POST adds one
+  // to a `(targetType, targetId)` entity; DELETE removes by id. Add/remove ping live clients.
+  app.get("/cases/:id/comments", async (req: Request, res: Response) => {
+    if (!options.commentsStore) return res.status(501).json({ error: "comments not configured" });
+    try {
+      return res.status(200).json(await options.commentsStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/comments", async (req: Request, res: Response) => {
+    if (!options.commentsStore) return res.status(501).json({ error: "comments not configured" });
+    const targetType = typeof req.body?.targetType === "string" ? req.body.targetType.trim() : "";
+    const targetId = typeof req.body?.targetId === "string" ? req.body.targetId.trim() : "";
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    if (!targetType || !targetId || !text) return res.status(400).json({ error: "targetType, targetId and text are required" });
+    try {
+      const comment = await options.commentsStore.add(req.params.id, {
+        targetType, targetId, text,
+        author: typeof req.body?.author === "string" ? req.body.author : "",
+      });
+      options.onComments?.(req.params.id);
+      return res.status(201).json(comment);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/cases/:id/comments/:commentId", async (req: Request, res: Response) => {
+    if (!options.commentsStore) return res.status(501).json({ error: "comments not configured" });
+    try {
+      const removed = await options.commentsStore.remove(req.params.id, req.params.commentId);
+      if (!removed) return res.status(404).json({ error: "comment not found" });
+      options.onComments?.(req.params.id);
+      return res.status(204).end();
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   return app;
 }
 
@@ -926,6 +972,7 @@ export function startServer(casesRoot: string, port = 4773): void {
   const stateStore = new StateStoreImpl(store);
   const hub = new LiveHub();
   const reportMetaStore = new ReportMetaStore(store);
+  const commentsStore = new CommentsStore(store);
   const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore);
 
   const provider = buildProvider();
@@ -943,6 +990,8 @@ export function startServer(casesRoot: string, port = 4773): void {
     stateStore,
     reportWriter,
     reportMetaStore,
+    commentsStore,
+    onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     autoSynthesize,
     autoSynthesizeDebounceMs,
     onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),

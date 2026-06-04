@@ -52,6 +52,23 @@
     .asset-subhead { font-size: 12px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 6px; }
     .asset-chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px;
       font-size: 12px; background: #0f1115; border: 1px solid #2a2f3a; color: #e6e6e6; }
+    /* Investigator comments */
+    .comment-chip { background: transparent; border: 1px solid #2a2f3a; color: #9aa4b2; border-radius: 10px;
+      padding: 0 7px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+    .comment-chip:hover { color: #6aa9ff; border-color: #6aa9ff; }
+    .comment-chip.has { color: #6aa9ff; border-color: #2d4a6a; background: #11202e; }
+    .comment-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; z-index: 50; }
+    .comment-overlay.open { display: block; }
+    .comment-modal { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      width: min(560px, 92vw); max-height: 80vh; overflow: auto; background: #161a22; border: 1px solid #2a2f3a;
+      border-radius: 10px; padding: 16px; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+    .comment-modal h3 { margin: 0 0 4px; font-size: 14px; color: #cbd3df; }
+    .comment-item { border-left: 2px solid #2a2f3a; padding: 6px 10px; margin: 8px 0; }
+    .comment-item .meta { color: #9aa4b2; font-size: 11px; }
+    .comment-item .body { white-space: pre-wrap; margin-top: 2px; }
+    .comment-del { background: transparent; border: 0; color: #ff7a7a; cursor: pointer; font-size: 11px; padding: 0 4px; }
+    #commentText { width: 100%; box-sizing: border-box; background: #0f1115; color: #e6e6e6;
+      border: 1px solid #2a2f3a; border-radius: 6px; padding: 6px; font-family: inherit; resize: vertical; }
     /* Ask the AI panel */
     .ask-row { display: flex; gap: 8px; margin-bottom: 10px; }
     .ask-row input { flex: 1; }
@@ -98,6 +115,7 @@
   <header>
     <strong>DFIR Companion</strong>
     <input id="caseId" placeholder="caseId" />
+    <input id="investigatorName" placeholder="your name" title="Your name — used as the author when you comment. Saved in this browser." style="max-width:130px" />
     <button id="connect">Connect</button>
     <button id="aiToggle" title="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" title="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
@@ -130,6 +148,18 @@
       <span id="scopeInfo"></span>
     </div>
   </header>
+  <div id="commentOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3 id="commentTitle">Comments</h3>
+      <div id="commentList"></div>
+      <textarea id="commentText" rows="3" placeholder="Add a comment for other investigators…"></textarea>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <button id="commentPost">Post comment</button>
+        <button id="commentClose" style="background:#2a2f3a;">Close</button>
+        <span id="commentMsg" style="color:#9aa4b2; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
   <main>
     <section style="grid-column: 1 / -1">
       <h2>Ask the AI about this case</h2>
@@ -502,6 +532,71 @@
       }));
     }
 
+    // --- Investigator comments (collaboration) -----------------------------------
+    let commentsByTarget = new Map();   // "type:id" -> [comment]
+    let commentTarget = null;           // currently-open { type, id } in the modal
+
+    const targetKey = (type, id) => type + ":" + String(id);
+    function commentChip(type, id) {
+      const list = commentsByTarget.get(targetKey(type, id)) || [];
+      return `<button class="comment-chip${list.length ? " has" : ""}" data-ct="${escAttr(type)}" data-ci="${escAttr(String(id))}" `
+        + `title="Comments — collaborate with other investigators">💬${list.length ? " " + list.length : ""}</button>`;
+    }
+    const investigatorName = () => (document.getElementById("investigatorName").value || "").trim();
+
+    function loadComments(caseId) {
+      fetch(`/cases/${caseId}/comments`).then(r => r.json()).then(list => {
+        commentsByTarget = new Map();
+        (list || []).forEach(c => {
+          const k = targetKey(c.targetType, c.targetId);
+          let arr = commentsByTarget.get(k); if (!arr) { arr = []; commentsByTarget.set(k, arr); }
+          arr.push(c);
+        });
+        if (lastState) render(lastState);          // refresh chip counts
+        if (commentTarget) renderCommentModal();    // refresh an open thread (live collaboration)
+      }).catch(() => {});
+    }
+
+    function openCommentModal(type, id) {
+      commentTarget = { type, id };
+      document.getElementById("commentOverlay").classList.add("open");
+      renderCommentModal();
+      document.getElementById("commentText").focus();
+    }
+    function closeCommentModal() {
+      commentTarget = null;
+      document.getElementById("commentOverlay").classList.remove("open");
+      document.getElementById("commentText").value = "";
+      document.getElementById("commentMsg").textContent = "";
+    }
+    function renderCommentModal() {
+      if (!commentTarget) return;
+      const list = commentsByTarget.get(targetKey(commentTarget.type, commentTarget.id)) || [];
+      document.getElementById("commentTitle").textContent = `Comments on ${commentTarget.type} ${commentTarget.id}`;
+      document.getElementById("commentList").innerHTML = list.length
+        ? list.map(c => `<div class="comment-item"><div class="meta"><strong style="color:#cbd3df">${esc(c.author)}</strong> · `
+            + `${esc(new Date(c.createdAt).toLocaleString())} <button class="comment-del" data-id="${escAttr(c.id)}" title="Delete">✕</button></div>`
+            + `<div class="body">${esc(c.text)}</div></div>`).join("")
+        : "<div style='color:#9aa4b2;font-size:12px'>No comments yet.</div>";
+      document.getElementById("commentList").querySelectorAll(".comment-del").forEach(b => b.onclick = () => deleteComment(b.getAttribute("data-id")));
+    }
+    function postComment() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const text = document.getElementById("commentText").value.trim();
+      if (!caseId || !commentTarget || !text) return;
+      const msg = document.getElementById("commentMsg"); msg.textContent = "posting…";
+      fetch(`/cases/${caseId}/comments`, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ targetType: commentTarget.type, targetId: commentTarget.id, author: investigatorName(), text }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => { document.getElementById("commentText").value = ""; msg.textContent = ""; loadComments(caseId); })
+        .catch(e => msg.textContent = "failed: " + e.message);
+    }
+    function deleteComment(id) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      fetch(`/cases/${caseId}/comments/${id}`, { method: "DELETE" }).then(() => loadComments(caseId)).catch(() => {});
+    }
+
     // --- Ask the AI about this case ----------------------------------------------
     function askStatusBadge(s) {
       const m = { answered: ["#1e3a2a", "#6bcB77"], partial: ["#3a3320", "#ffd93b"], unknown: ["#2a2f3a", "#9aa4b2"] };
@@ -805,13 +900,13 @@
         ? kq.map(q =>
             `<div class="finding"><strong>${q.pinned ? "📌 " : ""}${QMARK[q.status] || "❓"} ${esc(q.question)}</strong>` +
             `<br><small>${esc(q.answer || "unknown")}</small>` +
-            `${q.pointer ? `<br><small style="color:#6aa9ff">→ ${esc(q.pointer)}</small>` : ""}</div>`
+            `${q.pointer ? `<br><small style="color:#6aa9ff">→ ${esc(q.pointer)}</small>` : ""} ${commentChip("question", q.id)}</div>`
           ).join("")
         : "<div style='color:#9aa4b2'>Not assessed yet — run Synthesize.</div>";
 
       const iocs = state.iocs || [];
       document.getElementById("iocs").innerHTML = iocs.length
-        ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}</div>`).join("")
+        ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)} ${commentChip("ioc", i.id)}</div>`).join("")
         : "<div style='color:#9aa4b2'>No IOCs yet</div>";
 
       // Already scope-projected above (events + findings/IOCs/MITRE consistently).
@@ -851,7 +946,7 @@
             // Strip any legacy "[corroborated by N sources: …]" note from old state for display.
             const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
             return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge}${corro}${chain} ` +
-              `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}` +
+              `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)} ${commentChip("event", e.id)}` +
               `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}` +
               `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${esc(e.mitreTechniques.join(", "))}</small>` : ""}` +
               `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +
@@ -862,7 +957,7 @@
       const openThreads = state.openThreads.filter(t => t.status === "open");
       const closedThreads = state.openThreads.filter(t => t.status === "closed");
       document.getElementById("openThreads").innerHTML =
-        openThreads.map(t => `<div>• <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("") || "<div style='color:#9aa4b2'>No open threads</div>";
+        openThreads.map(t => `<div>• <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)} ${commentChip("thread", t.id)}</div>`).join("") || "<div style='color:#9aa4b2'>No open threads</div>";
       document.getElementById("closedThreads").innerHTML = closedThreads.length
         ? `<div style='margin-top:8px;color:#6bcB77'>Closed (${closedThreads.length}):</div>` +
           closedThreads.map(t => `<div style='color:#9aa4b2;text-decoration:line-through'>✓ <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("")
@@ -876,7 +971,7 @@
           const auto = String(f.id).startsWith("f-auto-")
             ? ` <span title="Auto-flagged from a ${esc(f.severity)}-severity artifact row — review and refine" style="background:#2a2233;color:#c79bff;border:1px solid #4a3a5a;border-radius:4px;padding:0 6px;font-size:10px">AUTO</span>` : "";
           return `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> ` +
-            `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)}` +
+            `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)} ${commentChip("finding", f.id)}` +
             `<br><small>${esc(f.description)}</small>${evidenceLinks(state.caseId, evidence)}</div>`;
         }).join("") || "—";
       document.getElementById("timeline").innerHTML =
@@ -900,6 +995,7 @@
       loadScope(caseId);
       loadReportMeta(caseId);
       loadAssetGraph(caseId);
+      loadComments(caseId);
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
@@ -914,6 +1010,7 @@
         const msg = JSON.parse(ev.data);
         if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
+        else if (msg.type === "comments_changed") loadComments(caseId);
       };
     }
 
@@ -948,6 +1045,18 @@
       setTimeout(fitAssetZoom, 60);   // wait for the fullscreen relayout before measuring
     });
     document.getElementById("saveReportMeta").onclick = saveReportMeta;
+    // Investigator name (comment author) — persisted per browser.
+    document.getElementById("investigatorName").value = localStorage.getItem("dfir.investigator") || "";
+    document.getElementById("investigatorName").addEventListener("input", (e) => localStorage.setItem("dfir.investigator", e.target.value));
+    // Comment modal + delegated chip clicks.
+    document.getElementById("commentPost").onclick = postComment;
+    document.getElementById("commentClose").onclick = closeCommentModal;
+    document.getElementById("commentOverlay").addEventListener("click", (e) => { if (e.target.id === "commentOverlay") closeCommentModal(); });
+    document.querySelector("main").addEventListener("click", (e) => {
+      const chip = e.target.closest && e.target.closest(".comment-chip");
+      if (chip) openCommentModal(chip.getAttribute("data-ct"), chip.getAttribute("data-ci"));
+    });
+    document.getElementById("commentText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) postComment(); });
     document.getElementById("askBtn").onclick = doAsk;
     document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
     document.getElementById("connect").onclick = connect;

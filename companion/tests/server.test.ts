@@ -12,6 +12,7 @@ import { StateStore } from "../src/analysis/stateStore.js";
 import { MockProvider } from "../src/providers/provider.js";
 import { ReportWriter } from "../src/reports/reportWriter.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
+import { CommentsStore } from "../src/analysis/comments.js";
 
 let app: ReturnType<typeof createApp>;
 
@@ -580,6 +581,33 @@ describe("state and report routes", () => {
 
     // Only known report files are served.
     expect((await request(app).get("/cases/c1/report/secrets.txt")).status).toBe(400);
+  });
+
+  it("comments: post/list/delete on a case entity, with validation + a live ping", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-comments-route-"));
+    const store = new CaseStore(root);
+    const commentsStore = new CommentsStore(store);
+    let pinged = 0;
+    const app = createApp(store, { commentsStore, onComments: () => { pinged++; } });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+
+    // text is required.
+    expect((await request(app).post("/cases/c1/comments").send({ targetType: "ioc", targetId: "i1" })).status).toBe(400);
+
+    const post = await request(app).post("/cases/c1/comments").send({ targetType: "ioc", targetId: "i1", author: "Alice", text: "Possible C2?" });
+    expect(post.status).toBe(201);
+    expect(post.body).toMatchObject({ targetType: "ioc", targetId: "i1", author: "Alice", text: "Possible C2?" });
+    expect(pinged).toBe(1);
+
+    const list = await request(app).get("/cases/c1/comments");
+    expect(list.body).toHaveLength(1);
+
+    const del = await request(app).delete(`/cases/c1/comments/${post.body.id}`);
+    expect(del.status).toBe(204);
+    expect(pinged).toBe(2);
+    expect((await request(app).get("/cases/c1/comments")).body).toHaveLength(0);
+
+    expect((await request(app).delete("/cases/c1/comments/nope")).status).toBe(404);
   });
 
   it("POST /cases/:id/ask answers a question, and /questions pins it to the case", async () => {

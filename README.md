@@ -79,6 +79,9 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   grounded in everything known; when the answer is unknown it tells you **which artifact to collect
   and where**. One click pins the question to the case's open questions, and synthesis auto-answers
   it once the evidence arrives.
+- **Investigator comments** — attach comments to any entity (event, finding, IOC, question, thread)
+  via a 💬 chip; authored by name, stored per case, and synced live over the WS so investigators
+  collaborate in real time.
 
 ### Threat-intel enrichment (OPSEC opt-in — **default OFF**)
 - **Sources** — VirusTotal (hash/IP/domain/URL), MalwareBazaar (hash), AbuseIPDB (IP), **MISP** and

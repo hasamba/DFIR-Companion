@@ -61,6 +61,15 @@ describe("dashboard.html", () => {
     expect(html).toContain("/questions");
   });
 
+  it("wires investigator comments (chip + modal + author name) to /comments", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("commentChip");
+    expect(html).toContain('id="commentOverlay"');
+    expect(html).toContain('id="investigatorName"');
+    expect(html).toContain("/comments");
+    expect(html).toContain("comments_changed"); // live-sync over the WS
+  });
+
   it("makes sections drag-reorderable (grip + persisted order) with Ask first by default", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain("setupReorder");
