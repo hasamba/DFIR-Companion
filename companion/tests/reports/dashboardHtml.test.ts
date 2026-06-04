@@ -52,6 +52,15 @@ describe("dashboard.html", () => {
     expect(html).toContain("requestFullscreen");
   });
 
+  it("offers a multi-file external-screenshot import that posts to /captures", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="importShots"');
+    expect(html).toContain('id="shotsFile"');
+    expect(html).toContain("multiple");                 // multi-select enabled
+    expect(html).toContain('fetch("/captures"');        // sends through the capture ingest path
+    expect(html).toContain("readAsDataURL");            // base64-encodes each image
+  });
+
   it("offers zoom in/out/fit buttons and mouse-wheel zoom for the graph", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="assetZoomIn"');

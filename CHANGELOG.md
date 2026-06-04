@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Import external screenshots** (dashboard) — an *Import Screenshots* button with **multi-select**
+  sends each image (PNG/JPEG/WebP) through the same `POST /captures` ingest path the extension uses,
+  so they're stored as evidence, logged in `captures.jsonl`, and analyzed (when AI is on). The batch
+  is windowed normally and the last image flushes the trailing window. Reports imported / duplicate /
+  failed counts.
 - **Customizable AI prompts** — override any of the four built-in prompts (`SYSTEM` per-screenshot
   extraction, `CSV`, `LOG`, `SYNTH` holistic synthesis) from `companion/.env`: `DFIR_AI_<NAME>_PROMPT`
   for inline text, or `DFIR_AI_<NAME>_PROMPT_FILE` to point at a file. The file is re-read on every

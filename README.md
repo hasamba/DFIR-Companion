@@ -35,6 +35,9 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   hotkey** to toggle capture; captured tab title baked into the screenshot filename.
 - **Evidence-first ingest** — screenshot written to disk + append-only `captures.jsonl` audit
   line **before** any analysis; perceptual-hash duplicate detection.
+- **Import external screenshots** — dashboard **Import Screenshots** button (multi-select PNG/JPEG/WebP)
+  feeds images from any other tool through the same ingest path as the extension, so they're stored
+  and analyzed identically.
 - **Localhost only** — server binds `127.0.0.1`; CORS + Private-Network-Access so the
   `chrome-extension://` origin can reach it.
 
