@@ -10,6 +10,7 @@ export interface AbuseIpdbOptions {
 // AbuseIPDB — IP reputation. GET /api/v2/check?ipAddress=&maxAgeInDays=.
 export class AbuseIpdbProvider implements EnrichmentProvider {
   readonly name = "AbuseIPDB";
+  readonly scope = "external" as const;
   private readonly fetchFn: FetchFn;
   constructor(private readonly opts: AbuseIpdbOptions) {
     this.fetchFn = opts.fetchFn ?? fetch;

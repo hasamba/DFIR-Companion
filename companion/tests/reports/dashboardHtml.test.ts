@@ -61,6 +61,15 @@ describe("dashboard.html", () => {
     expect(html).toContain("/questions");
   });
 
+  it("offers per-source enrichment selection (local/external) via a modal", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="enrichOverlay"');
+    expect(html).toContain("openEnrichModal");
+    expect(html).toContain('class="enrich-cb"');
+    expect(html).toContain("OPSEC-safe");
+    expect(html).toContain("anyConfigured");
+  });
+
   it("wires investigator comments (chip + modal + author name) to /comments", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain("commentChip");

@@ -16,8 +16,15 @@ export interface EnrichmentResult {
   link?: string;
 }
 
+// "local" = the analyst's OWN self-hosted instance (MISP / YETI) — querying it does NOT
+// leak indicators off-box, so it's OPSEC-safe and enabled by default. "external" = a
+// third-party SaaS (VirusTotal, MalwareBazaar, AbuseIPDB, RockyRaccoon) — sending an
+// indicator there can tip off an adversary, so it's opt-in per case.
+export type ProviderScope = "local" | "external";
+
 export interface EnrichmentProvider {
   readonly name: string;
+  readonly scope: ProviderScope;
   supports(kind: IocKind): boolean;
   // Resolve to a result, or null if the indicator isn't found / no data. Throws only on
   // hard errors (auth, rate limit) so the service can react (skip / back off).

@@ -28,6 +28,7 @@ function tagNames(tags: YetiObservable["tags"]): string[] {
 // Auth is two-step: exchange the API key for a short-lived JWT, then Bearer it.
 export class YetiProvider implements EnrichmentProvider {
   readonly name = "YETI";
+  readonly scope = "local" as const;     // your own instance — OPSEC-safe
   private readonly fetchFn: FetchFn;
   private readonly base: string;
   private token?: string;

@@ -30,6 +30,7 @@ function verdictFor(attrs: MispAttribute[]): Verdict {
 // the indicator value; a hit means the IOC is known threat intel shared on that instance.
 export class MispProvider implements EnrichmentProvider {
   readonly name = "MISP";
+  readonly scope = "local" as const;     // your own instance — OPSEC-safe
   private readonly fetchFn: FetchFn;
   private readonly base: string;
   constructor(private readonly opts: MispOptions) {

@@ -11,6 +11,7 @@ function ioc(over: Partial<IOC> & { value: string; type: IOC["type"] }): IOC {
 function fakeProvider(name: string, kinds: IocKind[], result: EnrichmentResult | null, calls: string[]): EnrichmentProvider {
   return {
     name,
+    scope: "external",
     supports: (k) => kinds.includes(k),
     lookup: async (k, v) => { calls.push(`${name}:${k}:${v}`); return result; },
   };
@@ -39,6 +40,43 @@ describe("enrichIocs", () => {
     expect(out[3].enrichments).toBeUndefined();          // other untouched
   });
 
+  it("re-checks an IOC only on providers that haven't checked it (a newly-enabled provider re-checks all)", async () => {
+    const calls: string[] = [];
+    const vt = fakeProvider("VirusTotal", ["hash"], { source: "VirusTotal", verdict: "malicious" }, calls);
+    const mb = fakeProvider("MalwareBazaar", ["hash"], { source: "MalwareBazaar", verdict: "malicious" }, calls);
+
+    const r1 = await enrichIocs([ioc({ value: "h1", type: "hash" })], { providers: [vt], sleep: noSleep, now });
+    expect(calls).toEqual(["VirusTotal:hash:h1"]);
+    expect(r1.iocs[0].enrichedBy).toEqual(["VirusTotal"]);
+
+    calls.length = 0;                                       // add MalwareBazaar — only it should query
+    const r2 = await enrichIocs(r1.iocs, { providers: [vt, mb], sleep: noSleep, now });
+    expect(calls).toEqual(["MalwareBazaar:hash:h1"]);
+    expect(new Set(r2.iocs[0].enrichedBy)).toEqual(new Set(["VirusTotal", "MalwareBazaar"]));
+    expect(r2.iocs[0].enrichments!.map((e) => e.source).sort()).toEqual(["MalwareBazaar", "VirusTotal"]);
+
+    calls.length = 0;                                       // nothing new → no calls
+    const r3 = await enrichIocs(r2.iocs, { providers: [vt, mb], sleep: noSleep, now });
+    expect(calls).toEqual([]);
+    expect(r3.summary.queried).toBe(0);
+  });
+
+  it("records a provider that found nothing so it isn't re-queried (force overrides)", async () => {
+    const calls: string[] = [];
+    const misp = fakeProvider("MISP", ["hash"], null, calls);   // no hit
+    const r1 = await enrichIocs([ioc({ value: "h1", type: "hash" })], { providers: [misp], sleep: noSleep, now });
+    expect(r1.iocs[0].enrichments).toEqual([]);            // checked, no hit
+    expect(r1.iocs[0].enrichedBy).toEqual(["MISP"]);
+
+    calls.length = 0;
+    await enrichIocs(r1.iocs, { providers: [misp], sleep: noSleep, now });
+    expect(calls).toEqual([]);                              // not re-queried
+
+    calls.length = 0;
+    await enrichIocs(r1.iocs, { providers: [misp], sleep: noSleep, now, force: true });
+    expect(calls).toEqual(["MISP:hash:h1"]);               // force re-queries
+  });
+
   it("routes a process IOC only to providers that support 'process'", async () => {
     const calls: string[] = [];
     const vt = fakeProvider("VirusTotal", ["hash", "ip", "domain", "url"], { source: "VirusTotal", verdict: "malicious" }, calls);
@@ -64,10 +102,10 @@ describe("enrichIocs", () => {
   it("skips already-enriched IOCs unless force is set (cache)", async () => {
     const calls: string[] = [];
     const vt = fakeProvider("VirusTotal", ["hash"], { source: "VirusTotal", verdict: "malicious" }, calls);
-    const cached = ioc({ value: "h1", type: "hash", enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "old" }] });
+    const cached = ioc({ value: "h1", type: "hash", enrichedBy: ["VirusTotal"], enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "old" }] });
 
     const first = await enrichIocs([cached], { providers: [vt], sleep: noSleep, now });
-    expect(first.summary.queried).toBe(0);               // cached → skipped
+    expect(first.summary.queried).toBe(0);               // already checked by VirusTotal → skipped
     expect(calls).toHaveLength(0);
 
     const forced = await enrichIocs([cached], { providers: [vt], sleep: noSleep, now, force: true });

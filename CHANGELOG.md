@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Per-source enrichment selection (OPSEC).** Enrichment is no longer all-or-nothing: each source is
+  **local** (your own MISP / YETI instance — queries stay on-box) or **external** (VirusTotal, AbuseIPDB,
+  MalwareBazaar, RockyRaccoon — sends indicators off-box). The dashboard **Enrich** button opens a
+  per-source picker grouped Local/External with a clearer OPSEC explanation; the **default is local-only**
+  (so enabling enrichment is OPSEC-safe by default), and turning on an external source still prompts a
+  confirm. **Enabling a source re-checks every IOC on it** — enrichment now caches per (IOC, provider) via
+  a new `enrichedBy` field, so a newly-added source queries all existing IOCs while already-checked ones
+  (hit or not) are skipped. Legacy `{ enabled }` controls still load. New control shape:
+  `GET/POST /cases/:id/enrich-control` exchange `{ providers: [{ name, scope, enabled }] }`.
+
 ## [0.5.0] - 2026-06-04
 
 ### Changed

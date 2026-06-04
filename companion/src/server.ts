@@ -13,7 +13,7 @@ import { parseCsv } from "./analysis/csvImport.js";
 import { parseLogLines } from "./analysis/logImport.js";
 import { parseThorReport } from "./analysis/thorImport.js";
 import { enrichIocs } from "./enrichment/enrichService.js";
-import { EnrichControlStore } from "./enrichment/enrichControl.js";
+import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
 import type { EnrichmentProvider } from "./enrichment/provider.js";
 import { VirusTotalProvider } from "./enrichment/virustotal.js";
 import { MalwareBazaarProvider } from "./enrichment/malwarebazaar.js";
@@ -433,11 +433,21 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // enriches the current IOCs and — via autoEnrichIfEnabled below — any IOCs added later.
   const enrichControl = new EnrichControlStore(store);
 
+  // Provider classification (from the configured set) + the per-case enabled subset.
+  const allProviders = options.enrichmentProviders ?? [];
+  const configuredNames = allProviders.map((p) => p.name);
+  const localNames = allProviders.filter((p) => p.scope === "local").map((p) => p.name);
+  async function enabledProvidersFor(caseId: string): Promise<EnrichmentProvider[]> {
+    const enabled = new Set(resolveEnabledProviders(await enrichControl.load(caseId), configuredNames, localNames));
+    return allProviders.filter((p) => enabled.has(p.name));
+  }
+
   function enrichInBackground(caseId: string, force = false): void {
-    const providers = options.enrichmentProviders ?? [];
-    if (providers.length === 0 || !options.stateStore) return;
-    options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: "enriching IOCs (threat intel)" });
+    if (allProviders.length === 0 || !options.stateStore) return;
     void (async () => {
+      const providers = await enabledProvidersFor(caseId);
+      if (providers.length === 0) return;     // nothing enabled for this case
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `enriching IOCs (${providers.map((p) => p.name).join(", ")})` });
       const state = await options.stateStore!.load(caseId);
       const { iocs, summary } = await enrichIocs(state.iocs, {
         providers,
@@ -481,8 +491,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // After IOCs change (synthesis/import), enrich the new ones if the toggle is on. The
   // cache means already-enriched IOCs are skipped, so this only queries fresh indicators.
   function autoEnrichIfEnabled(caseId: string): void {
-    if ((options.enrichmentProviders?.length ?? 0) === 0) return;
-    enrichControl.load(caseId).then((c) => { if (c.enabled) enrichInBackground(caseId); }).catch(() => {});
+    if (allProviders.length === 0) return;
+    enabledProvidersFor(caseId).then((ps) => { if (ps.length > 0) enrichInBackground(caseId); }).catch(() => {});
   }
 
   function resynthesizeInBackground(caseId: string): void {
@@ -726,25 +736,32 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // AbuseIPDB) — that's why it is off until the analyst opts in.
   app.get("/cases/:id/enrich-control", async (req: Request, res: Response) => {
     try {
-      const control = await enrichControl.load(req.params.id);
-      return res.status(200).json({ ...control, available: (options.enrichmentProviders?.length ?? 0) > 0, providers: (options.enrichmentProviders ?? []).map((p) => p.name) });
+      const enabled = new Set(resolveEnabledProviders(await enrichControl.load(req.params.id), configuredNames, localNames));
+      return res.status(200).json({
+        anyConfigured: allProviders.length > 0,
+        // Each CONFIGURED provider with its scope (local = OPSEC-safe) and whether it's on for this case.
+        providers: allProviders.map((p) => ({ name: p.name, scope: p.scope, enabled: enabled.has(p.name) })),
+      });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
 
+  // Set which providers are enabled for this case. Accepts `{ providers: string[] }`
+  // (preferred) or legacy `{ enabled: boolean }`. Saving re-runs enrichment; per-provider
+  // caching means only the newly-enabled providers query the existing IOCs.
   app.post("/cases/:id/enrich-control", async (req: Request, res: Response) => {
-    const providers = options.enrichmentProviders ?? [];
-    if (providers.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_ABUSEIPDB_KEY)" });
+    if (allProviders.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_ABUSEIPDB_KEY / DFIR_MISP_* / DFIR_YETI_*)" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
-    const enabled = req.body?.enabled === true;
+    let providers: string[];
+    if (Array.isArray(req.body?.providers)) providers = req.body.providers.map(String).filter((n: string) => configuredNames.includes(n));
+    else if (typeof req.body?.enabled === "boolean") providers = req.body.enabled ? [...configuredNames] : [];
+    else return res.status(400).json({ error: "providers (array of provider names) or enabled (boolean) is required" });
     try {
-      await enrichControl.save(caseId, { enabled });
-      // Turning it ON kicks off enrichment of the IOCs already in the list (force=false
-      // skips ones already enriched). Future IOCs are handled by autoEnrichIfEnabled.
-      if (enabled) enrichInBackground(caseId);
-      return res.status(200).json({ enabled, providers: providers.map((p) => p.name) });
+      await enrichControl.save(caseId, { providers });
+      if (providers.length > 0) enrichInBackground(caseId);   // re-check; cache only queries newly-enabled / un-checked
+      return res.status(200).json({ providers });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

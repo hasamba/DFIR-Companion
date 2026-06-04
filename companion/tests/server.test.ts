@@ -403,15 +403,17 @@ describe("server analysis wiring", () => {
 
     const provider = {
       name: "VirusTotal",
+      scope: "external" as const,
       supports: () => true,
       lookup: async () => ({ source: "VirusTotal", verdict: "malicious" as const, score: "60/72" }),
     };
     const app2 = createApp(store, { stateStore, enrichmentProviders: [provider], enrichDelayMs: 0 });
 
+    // Enable VirusTotal for this case (external is opt-in), then enrich.
+    await request(app2).post("/cases/c1/enrich-control").send({ providers: ["VirusTotal"] });
     const res = await request(app2).post("/cases/c1/enrich").send({});
     expect(res.status).toBe(202);
     expect(res.body.iocs).toBe(2);
-    expect(res.body.providers).toEqual(["VirusTotal"]);
 
     // Background enrichment annotates the hash (not the file) — poll until it lands.
     let state = await stateStore.load("c1");
@@ -442,18 +444,20 @@ describe("server analysis wiring", () => {
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     await stateStore.save(seeded);
 
-    const provider = { name: "VirusTotal", supports: () => true, lookup: async () => ({ source: "VirusTotal", verdict: "malicious" as const }) };
+    const provider = { name: "VirusTotal", scope: "external" as const, supports: () => true, lookup: async () => ({ source: "VirusTotal", verdict: "malicious" as const }) };
     const app2 = createApp(store, { stateStore, enrichmentProviders: [provider], enrichDelayMs: 0 });
+    const vtState = async () => (await request(app2).get("/cases/c1/enrich-control")).body.providers.find((p: { name: string }) => p.name === "VirusTotal");
 
-    // Default OFF.
+    // External provider is OFF by default (local-only default; VT is external).
     const get0 = await request(app2).get("/cases/c1/enrich-control");
     expect(get0.status).toBe(200);
-    expect(get0.body).toMatchObject({ enabled: false, available: true });
+    expect(get0.body.anyConfigured).toBe(true);
+    expect(await vtState()).toMatchObject({ scope: "external", enabled: false });
 
-    // Turn ON → enriches the existing IOC in the background.
+    // Turn ON via the legacy { enabled } shape → enables all configured (just VirusTotal).
     const on = await request(app2).post("/cases/c1/enrich-control").send({ enabled: true });
     expect(on.status).toBe(200);
-    expect(on.body.enabled).toBe(true);
+    expect(on.body.providers).toEqual(["VirusTotal"]);
 
     let state = await stateStore.load("c1");
     for (let i = 0; i < 40 && !state.iocs[0].enrichments; i++) {
@@ -463,7 +467,7 @@ describe("server analysis wiring", () => {
     expect(state.iocs[0].enrichments?.[0]).toMatchObject({ source: "VirusTotal", verdict: "malicious" });
 
     // Persisted ON.
-    expect((await request(app2).get("/cases/c1/enrich-control")).body.enabled).toBe(true);
+    expect((await vtState()).enabled).toBe(true);
   });
 
   it("rejects a log import when no AI pipeline is configured", async () => {
@@ -581,6 +585,38 @@ describe("state and report routes", () => {
 
     // Only known report files are served.
     expect((await request(app).get("/cases/c1/report/secrets.txt")).status).toBe(400);
+  });
+
+  it("enrich-control: per-provider selection with scope, local-only default", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-enrich-ctl-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const mkP = (name: string, scope: "local" | "external") => ({ name, scope, supports: () => true, lookup: async () => null });
+    const enrichmentProviders = [mkP("VirusTotal", "external"), mkP("MISP", "local"), mkP("YETI", "local")];
+    const app = createApp(store, { stateStore, enrichmentProviders });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+
+    // Default: local sources ON, external OFF — with scope reported.
+    const g1 = await request(app).get("/cases/c1/enrich-control");
+    expect(g1.status).toBe(200);
+    expect(g1.body.anyConfigured).toBe(true);
+    const byName = Object.fromEntries(g1.body.providers.map((p: { name: string }) => [p.name, p]));
+    expect(byName.MISP).toMatchObject({ scope: "local", enabled: true });
+    expect(byName.YETI.enabled).toBe(true);
+    expect(byName.VirusTotal).toMatchObject({ scope: "external", enabled: false });
+
+    // Select VirusTotal + MISP (unknown name dropped).
+    const post = await request(app).post("/cases/c1/enrich-control").send({ providers: ["VirusTotal", "MISP", "bogus"] });
+    expect(post.status).toBe(200);
+    expect([...post.body.providers].sort()).toEqual(["MISP", "VirusTotal"]);
+
+    const g2 = await request(app).get("/cases/c1/enrich-control");
+    const byName2 = Object.fromEntries(g2.body.providers.map((p: { name: string }) => [p.name, p]));
+    expect(byName2.VirusTotal.enabled).toBe(true);
+    expect(byName2.YETI.enabled).toBe(false);
+
+    // Neither providers nor enabled → 400.
+    expect((await request(app).post("/cases/c1/enrich-control").send({})).status).toBe(400);
   });
 
   it("comments: post/list/delete on a case entity, with validation + a live ping", async () => {

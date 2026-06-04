@@ -35,6 +35,7 @@ function fmtCount(n?: number): string {
 // check used by the process-chain validation pass.
 export class RockyRaccoonProvider implements EnrichmentProvider {
   readonly name = "RockyRaccoon";
+  readonly scope = "external" as const;
   private readonly fetchFn: FetchFn;
   private readonly base: string;
   constructor(private readonly opts: RockyRaccoonOptions) {

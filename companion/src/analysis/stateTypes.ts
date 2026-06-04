@@ -19,7 +19,8 @@ export interface IOC {
   type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "other";
   value: string;
   firstSeen: string;
-  enrichments?: IocEnrichment[];                               // threat-intel lookups (added by the enrich pass)
+  enrichments?: IocEnrichment[];                               // threat-intel HITS (added by the enrich pass)
+  enrichedBy?: string[];                                       // provider names that have CHECKED this IOC (hit or not) — so a newly-enabled provider re-checks every IOC, and checked ones aren't re-queried
 }
 
 export interface Finding {

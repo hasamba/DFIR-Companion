@@ -32,6 +32,7 @@ function verdictFromStats(s: VtStats): { verdict: Verdict; detections: number; t
 
 export class VirusTotalProvider implements EnrichmentProvider {
   readonly name = "VirusTotal";
+  readonly scope = "external" as const;
   private readonly fetchFn: FetchFn;
   constructor(private readonly opts: VirusTotalOptions) {
     this.fetchFn = opts.fetchFn ?? fetch;

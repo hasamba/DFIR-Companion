@@ -94,10 +94,14 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   via a 💬 chip; authored by name, stored per case, and synced live over the WS so investigators
   collaborate in real time.
 
-### Threat-intel enrichment (OPSEC opt-in — **default OFF**)
+### Threat-intel enrichment (OPSEC — **per-source, default local-only**)
 - **Sources** — VirusTotal (hash/IP/domain/URL), MalwareBazaar (hash), AbuseIPDB (IP), **MISP** and
   **YETI** (your own instances), **RockyRaccoon** (Windows **process** intel — prevalence / LOLBIN /
   risk / expected parent / ATT&CK).
+- **Per-source selection** — each source is **local** (your own MISP/YETI — queries stay on-box,
+  OPSEC-safe) or **external** (third-party — sends indicators off-box). Pick which to use; the
+  **default is local-only**, external is opt-in with a confirm. **Enabling a source re-checks every
+  IOC on it** (per-source cache), so adding a site later backfills the whole case on it.
 - **Process-chain validation** — RockyRaccoon parent→child check flags an anomalous chain
   (e.g. `excel.exe → powershell.exe`) on the timeline.
 - **Per-case toggle**, cached on the IOC, throttled, capped; verdict/score/tags/link badges; IOC CSV column.
