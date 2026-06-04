@@ -80,6 +80,9 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Process-chain validation** — RockyRaccoon parent→child check flags an anomalous chain
   (e.g. `excel.exe → powershell.exe`) on the timeline.
 - **Per-case toggle**, cached on the IOC, throttled, capped; verdict/score/tags/link badges; IOC CSV column.
+- **Self-hosted TLS** — MISP / YETI on an internal-CA or self-signed cert: trust a PEM CA bundle
+  (`DFIR_MISP_CA` / `DFIR_YETI_CA`, verification stays on) or skip verification for a lab
+  (`DFIR_MISP_INSECURE` / `DFIR_YETI_INSECURE`). Scoped per provider — never relaxes the other lookups.
 
 ### Dashboard & reports
 - **Live dashboard** over WebSocket — collapsible sections, scope bar, clickable evidence links, and
@@ -375,7 +378,6 @@ into the **Features** section (and `CHANGELOG.md`) once shipped.
 
 - [ ] Per-provider enrichment throttle (so RockyRaccoon's tight rate limit doesn't slow VT/AbuseIPDB).
 - [ ] Configurable companion host/port in the **extension** (currently `127.0.0.1:4773`).
-- [ ] Optional self-signed / internal-CA TLS support for MISP / YETI instances.
 - [ ] `_execute_action` hotkey to open the extension popup.
 
 ## Tests

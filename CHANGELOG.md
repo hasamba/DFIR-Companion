@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starts/stops screenshot capture without opening the popup. Turning it on takes one capture
   immediately and flashes the toolbar badge `REC`/`off`; the popup shows the current binding and
   a **rebind** link to `chrome://extensions/shortcuts`.
+- **Self-hosted TLS trust for MISP / YETI** — connect to intel instances on an internal-CA or
+  self-signed certificate. Point `DFIR_MISP_CA` / `DFIR_YETI_CA` at a PEM bundle to trust a
+  private CA (verification stays on), or set `DFIR_MISP_INSECURE` / `DFIR_YETI_INSECURE` to skip
+  verification for a lab (insecure; logs a warning). Scoped per provider via an injected
+  undici dispatcher — the VirusTotal/AbuseIPDB/AI calls keep the default verified trust store.
 
 ## [0.3.0] - 2026-06-04
 

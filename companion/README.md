@@ -36,6 +36,12 @@ Other AI tunables: `DFIR_AI_TIMEOUT_MS` (per-request timeout, default 180000),
 402-ing a large request by over-reserving credit), and `DFIR_AI_SYNTH_MAX_EVENTS`
 (events fed to the synthesis prompt, default 300, most-severe first).
 
+Self-hosted enrichment TLS: if your **MISP** or **YETI** instance presents an internal-CA
+or self-signed cert, set `DFIR_MISP_CA` / `DFIR_YETI_CA` to a PEM CA-bundle path to trust a
+private CA (verification stays on), or `DFIR_MISP_INSECURE` / `DFIR_YETI_INSECURE` (`=1`) to
+skip verification for a lab (insecure — logs a warning). Each is scoped to that one provider
+via an injected undici dispatcher; VirusTotal/AbuseIPDB and the AI calls keep the verified store.
+
 Shell environment variables override `.env`. `GET /health` returns `{ aiEnabled }`
 so you can confirm whether an AI provider is configured.
 
