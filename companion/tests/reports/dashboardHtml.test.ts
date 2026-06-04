@@ -61,6 +61,15 @@ describe("dashboard.html", () => {
     expect(html).toContain("/questions");
   });
 
+  it("makes sections drag-reorderable (grip + persisted order) with Ask first by default", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("setupReorder");
+    expect(html).toContain("drag-grip");
+    expect(html).toContain('"dfir.sectionOrder"');
+    // Ask section comes before Executive Summary in the default markup.
+    expect(html.indexOf("Ask the AI about this case")).toBeLessThan(html.indexOf("Executive Summary"));
+  });
+
   it("offers a multi-file external-screenshot import that posts to /captures", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="importShots"');

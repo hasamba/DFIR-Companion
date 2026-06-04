@@ -20,6 +20,11 @@
     h2 { margin: 0 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: #9aa4b2;
       cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
     h2:hover { color: #cbd3df; }
+    /* Drag-to-reorder sections (grip in each header; order persists in localStorage). */
+    .drag-grip { cursor: grab; color: #6aa9ff; margin-right: 2px; font-size: 13px; user-select: none; }
+    .drag-grip:active { cursor: grabbing; }
+    section.dragging { opacity: 0.45; }
+    section.drop-target { outline: 2px dashed #6aa9ff; outline-offset: -2px; }
     h2 .chev { font-size: 10px; color: #6aa9ff; transition: transform .12s; }
     section.collapsed h2 { margin-bottom: 0; }
     section.collapsed h2 .chev { transform: rotate(-90deg); }
@@ -126,6 +131,14 @@
     </div>
   </header>
   <main>
+    <section style="grid-column: 1 / -1">
+      <h2>Ask the AI about this case</h2>
+      <div class="ask-row">
+        <input id="askInput" placeholder="e.g. Was data exfiltrated? Was a USB connected? Any signs of persistence?" />
+        <button id="askBtn">Ask</button>
+      </div>
+      <div id="askAnswer"></div>
+    </section>
     <section style="grid-column: 1 / -1"><h2>Executive Summary</h2><div id="summary">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attacker Path</h2><div id="attackerPath">—</div></section>
@@ -165,14 +178,6 @@
     </section>
     <section><h2>Findings</h2><div id="findings">—</div></section>
     <section><h2>IOCs</h2><div id="iocs">—</div></section>
-    <section style="grid-column: 1 / -1">
-      <h2>Ask the AI about this case</h2>
-      <div class="ask-row">
-        <input id="askInput" placeholder="e.g. Was data exfiltrated? Was a USB connected? Any signs of persistence?" />
-        <button id="askBtn">Ask</button>
-      </div>
-      <div id="askAnswer"></div>
-    </section>
     <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
@@ -1169,6 +1174,51 @@
     const loadCollapsed = () => { try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "{}"); } catch { return {}; } };
     const saveCollapsed = (map) => localStorage.setItem(COLLAPSE_KEY, JSON.stringify(map));
 
+    // Drag-to-reorder sections. Order persists per-browser in localStorage and is reapplied
+    // on load. render() rewrites inner divs (not <section>s), so a reordered layout sticks.
+    const ORDER_KEY = "dfir.sectionOrder";
+    function saveSectionOrder() {
+      localStorage.setItem(ORDER_KEY, JSON.stringify(sections().map(sectionKey)));
+    }
+    function applySectionOrder() {
+      let saved; try { saved = JSON.parse(localStorage.getItem(ORDER_KEY) || "null"); } catch { saved = null; }
+      if (!Array.isArray(saved)) return;                 // no saved order → use the HTML default
+      const main = document.querySelector("main");
+      const byKey = new Map(sections().map(s => [sectionKey(s), s]));
+      const used = new Set();
+      const ordered = [];
+      saved.forEach(k => { const s = byKey.get(k); if (s) { ordered.push(s); used.add(s); } });
+      sections().forEach(s => { if (!used.has(s)) ordered.push(s); }); // new/unknown sections go to the end
+      ordered.forEach(s => main.appendChild(s));
+    }
+    function setupReorder() {
+      const main = document.querySelector("main");
+      let dragged = null;
+      sections().forEach(sec => {
+        const h2 = sec.querySelector("h2");
+        if (h2 && !h2.querySelector(".drag-grip")) {
+          const grip = document.createElement("span");
+          grip.className = "drag-grip"; grip.textContent = "⠿"; grip.title = "Drag to reorder this section";
+          grip.setAttribute("draggable", "true");
+          grip.addEventListener("click", e => e.stopPropagation()); // don't toggle collapse
+          grip.addEventListener("dragstart", e => { dragged = sec; sec.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", sectionKey(sec)); } catch {} });
+          grip.addEventListener("dragend", () => { sec.classList.remove("dragging"); sections().forEach(s => s.classList.remove("drop-target")); dragged = null; });
+          h2.insertBefore(grip, h2.firstChild);
+        }
+        sec.addEventListener("dragover", e => { if (!dragged || dragged === sec) return; e.preventDefault(); sec.classList.add("drop-target"); });
+        sec.addEventListener("dragleave", () => sec.classList.remove("drop-target"));
+        sec.addEventListener("drop", e => {
+          e.preventDefault(); sec.classList.remove("drop-target");
+          if (!dragged || dragged === sec) return;
+          const r = sec.getBoundingClientRect();
+          const after = (e.clientY - r.top) > r.height / 2;   // drop in the lower half → place after
+          main.insertBefore(dragged, after ? sec.nextSibling : sec);
+          saveSectionOrder();
+        });
+      });
+      applySectionOrder();
+    }
+
     function updateToggleAllLabel() {
       const anyOpen = sections().some(s => !s.classList.contains("collapsed"));
       document.getElementById("toggleAll").textContent = anyOpen ? "Collapse all" : "Expand all";
@@ -1206,6 +1256,7 @@
     };
 
     setupCollapsible();
+    setupReorder();
 
     // On load, restore the case from the URL (?caseId=) or last session and reconnect.
     (function restore() {

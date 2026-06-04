@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on corroborated structure, not blind inference.
 
 ### Added
+- **Drag-to-reorder dashboard sections** — each section header has a ⠿ grip; drag to reorder, and
+  the layout persists per-browser (localStorage) across reloads. Default order now leads with
+  **Ask the AI** (first), with Compromised Assets above Investigation Threads.
 - **Ask the AI about the case** — a dashboard panel (and `POST /cases/:id/ask`) to ask free-form
   questions ("was data exfiltrated?", "was a USB connected?"). Single-shot, grounded in the case's
   evidence digest (assets, IOCs+verdicts, attacker path, findings, timeline); returns an answer + a
