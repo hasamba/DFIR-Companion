@@ -25,6 +25,8 @@ import { makeImageLoader } from "../src/analysis/imageLoader.js";
 import { emptyState } from "../src/analysis/stateTypes.js";
 import { LegitimateStore } from "../src/analysis/legitimate.js";
 import { ScopeStore } from "../src/analysis/scope.js";
+import { AnonControlStore } from "../src/analysis/anonControl.js";
+import { CustomEntitiesStore } from "../src/analysis/anonEntities.js";
 import { buildProviderFrom } from "../src/server.js";
 import type { CaptureMetadata } from "../src/types.js";
 
@@ -76,7 +78,7 @@ async function main(): Promise<void> {
 
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
-  const pipeline = new AnalysisPipeline({ provider, synthesisProvider, stateStore, legitimateStore: new LegitimateStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store) });
+  const pipeline = new AnalysisPipeline({ provider, synthesisProvider, stateStore, legitimateStore: new LegitimateStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), anonStore: new AnonControlStore(store), customEntitiesStore: new CustomEntitiesStore(store) });
 
   const logText = await readFile(store.capturesLogPath(caseId), "utf8");
   const all: CaptureMetadata[] = logText.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));

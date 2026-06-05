@@ -1,0 +1,45 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import request from "supertest";
+import { CaseStore } from "../../src/storage/caseStore.js";
+import { StateStore } from "../../src/analysis/stateStore.js";
+import { createApp } from "../../src/server.js";
+
+let app: ReturnType<typeof createApp>;
+beforeEach(async () => {
+  const root = await mkdtemp(join(tmpdir(), "dfir-anonroute-"));
+  const store = new CaseStore(root);
+  await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  app = createApp(store, { stateStore: new StateStore(store) });
+});
+
+describe("/cases/:id/anon-control", () => {
+  it("GET returns the default (enabled) control with screenshotWarning", async () => {
+    const res = await request(app).get("/cases/c1/anon-control");
+    expect(res.status).toBe(200);
+    expect(res.body.enabled).toBe(true);
+    expect(res.body.categories.IP).toBe(true);
+    expect(typeof res.body.screenshotWarning).toBe("boolean");
+  });
+  it("POST persists changes", async () => {
+    const res = await request(app).post("/cases/c1/anon-control").send({ enabled: false });
+    expect(res.status).toBe(200);
+    expect(res.body.enabled).toBe(false);
+    expect((await request(app).get("/cases/c1/anon-control")).body.enabled).toBe(false);
+  });
+});
+
+describe("/cases/:id/anon-entities", () => {
+  it("GET returns auto + custom; POST replaces custom (sanitized, unknown cat → OTHER)", async () => {
+    const get0 = await request(app).get("/cases/c1/anon-entities");
+    expect(get0.status).toBe(200);
+    expect(Array.isArray(get0.body.auto.hosts)).toBe(true);
+    expect(get0.body.custom).toEqual([]);
+    const post = await request(app).post("/cases/c1/anon-entities").send({ entities: [{ value: "DC9", category: "HOST" }, { value: "x", category: "bogus" }] });
+    expect(post.status).toBe(200);
+    expect(post.body.custom).toEqual([{ value: "DC9", category: "HOST" }, { value: "x", category: "OTHER" }]);
+    expect((await request(app).get("/cases/c1/anon-entities")).body.custom.length).toBe(2);
+  });
+});

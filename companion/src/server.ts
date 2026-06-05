@@ -7,6 +7,9 @@ import { ZodError } from "zod";
 import { CaseStore } from "./storage/caseStore.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
+import { AnonControlStore, type AnonControl } from "./analysis/anonControl.js";
+import { CustomEntitiesStore, sanitizeCustomEntities } from "./analysis/anonEntities.js";
+import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { parseCsv } from "./analysis/csvImport.js";
@@ -542,6 +545,66 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Client-confirmed legitimate findings/IOCs (false positives). Marking one
   // re-runs synthesis so the AI re-derives its conclusions without it.
   const legitimate = new LegitimateStore(store);
+
+  // Per-case anonymization control (default ON) + the analyst-added entity list. Screenshots can't
+  // be tokenized, so the dashboard warns when anon is on and the vision provider is external.
+  const anonControl = new AnonControlStore(store);
+  const customEntities = new CustomEntitiesStore(store);
+  const visionIsLocal = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
+
+  // Anonymization control: GET reports the control + whether screenshots are exposed (anon on +
+  // external vision). POST updates it and, when `enabled` flips, forces a re-synth so conclusions
+  // reflect the new wire policy (the skip-if-unchanged hash is keyed on real inputs and won't notice).
+  app.get("/cases/:id/anon-control", async (req: Request, res: Response) => {
+    try {
+      const c = await anonControl.load(req.params.id);
+      return res.status(200).json({ ...c, screenshotWarning: c.enabled && !visionIsLocal });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+  app.post("/cases/:id/anon-control", async (req: Request, res: Response) => {
+    try {
+      const cur = await anonControl.load(req.params.id);
+      const next: AnonControl = {
+        enabled: typeof req.body?.enabled === "boolean" ? req.body.enabled : cur.enabled,
+        categories: { ...cur.categories, ...(req.body?.categories ?? {}) },
+        redactSecrets: typeof req.body?.redactSecrets === "boolean" ? req.body.redactSecrets : cur.redactSecrets,
+      };
+      await anonControl.save(req.params.id, next);
+      if (next.enabled !== cur.enabled && options.pipeline) {
+        void options.pipeline.synthesize(req.params.id, { force: true }).catch(() => {});
+      }
+      return res.status(200).json({ ...next, screenshotWarning: next.enabled && !visionIsLocal });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // The entities that will be anonymized for a case: `auto` (derived from the timeline — grows as
+  // the investigation does, read-only) + `custom` (analyst-added). POST replaces the custom list.
+  app.get("/cases/:id/anon-entities", async (req: Request, res: Response) => {
+    try {
+      const custom = await customEntities.load(req.params.id);
+      let auto = { hosts: [] as string[], accounts: [] as string[], internalDomains: [] as string[] };
+      if (options.stateStore) {
+        const d = deriveKnownEntities(await options.stateStore.load(req.params.id));
+        auto = { hosts: d.hosts, accounts: d.accounts, internalDomains: d.internalDomains };
+      }
+      return res.status(200).json({ auto, custom });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+  app.post("/cases/:id/anon-entities", async (req: Request, res: Response) => {
+    try {
+      const entities = sanitizeCustomEntities(req.body?.entities);
+      await customEntities.save(req.params.id, entities);
+      return res.status(200).json({ custom: entities });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
 
   // Threat-intel enrichment is OFF by default (OPSEC). When the analyst turns it on it
   // enriches the current IOCs and — via autoEnrichIfEnabled below — any IOCs added later.
@@ -1265,7 +1328,7 @@ export function startServer(casesRoot: string, port = 4773): void {
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
   const wiredPipeline = provider
-    ? new AnalysisPipelineImpl({ provider, synthesisProvider, stateStore, legitimateStore: new LegitimateStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s) })
+    ? new AnalysisPipelineImpl({ provider, synthesisProvider, stateStore, legitimateStore: new LegitimateStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s), anonStore: new AnonControlStore(store), customEntitiesStore: new CustomEntitiesStore(store) })
     : undefined;
 
   // Live synthesis on by default — set DFIR_AI_AUTO_SYNTHESIZE=off to disable.
