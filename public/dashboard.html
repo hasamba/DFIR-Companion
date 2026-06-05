@@ -296,7 +296,7 @@
     let ws = null;
     let countTimer = null;
     let countUpdate = null;   // current capture-count poll fn (set by pollCount)
-    let aiEnabled = true;
+    let aiEnabled = false;   // AI defaults OFF per case; loadAiToggle() syncs the real state
     let scope = { start: null, end: null };  // active investigation window (ISO or null)
     let lastState = null;                    // last raw state from server, for re-render on scope change
     let legitMarkers = [];                    // confirmed-legitimate markers; events here are hidden from the timeline

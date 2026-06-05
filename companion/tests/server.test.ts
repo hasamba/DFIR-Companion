@@ -97,6 +97,7 @@ describe("server analysis wiring", () => {
     const app = createApp(store, { pipeline, windowSize: 10 });
 
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
     await request(app).post("/captures").send({
       caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
       triggerType: "navigation", imageBase64: await pngBase64(),
@@ -136,6 +137,7 @@ describe("server analysis wiring", () => {
     const app = createApp(store, { pipeline, windowSize: 10, autoSynthesize: true, autoSynthesizeDebounceMs: 10 });
 
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
     await request(app).post("/captures").send({
       caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
       triggerType: "navigation", imageBase64: await pngBase64(),
@@ -502,6 +504,7 @@ describe("server analysis wiring", () => {
     });
 
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
     await request(app).post("/captures").send({
       caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
       triggerType: "navigation", imageBase64: await pngBase64(),
@@ -846,7 +849,7 @@ describe("AI on/off control", () => {
     const app = createApp(store, {});
     const res = await request(app).get("/cases/c1/ai-control");
     expect(res.status).toBe(200);
-    expect(res.body.enabled).toBe(true);
+    expect(res.body.enabled).toBe(false); // AI defaults OFF for a fresh case
   });
 });
 

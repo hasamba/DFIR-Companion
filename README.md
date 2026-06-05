@@ -90,7 +90,8 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Scope** — set a from/to time window; everything re-projects to it deterministically.
 - **Mark legitimate** — flag a finding / IOC / **forensic event** as benign (reversible); excluded
   from analysis and reports.
-- **Per-case AI on/off** — capture-only mode; backfills when turned back on.
+- **Per-case AI on/off** — **off by default** (capture-only); the dashboard's **AI: ON/OFF** button
+  starts live analysis and backfills everything captured while it was off.
 - **Threads, key questions, next steps** — open/closed leads and standard DFIR questions with pointers.
 - **Ask the AI about the case** — free-form Q&A ("was data exfiltrated?", "was a USB connected?")
   grounded in everything known; when the answer is unknown it tells you **which artifact to collect

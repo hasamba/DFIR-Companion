@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **AI analysis now defaults to OFF per case.** A fresh app start or a brand-new case captures
+  evidence (screenshots are always stored) but runs no live AI until the analyst turns it on with
+  the dashboard's **AI: ON/OFF** button — the same OPSEC/cost-first, opt-in stance as threat-intel
+  enrichment. Turning it on still backfills everything captured while it was off. Explicit imports
+  (CSV / log / THOR) are unaffected and always analyze. The default lives in `AiControlStore`
+  (`enabled: false`); cases that already ran analysis keep their saved on state.
+
 ## [0.6.0] - 2026-06-04
 
 ### Added

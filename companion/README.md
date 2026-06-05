@@ -111,7 +111,7 @@ Examples:
 | `POST /cases/:id/legitimate` | `{ kind: "finding"\|"ioc"\|"event", ref, note, label? }` — mark a finding (ref = title), IOC (ref = value), or **forensic event** (ref = event id; `label` = its description for display) legitimate; re-runs synthesis without it. The dashboard's per-item **⚑ mark legitimate** button calls this. Legit **events** are hidden from the timeline and excluded from synthesis input but the raw event is preserved in state, so un-marking restores it. |
 | `POST /cases/:id/legitimate/remove` | `{ id }` — un-mark; re-runs synthesis. |
 | `GET /cases/:id/ai-control` | Current AI on/off state: `{ enabled, lastAnalyzedSeq }`. |
-| `POST /cases/:id/ai-control` | `{ enabled }` — turn AI analysis on/off for the case. Evidence is always captured; when off, no AI runs. Turning it **on** backfills every screenshot captured while it was off. The dashboard's **AI: ON/OFF** button calls this. |
+| `POST /cases/:id/ai-control` | `{ enabled }` — turn AI analysis on/off for the case. **Defaults off** (a fresh case captures evidence without running AI). Evidence is always captured; when off, no AI runs. Turning it **on** backfills every screenshot captured while it was off. The dashboard's **AI: ON/OFF** button calls this. |
 | `GET /cases/:id/enrich-control` | Per-source enrichment state: `{ anyConfigured, providers: [{ name, scope, enabled }] }`. `scope` is `local` (your own MISP/YETI — OPSEC-safe) or `external` (third-party SaaS). |
 | `POST /cases/:id/enrich-control` | `{ providers: [names] }` (or legacy `{ enabled }`) — set which sources are enabled for the case. **Default is local-only** (OPSEC-safe). Saving enriches the current IOCs and auto-enriches IOCs added later; **enabling a source re-checks every IOC on it** (per-source cache via `enrichedBy`). The dashboard's **Enrich** picker calls this. Stored in `state/enrich-control.json`. |
 | `POST /cases/:id/enrich` | Manual one-shot IOC enrichment (does not change the toggle). Looks up the case's IOCs (hashes/IPs/domains/URLs) on the configured providers — **VirusTotal** (`DFIR_VT_KEY`), **MalwareBazaar** (`DFIR_MB_KEY`), **AbuseIPDB** (`DFIR_ABUSEIPDB_KEY`), **MISP** (`DFIR_MISP_URL` + `DFIR_MISP_KEY`), **RockyRaccoon** (`DFIR_ROCKYRACCOON_KEY`, **process** names — prevalence / LOLBIN / risk / expected parent / ATT&CK), **YETI** (`DFIR_YETI_URL` + `DFIR_YETI_KEY`, your own instance) — and annotates each with a verdict/score/link. Cached on the IOC (skips already-enriched unless `{ force: true }`); throttled (`DFIR_ENRICH_DELAY_MS`) and capped (`DFIR_ENRICH_MAX`, hashes/IPs first). `501` if no provider key is set. **⚠ OPSEC: sends indicators to third-party services.** |
@@ -208,10 +208,13 @@ finding. As a deterministic safety net, after each synthesis any in-scope, non-l
 auto-created and linked (id prefix `f-auto-`, badged **AUTO** in the dashboard) so a
 severe detection can never be silently missed. Refine or mark it legitimate as needed.
 
-**Capture-only mode.** The dashboard's **AI: ON/OFF** button (per case) lets you
-capture screenshots as evidence without running AI. When you switch it back on, the
-server automatically analyzes everything captured while it was off (tracked by
-`lastAnalyzedSeq` in `state/ai-control.json`), then synthesizes.
+**Capture-only mode (the default).** AI analysis is **off by default** per case, so a
+fresh app start or a new case captures screenshots as evidence without running any AI
+until you opt in — the same OPSEC/cost-first stance as threat-intel enrichment. The
+dashboard's **AI: ON/OFF** button (per case) turns live analysis on; when you switch it
+on, the server automatically analyzes everything captured while it was off (tracked by
+`lastAnalyzedSeq` in `state/ai-control.json`), then synthesizes. Explicit imports
+(CSV / log / THOR) always analyze regardless of this toggle.
 
 **Live capture and conclusions.** While you browse, the per-window extraction builds
 the forensic timeline + investigation log. Findings, MITRE and the attacker path come

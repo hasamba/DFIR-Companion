@@ -16,9 +16,9 @@ beforeEach(async () => {
 });
 
 describe("AiControlStore", () => {
-  it("defaults to enabled with lastAnalyzedSeq 0 when none saved", async () => {
+  it("defaults to disabled with lastAnalyzedSeq 0 when none saved", async () => {
     const c = await control.load("c1");
-    expect(c.enabled).toBe(true);
+    expect(c.enabled).toBe(false);
     expect(c.lastAnalyzedSeq).toBe(0);
   });
 

@@ -3,15 +3,19 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 
-// Per-case AI analysis control. `enabled` lets the user capture screenshots without
-// running AI; `lastAnalyzedSeq` is the highest capture sequence the live pipeline has
-// analyzed, so turning AI back on can catch up on everything captured while it was off.
+// Per-case AI analysis control. `enabled` gates the LIVE screenshot pipeline only —
+// evidence is always captured, and explicit imports (CSV / log / THOR) always analyze.
+// It defaults to OFF so a fresh app start or a brand-new case captures evidence without
+// spending any AI until the analyst deliberately turns it on (the same OPSEC/cost-first
+// default-off stance as threat-intel enrichment). `lastAnalyzedSeq` is the highest
+// capture sequence the live pipeline has analyzed, so turning AI on backfills everything
+// captured while it was off.
 export interface AiControl {
   enabled: boolean;
   lastAnalyzedSeq: number;
 }
 
-const DEFAULT: AiControl = { enabled: true, lastAnalyzedSeq: 0 };
+const DEFAULT: AiControl = { enabled: false, lastAnalyzedSeq: 0 };
 
 export class AiControlStore {
   constructor(private readonly cases: CaseStore) {}
