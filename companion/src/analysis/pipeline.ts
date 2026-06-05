@@ -24,6 +24,7 @@ import { parseSiemExport, type SiemImportOptions } from "./siemImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
+import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 
@@ -902,6 +903,53 @@ export class AnalysisPipeline {
       timelineNote: `Velociraptor import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
         (parsed.detections > 0 ? `, ${parsed.detections} detection(s)` : "") +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import network-monitor logs — Suricata `eve.json` and Zeek JSON (Security Onion's
+  // network side). Deterministic (no AI call): the timeline is built from the detections
+  // (Suricata alerts + Zeek notices); surrounding telemetry (dns/http/tls/files/conn)
+  // contributes IOCs only. Events are tagged Suricata / Zeek.
+  async importNetwork(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;                // unique per import (e.g. "n3") so ids never collide
+      importedAt: string;
+      network?: NetworkImportOptions;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsed = parseNetworkLogs(text, opts.network);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Suricata"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Network import (${parsed.format}): ${parsed.kept} detection event(s) from ${parsed.total} record(s)` +
+        (parsed.alerts > 0 ? `, ${parsed.alerts} alert/notice(s)` : "") +
+        `, ${parsed.iocs.length} IOC(s)` +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
       summary: "",
     };

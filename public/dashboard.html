@@ -154,6 +154,8 @@
     <button id="importHayabusa" title="Upload a Hayabusa (Yamato Security) detection timeline — csv-timeline (.csv) or json-timeline (.json/.jsonl). The matched Sigma rule's level drives severity, its title/tactics/tags drive the description + MITRE, and IOCs/asset/process-chain come from the detail fields. No AI extraction.">Import Hayabusa</button>
     <input id="velociraptorFile" type="file" accept=".json,.jsonl,.ndjson,application/json,text/plain" style="display:none" />
     <button id="importVelociraptor" title="Upload Velociraptor native JSON output (collection results / hunt export — JSON array, JSONL, or an artifact map). Sigma & YARA detection rows are mapped verdict-first; parsed EVTX rows use the per-EID mapping; other artifacts auto-detect time/host/IOCs. No AI extraction.">Import Velociraptor</button>
+    <input id="networkFile" type="file" accept=".json,.jsonl,.ndjson,.eve,.log,application/json,text/plain" style="display:none" />
+    <button id="importNetwork" title="Upload Suricata eve.json or Zeek JSON logs (Security Onion's network side — NDJSON or array). Suricata alerts & Zeek notices become timeline detections; dns/http/tls/files telemetry contributes IOCs (domains, URLs, file hashes). No AI extraction.">Import Suricata/Zeek</button>
     <input id="shotsFile" type="file" accept="image/png,image/jpeg,image/webp" multiple style="display:none" />
     <button id="importShots" title="Import external screenshots (PNG/JPEG/WebP) from another tool — select multiple at once. Each is stored as evidence and analyzed (when AI is on), exactly like the extension's captures.">Import Screenshots</button>
     <button id="generateReport" title="Write the report (Markdown + HTML) and CSVs; then export via the links that appear">Generate Report</button>
@@ -1760,6 +1762,42 @@
       } catch (err) {
         document.getElementById("status").textContent =
           "Velociraptor import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
+      }
+      e.target.value = ""; // allow re-selecting the same file
+    };
+    document.getElementById("importNetwork").onclick = () => {
+      if (!document.getElementById("caseId").value.trim()) {
+        document.getElementById("status").textContent = "enter/connect a Case ID first";
+        return;
+      }
+      document.getElementById("networkFile").click();
+    };
+    document.getElementById("networkFile").onchange = async (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      const file = e.target.files && e.target.files[0];
+      if (!caseId || !file) return;
+      // Severity floor applies to the alert/notice events; telemetry IOCs are always kept.
+      const ans = prompt("Suricata/Zeek — minimum severity for alert events?\n  (blank) = keep everything (default)\n  low     = drop Suricata priority-3 alerts\n  medium / high = only that level and above\n(IOCs from dns/http/tls/files telemetry are kept regardless)", "");
+      if (ans === null) { e.target.value = ""; return; } // cancelled
+      const minSeverity = ans.trim().toLowerCase();
+      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
+      try {
+        const text = await file.text();
+        const r = await fetch(`/cases/${caseId}/import-network`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ filename: file.name, text, minSeverity }),
+        });
+        if (!r.ok) {
+          let msg = "HTTP " + r.status;
+          try { msg = (await r.json()).error || msg; } catch {}
+          throw new Error(msg);
+        }
+        const p = await r.json();
+        document.getElementById("status").textContent =
+          `Network (${p.format}): ${p.events} detection(s) from ${p.records} record(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
+      } catch (err) {
+        document.getElementById("status").textContent =
+          "Suricata/Zeek import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
       }
       e.target.value = ""; // allow re-selecting the same file
     };
