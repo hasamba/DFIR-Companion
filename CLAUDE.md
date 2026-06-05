@@ -117,6 +117,13 @@ are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
 
+**One import button, server-side routing.** The dashboard has a SINGLE **Import** button → `POST /cases/:id/import`;
+`importDetect.ts` (`detectImportKind`, pure + tested) sniffs the file (JSON/NDJSON vs CSV vs log, then per-format
+key/header signatures, most-specific→generic) and the route dispatches to the matching `pipeline.import*` (or
+`analyzeCsv`/`analyzeLog`). Images go to `POST /captures`. The per-format `import-*` routes still exist for
+programmatic use. When you add a new importer, **also add its signature to `importDetect.ts` + a dispatch case in
+the `/import` route**, or the unified button won't route to it. Export/Push are single dashboard menus too.
+
 **Cross-source correlation runs in `mergeDelta`** (`correlate.ts`): events describing the
 same artifact collapse into one — by exact dup (time+description, so re-imports don't
 double), shared hash, or same path within a time window. The merged event unions `sources`

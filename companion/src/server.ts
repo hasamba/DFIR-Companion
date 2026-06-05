@@ -38,6 +38,7 @@ import { parsePlasoCsv } from "./analysis/plasoImport.js";
 import type { PlasoImportOptions } from "./analysis/plasoImport.js";
 import { parseSandboxReport } from "./analysis/sandboxImport.js";
 import type { SandboxImportOptions } from "./analysis/sandboxImport.js";
+import { detectImportKind } from "./analysis/importDetect.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
 import { ProviderHealthCache } from "./enrichment/providerHealth.js";
@@ -899,6 +900,74 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await scopeStore.save(req.params.id, scope);
       resynthesizeInBackground(req.params.id); // re-derive within the window
       return res.status(200).json(scope);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Unified import: ONE endpoint the dashboard's single "Import" button posts any data file to.
+  // The server SNIFFS the file (filename + content) — JSON/NDJSON vs CSV vs log, then per-format
+  // signatures — and dispatches to the matching importer (deterministic ones, or the AI CSV/log
+  // path). Evidence-first: the raw file is persisted + audit-logged before analysis. The detected
+  // `kind` is returned so a mis-route is visible. (The per-format routes below remain for
+  // programmatic use.)
+  app.post("/cases/:id/import", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.json === "string" ? req.body.json
+      : typeof req.body?.csv === "string" ? req.body.csv : "";
+    const originalName = String(req.body?.filename ?? "import.dat");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const kind = detectImportKind(originalName, text);
+    if (kind === "unknown") {
+      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / CSV / log)" });
+    }
+
+    try {
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.dat");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: 0, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, kind, file: storedName });
+
+      const pipeline = options.pipeline;
+      const onProgress = (done: number, total: number): void => options.onAiStatus?.(caseId, {
+        status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}`,
+      });
+      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress };
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind})` });
+
+      const run = (): Promise<unknown> => {
+        switch (kind) {
+          case "thor": return pipeline.importThor(caseId, text, base);
+          case "siem": return pipeline.importSiem(caseId, text, base);
+          case "chainsaw": return pipeline.importChainsaw(caseId, text, base);
+          case "hayabusa": return pipeline.importHayabusa(caseId, text, base);
+          case "velociraptor": return pipeline.importVelociraptor(caseId, text, base);
+          case "network": return pipeline.importNetwork(caseId, text, base);
+          case "kape": return pipeline.importKape(caseId, text, base);
+          case "m365": return pipeline.importM365(caseId, text, base);
+          case "aws": return pipeline.importAws(caseId, text, base);
+          case "cloud": return pipeline.importCloudActivity(caseId, text, base);
+          case "plaso": return pipeline.importPlaso(caseId, text, base);
+          case "sandbox": return pipeline.importSandbox(caseId, text, base);
+          case "csv": return pipeline.analyzeCsv(caseId, text, base);
+          case "log": return pipeline.analyzeLog(caseId, text, base);
+          default: return Promise.reject(new Error(`unhandled import kind: ${kind as string}`));
+        }
+      };
+      run()
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

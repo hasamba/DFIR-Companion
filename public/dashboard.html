@@ -140,41 +140,18 @@
     <button id="synthesize" title="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
     <button id="enrichToggle" title="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/MalwareBazaar/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" title="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
-    <input id="csvFile" type="file" accept=".csv,text/csv" style="display:none" />
-    <button id="importCsv" title="Upload a CSV of results (e.g. a Velociraptor export) to analyze into IOCs, TTPs and the timeline">Import CSV</button>
-    <input id="logFile" type="file" accept=".log,.txt,text/plain" style="display:none" />
-    <button id="importLog" title="Upload a generic log file (firewall, syslog, sshd, IIS/Apache/nginx, application logs — .log or .txt). Each line is analyzed for forensic events and IOCs.">Import Log</button>
-    <input id="thorFile" type="file" accept=".json,.jsonl,application/json,text/plain" style="display:none" />
-    <button id="importThor" title="Upload a THOR (Nextron) scanner report in JSON-Lines format (thor --jsonfile). Findings map deterministically to the timeline + IOCs; scan info/lifecycle noise is dropped automatically.">Import THOR</button>
-    <input id="siemFile" type="file" accept=".json,.jsonl,.ndjson,application/json,text/plain" style="display:none" />
-    <button id="importSiem" title="Upload a SIEM/EDR JSON export (Elastic/Kibana, Splunk, an EDR console, or a raw winlogbeat dump). The container is unwrapped and Windows/Sysmon events map deterministically to the timeline + IOCs (other records use field auto-detection); repetitive events are aggregated. No AI extraction.">Import SIEM/EDR</button>
-    <input id="chainsawFile" type="file" accept=".json,.jsonl,.ndjson,application/json,text/plain" style="display:none" />
-    <button id="importChainsaw" title="Upload Chainsaw (WithSecure) hunt output (chainsaw hunt --json/--jsonl) or a raw EVTX dump (evtx_dump -o json/jsonl). Chainsaw's matched Sigma rule level/MITRE tags drive severity; embedded EVTX events map deterministically to the timeline + IOCs. No AI extraction.">Import Chainsaw/EVTX</button>
-    <input id="hayabusaFile" type="file" accept=".csv,.json,.jsonl,.ndjson,text/csv,application/json,text/plain" style="display:none" />
-    <button id="importHayabusa" title="Upload a Hayabusa (Yamato Security) detection timeline — csv-timeline (.csv) or json-timeline (.json/.jsonl). The matched Sigma rule's level drives severity, its title/tactics/tags drive the description + MITRE, and IOCs/asset/process-chain come from the detail fields. No AI extraction.">Import Hayabusa</button>
-    <input id="velociraptorFile" type="file" accept=".json,.jsonl,.ndjson,application/json,text/plain" style="display:none" />
-    <button id="importVelociraptor" title="Upload Velociraptor native JSON output (collection results / hunt export — JSON array, JSONL, or an artifact map). Sigma & YARA detection rows are mapped verdict-first; parsed EVTX rows use the per-EID mapping; other artifacts auto-detect time/host/IOCs. No AI extraction.">Import Velociraptor</button>
-    <input id="networkFile" type="file" accept=".json,.jsonl,.ndjson,.eve,.log,application/json,text/plain" style="display:none" />
-    <button id="importNetwork" title="Upload Suricata eve.json or Zeek JSON logs (Security Onion's network side — NDJSON or array). Suricata alerts & Zeek notices become timeline detections; dns/http/tls/files telemetry contributes IOCs (domains, URLs, file hashes). No AI extraction.">Import Suricata/Zeek</button>
-    <input id="kapeFile" type="file" accept=".csv,text/csv,text/plain" style="display:none" />
-    <button id="importKape" title="Upload a KAPE / Eric Zimmerman Tools CSV (Prefetch, Amcache, ShimCache, LNK, JumpLists, UsnJrnl, MFT, SRUM, RecycleBin, Shellbags). The EZ tool is auto-detected from the header; each row becomes a timeline event with its own time + file/hash/process IOCs. No AI extraction.">Import KAPE/EZ</button>
-    <input id="m365File" type="file" accept=".json,.jsonl,.ndjson,.csv,application/json,text/csv,text/plain" style="display:none" />
-    <button id="importM365" title="Upload Microsoft 365 Unified Audit Log (Search-UnifiedAuditLog CSV/JSON) or Entra ID sign-in / directory audit JSON. Severity is derived from the operation (BEC tradecraft — inbox rules, mailbox delegation, OAuth/role grants, risky sign-ins); source IPs become IOCs. No AI extraction.">Import M365/Entra</button>
-    <input id="awsFile" type="file" accept=".json,.jsonl,.ndjson,application/json,text/plain" style="display:none" />
-    <button id="importAws" title="Upload AWS CloudTrail logs ({ Records: [...] } JSON, NDJSON, or array). Severity is derived from the API action (IAM persistence, CloudTrail/GuardDuty tampering, S3 exposure, secrets access) plus denied/root/console-failure bumps; the caller IP becomes an IOC. No AI extraction.">Import AWS CloudTrail</button>
-    <input id="cloudActivityFile" type="file" accept=".json,.jsonl,.ndjson,application/json,text/plain" style="display:none" />
-    <button id="importCloudActivity" title="Upload GCP Cloud Audit Logs (gcloud logging read JSON) or Azure Activity Log (az monitor activity-log list JSON / Log Analytics export). Severity is derived from the action (IAM/role grants, key & secret access, logging-sink/diagnostic deletion, firewall opens); the caller IP becomes an IOC. No AI extraction.">Import GCP/Azure</button>
-    <input id="plasoFile" type="file" accept=".csv,text/csv,text/plain" style="display:none" />
-    <button id="importPlaso" title="Upload a Plaso / log2timeline super-timeline (psort CSV — dynamic or legacy l2tcsv). Each row becomes a timeline event at its own time; IOCs (hashes, URLs, IPs) and the source file path are scraped from the message. Filter your psort output first — it caps at the most-recent rows. No AI extraction.">Import Plaso</button>
-    <input id="sandboxFile" type="file" accept=".json,application/json,text/plain" style="display:none" />
-    <button id="importSandbox" title="Upload a malware-sandbox detonation report — CAPEv2 (report.json) or CrowdStrike Falcon Sandbox (summary JSON). The sample verdict + each behavioural signature become timeline events with their own severity + MITRE; dropped/extracted file hashes and network hosts/domains/URLs are harvested as IOCs. No AI extraction.">Import Sandbox</button>
-    <input id="shotsFile" type="file" accept="image/png,image/jpeg,image/webp" multiple style="display:none" />
-    <button id="importShots" title="Import external screenshots (PNG/JPEG/WebP) from another tool — select multiple at once. Each is stored as evidence and analyzed (when AI is on), exactly like the extension's captures.">Import Screenshots</button>
-    <button id="generateReport" title="Write the report (Markdown + HTML) and CSVs; then export via the links that appear">Generate Report</button>
-    <button id="exportTimelineCsv" title="Download just the incident (forensic) timeline as CSV">Export Timeline CSV</button>
-    <button id="exportTimesketchJsonl" title="Download the incident (forensic) timeline as Timesketch-compatible JSONL (message/datetime/timestamp_desc + searchable fields), ready to upload into a Timesketch sketch">Export Timesketch JSONL</button>
-    <button id="pushIris" title="Push this case to DFIR-IRIS: creates the case (or updates it if it already exists), pushing assets, IOCs, timeline, the executive summary as the case summary, and every other section as notes" style="display:none">Push to IRIS</button>
-    <button id="pushTimesketch" title="Push this case's forensic timeline into a Timesketch sketch (created or updated by case id). The managed timeline is clean-replaced on re-push, so events never duplicate." style="display:none">Push to Timesketch</button>
+    <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,application/json,text/csv,text/plain,image/png,image/jpeg,image/webp" style="display:none" />
+    <button id="importBtn" title="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import…</button>
+    <select id="exportSelect" title="Export this case (report, CSV, Timesketch JSONL, JSON state)">
+      <option value="">Export…</option>
+      <option value="report">Generate report (Markdown + HTML)</option>
+      <option value="timeline-csv">Forensic timeline (CSV)</option>
+      <option value="timesketch-jsonl">Timesketch JSONL</option>
+      <option value="state-json">Full case state (JSON)</option>
+    </select>
+    <select id="pushSelect" title="Push this case to an external platform" style="display:none">
+      <option value="">Push to…</option>
+    </select>
     <span id="reportLinks" class="report-links"></span>
     <button id="toggleAll" title="Collapse or expand all sections">Collapse all</button>
     <span id="status">disconnected</span>
@@ -1474,41 +1451,6 @@
     document.getElementById("anonCustAdd").onclick = addCustomEntity;
     document.getElementById("anonCustVal").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addCustomEntity(); } });
     document.getElementById("anonOverlay").addEventListener("click", (e) => { if (e.target.id === "anonOverlay") document.getElementById("anonOverlay").classList.remove("open"); });
-    // CSV import: read the file locally, POST its text; the server persists it as
-    // evidence and analyzes it (events → IOCs/TTPs/findings) with live WS updates.
-    document.getElementById("importCsv").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("csvFile").click();
-    };
-    document.getElementById("csvFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-csv`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, csv: text }),
-        });
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `imported ${p.rows} row(s) from ${file.name} — AI is analyzing them (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "CSV import failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    // Import external screenshots (multi-select). Each image is sent through the SAME
-    // /captures endpoint the extension uses — so it's stored as evidence, logged in
-    // captures.jsonl, and analyzed (when AI is on). We send a batch as "timer" (which the
-    // server windows into groups of N) and mark the LAST one "tab_switch" — a significant
-    // trigger that flushes the trailing window so nothing waits in the buffer.
     function fileToBase64(file) {
       return new Promise((resolve, reject) => {
         const r = new FileReader();
@@ -1517,536 +1459,103 @@
         r.readAsDataURL(file);
       });
     }
-    document.getElementById("importShots").onclick = () => {
+    // ── Unified import: one button, the server auto-detects the file type ─────
+    // Images go through the same /captures path the extension uses; every other file is
+    // POSTed to /import, where the server sniffs it (JSON/CSV/log + per-format signatures)
+    // and routes it to the right importer. Multiple files can be selected at once.
+    document.getElementById("importBtn").onclick = () => {
       if (!document.getElementById("caseId").value.trim()) {
         document.getElementById("status").textContent = "enter/connect a Case ID first";
         return;
       }
-      document.getElementById("shotsFile").click();
+      document.getElementById("importFile").click();
     };
-    document.getElementById("shotsFile").onchange = async (e) => {
+    document.getElementById("importFile").onchange = async (e) => {
       const caseId = document.getElementById("caseId").value.trim();
       const files = Array.from(e.target.files || []);
       if (!caseId || !files.length) return;
       const statusEl = document.getElementById("status");
-      let ok = 0, dup = 0, fail = 0;
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        statusEl.textContent = `importing screenshot ${i + 1}/${files.length}: ${f.name}…`;
+      const isImage = (f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp)$/i.test(f.name);
+      const images = files.filter(isImage);
+      const data = files.filter((f) => !isImage(f));
+
+      // Data files → the unified /import endpoint (server auto-detects + routes).
+      const kinds = {};
+      let dataFail = 0;
+      for (let i = 0; i < data.length; i++) {
+        const f = data[i];
+        statusEl.textContent = `importing ${i + 1}/${data.length}: ${f.name}…`;
+        try {
+          const text = await f.text();
+          const r = await fetch(`/cases/${caseId}/import`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ filename: f.name, text }),
+          });
+          const jr = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(jr.error || ("HTTP " + r.status));
+          kinds[jr.kind] = (kinds[jr.kind] || 0) + 1;
+        } catch (err) { dataFail++; console.warn("import failed:", f.name, err && err.message); }
+      }
+
+      // Image files → screenshot ingest (stored as evidence, analyzed when AI is on).
+      let imgOk = 0, imgDup = 0, imgFail = 0;
+      for (let i = 0; i < images.length; i++) {
+        const f = images[i];
+        statusEl.textContent = `importing screenshot ${i + 1}/${images.length}: ${f.name}…`;
         try {
           const imageBase64 = await fileToBase64(f);
-          if (!imageBase64) { fail++; continue; }
-          const triggerType = i === files.length - 1 ? "tab_switch" : "timer"; // flush the last window
+          if (!imageBase64) { imgFail++; continue; }
+          const triggerType = i === images.length - 1 ? "tab_switch" : "timer"; // flush the last window
           const r = await fetch("/captures", {
             method: "POST", headers: { "content-type": "application/json" },
             body: JSON.stringify({
-              caseId,
-              timestamp: new Date().toISOString(),   // import time (not the forensic event time — AI reads that from the image)
-              url: "imported://" + f.name,
-              tabTitle: f.name.replace(/\.[^.]+$/, ""),
-              triggerType,
-              imageBase64,
+              caseId, timestamp: new Date().toISOString(), url: "imported://" + f.name,
+              tabTitle: f.name.replace(/\.[^.]+$/, ""), triggerType, imageBase64,
             }),
           });
-          if (!r.ok) { fail++; continue; }
+          if (!r.ok) { imgFail++; continue; }
           const meta = await r.json();
-          if (meta.isDuplicate) dup++; else ok++;
-        } catch { fail++; }
+          if (meta.isDuplicate) imgDup++; else imgOk++;
+        } catch { imgFail++; }
       }
-      statusEl.textContent = `imported ${ok} screenshot(s)`
-        + (dup ? `, ${dup} duplicate(s) skipped` : "")
-        + (fail ? `, ${fail} failed` : "")
-        + (ok ? " — AI is analyzing them if enabled for this case (see AI status)" : ".");
+
+      const parts = [];
+      const kindList = Object.entries(kinds).map(([k, n]) => (n > 1 ? `${n}× ${k}` : k));
+      if (kindList.length) parts.push(`imported ${kindList.join(", ")} — analyzing (see AI status)`);
+      if (images.length) parts.push(`${imgOk} screenshot(s)` + (imgDup ? `, ${imgDup} dup` : "") + (imgFail ? `, ${imgFail} failed` : ""));
+      if (dataFail) parts.push(`${dataFail} file(s) failed / unrecognized`);
+      statusEl.textContent = parts.join(" · ") || "nothing imported";
       e.target.value = ""; // allow re-selecting the same files
     };
-    // Generic log import (.log / .txt — firewall, syslog, sshd, IIS/Apache/nginx,
-    // application logs). Mirrors the CSV path: POST text, server persists +
-    // analyzes line-by-line, dashboard sees live updates over the WS.
-    document.getElementById("importLog").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("logFile").click();
-    };
-    document.getElementById("logFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-log`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, text: text }),
-        });
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `imported ${p.lines} line(s) from ${file.name} — AI is analyzing them (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "Log import failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    // THOR (Nextron) scanner report import (JSON-Lines). Deterministic mapping on the
-    // server; scan info/lifecycle noise is dropped automatically.
-    document.getElementById("importThor").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("thorFile").click();
-    };
-    document.getElementById("thorFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      // Severity floor: alert (only alerts) / warning (alerts+warnings) / notice (all, default).
-      const ans = prompt("THOR — minimum severity to import?\n  alert   = only Alerts\n  warning = Alerts + Warnings\n  notice  = all findings (default)", "notice");
-      if (ans === null) { e.target.value = ""; return; } // cancelled
-      const minLevel = ans.trim().toLowerCase();
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-thor`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, json: text, minLevel }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `THOR: kept ${p.findings} finding(s), dropped ${p.dropped} info/lifecycle row(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "THOR import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
 
-    // SIEM / EDR JSON export import (Elastic/Kibana, Splunk, EDR console, winlogbeat dump).
-    // Deterministic mapping on the server; repetitive events are aggregated automatically.
-    document.getElementById("importSiem").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("siemFile").click();
-    };
-    document.getElementById("siemFile").onchange = async (e) => {
+    // ── Unified export menu ───────────────────────────────────────────────────
+    document.getElementById("exportSelect").onchange = (e) => {
+      const sel = e.target;
+      const action = sel.value;
+      sel.value = ""; // reset to the "Export…" placeholder
       const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      // Severity floor: blank keeps everything; low drops Info noise (logoffs, etc.).
-      const ans = prompt("SIEM/EDR — minimum severity to import?\n  (blank) = keep everything (default)\n  low     = drop Info noise (logoffs, process-terminated…)\n  medium / high / critical = only that level and above", "");
-      if (ans === null) { e.target.value = ""; return; } // cancelled
-      const minSeverity = ans.trim().toLowerCase();
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-siem`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, json: text, minSeverity }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `SIEM (${p.format}): ${p.events} event(s) from ${p.records} record(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "SIEM import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
+      if (!action || !caseId) return;
+      const c = encodeURIComponent(caseId);
+      if (action === "report") {
+        document.getElementById("status").textContent = "generating report…";
+        document.getElementById("reportLinks").innerHTML = "";
+        fetch(`/cases/${c}/report`, { method: "POST" })
+          .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+          .then(() => {
+            document.getElementById("status").textContent = "report written";
+            document.getElementById("reportLinks").innerHTML =
+              `<a href="/cases/${c}/report/report.html" target="_blank" rel="noopener">Open HTML</a>` +
+              ` · <a href="/cases/${c}/report/report.html?download=1">Download HTML</a>` +
+              ` · <a href="/cases/${c}/report/report.md?download=1">Download Markdown</a>`;
+          })
+          .catch((err) => document.getElementById("status").textContent = "report failed: " + err.message);
+      } else if (action === "timeline-csv") {
+        window.location.href = `/cases/${c}/incident-timeline.csv`;
+      } else if (action === "timesketch-jsonl") {
+        window.location.href = `/cases/${c}/timeline.jsonl`;
+      } else if (action === "state-json") {
+        window.open(`/cases/${c}/state`, "_blank", "noopener");
       }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    document.getElementById("importChainsaw").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("chainsawFile").click();
-    };
-    document.getElementById("chainsawFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      // Severity floor: blank keeps everything; medium drops Low/Info detections + noise.
-      const ans = prompt("Chainsaw/EVTX — minimum severity to import?\n  (blank) = keep everything (default)\n  low     = drop Info noise\n  medium / high / critical = only that level and above", "");
-      if (ans === null) { e.target.value = ""; return; } // cancelled
-      const minSeverity = ans.trim().toLowerCase();
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-chainsaw`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, json: text, minSeverity }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        const kind = p.detections > 0 ? `Chainsaw (${p.detections} detection(s))` : "EVTX";
-        document.getElementById("status").textContent =
-          `${kind}: ${p.events} event(s) from ${p.records} record(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "Chainsaw/EVTX import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    document.getElementById("importHayabusa").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("hayabusaFile").click();
-    };
-    document.getElementById("hayabusaFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      // Severity floor: blank keeps everything; medium drops Low/Info detections + noise.
-      const ans = prompt("Hayabusa — minimum severity to import?\n  (blank) = keep everything (default)\n  low     = drop Info noise\n  medium / high / critical = only that level and above", "");
-      if (ans === null) { e.target.value = ""; return; } // cancelled
-      const minSeverity = ans.trim().toLowerCase();
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-hayabusa`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, text, minSeverity }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `Hayabusa (${p.format}): ${p.events} event(s) from ${p.records} record(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "Hayabusa import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    document.getElementById("importVelociraptor").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("velociraptorFile").click();
-    };
-    document.getElementById("velociraptorFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      // Severity floor: blank keeps everything; low drops the Info-level raw-collection rows.
-      const ans = prompt("Velociraptor — minimum severity to import?\n  (blank) = keep everything (default)\n  low     = drop Info-level raw-collection rows (pslist/netstat/file listings)\n  medium / high / critical = only that level and above", "");
-      if (ans === null) { e.target.value = ""; return; } // cancelled
-      const minSeverity = ans.trim().toLowerCase();
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-velociraptor`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, text, minSeverity }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        const det = p.detections > 0 ? `, ${p.detections} detection(s)` : "";
-        document.getElementById("status").textContent =
-          `Velociraptor (${p.format}): ${p.events} event(s) from ${p.rows} row(s)${det}, ${p.iocs} IOC(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "Velociraptor import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    document.getElementById("importNetwork").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("networkFile").click();
-    };
-    document.getElementById("networkFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      // Severity floor applies to the alert/notice events; telemetry IOCs are always kept.
-      const ans = prompt("Suricata/Zeek — minimum severity for alert events?\n  (blank) = keep everything (default)\n  low     = drop Suricata priority-3 alerts\n  medium / high = only that level and above\n(IOCs from dns/http/tls/files telemetry are kept regardless)", "");
-      if (ans === null) { e.target.value = ""; return; } // cancelled
-      const minSeverity = ans.trim().toLowerCase();
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-network`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, text, minSeverity }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `Network (${p.format}): ${p.events} detection(s) from ${p.records} record(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "Suricata/Zeek import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    document.getElementById("importKape").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("kapeFile").click();
-    };
-    document.getElementById("kapeFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-kape`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, text }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `KAPE/${p.artifact}: ${p.events} event(s) from ${p.rows} row(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "KAPE/EZ import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    document.getElementById("importM365").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("m365File").click();
-    };
-    document.getElementById("m365File").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      // Severity floor: blank keeps everything; medium drops routine Info sign-ins/ops.
-      const ans = prompt("M365/Entra — minimum severity to import?\n  (blank) = keep everything (default)\n  low     = drop routine Info activity (successful sign-ins, reads)\n  medium / high = only that level and above", "");
-      if (ans === null) { e.target.value = ""; return; } // cancelled
-      const minSeverity = ans.trim().toLowerCase();
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-m365`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, text, minSeverity }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `M365 (${p.format}): ${p.events} event(s) from ${p.records} record(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "M365/Entra import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    document.getElementById("importAws").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("awsFile").click();
-    };
-    document.getElementById("awsFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      // Severity floor: blank keeps everything; low drops routine Info reads (Describe/List/Get).
-      const ans = prompt("AWS CloudTrail — minimum severity to import?\n  (blank) = keep everything (default)\n  low     = drop routine Info read calls (Describe/List/Get)\n  medium / high = only that level and above", "");
-      if (ans === null) { e.target.value = ""; return; } // cancelled
-      const minSeverity = ans.trim().toLowerCase();
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-aws`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, text, minSeverity }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `AWS CloudTrail: ${p.events} event(s) from ${p.records} record(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "AWS CloudTrail import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    document.getElementById("importCloudActivity").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("cloudActivityFile").click();
-    };
-    document.getElementById("cloudActivityFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      // Severity floor: blank keeps everything; low drops routine Info reads.
-      const ans = prompt("GCP/Azure — minimum severity to import?\n  (blank) = keep everything (default)\n  low     = drop routine Info read activity\n  medium / high = only that level and above", "");
-      if (ans === null) { e.target.value = ""; return; } // cancelled
-      const minSeverity = ans.trim().toLowerCase();
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-cloud-activity`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, text, minSeverity }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `Cloud activity (${p.format}): ${p.events} event(s) from ${p.records} record(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "GCP/Azure import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    document.getElementById("importPlaso").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("plasoFile").click();
-    };
-    document.getElementById("plasoFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-plaso`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, text }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `Plaso (${p.format}): ${p.events} event(s) from ${p.rows} row(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "Plaso import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    document.getElementById("importSandbox").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
-        document.getElementById("status").textContent = "enter/connect a Case ID first";
-        return;
-      }
-      document.getElementById("sandboxFile").click();
-    };
-    document.getElementById("sandboxFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const file = e.target.files && e.target.files[0];
-      if (!caseId || !file) return;
-      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
-      try {
-        const text = await file.text();
-        const r = await fetch(`/cases/${caseId}/import-sandbox`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename: file.name, text }),
-        });
-        if (!r.ok) {
-          let msg = "HTTP " + r.status;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(msg);
-        }
-        const p = await r.json();
-        document.getElementById("status").textContent =
-          `Sandbox (${p.format}): ${p.events} event(s), ${p.signatures} signature(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
-      } catch (err) {
-        document.getElementById("status").textContent =
-          "Sandbox import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
-      }
-      e.target.value = ""; // allow re-selecting the same file
-    };
-    document.getElementById("generateReport").onclick = () => {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      document.getElementById("status").textContent = "generating report…";
-      document.getElementById("reportLinks").innerHTML = "";
-      fetch(`/cases/${caseId}/report`, { method: "POST" })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(() => {
-          document.getElementById("status").textContent = "report written";
-          const c = encodeURIComponent(caseId);
-          // Export options: view the HTML, or download either format.
-          document.getElementById("reportLinks").innerHTML =
-            `<a href="/cases/${c}/report/report.html" target="_blank" rel="noopener">Open HTML</a>` +
-            ` · <a href="/cases/${c}/report/report.html?download=1">Download HTML</a>` +
-            ` · <a href="/cases/${c}/report/report.md?download=1">Download Markdown</a>`;
-        })
-        .catch(e => document.getElementById("status").textContent = "report failed: " + e.message);
-    };
-    document.getElementById("exportTimelineCsv").onclick = () => {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      // Content-Disposition: attachment on the endpoint triggers a download without navigating away.
-      window.location.href = `/cases/${encodeURIComponent(caseId)}/incident-timeline.csv`;
-    };
-    document.getElementById("exportTimesketchJsonl").onclick = () => {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      // Timesketch-format JSONL (one event per line) — upload it into a sketch manually, or use
-      // the Push to Timesketch button to do it in one click.
-      window.location.href = `/cases/${encodeURIComponent(caseId)}/timeline.jsonl`;
     };
 
     // ── Manual add (event / IOC the AI didn't catch) ──────────────────────────
@@ -2111,67 +1620,52 @@
       });
     });
 
-    // ── Push to DFIR-IRIS ───────────────────────────────────────────────────
-    // The button is shown only when the server has an IRIS target configured
-    // (GET /iris/status). Clicking pushes the case and reports a per-section summary.
-    fetch("/iris/status").then(r => r.json()).then(s => {
-      if (s && s.configured) document.getElementById("pushIris").style.display = "";
-    }).catch(() => {});
-    document.getElementById("pushIris").onclick = () => {
+    // ── Push to an external platform (DFIR-IRIS / Timesketch) ─────────────────
+    // Each option appears in the Push menu only when the server has that target configured
+    // (GET /iris/status, /timesketch/status); the menu stays hidden until at least one does.
+    const pushSelect = document.getElementById("pushSelect");
+    function addPushOption(value, label) {
+      if ([...pushSelect.options].some((o) => o.value === value)) return;
+      const opt = document.createElement("option");
+      opt.value = value; opt.textContent = label;
+      pushSelect.appendChild(opt);
+      pushSelect.style.display = "";
+    }
+    fetch("/iris/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("iris", "Push to DFIR-IRIS"); }).catch(() => {});
+    fetch("/timesketch/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("timesketch", "Push to Timesketch"); }).catch(() => {});
+    pushSelect.onchange = (e) => {
+      const sel = e.target;
+      const target = sel.value;
+      sel.value = ""; // reset to the "Push to…" placeholder
       const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const btn = document.getElementById("pushIris");
-      btn.disabled = true;
-      document.getElementById("status").textContent = "pushing to IRIS…";
+      if (!target || !caseId) return;
+      const c = encodeURIComponent(caseId);
+      sel.disabled = true;
+      document.getElementById("status").textContent = `pushing to ${target === "iris" ? "IRIS" : "Timesketch"}…`;
       document.getElementById("reportLinks").innerHTML = "";
-      fetch(`/cases/${encodeURIComponent(caseId)}/push/iris`, { method: "POST" })
-        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
-        .then(res => {
-          const verb = res.created ? "created" : "updated";
-          document.getElementById("status").textContent =
-            `IRIS case #${res.caseId} ${verb}: assets +${res.assets.added} (${res.assets.existing} existing), ` +
-            `IOCs +${res.iocs.added} (${res.iocs.existing} existing), timeline +${res.timeline.added}, ` +
-            `tasks +${res.tasks.added}, notes ${res.notes}` +
-            (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
-          if (res.caseUrl) {
-            document.getElementById("reportLinks").innerHTML =
-              `<a href="${escAttr(res.caseUrl)}" target="_blank" rel="noopener">Open in IRIS</a>`;
+      fetch(`/cases/${c}/push/${target}`, { method: "POST" })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((res) => {
+          if (target === "iris") {
+            const verb = res.created ? "created" : "updated";
+            document.getElementById("status").textContent =
+              `IRIS case #${res.caseId} ${verb}: assets +${res.assets.added} (${res.assets.existing} existing), ` +
+              `IOCs +${res.iocs.added} (${res.iocs.existing} existing), timeline +${res.timeline.added}, ` +
+              `tasks +${res.tasks.added}, notes ${res.notes}` +
+              (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
+            if (res.caseUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.caseUrl)}" target="_blank" rel="noopener">Open in IRIS</a>`;
+          } else {
+            const verb = res.created ? "created" : "updated";
+            document.getElementById("status").textContent =
+              `Timesketch sketch #${res.sketchId} ${verb}: ${res.events} event(s) → "${res.timelineName}"` +
+              (res.replacedTimeline ? " (replaced)" : "") +
+              (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
+            if (res.sketchUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.sketchUrl)}" target="_blank" rel="noopener">Open in Timesketch</a>`;
           }
-          if (res.warnings && res.warnings.length) console.warn("IRIS push warnings:", res.warnings);
+          if (res.warnings && res.warnings.length) console.warn("push warnings:", res.warnings);
         })
-        .catch(e => document.getElementById("status").textContent = "IRIS push failed: " + e.message)
-        .finally(() => { btn.disabled = false; });
-    };
-
-    // ── Push to Timesketch ──────────────────────────────────────────────────
-    // The button is shown only when the server has a Timesketch target configured
-    // (GET /timesketch/status). Clicking uploads the forensic timeline into a sketch.
-    fetch("/timesketch/status").then(r => r.json()).then(s => {
-      if (s && s.configured) document.getElementById("pushTimesketch").style.display = "";
-    }).catch(() => {});
-    document.getElementById("pushTimesketch").onclick = () => {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const btn = document.getElementById("pushTimesketch");
-      btn.disabled = true;
-      document.getElementById("status").textContent = "pushing to Timesketch…";
-      document.getElementById("reportLinks").innerHTML = "";
-      fetch(`/cases/${encodeURIComponent(caseId)}/push/timesketch`, { method: "POST" })
-        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
-        .then(res => {
-          const verb = res.created ? "created" : "updated";
-          document.getElementById("status").textContent =
-            `Timesketch sketch #${res.sketchId} ${verb}: ${res.events} event(s) → "${res.timelineName}"` +
-            (res.replacedTimeline ? " (replaced)" : "") +
-            (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
-          if (res.sketchUrl) {
-            document.getElementById("reportLinks").innerHTML =
-              `<a href="${escAttr(res.sketchUrl)}" target="_blank" rel="noopener">Open in Timesketch</a>`;
-          }
-          if (res.warnings && res.warnings.length) console.warn("Timesketch push warnings:", res.warnings);
-        })
-        .catch(e => document.getElementById("status").textContent = "Timesketch push failed: " + e.message)
-        .finally(() => { btn.disabled = false; });
+        .catch((err) => document.getElementById("status").textContent = "push failed: " + err.message)
+        .finally(() => { sel.disabled = false; });
     };
 
     // ── Collapsible sections ──────────────────────────────────────────────────

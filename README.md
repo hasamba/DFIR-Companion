@@ -69,6 +69,11 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   `chrome-extension://` origin can reach it.
 
 ### Evidence import (beyond screenshots)
+- **One Import button — the server auto-detects the type.** Drop in any file (JSON / NDJSON / CSV / log,
+  multi-select; images too) and the companion **sniffs it** (structure + per-format signatures) and routes it
+  to the right importer below — no need to pick the format. The detected kind is shown back so a mis-route is
+  visible. Images are stored as screenshots. (Each importer also has a dedicated `POST /cases/:id/import-*`
+  endpoint for programmatic use.)
 - **CSV import** — Velociraptor / EDR result exports → forensic events + IOCs.
 - **Generic log import** — firewall / syslog / sshd / IIS·Apache·nginx / VPN. Repetitive lines
   are **deduplicated into counted patterns**, then the AI **triages only the suspicious ones**
@@ -247,10 +252,10 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   click-a-node-to-focus. A *Compromised assets* section also appears in the report.
 - **Reports** — Markdown **and HTML** report (standalone, print-friendly → Save-as-PDF) + CSVs
   (findings, IOCs incl. enrichment, capture timeline, forensic timeline incl. count/sources) + full
-  JSON state export. Export from the dashboard as Markdown or HTML, or **export just the incident
-  timeline as CSV** with one click.
+  JSON state export. All of these — generate report (MD+HTML), forensic-timeline CSV, Timesketch JSONL, full
+  JSON state — are reachable from the dashboard's single **Export** menu.
 - **Push to DFIR-IRIS** — push a case into a [DFIR-IRIS](https://dfir-iris.org/) instance with one
-  click (dashboard **Push to IRIS** button, or `npm run iris:push -- <caseId>`). It **find-or-creates
+  click (dashboard **Push** menu → **DFIR-IRIS**, or `npm run iris:push -- <caseId>`). It **find-or-creates
   the IRIS case by name** (= the Companion case id) — re-exporting an existing case *updates* it — and
   maps **assets → assets**, **IOCs → IOCs** (type/TLP resolved at runtime, with threat-intel verdicts as
   description/tags), **forensic timeline → timeline** (events **auto-categorized** by MITRE tactic and
@@ -260,10 +265,10 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   title; the summary and Companion notes are refreshed each run. Configure with `DFIR_IRIS_URL` +
   `DFIR_IRIS_KEY` (self-signed/internal-CA supported via `DFIR_IRIS_CA`/`_INSECURE`).
 - **Timesketch timeline export & push** — turn the forensic timeline into a [Timesketch](https://timesketch.org/)
-  timeline. **Export Timesketch JSONL** downloads the timeline as Timesketch import format (`message` /
-  `datetime` / `timestamp_desc` + every structured field — severity, MITRE, asset, hashes, path, process
-  chain — kept as **searchable columns**, plus a `tag` list) for manual upload; needs no config. **Push to
-  Timesketch** (dashboard button, or `npm run timesketch:push -- <caseId>`) does it in one click: it logs in
+  timeline. The **Export** menu → **Timesketch JSONL** downloads the timeline as Timesketch import format
+  (`message` / `datetime` / `timestamp_desc` + every structured field — severity, MITRE, asset, hashes, path,
+  process chain — kept as **searchable columns**, plus a `tag` list) for manual upload; needs no config. **Push**
+  menu → **Timesketch** (or `npm run timesketch:push -- <caseId>`) does it in one click: it logs in
   (Timesketch local auth), **find-or-creates the sketch by name** (= the Companion case id), and uploads the
   timeline. **Idempotent** — the managed timeline is **clean-replaced** on re-push, so events never duplicate.
   The pushed/exported timeline matches the report (same scope/legitimate filtering). Configure with

@@ -2,13 +2,17 @@ import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 
 describe("dashboard.html", () => {
-  it("contains websocket wiring and report button", async () => {
+  it("contains websocket wiring and the consolidated import/export controls", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain("/ws?caseId=");
     expect(html).toContain('id="findings"');
     expect(html).toContain('id="timeline"');
     expect(html).toContain('id="openThreads"');
-    expect(html).toContain('id="generateReport"');
+    // One Import button (server auto-detects the type) + one Export menu (incl. report generation).
+    expect(html).toContain('id="importBtn"');
+    expect(html).toContain('id="exportSelect"');
+    expect(html).toContain("/import");          // unified import endpoint
+    expect(html).toContain("/report");          // report generation via the Export menu
   });
 
   it("makes the case-ID field a combo box (datalist of existing cases + free text)", async () => {
@@ -35,9 +39,10 @@ describe("dashboard.html", () => {
     expect(html).toContain("/report/report.md?download=1");
   });
 
-  it("offers a one-click incident-timeline CSV export", async () => {
+  it("offers an incident-timeline CSV export via the Export menu", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
-    expect(html).toContain('id="exportTimelineCsv"');
+    expect(html).toContain('id="exportSelect"');
+    expect(html).toContain('value="timeline-csv"');
     expect(html).toContain("/incident-timeline.csv");
   });
 
@@ -95,13 +100,14 @@ describe("dashboard.html", () => {
     expect(html.indexOf("Ask the AI about this case")).toBeLessThan(html.indexOf("Executive Summary"));
   });
 
-  it("offers a multi-file external-screenshot import that posts to /captures", async () => {
+  it("offers a unified multi-file import (images → /captures, data → /import)", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
-    expect(html).toContain('id="importShots"');
-    expect(html).toContain('id="shotsFile"');
+    expect(html).toContain('id="importBtn"');
+    expect(html).toContain('id="importFile"');
     expect(html).toContain("multiple");                 // multi-select enabled
-    expect(html).toContain('fetch("/captures"');        // sends through the capture ingest path
+    expect(html).toContain('fetch("/captures"');        // images go through the capture ingest path
     expect(html).toContain("readAsDataURL");            // base64-encodes each image
+    expect(html).toContain("/import");                  // data files are auto-detected + routed
   });
 
   it("offers zoom in/out/fit buttons and mouse-wheel zoom for the graph", async () => {
