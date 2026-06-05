@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Suricata / Zeek network-log import.** A new **Import Suricata/Zeek** button (and
+  `POST /cases/:id/import-network`) ingests network-monitor logs — Suricata `eve.json` and Zeek (Bro) JSON
+  logs, the network side of Security Onion / Corelight — as the sixth deterministic ingest path (no AI call).
+  It reads NDJSON (the native form), a JSON array, or an Elastic-style wrapper, routing each record by shape
+  (Suricata has `event_type`, Zeek has `_path`). Per the post-detection principle the **timeline is built only
+  from the detections**: Suricata **`alert`** records (signature → description, category, `alert.severity`
+  priority → severity, `alert.metadata.mitre_technique_id` → MITRE, with the flow 5-tuple) and Zeek
+  **`notice`** records (the notice framework's `note`/`msg`). The surrounding **telemetry** (`dns`/`http`/
+  `tls`/`fileinfo`/`files`/`ssl`/`x509`) is **not** added to the timeline — that would flood it with raw flow
+  records — but it **contributes observed IOCs**: DNS/SNI/HTTP-host **domains**, HTTP **URLs**, transferred-file
+  **hashes** (Suricata `fileinfo`, Zeek `files`), and the alert/notice **IPs**. Events are tagged **Suricata** /
+  **Zeek** for cross-source correlation; the artifact's own time is used (Suricata's offset timestamp, Zeek's
+  epoch `ts`); repetitive alerts aggregate into counted rows and cap; an optional `minSeverity` floor drops
+  low-priority alert events while telemetry IOCs are kept regardless. Evidence-first (raw file persisted +
+  audit-logged before analysis). Pure mapper (`networkImport.ts`) reuses `siemImport`'s `aggregateEvents` +
+  IOC sink; unit-tested with no network.
 - **Velociraptor native JSON import.** A new **Import Velociraptor** button (and
   `POST /cases/:id/import-velociraptor`) ingests [Velociraptor](https://docs.velociraptor.app/) collection
   results / hunt exports — the fifth deterministic ingest path (no AI call). It reads a JSON array, **JSONL**

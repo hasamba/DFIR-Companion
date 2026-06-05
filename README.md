@@ -106,6 +106,13 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   reuse the per-EID Windows mapping; any other artifact (pslist / netstat / file listing…) **auto-detects the
   artifact's own time** (not the `_ts` collection time), host, and IOCs. Tagged **Velociraptor** for cross-source
   correlation; aggregates + caps; optional `minSeverity` floor (drops the Info-level raw-collection rows).
+- **Suricata / Zeek import** — network-monitor logs (Security Onion's network side), **deterministic** (no AI
+  call). Reads **Suricata `eve.json`** and **Zeek JSON** logs (NDJSON or array). The timeline is built only from
+  the **detections** — Suricata `alert` records (signature, category, priority→severity, ATT&CK metadata→MITRE)
+  and Zeek **`notice`** records — so it stays signal-rich; the surrounding **telemetry** (`dns`/`http`/`tls`/
+  `files`/`conn`…) is **not** dumped into the timeline but **contributes IOCs** (domains, URLs, file hashes, and
+  the alert/notice IPs). Tagged **Suricata** / **Zeek** for cross-source correlation; aggregates + caps; optional
+  `minSeverity` floor on the alert events (telemetry IOCs are kept regardless).
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only

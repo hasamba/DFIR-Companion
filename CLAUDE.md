@@ -92,7 +92,10 @@ IOCs/host/process-chain from the rendered detail fields; reuses `siemImport`'s `
 IOC extractors and `csvImport`'s `parseCsv`), and **Velociraptor** native JSON (`importVelociraptor` →
 `velociraptorImport.ts` — array/JSONL/artifact-map; classifies each VQL row Sigma/YARA/EventLog/generic,
 verdict-first for detections, reuses `siemImport`'s `mapWindows`/`aggregateEvents`, reads the artifact's
-own time not `_ts`). The last five are **fully
+own time not `_ts`), and **Suricata/Zeek** network logs (`importNetwork` → `networkImport.ts` — Suricata
+`eve.json` + Zeek JSON; the timeline is built from the **detections** only (Suricata `alert` + Zeek `notice`),
+while telemetry (`dns`/`http`/`tls`/`files`/…) contributes **IOCs only** so the timeline stays signal-rich).
+The last six are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
 
