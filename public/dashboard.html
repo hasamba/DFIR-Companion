@@ -1213,9 +1213,16 @@
     document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
     document.getElementById("connect").onclick = connect;
     document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
-    // Refresh the dropdown each time the field is focused, so cases added since page load
-    // (moved into the cases folder, or created elsewhere) show up without a full reload.
-    document.getElementById("caseId").addEventListener("focus", loadCaseList);
+    // A <datalist> filters its suggestions by the field's current text, so a pre-filled case id
+    // (e.g. "test9") hides every other case. On focus: refresh the list and clear the field so the
+    // FULL dropdown shows; on blur, restore the prior id if the user didn't pick or type one. Also
+    // picks up cases added since page load (moved into the cases folder, created elsewhere).
+    (function () {
+      const el = document.getElementById("caseId");
+      let prev = "";
+      el.addEventListener("focus", () => { loadCaseList(); prev = el.value; el.value = ""; });
+      el.addEventListener("blur", () => { if (!el.value.trim()) el.value = prev; });
+    })();
     document.getElementById("newCaseBtn").onclick = openNewCase;
     document.getElementById("ncCreate").onclick = createNewCase;
     document.getElementById("ncCancel").onclick = closeNewCase;
