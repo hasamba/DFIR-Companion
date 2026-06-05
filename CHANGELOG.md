@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-05
+
 ### Changed
 - **One "Import" button — the server auto-detects the file type.** The dashboard's ~15 per-format
   import buttons are replaced by a **single Import button** (multi-file). Each uploaded file is **sniffed
@@ -662,7 +664,8 @@ Initial baseline.
   report exports.
 - Scripts: `dev`, `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.4.0...v0.5.0
