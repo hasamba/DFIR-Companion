@@ -96,6 +96,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`enabled: false`); cases that already ran analysis keep their saved on state.
 
 ### Fixed
+- **Large evidence imports failed with HTTP 413.** The JSON body limit was a fixed 25 MB, so a
+  big SIEM/EDR (or CSV/THOR) export was rejected by the body parser before reaching the route. The
+  limit is now **256 MB** and configurable via **`DFIR_MAX_BODY_MB`**, and an over-limit upload now
+  returns an actionable JSON 413 ("raise DFIR_MAX_BODY_MB … or split the export") instead of a raw
+  HTML error. Malformed JSON bodies return a clear 400.
 - **Manual event time was shifted by the local timezone.** `buildManualEvent` used
   `new Date(input).toISOString()`, which reinterpreted a timezone-less value in the server's local
   zone (and the dashboard's pickers used the browser's). Both now treat the entered time as UTC, so a

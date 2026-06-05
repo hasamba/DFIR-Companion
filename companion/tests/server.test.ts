@@ -445,6 +445,30 @@ describe("server analysis wiring", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns a friendly 413 (not raw HTML) when an upload exceeds the body limit", async () => {
+    const prev = process.env.DFIR_MAX_BODY_MB;
+    process.env.DFIR_MAX_BODY_MB = "1"; // 1 MB cap for the test
+    try {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-413-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const pipeline = new AnalysisPipeline({
+        provider: new MockProvider("mock", "should not be called"),
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      const app4 = createApp(store, { pipeline, stateStore });
+
+      // A ~1.5 MB JSON string field, over the 1 MB cap → rejected by the body parser.
+      const res = await request(app4).post("/cases/c1/import-siem").send({ filename: "big.json", json: "x".repeat(1_500_000) });
+      expect(res.status).toBe(413);
+      expect(res.body.error).toMatch(/exceeds the 1 MB limit/);
+      expect(res.body.error).toMatch(/DFIR_MAX_BODY_MB/);
+    } finally {
+      if (prev === undefined) delete process.env.DFIR_MAX_BODY_MB; else process.env.DFIR_MAX_BODY_MB = prev;
+    }
+  });
+
   it("marks a forensic event legitimate (kind=event), storing its label and re-synthesizing", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-legit-ev-"));
     const store = new CaseStore(root);
