@@ -130,6 +130,7 @@
     <input id="caseId" placeholder="caseId" />
     <input id="investigatorName" placeholder="your name" title="Your name — used as the author when you comment. Saved in this browser." style="max-width:130px" />
     <button id="connect">Connect</button>
+    <button id="newCaseBtn" title="Create a new case, then attach the capture extension to it">+ New case</button>
     <button id="aiToggle" title="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" title="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
     <button id="enrichToggle" title="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/MalwareBazaar/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
@@ -187,6 +188,25 @@
         <button id="commentPost">Post comment</button>
         <button id="commentClose" style="background:#2a2f3a;">Close</button>
         <span id="commentMsg" style="color:#9aa4b2; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+  <div id="newCaseOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>New case</h3>
+      <p style="color:#9aa4b2; font-size:12px; margin:0 0 10px">
+        Cases are created here — then attach the capture extension to one (it only connects to
+        existing cases). The case id is permanent and becomes the folder under <code>cases/</code>.</p>
+      <label style="display:block; font-size:12px; margin-bottom:8px;">Case ID
+        <input id="ncCaseId" placeholder="e.g. INC-2026-001" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
+      <label style="display:block; font-size:12px; margin-bottom:8px;">Name
+        <input id="ncName" placeholder="short description" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
+      <label style="display:block; font-size:12px; margin-bottom:8px;">Investigator
+        <input id="ncInvestigator" placeholder="your name" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="ncCreate">Create case</button>
+        <button id="ncCancel" style="background:#2a2f3a;">Cancel</button>
+        <span id="ncMsg" style="color:#9aa4b2; font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -1106,6 +1126,44 @@
       };
     }
 
+    // ── New case ── creation lives here (the extension only attaches to existing cases) ──
+    function openNewCase() {
+      document.getElementById("ncCaseId").value = "";
+      document.getElementById("ncName").value = "";
+      document.getElementById("ncInvestigator").value =
+        (document.getElementById("investigatorName").value || "").trim();
+      document.getElementById("ncMsg").textContent = "";
+      document.getElementById("newCaseOverlay").classList.add("open");
+      document.getElementById("ncCaseId").focus();
+    }
+    function closeNewCase() { document.getElementById("newCaseOverlay").classList.remove("open"); }
+    async function createNewCase() {
+      const caseId = document.getElementById("ncCaseId").value.trim();
+      const name = document.getElementById("ncName").value.trim();
+      const investigator = document.getElementById("ncInvestigator").value.trim();
+      const msg = document.getElementById("ncMsg");
+      if (!caseId || !name) { msg.textContent = "case id and name are required"; return; }
+      msg.textContent = "creating…";
+      try {
+        const res = await fetch("/cases", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ caseId, name, investigator: investigator || "unknown", aiProvider: null }),
+        });
+        if (res.status === 201) {
+          closeNewCase();
+          document.getElementById("caseId").value = caseId;
+          connect();   // attach the dashboard to the case we just created
+        } else if (res.status === 409) {
+          msg.textContent = "a case with that id already exists — pick a different id, or Cancel and Connect to it";
+        } else {
+          const body = await res.json().catch(() => ({}));
+          msg.textContent = "create failed: HTTP " + res.status + (body.error ? " — " + body.error : "");
+        }
+      } catch (err) {
+        msg.textContent = "create failed: " + err.message + " — is the companion running?";
+      }
+    }
+
     document.querySelectorAll(".asset-type-toggle").forEach(cb => cb.onchange = () => {
       if (cb.checked) assetTypesEnabled.add(cb.value); else assetTypesEnabled.delete(cb.value);
       assetFocus = null; renderAssetGraph();
@@ -1153,6 +1211,12 @@
     document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
     document.getElementById("connect").onclick = connect;
     document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+    document.getElementById("newCaseBtn").onclick = openNewCase;
+    document.getElementById("ncCreate").onclick = createNewCase;
+    document.getElementById("ncCancel").onclick = closeNewCase;
+    document.getElementById("newCaseOverlay").addEventListener("click", (e) => { if (e.target.id === "newCaseOverlay") closeNewCase(); });
+    ["ncCaseId", "ncName", "ncInvestigator"].forEach((id) =>
+      document.getElementById(id).addEventListener("keydown", (e) => { if (e.key === "Enter") createNewCase(); }));
     document.getElementById("aiToggle").onclick = toggleAi;
     document.getElementById("applyScope").onclick = applyScope;
     document.getElementById("clearScope").onclick = () => {

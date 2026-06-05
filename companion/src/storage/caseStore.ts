@@ -1,4 +1,5 @@
-import { mkdir, writeFile, appendFile, readFile } from "node:fs/promises";
+import { mkdir, writeFile, appendFile, readFile, stat, readdir } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 
@@ -59,6 +60,42 @@ export class CaseStore {
     }
     await writeFile(this.caseMetaPath(input.caseId), JSON.stringify(meta, null, 2), "utf8");
     return meta;
+  }
+
+  // True once a case has been created (its case.json exists). Backs the capture guard:
+  // the companion never creates a case as a side effect of ingesting evidence — creation
+  // is a deliberate dashboard action — so an unknown caseId is rejected, not auto-created.
+  async caseExists(caseId: string): Promise<boolean> {
+    try {
+      await stat(this.caseMetaPath(caseId));
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw err;
+    }
+  }
+
+  // All cases that have a readable case.json, newest first. Backs GET /cases so the
+  // extension can present a picker of existing cases instead of creating its own.
+  async listCases(): Promise<CaseMeta[]> {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(this.root, { withFileTypes: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+    const metas: CaseMeta[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      try {
+        metas.push(JSON.parse(await readFile(this.caseMetaPath(entry.name), "utf8")) as CaseMeta);
+      } catch {
+        // a directory without a valid case.json is not a case — skip it
+      }
+    }
+    metas.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+    return metas;
   }
 
   async saveScreenshot(caseId: string, filename: string, bytes: Buffer): Promise<string> {

@@ -21,14 +21,22 @@ export class CaptureController {
       imageBase64: snapshot.imageBase64,
     };
 
-    const ok = await this.client.postCapture(payload);
-    if (!ok) {
-      await this.queue.enqueue(payload);
-      return { online: false, queued: await this.queue.size() };
+    const result = await this.client.postCapture(payload);
+
+    if (result.ok) {
+      // Online: opportunistically drain anything queued during an outage.
+      await this.queue.drain((p) => this.client.postCapture(p).then((r) => r.ok));
+      return { online: true, queued: await this.queue.size() };
     }
 
-    // Online: opportunistically drain anything queued during an outage.
-    await this.queue.drain((p) => this.client.postCapture(p));
-    return { online: true, queued: await this.queue.size() };
+    // The companion responded but rejected the capture (4xx — typically 404, the case
+    // doesn't exist). Retrying won't help, so don't queue; surface it for the popup.
+    if (result.status >= 400 && result.status < 500) {
+      return { online: true, queued: await this.queue.size(), rejected: result.status };
+    }
+
+    // Transient failure (unreachable / 5xx) — queue for retry when the companion is back.
+    await this.queue.enqueue(payload);
+    return { online: false, queued: await this.queue.size() };
   }
 }

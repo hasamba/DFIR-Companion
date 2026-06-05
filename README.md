@@ -45,7 +45,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 ### Capture & evidence
 - **MV3 browser extension** — timer + event-driven capture (navigation, tab switch, click);
   lossless full-resolution PNG; offline queue + auto-sync; per-case Start/Stop; **`Ctrl+Shift+S`
-  hotkey** to toggle capture; captured tab title baked into the screenshot filename.
+  hotkey** to toggle capture; captured tab title baked into the screenshot filename. It
+  **attaches to an existing case** picked from a server-provided dropdown — case creation is a
+  deliberate dashboard action, never an extension side effect.
+- **Case management in the dashboard** — a **+ New case** form is the one place cases are born
+  (id, name, investigator); the companion rejects captures to an unknown case so evidence never
+  lands in a half-made one.
 - **Evidence-first ingest** — screenshot written to disk + append-only `captures.jsonl` audit
   line **before** any analysis; perceptual-hash duplicate detection.
 - **Import external screenshots** — dashboard **Import Screenshots** button (multi-select PNG/JPEG/WebP)
@@ -215,9 +220,12 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
    npm run build             # then load extension/dist as an unpacked extension
    ```
 
-   In the popup: set a Case ID, **Create case**, **Start**. Browse your evidence.
+   The popup only **attaches** to an existing case — you create cases in the dashboard.
 
-3. Open `http://127.0.0.1:4773/dashboard`, enter the Case ID, **Connect**.
+3. Open `http://127.0.0.1:4773/dashboard`, click **+ New case** to create your case (it
+   connects automatically). Then in the extension popup pick that case from the **Case**
+   dropdown (**Refresh cases** if it isn't listed yet) and **Start**. Browse your evidence —
+   the dashboard updates live.
 
 Full configuration, HTTP endpoints, the case-folder layout, and the analysis model
 are documented in **[companion/README.md](companion/README.md)**.

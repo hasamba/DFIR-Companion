@@ -2,6 +2,14 @@ import type { CapturePayload } from "./types.js";
 
 type FetchFn = typeof fetch;
 
+// Outcome of a capture POST. `status` is the HTTP status, or 0 when fetch threw (the
+// companion is unreachable). The controller uses it to tell a transient outage (queue
+// and retry) apart from a server rejection like 404 case-not-found (don't queue).
+export interface PostCaptureResult {
+  ok: boolean;
+  status: number;
+}
+
 export class CompanionClient {
   // The default wraps global fetch in an arrow so it keeps its correct binding.
   // Invoking unbound `fetch` via `this.fetchFn(...)` throws "Illegal invocation"
@@ -11,29 +19,16 @@ export class CompanionClient {
     private readonly fetchFn: FetchFn = (input, init) => fetch(input, init),
   ) {}
 
-  async postCapture(payload: CapturePayload): Promise<boolean> {
+  async postCapture(payload: CapturePayload): Promise<PostCaptureResult> {
     try {
       const res = await this.fetchFn(`${this.baseUrl}/captures`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
-      return res.status === 201;
+      return { ok: res.status === 201, status: res.status };
     } catch {
-      return false;
-    }
-  }
-
-  async createCase(caseId: string, name: string, investigator: string, aiProvider: string | null): Promise<boolean> {
-    try {
-      const res = await this.fetchFn(`${this.baseUrl}/cases`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ caseId, name, investigator, aiProvider }),
-      });
-      return res.status === 201;
-    } catch {
-      return false;
+      return { ok: false, status: 0 }; // network error — companion unreachable
     }
   }
 

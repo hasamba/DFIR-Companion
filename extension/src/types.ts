@@ -28,4 +28,8 @@ export const DEFAULT_SETTINGS: Settings = {
 export interface ConnectionStatus {
   online: boolean;
   queued: number;
+  // HTTP 4xx status when the companion *rejected* the capture (e.g. 404 — the case does
+  // not exist). The payload is NOT queued (retrying won't help); the popup surfaces it so
+  // the analyst knows to create/select the case in the dashboard.
+  rejected?: number;
 }

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { writeFile, readFile, rm } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore } from "./storage/caseStore.js";
-import { ingestCapture } from "./ingest/captureIngest.js";
+import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
@@ -263,11 +263,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   }
 
-  // /cases handler stays exactly as in Plan 1.
+  // List existing cases (newest first) so the extension can present a picker of cases
+  // to attach to — case CREATION lives in the dashboard, the extension only connects.
+  app.get("/cases", async (_req: Request, res: Response) => {
+    try {
+      return res.status(200).json(await store.listCases());
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Create a case. This is the one place a case is born (the dashboard's New case form and
+  // `npm run`-style tooling call it); the extension no longer creates cases. Rejects a
+  // duplicate id so the form can't silently clobber an existing case's metadata/evidence.
   app.post("/cases", async (req: Request, res: Response) => {
     try {
       const { caseId, name, investigator, aiProvider } = req.body ?? {};
       if (!caseId || !name) return res.status(400).json({ error: "caseId and name are required" });
+      if (await store.caseExists(caseId)) return res.status(409).json({ error: `case ${caseId} already exists` });
       const meta = await store.createCase({
         caseId, name, investigator: investigator ?? "unknown", aiProvider: aiProvider ?? null,
       });
@@ -293,6 +306,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return;
     } catch (err) {
       if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
+      if (err instanceof CaseNotFoundError) {
+        return res.status(404).json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
+      }
       return res.status(500).json({ error: (err as Error).message });
     }
   });

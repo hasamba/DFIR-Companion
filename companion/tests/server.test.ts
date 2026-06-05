@@ -55,6 +55,20 @@ describe("HTTP server", () => {
     expect(res.body.caseId).toBe("c1");
   });
 
+  it("POST /cases returns 409 for a duplicate caseId", async () => {
+    await request(app).post("/cases").send({ caseId: "c1", name: "A", investigator: "y", aiProvider: null });
+    const res = await request(app).post("/cases").send({ caseId: "c1", name: "A again", investigator: "y", aiProvider: null });
+    expect(res.status).toBe(409);
+  });
+
+  it("GET /cases lists created cases", async () => {
+    await request(app).post("/cases").send({ caseId: "c1", name: "Incident A", investigator: "y", aiProvider: null });
+    await request(app).post("/cases").send({ caseId: "c2", name: "Incident B", investigator: "y", aiProvider: null });
+    const res = await request(app).get("/cases");
+    expect(res.status).toBe(200);
+    expect(res.body.map((c: { caseId: string }) => c.caseId).sort()).toEqual(["c1", "c2"]);
+  });
+
   it("POST /captures ingests a capture and returns metadata", async () => {
     await request(app)
       .post("/cases")
@@ -76,6 +90,14 @@ describe("HTTP server", () => {
   it("POST /captures returns 400 on invalid payload", async () => {
     const res = await request(app).post("/captures").send({ caseId: "c1" });
     expect(res.status).toBe(400);
+  });
+
+  it("POST /captures returns 404 for a case that does not exist", async () => {
+    const res = await request(app).post("/captures").send({
+      caseId: "ghost", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
+      triggerType: "timer", imageBase64: await pngBase64(),
+    });
+    expect(res.status).toBe(404);
   });
 });
 

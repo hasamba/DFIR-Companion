@@ -38,15 +38,22 @@ async function captureActiveTab(trigger: TriggerType): Promise<void> {
   });
 
   // Record the last capture outcome so the popup can surface it.
-  const diag = status.online
-    ? `ok (online=true, queued=${status.queued})`
-    : `offline — capture queued for retry (queued=${status.queued})`;
+  const diag = status.rejected
+    ? `rejected (HTTP ${status.rejected}) — case missing? create/select it in the dashboard`
+    : status.online
+      ? `ok (online=true, queued=${status.queued})`
+      : `offline — capture queued for retry (queued=${status.queued})`;
   await chrome.storage.local.set({
     lastCapture: { at: new Date().toISOString(), trigger, url: tab.url, bytes: imageBase64.length, diag },
   });
 
-  await chrome.action.setBadgeText({ text: status.online ? (status.queued ? String(status.queued) : "") : "off" });
-  await chrome.action.setBadgeBackgroundColor({ color: status.online ? "#2d6cdf" : "#cc3333" });
+  if (status.rejected) {
+    await chrome.action.setBadgeText({ text: "!" });
+    await chrome.action.setBadgeBackgroundColor({ color: "#d18616" }); // amber — case rejected, not queued
+  } else {
+    await chrome.action.setBadgeText({ text: status.online ? (status.queued ? String(status.queued) : "") : "off" });
+    await chrome.action.setBadgeBackgroundColor({ color: status.online ? "#2d6cdf" : "#cc3333" });
+  }
 }
 
 async function rescheduleAlarm(): Promise<void> {

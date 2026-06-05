@@ -29,6 +29,15 @@ describe("CaptureController", () => {
     expect(status.queued).toBe(1);
   });
 
+  it("does NOT queue when the companion rejects the capture (404 case missing)", async () => {
+    const client = new CompanionClient("http://x", vi.fn(async () => new Response("{}", { status: 404 })));
+    const controller = new CaptureController(client, queue);
+    const status = await controller.capture("ghost", "timer", snapshot);
+    expect(status.rejected).toBe(404);
+    expect(status.queued).toBe(0);
+    expect(await queue.size()).toBe(0);
+  });
+
   it("flushes the queue once the companion is back", async () => {
     let online = false;
     const client = new CompanionClient("http://x",

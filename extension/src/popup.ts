@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS, type Settings } from "./types.js";
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
+const caseSelect = () => document.getElementById("caseId") as HTMLSelectElement;
 const statusEl = () => document.getElementById("status") as HTMLDivElement;
 
 async function load(): Promise<Settings> {
@@ -15,7 +16,7 @@ async function save(settings: Settings): Promise<void> {
 
 function readForm(running: boolean): Settings {
   return {
-    caseId: $("caseId").value.trim(),
+    caseId: caseSelect().value.trim(),
     companionUrl: $("companionUrl").value.trim() || DEFAULT_SETTINGS.companionUrl,
     intervalSeconds: Math.max(5, Number($("intervalSeconds").value) || 10),
     dedupThreshold: Math.max(0, Number($("dedupThreshold").value) || 5),
@@ -38,6 +39,34 @@ async function refreshStatus(s: Settings): Promise<void> {
   } catch (err) {
     el.textContent = `${prefix} — companion offline: ${(err as Error).message} (${s.companionUrl}/health)`;
     el.className = "off";
+  }
+}
+
+// Populate the case dropdown from the companion (GET /cases). The extension only ATTACHES
+// to existing cases — they're created in the dashboard — so this is the only way to pick
+// one. On failure (companion offline, or an older server without GET /cases) fall back to
+// the last-used case id so Start can still resume an existing case.
+async function loadCases(companionUrl: string, selectedId: string): Promise<void> {
+  const sel = caseSelect();
+  try {
+    const res = await fetch(`${companionUrl}/cases`, { method: "GET" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const cases = (await res.json()) as Array<{ caseId: string; name: string }>;
+    sel.innerHTML = "";
+    if (cases.length === 0) {
+      sel.appendChild(new Option("(no cases — create one in the dashboard)", ""));
+      return;
+    }
+    for (const c of cases) {
+      const label = c.name && c.name !== c.caseId ? `${c.caseId} — ${c.name}` : c.caseId;
+      sel.appendChild(new Option(label, c.caseId));
+    }
+    if (selectedId && cases.some((c) => c.caseId === selectedId)) sel.value = selectedId;
+  } catch {
+    // Offline or endpoint missing — keep the last-used case selectable so Start works.
+    sel.innerHTML = "";
+    if (selectedId) sel.appendChild(new Option(`${selectedId} (offline — last used)`, selectedId));
+    else sel.appendChild(new Option("(companion offline — start it, then Refresh)", ""));
   }
 }
 
@@ -75,34 +104,33 @@ async function showHotkey(): Promise<void> {
 
 async function init() {
   const s = await load();
-  $("caseId").value = s.caseId;
   $("companionUrl").value = s.companionUrl;
   $("intervalSeconds").value = String(s.intervalSeconds);
   $("dedupThreshold").value = String(s.dedupThreshold);
+  await loadCases(s.companionUrl, s.caseId);
   await refreshStatus(s);
   await showLastCapture();
   await showHotkey();
 
-  document.getElementById("createCase")!.onclick = async () => {
-    const f = readForm(s.running);
-    if (!f.caseId) {
-      statusEl().textContent = "enter a Case ID first";
-      return;
-    }
-    try {
-      const res = await fetch(`${f.companionUrl}/cases`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ caseId: f.caseId, name: f.caseId, investigator: "investigator", aiProvider: null }),
-      });
-      statusEl().textContent =
-        res.status === 201 ? `case ${f.caseId} created` : `create failed: HTTP ${res.status}`;
-    } catch (err) {
-      statusEl().textContent = `create failed: ${(err as Error).message} — is the companion running at ${f.companionUrl}?`;
-    }
+  // Re-fetch the case list — e.g. after creating a case in the dashboard, or after
+  // pointing Companion URL at a different instance.
+  document.getElementById("refreshCases")!.onclick = async () => {
+    const url = $("companionUrl").value.trim() || DEFAULT_SETTINGS.companionUrl;
+    await loadCases(url, caseSelect().value);
+    statusEl().textContent = "case list refreshed";
+  };
+  // Cases are created in the dashboard — open it in a new tab.
+  document.getElementById("openDashboard")!.onclick = (e) => {
+    e.preventDefault();
+    const url = $("companionUrl").value.trim() || DEFAULT_SETTINGS.companionUrl;
+    void chrome.tabs.create({ url: `${url}/dashboard` });
   };
   document.getElementById("start")!.onclick = async () => {
     const f = readForm(true);
+    if (!f.caseId) {
+      statusEl().textContent = "select a case — create one in the dashboard, then Refresh cases";
+      return;
+    }
     await save(f);
     await refreshStatus(f);
   };

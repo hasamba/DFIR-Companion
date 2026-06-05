@@ -12,13 +12,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Case creation moved to the dashboard.** A new **+ New case** form in the dashboard (id, name,
+  investigator) is now the one place a case is born, backed by a new **`GET /cases`** endpoint that lists
+  existing cases. The capture extension's popup replaces its free-text Case ID box + "Create case" button
+  with a **dropdown of existing cases** fetched from the companion (with **Refresh cases** and a link to
+  open the dashboard) — the extension only **attaches** to a case, it never creates one. This puts case
+  metadata where the full UI lives and keeps the extension a pure capture client.
+
 ### Changed
+- **The companion rejects captures to an unknown case.** `POST /captures` now returns **404** (instead of
+  the old confusing 500-then-queue-forever) when the `caseId` doesn't exist — evidence never lands in a
+  half-made case, and the extension surfaces it (amber `!` badge, "case missing" diagnostic) instead of
+  silently queueing. `POST /cases` returns **409** on a duplicate id so the New case form can't clobber an
+  existing case's metadata/evidence.
 - **AI analysis now defaults to OFF per case.** A fresh app start or a brand-new case captures
   evidence (screenshots are always stored) but runs no live AI until the analyst turns it on with
   the dashboard's **AI: ON/OFF** button — the same OPSEC/cost-first, opt-in stance as threat-intel
   enrichment. Turning it on still backfills everything captured while it was off. Explicit imports
   (CSV / log / THOR) are unaffected and always analyze. The default lives in `AiControlStore`
   (`enabled: false`); cases that already ran analysis keep their saved on state.
+
+### Removed
+- **The extension no longer creates cases.** Removed the popup's "Create case" button and the
+  `CompanionClient.createCase` method — case creation is a deliberate dashboard action.
 
 ## [0.6.0] - 2026-06-04
 

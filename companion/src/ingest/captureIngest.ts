@@ -15,6 +15,16 @@ const payloadSchema = z.object({
   imageBase64: z.string().min(1),
 });
 
+// Thrown when a capture targets a case that was never created. The companion never
+// creates a case as a side effect of ingesting evidence — creation is an explicit
+// dashboard action — so an unknown caseId is a 404, not an auto-create.
+export class CaseNotFoundError extends Error {
+  constructor(public readonly caseId: string) {
+    super(`case not found: ${caseId}`);
+    this.name = "CaseNotFoundError";
+  }
+}
+
 // In-memory cache of the last hash per case, to decide duplicates without re-reading disk.
 const lastHashByCase = new Map<string, string>();
 
@@ -24,6 +34,12 @@ export async function ingestCapture(
   threshold = DUP_THRESHOLD,
 ): Promise<CaptureMetadata> {
   const payload = payloadSchema.parse(rawPayload);
+
+  // The case must already exist (created in the dashboard). Reject an unknown case
+  // before touching disk — never auto-create a case from a stray capture.
+  if (!(await store.caseExists(payload.caseId))) {
+    throw new CaseNotFoundError(payload.caseId);
+  }
 
   const bytes = Buffer.from(payload.imageBase64, "base64");
   const hash = await computeHash(bytes);
