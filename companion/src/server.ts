@@ -34,6 +34,8 @@ import { parseCloudTrail } from "./analysis/awsImport.js";
 import type { AwsImportOptions } from "./analysis/awsImport.js";
 import { parseCloudActivity } from "./analysis/cloudActivityImport.js";
 import type { CloudActivityImportOptions } from "./analysis/cloudActivityImport.js";
+import { parsePlasoCsv } from "./analysis/plasoImport.js";
+import type { PlasoImportOptions } from "./analysis/plasoImport.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
 import { ProviderHealthCache } from "./enrichment/providerHealth.js";
@@ -1542,6 +1544,60 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `Cloud activity import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a Plaso / log2timeline super-timeline (psort CSV — dynamic or l2tcsv). Evidence-first;
+  // mapping is DETERMINISTIC (no AI extraction): each row is an Info evidence event read at its
+  // own time, with IOCs scraped from the message + source file path.
+  app.post("/cases/:id/import-plaso", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.csv === "string" ? req.body.csv : "";
+    const originalName = String(req.body?.filename ?? "plaso.csv");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const minSeverity: Severity | undefined =
+      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
+      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
+      : rawLevel === "info" ? "Info" : undefined;
+    const plasoOpts: PlasoImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      const preview = parsePlasoCsv(text, plasoOpts);
+      if (preview.format === "unknown") return res.status(400).json({ error: "unrecognized CSV — expected a Plaso psort export (dynamic: datetime,message,… or l2tcsv: date,time,…,desc,…)" });
+      if (preview.kept === 0) return res.status(400).json({ error: `no events from the Plaso ${preview.format} CSV (${preview.total} row(s) parsed)` });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "plaso.csv");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, rows: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} Plaso event(s)` });
+      void options.pipeline.importPlaso(caseId, text, {
+        label: storedName,
+        idPrefix: `p${seq}`,
+        importedAt,
+        plaso: plasoOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `Plaso import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })

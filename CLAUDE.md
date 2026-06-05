@@ -107,7 +107,10 @@ S3 exposure, secrets access table) with bumps for `errorCode`/root/failed-Consol
 and **GCP/Azure activity** (`importCloudActivity` → `cloudActivityImport.ts` — auto-detects GCP Cloud Audit
 Logs (`protoPayload`) vs Azure Activity Log (`operationName`, native camelCase or flat Log-Analytics); severity
 DERIVED from the action via per-cloud regex tables (IAM/role grants, logging-tampering, secret/key access) +
-denied bump; caller IP→IOC, principal email→description). The last ten are **fully
+denied bump; caller IP→IOC, principal email→description), and **Plaso** (`importPlaso` → `plasoImport.ts` —
+psort CSV, dynamic or l2tcsv; Info evidence events at the artifact's own time, IOCs (hash/URL/IP) scraped from
+the free-text message + the `display_name` path; reuses `csvImport`'s `parseCsv` + `siemImport`'s
+`aggregateEvents`). The last eleven are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
 

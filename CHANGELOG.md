@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Plaso / log2timeline (psort CSV) import.** A new **Import Plaso** button (and `POST /cases/:id/import-plaso`)
+  ingests a `psort` super-timeline — the eleventh deterministic ingest path (no AI call). It header-detects both
+  psort CSV flavours: the **dynamic** default (`datetime,timestamp_desc,source,source_long,message,parser,
+  display_name,tag`) and the legacy **l2tcsv** (`date,time,timezone,MACB,source,sourcetype,type,user,host,
+  short,desc,…`). Like KAPE these are evidence rows with no verdict, so each maps to an **Info** event read at
+  its **own time** (dynamic ISO datetime with µs truncated to ms; l2tcsv `MM/DD/YYYY`+time+timezone combined to
+  UTC). **IOCs are scraped from the free-text message** — SHA256/SHA1/MD5 hashes, `http(s)` URLs, and IPv4
+  (with an octet-bounded regex so version strings like `10.0.22000` aren't mistaken for IPs) — plus the source
+  file path (the `display_name`/`filename` `TYPE:`-prefix like `TSK:`/`OS:` is stripped); the l2tcsv `host`
+  attributes the event for the asset↔IoC graph. Events are tagged **Plaso**; repetitive rows aggregate into
+  counted rows (long digit runs — timestamps/sizes/inodes — normalized out of the key) and cap, so a large
+  timeline doesn't flood (filter the psort output first). Evidence-first (raw CSV persisted + audit-logged
+  before analysis). Pure mapper (`plasoImport.ts`) reuses `csvImport`'s `parseCsv` and `siemImport`'s
+  `aggregateEvents` + IOC sink; unit-tested with no network.
 - **GCP Cloud Audit Logs + Azure Activity Log import.** A new **Import GCP/Azure** button (and
   `POST /cases/:id/import-cloud-activity`) ingests the other two major clouds — the tenth deterministic ingest
   path (no AI call), completing AWS/GCP/Azure. One importer auto-detects per record: a **GCP** Cloud Logging
