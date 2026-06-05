@@ -215,9 +215,13 @@ export class TimesketchClient {
 
   // Upload events as an in-memory JSONL string (no file / no chunking — our forensic timelines are
   // well under the importer's 50k-record / 200MB thresholds). Creates a timeline named `timelineName`
-  // in the sketch. POST multipart/form-data to /api/v1/upload/ with the `events` field.
+  // in the sketch. The upload resource reads every field from `request.form`, so we send
+  // application/x-www-form-urlencoded (URLSearchParams) — exactly what the official Python importer
+  // does for the no-file path (`requests.post(..., data=dict)`). A multipart/form-data body is
+  // mishandled by some Timesketch deployments (proxy/WSGI), which then see no fields and abort with
+  // "Unable to upload data without supplying a sketch to associate it with".
   async uploadEvents(sketchId: number, timelineName: string, jsonl: string): Promise<void> {
-    const form = new FormData();
+    const form = new URLSearchParams();
     form.set("sketch_id", String(sketchId));
     form.set("name", timelineName.slice(0, 255));
     form.set("events", jsonl);
