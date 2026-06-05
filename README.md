@@ -120,6 +120,15 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   **LNK** (LECmd), **JumpLists** (JLECmd), **UsnJrnl $J** & **$MFT** (MFTECmd), **SRUM** (SrumECmd),
   **Recycle Bin** (RBCmd), and **Shellbags** (SBECmd). Tagged by artifact name for cross-source correlation;
   aggregates + caps; optional `minSeverity` floor.
+- **Microsoft 365 / Entra ID import** — cloud & identity IR (incl. business-email-compromise), **deterministic**
+  (no AI call). Ingests the **M365 Unified Audit Log** (`Search-UnifiedAuditLog` CSV/JSON or the Management
+  Activity API — the `AuditData` blob is parsed and merged), **Entra sign-in logs**, and **Entra directory
+  audit logs**. Like Windows logs these carry no verdict, so severity is **derived from the operation** — BEC
+  tradecraft (inbox/transport rules, mailbox delegation, OAuth/service-principal grants, role additions,
+  password resets, failed sign-ins) maps to High/Medium with MITRE — while **Entra's own `riskLevel`**
+  (Identity Protection) drives severity directly. Source IPs become IOCs; the UPN is surfaced so the asset↔IoC
+  graph captures the account. Tagged **Microsoft 365** / **Entra ID**; aggregates + caps; optional `minSeverity`
+  floor (drops routine Info activity).
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only

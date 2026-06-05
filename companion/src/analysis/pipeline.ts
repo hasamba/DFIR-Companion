@@ -26,6 +26,7 @@ import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImp
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
 import { parseKapeCsv, type KapeImportOptions } from "./kapeImport.js";
+import { parseM365Audit, type M365ImportOptions } from "./m365Import.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 
@@ -997,6 +998,52 @@ export class AnalysisPipeline {
       threadsClosed: [],
       timelineNote: `KAPE/${parsed.artifact} import: ${parsed.kept} event(s) from ${parsed.total} row(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import Microsoft 365 Unified Audit Log + Entra ID (sign-in / directory audit) data.
+  // Deterministic (no AI call): each record is classified (UAL / sign-in / audit) and mapped,
+  // severity derived from the operation (BEC tradecraft) or Entra's own risk verdict; the
+  // source IP becomes an IOC and the UPN is surfaced for the asset graph.
+  async importM365(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;            // unique per import (e.g. "m3") so ids never collide
+      importedAt: string;
+      m365?: M365ImportOptions;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsed = parseM365Audit(text, opts.m365);
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Microsoft 365"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Microsoft 365 import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        `, ${parsed.iocs.length} IOC(s)`,
       summary: "",
     };
     const delta = deltaSchema.parse(raw);

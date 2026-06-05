@@ -98,7 +98,10 @@ while telemetry (`dns`/`http`/`tls`/`files`/…) contributes **IOCs only** so th
 and **KAPE / Eric Zimmerman Tools** CSV (`importKape` → `kapeImport.ts` — host triage: detects the EZ tool
 from the CSV header (Prefetch/Amcache/ShimCache/LNK/JumpLists/UsnJrnl/MFT/SRUM/RecycleBin/Shellbags), maps each
 row to an Info evidence event reading the artifact's own time + file/hash/process IOCs; reuses `csvImport`'s
-`parseCsv` + `siemImport`'s `aggregateEvents`). The last seven are **fully
+`parseCsv` + `siemImport`'s `aggregateEvents`), and **Microsoft 365 / Entra ID** (`importM365` →
+`m365Import.ts` — UAL (parses the `AuditData` blob) + Entra sign-in/audit; severity DERIVED from the operation
+(BEC tradecraft table + keyword fallback) like the SIEM per-EID table, or from Entra's own `riskLevel` verdict;
+source IP→IOC, UPN→description for the asset graph). The last eight are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
 
