@@ -50,6 +50,10 @@ export function isInternalIp(ip: string): boolean {
 }
 
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+// DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts.
+const NETBIOS_ACCT = /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
+const UPN_ACCT = /\b[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/g;
+const PATH_DOMAINS = /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
 
 export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anonymizer {
   const toToken = new Map<string, string>();  // "CAT:reallower" -> token
@@ -69,7 +73,20 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
 
   // ── detectors (filled in across later tasks; order is fixed in apply()) ──
   function redactSecrets(t: string): string { return t; }
-  function anonAccounts(t: string): string { return t; }
+  function isInternalDomain(domain: string): boolean {
+    const d = domain.toLowerCase();
+    return known.internalDomains.some((kd) => d === kd || d.endsWith("." + kd));
+  }
+  function anonAccounts(t: string): string {
+    let out = t.replace(NETBIOS_ACCT, (m, dom: string, user: string) =>
+      PATH_DOMAINS.test(dom) ? m : assign("USER", `${dom}\\${user}`));
+    // Only UPNs on an internal domain are AD accounts → USER. Others stay for anonEmails.
+    out = out.replace(UPN_ACCT, (m) => {
+      const domain = m.split("@")[1] ?? "";
+      return isInternalDomain(domain) ? assign("USER", m) : m;
+    });
+    return out;
+  }
   const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
   function anonEmails(t: string): string {
     return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));

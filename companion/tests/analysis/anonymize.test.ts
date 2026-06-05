@@ -63,6 +63,8 @@ describe("anonymizer — internal IPs", () => {
   });
 });
 
+const ADATUM: KnownEntities = { hosts: [], accounts: [], internalDomains: ["adatumlab", "adatumlab.local"] };
+
 describe("anonymizer — emails", () => {
   it("tokenizes email addresses and restores them", () => {
     const a = createAnonymizer(policy({ EMAIL: true }), NONE);
@@ -72,5 +74,28 @@ describe("anonymizer — emails", () => {
     expect(out).toMatch(/ANON_EMAIL_1/);
     expect(out).toMatch(/ANON_EMAIL_2/);
     expect(a.restore(out)).toBe("phish from attacker@evil.com to jdoe@victim.com");
+  });
+});
+
+describe("anonymizer — accounts/usernames", () => {
+  it("tokenizes NETBIOS DOMAIN\\user", () => {
+    const a = createAnonymizer(policy({ USER: true }), ADATUM);
+    const out = a.apply("logon by ADATUMLAB\\srv on the DC");
+    expect(out).not.toContain("ADATUMLAB\\srv");
+    expect(out).toMatch(/ANON_USER_1/);
+    expect(a.restore(out)).toBe("logon by ADATUMLAB\\srv on the DC");
+  });
+  it("tokenizes an internal UPN as USER but leaves a third-party address for EMAIL", () => {
+    const a = createAnonymizer(policy({ USER: true, EMAIL: true }), ADATUM);
+    const out = a.apply("admin@adatumlab.local phished by attacker@evil.com");
+    expect(out).toMatch(/ANON_USER_1/);   // internal UPN
+    expect(out).toMatch(/ANON_EMAIL_1/);  // external sender
+    expect(out).not.toContain("admin@adatumlab.local");
+    expect(out).not.toContain("attacker@evil.com");
+    expect(a.restore(out)).toBe("admin@adatumlab.local phished by attacker@evil.com");
+  });
+  it("does NOT treat a Windows path segment as DOMAIN\\user", () => {
+    const a = createAnonymizer(policy({ USER: true }), ADATUM);
+    expect(a.apply("path C:\\Users\\srv reading")).toContain("C:\\Users\\srv");
   });
 });
