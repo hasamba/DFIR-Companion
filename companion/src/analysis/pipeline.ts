@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import type { AIProvider, AnalyzeImage } from "../providers/provider.js";
+import type { AIProvider, AnalyzeImage, AnalyzeRequest } from "../providers/provider.js";
+import { createAnonymizer, deriveKnownEntities } from "./anonymize.js";
+import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion } from "./stateTypes.js";
@@ -426,6 +428,10 @@ export interface PipelineOptions {
   legitimateStore?: LegitimateStore;
   // Optional investigation time-window — events outside it are excluded.
   scopeStore?: ScopeStore;
+  // Per-case anonymization control. When a case has it enabled, the userPrompt is tokenized
+  // before the provider call and the response is restored before parsing. Optional: absent →
+  // no anonymization (used by older tests).
+  anonStore?: AnonControlStore;
   stateStore: StateStore;
   imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage>;
   retries?: number;
@@ -461,6 +467,28 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number, backoffMs: nu
 export class AnalysisPipeline {
   constructor(private readonly opts: PipelineOptions) {}
 
+  // Run one AI call with optional per-case anonymization. Tokenizes the userPrompt (images are
+  // passed through — pixels can't be tokenized; that's the documented best-effort limitation),
+  // then restores the parsed JSON response BEFORE schema validation, so real values containing
+  // JSON metacharacters (e.g. a path's backslashes) never corrupt the parse. Returns the
+  // loose-parsed, restored object for the caller to schema-validate.
+  private async analyzeRestored(
+    caseId: string,
+    state: InvestigationState,
+    provider: AIProvider,
+    req: AnalyzeRequest,
+  ): Promise<unknown> {
+    const control = this.opts.anonStore ? await this.opts.anonStore.load(caseId) : null;
+    const policy = toAnonPolicy(control);
+    if (!policy.enabled) {
+      const result = await provider.analyze(req);
+      return parseJsonLoose(result.rawText);
+    }
+    const anon = createAnonymizer(policy, deriveKnownEntities(state));
+    const result = await provider.analyze({ ...req, userPrompt: anon.apply(req.userPrompt) });
+    return anon.restoreDeep(parseJsonLoose(result.rawText));
+  }
+
   // Hash of the last successfully-synthesized inputs per case. The live, debounced
   // synthesis fires after every capture window; this lets us skip the (expensive) AI call
   // when nothing that affects the output has changed since the last run. In-memory: a
@@ -489,9 +517,8 @@ export class AnalysisPipeline {
     const backoffMs = this.opts.backoffMs ?? 500;
 
     const delta = await withRetry(async () => {
-      const result = await this.opts.provider.analyze({ systemPrompt: getSystemPrompt(), userPrompt, images });
-      // Models often wrap JSON in markdown fences / prose — extract it first.
-      return deltaSchema.parse(parseJsonLoose(result.rawText));
+      const parsed = await this.analyzeRestored(caseId, state, this.opts.provider, { systemPrompt: getSystemPrompt(), userPrompt, images });
+      return deltaSchema.parse(parsed);
     }, retries, backoffMs);
 
     const windowSequence = analyzable[analyzable.length - 1].sequenceNumber;
@@ -542,8 +569,8 @@ export class AnalysisPipeline {
         `Return the JSON delta.`;
 
       const delta = await withRetry(async () => {
-        const result = await this.opts.provider.analyze({ systemPrompt: getCsvPrompt(), userPrompt, images: [] });
-        return deltaSchema.parse(parseJsonLoose(result.rawText));
+        const parsed = await this.analyzeRestored(caseId, state, this.opts.provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [] });
+        return deltaSchema.parse(parsed);
       }, retries, backoffMs);
 
       // Renumber event ids so chunked imports don't overwrite each other (merge
@@ -612,8 +639,8 @@ export class AnalysisPipeline {
         `Return the JSON delta.`;
 
       const delta = await withRetry(async () => {
-        const result = await this.opts.provider.analyze({ systemPrompt: getLogPrompt(), userPrompt, images: [] });
-        return deltaSchema.parse(parseJsonLoose(result.rawText));
+        const parsed = await this.analyzeRestored(caseId, state, this.opts.provider, { systemPrompt: getLogPrompt(), userPrompt, images: [] });
+        return deltaSchema.parse(parsed);
       }, retries, backoffMs);
 
       const renumbered = {
@@ -754,8 +781,8 @@ export class AnalysisPipeline {
 
     const provider = this.opts.synthesisProvider ?? this.opts.provider;
     return withRetry(async () => {
-      const result = await provider.analyze({ systemPrompt: getAskPrompt(), userPrompt, images: [] });
-      return askSchema.parse(parseJsonLoose(result.rawText));
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getAskPrompt(), userPrompt, images: [] });
+      return askSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
@@ -854,8 +881,8 @@ export class AnalysisPipeline {
     const synthProvider = this.opts.synthesisProvider ?? this.opts.provider;
 
     const delta = await withRetry(async () => {
-      const result = await synthProvider.analyze({ systemPrompt: getSynthesisPrompt(), userPrompt, images: [] });
-      return deltaSchema.parse(parseJsonLoose(result.rawText));
+      const parsed = await this.analyzeRestored(caseId, state, synthProvider, { systemPrompt: getSynthesisPrompt(), userPrompt, images: [] });
+      return deltaSchema.parse(parsed);
     }, retries, backoffMs);
 
     // Anchor finding timestamps to the last real event time (fallback: existing state time).
