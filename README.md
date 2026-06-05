@@ -19,6 +19,15 @@ exportable reports.
 Everything runs on your machine — the companion binds to `127.0.0.1` only, evidence
 stays on disk, and the AI provider is yours to choose.
 
+> **Where it fits — a post-detection analysis layer.** DFIR Companion is **not** a detection
+> engine and deliberately does not run Sigma/YARA itself. Your detection tools already do that:
+> **Velociraptor** (Sigma/YARA hunts), **Security Onion** (Suricata/Zeek/Elastic), **Chainsaw**,
+> **Hayabusa**, **THOR**, your EDR/SIEM. The Companion is the layer **after** detection — it
+> ingests *their* verdicts and hits, correlates them across tools into one forensic timeline,
+> and synthesizes the findings, attacker path, IOCs, and report. The value is the **"so what"**,
+> not re-deriving alerts. New ingest connectors should consume a tool's output; they should not
+> reimplement its detection.
+
 ## What it produces
 
 For each case the AI builds and keeps up to date:
@@ -83,6 +92,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   dump (`{ Event: { System, EventData } }`, named or `Data[]` form) with the per-EID severity fallback.
   Events are tagged **Chainsaw / EVTX** for cross-source correlation; repetitive events aggregate and cap;
   optional `minSeverity` floor.
+- **Hayabusa import** — [Hayabusa](https://github.com/Yamato-Security/hayabusa) (Yamato Security) Sigma-over-EVTX
+  detection timelines, **deterministic** (no AI call). Ingests both a **`json-timeline`** (`.json`/`.jsonl`) and
+  the default **`csv-timeline`** (`.csv`, with its `Key: value ¦ …` detail cells). Verdict-first like Chainsaw:
+  the matched **rule title** leads the event, its **level drives severity**, and its **tactics/tags** (`Txxxx`)
+  become MITRE techniques; **IOCs, the affected host, and the process→parent chain** are pulled from the rendered
+  detail fields. Tagged **Hayabusa** for cross-source correlation; aggregates + caps; optional `minSeverity` floor.
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only

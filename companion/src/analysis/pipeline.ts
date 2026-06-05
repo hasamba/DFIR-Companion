@@ -22,6 +22,7 @@ import { aggregateLogLines } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
 import { parseSiemExport, type SiemImportOptions } from "./siemImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
+import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 
@@ -806,6 +807,52 @@ export class AnalysisPipeline {
       threadsClosed: [],
       timelineNote: `${parsed.detections > 0 ? "Chainsaw" : "EVTX"} import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
         (parsed.detections > 0 ? `, ${parsed.detections} rule detection(s)` : "") +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a Hayabusa (Yamato Security) detection timeline — JSON/JSONL or CSV. Like the
+  // other deterministic paths there is no AI call: the matched Sigma rule's level drives
+  // severity, its title leads the description, its tactics/tags become MITRE, and IOCs /
+  // asset / process-chain come from the rendered detail fields. Tagged Hayabusa as source.
+  async importHayabusa(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;                  // unique per import (e.g. "h3") so ids never collide
+      importedAt: string;
+      hayabusa?: HayabusaImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsed = parseHayabusaTimeline(text, opts.hayabusa);
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Hayabusa"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Hayabusa import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
       summary: "",

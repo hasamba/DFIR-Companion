@@ -20,6 +20,8 @@ import { parseSiemExport } from "./analysis/siemImport.js";
 import type { SiemImportOptions } from "./analysis/siemImport.js";
 import { parseChainsawReport } from "./analysis/chainsawImport.js";
 import type { ChainsawImportOptions } from "./analysis/chainsawImport.js";
+import { parseHayabusaTimeline } from "./analysis/hayabusaImport.js";
+import type { HayabusaImportOptions } from "./analysis/hayabusaImport.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
 import { ProviderHealthCache } from "./enrichment/providerHealth.js";
@@ -1147,6 +1149,63 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `${kind} import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a Hayabusa (Yamato Security) detection timeline — JSON/JSONL or CSV. Sister of
+  // the Chainsaw path; evidence-first, mapping is DETERMINISTIC (no AI extraction): the
+  // matched Sigma rule's level drives severity, its title/tactics/tags drive the
+  // description + MITRE, and IOCs/asset/process-chain come from the rendered detail fields.
+  app.post("/cases/:id/import-hayabusa", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.json === "string" ? req.body.json : "";
+    const originalName = String(req.body?.filename ?? "hayabusa.csv");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    // Optional severity floor (e.g. "medium" drops Low/Info detections + noise).
+    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const minSeverity: Severity | undefined =
+      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
+      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
+      : rawLevel === "info" ? "Info" : undefined;
+    const hayabusaOpts: HayabusaImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      // Parse up-front: reject a file with no parseable records, and report counts to the UI.
+      const preview = parseHayabusaTimeline(text, hayabusaOpts);
+      if (preview.total === 0) return res.status(400).json({ error: "no parseable Hayabusa records found (expected a Hayabusa json-timeline or csv-timeline)" });
+      if (preview.kept === 0) return res.status(400).json({ error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)` });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "hayabusa.csv");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, records: preview.total, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} Hayabusa event(s)` });
+      void options.pipeline.importHayabusa(caseId, text, {
+        label: storedName,
+        idPrefix: `h${seq}`,
+        importedAt,
+        hayabusa: hayabusaOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `Hayabusa import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })

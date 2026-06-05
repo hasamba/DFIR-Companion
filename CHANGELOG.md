@@ -13,6 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Hayabusa import.** A new **Import Hayabusa** button (and `POST /cases/:id/import-hayabusa`) ingests a
+  [Hayabusa](https://github.com/Yamato-Security/hayabusa) (Yamato Security) Sigma-over-EVTX detection timeline —
+  the sister of the Chainsaw path and the fourth deterministic ingest path (no AI call). It accepts both a
+  **`json-timeline`** (`hayabusa json-timeline [-J]`, a JSON array or NDJSON) and the default **`csv-timeline`**
+  (`.csv`, whose `Details`/`ExtraFieldInfo` cells are `Key: value ¦ …` strings — parsed back into fields).
+  Unlike Chainsaw, Hayabusa does not embed the raw EVTX node, so the mapping is **verdict-first**: the matched
+  rule's **`Level` drives severity**, its **`RuleTitle` leads the description**, and its `MitreTactics`/`MitreTags`
+  (`Txxxx` ids) become **MITRE techniques**. IOCs (hashes/IPs/files/processes), the affected **host**, and the
+  **process→parent chain** are pulled from the rendered detail fields (Proc/CmdLine/ParentProc/Hashes/TgtIP/…)
+  with the same generic extractors the SIEM importer uses, so the timeline still corroborates and feeds the
+  asset↔IoC graph. Both abbreviated and spelled-out levels (`crit`/`critical`, `med`/`medium`) are accepted; the
+  timestamp's offset is honored to UTC; events are tagged **Hayabusa** for cross-source correlation; repetitive
+  events aggregate into counted rows and cap; optional `minSeverity` floor. Evidence-first (raw file persisted +
+  audit-logged before analysis). Pure mapper (`hayabusaImport.ts`) reuses `siemImport`'s `aggregateEvents` +
+  IOC extractors and `csvImport`'s `parseCsv`; unit-tested with no network.
 - **Chainsaw / EVTX import.** A new **Import Chainsaw/EVTX** button (and `POST /cases/:id/import-chainsaw`)
   ingests Windows event logs the way IR teams carry them — the third JSON ingest path besides THOR and SIEM,
   and the richest for Windows IR. It accepts **[Chainsaw](https://github.com/WithSecureLabs/chainsaw) hunt
