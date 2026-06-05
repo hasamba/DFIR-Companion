@@ -125,6 +125,10 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   IOC on it** (per-source cache), so adding a site later backfills the whole case on it.
 - **Process-chain validation** — RockyRaccoon parent→child check flags an anomalous chain
   (e.g. `excel.exe → powershell.exe`) on the timeline.
+- **Reachability gate** — a self-hosted **MISP/YETI that's down** is **health-probed before any IOC is
+  sent** (cached ~60s), so a dead instance isn't hit once per IOC. Down sources are **skipped and
+  retried** (not marked "checked"), shown as **●up/down dots** in the Enrich picker, and a background
+  poller **auto-resumes** enrichment when the server comes back (`DFIR_ENRICH_HEALTH_POLL_MS`).
 - **Per-case toggle**, cached on the IOC, throttled, capped; verdict/score/tags/link badges; IOC CSV column.
 - **Self-hosted TLS** — MISP / YETI on an internal-CA or self-signed cert: trust a PEM CA bundle
   (`DFIR_MISP_CA` / `DFIR_YETI_CA`, verification stays on) or skip verification for a lab

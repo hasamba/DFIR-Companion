@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Enrichment reachability gate (don't blast a down MISP/YETI).** A self-hosted threat-intel
+  instance can be offline (server off, TLS broken, auth 405) — and a case can carry hundreds of
+  IOCs. Previously enrichment fired one doomed request *per IOC* at the dead server (the log filled
+  with `… -> error (fetch failed)` / `(YETI auth HTTP 405)`). Now each provider is **health-probed
+  before any IOC is sent** — a cheap call (MISP `GET /servers/getVersion`; YETI a fresh API-token
+  exchange) — and the verdict is **cached ~60s** (`DFIR_ENRICH_HEALTH_TTL_MS`), so a down instance
+  is tested **at most once a minute** regardless of IOC count. A provider probed *down* is skipped:
+  no requests sent, **not** recorded as "checked" (so it's retried later), and reported in the run
+  summary (`unavailable=[…]`) and the live AI-status line (`skipped MISP, YETI (unreachable — will
+  retry)`). A **background poller** (`DFIR_ENRICH_HEALTH_POLL_MS`, default 60s, `=0` to disable)
+  re-probes only the servers it last saw down and **auto-resumes enrichment** for the cases it had
+  to skip, the moment the instance is reachable again. New `GET /enrich-health` route + **●up/down
+  reachability dots** next to each source in the dashboard's enrichment modal. New
+  `ProviderHealthCache` (pure, injectable clock) and `EnrichmentProvider.probe()` are unit-tested;
+  the gate is exercised in `enrichService` and the route in `server` tests. Providers without a
+  `probe()` (external SaaS) are treated as up, keeping their existing per-call error handling.
 - **SIEM / EDR JSON import.** A new **Import SIEM/EDR** button (and `POST /cases/:id/import-siem`)
   ingests a JSON export from a SIEM or EDR — the second JSON ingest path besides THOR. It **unwraps the
   common container envelopes** (Elastic/Kibana `{ data: [{ _source }] }`, an Elasticsearch
@@ -96,6 +112,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`enabled: false`); cases that already ran analysis keep their saved on state.
 
 ### Fixed
+- **Large evidence imports failed with HTTP 413.** The JSON body limit was a fixed 25 MB, so a
+  big SIEM/EDR (or CSV/THOR) export was rejected by the body parser before reaching the route. The
+  limit is now **256 MB** and configurable via **`DFIR_MAX_BODY_MB`**, and an over-limit upload now
+  returns an actionable JSON 413 ("raise DFIR_MAX_BODY_MB … or split the export") instead of a raw
+  HTML error. Malformed JSON bodies return a clear 400.
 - **Manual event time was shifted by the local timezone.** `buildManualEvent` used
   `new Date(input).toISOString()`, which reinterpreted a timezone-less value in the server's local
   zone (and the dashboard's pickers used the browser's). Both now treat the entered time as UTC, so a

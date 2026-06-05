@@ -48,6 +48,15 @@ export class YetiProvider implements EnrichmentProvider {
 
   supports(kind: IocKind): boolean { return kind !== "process"; } // hash/ip/domain/url observables
 
+  // Cheap reachability + auth check: force a fresh API-key→JWT exchange (the exact call that
+  // fails with "YETI auth HTTP 405" when the instance is down). Discards the cached token so
+  // it genuinely re-tests; throws on unreachable / bad key. A success also warms the token
+  // for the lookups that follow. Gates us from auth-storming a dead instance once per IOC.
+  async probe(): Promise<void> {
+    this.token = undefined;
+    await this.accessToken();
+  }
+
   private signal(): AbortSignal { return AbortSignal.timeout(this.opts.timeoutMs ?? 20_000); }
 
   // Exchange the API key for a JWT access token (cached until a 401 invalidates it).
