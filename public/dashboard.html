@@ -70,6 +70,10 @@
       padding: 0 7px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .comment-chip:hover { color: #6aa9ff; border-color: #6aa9ff; }
     .comment-chip.has { color: #6aa9ff; border-color: #2d4a6a; background: #11202e; }
+    .anon-chip { display:inline-block; background:#22272e; border:1px solid #30363d; border-radius:10px; padding:1px 7px; margin:1px 0; font-size:11px; }
+    .anon-auto-grp { margin-bottom:6px; }
+    .anon-cust-row { display:flex; align-items:center; gap:8px; padding:2px 0; }
+    .anon-cust-rm { background:#3a2230; border:none; color:#ff8aa0; border-radius:4px; cursor:pointer; padding:0 6px; }
     .comment-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; z-index: 50; }
     .comment-overlay.open { display: block; }
     .comment-modal { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
@@ -135,6 +139,7 @@
     <button id="aiToggle" title="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" title="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
     <button id="enrichToggle" title="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/MalwareBazaar/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
+    <button id="anonToggle" title="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
     <input id="csvFile" type="file" accept=".csv,text/csv" style="display:none" />
     <button id="importCsv" title="Upload a CSV of results (e.g. a Velociraptor export) to analyze into IOCs, TTPs and the timeline">Import CSV</button>
     <input id="logFile" type="file" accept=".log,.txt,text/plain" style="display:none" />
@@ -183,6 +188,34 @@
         <button id="enrichCancel" style="background:#2a2f3a;">Cancel</button>
         <span id="enrichMsg" style="color:#9aa4b2; font-size:12px;"></span>
       </div>
+    </div>
+  </div>
+  <div id="anonOverlay" class="comment-overlay">
+    <div class="comment-modal">
+        <h3 style="margin:0 0 6px">Anonymization</h3>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:6px 0">
+          <input type="checkbox" id="anonEnabled"> <strong>Enabled</strong> — tokenize text sent to the AI; restore on display
+        </label>
+        <div class="asset-subhead" style="margin:8px 0 2px">Categories to anonymize</div>
+        <div id="anonCategories" style="display:grid;grid-template-columns:1fr 1fr;gap:2px 12px"></div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:8px 0 0">
+          <input type="checkbox" id="anonRedactSecrets"> Redact secrets (passwords / API keys / tokens — one-way)
+        </label>
+        <div id="anonWarning" style="display:none;margin-top:10px;padding:8px;border-radius:6px;background:#3a2a00;color:#ffcf66;font-size:12px"></div>
+        <div class="asset-subhead" style="margin:12px 0 2px">Auto-detected entities (read-only — grows with the investigation)</div>
+        <div id="anonAuto" style="max-height:140px;overflow:auto;font-size:12px;background:#0e1116;border-radius:6px;padding:6px"></div>
+        <div class="asset-subhead" style="margin:12px 0 2px">Custom entities (add anything the auto-detection missed)</div>
+        <div id="anonCustom" style="max-height:120px;overflow:auto;font-size:12px;margin-bottom:6px"></div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input id="anonCustVal" placeholder="value (host, user, IP, codename…)" style="flex:1" />
+          <select id="anonCustCat"></select>
+          <button id="anonCustAdd" type="button">Add</button>
+        </div>
+        <div id="anonMsg" style="color:#9aa4b2;font-size:12px;margin-top:8px"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+          <button id="anonCancel">Cancel</button>
+          <button id="anonSave">Save</button>
+        </div>
     </div>
   </div>
   <div id="commentOverlay" class="comment-overlay">
@@ -834,6 +867,96 @@
         .catch(e => msg.textContent = "failed: " + e.message);
     }
 
+    // ── Anonymization — tokenize sensitive victim data before the AI; restore on display ──
+    const ANON_CATEGORIES = [
+      ["IP", "Internal IPs"], ["USER", "Usernames"], ["HOST", "Hostnames"],
+      ["DOMAIN", "Internal domains"], ["EMAIL", "Emails"], ["PATH", "User paths"],
+    ];
+    const ANON_ENTITY_CATEGORIES = ["HOST", "USER", "DOMAIN", "IP", "EMAIL", "PATH", "OTHER"];
+    let anonControl = null;          // { enabled, categories, redactSecrets, screenshotWarning }
+    let anonAuto = { hosts: [], accounts: [], internalDomains: [] };
+    let anonCustom = [];             // working copy: [{ value, category }]
+
+    function renderAnonToggle() {
+      const b = document.getElementById("anonToggle");
+      if (!anonControl) { b.textContent = "Anon: …"; b.style.background = "#555"; return; }
+      b.textContent = anonControl.enabled ? "Anon: on" : "Anon: off";
+      b.style.background = anonControl.enabled ? "#7a5cff" : "#555";
+    }
+    function anonUnavailable() {
+      const b = document.getElementById("anonToggle");
+      b.textContent = "Anon: ?";
+      document.getElementById("status").textContent =
+        "Anon control endpoint missing — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
+    }
+    function loadAnonToggle(caseId) {
+      fetch(`/cases/${caseId}/anon-control`)
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(c => { anonControl = c; renderAnonToggle(); })
+        .catch(() => anonUnavailable());
+    }
+    function loadAnonEntities(caseId) {
+      return fetch(`/cases/${caseId}/anon-entities`)
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(d => { anonAuto = d.auto || { hosts: [], accounts: [], internalDomains: [] }; anonCustom = (d.custom || []).map(e => ({ ...e })); })
+        .catch(() => { anonAuto = { hosts: [], accounts: [], internalDomains: [] }; anonCustom = []; });
+    }
+    function renderAutoEntities() {
+      const chip = v => `<span class="anon-chip">${esc(v)}</span>`;
+      const grp = (label, arr) => `<div class="anon-auto-grp"><div class="asset-subhead">${esc(label)} (${arr.length})</div><div>${arr.length ? arr.map(chip).join(" ") : "<em style='color:#9aa4b2'>none yet</em>"}</div></div>`;
+      document.getElementById("anonAuto").innerHTML =
+        grp("Hosts", anonAuto.hosts || []) + grp("Accounts", anonAuto.accounts || []) + grp("Internal domains", anonAuto.internalDomains || []);
+    }
+    function renderCustomEntities() {
+      document.getElementById("anonCustom").innerHTML = anonCustom.length
+        ? anonCustom.map((e, i) => `<div class="anon-cust-row"><span class="anon-chip">${esc(e.value)}</span><span style="color:#9aa4b2;font-size:11px">${esc(e.category)}</span><button data-i="${i}" class="anon-cust-rm" title="remove">✕</button></div>`).join("")
+        : "<em style='color:#9aa4b2'>none added</em>";
+      [...document.querySelectorAll(".anon-cust-rm")].forEach(btn => btn.onclick = () => { anonCustom.splice(Number(btn.getAttribute("data-i")), 1); renderCustomEntities(); });
+    }
+    function addCustomEntity() {
+      const valEl = document.getElementById("anonCustVal");
+      const val = valEl.value.trim();
+      const cat = document.getElementById("anonCustCat").value;
+      if (!val) return;
+      if (!anonCustom.some(e => e.value.toLowerCase() === val.toLowerCase())) anonCustom.push({ value: val, category: cat });
+      valEl.value = "";
+      renderCustomEntities();
+    }
+    function openAnonModal() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { document.getElementById("status").textContent = "connect to a case first"; return; }
+      if (!anonControl) return;
+      document.getElementById("anonEnabled").checked = !!anonControl.enabled;
+      document.getElementById("anonRedactSecrets").checked = anonControl.redactSecrets !== false;
+      document.getElementById("anonCategories").innerHTML = ANON_CATEGORIES.map(([k, label]) =>
+        `<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:2px 0"><input type="checkbox" class="anon-cb" value="${escAttr(k)}" ${anonControl.categories && anonControl.categories[k] ? "checked" : ""}> ${esc(label)}</label>`
+      ).join("");
+      document.getElementById("anonCustCat").innerHTML = ANON_ENTITY_CATEGORIES.map(c => `<option value="${escAttr(c)}">${esc(c)}</option>`).join("");
+      const warn = document.getElementById("anonWarning");
+      if (anonControl.screenshotWarning) { warn.style.display = "block"; warn.textContent = "⚠ Screenshots are sent to the external vision model un-anonymized — pixels can't be tokenized. Point DFIR_AI_MODEL at a local Ollama vision model to keep them on-box. Imported CSV/log text and synthesis ARE anonymized."; }
+      else { warn.style.display = "none"; }
+      document.getElementById("anonMsg").textContent = "loading entities…";
+      loadAnonEntities(caseId).then(() => { renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = ""; });
+      document.getElementById("anonOverlay").classList.add("open");
+    }
+    function saveAnon() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const enabled = document.getElementById("anonEnabled").checked;
+      const redactSecrets = document.getElementById("anonRedactSecrets").checked;
+      const categories = {};
+      ANON_CATEGORIES.forEach(([k]) => { categories[k] = false; });
+      [...document.querySelectorAll(".anon-cb:checked")].forEach(cb => { categories[cb.value] = true; });
+      const msg = document.getElementById("anonMsg"); msg.textContent = "saving…";
+      Promise.all([
+        fetch(`/cases/${caseId}/anon-control`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled, categories, redactSecrets }) }).then(r => { if (!r.ok) throw new Error("control HTTP " + r.status); return r.json(); }),
+        fetch(`/cases/${caseId}/anon-entities`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entities: anonCustom }) }).then(r => { if (!r.ok) throw new Error("entities HTTP " + r.status); return r.json(); }),
+      ]).then(([c]) => {
+        anonControl = c; renderAnonToggle();
+        document.getElementById("anonOverlay").classList.remove("open");
+        document.getElementById("status").textContent = enabled ? "Anonymization on — sensitive data tokenized before the AI" : "Anonymization off";
+      }).catch(e => msg.textContent = "failed: " + e.message);
+    }
+
     function fmtTime(iso) {
       try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
     }
@@ -1117,6 +1240,7 @@
       pollCount(caseId);
       loadAiToggle(caseId);
       loadEnrichToggle(caseId);
+      loadAnonToggle(caseId);
       loadLegitimate(caseId);
       loadScope(caseId);
       loadReportMeta(caseId);
@@ -1278,6 +1402,12 @@
     document.getElementById("enrichSave").onclick = saveEnrich;
     document.getElementById("enrichCancel").onclick = () => document.getElementById("enrichOverlay").classList.remove("open");
     document.getElementById("enrichOverlay").addEventListener("click", (e) => { if (e.target.id === "enrichOverlay") document.getElementById("enrichOverlay").classList.remove("open"); });
+    document.getElementById("anonToggle").onclick = openAnonModal;
+    document.getElementById("anonSave").onclick = saveAnon;
+    document.getElementById("anonCancel").onclick = () => document.getElementById("anonOverlay").classList.remove("open");
+    document.getElementById("anonCustAdd").onclick = addCustomEntity;
+    document.getElementById("anonCustVal").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addCustomEntity(); } });
+    document.getElementById("anonOverlay").addEventListener("click", (e) => { if (e.target.id === "anonOverlay") document.getElementById("anonOverlay").classList.remove("open"); });
     // CSV import: read the file locally, POST its text; the server persists it as
     // evidence and analyzes it (events → IOCs/TTPs/findings) with live WS updates.
     document.getElementById("importCsv").onclick = () => {
