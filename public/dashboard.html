@@ -157,8 +157,9 @@
       <button class="scope-preset" data-hours="24" title="Last 24 hours of activity">24h</button>
       <button class="scope-preset" data-hours="168" title="Last 7 days of activity">7d</button>
       <button class="scope-preset" data-hours="720" title="Last 30 days of activity">30d</button>
-      <label>from <input id="scopeStart" type="datetime-local" /></label>
-      <label>to <input id="scopeEnd" type="datetime-local" /></label>
+      <label>from <input id="scopeStart" type="datetime-local" title="UTC" /></label>
+      <label>to <input id="scopeEnd" type="datetime-local" title="UTC" /></label>
+      <span style="color:#9aa4b2;">(UTC)</span>
       <button id="applyScope" title="Re-synthesize using only events inside this window">Apply</button>
       <button id="clearScope" title="Remove the time window (use all events)">Clear</button>
       <span id="scopeInfo"></span>
@@ -224,9 +225,10 @@
     <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attacker Path</h2><div id="attackerPath">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)<button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button></h2>
+      <div style="font-size:11px; color:#9aa4b2; margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
-          <input id="meTime" type="datetime-local" title="Event time (defaults to now if blank)" />
+          <input id="meTime" type="datetime-local" title="Event time in UTC (defaults to now if blank)" />
           <input id="meDesc" placeholder="what happened" style="flex:1; min-width:220px" />
           <select id="meSev" title="Severity"><option>Critical</option><option>High</option><option selected>Medium</option><option>Low</option><option>Info</option></select>
           <input id="meAsset" placeholder="asset / host (optional)" style="max-width:150px" />
@@ -322,14 +324,20 @@
     let lastState = null;                    // last raw state from server, for re-render on scope change
     let legitMarkers = [];                    // confirmed-legitimate markers; events here are hidden from the timeline
 
-    // <input type="datetime-local"> uses local time without a zone; convert to/from ISO.
-    function isoToLocalInput(iso) {
+    // The case timeline is UTC, so the <input type="datetime-local"> pickers (scope, manual event)
+    // are treated as UTC wall-clock, NOT the browser's local zone: show the UTC components, and parse
+    // the picked value back as UTC.
+    function isoToUtcInput(iso) {
       if (!iso) return "";
       const d = new Date(iso); if (isNaN(d)) return "";
       const p = (n) => String(n).padStart(2, "0");
-      return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+      return `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
     }
-    function localInputToIso(v) { if (!v) return null; const d = new Date(v); return isNaN(d) ? null : d.toISOString(); }
+    function utcInputToIso(v) {
+      if (!v) return null;
+      const d = new Date((v.length === 16 ? v + ":00" : v) + "Z"); // the picked wall-clock IS UTC
+      return isNaN(d) ? null : d.toISOString();
+    }
 
     function inScope(ts) {
       if (!scope.start && !scope.end) return true;
@@ -381,8 +389,9 @@
 
     function renderScopeInfo() {
       const el = document.getElementById("scopeInfo");
+      const utc = (iso) => isoToUtcInput(iso).replace("T", " ") + " UTC";
       el.textContent = (scope.start || scope.end)
-        ? `active: ${scope.start ? new Date(scope.start).toLocaleString() : "−∞"} → ${scope.end ? new Date(scope.end).toLocaleString() : "now"}`
+        ? `active: ${scope.start ? utc(scope.start) : "−∞"} → ${scope.end ? utc(scope.end) : "now"}`
         : "none (all events)";
       el.style.color = (scope.start || scope.end) ? "#ffd93b" : "#9aa4b2";
     }
@@ -390,8 +399,8 @@
     function loadScope(caseId) {
       fetch(`/cases/${caseId}/scope`).then(r => r.json()).then(s => {
         scope = { start: s.start || null, end: s.end || null };
-        document.getElementById("scopeStart").value = isoToLocalInput(scope.start);
-        document.getElementById("scopeEnd").value = isoToLocalInput(scope.end);
+        document.getElementById("scopeStart").value = isoToUtcInput(scope.start);
+        document.getElementById("scopeEnd").value = isoToUtcInput(scope.end);
         renderScopeInfo();
       }).catch(() => {});
     }
@@ -712,8 +721,8 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
       const body = {
-        start: localInputToIso(document.getElementById("scopeStart").value),
-        end: localInputToIso(document.getElementById("scopeEnd").value),
+        start: utcInputToIso(document.getElementById("scopeStart").value),
+        end: utcInputToIso(document.getElementById("scopeEnd").value),
       };
       document.getElementById("status").textContent = "applying scope & re-synthesizing…";
       fetch(`/cases/${caseId}/scope`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
@@ -1241,8 +1250,8 @@
       btn.onclick = () => {
         const hours = Number(btn.dataset.hours);
         const anchor = latestEventMs();
-        document.getElementById("scopeStart").value = isoToLocalInput(new Date(anchor - hours * 3600_000).toISOString());
-        document.getElementById("scopeEnd").value = isoToLocalInput(new Date(anchor).toISOString());
+        document.getElementById("scopeStart").value = isoToUtcInput(new Date(anchor - hours * 3600_000).toISOString());
+        document.getElementById("scopeEnd").value = isoToUtcInput(new Date(anchor).toISOString());
         applyScope();
       };
     });
@@ -1462,7 +1471,7 @@
       if (!desc) { document.getElementById("addEventMsg").textContent = "description required"; return; }
       const tIn = document.getElementById("meTime").value;
       const body = {
-        timestamp: tIn ? new Date(tIn).toISOString() : new Date().toISOString(),
+        timestamp: utcInputToIso(tIn) || new Date().toISOString(),   // picker is UTC; blank → now (UTC)
         description: desc,
         severity: document.getElementById("meSev").value,
         asset: document.getElementById("meAsset").value.trim(),

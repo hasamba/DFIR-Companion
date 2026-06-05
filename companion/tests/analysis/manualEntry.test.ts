@@ -5,7 +5,7 @@ import { buildManualEvent, buildManualIoc } from "../../src/analysis/manualEntry
 const deps = { now: () => "2026-06-04T00:00:00.000Z", id: () => "ID1" };
 
 describe("buildManualEvent", () => {
-  it("builds a forensic event, normalizes the timestamp, parses MITRE from a string, tags provenance", () => {
+  it("builds a forensic event, keeps a UTC timestamp, parses MITRE from a string, tags provenance", () => {
     const e = buildManualEvent({
       timestamp: "2026-06-04T13:45:00Z", description: "  Suspicious PowerShell  ",
       severity: "High", asset: "DC01", mitreTechniques: "T1059.001, t1003 garbage",
@@ -13,11 +13,16 @@ describe("buildManualEvent", () => {
     expect(e.id).toBe("manual-ID1");
     expect(e.severity).toBe("High");
     expect(e.description).toBe("Suspicious PowerShell");
-    expect(e.timestamp).toBe("2026-06-04T13:45:00.000Z");        // normalized to ISO
+    expect(e.timestamp).toBe("2026-06-04T13:45:00Z");            // already UTC — kept verbatim
     expect(e.mitreTechniques).toEqual(["T1059.001", "T1003"]);   // invalid token dropped
     expect(e.asset).toBe("DC01");
     expect(e.sources).toEqual(["manual"]);
     expect(e.relatedFindingIds).toEqual([]);
+  });
+
+  it("converts a timestamp with a timezone offset to UTC", () => {
+    const e = buildManualEvent({ timestamp: "2026-06-04T15:45:00+02:00", description: "x" }, deps);
+    expect(e.timestamp).toBe("2026-06-04T13:45:00.000Z");
   });
 
   it("defaults a bad severity to Medium and keeps an unparseable timestamp verbatim", () => {

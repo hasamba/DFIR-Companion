@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type { ForensicEvent, IOC, Severity } from "./stateTypes.js";
+import { toUtcIso } from "./timeUtc.js";
 
 const SEVERITIES = ["Critical", "High", "Medium", "Low", "Info"] as const;
 const IOC_TYPES = ["ip", "domain", "hash", "file", "process", "url", "other"] as const;
@@ -38,20 +39,16 @@ export interface BuildDeps {
   id?: () => string;         // injected id generator (default randomUUID)
 }
 
-// Parse a date as forgivingly as the UI sends it (ISO, or a datetime-local value); fall back to
-// the raw string when it isn't parseable so the event still carries the analyst's intent.
-function normalizeTimestamp(input: string): string {
-  const d = new Date(input);
-  return Number.isNaN(d.getTime()) ? input : d.toISOString();
-}
-
-// Build a ForensicEvent from validated input. Tagged `sources: ["manual"]` for provenance.
+// Build a ForensicEvent from validated input. Tagged `sources: ["manual"]` for provenance. The
+// timestamp is normalized to UTC via toUtcIso — the dashboard sends UTC (its time field is UTC),
+// an explicit offset is converted, and a naive/unparseable value is kept verbatim (we never run
+// it through `new Date()`, which would mis-shift it by the server's local zone).
 export function buildManualEvent(input: unknown, deps: BuildDeps = {}): ForensicEvent {
   const p = manualEventSchema.parse(input);
   const id = deps.id ?? randomUUID;
   return {
     id: `manual-${id()}`,
-    timestamp: normalizeTimestamp(p.timestamp),
+    timestamp: toUtcIso(p.timestamp),
     description: p.description.trim(),
     severity: p.severity as Severity,
     mitreTechniques: p.mitreTechniques,

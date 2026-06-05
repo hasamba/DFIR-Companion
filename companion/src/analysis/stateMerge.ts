@@ -3,6 +3,7 @@ import type { InvestigationState, Finding, IOC, Technique, ForensicEvent } from 
 import { byEventTime } from "./forensicSort.js";
 import { isAnalystWorkLog } from "./workLogFilter.js";
 import { correlateEvents } from "./correlate.js";
+import { toUtcIso } from "./timeUtc.js";
 
 export interface WindowContext {
   windowSequence: number;
@@ -130,16 +131,20 @@ export function mergeDelta(
     // ("Velociraptor Response and Monitoring session continued") as an event.
     // Never let tool-usage narration into the forensic timeline.
     if (isAnalystWorkLog(incoming.description)) continue;
+    // Normalize the artifact's own time to UTC (converts an explicit offset like +02:00 to "…Z";
+    // leaves already-UTC / naive times untouched) so the whole timeline is one timezone.
+    const ts = toUtcIso(incoming.timestamp);
+    const endTs = incoming.endTimestamp !== undefined ? toUtcIso(incoming.endTimestamp) : undefined;
     const existing = forensicTimeline.find((e) => e.id === incoming.id);
     if (existing) {
-      existing.timestamp = incoming.timestamp || existing.timestamp;
+      existing.timestamp = ts || existing.timestamp;
       existing.description = incoming.description;
       existing.severity = incoming.severity;
       existing.mitreTechniques = uniq([...existing.mitreTechniques, ...incoming.mitreTechniques]);
       existing.relatedFindingIds = uniq([...existing.relatedFindingIds, ...incoming.relatedFindingIds]);
       existing.sourceScreenshots = uniq([...existing.sourceScreenshots, ...ctx.sourceScreenshots]);
       if (incoming.count !== undefined) existing.count = incoming.count;
-      if (incoming.endTimestamp !== undefined) existing.endTimestamp = incoming.endTimestamp;
+      if (endTs !== undefined) existing.endTimestamp = endTs;
       if (incoming.sha256) existing.sha256 = incoming.sha256;
       if (incoming.md5) existing.md5 = incoming.md5;
       if (incoming.path) existing.path = incoming.path;
@@ -150,14 +155,14 @@ export function mergeDelta(
     } else {
       forensicTimeline.push({
         id: incoming.id,
-        timestamp: incoming.timestamp,
+        timestamp: ts,
         description: incoming.description,
         severity: incoming.severity,
         mitreTechniques: uniq(incoming.mitreTechniques),
         relatedFindingIds: uniq(incoming.relatedFindingIds),
         sourceScreenshots: uniq(ctx.sourceScreenshots),
         ...(incoming.count !== undefined ? { count: incoming.count } : {}),
-        ...(incoming.endTimestamp !== undefined ? { endTimestamp: incoming.endTimestamp } : {}),
+        ...(endTs !== undefined ? { endTimestamp: endTs } : {}),
         ...(incoming.sha256 ? { sha256: incoming.sha256 } : {}),
         ...(incoming.md5 ? { md5: incoming.md5 } : {}),
         ...(incoming.path ? { path: incoming.path } : {}),

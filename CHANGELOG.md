@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata where the full UI lives and keeps the extension a pure capture client.
 
 ### Changed
+- **All forensic timestamps are normalized to UTC.** Ingestion converts any timestamp carrying a
+  timezone offset (e.g. `+02:00`) to UTC (`…Z`) at the merge step (`toUtcIso` in `mergeDelta`), so the
+  whole timeline is one timezone; already-UTC and timezone-less times are left untouched (a naive time
+  is never re-interpreted in the server's local zone). The screenshot / CSV / log extraction prompts
+  now tell the model to emit UTC — convert a shown timezone, keep a timezone-less time as UTC with a
+  trailing `Z`. The dashboard's scope and manual-event date pickers are now UTC (labeled **(UTC)**,
+  and the scope readout shows `… UTC`), and a **"🕑 All timestamps are in UTC"** note sits on the
+  Forensic Timeline.
 - **Dashboard case-ID field is now a combo box.** It shows a dropdown of existing cases (from
   `GET /cases`, refreshed on focus and when you create a case) while still accepting free text — so
   you can pick a case or type an id, and cases added out-of-band (moved into the cases folder, or
@@ -45,6 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enrichment. Turning it on still backfills everything captured while it was off. Explicit imports
   (CSV / log / THOR) are unaffected and always analyze. The default lives in `AiControlStore`
   (`enabled: false`); cases that already ran analysis keep their saved on state.
+
+### Fixed
+- **Manual event time was shifted by the local timezone.** `buildManualEvent` used
+  `new Date(input).toISOString()`, which reinterpreted a timezone-less value in the server's local
+  zone (and the dashboard's pickers used the browser's). Both now treat the entered time as UTC, so a
+  manually-added event lands at the time the analyst intended.
 
 ### Removed
 - **The extension no longer creates cases.** Removed the popup's "Create case" button and the
