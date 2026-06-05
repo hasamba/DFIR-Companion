@@ -110,7 +110,10 @@ DERIVED from the action via per-cloud regex tables (IAM/role grants, logging-tam
 denied bump; caller IP→IOC, principal email→description), and **Plaso** (`importPlaso` → `plasoImport.ts` —
 psort CSV, dynamic or l2tcsv; Info evidence events at the artifact's own time, IOCs (hash/URL/IP) scraped from
 the free-text message + the `display_name` path; reuses `csvImport`'s `parseCsv` + `siemImport`'s
-`aggregateEvents`). The last eleven are **fully
+`aggregateEvents`), and **malware-sandbox reports** (`importSandbox` → `sandboxImport.ts` — auto-detects
+CAPEv2 (`report.json`) vs CrowdStrike Falcon Sandbox; the sample verdict + each behavioural signature → events
+with their own severity + MITRE, dropped/extracted hashes + network host/domain/URL → IOCs). The last twelve
+are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
 

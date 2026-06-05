@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Malware-sandbox report import (CAPEv2 + CrowdStrike Falcon Sandbox).** A new **Import Sandbox** button (and
+  `POST /cases/:id/import-sandbox`) ingests a sandbox detonation report — the twelfth deterministic ingest path
+  (no AI call), and the cleanest "ingest a verdict" case. One importer auto-detects **CAPEv2** (`report.json`:
+  `info` + `target` + `signatures`) and **CrowdStrike Falcon Sandbox** / Hybrid Analysis (`verdict` + `sha256`
+  + `threat_score`/`vx_family`/`mitre_attcks`). The sandbox already detonated the sample and emitted its
+  verdict, so we consume it: the **sample verdict** maps to one event (severity from CAPE `malscore`/10 or the
+  Falcon `verdict` — malicious→High, suspicious→Medium), and **each behavioural signature** maps to its own
+  event with its **own severity** (CAPE `severity` 1–3 → Low/Medium/High; Falcon `threat_level_human`) and
+  **MITRE** (CAPE signature `ttp`, Falcon `mitre_attcks`/per-signature `attck_id`). Every artefact is harvested
+  as an IOC: the sample + **dropped** files + CAPE **payloads** + Falcon **extracted_files**/**processes**
+  hashes, and the **network** indicators (CAPE `network.hosts`/`domains`/`http`, Falcon `hosts`/`domains` —
+  IPs/domains/URLs, with a domain validator and an octet-bounded IP check). An array of reports is accepted
+  (e.g. CAPE + Falcon mixed). Events are tagged **CAPEv2** / **Falcon Sandbox** for cross-source correlation;
+  identical signatures aggregate and cap; optional `minSeverity` floor keeps just the malicious findings.
+  Evidence-first (raw report persisted + audit-logged before analysis). Pure mapper (`sandboxImport.ts`) reuses
+  `siemImport`'s `aggregateEvents` + IOC sink; unit-tested with no network.
 - **Plaso / log2timeline (psort CSV) import.** A new **Import Plaso** button (and `POST /cases/:id/import-plaso`)
   ingests a `psort` super-timeline — the eleventh deterministic ingest path (no AI call). It header-detects both
   psort CSV flavours: the **dynamic** default (`datetime,timestamp_desc,source,source_long,message,parser,
