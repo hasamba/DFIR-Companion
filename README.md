@@ -113,6 +113,13 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   `files`/`conn`…) is **not** dumped into the timeline but **contributes IOCs** (domains, URLs, file hashes, and
   the alert/notice IPs). Tagged **Suricata** / **Zeek** for cross-source correlation; aggregates + caps; optional
   `minSeverity` floor on the alert events (telemetry IOCs are kept regardless).
+- **KAPE / Eric Zimmerman Tools CSV import** — host-forensics triage, **deterministic** (no AI call). Upload a
+  single EZ-tool CSV and the producing tool is **auto-detected from the header**, then each row becomes a
+  super-timeline event reading the **artifact's own time** + file/hash/process IOCs. Supports **Prefetch**
+  (PECmd), **Amcache** (AmcacheParser — incl. SHA1), **ShimCache/AppCompatCache** (AppCompatCacheParser),
+  **LNK** (LECmd), **JumpLists** (JLECmd), **UsnJrnl $J** & **$MFT** (MFTECmd), **SRUM** (SrumECmd),
+  **Recycle Bin** (RBCmd), and **Shellbags** (SBECmd). Tagged by artifact name for cross-source correlation;
+  aggregates + caps; optional `minSeverity` floor.
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only

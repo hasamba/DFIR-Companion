@@ -25,6 +25,7 @@ import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImpor
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
+import { parseKapeCsv, type KapeImportOptions } from "./kapeImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 
@@ -951,6 +952,51 @@ export class AnalysisPipeline {
         (parsed.alerts > 0 ? `, ${parsed.alerts} alert/notice(s)` : "") +
         `, ${parsed.iocs.length} IOC(s)` +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a KAPE / Eric Zimmerman Tools CSV (Prefetch, Amcache, ShimCache, LNK, JumpLists,
+  // UsnJrnl, MFT, SRUM, Recycle Bin, Shellbags). Deterministic (no AI call): the EZ tool is
+  // detected from the CSV header, then each row maps to a forensic event reading the
+  // artifact's own time + file/hash/process IOCs. Events are tagged by artifact name.
+  async importKape(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;             // unique per import (e.g. "k3") so ids never collide
+      importedAt: string;
+      kape?: KapeImportOptions;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsed = parseKapeCsv(text, opts.kape);
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [parsed.artifact],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `KAPE/${parsed.artifact} import: ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
       summary: "",
     };
     const delta = deltaSchema.parse(raw);
