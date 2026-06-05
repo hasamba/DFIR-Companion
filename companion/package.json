@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "pretest": "node scripts/clean-vitest-temp.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "tsx src/server.ts",

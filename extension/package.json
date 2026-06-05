@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "pretest": "node scripts/clean-vitest-temp.mjs",
     "test": "vitest run"
   },
   "devDependencies": {
