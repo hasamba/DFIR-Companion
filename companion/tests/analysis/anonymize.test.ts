@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { createAnonymizer, isInternalIp, SECRET_PLACEHOLDER, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import { createAnonymizer, isInternalIp, SECRET_PLACEHOLDER, deriveKnownEntities, isLocalAiProvider, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import { emptyState } from "../../src/analysis/stateTypes.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
 function policy(over: Partial<AnonPolicy["categories"]> = {}, redactSecrets = false): AnonPolicy {
@@ -179,5 +180,27 @@ describe("anonymizer — secret redaction (one-way)", () => {
     const out = a.apply("Authorization: Bearer ABCDEF1234567890ABCDEF");
     expect(out).not.toContain("ABCDEF1234567890ABCDEF");
     expect(out).toContain(SECRET_PLACEHOLDER);
+  });
+});
+
+describe("deriveKnownEntities", () => {
+  it("pulls hosts from asset, accounts + internal domains from descriptions and FQDNs", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline = [
+      { id: "e1", timestamp: "", description: "logon ADATUMLAB\\srv", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "dc01.adatumlab.local" },
+    ];
+    const k = deriveKnownEntities(s);
+    expect(k.hosts).toContain("dc01.adatumlab.local");
+    expect(k.accounts).toContain("ADATUMLAB\\srv");
+    expect(k.internalDomains).toContain("adatumlab");        // NETBIOS domain
+    expect(k.internalDomains).toContain("adatumlab.local");  // from the FQDN host
+  });
+});
+
+describe("isLocalAiProvider", () => {
+  it("treats ollama and localhost base URLs as local", () => {
+    expect(isLocalAiProvider("ollama", undefined)).toBe(true);
+    expect(isLocalAiProvider("litellm", "http://127.0.0.1:4000/v1")).toBe(true);
+    expect(isLocalAiProvider("openrouter", "https://openrouter.ai/api/v1")).toBe(false);
   });
 });

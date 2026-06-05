@@ -1,3 +1,6 @@
+import type { InvestigationState } from "./stateTypes.js";
+import { extractAccounts } from "./assetGraph.js";
+
 // Reversible anonymization of the TEXT sent to the LLM. Real values stay in state; only the
 // wire is tokenized. Typed numbered tokens keep the model's semantic understanding (it still
 // knows ANON_HOST_1 is a host) and within-call correlation (same value → same token). Restore
@@ -165,4 +168,39 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   }
 
   return { apply, restore, restoreDeep };
+}
+
+// Derive the victim entities to tokenize from the case state: hosts (event.asset), accounts
+// (DOMAIN\user / UPN in event text) and the internal domains those imply (NETBIOS name, UPN
+// domain, and the parent domain of any FQDN host). Pure + deterministic.
+export function deriveKnownEntities(state: InvestigationState): KnownEntities {
+  const hosts = new Set<string>();
+  const accounts = new Set<string>();
+  const internalDomains = new Set<string>();
+  for (const e of state.forensicTimeline) {
+    if (e.asset && e.asset.trim()) hosts.add(e.asset.trim());
+    for (const acct of extractAccounts(e.description)) {
+      accounts.add(acct);
+      if (acct.includes("\\")) internalDomains.add(acct.split("\\")[0]);
+      else if (acct.includes("@")) internalDomains.add(acct.split("@")[1]);
+    }
+  }
+  for (const h of hosts) {
+    const i = h.indexOf(".");
+    if (i > 0) internalDomains.add(h.slice(i + 1)); // FQDN → parent domain is internal
+  }
+  const byLenDesc = (a: string, b: string) => b.length - a.length || a.localeCompare(b);
+  return {
+    hosts: [...hosts].sort(byLenDesc),
+    accounts: [...accounts],
+    internalDomains: [...internalDomains].map((d) => d.toLowerCase()).sort(byLenDesc),
+  };
+}
+
+// Is the configured AI provider on-box (so screenshots sent to it don't leave the machine)?
+// Used to decide whether to warn that screenshots are NOT anonymized.
+export function isLocalAiProvider(name: string | undefined, baseUrl: string | undefined): boolean {
+  if ((name ?? "").toLowerCase() === "ollama") return true;
+  const u = (baseUrl ?? "").toLowerCase();
+  return /(?:\/\/|@)(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(?::|\/|$)/.test(u);
 }

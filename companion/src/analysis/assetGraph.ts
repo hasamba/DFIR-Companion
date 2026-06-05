@@ -58,7 +58,7 @@ const NETBIOS_ACCT = /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._
 const UPN_ACCT = /([A-Za-z0-9._-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
 const PATH_DOMAINS = /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
 
-function extractAccounts(text: string): string[] {
+export function extractAccounts(text: string): string[] {
   const out = new Set<string>();
   let m: RegExpExecArray | null;
   NETBIOS_ACCT.lastIndex = 0;
