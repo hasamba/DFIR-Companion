@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overrides the API base URL for any provider, so any OpenAI-compatible local endpoint works. The key may
   be blank for an auth-less proxy or set to its master/virtual key. Provider error messages now use the
   real provider label (LiteLLM / Ollama / OpenRouter / OpenAI) instead of always saying "OpenAI".
+  The same `DFIR_AI_BASE_URL` lets `DFIR_AI_PROVIDER=ollama` talk **directly to a local Ollama daemon**
+  (`http://localhost:11434/v1`, native OpenAI-compatible API) with no proxy — leave the key blank; when
+  unset, the `ollama` provider targets hosted Ollama Cloud (`https://ollama.com/v1`). Use a **vision**
+  model (e.g. `llama3.2-vision`) for screenshot extraction.
 - **Timesketch timeline export & push.** A new **Export Timesketch JSONL** button (and
   `GET /cases/:id/timeline.jsonl`) downloads the forensic timeline in [Timesketch](https://timesketch.org/)
   import format — `message` / `datetime` / `timestamp_desc` plus every structured field (severity, MITRE,

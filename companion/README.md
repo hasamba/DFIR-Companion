@@ -47,6 +47,12 @@ auth-less proxy, or set it to the proxy's master/virtual key. Screenshot extract
 **multimodal** model; text-only models still drive CSV/log/synthesis (pair them via the two-tier
 `DFIR_AI_SYNTH_*` vars). Keeping everything on-box means evidence never leaves your network.
 
+Direct local **Ollama** (no proxy): Ollama already serves a native OpenAI-compatible API, so you
+can skip LiteLLM entirely — set `DFIR_AI_PROVIDER=ollama`, `DFIR_AI_BASE_URL=http://localhost:11434/v1`,
+and `DFIR_AI_MODEL` to a pulled model (a **vision** model such as `llama3.2-vision` for screenshot
+extraction). Leave `DFIR_AI_KEY` blank — Ollama ignores it. *Without* `DFIR_AI_BASE_URL` the `ollama`
+provider targets hosted Ollama Cloud (`https://ollama.com/v1`), which does need a key.
+
 Self-hosted enrichment TLS: if your **MISP** or **YETI** instance presents an internal-CA
 or self-signed cert, set `DFIR_MISP_CA` / `DFIR_YETI_CA` to a PEM CA-bundle path to trust a
 private CA (verification stays on), or `DFIR_MISP_INSECURE` / `DFIR_YETI_INSECURE` (`=1`) to
