@@ -18,6 +18,7 @@
     "prompts:eject": "tsx scripts/eject-prompts.ts",
     "yeti": "tsx scripts/yeti-lookup.ts",
     "iris:push": "tsx scripts/push-iris.ts",
+    "timesketch:push": "tsx scripts/push-timesketch.ts",
     "icons": "tsx scripts/make-icons.ts"
   },
   "dependencies": {

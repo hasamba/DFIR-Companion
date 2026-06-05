@@ -150,6 +150,16 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   recommendations…). Idempotent: assets dedupe by name, IOCs by value, events by title+time, tasks by
   title; the summary and Companion notes are refreshed each run. Configure with `DFIR_IRIS_URL` +
   `DFIR_IRIS_KEY` (self-signed/internal-CA supported via `DFIR_IRIS_CA`/`_INSECURE`).
+- **Timesketch timeline export & push** — turn the forensic timeline into a [Timesketch](https://timesketch.org/)
+  timeline. **Export Timesketch JSONL** downloads the timeline as Timesketch import format (`message` /
+  `datetime` / `timestamp_desc` + every structured field — severity, MITRE, asset, hashes, path, process
+  chain — kept as **searchable columns**, plus a `tag` list) for manual upload; needs no config. **Push to
+  Timesketch** (dashboard button, or `npm run timesketch:push -- <caseId>`) does it in one click: it logs in
+  (Timesketch local auth), **find-or-creates the sketch by name** (= the Companion case id), and uploads the
+  timeline. **Idempotent** — the managed timeline is **clean-replaced** on re-push, so events never duplicate.
+  The pushed/exported timeline matches the report (same scope/legitimate filtering). Configure with
+  `DFIR_TIMESKETCH_URL` + `DFIR_TIMESKETCH_USER` + `DFIR_TIMESKETCH_PASSWORD` (self-signed/internal-CA
+  supported via `DFIR_TIMESKETCH_CA`/`_INSECURE`).
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template)
   (title page → executive summary → BIA, limitations, goals, glossary → incident/investigation
   timelines → investigation → conclusions/recommendations → attachments). Technical sections

@@ -145,7 +145,9 @@
     <button id="importShots" title="Import external screenshots (PNG/JPEG/WebP) from another tool — select multiple at once. Each is stored as evidence and analyzed (when AI is on), exactly like the extension's captures.">Import Screenshots</button>
     <button id="generateReport" title="Write the report (Markdown + HTML) and CSVs; then export via the links that appear">Generate Report</button>
     <button id="exportTimelineCsv" title="Download just the incident (forensic) timeline as CSV">Export Timeline CSV</button>
+    <button id="exportTimesketchJsonl" title="Download the incident (forensic) timeline as Timesketch-compatible JSONL (message/datetime/timestamp_desc + searchable fields), ready to upload into a Timesketch sketch">Export Timesketch JSONL</button>
     <button id="pushIris" title="Push this case to DFIR-IRIS: creates the case (or updates it if it already exists), pushing assets, IOCs, timeline, the executive summary as the case summary, and every other section as notes" style="display:none">Push to IRIS</button>
+    <button id="pushTimesketch" title="Push this case's forensic timeline into a Timesketch sketch (created or updated by case id). The managed timeline is clean-replaced on re-push, so events never duplicate." style="display:none">Push to Timesketch</button>
     <span id="reportLinks" class="report-links"></span>
     <button id="toggleAll" title="Collapse or expand all sections">Collapse all</button>
     <span id="status">disconnected</span>
@@ -1452,6 +1454,13 @@
       // Content-Disposition: attachment on the endpoint triggers a download without navigating away.
       window.location.href = `/cases/${encodeURIComponent(caseId)}/incident-timeline.csv`;
     };
+    document.getElementById("exportTimesketchJsonl").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      // Timesketch-format JSONL (one event per line) — upload it into a sketch manually, or use
+      // the Push to Timesketch button to do it in one click.
+      window.location.href = `/cases/${encodeURIComponent(caseId)}/timeline.jsonl`;
+    };
 
     // ── Manual add (event / IOC the AI didn't catch) ──────────────────────────
     // POST to the case; the server appends + re-synthesizes/enriches and broadcasts the new
@@ -1544,6 +1553,37 @@
           if (res.warnings && res.warnings.length) console.warn("IRIS push warnings:", res.warnings);
         })
         .catch(e => document.getElementById("status").textContent = "IRIS push failed: " + e.message)
+        .finally(() => { btn.disabled = false; });
+    };
+
+    // ── Push to Timesketch ──────────────────────────────────────────────────
+    // The button is shown only when the server has a Timesketch target configured
+    // (GET /timesketch/status). Clicking uploads the forensic timeline into a sketch.
+    fetch("/timesketch/status").then(r => r.json()).then(s => {
+      if (s && s.configured) document.getElementById("pushTimesketch").style.display = "";
+    }).catch(() => {});
+    document.getElementById("pushTimesketch").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const btn = document.getElementById("pushTimesketch");
+      btn.disabled = true;
+      document.getElementById("status").textContent = "pushing to Timesketch…";
+      document.getElementById("reportLinks").innerHTML = "";
+      fetch(`/cases/${encodeURIComponent(caseId)}/push/timesketch`, { method: "POST" })
+        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then(res => {
+          const verb = res.created ? "created" : "updated";
+          document.getElementById("status").textContent =
+            `Timesketch sketch #${res.sketchId} ${verb}: ${res.events} event(s) → "${res.timelineName}"` +
+            (res.replacedTimeline ? " (replaced)" : "") +
+            (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
+          if (res.sketchUrl) {
+            document.getElementById("reportLinks").innerHTML =
+              `<a href="${escAttr(res.sketchUrl)}" target="_blank" rel="noopener">Open in Timesketch</a>`;
+          }
+          if (res.warnings && res.warnings.length) console.warn("Timesketch push warnings:", res.warnings);
+        })
+        .catch(e => document.getElementById("status").textContent = "Timesketch push failed: " + e.message)
         .finally(() => { btn.disabled = false; });
     };
 

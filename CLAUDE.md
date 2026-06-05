@@ -197,7 +197,8 @@ Providers use injectable `fetchFn` (no network in tests), configured only when t
 `npm run synthesize -- <case> [--model …]` · `npm run clean-timeline -- <case> [--apply]` ·
 `npm run prompts:eject -- [dir]` (write the 4 default prompts to files for customizing) ·
 `npm run yeti -- <indicator>` (CLI YETI lookup) ·
-`npm run iris:push -- <case>` (push the case to a configured DFIR-IRIS instance).
+`npm run iris:push -- <case>` (push the case to a configured DFIR-IRIS instance) ·
+`npm run timesketch:push -- <case>` (push the case's forensic timeline to a configured Timesketch instance).
 
 **Customizable prompts.** The five prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
 consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`,

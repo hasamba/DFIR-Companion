@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Timesketch timeline export & push.** A new **Export Timesketch JSONL** button (and
+  `GET /cases/:id/timeline.jsonl`) downloads the forensic timeline in [Timesketch](https://timesketch.org/)
+  import format — `message` / `datetime` / `timestamp_desc` plus every structured field (severity, MITRE,
+  asset, hashes, path, process chain) as searchable columns and a `tag` list — for manual upload, needing no
+  config. A **Push to Timesketch** button (and `npm run timesketch:push -- <caseId>`, `POST /cases/:id/push/timesketch`)
+  pushes it in one click: it logs in via Timesketch local auth (CSRF + session cookie), **find-or-creates the
+  sketch by name** (= the Companion case id) and uploads the timeline as Timesketch events. **Idempotent** —
+  the managed timeline is **clean-replaced** on re-push so events never duplicate. The exported/pushed timeline
+  matches the report (same scope/legitimate filtering). Configure with `DFIR_TIMESKETCH_URL` +
+  `DFIR_TIMESKETCH_USER` + `DFIR_TIMESKETCH_PASSWORD` (self-signed/internal-CA via `DFIR_TIMESKETCH_CA`/`_INSECURE`).
+  Pure mappers + a structural client interface keep it unit-tested with no network, matching the DFIR-IRIS push.
 - **Case creation moved to the dashboard.** A new **+ New case** form in the dashboard (id, name,
   investigator) is now the one place a case is born, backed by a new **`GET /cases`** endpoint that lists
   existing cases. The capture extension's popup replaces its free-text Case ID box + "Create case" button

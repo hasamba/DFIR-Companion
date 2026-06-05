@@ -9,6 +9,7 @@ import { renderMarkdownReport } from "./markdown.js";
 import { renderHtmlReport } from "./html.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
+import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 
@@ -49,6 +50,18 @@ export class ReportWriter {
   // full report. Uses the same scope/legitimate filtering so it matches the report's 3.1.
   async incidentTimelineCsv(caseId: string): Promise<string> {
     return forensicTimelineCsv(await this.loadFilteredState(caseId));
+  }
+
+  // Export the forensic timeline as Timesketch-compatible JSONL (same scope/legitimate filtering).
+  // Used by the "Export Timesketch JSONL" download and as the payload for the Timesketch push.
+  async timesketchJsonl(caseId: string): Promise<string> {
+    return toTimesketchJsonl(await this.loadFilteredState(caseId));
+  }
+
+  // The case state with the report's scope/legitimate filters applied — so the Timesketch push
+  // uploads exactly the timeline the report (and the JSONL export) show.
+  async filteredState(caseId: string): Promise<InvestigationState> {
+    return this.loadFilteredState(caseId);
   }
 
   // The asset ↔ IoC graph for the case (same scope/legitimate filtering as the report).

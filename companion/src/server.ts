@@ -34,6 +34,8 @@ import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
+import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
+import { pushCaseToTimesketch, type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
 
 // Server console logging — every line is prefixed with an ISO-8601 timestamp so the local
 // log can be correlated with case events and outbound threat-intel API calls. This is a
@@ -91,6 +93,10 @@ export interface AppOptions {
   // (customer/classification ids, base URL for the case link).
   irisClient?: IrisClient;
   irisOptions?: IrisPushOptions;
+  // Timesketch push: a configured client (when DFIR_TIMESKETCH_URL/USER/PASSWORD are set) +
+  // options (base URL for the sketch link, managed timeline name).
+  timesketchClient?: TimesketchClient;
+  timesketchOptions?: TimesketchPushOptions;
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -414,6 +420,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Export the incident (forensic) timeline as Timesketch-compatible JSONL, generated on demand
+  // from the current state (same scope/legitimate filtering as the report). Upload it into a
+  // Timesketch sketch manually, or use the Push-to-Timesketch button below to do it in one click.
+  app.get("/cases/:id/timeline.jsonl", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const jsonl = await options.reportWriter.timesketchJsonl(req.params.id);
+      res.type("application/x-ndjson; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="timesketch-timeline.jsonl"');
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(jsonl);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Human-authored report metadata (title page, distribution, BIA, limitations, glossary,
   // recommendations…). GET returns the stored values (or defaults); PUT replaces them with a
   // normalized payload. These merge into report.md alongside the auto-derived sections.
@@ -459,6 +481,31 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[iris] ${caseId} push ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Whether a Timesketch push target is configured (so the dashboard can show/hide the button).
+  app.get("/timesketch/status", (_req: Request, res: Response) => {
+    res.status(200).json({ configured: !!options.timesketchClient, baseUrl: options.timesketchOptions?.baseUrl });
+  });
+
+  // Push a case to Timesketch: log in, find-or-create the sketch by name (= the Companion case id),
+  // then upload the forensic timeline as a timeline. The managed timeline is clean-replaced so a
+  // re-push never duplicates events.
+  app.post("/cases/:id/push/timesketch", async (req: Request, res: Response) => {
+    if (!options.timesketchClient) return res.status(501).json({ error: "Timesketch not configured (set DFIR_TIMESKETCH_URL, DFIR_TIMESKETCH_USER and DFIR_TIMESKETCH_PASSWORD)" });
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    const caseId = req.params.id;
+    try {
+      const state = await options.reportWriter.filteredState(caseId);
+      logLine(`[timesketch] ${caseId} push START`);
+      const result = await pushCaseToTimesketch(options.timesketchClient, { sketchName: caseId, state }, options.timesketchOptions);
+      logLine(`[timesketch] ${caseId} push DONE -> sketch ${result.sketchId} (${result.created ? "created" : "updated"}); ` +
+        `timeline "${result.timelineName}" events ${result.events}${result.replacedTimeline ? " (replaced)" : ""}, warnings ${result.warnings.length}`);
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[timesketch] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
     }
   });
@@ -1077,7 +1124,7 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
 // self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
 // DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
-function tlsFetchFor(name: "MISP" | "YETI" | "IRIS") {
+function tlsFetchFor(name: "MISP" | "YETI" | "IRIS" | "TIMESKETCH") {
   return buildTlsFetch({
     caCertPath: process.env[`DFIR_${name}_CA`],
     insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
@@ -1104,6 +1151,24 @@ export function irisPushOptions(): IrisPushOptions {
     baseUrl: process.env.DFIR_IRIS_URL,
     customerId: Number(process.env.DFIR_IRIS_CUSTOMER_ID) || undefined,
     classificationId: Number(process.env.DFIR_IRIS_CLASSIFICATION_ID) || undefined,
+  };
+}
+
+// Build the Timesketch push client from env (DFIR_TIMESKETCH_URL + USER + PASSWORD). Returns
+// undefined when not configured, which hides the dashboard's "Push to Timesketch" button. TLS
+// trust for a self-hosted Timesketch honors DFIR_TIMESKETCH_CA / DFIR_TIMESKETCH_INSECURE.
+export function buildTimesketchClient(): TimesketchClient | undefined {
+  const baseUrl = process.env.DFIR_TIMESKETCH_URL;
+  const username = process.env.DFIR_TIMESKETCH_USER;
+  const password = process.env.DFIR_TIMESKETCH_PASSWORD;
+  if (!baseUrl || !username || !password) return undefined;
+  return new TimesketchClient({ baseUrl, username, password, fetchFn: tlsFetchFor("TIMESKETCH") });
+}
+
+export function timesketchPushOptions(): TimesketchPushOptions {
+  return {
+    baseUrl: process.env.DFIR_TIMESKETCH_URL,
+    timelineName: process.env.DFIR_TIMESKETCH_TIMELINE || undefined,
   };
 }
 
@@ -1152,6 +1217,8 @@ export function startServer(casesRoot: string, port = 4773): void {
     enrichMaxIocs: Number(process.env.DFIR_ENRICH_MAX) || undefined,
     irisClient: buildIrisClient(),
     irisOptions: irisPushOptions(),
+    timesketchClient: buildTimesketchClient(),
+    timesketchOptions: timesketchPushOptions(),
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted

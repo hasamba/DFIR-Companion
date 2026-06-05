@@ -1,0 +1,149 @@
+import { describe, it, expect } from "vitest";
+import {
+  timesketchDate, mapForensicEvent, toTimesketchEvents, toTimesketchJsonl,
+} from "../../src/integrations/timesketch/timesketchMap.js";
+import { scrapeCsrfToken } from "../../src/integrations/timesketch/timesketchClient.js";
+import {
+  pushCaseToTimesketch, type TimesketchClientLike,
+} from "../../src/integrations/timesketch/timesketchPush.js";
+import { emptyState, type InvestigationState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import type { TimesketchSketchRef, TimesketchTimelineRef } from "../../src/integrations/timesketch/timesketchClient.js";
+
+function event(over: Partial<ForensicEvent> & { timestamp: string; description: string }): ForensicEvent {
+  return { id: over.timestamp, severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...over };
+}
+
+// ---- mappers ---------------------------------------------------------------
+
+describe("timesketchMap", () => {
+  it("formats datetime as ISO8601 with microseconds + explicit UTC offset", () => {
+    expect(timesketchDate("2026-06-04T13:45:09.123Z")).toBe("2026-06-04T13:45:09.123000+00:00");
+    expect(timesketchDate("2026-06-04T13:45:09+02:00")).toBe("2026-06-04T11:45:09.000000+00:00"); // normalized to UTC
+    expect(timesketchDate("not a date")).toBeNull();
+  });
+
+  it("maps a forensic event to the three required fields plus searchable extras and a tag list", () => {
+    const e = mapForensicEvent(event({
+      timestamp: "2026-06-04T13:00:00Z", description: "C2 beacon to 8.8.8.8", severity: "High",
+      asset: "DC01", mitreTechniques: ["T1071"], sources: ["THOR", "Velociraptor"],
+      sha256: "a".repeat(64), path: "c:\\\\temp\\\\evil.exe", processName: "evil.exe", count: 5,
+      endTimestamp: "2026-06-04T14:00:00Z", relatedFindingIds: ["f1"],
+    }))!;
+    expect(e.message).toBe("C2 beacon to 8.8.8.8");
+    expect(e.datetime).toBe("2026-06-04T13:00:00.000000+00:00");
+    expect(e.timestamp_desc).toBe("THOR, Velociraptor");          // derived from the reporting tools
+    expect(e.data_type).toBe("dfir:companion:event");
+    expect(e.severity).toBe("High");
+    expect(e.tag).toEqual(["dfir-companion", "high", "T1071"]);
+    expect(e.asset).toBe("DC01");
+    expect(e.mitre).toBe("T1071");
+    expect(e.sha256).toBe("a".repeat(64));
+    expect(e.process_name).toBe("evil.exe");
+    expect(e.occurrence_count).toBe(5);
+    expect(e.end_datetime).toBe("2026-06-04T14:00:00.000000+00:00");
+    expect(e.related_findings).toBe("f1");
+    expect(e.companion_event_id).toBe("2026-06-04T13:00:00Z");
+  });
+
+  it("falls back to a generic timestamp_desc and drops a no-timestamp event", () => {
+    const e = mapForensicEvent(event({ timestamp: "2026-06-04T13:00:00Z", description: "logon" }))!;
+    expect(e.timestamp_desc).toBe("Forensic event");
+    expect(mapForensicEvent(event({ timestamp: "bad", description: "x" }))).toBeNull();
+  });
+
+  it("renders the timeline as sorted JSONL, one valid JSON event per line, skipping bad timestamps", () => {
+    const state: InvestigationState = {
+      ...emptyState("c1"),
+      forensicTimeline: [
+        event({ timestamp: "2026-06-04T15:00:00Z", description: "later" }),
+        event({ timestamp: "bad-date", description: "dropped" }),
+        event({ timestamp: "2026-06-04T09:00:00Z", description: "earlier" }),
+      ],
+    };
+    expect(toTimesketchEvents(state)).toHaveLength(2);             // bad-date dropped
+    const lines = toTimesketchJsonl(state).trimEnd().split("\n");
+    expect(lines).toHaveLength(2);
+    const parsed = lines.map((l) => JSON.parse(l));
+    expect(parsed.map((p) => p.message)).toEqual(["earlier", "later"]); // chronological
+    expect(parsed[0]).toHaveProperty("datetime");
+    expect(toTimesketchJsonl(emptyState("c1"))).toBe("");          // no events → empty string
+  });
+});
+
+describe("scrapeCsrfToken", () => {
+  it("extracts the token from a hidden input or a meta tag", () => {
+    expect(scrapeCsrfToken('<input id="csrf_token" name="csrf_token" type="hidden" value="abc123">')).toBe("abc123");
+    expect(scrapeCsrfToken('<meta name="csrf-token" content="meta-tok">')).toBe("meta-tok");
+    expect(scrapeCsrfToken("<html>no token here</html>")).toBeUndefined();
+  });
+});
+
+// ---- orchestrator with a recording mock client -----------------------------
+
+class MockTimesketch implements TimesketchClientLike {
+  sketches: TimesketchSketchRef[] = [];
+  timelines: TimesketchTimelineRef[] = [];
+  uploads: { sketchId: number; timelineName: string; jsonl: string }[] = [];
+  deletedTimelines: number[] = [];
+  loggedIn = false;
+  private seq = 10;
+
+  async login() { this.loggedIn = true; }
+  async findSketchByName(name: string) { return this.sketches.find((s) => s.name === name) ?? null; }
+  async createSketch(name: string) { const ref = { id: 1, name }; this.sketches.push(ref); return ref; }
+  async listTimelines() { return this.timelines; }
+  async deleteTimeline(_sketchId: number, timelineId: number) {
+    this.deletedTimelines.push(timelineId);
+    this.timelines = this.timelines.filter((t) => t.id !== timelineId);
+  }
+  async uploadEvents(sketchId: number, timelineName: string, jsonl: string) {
+    this.uploads.push({ sketchId, timelineName, jsonl });
+  }
+}
+
+function sampleState(): InvestigationState {
+  return {
+    ...emptyState("Case Alpha"),
+    forensicTimeline: [
+      event({ timestamp: "2026-06-04T10:00:00Z", description: "logon to DC01", asset: "DC01", severity: "High" }),
+      event({ timestamp: "2026-06-04T11:00:00Z", description: "mimikatz run", severity: "Critical" }),
+    ],
+  };
+}
+
+describe("pushCaseToTimesketch", () => {
+  it("logs in, creates the sketch when missing, and uploads the timeline", async () => {
+    const m = new MockTimesketch();
+    const res = await pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() }, { baseUrl: "https://ts.example.org/" });
+    expect(m.loggedIn).toBe(true);
+    expect(res.created).toBe(true);
+    expect(res.sketchId).toBe(1);
+    expect(res.events).toBe(2);
+    expect(res.timelineName).toBe("DFIR Companion timeline");
+    expect(res.replacedTimeline).toBe(false);
+    expect(m.uploads).toHaveLength(1);
+    expect(m.uploads[0].jsonl.trimEnd().split("\n")).toHaveLength(2);
+    expect(res.sketchUrl).toBe("https://ts.example.org/sketch/1/explore");
+  });
+
+  it("uses an existing sketch (matched by name) and clean-replaces the managed timeline", async () => {
+    const m = new MockTimesketch();
+    m.sketches.push({ id: 42, name: "Case Alpha" });
+    m.timelines.push({ id: 7, name: "DFIR Companion timeline" });  // from a prior push
+    const res = await pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() });
+    expect(res.created).toBe(false);
+    expect(res.sketchId).toBe(42);
+    expect(res.replacedTimeline).toBe(true);
+    expect(m.deletedTimelines).toContain(7);                       // old timeline deleted before upload
+    expect(m.uploads).toHaveLength(1);
+  });
+
+  it("warns and skips the upload when there are no events with a parseable timestamp", async () => {
+    const m = new MockTimesketch();
+    const state = { ...emptyState("Case Beta"), forensicTimeline: [event({ timestamp: "bad", description: "x" })] };
+    const res = await pushCaseToTimesketch(m, { sketchName: "Case Beta", state });
+    expect(res.events).toBe(0);
+    expect(m.uploads).toHaveLength(0);
+    expect(res.warnings.some((w) => w.includes("no forensic events"))).toBe(true);
+  });
+});
