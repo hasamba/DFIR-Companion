@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-05
+
 ### Fixed
 - **AI prompts no longer overflow the model's context window.** On a big case an AI call
   could exceed the model's limit and fail (`OpenRouter HTTP 400 — maximum context length is
@@ -476,7 +478,8 @@ Initial baseline.
   report exports.
 - Scripts: `dev`, `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.3.0...v0.4.0
