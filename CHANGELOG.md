@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata where the full UI lives and keeps the extension a pure capture client.
 
 ### Changed
+- **New dashboard favicon.** Replaced the favicon / apple-touch icon with a dedicated DFIR Companion
+  emblem (the "D + magnifier" mark on transparency). `npm run icons` now sources
+  `public/DFIR_Companion_favicon.png` and Lanczos-downsamples it to 16/32/180 px (no crop — the new
+  source is already square and wordmark-free).
 - **Renamed the dashboard "Report Details" panel to "Case Details."** Only the user-facing label
   changed (heading + Save button, and the report's "to be completed" pointer); the `/report-meta`
   endpoint, element ids, and `state/report-meta.json` are unchanged.
