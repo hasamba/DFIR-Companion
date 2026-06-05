@@ -91,7 +91,13 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   function anonEmails(t: string): string {
     return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));
   }
-  function anonUserPaths(t: string): string { return t; }
+  // Capture the profile-dir prefix + the username segment; tokenize only the username.
+  const USER_PATH_RE = /([A-Za-z]:\\Users\\|\\Users\\|\/home\/|\/Users\/)([^\\/\r\n"'<>|:*?]+)/g;
+  const WELL_KNOWN_PROFILE = /^(public|default|default user|all users|administrator|admin)$/i;
+  function anonUserPaths(t: string): string {
+    return t.replace(USER_PATH_RE, (m, prefix: string, name: string) =>
+      WELL_KNOWN_PROFILE.test(name) ? m : prefix + assign("USER", name));
+  }
   function anonHosts(t: string): string { return t; }
   function anonDomains(t: string): string { return t; }
   function anonInternalIps(t: string): string {

@@ -99,3 +99,23 @@ describe("anonymizer — accounts/usernames", () => {
     expect(a.apply("path C:\\Users\\srv reading")).toContain("C:\\Users\\srv");
   });
 });
+
+describe("anonymizer — user paths", () => {
+  it("tokenizes only the username segment, preserving the rest of the path", () => {
+    const a = createAnonymizer(policy({ PATH: true }), NONE);
+    const out = a.apply("dropped C:\\Users\\srv\\Downloads\\Rubeus.exe");
+    expect(out).toContain("\\Downloads\\Rubeus.exe");
+    expect(out).not.toMatch(/Users\\srv/);
+    expect(out).toMatch(/Users\\ANON_USER_1\\Downloads/);
+    expect(a.restore(out)).toBe("dropped C:\\Users\\srv\\Downloads\\Rubeus.exe");
+  });
+  it("leaves well-known profile names alone", () => {
+    const a = createAnonymizer(policy({ PATH: true }), NONE);
+    expect(a.apply("C:\\Users\\Public\\x")).toContain("Users\\Public");
+  });
+  it("handles POSIX home paths", () => {
+    const a = createAnonymizer(policy({ PATH: true }), NONE);
+    const out = a.apply("/home/alice/.ssh/id_rsa");
+    expect(out).toMatch(/\/home\/ANON_USER_1\/\.ssh/);
+  });
+});
