@@ -27,6 +27,7 @@ import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velocir
 import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
 import { parseKapeCsv, type KapeImportOptions } from "./kapeImport.js";
 import { parseM365Audit, type M365ImportOptions } from "./m365Import.js";
+import { parseCloudTrail, type AwsImportOptions } from "./awsImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 
@@ -1042,6 +1043,51 @@ export class AnalysisPipeline {
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Microsoft 365 import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        `, ${parsed.iocs.length} IOC(s)`,
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import AWS CloudTrail logs. Deterministic (no AI call): each API-call record is mapped,
+  // severity derived from the action (IAM persistence, logging/detection tampering, S3
+  // exposure, secrets access) + denied/root/console-failure bumps; the caller IP → IOC.
+  async importAws(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;          // unique per import (e.g. "a3") so ids never collide
+      importedAt: string;
+      aws?: AwsImportOptions;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsed = parseCloudTrail(text, opts.aws);
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["AWS CloudTrail"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `AWS CloudTrail import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         `, ${parsed.iocs.length} IOC(s)`,
       summary: "",
