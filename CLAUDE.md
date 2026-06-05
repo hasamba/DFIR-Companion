@@ -71,10 +71,15 @@ companion server" messages when this happens; preserve that behavior.
 
 **Evidence import (deterministic + AI).** Besides screenshots, the pipeline ingests:
 CSV (`analyzeCsv`), generic logs (`analyzeLog` — `logAggregate.ts` collapses repetitive
-lines into counted patterns first, then AI triages only suspicious ones), and **THOR**
-Nextron JSON (`importThor` → `thorImport.ts`, fully deterministic, no AI call; drops
-info/lifecycle noise, maps level→severity, reads the artifact's own time). All feed the
-same forensic timeline via `mergeDelta`.
+lines into counted patterns first, then AI triages only suspicious ones), **THOR**
+Nextron JSON (`importThor` → `thorImport.ts`), **SIEM/EDR** JSON (`importSiem` →
+`siemImport.ts` — unwraps the container, per-EID Windows/Sysmon mapping, field
+auto-detection for other records, aggregation), and **Chainsaw/EVTX** (`importChainsaw` →
+`chainsawImport.ts` — Chainsaw hunt JSON or a raw `evtx_dump`; reuses `siemImport`'s
+exported `mapWindows`/`aggregateEvents` on the embedded EVTX event and overlays the matched
+Sigma rule's level→severity + `attack.tXXXX`→MITRE). The last three are **fully
+deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
+time. All feed the same forensic timeline via `mergeDelta`.
 
 **Cross-source correlation runs in `mergeDelta`** (`correlate.ts`): events describing the
 same artifact collapse into one — by exact dup (time+description, so re-imports don't

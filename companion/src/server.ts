@@ -18,6 +18,8 @@ import { parseLogLines } from "./analysis/logImport.js";
 import { parseThorReport } from "./analysis/thorImport.js";
 import { parseSiemExport } from "./analysis/siemImport.js";
 import type { SiemImportOptions } from "./analysis/siemImport.js";
+import { parseChainsawReport } from "./analysis/chainsawImport.js";
+import type { ChainsawImportOptions } from "./analysis/chainsawImport.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
 import { ProviderHealthCache } from "./enrichment/providerHealth.js";
@@ -1086,6 +1088,65 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `SIEM import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import Chainsaw (WithSecure) hunt output or a raw EVTX-as-JSON dump — the third JSON
+  // ingest path, and the richest for Windows IR. Evidence-first like the other imports;
+  // mapping is DETERMINISTIC (no AI extraction): embedded EVTX events get the per-EID
+  // Windows mapping and, for Chainsaw, the matched Sigma rule's level/tags drive
+  // severity/MITRE. Synthesis runs after.
+  app.post("/cases/:id/import-chainsaw", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const json = typeof req.body?.json === "string" ? req.body.json
+      : typeof req.body?.text === "string" ? req.body.text : "";
+    const originalName = String(req.body?.filename ?? "chainsaw.json");
+    if (!json.trim()) return res.status(400).json({ error: "json is required" });
+
+    // Optional severity floor (e.g. "medium" drops Low/Info detections and noise events).
+    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const minSeverity: Severity | undefined =
+      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
+      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
+      : rawLevel === "info" ? "Info" : undefined;
+    const chainsawOpts: ChainsawImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      // Parse up-front: reject a file with no parseable records, and report counts to the UI.
+      const preview = parseChainsawReport(json, chainsawOpts);
+      if (preview.total === 0) return res.status(400).json({ error: "no parseable Chainsaw/EVTX records found (expected Chainsaw hunt JSON, or evtx_dump JSON/NDJSON)" });
+      if (preview.kept === 0) return res.status(400).json({ error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)` });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "chainsaw.json");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, json);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(json, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, records: preview.total, detections: preview.detections, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+
+      const kind = preview.detections > 0 ? "Chainsaw" : "EVTX";
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} ${kind} event(s)` });
+      void options.pipeline.importChainsaw(caseId, json, {
+        label: storedName,
+        idPrefix: `c${seq}`,
+        importedAt,
+        chainsaw: chainsawOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `${kind} import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })

@@ -12,6 +12,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Chainsaw / EVTX import.** A new **Import Chainsaw/EVTX** button (and `POST /cases/:id/import-chainsaw`)
+  ingests Windows event logs the way IR teams carry them — the third JSON ingest path besides THOR and SIEM,
+  and the richest for Windows IR. It accepts **[Chainsaw](https://github.com/WithSecureLabs/chainsaw) hunt
+  output** (`chainsaw hunt --json`/`--jsonl`, a JSON array or NDJSON of detections) and a **raw `evtx_dump`
+  JSON/NDJSON** dump, auto-detected per record. For a Chainsaw detection the matched **Sigma/built-in rule**
+  is the gold: the rule name **leads the event description**, its **level drives severity** (a genuine
+  maliciousness verdict, unlike a bare Windows log where severity must be derived), and its `attack.tXXXX`
+  **tags become MITRE techniques** — layered on top of the same per-EID Windows/Sysmon mapping +
+  IOC/asset/hash/process-chain extraction the SIEM importer already does, run against the **embedded EVTX
+  event** the detection fired on (`document.data.Event` / aggregate `documents[]`). A raw `evtx_dump`
+  record (`{ Event: { System, EventData } }`, named EventData **or** the `Data[{@Name,#text}]` form) has no
+  verdict, so it falls back to the **per-EID severity/MITRE derivation**. Two different rules on the same
+  underlying event stay **separate** events; the same rule firing repeatedly **aggregates** into a counted
+  row; aggregate detections expand per embedded document. Each event is tagged **Chainsaw / EVTX** as its
+  `sources` for cross-source correlation, `::ffff:` IPs are unwrapped, Sysmon `Hashes` parsed, and the
+  artifact's **own time** is used (Sysmon `UtcTime` / `System.TimeCreated`). Evidence-first: the raw file is
+  persisted + audit-logged before analysis; optional `minSeverity` floor drops low/info noise. The valuable
+  Windows mapping, aggregation, sort and cap are **shared with `siemImport.ts`** (refactored to a reusable
+  `mapWindows` + `aggregateEvents`); the new pure mapper (`chainsawImport.ts`) is unit-tested with no network.
+
 ## [0.7.0] - 2026-06-05
 
 ### Fixed

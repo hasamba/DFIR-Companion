@@ -76,10 +76,10 @@ const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 
 
 // ───────────────────────────── small value helpers ─────────────────────────────
 
-function isObject(v: unknown): v is Row {
+export function isObject(v: unknown): v is Row {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
-function str(v: unknown): string {
+export function str(v: unknown): string {
   return typeof v === "string" ? v : v == null ? "" : typeof v === "object" ? "" : String(v);
 }
 function oneLine(s: string): string {
@@ -89,7 +89,7 @@ function baseName(p: string): string {
   return (p.trim().split(/[\\/]/).pop() || p.trim());
 }
 // Case-insensitive single-key lookup.
-function getCI(row: Row, key: string): unknown {
+export function getCI(row: Row, key: string): unknown {
   if (key in row) return row[key];
   const lower = key.toLowerCase();
   for (const k of Object.keys(row)) if (k.toLowerCase() === lower) return row[k];
@@ -105,7 +105,7 @@ function firstStr(row: Row, keys: string[]): string {
   return "";
 }
 // Dotted-path getter ("host.name", "event.action"), case-insensitive per segment.
-function getPath(row: Row, path: string): unknown {
+export function getPath(row: Row, path: string): unknown {
   let cur: unknown = row;
   for (const seg of path.split(".")) {
     if (!isObject(cur)) return undefined;
@@ -305,7 +305,7 @@ function channelLabel(channel: string): string {
 
 // Normalize a "YYYY-MM-DD HH:MM:SS(.fff)" (Sysmon UtcTime) to ISO "…Z"; pass ISO through
 // toUtcIso (which converts a numeric offset to UTC and leaves "…Z"/naive untouched).
-function normalizeTime(s: string): string {
+export function normalizeTime(s: string): string {
   const t = s.trim();
   if (!t) return "";
   const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d+)?Z?$/.exec(t);
@@ -349,7 +349,7 @@ const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
 const NOISE_IP = new Set(["::1", "127.0.0.1", "0.0.0.0", "::", "-", "::ffff:127.0.0.1"]);
 
 // Strip an IPv4-mapped IPv6 prefix ("::ffff:10.0.0.1" → "10.0.0.1"); drop loopback/empty.
-function cleanIp(raw: string): string {
+export function cleanIp(raw: string): string {
   let v = raw.trim();
   if (!v || NOISE_IP.has(v)) return "";
   const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(v);
@@ -424,7 +424,7 @@ function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" | null {
   return null;
 }
 
-interface MappedEvent {
+export interface MappedEvent {
   timestamp: string;
   description: string;
   severity: Severity;
@@ -436,10 +436,13 @@ interface MappedEvent {
   asset?: string;
   processName?: string;
   parentName?: string;
+  // Per-event tool source(s). siem mapping leaves this unset (the pipeline tags the whole
+  // import); reused by chainsawImport, which tags each event Chainsaw/EVTX individually.
+  sources?: string[];
 }
 
 // Map a Windows Event Log / Sysmon record. Returns null if it is not a Windows record.
-function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent | null {
+export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent | null {
   const eidRaw = getCI(rec, "event_id") ?? getCI(rec, "EventID") ?? getPath(rec, "winlog.event_id") ?? getPath(rec, "event.code");
   const eid = Number(typeof eidRaw === "object" && isObject(eidRaw) ? getCI(eidRaw, "#text") : eidRaw);
   const channel = firstStr(rec, ["log_name", "channel", "Channel", "winlog.channel", "source_name"]);
@@ -520,7 +523,7 @@ function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>): Mapp
   };
 }
 
-function worst(a: Severity, b: Severity): Severity {
+export function worst(a: Severity, b: Severity): Severity {
   return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
 }
 
@@ -597,7 +600,7 @@ function genericIocs(pairs: [string, string][], iocSink: Map<string, SiemIoc>): 
   }
 }
 
-function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent {
+export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent {
   const vendor = detectVendor(rec);
   const msg = firstStr(rec, GENERIC_MSG_KEYS);
   const pairs: [string, string][] = [];
@@ -636,68 +639,66 @@ function detectVendor(rec: Row): string | undefined {
 
 // ───────────────────────────── IOC sink ─────────────────────────────
 
-function addIoc(sink: Map<string, SiemIoc>, type: SiemIoc["type"], value: string): void {
+export function addIoc(sink: Map<string, SiemIoc>, type: SiemIoc["type"], value: string): void {
   const v = value.trim();
   if (!v) return;
   const key = `${type}:${v.toLowerCase()}`;
   if (!sink.has(key)) sink.set(key, { type, value: v });
 }
 
-// ───────────────────────────── top-level parse ─────────────────────────────
+// ───────────────────────────── aggregation (shared) ─────────────────────────────
 
-export function parseSiemExport(text: string, opts: SiemImportOptions = {}): SiemParseResult {
+// Collapse mapped events by their aggKey into counted rows, apply the severity floor,
+// sort (most-severe → noisiest → earliest) and cap. Shared by the SIEM and Chainsaw/EVTX
+// importers so both aggregate, sort, and cap identically. Returns the capped rows plus the
+// group count BEFORE the cap (so callers can report "N over the cap"). Pure.
+export function aggregateEvents(
+  mapped: MappedEvent[],
+  opts: { aggregate?: boolean; minSeverity?: Severity; maxEvents?: number } = {},
+): { events: SiemEvent[]; groups: number } {
   const aggregate = opts.aggregate ?? true;
   const maxEvents = opts.maxEvents ?? 2000;
-  const maxIocs = opts.maxIocs ?? 5000;
   const floorRank = opts.minSeverity ? SEVERITY_RANK[opts.minSeverity] : Infinity;
 
-  const { records, format } = extractRecords(text);
-  const total = records.length;
-
-  const iocSink = new Map<string, SiemIoc>();
   const byKey = new Map<string, SiemEvent>();
   const order: string[] = [];
-  const hostTally = new Map<string, number>();
 
-  for (const rec of records) {
-    const host = pickHost(rec);
-    if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
-
-    const mapped = mapWindows(rec, host, iocSink) ?? mapGeneric(rec, host, iocSink);
-    if (SEVERITY_RANK[mapped.severity] > floorRank) continue;   // below the severity floor
-
-    const key = aggregate ? mapped.aggKey : `${order.length}`;  // no-agg ⇒ unique key per row
+  for (const m of mapped) {
+    if (SEVERITY_RANK[m.severity] > floorRank) continue;        // below the severity floor
+    const key = aggregate ? m.aggKey : `${order.length}`;       // no-agg ⇒ unique key per row
     const existing = byKey.get(key);
     if (existing) {
       existing.count = (existing.count ?? 1) + 1;
-      const t = mapped.timestamp;
+      const t = m.timestamp;
       if (t) {
         if (!existing.timestamp || t < existing.timestamp) existing.timestamp = t;
         if (!existing.endTimestamp || t > existing.endTimestamp) existing.endTimestamp = t;
       }
-      existing.severity = worst(existing.severity, mapped.severity);
-      for (const m of mapped.mitre) if (!existing.mitreTechniques.includes(m)) existing.mitreTechniques.push(m);
+      existing.severity = worst(existing.severity, m.severity);
+      for (const mt of m.mitre) if (!existing.mitreTechniques.includes(mt)) existing.mitreTechniques.push(mt);
+      if (m.sources) for (const s of m.sources) { (existing.sources ??= []); if (!existing.sources.includes(s)) existing.sources.push(s); }
     } else {
       byKey.set(key, {
         id: "",
-        timestamp: mapped.timestamp,
-        description: mapped.description,
-        severity: mapped.severity,
-        mitreTechniques: [...mapped.mitre],
+        timestamp: m.timestamp,
+        description: m.description,
+        severity: m.severity,
+        mitreTechniques: [...m.mitre],
         count: 1,
-        ...(mapped.sha256 ? { sha256: mapped.sha256 } : {}),
-        ...(mapped.md5 ? { md5: mapped.md5 } : {}),
-        ...(mapped.path ? { path: mapped.path } : {}),
-        ...(mapped.asset ? { asset: mapped.asset } : {}),
-        ...(mapped.processName ? { processName: mapped.processName } : {}),
-        ...(mapped.parentName ? { parentName: mapped.parentName } : {}),
+        ...(m.sha256 ? { sha256: m.sha256 } : {}),
+        ...(m.md5 ? { md5: m.md5 } : {}),
+        ...(m.path ? { path: m.path } : {}),
+        ...(m.asset ? { asset: m.asset } : {}),
+        ...(m.processName ? { processName: m.processName } : {}),
+        ...(m.parentName ? { parentName: m.parentName } : {}),
+        ...(m.sources?.length ? { sources: [...m.sources] } : {}),
       });
       order.push(key);
     }
   }
 
   // Drop the synthetic count:1 marker on un-aggregated singletons for a cleaner timeline.
-  let events = order.map((k) => byKey.get(k)!);
+  const events = order.map((k) => byKey.get(k)!);
   for (const e of events) if (e.count === 1) delete e.count;
   const groups = events.length;
 
@@ -706,16 +707,42 @@ export function parseSiemExport(text: string, opts: SiemImportOptions = {}): Sie
     SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
     (b.count ?? 1) - (a.count ?? 1) ||
     (a.timestamp || "~").localeCompare(b.timestamp || "~"));
-  const capped = events.slice(0, maxEvents);
 
-  const represented = capped.reduce((n, e) => n + (e.count ?? 1), 0);
+  return { events: events.slice(0, maxEvents), groups };
+}
+
+// ───────────────────────────── top-level parse ─────────────────────────────
+
+export function parseSiemExport(text: string, opts: SiemImportOptions = {}): SiemParseResult {
+  const maxIocs = opts.maxIocs ?? 5000;
+
+  const { records, format } = extractRecords(text);
+  const total = records.length;
+
+  const iocSink = new Map<string, SiemIoc>();
+  const hostTally = new Map<string, number>();
+  const mapped: MappedEvent[] = [];
+
+  for (const rec of records) {
+    const host = pickHost(rec);
+    if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
+    mapped.push(mapWindows(rec, host, iocSink) ?? mapGeneric(rec, host, iocSink));
+  }
+
+  const { events, groups } = aggregateEvents(mapped, {
+    aggregate: opts.aggregate,
+    minSeverity: opts.minSeverity,
+    maxEvents: opts.maxEvents ?? 2000,
+  });
+
+  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
 
   return {
-    events: capped,
+    events,
     iocs: [...iocSink.values()].slice(0, maxIocs),
     total,
-    kept: capped.length,
+    kept: events.length,
     dropped: Math.max(0, total - represented),
     groups,
     format,

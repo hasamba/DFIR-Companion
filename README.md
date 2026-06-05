@@ -74,6 +74,15 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   unwrapped, Sysmon hashes parsed), and **auto-detects** timestamp/host/message/severity for any
   other SIEM/EDR record. Repetitive events are **aggregated** into counted rows and capped;
   optional `minSeverity` floor.
+- **Chainsaw / EVTX import** — Windows event logs the way IR teams actually carry them, **deterministic**
+  (no AI call). Ingests **[Chainsaw](https://github.com/WithSecureLabs/chainsaw) hunt output**
+  (`chainsaw hunt --json`/`--jsonl`) — the **matched Sigma rule** leads the description, its **level
+  drives severity** (a real maliciousness verdict, unlike a bare Windows log) and its `attack.tXXXX`
+  **tags become MITRE techniques** — *on top of* the same per-EID mapping + IOC/asset/hash/process-chain
+  extraction as the SIEM path on the **embedded EVTX event**. Also ingests a **raw `evtx_dump` JSON/NDJSON**
+  dump (`{ Event: { System, EventData } }`, named or `Data[]` form) with the per-EID severity fallback.
+  Events are tagged **Chainsaw / EVTX** for cross-source correlation; repetitive events aggregate and cap;
+  optional `minSeverity` floor.
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only
