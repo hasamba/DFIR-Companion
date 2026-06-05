@@ -1064,6 +1064,7 @@ import type { AIProvider as AnalyzeProvider } from "./providers/provider.js";
 import { OpenAIProvider } from "./providers/openai.js";
 import { OpenRouterProvider } from "./providers/openrouter.js";
 import { OllamaCloudProvider } from "./providers/ollama.js";
+import { LiteLlmProvider } from "./providers/litellm.js";
 import { GeminiProvider } from "./providers/gemini.js";
 import { WebSocketServer } from "ws";
 import { LiveHub } from "./live/hub.js";
@@ -1076,6 +1077,10 @@ export interface ProviderParams {
   imageDetail?: "high" | "low" | "auto";
   timeoutMs?: number;
   maxTokens?: number;
+  // Override the provider's API base URL. Required for a self-hosted LiteLLM proxy
+  // (and any OpenAI-compatible local endpoint); each provider keeps its own default
+  // when this is unset. Empty string is treated as unset.
+  baseUrl?: string;
 }
 
 // Build a provider from explicit params (so callers can build more than one,
@@ -1086,6 +1091,8 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
   const model = params.model ?? "";
   const apiKey = params.apiKey ?? "";
   const imageDetail = params.imageDetail ?? "high";
+  // Empty string → undefined so each provider falls back to its built-in default.
+  const baseUrl = params.baseUrl?.trim() || undefined;
   // Strong models over a large timeline can take >60s — make the request timeout tunable.
   const timeoutMs = params.timeoutMs ?? (Number(process.env.DFIR_AI_TIMEOUT_MS) || 180_000);
   // Bound completion tokens. Without this, OpenRouter reserves the model's full max
@@ -1093,10 +1100,11 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
   // synthesis) even when the account has credits. Tunable via DFIR_AI_MAX_TOKENS.
   const maxTokens = params.maxTokens ?? (Number(process.env.DFIR_AI_MAX_TOKENS) || 16000);
   const registry = new ProviderRegistry();
-  registry.register(new OpenAIProvider({ apiKey, model, imageDetail, timeoutMs, maxTokens }));
-  registry.register(new OpenRouterProvider({ apiKey, model, imageDetail, timeoutMs, maxTokens }));
-  registry.register(new OllamaCloudProvider({ apiKey, model, imageDetail, timeoutMs, maxTokens }));
-  registry.register(new GeminiProvider({ apiKey, model, timeoutMs, maxTokens }));
+  registry.register(new OpenAIProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
+  registry.register(new OpenRouterProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
+  registry.register(new OllamaCloudProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
+  registry.register(new LiteLlmProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
+  registry.register(new GeminiProvider({ apiKey, model, baseUrl, timeoutMs, maxTokens }));
   return registry.get(name);
 }
 
@@ -1105,6 +1113,7 @@ export function buildProvider(): AnalyzeProvider | undefined {
     provider: process.env.DFIR_AI_PROVIDER,
     model: process.env.DFIR_AI_MODEL,
     apiKey: process.env.DFIR_AI_KEY,
+    baseUrl: process.env.DFIR_AI_BASE_URL,
     imageDetail: process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined,
   });
 }
@@ -1115,6 +1124,7 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
     provider: process.env.DFIR_AI_SYNTH_PROVIDER ?? process.env.DFIR_AI_PROVIDER,
     model: process.env.DFIR_AI_SYNTH_MODEL ?? process.env.DFIR_AI_MODEL,
     apiKey: process.env.DFIR_AI_SYNTH_KEY ?? process.env.DFIR_AI_KEY,
+    baseUrl: process.env.DFIR_AI_SYNTH_BASE_URL ?? process.env.DFIR_AI_BASE_URL,
     imageDetail: process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined,
   });
 }

@@ -71,9 +71,11 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only
   **synthesis** → findings, IOCs, MITRE ATT&CK, attacker path, key questions, next steps, threads.
-- **Providers** — OpenAI, OpenRouter, Ollama, Gemini; optional **two-tier** (cheap extraction +
-  strong synthesis); high-detail image tiling for small-text OCR; tunable timeout; **bounded
-  `max_tokens`** + **truncation-tolerant JSON parsing** (no more spurious OpenRouter 402 / parse errors).
+- **Providers** — OpenAI, OpenRouter, Ollama, **local LiteLLM** (an OpenAI-compatible gateway over
+  Ollama / vLLM / 100+ backends — keeps evidence fully on-box) or any OpenAI-compatible endpoint via
+  `DFIR_AI_BASE_URL`, Gemini; optional **two-tier** (cheap extraction + strong synthesis); high-detail
+  image tiling for small-text OCR; tunable timeout; **bounded `max_tokens`** + **truncation-tolerant
+  JSON parsing** (no more spurious OpenRouter 402 / parse errors).
 - **EDR/XDR + SIEM consoles are evidence** — CrowdStrike, Defender, SentinelOne, Splunk, Elastic,
   Sentinel, QRadar detections are extracted; analyst tool-operation / UI navigation is filtered out,
   with an **incident-signal allowlist** so a real detection is never dropped.
@@ -248,14 +250,16 @@ All companion behavior is configured via env vars. Shell vars override `.env`.
 | --- | --- | --- | --- |
 | `DFIR_CASES_ROOT` | no | `./cases` | Where case folders are written. Relative paths resolve against `companion/`. |
 | `DFIR_PORT` | no | `4773` | Port the localhost server binds to (1–65535). Change to avoid `EADDRINUSE` or run multiple companions in parallel. The extension and dashboard must use the same port. |
-| `DFIR_AI_PROVIDER` | no (capture-only if unset) | — | `openai` \| `openrouter` \| `ollama` \| `gemini`. |
-| `DFIR_AI_MODEL` | when provider set | — | Model id understood by the provider (e.g. `gpt-4o`, `openai/gpt-4o-mini`, `google/gemini-2.0-flash-001`). |
-| `DFIR_AI_KEY` | when provider set | — | Provider API key. |
+| `DFIR_AI_PROVIDER` | no (capture-only if unset) | — | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini`. |
+| `DFIR_AI_MODEL` | when provider set | — | Model id understood by the provider (e.g. `gpt-4o`, `openai/gpt-4o-mini`, `ollama/llama3.1`, `google/gemini-2.0-flash-001`). |
+| `DFIR_AI_KEY` | when provider set | — | Provider API key. Leave blank for an auth-less local LiteLLM proxy. |
+| `DFIR_AI_BASE_URL` | no | provider default | Override the provider's API base URL — for a self-hosted **LiteLLM** proxy or any OpenAI-compatible local endpoint. `litellm` defaults to `http://localhost:4000/v1`. |
 | `DFIR_AI_TIMEOUT_MS` | no | `180000` | Per-request timeout in ms. Raise for strong models on large timelines. |
 | `DFIR_AI_IMAGE_DETAIL` | no | `high` | `high` \| `low` \| `auto`. OpenAI/OpenRouter only — tiles screenshots at full res for small-text OCR. |
 | `DFIR_AI_SYNTH_PROVIDER` | no | = `DFIR_AI_PROVIDER` | Optional stronger model for the synthesis pass (findings / MITRE / attacker path). |
 | `DFIR_AI_SYNTH_MODEL` | no | = `DFIR_AI_MODEL` | Synthesis model id. |
 | `DFIR_AI_SYNTH_KEY` | no | = `DFIR_AI_KEY` | Synthesis provider API key. |
+| `DFIR_AI_SYNTH_BASE_URL` | no | = `DFIR_AI_BASE_URL` | Synthesis base URL override (e.g. a separate local LiteLLM proxy for the synthesis model). |
 | `DFIR_AI_AUTO_SYNTHESIZE` | no | `on` | Live synthesis during capture. `on` \| `off`. |
 | `DFIR_AI_AUTO_SYNTHESIZE_MS` | no | `8000` | Debounce window in ms after the last screenshot before auto-synthesis fires. |
 
@@ -349,9 +353,11 @@ Uses your API quota (~1 call per `--window` screenshots, plus 1 synthesis call).
 | `--provider NAME` | from `.env` | Override `DFIR_AI_PROVIDER` (extraction). |
 | `--model ID` | from `.env` | Override `DFIR_AI_MODEL` (extraction). |
 | `--key KEY` | from `.env` | Override `DFIR_AI_KEY` (extraction). |
+| `--base-url URL` | from `.env` | Override `DFIR_AI_BASE_URL` (extraction) — e.g. a local LiteLLM proxy. |
 | `--synth-provider NAME` | = extraction / `DFIR_AI_SYNTH_PROVIDER` | Provider for the synthesis pass. |
 | `--synth-model ID` | = extraction / `DFIR_AI_SYNTH_MODEL` | Stronger model for synthesis (findings / MITRE / attacker path). |
 | `--synth-key KEY` | = extraction / `DFIR_AI_SYNTH_KEY` | API key for the synthesis provider. |
+| `--synth-base-url URL` | = extraction / `DFIR_AI_SYNTH_BASE_URL` | Base URL for the synthesis provider. |
 | `--no-synthesis` | off | Skip the final synthesis pass (raw forensic timeline only). |
 
 ```
@@ -399,6 +405,7 @@ back to the extraction model.
 | `--provider NAME` | `DFIR_AI_SYNTH_PROVIDER` ?? `DFIR_AI_PROVIDER` | Override the synthesis provider. |
 | `--model ID` | `DFIR_AI_SYNTH_MODEL` ?? `DFIR_AI_MODEL` | Override the synthesis model. |
 | `--key KEY` | `DFIR_AI_SYNTH_KEY` ?? `DFIR_AI_KEY` | Override the synthesis API key. |
+| `--base-url URL` | `DFIR_AI_SYNTH_BASE_URL` ?? `DFIR_AI_BASE_URL` | Override the synthesis base URL (e.g. a local LiteLLM proxy). |
 
 ```
 # Use whatever .env says

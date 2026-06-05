@@ -25,9 +25,10 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | --- | --- | --- |
 | `DFIR_CASES_ROOT` | Where case folders are written. Relative paths resolve against `companion/`, so the same folder is used no matter where you launch from. | `./cases` or `../cases` |
 | `DFIR_PORT` | Port the localhost server binds to. Default `4773`. Must be 1–65535; invalid values fall back to the default with a warning. Change this if 4773 is taken, or to run multiple companions side-by-side. The extension and dashboard must use the same port. | `4773` or `4774` |
-| `DFIR_AI_PROVIDER` | `openai` \| `openrouter` \| `ollama` \| `gemini`. Leave **unset** to run capture-only (no AI). | `openrouter` |
-| `DFIR_AI_MODEL` | Model id understood by the provider. | `google/gemini-2.0-flash-001` |
-| `DFIR_AI_KEY` | Provider API key. | `sk-...` |
+| `DFIR_AI_PROVIDER` | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini`. Leave **unset** to run capture-only (no AI). | `litellm` |
+| `DFIR_AI_MODEL` | Model id understood by the provider. | `ollama/llama3.1` |
+| `DFIR_AI_KEY` | Provider API key (blank for an auth-less local LiteLLM proxy). | `sk-...` |
+| `DFIR_AI_BASE_URL` | Override the provider's API base URL. Needed for a self-hosted **LiteLLM** proxy or any OpenAI-compatible local endpoint. `litellm` defaults to `http://localhost:4000/v1`. | `http://localhost:4000/v1` |
 | `DFIR_AI_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high`). High tiles screenshots at full resolution for accurate small-text OCR (OpenAI/OpenRouter models). | `high` |
 | `DFIR_AI_SYNTH_PROVIDER` / `DFIR_AI_SYNTH_MODEL` / `DFIR_AI_SYNTH_KEY` | Optional **synthesis** model (findings / MITRE / attacker path). The vars above are the cheap per-screenshot **extraction** model; point a stronger model here for the one text-only synthesis call. Unset → reuses the extraction model. | `google/gemini-2.5-pro` |
 
@@ -35,6 +36,16 @@ Other AI tunables: `DFIR_AI_TIMEOUT_MS` (per-request timeout, default 180000),
 `DFIR_AI_MAX_TOKENS` (max completion tokens, default 8192 — also stops OpenRouter from
 402-ing a large request by over-reserving credit), and `DFIR_AI_SYNTH_MAX_EVENTS`
 (events fed to the synthesis prompt, default 300, most-severe first).
+
+Local models via **LiteLLM**: run [LiteLLM](https://docs.litellm.ai/) as a local gateway
+in front of Ollama / vLLM / any of its 100+ backends — it speaks the OpenAI chat-completions
+API, so the companion talks to it natively. Start the proxy (`litellm --model ollama/llama3.1`,
+default port `4000`), then set `DFIR_AI_PROVIDER=litellm` and `DFIR_AI_MODEL=<your proxy model>`.
+The `litellm` provider defaults `DFIR_AI_BASE_URL` to `http://localhost:4000/v1`; set that var
+only to change the host/port (e.g. a proxy on another box). Leave `DFIR_AI_KEY` blank for an
+auth-less proxy, or set it to the proxy's master/virtual key. Screenshot extraction needs a
+**multimodal** model; text-only models still drive CSV/log/synthesis (pair them via the two-tier
+`DFIR_AI_SYNTH_*` vars). Keeping everything on-box means evidence never leaves your network.
 
 Self-hosted enrichment TLS: if your **MISP** or **YETI** instance presents an internal-CA
 or self-signed cert, set `DFIR_MISP_CA` / `DFIR_YETI_CA` to a PEM CA-bundle path to trust a
@@ -77,8 +88,9 @@ so you can confirm whether an AI provider is configured.
 | `--provider NAME` | Override `DFIR_AI_PROVIDER` (extraction model) for this run. | from `.env` |
 | `--model ID` | Override `DFIR_AI_MODEL` (extraction model) for this run. | from `.env` |
 | `--key KEY` | Override `DFIR_AI_KEY` for this run. | from `.env` |
+| `--base-url URL` | Override `DFIR_AI_BASE_URL` (e.g. a local LiteLLM proxy) for this run. | from `.env` |
 | `--synth-model ID` | Use a **different (stronger) model for the synthesis pass** — findings / MITRE / attacker path. Per-screenshot extraction still uses `--model`. | = extraction model |
-| `--synth-provider NAME` / `--synth-key KEY` | Provider/key for the synthesis model (if different). | = extraction provider/key |
+| `--synth-provider NAME` / `--synth-key KEY` / `--synth-base-url URL` | Provider/key/base-URL for the synthesis model (if different). | = extraction provider/key/base-URL |
 | `--no-synthesis` | Skip the final synthesis pass (raw forensic timeline only, no findings/attacker path). | off |
 
 Examples:

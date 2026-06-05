@@ -26,6 +26,18 @@ export class OpenAIProvider implements AIProvider {
     this.baseUrl = opts.baseUrl ?? "https://api.openai.com/v1";
   }
 
+  // Human-friendly name for error messages — subclasses share this OpenAI-compatible
+  // request path, so resolve the label from the (possibly overridden) provider name
+  // rather than hardcoding "OpenAI".
+  private get label(): string {
+    switch (this.name) {
+      case "openrouter": return "OpenRouter";
+      case "ollama": return "Ollama";
+      case "litellm": return "LiteLLM";
+      default: return "OpenAI";
+    }
+  }
+
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     const detail = this.opts.imageDetail ?? "high";
     const content: unknown[] = [{ type: "text", text: req.userPrompt }];
@@ -54,17 +66,17 @@ export class OpenAIProvider implements AIProvider {
       });
     } catch (err) {
       const msg = (err as Error).name === "TimeoutError"
-        ? `OpenAI request timed out after ${timeoutMs}ms`
-        : `OpenAI transport error: ${(err as Error).message}`;
+        ? `${this.label} request timed out after ${timeoutMs}ms`
+        : `${this.label} transport error: ${(err as Error).message}`;
       throw new ProviderError(msg, "transport");
     }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new ProviderError(httpErrorMessage(this.name === "openrouter" ? "OpenRouter" : "OpenAI", res.status, body), httpErrorKind(res.status));
+      throw new ProviderError(httpErrorMessage(this.label, res.status, body), httpErrorKind(res.status));
     }
     const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     const text = json.choices?.[0]?.message?.content;
-    if (!text) throw new ProviderError("OpenAI returned no content", "other");
+    if (!text) throw new ProviderError(`${this.label} returned no content`, "other");
     return { rawText: text };
   }
 }

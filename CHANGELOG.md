@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Local LiteLLM models / any OpenAI-compatible endpoint.** New `DFIR_AI_PROVIDER=litellm`
+  provider talks to a self-hosted [LiteLLM](https://docs.litellm.ai/) proxy — an OpenAI-compatible
+  gateway over Ollama / vLLM / 100+ backends — so analysis can run **fully on-box** with evidence never
+  leaving your network. Defaults its base URL to `http://localhost:4000/v1`; a new **`DFIR_AI_BASE_URL`**
+  (and `DFIR_AI_SYNTH_BASE_URL`, plus `--base-url` / `--synth-base-url` on `reanalyze`/`synthesize`)
+  overrides the API base URL for any provider, so any OpenAI-compatible local endpoint works. The key may
+  be blank for an auth-less proxy or set to its master/virtual key. Provider error messages now use the
+  real provider label (LiteLLM / Ollama / OpenRouter / OpenAI) instead of always saying "OpenAI".
 - **Timesketch timeline export & push.** A new **Export Timesketch JSONL** button (and
   `GET /cases/:id/timeline.jsonl`) downloads the forensic timeline in [Timesketch](https://timesketch.org/)
   import format — `message` / `datetime` / `timestamp_desc` plus every structured field (severity, MITRE,

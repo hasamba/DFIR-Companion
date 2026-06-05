@@ -31,8 +31,9 @@ async function main(): Promise<void> {
   const provName = strOpt("provider") ?? process.env.DFIR_AI_SYNTH_PROVIDER ?? process.env.DFIR_AI_PROVIDER;
   const model = strOpt("model") ?? process.env.DFIR_AI_SYNTH_MODEL ?? process.env.DFIR_AI_MODEL;
   const apiKey = strOpt("key") ?? process.env.DFIR_AI_SYNTH_KEY ?? process.env.DFIR_AI_KEY;
+  const baseUrl = strOpt("base-url") ?? process.env.DFIR_AI_SYNTH_BASE_URL ?? process.env.DFIR_AI_BASE_URL;
   const imageDetail = process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined;
-  const provider = buildProviderFrom({ provider: provName, model, apiKey, imageDetail });
+  const provider = buildProviderFrom({ provider: provName, model, apiKey, baseUrl, imageDetail });
   if (!provider) {
     console.error("No AI provider configured (DFIR_AI_PROVIDER / --provider). Aborting.");
     process.exit(1);

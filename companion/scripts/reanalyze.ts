@@ -52,7 +52,8 @@ async function main(): Promise<void> {
   const provName = strOpt("provider") ?? process.env.DFIR_AI_PROVIDER;
   const model = strOpt("model") ?? process.env.DFIR_AI_MODEL;
   const apiKey = strOpt("key") ?? process.env.DFIR_AI_KEY;
-  const provider = buildProviderFrom({ provider: provName, model, apiKey, imageDetail });
+  const baseUrl = strOpt("base-url") ?? process.env.DFIR_AI_BASE_URL;
+  const provider = buildProviderFrom({ provider: provName, model, apiKey, baseUrl, imageDetail });
   if (!provider) {
     console.error("No AI provider configured (DFIR_AI_PROVIDER / --provider). Aborting.");
     process.exit(1);
@@ -63,9 +64,10 @@ async function main(): Promise<void> {
   const synthProvName = strOpt("synth-provider") ?? process.env.DFIR_AI_SYNTH_PROVIDER ?? provName;
   const synthModel = strOpt("synth-model") ?? process.env.DFIR_AI_SYNTH_MODEL ?? model;
   const synthKey = strOpt("synth-key") ?? process.env.DFIR_AI_SYNTH_KEY ?? apiKey;
+  const synthBaseUrl = strOpt("synth-base-url") ?? process.env.DFIR_AI_SYNTH_BASE_URL ?? baseUrl;
   const usingTwoTier = synthModel !== model || synthProvName !== provName;
   const synthesisProvider = usingTwoTier
-    ? buildProviderFrom({ provider: synthProvName, model: synthModel, apiKey: synthKey, imageDetail })
+    ? buildProviderFrom({ provider: synthProvName, model: synthModel, apiKey: synthKey, baseUrl: synthBaseUrl, imageDetail })
     : provider;
 
   const raw = process.env.DFIR_CASES_ROOT ?? "cases";
