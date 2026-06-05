@@ -33,9 +33,16 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_AI_SYNTH_PROVIDER` / `DFIR_AI_SYNTH_MODEL` / `DFIR_AI_SYNTH_KEY` | Optional **synthesis** model (findings / MITRE / attacker path). The vars above are the cheap per-screenshot **extraction** model; point a stronger model here for the one text-only synthesis call. Unset → reuses the extraction model. | `google/gemini-2.5-pro` |
 
 Other AI tunables: `DFIR_AI_TIMEOUT_MS` (per-request timeout, default 180000),
-`DFIR_AI_MAX_TOKENS` (max completion tokens, default 8192 — also stops OpenRouter from
-402-ing a large request by over-reserving credit), and `DFIR_AI_SYNTH_MAX_EVENTS`
-(events fed to the synthesis prompt, default 300, most-severe first).
+`DFIR_AI_MAX_TOKENS` (max completion tokens, default 16000 — also stops OpenRouter from
+402-ing a large request by over-reserving credit), `DFIR_AI_SYNTH_MAX_EVENTS`
+(events fed to the synthesis prompt, default 300, most-severe first), and
+`DFIR_AI_CONTEXT_TOKENS` (the model's context window, default **128000**). Every prompt is
+budgeted to fit `DFIR_AI_CONTEXT_TOKENS`: the synthesis/ask timelines are trimmed, CSV/log
+imports are batched by token budget (not just row count), and the state-summary echo is
+bounded — so a big case no longer fails with *"maximum context length is 128000 tokens"*.
+Raise it for a bigger-context model (Claude 200k, Gemini 1M); the default only trims
+genuinely huge prompts. A prompt that still can't fit fails fast with an actionable message
+instead of a cryptic upstream 400.
 
 Local models via **LiteLLM**: run [LiteLLM](https://docs.litellm.ai/) as a local gateway
 in front of Ollama / vLLM / any of its 100+ backends — it speaks the OpenAI chat-completions

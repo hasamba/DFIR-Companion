@@ -12,7 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **AI prompts no longer overflow the model's context window.** On a big case an AI call
+  could exceed the model's limit and fail (`OpenRouter HTTP 400 — maximum context length is
+  128000 tokens. However, you requested about 251167 tokens`). The tool now budgets every
+  prompt to fit `DFIR_AI_CONTEXT_TOKENS` (default **128000**, raise for Claude 200k / Gemini
+  1M): the **synthesis & ask** timelines are trimmed to fit (re-selected so the kept events
+  stay the most important — the high-severity backfill still covers any dropped Critical/High
+  event); **CSV / log imports** are batched by a token budget, not just a fixed row/pattern
+  count, so a few very wide rows (long EDR/SIEM command-lines) no longer pack one oversized
+  request; and `buildStateSummary` (prepended to every import batch) is **bounded** to the most
+  recent findings/IOCs instead of dumping hundreds. As a backstop, the provider runs a
+  **pre-flight context guard** — it shrinks the reserved output to fit, or fails fast with an
+  actionable "reduce the input / raise DFIR_AI_CONTEXT_TOKENS" message — and an upstream 400
+  about context length is rewritten to that same guidance. New pure `promptBudget` helpers
+  (estimate / budget / batch-by-budget) are unit-tested, alongside the provider guard and the
+  bounded summary.
+
 ### Added
+- **New-case dialog auto-suggests the next `INC-YYYY-NNN` id** (highest NNN among this year's
+  existing INC cases + 1), pre-filled and selected so it's still editable in one keystroke.
 - **Enrichment reachability gate (don't blast a down MISP/YETI).** A self-hosted threat-intel
   instance can be offline (server off, TLS broken, auth 405) — and a case can carry hundreds of
   IOCs. Previously enrichment fired one doomed request *per IOC* at the dead server (the log filled

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { AIProvider, AnalyzeImage } from "../providers/provider.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
-import type { InvestigationState, InvestigationQuestion } from "./stateTypes.js";
+import type { InvestigationState, InvestigationQuestion, ForensicEvent } from "./stateTypes.js";
 import { deltaSchema, askSchema, type AskAnswer } from "./responseSchema.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
@@ -13,12 +13,13 @@ import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
 import { correlateEvents } from "./correlate.js";
 import { detectTool } from "./toolDetect.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
-import { parseCsv, chunk, chunkToCsvText } from "./csvImport.js";
+import { parseCsv, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
 import { parseSiemExport, type SiemImportOptions } from "./siemImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
+import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 
 export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation. The",
@@ -527,12 +528,19 @@ export class AnalysisPipeline {
     const { headers, rows } = parseCsv(csvText);
     if (rows.length === 0) return this.opts.stateStore.load(caseId);
 
-    const batches = chunk(rows, Math.max(1, opts.rowsPerBatch ?? 50));
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
 
     let state = await this.opts.stateStore.load(caseId);
     let evSeq = 0; // running counter → globally unique forensic-event ids for this import
+
+    // Batch by BOTH the row cap and a token budget: wide rows (long EDR/SIEM command-lines)
+    // could otherwise pack 50 rows into a prompt that overflows the model context. Reserve
+    // room for the system prompt + the state-summary that's prepended to every batch.
+    const csvOverhead = estimateTokens(getCsvPrompt()) + estimateTokens(buildStateSummary(state))
+      + estimateTokens(chunkToCsvText(headers, [])) + 64;
+    const rowBudget = Math.max(0, inputTokenBudget() - csvOverhead);
+    const batches = batchByBudget(rows, opts.rowsPerBatch ?? 50, (r) => r.join(","), rowBudget);
 
     for (let b = 0; b < batches.length; b++) {
       const csvChunk = chunkToCsvText(headers, batches[b]);
@@ -588,12 +596,19 @@ export class AnalysisPipeline {
 
     // Collapse the raw lines into distinct, counted patterns (most frequent first).
     const templates = aggregateLogLines(lines);
-    const batches = chunk(templates, Math.max(1, opts.patternsPerBatch ?? 120));
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
 
     let state = await this.opts.stateStore.load(caseId);
     let evSeq = 0; // running counter → globally unique forensic-event ids for this import
+
+    // Batch by BOTH the pattern cap and a token budget — a few patterns with very long
+    // examples shouldn't form a prompt that overflows the model context.
+    const renderPattern = (t: typeof templates[number]) =>
+      `×${t.count} ${t.firstTimestamp ?? ""} ${t.lastTimestamp ?? ""} ${t.example}`;
+    const logOverhead = estimateTokens(getLogPrompt()) + estimateTokens(buildStateSummary(state)) + 96;
+    const patternBudget = Math.max(0, inputTokenBudget() - logOverhead);
+    const batches = batchByBudget(templates, opts.patternsPerBatch ?? 120, renderPattern, patternBudget);
 
     for (let b = 0; b < batches.length; b++) {
       // Present each pattern with its occurrence count, time span, and an example.
@@ -738,14 +753,22 @@ export class AnalysisPipeline {
     const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
-    const timelineText = selectSynthesisEvents(scopedEvents, max)
-      .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`)
-      .join("\n") || "(no events yet)";
+    let events = selectSynthesisEvents(scopedEvents, max);
+    const renderEvent = (e: ForensicEvent) =>
+      `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
     const findingsText = loaded.findings.slice(0, 150).map((f) => `[${f.id}] [${f.severity}] ${f.title}`).join("\n") || "(none)";
     const questionsText = loaded.keyQuestions.map((q) => `- ${q.question}${q.answer ? ` → ${q.answer}` : " (open)"}`).join("\n") || "(none)";
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents);
+
+    // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
+    const askOverhead = estimateTokens(getAskPrompt())
+      + estimateTokens(contextBlock + (loaded.attackerPath || "") + findingsText + questionsText + question) + 300;
+    const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - askOverhead));
+    if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
+    const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
 
     const userPrompt =
-      buildSynthesisContext(loaded, scopedEvents) +
+      contextBlock +
       `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
       `FINDINGS:\n${findingsText}\n\n` +
       `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
@@ -796,7 +819,7 @@ export class AnalysisPipeline {
     const SYNTH_MAX_EVENTS = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
     // Stratified selection: all Critical/High + the earliest (initial-access) + an even
     // time-spread sample, chronologically — better kill-chain coverage than severity-only.
-    const promptEvents = selectSynthesisEvents(scopedEvents, SYNTH_MAX_EVENTS);
+    let promptEvents = selectSynthesisEvents(scopedEvents, SYNTH_MAX_EVENTS);
 
     // Skip-if-unchanged: hash only the STABLE INPUTS to synthesis — the in-scope timeline,
     // the IOCs (value + intel verdicts), the scope, and the legitimate markers. NOT the
@@ -810,12 +833,6 @@ export class AnalysisPipeline {
     })).digest("hex");
     if (!opts.force && this.lastSynthHash.get(caseId) === synthHash) return loaded;
 
-    const timelineText = promptEvents
-      .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`)
-      .join("\n");
-    const truncatedNote = scopedEvents.length > promptEvents.length
-      ? ` — showing the ${promptEvents.length} most severe; ${scopedEvents.length - promptEvents.length} lower-severity event(s) omitted from this prompt but still in the case`
-      : "";
     const scopeNote = hasScope(scope)
       ? `INVESTIGATION SCOPE: only consider activity from ${scope.start ?? "the beginning"} to ${scope.end ?? "now"}. ` +
         `Events outside this window have already been removed below.\n\n`
@@ -838,6 +855,22 @@ export class AnalysisPipeline {
         `status/answer + supporting relatedEventIds if the evidence now supports it, else status ` +
         `"unknown" with a 'pointer' to the artifact to collect):\n` +
         pinnedQuestions.map((q) => `[${q.id}] ${q.question}`).join("\n") + "\n\n"
+      : "";
+
+    // Token budget: trim the timeline so the WHOLE prompt fits the model context — the rest
+    // (context block, findings echo, system prompt) is the fixed overhead. Re-select for the
+    // smaller count so the kept events stay the most important; the high-severity backfill
+    // still creates findings for any Critical/High event dropped here.
+    const renderEvent = (e: ForensicEvent) =>
+      `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
+    const synthOverhead = estimateTokens(getSynthesisPrompt())
+      + estimateTokens(scopeNote + contextBlock + pinnedBlock + existingFindings + openThreads + legitimateBlock + (state.lastSummary || "")) + 400;
+    const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
+    if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
+
+    const timelineText = promptEvents.map(renderEvent).join("\n");
+    const truncatedNote = scopedEvents.length > promptEvents.length
+      ? ` — showing ${promptEvents.length} of ${scopedEvents.length}; ${scopedEvents.length - promptEvents.length} event(s) omitted from this prompt but still in the case`
       : "";
     const userPrompt =
       scopeNote +

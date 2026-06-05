@@ -13,7 +13,7 @@ export interface AnalyzeResult {
   rawText: string; // expected to be JSON matching deltaSchema
 }
 
-export type ProviderErrorKind = "auth" | "billing" | "rate_limit" | "timeout" | "transport" | "other";
+export type ProviderErrorKind = "auth" | "billing" | "rate_limit" | "timeout" | "transport" | "context" | "other";
 
 export class ProviderError extends Error {
   constructor(message: string, readonly kind: ProviderErrorKind) {
@@ -36,6 +36,12 @@ export function httpErrorKind(status: number): ProviderErrorKind {
 // include a short snippet of the provider's own error body when present.
 export function httpErrorMessage(provider: string, status: number, body?: string): string {
   const snippet = body ? ` — ${body.replace(/\s+/g, " ").trim().slice(0, 180)}` : "";
+  // A 400 about context length is the model rejecting an oversized prompt — say what to DO.
+  if (status === 400 && body && /context length|maximum context|too many tokens|reduce the length/i.test(body)) {
+    return `${provider} HTTP 400 (context too large): the prompt exceeds the model's context window. ` +
+      `Reduce the input (lower DFIR_AI_SYNTH_MAX_EVENTS, split the import into smaller files / fewer rows per batch) ` +
+      `or set DFIR_AI_CONTEXT_TOKENS to your model's real window so the tool trims to fit.${snippet}`;
+  }
   switch (status) {
     case 402:
       return `${provider} HTTP 402 (payment required): the ${provider} account is out of credits or has no active billing. ` +

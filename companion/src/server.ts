@@ -10,6 +10,7 @@ import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { parseCsv } from "./analysis/csvImport.js";
+import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
 import { parseLogLines } from "./analysis/logImport.js";
 import { parseThorReport } from "./analysis/thorImport.js";
 import { parseSiemExport } from "./analysis/siemImport.js";
@@ -1224,6 +1225,9 @@ export interface ProviderParams {
   imageDetail?: "high" | "low" | "auto";
   timeoutMs?: number;
   maxTokens?: number;
+  // The model's context window (tokens) for the provider's pre-flight guard. Defaults from
+  // DFIR_AI_CONTEXT_TOKENS (or 128000) so an oversized prompt is trimmed/clearly-errored.
+  contextTokens?: number;
   // Override the provider's API base URL. Required for a self-hosted LiteLLM proxy
   // (and any OpenAI-compatible local endpoint); each provider keeps its own default
   // when this is unset. Empty string is treated as unset.
@@ -1246,11 +1250,14 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
   // output for its per-request credit check and can 402 a large request (e.g. THOR
   // synthesis) even when the account has credits. Tunable via DFIR_AI_MAX_TOKENS.
   const maxTokens = params.maxTokens ?? (Number(process.env.DFIR_AI_MAX_TOKENS) || 16000);
+  // Context window for the pre-flight guard — same default the pipeline budgets against, so
+  // a too-big prompt is trimmed by the pipeline and, as a backstop, caught here before the API.
+  const contextTokens = params.contextTokens ?? resolveContextTokens();
   const registry = new ProviderRegistry();
-  registry.register(new OpenAIProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
-  registry.register(new OpenRouterProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
-  registry.register(new OllamaCloudProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
-  registry.register(new LiteLlmProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
+  registry.register(new OpenAIProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
+  registry.register(new OpenRouterProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
+  registry.register(new OllamaCloudProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
+  registry.register(new LiteLlmProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
   registry.register(new GeminiProvider({ apiKey, model, baseUrl, timeoutMs, maxTokens }));
   return registry.get(name);
 }

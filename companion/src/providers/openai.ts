@@ -12,9 +12,21 @@ export interface OpenAIOptions {
   // affordability check (credits >= (input + max_output) * price) from reserving the
   // model's full max output — the usual cause of a 402 on a large (e.g. THOR) request.
   maxTokens?: number;
+  // The model's context window, in tokens. When set (>0), a pre-flight guard estimates the
+  // request and keeps it inside this window — reducing the sent max_tokens if the prompt is
+  // large-but-fits, or failing fast with a clear "context" error if the prompt alone is too
+  // big — instead of a cryptic upstream "maximum context length is N tokens" 400. 0/unset
+  // disables the guard.
+  contextTokens?: number;
   // "high" tiles the image at full resolution (best for reading small text in
   // forensic screenshots); "low" downscales to one tile (cheaper, blurrier).
   imageDetail?: "high" | "low" | "auto";
+}
+
+// Rough token estimate (~4 chars/token) — mirrors analysis/promptBudget without coupling the
+// provider layer to it. Conservative enough with the 5% margin the guard applies.
+function estTokens(text: string): number {
+  return Math.ceil(text.length / 4);
 }
 
 export class OpenAIProvider implements AIProvider {
@@ -47,6 +59,30 @@ export class OpenAIProvider implements AIProvider {
         image_url: { url: `data:${img.mimeType};base64,${img.base64}`, detail },
       });
     }
+
+    // Pre-flight context guard: keep the request inside the model's window so an oversized
+    // prompt fails fast with an actionable message (or sends with reduced output room),
+    // rather than a cryptic upstream "maximum context length" 400.
+    let maxTokens = this.opts.maxTokens;
+    const ctx = this.opts.contextTokens ?? 0;
+    if (ctx > 0) {
+      // ~1100 tokens per full-detail image tile (upper bound); "low" is roughly one tile.
+      const imageTokens = req.images.length * (detail === "low" ? 400 : 1200);
+      const promptTokens = estTokens(req.systemPrompt) + estTokens(req.userPrompt) + imageTokens;
+      const margin = Math.max(1000, Math.ceil(ctx * 0.05));
+      const MIN_OUTPUT = 1024;
+      if (promptTokens + margin >= ctx - MIN_OUTPUT) {
+        throw new ProviderError(
+          `${this.label} prompt is ~${promptTokens.toLocaleString()} tokens, over the model's ${ctx.toLocaleString()}-token context. ` +
+          `Reduce the input (lower DFIR_AI_SYNTH_MAX_EVENTS, split the import into smaller files / fewer rows per batch) ` +
+          `or set DFIR_AI_CONTEXT_TOKENS to your model's real window.`,
+          "context",
+        );
+      }
+      const room = ctx - promptTokens - margin;   // shrink reserved output to fit if needed
+      if (maxTokens === undefined || maxTokens > room) maxTokens = Math.max(MIN_OUTPUT, room);
+    }
+
     const timeoutMs = this.opts.timeoutMs ?? 60_000;
     let res: Response;
     try {
@@ -56,7 +92,7 @@ export class OpenAIProvider implements AIProvider {
         body: JSON.stringify({
           model: this.opts.model,
           response_format: { type: "json_object" },
-          ...(this.opts.maxTokens ? { max_tokens: this.opts.maxTokens } : {}),
+          ...(maxTokens ? { max_tokens: maxTokens } : {}),
           messages: [
             { role: "system", content: req.systemPrompt },
             { role: "user", content },

@@ -82,7 +82,9 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   Ollama / vLLM / 100+ backends — keeps evidence fully on-box) or any OpenAI-compatible endpoint via
   `DFIR_AI_BASE_URL`, Gemini; optional **two-tier** (cheap extraction + strong synthesis); high-detail
   image tiling for small-text OCR; tunable timeout; **bounded `max_tokens`** + **truncation-tolerant
-  JSON parsing** (no more spurious OpenRouter 402 / parse errors).
+  JSON parsing** (no more spurious OpenRouter 402 / parse errors); **context-window budgeting**
+  (`DFIR_AI_CONTEXT_TOKENS`, default 128k) — every prompt is trimmed/batched to fit, so a big case
+  never 400s on *"maximum context length"*; an unfittable prompt fails with actionable guidance.
 - **EDR/XDR + SIEM consoles are evidence** — CrowdStrike, Defender, SentinelOne, Splunk, Elastic,
   Sentinel, QRadar detections are extracted; analyst tool-operation / UI navigation is filtered out,
   with an **incident-signal allowlist** so a real detection is never dropped.
