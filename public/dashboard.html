@@ -127,7 +127,8 @@
 <body>
   <header>
     <strong>DFIR Companion</strong>
-    <input id="caseId" placeholder="caseId" />
+    <input id="caseId" placeholder="caseId" list="caseList" autocomplete="off" />
+    <datalist id="caseList"></datalist>
     <input id="investigatorName" placeholder="your name" title="Your name — used as the author when you comment. Saved in this browser." style="max-width:130px" />
     <button id="connect">Connect</button>
     <button id="newCaseBtn" title="Create a new case, then attach the capture extension to it">+ New case</button>
@@ -1152,7 +1153,8 @@
         if (res.status === 201) {
           closeNewCase();
           document.getElementById("caseId").value = caseId;
-          connect();   // attach the dashboard to the case we just created
+          loadCaseList();   // add the new case to the combo box
+          connect();        // attach the dashboard to the case we just created
         } else if (res.status === 409) {
           msg.textContent = "a case with that id already exists — pick a different id, or Cancel and Connect to it";
         } else {
@@ -1622,7 +1624,28 @@
     setupCollapsible();
     setupReorder();
 
-    // On load, restore the case from the URL (?caseId=) or last session and reconnect.
+    // Populate the case-ID combo box (datalist) with existing cases from the server, so the field
+    // shows a dropdown of available cases while still accepting free text. Safe on older servers /
+    // offline — it just leaves the field as free-text.
+    function loadCaseList() {
+      fetch("/cases")
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(cases => {
+          const dl = document.getElementById("caseList");
+          dl.innerHTML = "";
+          for (const c of cases) {
+            const o = document.createElement("option");
+            o.value = c.caseId;
+            if (c.name && c.name !== c.caseId) o.label = c.name; // shown as a hint beside the id
+            dl.appendChild(o);
+          }
+        })
+        .catch(() => {});
+    }
+
+    // On load, populate the case picker, then restore the case from the URL (?caseId=) or last
+    // session and reconnect.
+    loadCaseList();
     (function restore() {
       const fromUrl = new URLSearchParams(location.search).get("caseId");
       const caseId = (fromUrl || localStorage.getItem("dfir.caseId") || "").trim();

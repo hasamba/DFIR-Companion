@@ -11,6 +11,13 @@ describe("dashboard.html", () => {
     expect(html).toContain('id="generateReport"');
   });
 
+  it("makes the case-ID field a combo box (datalist of existing cases + free text)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('list="caseList"');          // the input is bound to the datalist
+    expect(html).toContain('<datalist id="caseList">'); // the dropdown of available cases
+    expect(html).toContain("loadCaseList");             // populated from GET /cases
+  });
+
   it("wires the Case Details form (people fields + save) to /report-meta", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="saveReportMeta"');
