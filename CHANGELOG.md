@@ -13,6 +13,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **GCP Cloud Audit Logs + Azure Activity Log import.** A new **Import GCP/Azure** button (and
+  `POST /cases/:id/import-cloud-activity`) ingests the other two major clouds — the tenth deterministic ingest
+  path (no AI call), completing AWS/GCP/Azure. One importer auto-detects per record: a **GCP** Cloud Logging
+  LogEntry (the `protoPayload` AuditLog, or a `cloudaudit` logName) and an **Azure** Activity Log entry
+  (`operationName` + `caller`/`resourceId`), handling both the native REST/az camelCase form (incl. nested
+  `{value}` operation/status objects) and the flat Log-Analytics PascalCase shape (`OperationNameValue`,
+  `Caller`, `CallerIpAddress`, …). Like AWS these are API calls with no verdict, so severity is **derived from
+  the action** via per-cloud regex rule tables: service-account keys / IAM role grants
+  (`CreateServiceAccountKey`→T1098.001, GCP/Azure `SetIamPolicy`/`roleAssignments/write`→T1098.003), logging
+  tampering (GCP `sinks.delete`, Azure `diagnosticSettings/delete`→T1562.008), firewall opens→T1562.007, storage
+  exposure (`storage.setIamPermissions`→T1530), secret/key access (GCP `AccessSecretVersion`, Azure KeyVault &
+  `storageAccounts/listKeys`→T1552.001), snapshot/image sharing→T1537, VM run-command→T1059. A non-OK
+  GCP `status.code` or a Failed Azure status (a denied probe) bumps severity to ≥ Medium. The caller IP
+  (GCP `requestMetadata.callerIp` / Azure `httpRequest.clientIpAddress`/`CallerIpAddress`) becomes an IOC, and
+  the principal email (`authenticationInfo.principalEmail` / `caller`) is surfaced in the description for the
+  asset↔IoC graph. Events are tagged **GCP Audit** / **Azure Activity**; repetitive calls aggregate into
+  counted rows and cap; optional `minSeverity` floor. Evidence-first (raw file persisted + audit-logged before
+  analysis). Pure mapper (`cloudActivityImport.ts`) reuses `siemImport`'s `aggregateEvents` + IOC sink;
+  unit-tested with no network.
 - **AWS CloudTrail import.** A new **Import AWS CloudTrail** button (and `POST /cases/:id/import-aws`) ingests
   CloudTrail logs — the ninth deterministic ingest path (no AI call), extending cloud IR to AWS. It reads the
   native `{ "Records": [ … ] }` envelope, NDJSON (CloudTrail Lake / Athena), or a plain array. Each record is an
