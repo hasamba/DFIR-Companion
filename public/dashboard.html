@@ -164,6 +164,8 @@
     <button id="importAws" title="Upload AWS CloudTrail logs ({ Records: [...] } JSON, NDJSON, or array). Severity is derived from the API action (IAM persistence, CloudTrail/GuardDuty tampering, S3 exposure, secrets access) plus denied/root/console-failure bumps; the caller IP becomes an IOC. No AI extraction.">Import AWS CloudTrail</button>
     <input id="cloudActivityFile" type="file" accept=".json,.jsonl,.ndjson,application/json,text/plain" style="display:none" />
     <button id="importCloudActivity" title="Upload GCP Cloud Audit Logs (gcloud logging read JSON) or Azure Activity Log (az monitor activity-log list JSON / Log Analytics export). Severity is derived from the action (IAM/role grants, key & secret access, logging-sink/diagnostic deletion, firewall opens); the caller IP becomes an IOC. No AI extraction.">Import GCP/Azure</button>
+    <input id="plasoFile" type="file" accept=".csv,text/csv,text/plain" style="display:none" />
+    <button id="importPlaso" title="Upload a Plaso / log2timeline super-timeline (psort CSV — dynamic or legacy l2tcsv). Each row becomes a timeline event at its own time; IOCs (hashes, URLs, IPs) and the source file path are scraped from the message. Filter your psort output first — it caps at the most-recent rows. No AI extraction.">Import Plaso</button>
     <input id="shotsFile" type="file" accept="image/png,image/jpeg,image/webp" multiple style="display:none" />
     <button id="importShots" title="Import external screenshots (PNG/JPEG/WebP) from another tool — select multiple at once. Each is stored as evidence and analyzed (when AI is on), exactly like the extension's captures.">Import Screenshots</button>
     <button id="generateReport" title="Write the report (Markdown + HTML) and CSVs; then export via the links that appear">Generate Report</button>
@@ -1946,6 +1948,38 @@
       } catch (err) {
         document.getElementById("status").textContent =
           "GCP/Azure import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
+      }
+      e.target.value = ""; // allow re-selecting the same file
+    };
+    document.getElementById("importPlaso").onclick = () => {
+      if (!document.getElementById("caseId").value.trim()) {
+        document.getElementById("status").textContent = "enter/connect a Case ID first";
+        return;
+      }
+      document.getElementById("plasoFile").click();
+    };
+    document.getElementById("plasoFile").onchange = async (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      const file = e.target.files && e.target.files[0];
+      if (!caseId || !file) return;
+      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
+      try {
+        const text = await file.text();
+        const r = await fetch(`/cases/${caseId}/import-plaso`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ filename: file.name, text }),
+        });
+        if (!r.ok) {
+          let msg = "HTTP " + r.status;
+          try { msg = (await r.json()).error || msg; } catch {}
+          throw new Error(msg);
+        }
+        const p = await r.json();
+        document.getElementById("status").textContent =
+          `Plaso (${p.format}): ${p.events} event(s) from ${p.rows} row(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
+      } catch (err) {
+        document.getElementById("status").textContent =
+          "Plaso import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
       }
       e.target.value = ""; // allow re-selecting the same file
     };

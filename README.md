@@ -148,6 +148,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   snapshot/image sharing — each mapped to High/Medium + MITRE, with a bump when the call was **denied**
   (`status.code != 0` / `Failed`). The caller IP becomes an IOC; the principal email is surfaced for the
   asset↔IoC graph. Tagged **GCP Audit** / **Azure Activity**; aggregates + caps; optional `minSeverity` floor.
+- **Plaso / log2timeline import** — a `psort` super-timeline CSV, **deterministic** (no AI call). Reads both
+  the **dynamic** (psort default: `datetime,timestamp_desc,source,message,parser,display_name,…`) and legacy
+  **l2tcsv** (`date,time,timezone,…,desc,…`) flavours, auto-detected from the header. Each row becomes an
+  evidence event (Info) at its **own time** (l2tcsv `MM/DD/YYYY`+time+tz → UTC); **IOCs** (hashes, URLs, IPs)
+  and the source file path are scraped from the message, and the l2tcsv `host` attributes the event. Tagged
+  **Plaso**; repetitive rows aggregate; capped — *filter your psort output first* (date range / parsers).
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only
