@@ -107,6 +107,9 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   importing the same report twice never doubles the timeline.
 
 ### Investigation workflow
+- **Case creation** — the dashboard's **+ New case** dialog auto-suggests the next
+  `INC-YYYY-NNN` id (highest for the year + 1), pre-filled and editable, so cases stay
+  consistently numbered without manual bookkeeping.
 - **Scope** — set a from/to time window; everything re-projects to it deterministically.
 - **Mark legitimate** — flag a finding / IOC / **forensic event** as benign (reversible); excluded
   from analysis and reports.
