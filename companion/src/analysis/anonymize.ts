@@ -98,7 +98,14 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     return t.replace(USER_PATH_RE, (m, prefix: string, name: string) =>
       WELL_KNOWN_PROFILE.test(name) ? m : prefix + assign("USER", name));
   }
-  function anonHosts(t: string): string { return t; }
+  function anonHosts(t: string): string {
+    let out = t;
+    for (const h of known.hosts) {
+      if (h.length < 2) continue;
+      out = out.replace(new RegExp(`\\b${escapeRegExp(h)}\\b`, "gi"), () => assign("HOST", h));
+    }
+    return out;
+  }
   function anonDomains(t: string): string { return t; }
   function anonInternalIps(t: string): string {
     return t.replace(IPV4_RE, (ip) => (isInternalIp(ip) ? assign("IP", ip) : ip));

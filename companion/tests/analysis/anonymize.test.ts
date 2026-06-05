@@ -119,3 +119,15 @@ describe("anonymizer — user paths", () => {
     expect(out).toMatch(/\/home\/ANON_USER_1\/\.ssh/);
   });
 });
+
+describe("anonymizer — hosts", () => {
+  it("tokenizes known hostnames and FQDNs (case-insensitive), restores them", () => {
+    const known: KnownEntities = { hosts: ["dc01.adatumlab.local", "ALCLIENT07"], accounts: [], internalDomains: [] };
+    const a = createAnonymizer(policy({ HOST: true }), known);
+    const out = a.apply("logon on ALCLIENT07 then to dc01.adatumlab.local");
+    expect(out).not.toContain("ALCLIENT07");
+    expect(out).not.toContain("dc01.adatumlab.local");
+    expect(out).toMatch(/ANON_HOST_/);
+    expect(a.restore(out)).toBe("logon on ALCLIENT07 then to dc01.adatumlab.local");
+  });
+});
