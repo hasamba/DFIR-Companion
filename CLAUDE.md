@@ -103,8 +103,11 @@ row to an Info evidence event reading the artifact's own time + file/hash/proces
 (BEC tradecraft table + keyword fallback) like the SIEM per-EID table, or from Entra's own `riskLevel` verdict;
 source IP→IOC, UPN→description for the asset graph), and **AWS CloudTrail** (`importAws` → `awsImport.ts` —
 `{Records:[]}`/NDJSON/array; severity DERIVED from the API `eventName` (IAM persistence, logging-tampering,
-S3 exposure, secrets access table) with bumps for `errorCode`/root/failed-ConsoleLogin; `sourceIPAddress`→IOC).
-The last nine are **fully
+S3 exposure, secrets access table) with bumps for `errorCode`/root/failed-ConsoleLogin; `sourceIPAddress`→IOC),
+and **GCP/Azure activity** (`importCloudActivity` → `cloudActivityImport.ts` — auto-detects GCP Cloud Audit
+Logs (`protoPayload`) vs Azure Activity Log (`operationName`, native camelCase or flat Log-Analytics); severity
+DERIVED from the action via per-cloud regex tables (IAM/role grants, logging-tampering, secret/key access) +
+denied bump; caller IP→IOC, principal email→description). The last ten are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
 

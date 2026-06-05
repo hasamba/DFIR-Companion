@@ -139,6 +139,15 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   `sourceIPAddress` becomes an IOC (AWS-service callers are ignored); the principal (IAM user / assumed-role
   issuer) is in the description. Tagged **AWS CloudTrail**; aggregates + caps; optional `minSeverity` floor
   (drops routine Describe/List/Get reads).
+- **GCP / Azure activity-log import** — the other two clouds, **deterministic** (no AI call), auto-detected
+  per record. **GCP Cloud Audit Logs** (`gcloud logging read` JSON / log-sink NDJSON — the `protoPayload`
+  AuditLog) and the **Azure Activity Log** (`az monitor activity-log list` JSON or the flat Log-Analytics
+  `AzureActivity` shape). Severity is **derived from the action** — service-account keys & IAM/role grants
+  (`CreateServiceAccountKey`, `SetIamPolicy`, `roleAssignments/write`), logging tampering (GCP sink delete,
+  Azure `diagnosticSettings/delete`), firewall opens, storage exposure, key-vault/secret & storage-key access,
+  snapshot/image sharing — each mapped to High/Medium + MITRE, with a bump when the call was **denied**
+  (`status.code != 0` / `Failed`). The caller IP becomes an IOC; the principal email is surfaced for the
+  asset↔IoC graph. Tagged **GCP Audit** / **Azure Activity**; aggregates + caps; optional `minSeverity` floor.
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only
