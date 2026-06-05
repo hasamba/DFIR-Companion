@@ -13,6 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Velociraptor native JSON import.** A new **Import Velociraptor** button (and
+  `POST /cases/:id/import-velociraptor`) ingests [Velociraptor](https://docs.velociraptor.app/) collection
+  results / hunt exports — the fifth deterministic ingest path (no AI call). It reads a JSON array, **JSONL**
+  (the native collection-results form), a single object, an Elastic-style wrapper, or a Velociraptor
+  **multi-artifact map** (`{ "Artifact.Name": [rows], … }`). Because VQL artifacts emit completely different
+  columns per artifact, each row is **classified and mapped** accordingly: a **Sigma** detection
+  (`*.Detection.Sigma`, or a `Rule:{Title,Level}` over a parsed event) is **verdict-first** — the matched
+  rule's level drives severity, its title leads the description, its tags become MITRE — layered over the same
+  per-EID Windows mapping the SIEM/Chainsaw paths use; a **YARA** hit (`*.Detection.Yara.*`, or a string `Rule`
+  + Strings/Meta/Namespace) becomes a **High** detection carrying the rule name + scanned file/process + hash;
+  a parsed **EVTX** row (`System`+`EventData`, EventID as a number or `{Value}`) reuses `mapWindows`; and any
+  **other** artifact (pslist / netstat / file listing / registry…) falls back to field auto-detection. Crucially
+  it reads the **artifact's own time** (`System.TimeCreated`, file MAC times, `EventTime`…) and only uses the
+  `_ts` collection time as a last resort. IOCs (hashes/IPs/files/processes) are pulled from every column; events
+  are tagged **Velociraptor** for cross-source correlation; repetitive rows aggregate into counted rows and cap;
+  optional `minSeverity` floor drops the Info-level raw-collection rows. Evidence-first (raw file persisted +
+  audit-logged before analysis). Pure mapper (`velociraptorImport.ts`) reuses `siemImport`'s `mapWindows` +
+  `aggregateEvents` + IOC extractors; unit-tested with no network.
 - **Hayabusa import.** A new **Import Hayabusa** button (and `POST /cases/:id/import-hayabusa`) ingests a
   [Hayabusa](https://github.com/Yamato-Security/hayabusa) (Yamato Security) Sigma-over-EVTX detection timeline —
   the sister of the Chainsaw path and the fourth deterministic ingest path (no AI call). It accepts both a

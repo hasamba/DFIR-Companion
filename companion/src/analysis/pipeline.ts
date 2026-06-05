@@ -23,6 +23,7 @@ import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
 import { parseSiemExport, type SiemImportOptions } from "./siemImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
+import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 
@@ -853,6 +854,53 @@ export class AnalysisPipeline {
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Hayabusa import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import Velociraptor native JSON output (collection results / hunt export). Like the
+  // other deterministic paths there is no AI call: each row is classified (Sigma / YARA /
+  // EventLog / generic) and mapped — detection rows are verdict-driven, the rest auto-detect
+  // the artifact's own time + IOCs. Every event is tagged Velociraptor as its source.
+  async importVelociraptor(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;                       // unique per import (e.g. "v3") so ids never collide
+      importedAt: string;
+      velociraptor?: VelociraptorImportOptions;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsed = parseVelociraptorJson(text, opts.velociraptor);
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Velociraptor"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Velociraptor import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+        (parsed.detections > 0 ? `, ${parsed.detections} detection(s)` : "") +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
       summary: "",
