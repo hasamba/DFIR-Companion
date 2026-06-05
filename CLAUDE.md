@@ -101,7 +101,10 @@ row to an Info evidence event reading the artifact's own time + file/hash/proces
 `parseCsv` + `siemImport`'s `aggregateEvents`), and **Microsoft 365 / Entra ID** (`importM365` →
 `m365Import.ts` — UAL (parses the `AuditData` blob) + Entra sign-in/audit; severity DERIVED from the operation
 (BEC tradecraft table + keyword fallback) like the SIEM per-EID table, or from Entra's own `riskLevel` verdict;
-source IP→IOC, UPN→description for the asset graph). The last eight are **fully
+source IP→IOC, UPN→description for the asset graph), and **AWS CloudTrail** (`importAws` → `awsImport.ts` —
+`{Records:[]}`/NDJSON/array; severity DERIVED from the API `eventName` (IAM persistence, logging-tampering,
+S3 exposure, secrets access table) with bumps for `errorCode`/root/failed-ConsoleLogin; `sourceIPAddress`→IOC).
+The last nine are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
 

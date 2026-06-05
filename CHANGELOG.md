@@ -13,6 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **AWS CloudTrail import.** A new **Import AWS CloudTrail** button (and `POST /cases/:id/import-aws`) ingests
+  CloudTrail logs — the ninth deterministic ingest path (no AI call), extending cloud IR to AWS. It reads the
+  native `{ "Records": [ … ] }` envelope, NDJSON (CloudTrail Lake / Athena), or a plain array. Each record is an
+  API call with no maliciousness score, so severity is **derived from the action** via a curated table + the
+  same deterministic pattern as the SIEM/M365 importers: IAM persistence/priv-esc (`CreateAccessKey`→T1098.001,
+  `Attach*Policy`/`Put*Policy`/`CreatePolicyVersion`→T1098.003, `CreateLoginProfile`/`UpdateAssumeRolePolicy`,
+  MFA removal→T1556), logging/detection tampering (`StopLogging`/`DeleteTrail`/`PutEventSelectors`/
+  `DeleteFlowLogs`→T1562.008, GuardDuty `DeleteDetector`→T1562.001), exfil/exposure (`PutBucketPolicy`/
+  `PutBucketAcl`→T1530, `ModifySnapshotAttribute`/`ModifyImageAttribute`→T1537), secrets access
+  (`GetSecretValue`→T1552.001), and recon (`GetCallerIdentity`→T1087). On top of the table, a present
+  **`errorCode`** (AccessDenied / UnauthorizedOperation = a probe/priv-test) bumps severity to ≥ Medium,
+  **`userIdentity.type == Root`** doing anything mutating is treated as notable, and a **failed ConsoleLogin**
+  (`responseElements.ConsoleLogin == Failure`) is a brute-force signal (root console login → High). The caller
+  `sourceIPAddress` becomes an IOC (AWS-service callers like `ec2.amazonaws.com` are ignored), and the acting
+  principal (IAM user name, or the assumed-role's `sessionIssuer`) is surfaced in the description. Events are
+  tagged **AWS CloudTrail**; repetitive calls aggregate into counted rows and cap; optional `minSeverity` floor
+  drops routine read calls. Evidence-first (raw file persisted + audit-logged before analysis). Pure mapper
+  (`awsImport.ts`) reuses `siemImport`'s `aggregateEvents` + IOC sink; unit-tested with no network.
 - **Microsoft 365 / Entra ID import.** A new **Import M365/Entra** button (and `POST /cases/:id/import-m365`)
   ingests cloud & identity audit data — the eighth deterministic ingest path (no AI call), opening
   business-email-compromise and cloud IR. It auto-detects and maps three sources: the **M365 Unified Audit

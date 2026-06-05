@@ -129,6 +129,16 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   (Identity Protection) drives severity directly. Source IPs become IOCs; the UPN is surfaced so the asset↔IoC
   graph captures the account. Tagged **Microsoft 365** / **Entra ID**; aggregates + caps; optional `minSeverity`
   floor (drops routine Info activity).
+- **AWS CloudTrail import** — cloud IR, **deterministic** (no AI call). Reads the native `{ "Records": [ … ] }`
+  envelope, NDJSON (CloudTrail Lake / Athena), or a plain array. Severity is **derived from the API action** —
+  IAM persistence/priv-esc (`CreateAccessKey`, `AttachUserPolicy`, `CreateLoginProfile`), logging/detection
+  tampering (`StopLogging`, `DeleteTrail`, `DeleteFlowLogs`, GuardDuty `DeleteDetector`), S3 exposure
+  (`PutBucketPolicy`/`PutBucketAcl`), AMI/snapshot sharing, secrets access (`GetSecretValue`) — each mapped to
+  High/Medium + MITRE; a present **`errorCode`** (AccessDenied/UnauthorizedOperation = a probe) bumps severity,
+  **root** usage is flagged, and a **failed ConsoleLogin** is a brute-force signal. The caller
+  `sourceIPAddress` becomes an IOC (AWS-service callers are ignored); the principal (IAM user / assumed-role
+  issuer) is in the description. Tagged **AWS CloudTrail**; aggregates + caps; optional `minSeverity` floor
+  (drops routine Describe/List/Get reads).
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only
