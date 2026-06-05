@@ -13,6 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Microsoft 365 / Entra ID import.** A new **Import M365/Entra** button (and `POST /cases/:id/import-m365`)
+  ingests cloud & identity audit data — the eighth deterministic ingest path (no AI call), opening
+  business-email-compromise and cloud IR. It auto-detects and maps three sources: the **M365 Unified Audit
+  Log** (`Search-UnifiedAuditLog` CSV/JSON or the Office 365 Management Activity API — the rich `AuditData`
+  JSON string is parsed and merged over the outer row), **Entra ID sign-in logs**, and **Entra directory audit
+  logs** (Graph schema). Like Windows event logs these records carry no maliciousness score, so severity is
+  **derived from the operation type** — a curated table + keyword heuristics flag BEC/abuse tradecraft
+  (`New/Set-InboxRule`→T1564.008, `Add-MailboxPermission`→T1098.002, `Add member to role`→T1098.003, `Add
+  service principal credentials`/`Consent to application`→T1098.001/T1528, `Set-Mailbox` forwarding→T1114,
+  password resets, `UserLoginFailed`→T1110) — the same deterministic approach as the SIEM importer's per-EID
+  table, **not** a detection engine. **Entra's own `riskLevelDuringSignIn`/`riskState`** (Identity Protection)
+  is a real verdict and drives severity directly; failed sign-ins (`status.errorCode != 0`) map to Medium. The
+  source IP (de-bracketed/de-ported from M365 `ClientIP` forms like `[1.2.3.4]:443`) becomes an IOC, and the
+  UPN is surfaced in the description so the asset↔IoC graph captures the compromised account. Events are tagged
+  **Microsoft 365** / **Entra ID** for cross-source correlation; repetitive operations aggregate into counted
+  rows and cap; optional `minSeverity` floor drops routine Info activity. Evidence-first (raw file persisted +
+  audit-logged before analysis). Pure mapper (`m365Import.ts`) reuses `siemImport`'s `aggregateEvents` + IOC
+  sink and `csvImport`'s `parseCsv`; unit-tested with no network.
 - **KAPE / Eric Zimmerman Tools CSV import.** A new **Import KAPE/EZ** button (and `POST /cases/:id/import-kape`)
   ingests an Eric Zimmerman Tools CSV — the host-forensics counterpart to the EDR/network connectors, and the
   seventh deterministic ingest path (no AI call). The producing tool is **detected from the CSV header**, then
