@@ -106,11 +106,17 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     }
     return out;
   }
-  function anonDomains(t: string): string { return t; }
+  function anonDomains(t: string): string {
+    let out = t;
+    for (const d of known.internalDomains) {
+      if (d.length < 2) continue;
+      out = out.replace(new RegExp(`\\b${escapeRegExp(d)}\\b`, "gi"), (m) => assign("DOMAIN", m));
+    }
+    return out;
+  }
   function anonInternalIps(t: string): string {
     return t.replace(IPV4_RE, (ip) => (isInternalIp(ip) ? assign("IP", ip) : ip));
   }
-  void escapeRegExp; void known; // referenced by detectors added later
 
   function apply(text: string): string {
     let t = text;

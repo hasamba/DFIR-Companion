@@ -131,3 +131,15 @@ describe("anonymizer — hosts", () => {
     expect(a.restore(out)).toBe("logon on ALCLIENT07 then to dc01.adatumlab.local");
   });
 });
+
+describe("anonymizer — internal domains", () => {
+  it("tokenizes internal domains but preserves a public/adversary domain", () => {
+    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: ["adatumlab.local", "adatumlab"] };
+    const a = createAnonymizer(policy({ DOMAIN: true }), known);
+    const out = a.apply("auth in ADATUMLAB to adatumlab.local; C2 at evil-c2.com");
+    expect(out).toContain("evil-c2.com");        // adversary preserved
+    expect(out).not.toMatch(/adatumlab\.local/i);
+    expect(out).toMatch(/ANON_DOMAIN_/);
+    expect(a.restore(out)).toBe("auth in ADATUMLAB to adatumlab.local; C2 at evil-c2.com");
+  });
+});
