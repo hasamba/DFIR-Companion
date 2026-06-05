@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **AI prompts no longer overflow the model's context window.** On a big case an AI call
+  could exceed the model's limit and fail (`OpenRouter HTTP 400 — maximum context length is
+  128000 tokens. However, you requested about 251167 tokens`). The tool now budgets every
+  prompt to fit `DFIR_AI_CONTEXT_TOKENS` (default **128000**, raise for Claude 200k / Gemini
+  1M): the **synthesis & ask** timelines are trimmed to fit (re-selected so the kept events
+  stay the most important — the high-severity backfill still covers any dropped Critical/High
+  event); **CSV / log imports** are batched by a token budget, not just a fixed row/pattern
+  count, so a few very wide rows (long EDR/SIEM command-lines) no longer pack one oversized
+  request; and `buildStateSummary` (prepended to every import batch) is **bounded** to the most
+  recent findings/IOCs instead of dumping hundreds. As a backstop, the provider runs a
+  **pre-flight context guard** — it shrinks the reserved output to fit, or fails fast with an
+  actionable "reduce the input / raise DFIR_AI_CONTEXT_TOKENS" message — and an upstream 400
+  about context length is rewritten to that same guidance. New pure `promptBudget` helpers
+  (estimate / budget / batch-by-budget) are unit-tested, alongside the provider guard and the
+  bounded summary.
+
 ### Added
 - **AI-input anonymization (default on):** sensitive victim data (internal IPs, usernames,
   hostnames, internal domains, emails, user-profile paths) is tokenized — and secrets
@@ -23,6 +40,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detection missed; `DFIR_ANONYMIZE` env default. Screenshots are best-effort (pixels can't
   be tokenized; the dashboard warns when the vision model is external — a local Ollama vision
   model keeps them on-box).
+- **New-case dialog auto-suggests the next `INC-YYYY-NNN` id** (highest NNN among this year's
+  existing INC cases + 1), pre-filled and selected so it's still editable in one keystroke.
+- **Enrichment reachability gate (don't blast a down MISP/YETI).** A self-hosted threat-intel
+  instance can be offline (server off, TLS broken, auth 405) — and a case can carry hundreds of
+  IOCs. Previously enrichment fired one doomed request *per IOC* at the dead server (the log filled
+  with `… -> error (fetch failed)` / `(YETI auth HTTP 405)`). Now each provider is **health-probed
+  before any IOC is sent** — a cheap call (MISP `GET /servers/getVersion`; YETI a fresh API-token
+  exchange) — and the verdict is **cached ~60s** (`DFIR_ENRICH_HEALTH_TTL_MS`), so a down instance
+  is tested **at most once a minute** regardless of IOC count. A provider probed *down* is skipped:
+  no requests sent, **not** recorded as "checked" (so it's retried later), and reported in the run
+  summary (`unavailable=[…]`) and the live AI-status line (`skipped MISP, YETI (unreachable — will
+  retry)`). A **background poller** (`DFIR_ENRICH_HEALTH_POLL_MS`, default 60s, `=0` to disable)
+  re-probes only the servers it last saw down and **auto-resumes enrichment** for the cases it had
+  to skip, the moment the instance is reachable again. New `GET /enrich-health` route + **●up/down
+  reachability dots** next to each source in the dashboard's enrichment modal. New
+  `ProviderHealthCache` (pure, injectable clock) and `EnrichmentProvider.probe()` are unit-tested;
+  the gate is exercised in `enrichService` and the route in `server` tests. Providers without a
+  `probe()` (external SaaS) are treated as up, keeping their existing per-call error handling.
 - **SIEM / EDR JSON import.** A new **Import SIEM/EDR** button (and `POST /cases/:id/import-siem`)
   ingests a JSON export from a SIEM or EDR — the second JSON ingest path besides THOR. It **unwraps the
   common container envelopes** (Elastic/Kibana `{ data: [{ _source }] }`, an Elasticsearch

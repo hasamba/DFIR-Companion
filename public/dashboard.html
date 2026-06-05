@@ -838,7 +838,8 @@
       if (!caseId) { document.getElementById("status").textContent = "connect to a case first"; return; }
       if (!enrichAvailable) return;
       const row = p => `<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:3px 0">`
-        + `<input type="checkbox" class="enrich-cb" value="${escAttr(p.name)}" data-scope="${escAttr(p.scope)}" ${p.enabled ? "checked" : ""}> ${esc(p.name)}</label>`;
+        + `<input type="checkbox" class="enrich-cb" value="${escAttr(p.name)}" data-scope="${escAttr(p.scope)}" ${p.enabled ? "checked" : ""}> ${esc(p.name)}`
+        + `<span class="enrich-health" data-prov="${escAttr(p.name)}" title="checking reachability…" style="color:#777;font-size:11px">●</span></label>`;
       const group = (label, color, arr) => arr.length
         ? `<div style="margin-bottom:8px"><div class="asset-subhead" style="margin:0 0 2px;color:${color}">${label}</div>${arr.map(row).join("")}</div>` : "";
       document.getElementById("enrichProviders").innerHTML =
@@ -847,6 +848,25 @@
         || "<em style='color:#9aa4b2'>No providers configured.</em>";
       document.getElementById("enrichMsg").textContent = "";
       document.getElementById("enrichOverlay").classList.add("open");
+      loadEnrichHealth();
+    }
+    // Colour each provider's ● by reachability. Probed-down (MISP/YETI server off) → red with
+    // the reason; reachable → green; external SaaS (no probe) → muted "no health check".
+    function loadEnrichHealth() {
+      fetch(`/enrich-health`)
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(h => {
+          for (const p of (h.providers || [])) {
+            const dot = document.querySelector(`.enrich-health[data-prov="${CSS.escape(p.name)}"]`);
+            if (!dot) continue;
+            if (!p.probed) { dot.style.color = "#5b6472"; dot.title = "no reachability check for this source"; }
+            else if (p.ok) { dot.style.color = "#6bcB77"; dot.title = "reachable"; }
+            else { dot.style.color = "#ff6b6b"; dot.title = "unreachable — IOCs are skipped until it's back" + (p.detail ? `: ${p.detail}` : ""); }
+          }
+        })
+        .catch(() => {
+          document.querySelectorAll(".enrich-health").forEach(d => { d.style.color = "#777"; d.title = "reachability unknown"; });
+        });
     }
     function saveEnrich() {
       const caseId = document.getElementById("caseId").value.trim();
@@ -1267,14 +1287,38 @@
     }
 
     // ── New case ── creation lives here (the extension only attaches to existing cases) ──
-    function openNewCase() {
-      document.getElementById("ncCaseId").value = "";
+    async function openNewCase() {
+      const idInput = document.getElementById("ncCaseId");
+      idInput.value = "";
       document.getElementById("ncName").value = "";
       document.getElementById("ncInvestigator").value =
         (document.getElementById("investigatorName").value || "").trim();
       document.getElementById("ncMsg").textContent = "";
       document.getElementById("newCaseOverlay").classList.add("open");
-      document.getElementById("ncCaseId").focus();
+      // Auto-suggest the next incident id — still fully editable (focus + select so a
+      // manually-typed id overtypes it in one keystroke).
+      idInput.value = await suggestCaseId();
+      idInput.focus();
+      idInput.select();
+    }
+    // Next free INC-YYYY-NNN: the highest NNN among this year's existing INC-YYYY-* cases,
+    // plus one, zero-padded to 3. Falls back to a date+time id if the case list can't be
+    // fetched, so the field is never left blank.
+    async function suggestCaseId() {
+      const year = new Date().getFullYear();
+      try {
+        const cases = await fetch("/cases").then(r => r.ok ? r.json() : []);
+        const re = new RegExp(`^INC-${year}-(\\d+)$`);
+        let max = 0;
+        for (const c of cases) {
+          const m = String(c.caseId || "").match(re);
+          if (m) max = Math.max(max, parseInt(m[1], 10));
+        }
+        return `INC-${year}-${String(max + 1).padStart(3, "0")}`;
+      } catch {
+        const d = new Date(), p = n => String(n).padStart(2, "0");
+        return `INC-${year}-${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+      }
     }
     function closeNewCase() { document.getElementById("newCaseOverlay").classList.remove("open"); }
     async function createNewCase() {

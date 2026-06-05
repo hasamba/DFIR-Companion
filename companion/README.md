@@ -33,9 +33,16 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_AI_SYNTH_PROVIDER` / `DFIR_AI_SYNTH_MODEL` / `DFIR_AI_SYNTH_KEY` | Optional **synthesis** model (findings / MITRE / attacker path). The vars above are the cheap per-screenshot **extraction** model; point a stronger model here for the one text-only synthesis call. Unset → reuses the extraction model. | `google/gemini-2.5-pro` |
 
 Other AI tunables: `DFIR_AI_TIMEOUT_MS` (per-request timeout, default 180000),
-`DFIR_AI_MAX_TOKENS` (max completion tokens, default 8192 — also stops OpenRouter from
-402-ing a large request by over-reserving credit), and `DFIR_AI_SYNTH_MAX_EVENTS`
-(events fed to the synthesis prompt, default 300, most-severe first).
+`DFIR_AI_MAX_TOKENS` (max completion tokens, default 16000 — also stops OpenRouter from
+402-ing a large request by over-reserving credit), `DFIR_AI_SYNTH_MAX_EVENTS`
+(events fed to the synthesis prompt, default 300, most-severe first), and
+`DFIR_AI_CONTEXT_TOKENS` (the model's context window, default **128000**). Every prompt is
+budgeted to fit `DFIR_AI_CONTEXT_TOKENS`: the synthesis/ask timelines are trimmed, CSV/log
+imports are batched by token budget (not just row count), and the state-summary echo is
+bounded — so a big case no longer fails with *"maximum context length is 128000 tokens"*.
+Raise it for a bigger-context model (Claude 200k, Gemini 1M); the default only trims
+genuinely huge prompts. A prompt that still can't fit fails fast with an actionable message
+instead of a cryptic upstream 400.
 
 Local models via **LiteLLM**: run [LiteLLM](https://docs.litellm.ai/) as a local gateway
 in front of Ollama / vLLM / any of its 100+ backends — it speaks the OpenAI chat-completions
@@ -134,7 +141,8 @@ Examples:
 | `POST /cases/:id/ai-control` | `{ enabled }` — turn AI analysis on/off for the case. **Defaults off** (a fresh case captures evidence without running AI). Evidence is always captured; when off, no AI runs. Turning it **on** backfills every screenshot captured while it was off. The dashboard's **AI: ON/OFF** button calls this. |
 | `GET /cases/:id/enrich-control` | Per-source enrichment state: `{ anyConfigured, providers: [{ name, scope, enabled }] }`. `scope` is `local` (your own MISP/YETI — OPSEC-safe) or `external` (third-party SaaS). |
 | `POST /cases/:id/enrich-control` | `{ providers: [names] }` (or legacy `{ enabled }`) — set which sources are enabled for the case. **Default is local-only** (OPSEC-safe). Saving enriches the current IOCs and auto-enriches IOCs added later; **enabling a source re-checks every IOC on it** (per-source cache via `enrichedBy`). The dashboard's **Enrich** picker calls this. Stored in `state/enrich-control.json`. |
-| `POST /cases/:id/enrich` | Manual one-shot IOC enrichment (does not change the toggle). Looks up the case's IOCs (hashes/IPs/domains/URLs) on the configured providers — **VirusTotal** (`DFIR_VT_KEY`), **MalwareBazaar** (`DFIR_MB_KEY`), **AbuseIPDB** (`DFIR_ABUSEIPDB_KEY`), **MISP** (`DFIR_MISP_URL` + `DFIR_MISP_KEY`), **RockyRaccoon** (`DFIR_ROCKYRACCOON_KEY`, **process** names — prevalence / LOLBIN / risk / expected parent / ATT&CK), **YETI** (`DFIR_YETI_URL` + `DFIR_YETI_KEY`, your own instance) — and annotates each with a verdict/score/link. Cached on the IOC (skips already-enriched unless `{ force: true }`); throttled (`DFIR_ENRICH_DELAY_MS`) and capped (`DFIR_ENRICH_MAX`, hashes/IPs first). `501` if no provider key is set. **⚠ OPSEC: sends indicators to third-party services.** |
+| `POST /cases/:id/enrich` | Manual one-shot IOC enrichment (does not change the toggle). Looks up the case's IOCs (hashes/IPs/domains/URLs) on the configured providers — **VirusTotal** (`DFIR_VT_KEY`), **MalwareBazaar** (`DFIR_MB_KEY`), **AbuseIPDB** (`DFIR_ABUSEIPDB_KEY`), **MISP** (`DFIR_MISP_URL` + `DFIR_MISP_KEY`), **RockyRaccoon** (`DFIR_ROCKYRACCOON_KEY`, **process** names — prevalence / LOLBIN / risk / expected parent / ATT&CK), **YETI** (`DFIR_YETI_URL` + `DFIR_YETI_KEY`, your own instance) — and annotates each with a verdict/score/link. Cached on the IOC (skips already-enriched unless `{ force: true }`); throttled (`DFIR_ENRICH_DELAY_MS`) and capped (`DFIR_ENRICH_MAX`, hashes/IPs first). **Reachability-gated**: a self-hosted MISP/YETI that's down is health-probed (cached ~60s) before sending, then skipped + retried rather than blasted one request per IOC. `501` if no provider key is set. **⚠ OPSEC: sends indicators to third-party services.** |
+| `GET /enrich-health` | Reachability of the configured providers (for the dashboard's ●up/down dots): `{ providers: [{ name, scope, probed, ok, detail? }] }`. Probes each self-hosted source (MISP `GET /servers/getVersion`; YETI API-token exchange), cached ~60s (`DFIR_ENRICH_HEALTH_TTL_MS`). Providers without a health endpoint (external SaaS) report `probed:false, ok:true`. A background poller (`DFIR_ENRICH_HEALTH_POLL_MS`, default 60s, `=0` off) re-probes down servers and auto-resumes enrichment for cases it had to skip. |
 | `POST /cases/:id/synthesize` | Run the synthesis pass (findings / MITRE / attacker path) from the forensic timeline; pushes the update to the dashboard. The dashboard's **Synthesize** button calls this. |
 | `POST /cases/:id/ask` | `{ question }` → ask the AI a free-form question about the case ("was data exfiltrated?", "was a USB connected?"). Single-shot, no state change; returns `{ answer, status (answered/partial/unknown), pointer (which artifact to collect/where), relatedEventIds }`. |
 | `POST /cases/:id/questions` | `{ question, answer?, status?, pointer? }` → add an analyst question to the case's key questions, **pinned** (preserved across synthesis, which answers it once the evidence supports it). The dashboard's **Add to open questions** button calls this. |

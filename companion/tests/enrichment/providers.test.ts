@@ -115,6 +115,21 @@ describe("MispProvider", () => {
     expect(misp.supports("hash")).toBe(true);
     expect(misp.supports("process")).toBe(false);
   });
+
+  it("probe() hits the version endpoint with auth; resolves when up, throws on 401 / unreachable", async () => {
+    const okFetch = vi.fn(async () => jsonResponse({ version: "2.4.190" }));
+    const misp = new MispProvider({ baseUrl: "https://misp.example.org/", apiKey: "k", fetchFn: okFetch });
+    await expect(misp.probe()).resolves.toBeUndefined();
+    expect(okFetch.mock.calls[0][0]).toBe("https://misp.example.org/servers/getVersion");
+    expect((okFetch.mock.calls[0][1] as RequestInit).method).toBe("GET");
+    expect(((okFetch.mock.calls[0][1] as RequestInit).headers as Record<string, string>).Authorization).toBe("k");
+
+    const auth = new MispProvider({ baseUrl: "https://m", apiKey: "bad", fetchFn: vi.fn(async () => new Response("", { status: 403 })) });
+    await expect(auth.probe()).rejects.toThrow(/auth failed/i);
+
+    const dead = new MispProvider({ baseUrl: "https://m", apiKey: "k", fetchFn: vi.fn(async () => { throw new Error("fetch failed"); }) });
+    await expect(dead.probe()).rejects.toThrow(/fetch failed/i);
+  });
 });
 
 describe("RockyRaccoonProvider (process intel)", () => {
@@ -228,6 +243,21 @@ describe("YetiProvider", () => {
     const r = await yeti.lookup("ip", "9.9.9.9");
     expect(r!.tags).toEqual(["blocklist"]);
     expect(r!.verdict).toBe("suspicious");
+  });
+
+  it("probe() forces a fresh API-token exchange; resolves when up, throws the 405 when down", async () => {
+    // Up: the token endpoint returns a JWT → probe resolves.
+    const upFetch = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/v2/auth/api-token")) return jsonResponse({ access_token: "jwt-abc" });
+      throw new Error("unexpected url " + url);
+    });
+    const up = new YetiProvider({ baseUrl: "https://yeti.example.org/", apiKey: "apikey123", fetchFn: upFetch });
+    await expect(up.probe()).resolves.toBeUndefined();
+    expect(upFetch.mock.calls[0][0]).toBe("https://yeti.example.org/api/v2/auth/api-token");
+
+    // Down: the instance answers 405 on the auth endpoint (as in the field report) → probe throws.
+    const down = new YetiProvider({ baseUrl: "https://y", apiKey: "apikey123", fetchFn: vi.fn(async () => new Response("", { status: 405 })) });
+    await expect(down.probe()).rejects.toThrow(/YETI auth HTTP 405/);
   });
 
   it("refreshes the token once on a 401 from search", async () => {

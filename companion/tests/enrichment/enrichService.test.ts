@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { enrichIocs, type EnrichLookupEvent } from "../../src/enrichment/enrichService.js";
+import { ProviderHealthCache } from "../../src/enrichment/providerHealth.js";
 import type { EnrichmentProvider, EnrichmentResult, IocKind } from "../../src/enrichment/provider.js";
 import type { IOC } from "../../src/analysis/stateTypes.js";
 
@@ -14,6 +15,16 @@ function fakeProvider(name: string, kinds: IocKind[], result: EnrichmentResult |
     scope: "external",
     supports: (k) => kinds.includes(k),
     lookup: async (k, v) => { calls.push(`${name}:${k}:${v}`); return result; },
+  };
+}
+
+// A provider with a probe() that's down (throws) and counts both probes and lookups.
+function downProvider(name: string, kinds: IocKind[], counts: { probes: number; lookups: number }): EnrichmentProvider {
+  return {
+    name, scope: "local",
+    supports: (k) => kinds.includes(k),
+    probe: async () => { counts.probes += 1; throw new Error("ECONNREFUSED"); },
+    lookup: async () => { counts.lookups += 1; return null; },
   };
 }
 
@@ -164,6 +175,42 @@ describe("enrichIocs", () => {
     calls.length = 0; mode = "error";
     const r3 = await enrichIocs(r2.iocs, { providers: [flaky], sleep: noSleep, now, force: true });
     expect(r3.iocs[0].enrichments!.map((e) => e.source)).toEqual(["Flaky"]); // last-known hit kept
+  });
+
+  it("skips a provider probed DOWN: never sends a lookup, doesn't mark it checked, reports it unavailable", async () => {
+    const counts = { probes: 0, lookups: 0 };
+    const dead = downProvider("MISP", ["hash", "ip"], counts);
+    const events: EnrichLookupEvent[] = [];
+    const health = new ProviderHealthCache({ monotonic: () => 0 });
+    const { iocs: out, summary } = await enrichIocs(
+      [ioc({ value: "h1", type: "hash" }), ioc({ value: "1.2.3.4", type: "ip" })],
+      { providers: [dead], sleep: noSleep, now, health, monotonic: () => 0, onLookup: (e) => events.push(e) },
+    );
+    expect(counts.lookups).toBe(0);                       // not a single indicator sent to the dead server
+    expect(counts.probes).toBe(1);                        // probed once (cached for both IOCs)
+    expect(summary.unavailable).toEqual(["MISP"]);
+    expect(summary.queried).toBe(0);
+    expect(out[0].enrichments).toBeUndefined();           // untouched → retried on a later run
+    expect(out[0].enrichedBy ?? []).not.toContain("MISP");
+    expect(events.filter((e) => e.outcome === "skipped")).toHaveLength(1);   // one line, not one-per-IOC
+    expect(events[0]).toMatchObject({ provider: "MISP", outcome: "skipped", detail: "ECONNREFUSED" });
+  });
+
+  it("with a mix of up and down providers, queries the healthy one and skips the dead one", async () => {
+    const calls: string[] = [];
+    const counts = { probes: 0, lookups: 0 };
+    const up = fakeProvider("VirusTotal", ["hash"], { source: "VirusTotal", verdict: "malicious" }, calls);   // no probe() → always up
+    const down = downProvider("MISP", ["hash"], counts);
+    const health = new ProviderHealthCache({ monotonic: () => 0 });
+    const { iocs: out, summary } = await enrichIocs([ioc({ value: "h1", type: "hash" })], {
+      providers: [up, down], sleep: noSleep, now, health,
+    });
+    expect(calls).toEqual(["VirusTotal:hash:h1"]);        // only the healthy provider queried
+    expect(counts.lookups).toBe(0);
+    expect(summary.unavailable).toEqual(["MISP"]);
+    expect(summary.queried).toBe(1);
+    expect(out[0].enrichedBy).toEqual(["VirusTotal"]);    // dead provider NOT recorded as checked
+    expect(out[0].enrichments!.map((e) => e.source)).toEqual(["VirusTotal"]);
   });
 
   it("emits an onLookup event per provider call with hit / miss / error outcome", async () => {

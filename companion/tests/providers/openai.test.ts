@@ -46,6 +46,44 @@ describe("OpenAIProvider", () => {
     expect(body.messages[1].content[1].image_url.detail).toBe("low");
   });
 
+  it("context guard: throws a clear 'context' error when the prompt alone exceeds the window (no API call)", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, contextTokens: 1000, maxTokens: 200 });
+    // ~5000-token user prompt (20000 chars / 4) >> 1000-token context.
+    await expect(p.analyze({ systemPrompt: "s", userPrompt: "x".repeat(20_000), images: [] }))
+      .rejects.toMatchObject({ kind: "context" } as Partial<ProviderError>);
+    expect(fetchFn).not.toHaveBeenCalled();   // failed fast — never hit the upstream API
+    await p.analyze({ systemPrompt: "s", userPrompt: "x".repeat(20_000), images: [] }).catch((e: ProviderError) => {
+      expect(e.message).toContain("over the model's");
+      expect(e.message).toContain("DFIR_AI_SYNTH_MAX_EVENTS");
+    });
+  });
+
+  it("context guard: shrinks max_tokens so a large-but-fitting prompt still sends", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    // ctx 10000, margin 1000. Prompt ~2000 tokens (8000 chars). room = 10000-2000-1000 = 7000.
+    const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, contextTokens: 10_000, maxTokens: 16_000 });
+    await p.analyze({ systemPrompt: "", userPrompt: "x".repeat(8_000), images: [] });
+    const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.max_tokens).toBe(7_000);       // reduced from 16000 to fit the window
+  });
+
+  it("context guard: leaves max_tokens untouched when the request comfortably fits", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, contextTokens: 128_000, maxTokens: 16_000 });
+    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string).max_tokens).toBe(16_000);
+  });
+
+  it("maps an upstream 400 about context length to an actionable message", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ error: { message: "This endpoint's maximum context length is 128000 tokens. However, you requested 251167" } }, 400));
+    const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn });   // guard off (no contextTokens)
+    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }).catch((e: ProviderError) => {
+      expect(e.message).toContain("context too large");
+      expect(e.message).toContain("DFIR_AI_CONTEXT_TOKENS");
+    });
+  });
+
   it("maps 429 to a rate_limit ProviderError", async () => {
     const fetchFn = vi.fn(async () => jsonResponse({ error: "slow down" }, 429));
     const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });

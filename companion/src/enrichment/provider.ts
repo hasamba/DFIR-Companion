@@ -29,6 +29,12 @@ export interface EnrichmentProvider {
   // Resolve to a result, or null if the indicator isn't found / no data. Throws only on
   // hard errors (auth, rate limit) so the service can react (skip / back off).
   lookup(kind: IocKind, value: string): Promise<EnrichmentResult | null>;
+  // OPTIONAL reachability check: a cheap request that verifies the server is up and auth
+  // works WITHOUT sending a real indicator. Resolves when reachable; throws (like lookup)
+  // when the server is unreachable / auth is broken. Used to gate sending hundreds of IOCs
+  // at a dead self-hosted instance (MISP / YETI). A provider that omits it is treated as
+  // always up — so external SaaS keep their existing per-call error handling.
+  probe?(): Promise<void>;
 }
 
 export type FetchFn = typeof fetch;

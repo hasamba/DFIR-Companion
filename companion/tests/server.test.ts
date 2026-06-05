@@ -731,6 +731,26 @@ describe("state and report routes", () => {
     expect((await request(app).post("/cases/c1/enrich-control").send({})).status).toBe(400);
   });
 
+  it("enrich-health: probes each provider and reports up / down / no-probe", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-enrich-health-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const base = (name: string, scope: "local" | "external") => ({ name, scope, supports: () => true, lookup: async () => null });
+    const enrichmentProviders = [
+      { ...base("MISP", "local"), probe: async () => { /* up */ } },
+      { ...base("YETI", "local"), probe: async () => { throw new Error("YETI auth HTTP 405"); } },
+      base("VirusTotal", "external"),   // no probe() → reported up, not probed
+    ];
+    const app = createApp(store, { stateStore, enrichmentProviders });
+
+    const r = await request(app).get("/enrich-health");
+    expect(r.status).toBe(200);
+    const byName = Object.fromEntries(r.body.providers.map((p: { name: string }) => [p.name, p]));
+    expect(byName.MISP).toMatchObject({ scope: "local", probed: true, ok: true });
+    expect(byName.YETI).toMatchObject({ probed: true, ok: false, detail: "YETI auth HTTP 405" });
+    expect(byName.VirusTotal).toMatchObject({ probed: false, ok: true });
+  });
+
   it("comments: post/list/delete on a case entity, with validation + a live ping", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-comments-route-"));
     const store = new CaseStore(root);

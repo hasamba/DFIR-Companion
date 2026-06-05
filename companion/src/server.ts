@@ -13,12 +13,14 @@ import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js"
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { parseCsv } from "./analysis/csvImport.js";
+import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
 import { parseLogLines } from "./analysis/logImport.js";
 import { parseThorReport } from "./analysis/thorImport.js";
 import { parseSiemExport } from "./analysis/siemImport.js";
 import type { SiemImportOptions } from "./analysis/siemImport.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
+import { ProviderHealthCache } from "./enrichment/providerHealth.js";
 import type { EnrichmentProvider } from "./enrichment/provider.js";
 import { VirusTotalProvider } from "./enrichment/virustotal.js";
 import { MalwareBazaarProvider } from "./enrichment/malwarebazaar.js";
@@ -91,6 +93,13 @@ export interface AppOptions {
   enrichmentProviders?: EnrichmentProvider[];
   enrichDelayMs?: number;
   enrichMaxIocs?: number;
+  // Provider reachability gate. A self-hosted MISP / YETI can be down; rather than fire one
+  // doomed request per IOC, each provider is probed (cached `enrichHealthTtlMs`, default 60s)
+  // before sending — a down provider is skipped this run. When `enrichHealthPollMs` is set
+  // (>0), a background poller re-probes down providers on that interval and auto-resumes
+  // enrichment for cases it had to skip, once the server is reachable again.
+  enrichHealthTtlMs?: number;
+  enrichHealthPollMs?: number;
   // Broadcast a fresh investigation state to dashboard clients (for routes that change
   // state outside the AI pipeline, e.g. enrichment).
   onState?: (state: InvestigationState) => void;
@@ -646,6 +655,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return allProviders.filter((p) => enabled.has(p.name));
   }
 
+  // Shared reachability gate (one per server, so the cache survives across enrich runs: if a
+  // self-hosted instance is down and three imports land within a minute, it's probed once,
+  // not three times). Logs each real probe's verdict so the operator sees DOWN/UP transitions.
+  const enrichHealth = new ProviderHealthCache({
+    ttlMs: options.enrichHealthTtlMs,
+    onProbe: (name, h) => logLine(`[enrich] health ${name} ${h.ok ? "UP" : `DOWN (${h.detail ?? "unreachable"})`}`),
+  });
+  // Cases whose last enrich run had to skip a provider that was down. The background poller
+  // drains this and re-enriches once the server is reachable again (the per-provider cache
+  // means only the still-unchecked IOCs are actually queried).
+  const enrichPending = new Set<string>();
+
   function enrichInBackground(caseId: string, force = false): void {
     if (allProviders.length === 0 || !options.stateStore) return;
     void (async () => {
@@ -659,6 +680,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         delayMs: options.enrichDelayMs,
         maxIocs: options.enrichMaxIocs,
         force,
+        health: enrichHealth,   // probe each provider (cached ~60s) before sending — skip the dead ones
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `enriching IOC ${done}/${total}`,
@@ -668,7 +690,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           `[enrich] ${caseId} ${e.provider} ${e.kind} ${shortValue(e.value)} -> ${e.outcome}${e.detail ? ` (${e.detail})` : ""} ${e.ms}ms`,
         ),
       });
-      logLine(`[enrich] ${caseId} DONE queried=${summary.queried} hits=${summary.withHits} errors=${summary.errors} skipped=${summary.skipped}`);
+      const downNote = summary.unavailable.length ? ` unavailable=[${summary.unavailable.join(", ")}]` : "";
+      logLine(`[enrich] ${caseId} DONE queried=${summary.queried} hits=${summary.withHits} errors=${summary.errors} skipped=${summary.skipped}${downNote}`);
+      // Remember (or clear) this case for the background poller: if a provider was down we
+      // couldn't finish, so retry it on recovery; if all reachable, drop any stale pending mark.
+      if (summary.unavailable.length) enrichPending.add(caseId);
+      else enrichPending.delete(caseId);
       // Re-load + write only the iocs so we don't clobber a concurrent state change.
       const latest = await options.stateStore!.load(caseId);
       const byValue = new Map(iocs.map((i) => [i.value, i]));
@@ -694,7 +721,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await options.stateStore!.save(merged);
       options.onState?.(merged);
       const chainNote = chainSummary ? `; chains ${chainSummary.anomalies} anomalous/${chainSummary.checked}` : "";
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}` });
+      const skipNote = summary.unavailable.length ? `; skipped ${summary.unavailable.join(", ")} (unreachable — will retry)` : "";
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}${skipNote}` });
     })().catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
   }
 
@@ -703,6 +731,31 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   function autoEnrichIfEnabled(caseId: string): void {
     if (allProviders.length === 0) return;
     enabledProvidersFor(caseId).then((ps) => { if (ps.length > 0) enrichInBackground(caseId); }).catch(() => {});
+  }
+
+  // Background reachability poller (opt-in via enrichHealthPollMs, set by startServer). It
+  // re-probes only the providers currently known-down — cheap — and, when one recovers,
+  // resumes enrichment for the cases that had to skip it. `.unref()` so it never holds the
+  // process open; tests don't set the option, so no timer starts.
+  if (options.enrichHealthPollMs && options.enrichHealthPollMs > 0 && allProviders.some((p) => p.probe)) {
+    let polling = false;   // guard against overlap if a probe round runs long
+    const timer = setInterval(() => {
+      if (polling) return;
+      const down = allProviders.filter((p) => enrichHealth.peek(p.name)?.ok === false);
+      if (down.length === 0) return;   // nothing to recover
+      polling = true;
+      void (async () => {
+        for (const p of down) { enrichHealth.invalidate(p.name); await enrichHealth.check(p); }
+        const recovered = down.some((p) => enrichHealth.peek(p.name)?.ok === true);
+        if (recovered && enrichPending.size > 0) {
+          const cases = [...enrichPending];
+          enrichPending.clear();
+          logLine(`[enrich] health recovered — resuming ${cases.length} case(s)`);
+          for (const c of cases) enrichInBackground(c);
+        }
+      })().catch(() => {}).finally(() => { polling = false; });
+    }, options.enrichHealthPollMs);
+    timer.unref?.();
   }
 
   function resynthesizeInBackground(caseId: string): void {
@@ -1061,6 +1114,21 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Reachability of the configured providers (for the dashboard's ●up/down dots). Probes each
+  // one (cached ~60s, so opening the modal repeatedly is cheap) and reports its last verdict.
+  // Providers without a probe() (external SaaS) report ok:true (no health endpoint to test).
+  app.get("/enrich-health", async (_req: Request, res: Response) => {
+    try {
+      const health = await Promise.all(allProviders.map(async (p) => {
+        const h = p.probe ? await enrichHealth.check(p) : { ok: true, checkedAt: 0 };
+        return { name: p.name, scope: p.scope, probed: Boolean(p.probe), ok: h.ok, detail: h.detail };
+      }));
+      return res.status(200).json({ providers: health });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Set which providers are enabled for this case. Accepts `{ providers: string[] }`
   // (preferred) or legacy `{ enabled: boolean }`. Saving re-runs enrichment; per-provider
   // caching means only the newly-enabled providers query the existing IOCs.
@@ -1228,6 +1296,9 @@ export interface ProviderParams {
   imageDetail?: "high" | "low" | "auto";
   timeoutMs?: number;
   maxTokens?: number;
+  // The model's context window (tokens) for the provider's pre-flight guard. Defaults from
+  // DFIR_AI_CONTEXT_TOKENS (or 128000) so an oversized prompt is trimmed/clearly-errored.
+  contextTokens?: number;
   // Override the provider's API base URL. Required for a self-hosted LiteLLM proxy
   // (and any OpenAI-compatible local endpoint); each provider keeps its own default
   // when this is unset. Empty string is treated as unset.
@@ -1250,11 +1321,14 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
   // output for its per-request credit check and can 402 a large request (e.g. THOR
   // synthesis) even when the account has credits. Tunable via DFIR_AI_MAX_TOKENS.
   const maxTokens = params.maxTokens ?? (Number(process.env.DFIR_AI_MAX_TOKENS) || 16000);
+  // Context window for the pre-flight guard — same default the pipeline budgets against, so
+  // a too-big prompt is trimmed by the pipeline and, as a backstop, caught here before the API.
+  const contextTokens = params.contextTokens ?? resolveContextTokens();
   const registry = new ProviderRegistry();
-  registry.register(new OpenAIProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
-  registry.register(new OpenRouterProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
-  registry.register(new OllamaCloudProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
-  registry.register(new LiteLlmProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens }));
+  registry.register(new OpenAIProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
+  registry.register(new OpenRouterProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
+  registry.register(new OllamaCloudProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
+  registry.register(new LiteLlmProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
   registry.register(new GeminiProvider({ apiKey, model, baseUrl, timeoutMs, maxTokens }));
   return registry.get(name);
 }
@@ -1376,6 +1450,11 @@ export function startServer(casesRoot: string, port = 4773): void {
     enrichmentProviders: buildEnrichmentProviders(),
     enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,
     enrichMaxIocs: Number(process.env.DFIR_ENRICH_MAX) || undefined,
+    // Reachability gate: probe a self-hosted MISP/YETI before sending IOCs, cached this long
+    // (default 60s in the cache). The poller re-checks down servers on the same cadence and
+    // auto-resumes skipped cases on recovery — set DFIR_ENRICH_HEALTH_POLL_MS=0 to disable it.
+    enrichHealthTtlMs: Number(process.env.DFIR_ENRICH_HEALTH_TTL_MS) || undefined,
+    enrichHealthPollMs: process.env.DFIR_ENRICH_HEALTH_POLL_MS === "0" ? 0 : (Number(process.env.DFIR_ENRICH_HEALTH_POLL_MS) || 60_000),
     irisClient: buildIrisClient(),
     irisOptions: irisPushOptions(),
     timesketchClient: buildTimesketchClient(),

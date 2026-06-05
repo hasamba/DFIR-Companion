@@ -4,6 +4,7 @@
 
 import type { IOC, IocEnrichment } from "../analysis/stateTypes.js";
 import { iocKind, type EnrichmentProvider, type IocKind } from "./provider.js";
+import type { ProviderHealthCache } from "./providerHealth.js";
 
 // Emitted once per outbound provider call so callers can log exactly which threat-intel
 // API was hit, for which indicator, and how it resolved (hit / miss / error). Lets the
@@ -12,8 +13,8 @@ export interface EnrichLookupEvent {
   provider: string;          // provider name (e.g. "MISP", "YETI")
   kind: IocKind;             // the looked-up IOC kind
   value: string;             // the indicator value
-  outcome: "hit" | "miss" | "error";
-  detail?: string;           // verdict on a hit, or the error message on a failure
+  outcome: "hit" | "miss" | "error" | "skipped";  // "skipped" = provider was probed down, no request sent
+  detail?: string;           // verdict on a hit, or the error/unreachable message
   ms: number;                // call duration in milliseconds
 }
 
@@ -27,6 +28,10 @@ export interface EnrichOptions {
   monotonic?: () => number;               // injected ms clock for call timing (default Date.now)
   onProgress?: (done: number, total: number) => void;
   onLookup?: (event: EnrichLookupEvent) => void;   // fired per provider call (for logging)
+  // Reachability gate. When provided, each provider is health-checked (cached ~60s) before we
+  // send it any indicator; a provider probed DOWN is skipped — not queried, not recorded as
+  // "checked" — so a dead MISP/YETI isn't hit once per IOC, and recovers retry on a later run.
+  health?: ProviderHealthCache;
 }
 
 function errorMessage(err: unknown): string {
@@ -34,11 +39,12 @@ function errorMessage(err: unknown): string {
 }
 
 export interface EnrichSummary {
-  enrichable: number;   // IOCs that have an enrichable kind
-  queried: number;      // IOCs actually looked up this run
-  withHits: number;     // IOCs that got ≥1 non-empty result
-  skipped: number;      // already-enriched (cached) or beyond the cap
-  errors: number;       // provider call failures
+  enrichable: number;     // IOCs that have an enrichable kind
+  queried: number;        // IOCs actually looked up this run (≥1 real provider call)
+  withHits: number;       // IOCs that got ≥1 non-empty result
+  skipped: number;        // already-enriched (cached) or beyond the cap
+  errors: number;         // provider call failures
+  unavailable: string[];  // providers probed DOWN and skipped this run (no requests sent)
 }
 
 // Most-valuable kinds first so the per-run cap spends lookups where they matter.
@@ -78,18 +84,36 @@ export async function enrichIocs(
     withHits: 0,
     skipped: enrichable - toQuery.length,
     errors: 0,
+    unavailable: [],
   };
 
   // Map of IOC index → { enrichments, enrichedBy }, so we can rebuild the list immutably.
   const updates = new Map<number, { enrichments: IocEnrichment[]; enrichedBy: string[] }>();
   let externalCalls = 0;
+  const downReported = new Set<string>();   // providers we've already logged as unreachable this run
 
   for (const { ioc, idx, kind, todo } of toQuery) {
     const succeeded = new Set<string>();   // providers whose call returned (hit OR miss) — NOT errors
     const fresh: IocEnrichment[] = [];
+    let queriedThisIoc = false;            // a real provider call was made for this IOC
     for (const provider of todo) {
+      // Reachability gate (cached ~60s): skip a provider probed DOWN before spending a call.
+      // It's NOT counted as an error and NOT added to enrichedBy, so a later run retries it
+      // once the server is back. Logged once per provider per run (not once per IOC).
+      if (opts.health) {
+        const h = await opts.health.check(provider);
+        if (!h.ok) {
+          if (!downReported.has(provider.name)) {
+            downReported.add(provider.name);
+            summary.unavailable.push(provider.name);
+            opts.onLookup?.({ provider: provider.name, kind, value: ioc.value, outcome: "skipped", detail: h.detail, ms: 0 });
+          }
+          continue;
+        }
+      }
       if (externalCalls > 0) await sleep(delayMs);            // throttle between live calls
       externalCalls += 1;
+      queriedThisIoc = true;
       const startedAt = monotonic();
       try {
         const r = await provider.lookup(kind, ioc.value);
@@ -107,6 +131,9 @@ export async function enrichIocs(
         });
       }
     }
+    // An IOC whose every provider was skipped (all down) was never really queried — don't
+    // count it, and fall through to leave it untouched so a later run picks it up.
+    if (!queriedThisIoc) continue;
     summary.queried += 1;
     opts.onProgress?.(summary.queried, toQuery.length);
 

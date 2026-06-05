@@ -82,7 +82,9 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   Ollama / vLLM / 100+ backends — keeps evidence fully on-box) or any OpenAI-compatible endpoint via
   `DFIR_AI_BASE_URL`, Gemini; optional **two-tier** (cheap extraction + strong synthesis); high-detail
   image tiling for small-text OCR; tunable timeout; **bounded `max_tokens`** + **truncation-tolerant
-  JSON parsing** (no more spurious OpenRouter 402 / parse errors).
+  JSON parsing** (no more spurious OpenRouter 402 / parse errors); **context-window budgeting**
+  (`DFIR_AI_CONTEXT_TOKENS`, default 128k) — every prompt is trimmed/batched to fit, so a big case
+  never 400s on *"maximum context length"*; an unfittable prompt fails with actionable guidance.
 - **EDR/XDR + SIEM consoles are evidence** — CrowdStrike, Defender, SentinelOne, Splunk, Elastic,
   Sentinel, QRadar detections are extracted; analyst tool-operation / UI navigation is filtered out,
   with an **incident-signal allowlist** so a real detection is never dropped.
@@ -129,6 +131,10 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   IOC on it** (per-source cache), so adding a site later backfills the whole case on it.
 - **Process-chain validation** — RockyRaccoon parent→child check flags an anomalous chain
   (e.g. `excel.exe → powershell.exe`) on the timeline.
+- **Reachability gate** — a self-hosted **MISP/YETI that's down** is **health-probed before any IOC is
+  sent** (cached ~60s), so a dead instance isn't hit once per IOC. Down sources are **skipped and
+  retried** (not marked "checked"), shown as **●up/down dots** in the Enrich picker, and a background
+  poller **auto-resumes** enrichment when the server comes back (`DFIR_ENRICH_HEALTH_POLL_MS`).
 - **Per-case toggle**, cached on the IOC, throttled, capped; verdict/score/tags/link badges; IOC CSV column.
 - **Self-hosted TLS** — MISP / YETI on an internal-CA or self-signed cert: trust a PEM CA bundle
   (`DFIR_MISP_CA` / `DFIR_YETI_CA`, verification stays on) or skip verification for a lab

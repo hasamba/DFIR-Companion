@@ -40,6 +40,19 @@ export class MispProvider implements EnrichmentProvider {
 
   supports(kind: IocKind): boolean { return kind !== "process"; } // attribute values: hash/ip/domain/url (not bare process names)
 
+  // Cheap reachability + auth check: GET /servers/getVersion (a tiny authenticated endpoint),
+  // so we never blast a down instance with one restSearch per IOC. A dead server (connection
+  // refused / TLS error) rejects the fetch; a bad key → 401/403. Throws on any of these.
+  async probe(): Promise<void> {
+    const res = await this.fetchFn(`${this.base}/servers/getVersion`, {
+      method: "GET",
+      headers: { Authorization: this.opts.apiKey, Accept: "application/json" },
+      signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
+    });
+    if (res.status === 401 || res.status === 403) throw new Error("MISP auth failed (check DFIR_MISP_KEY)");
+    if (!res.ok) throw new Error(`MISP HTTP ${res.status}`);
+  }
+
   async lookup(_kind: IocKind, value: string): Promise<EnrichmentResult | null> {
     const res = await this.fetchFn(`${this.base}/attributes/restSearch`, {
       method: "POST",
