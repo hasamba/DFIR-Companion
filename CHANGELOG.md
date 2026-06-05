@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **AI-input anonymization (default on):** sensitive victim data (internal IPs, usernames,
+  hostnames, internal domains, emails, user-profile paths) is tokenized — and secrets
+  (passwords/API keys/tokens) one-way-redacted — before any text is sent to the LLM, then
+  the real values are restored before they reach the timeline/IOCs/findings. Adversary
+  indicators (public IPs, malware hashes, attacker domains) are preserved so threat signal
+  and enrichment survive. Per-case toggle + category picker in the dashboard; an entity view
+  shows the auto-derived list (grows with the case) and lets you add custom entities the
+  detection missed; `DFIR_ANONYMIZE` env default. Screenshots are best-effort (pixels can't
+  be tokenized; the dashboard warns when the vision model is external — a local Ollama vision
+  model keeps them on-box).
 - **SIEM / EDR JSON import.** A new **Import SIEM/EDR** button (and `POST /cases/:id/import-siem`)
   ingests a JSON export from a SIEM or EDR — the second JSON ingest path besides THOR. It **unwraps the
   common container envelopes** (Elastic/Kibana `{ data: [{ _source }] }`, an Elasticsearch

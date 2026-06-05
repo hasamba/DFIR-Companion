@@ -93,6 +93,10 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   picks events *stratified* (all Critical/High + earliest initial-access + an even time-spread) for better
   kill-chain coverage than top-N-by-severity; and prepends a compact *compromised assets ← IoCs* +
   *threat-intel verdicts* digest so findings and the attacker path are grounded, not inferred.
+- **AI-input anonymization** — reversibly tokenizes internal IPs/usernames/hostnames/domains/emails/
+  user-paths and one-way-redacts secrets before the LLM sees them, restoring real values on display;
+  adversary IOCs (public IPs, hashes, attacker domains) are preserved. Per-case toggle + a
+  viewable/editable entity list (auto-derived + manual). Default on.
 
 ### Correlation & deduplication
 - **Cross-source correlation** — the same artifact reported by different tools (e.g. Velociraptor +

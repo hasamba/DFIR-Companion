@@ -238,6 +238,38 @@ on, the server automatically analyzes everything captured while it was off (trac
 `lastAnalyzedSeq` in `state/ai-control.json`), then synthesizes. Explicit imports
 (CSV / log / THOR / SIEM-EDR JSON) always analyze regardless of this toggle.
 
+**Anonymization (default on).** Before any text is sent to the LLM (screenshot-window
+context, CSV, log, Ask, synthesis), sensitive *victim* data is replaced with reversible
+typed tokens (`ANON_HOST_1`, `ANON_USER_2`, …) and secrets are one-way-redacted to
+`[REDACTED_SECRET]`. The model's response is restored to real values before it reaches
+the timeline, IOCs, findings, or the dashboard — so `InvestigationState` and all exports
+always contain the real data ("tokenize-in-transit").
+
+- **Tokenized (victim / internal):** RFC 1918 / loopback / CGNAT internal IPs, known
+  hostnames / FQDNs, `DOMAIN\user` / internal-UPN accounts, internal / AD domains,
+  emails, and the username segment of user-profile paths (`C:\Users\<name>\…`).
+- **Preserved (adversary / IOC):** public IPs, malware hashes, attacker domains — so
+  threat signal and threat-intel enrichment survive with real indicators.
+- **Secrets** (AWS keys, JWTs, GitHub/Slack tokens, `password=` / `Authorization: Bearer …`,
+  URL credentials) are **one-way redacted** (`[REDACTED_SECRET]`), never restored.
+  Hashes are deliberately NOT treated as secrets.
+- **Per-case control** via the dashboard **Anon** button: enable/disable, choose which
+  of the six categories to tokenize, toggle secret redaction. Persisted in
+  `state/anon-control.json`. Toggling forces a re-synthesis so conclusions reflect the new
+  wire policy.
+- **Entity list (transparency + manual additions).** The Anon modal shows the
+  *auto-derived* entities (hosts / accounts / internal domains derived from the case
+  timeline — read-only, grows as the investigation does) and lets the analyst
+  **add/remove custom entities** (value + category, including a free-form **"Other"**
+  for codenames). Custom entities are tokenized by exact match even if that category's
+  detector is off. Persisted in `state/anon-entities.json`.
+- **Screenshots are best-effort.** Pixel content can't be tokenized. With an external
+  vision model the screenshot images are sent as-is (the dashboard shows a warning when
+  anon is on and the vision model is external). Pointing `DFIR_AI_MODEL` at a local
+  Ollama vision model keeps screenshots on-box.
+- `DFIR_ANONYMIZE=off` flips the default for **new** cases (existing cases keep their
+  saved setting).
+
 **Live capture and conclusions.** While you browse, the per-window extraction builds
 the forensic timeline + investigation log. Findings, MITRE and the attacker path come
 from the synthesis pass, which by default now runs **automatically and debounced**
