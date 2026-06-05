@@ -112,6 +112,8 @@ describe("anonymizer — user paths", () => {
   it("leaves well-known profile names alone", () => {
     const a = createAnonymizer(policy({ PATH: true }), NONE);
     expect(a.apply("C:\\Users\\Public\\x")).toContain("Users\\Public");
+    expect(a.apply("C:\\Users\\SYSTEM\\x")).toContain("Users\\SYSTEM");
+    expect(a.apply("C:\\Users\\Guest\\x")).toContain("Users\\Guest");
   });
   it("handles POSIX home paths", () => {
     const a = createAnonymizer(policy({ PATH: true }), NONE);
@@ -129,6 +131,13 @@ describe("anonymizer — hosts", () => {
     expect(out).not.toContain("dc01.adatumlab.local");
     expect(out).toMatch(/ANON_HOST_/);
     expect(a.restore(out)).toBe("logon on ALCLIENT07 then to dc01.adatumlab.local");
+  });
+  it("restores hostnames in the text's own casing (round-trip on case mismatch)", () => {
+    const known: KnownEntities = { hosts: ["DC01"], accounts: [], internalDomains: [] };
+    const a = createAnonymizer(policy({ HOST: true }), known);
+    const out = a.apply("logon on dc01");
+    expect(out).not.toContain("dc01");
+    expect(a.restore(out)).toBe("logon on dc01");
   });
 });
 
@@ -163,6 +172,12 @@ describe("anonymizer — secret redaction (one-way)", () => {
     const a = createAnonymizer(policy({}, true), NONE);
     const out = a.apply("conn https://svc:s3cr3tPW@10.0.0.5/api");
     expect(out).not.toContain("s3cr3tPW");
+    expect(out).toContain(SECRET_PLACEHOLDER);
+  });
+  it("redacts an opaque (non-JWT) Bearer token in an Authorization header", () => {
+    const a = createAnonymizer(policy({}, true), NONE);
+    const out = a.apply("Authorization: Bearer ABCDEF1234567890ABCDEF");
+    expect(out).not.toContain("ABCDEF1234567890ABCDEF");
     expect(out).toContain(SECRET_PLACEHOLDER);
   });
 });

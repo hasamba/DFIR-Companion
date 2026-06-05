@@ -76,7 +76,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     let out = t;
     // key/value credentials: keep the key name, redact the value.
     out = out.replace(
-      /\b(password|passwd|pwd|secret|api[_-]?key|apikey|token|authorization|bearer)\b(\s*[:=]\s*)["']?([^\s"'<>,;]{3,})/gi,
+      /\b(password|passwd|pwd|secret|api[_-]?key|apikey|token|authorization|bearer)\b(\s*[:=]\s*)(?:bearer\s+|basic\s+)?["']?([^\s"'<>,;]{3,})/gi,
       (_m, k: string, sep: string) => `${k}${sep}${SECRET_PLACEHOLDER}`,
     );
     // URL userinfo password (scheme://user:pass@host) — redact just the password.
@@ -112,7 +112,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   }
   // Capture the profile-dir prefix + the username segment; tokenize only the username.
   const USER_PATH_RE = /([A-Za-z]:\\Users\\|\\Users\\|\/home\/|\/Users\/)([^\\/\r\n"'<>|:*?]+)/g;
-  const WELL_KNOWN_PROFILE = /^(public|default|default user|all users|administrator|admin)$/i;
+  const WELL_KNOWN_PROFILE = /^(public|default|default user|all users|administrator|admin|guest|system|systemprofile|localservice|networkservice)$/i;
   function anonUserPaths(t: string): string {
     return t.replace(USER_PATH_RE, (m, prefix: string, name: string) =>
       WELL_KNOWN_PROFILE.test(name) ? m : prefix + assign("USER", name));
@@ -121,7 +121,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     let out = t;
     for (const h of known.hosts) {
       if (h.length < 2) continue;
-      out = out.replace(new RegExp(`\\b${escapeRegExp(h)}\\b`, "gi"), () => assign("HOST", h));
+      out = out.replace(new RegExp(`\\b${escapeRegExp(h)}\\b`, "gi"), (m) => assign("HOST", m));
     }
     return out;
   }
