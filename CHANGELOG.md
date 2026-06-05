@@ -22,9 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Dashboard case-ID field is now a combo box.** It shows a dropdown of existing cases (from
-  `GET /cases`, refreshed when you create one) while still accepting free text — so you can pick a
-  case or type an id. Implemented with a native `<datalist>`; degrades to plain free-text on an
-  older server / when offline.
+  `GET /cases`, refreshed on focus and when you create a case) while still accepting free text — so
+  you can pick a case or type an id, and cases added out-of-band (moved into the cases folder, or
+  created elsewhere) appear without a full page reload. Implemented with a native `<datalist>`;
+  degrades to plain free-text on an older server / when offline.
 - **New dashboard favicon.** Replaced the favicon / apple-touch icon with a dedicated DFIR Companion
   emblem (the "D + magnifier" mark). `npm run icons` now sources `public/DFIR_Companion_favicon.png`,
   flood-fills its light background to transparent, then trims to the mark and `cover`-resizes

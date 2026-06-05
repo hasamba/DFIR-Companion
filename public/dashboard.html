@@ -1213,6 +1213,9 @@
     document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
     document.getElementById("connect").onclick = connect;
     document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+    // Refresh the dropdown each time the field is focused, so cases added since page load
+    // (moved into the cases folder, or created elsewhere) show up without a full reload.
+    document.getElementById("caseId").addEventListener("focus", loadCaseList);
     document.getElementById("newCaseBtn").onclick = openNewCase;
     document.getElementById("ncCreate").onclick = createNewCase;
     document.getElementById("ncCancel").onclick = closeNewCase;
