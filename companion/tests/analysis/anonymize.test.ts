@@ -62,3 +62,15 @@ describe("anonymizer — internal IPs", () => {
     expect(a.apply("10.0.0.5")).toBe("10.0.0.5");
   });
 });
+
+describe("anonymizer — emails", () => {
+  it("tokenizes email addresses and restores them", () => {
+    const a = createAnonymizer(policy({ EMAIL: true }), NONE);
+    const out = a.apply("phish from attacker@evil.com to jdoe@victim.com");
+    expect(out).not.toContain("attacker@evil.com");
+    expect(out).not.toContain("jdoe@victim.com");
+    expect(out).toMatch(/ANON_EMAIL_1/);
+    expect(out).toMatch(/ANON_EMAIL_2/);
+    expect(a.restore(out)).toBe("phish from attacker@evil.com to jdoe@victim.com");
+  });
+});

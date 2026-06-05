@@ -70,7 +70,10 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   // ── detectors (filled in across later tasks; order is fixed in apply()) ──
   function redactSecrets(t: string): string { return t; }
   function anonAccounts(t: string): string { return t; }
-  function anonEmails(t: string): string { return t; }
+  const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+  function anonEmails(t: string): string {
+    return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));
+  }
   function anonUserPaths(t: string): string { return t; }
   function anonHosts(t: string): string { return t; }
   function anonDomains(t: string): string { return t; }
