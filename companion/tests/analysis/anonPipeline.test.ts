@@ -6,6 +6,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { AnonControlStore } from "../../src/analysis/anonControl.js";
+import { CustomEntitiesStore } from "../../src/analysis/anonEntities.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 
@@ -54,5 +55,26 @@ describe("pipeline anonymization (default on)", () => {
     await pipeline.synthesize("c1", { force: true });
     expect(provider.lastReq!.userPrompt).toContain("ALCLIENT07");
     expect(provider.lastReq!.userPrompt).not.toContain("ANON_HOST_1");
+  });
+});
+
+describe("pipeline anonymization — custom entities", () => {
+  it("tokenizes an analyst-added public IP (from the custom list) in the prompt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-anonpipe2-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const s = emptyState("c1");
+    s.forensicTimeline = [{ id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "exfil to 203.0.113.50", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "" }];
+    await stateStore.save(s);
+    const provider = new CapturingProvider();
+    const anonStore = new AnonControlStore(cases);
+    const customEntitiesStore = new CustomEntitiesStore(cases);
+    await customEntitiesStore.save("c1", [{ value: "203.0.113.50", category: "IP" }]);
+    const pipeline = new AnalysisPipeline({ provider, stateStore, anonStore, customEntitiesStore, imageLoader: async () => ({ base64: "", mimeType: "image/webp" }) });
+    await pipeline.synthesize("c1", { force: true });
+    // A public IP is NOT tokenized by the internal-IP detector — so if it's gone, the custom-entity wiring worked.
+    expect(provider.lastReq!.userPrompt).not.toContain("203.0.113.50");
+    expect(provider.lastReq!.userPrompt).toMatch(/ANON_IP_/);
   });
 });

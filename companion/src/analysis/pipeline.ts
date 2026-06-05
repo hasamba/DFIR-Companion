@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { AIProvider, AnalyzeImage, AnalyzeRequest } from "../providers/provider.js";
 import { createAnonymizer, deriveKnownEntities } from "./anonymize.js";
 import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
+import type { CustomEntitiesStore } from "./anonEntities.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion } from "./stateTypes.js";
@@ -432,6 +433,8 @@ export interface PipelineOptions {
   // before the provider call and the response is restored before parsing. Optional: absent →
   // no anonymization (used by older tests).
   anonStore?: AnonControlStore;
+  // Per-case analyst-added entities to anonymize (exact-match), merged with the auto-derived ones.
+  customEntitiesStore?: CustomEntitiesStore;
   stateStore: StateStore;
   imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage>;
   retries?: number;
@@ -484,7 +487,9 @@ export class AnalysisPipeline {
       const result = await provider.analyze(req);
       return parseJsonLoose(result.rawText);
     }
-    const anon = createAnonymizer(policy, deriveKnownEntities(state));
+    const known = deriveKnownEntities(state);
+    if (this.opts.customEntitiesStore) known.custom = await this.opts.customEntitiesStore.load(caseId);
+    const anon = createAnonymizer(policy, known);
     const result = await provider.analyze({ ...req, userPrompt: anon.apply(req.userPrompt) });
     return anon.restoreDeep(parseJsonLoose(result.rawText));
   }
