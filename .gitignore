@@ -12,6 +12,13 @@ dist/
 *.timestamp-*.mjs
 .gstack/
 
+# Atomic-write temp files. atomicWrite.ts writes `<target>.tmp` then renames it over
+# the target; formatters (Prettier-style write-file-atomic) write `<src>.tmp.<pid>.<hex>`.
+# In a Dropbox/OneDrive-synced tree a sync/AV lock can orphan one mid-rename — keep these
+# out of git so `git add -A` never sweeps them in.
+*.tmp
+*.tmp.*
+
 # Local planning / process scratch (not part of the shipped project)
 .planning/
 docs/superpowers/
