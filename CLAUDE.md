@@ -5,6 +5,14 @@ the server or the analysis pipeline.
 
 ## What this is
 
+**Product principle — a post-detection analysis layer, NOT a detection engine.** The Companion
+deliberately does **not** run Sigma/YARA or write detection rules. Detection is done by the tools
+the analyst already runs (Velociraptor, Security Onion, Chainsaw, Hayabusa, THOR, EDR/SIEM); the
+Companion ingests *their* verdicts/hits, correlates across tools into one timeline, and synthesizes
+the findings/attacker-path/report — the "so what" layer. When adding an ingest connector, **consume
+the tool's output; do not reimplement its detection.** (This is why the Chainsaw/Hayabusa importers
+read the matched Sigma rule's level/MITRE rather than evaluating rules themselves.)
+
 A localhost DFIR tool in two projects:
 - **`companion/`** — Node 20+/TypeScript, Express server on `127.0.0.1:4773`. The core.
   Ingests screenshots **and** imported artifacts (CSV / generic log / THOR JSON) as
@@ -77,7 +85,11 @@ Nextron JSON (`importThor` → `thorImport.ts`), **SIEM/EDR** JSON (`importSiem`
 auto-detection for other records, aggregation), and **Chainsaw/EVTX** (`importChainsaw` →
 `chainsawImport.ts` — Chainsaw hunt JSON or a raw `evtx_dump`; reuses `siemImport`'s
 exported `mapWindows`/`aggregateEvents` on the embedded EVTX event and overlays the matched
-Sigma rule's level→severity + `attack.tXXXX`→MITRE). The last three are **fully
+Sigma rule's level→severity + `attack.tXXXX`→MITRE), and **Hayabusa** (`importHayabusa` →
+`hayabusaImport.ts` — Hayabusa `json-timeline`/`csv-timeline`; **verdict-first** since Hayabusa
+doesn't embed the raw EVTX node: rule `Level`→severity, `RuleTitle`→description, tactics/tags→MITRE,
+IOCs/host/process-chain from the rendered detail fields; reuses `siemImport`'s `aggregateEvents` +
+IOC extractors and `csvImport`'s `parseCsv`). The last four are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
 

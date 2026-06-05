@@ -82,10 +82,10 @@ export function isObject(v: unknown): v is Row {
 export function str(v: unknown): string {
   return typeof v === "string" ? v : v == null ? "" : typeof v === "object" ? "" : String(v);
 }
-function oneLine(s: string): string {
+export function oneLine(s: string): string {
   return s.replace(/\s*[\r\n]+\s*/g, " ").trim();
 }
-function baseName(p: string): string {
+export function baseName(p: string): string {
   return (p.trim().split(/[\\/]/).pop() || p.trim());
 }
 // Case-insensitive single-key lookup.
@@ -96,7 +96,7 @@ export function getCI(row: Row, key: string): unknown {
   return undefined;
 }
 // First non-empty string across candidate keys (case-insensitive), supporting dotted paths.
-function firstStr(row: Row, keys: string[]): string {
+export function firstStr(row: Row, keys: string[]): string {
   for (const k of keys) {
     const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
     const s = str(v).trim();
@@ -363,7 +363,7 @@ export function cleanIp(raw: string): string {
 
 // Parse a Sysmon "Hashes" string ("SHA1=..,MD5=..,SHA256=..,IMPHASH=..") + a hashes_ex
 // object into { sha256, md5 } (lowercased).
-function parseHashes(rec: Row, ed: Row | undefined): { sha256?: string; md5?: string } {
+export function parseHashes(rec: Row, ed: Row | undefined): { sha256?: string; md5?: string } {
   const out: { sha256?: string; md5?: string } = {};
   const take = (algo: string, val: string): void => {
     const v = val.trim().toLowerCase();
@@ -564,7 +564,7 @@ const GENERIC_MSG_KEYS = [
 ];
 
 // Flatten a record to dotted key/value string pairs (objects one+ levels deep).
-function flatten(obj: Row, out: [string, string][], prefix = "", depth = 0): void {
+export function flatten(obj: Row, out: [string, string][], prefix = "", depth = 0): void {
   if (depth > 3) return;
   for (const [k, v] of Object.entries(obj)) {
     const key = prefix ? `${prefix}.${k}` : k;
@@ -582,7 +582,7 @@ function flatten(obj: Row, out: [string, string][], prefix = "", depth = 0): voi
 }
 
 // IOC extraction for non-Windows records, driven by key-name heuristics.
-function genericIocs(pairs: [string, string][], iocSink: Map<string, SiemIoc>): void {
+export function genericIocs(pairs: [string, string][], iocSink: Map<string, SiemIoc>): void {
   for (const [key, value] of pairs) {
     const k = key.toLowerCase();
     const v = value.trim();
