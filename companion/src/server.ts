@@ -26,6 +26,8 @@ import { parseVelociraptorJson } from "./analysis/velociraptorImport.js";
 import type { VelociraptorImportOptions } from "./analysis/velociraptorImport.js";
 import { parseNetworkLogs } from "./analysis/networkImport.js";
 import type { NetworkImportOptions } from "./analysis/networkImport.js";
+import { parseKapeCsv } from "./analysis/kapeImport.js";
+import type { KapeImportOptions } from "./analysis/kapeImport.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
 import { ProviderHealthCache } from "./enrichment/providerHealth.js";
@@ -1320,6 +1322,60 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `Network import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a KAPE / Eric Zimmerman Tools CSV (Prefetch, Amcache, ShimCache, LNK, JumpLists,
+  // UsnJrnl, MFT, SRUM, Recycle Bin, Shellbags). Evidence-first; the EZ tool is detected from
+  // the CSV header and mapped DETERMINISTICALLY (no AI extraction), reading the artifact's own time.
+  app.post("/cases/:id/import-kape", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.csv === "string" ? req.body.csv : "";
+    const originalName = String(req.body?.filename ?? "kape.csv");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const minSeverity: Severity | undefined =
+      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
+      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
+      : rawLevel === "info" ? "Info" : undefined;
+    const kapeOpts: KapeImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      const preview = parseKapeCsv(text, kapeOpts);
+      if (preview.artifact === "unknown") return res.status(400).json({ error: "unrecognized CSV — expected a KAPE / Eric Zimmerman Tools export (Prefetch, Amcache, ShimCache, LNK, JumpLists, UsnJrnl, MFT, SRUM, RecycleBin, Shellbags)" });
+      if (preview.kept === 0) return res.status(400).json({ error: `no events from the ${preview.artifact} CSV (${preview.total} row(s) parsed)` });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "kape.csv");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, artifact: preview.artifact, events: preview.kept, rows: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} ${preview.artifact} event(s)` });
+      void options.pipeline.importKape(caseId, text, {
+        label: storedName,
+        idPrefix: `k${seq}`,
+        importedAt,
+        kape: kapeOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `${preview.artifact} import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })

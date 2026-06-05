@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **KAPE / Eric Zimmerman Tools CSV import.** A new **Import KAPE/EZ** button (and `POST /cases/:id/import-kape`)
+  ingests an Eric Zimmerman Tools CSV — the host-forensics counterpart to the EDR/network connectors, and the
+  seventh deterministic ingest path (no AI call). The producing tool is **detected from the CSV header**, then
+  each row maps to a forensic event reading the **artifact's own time** (program last-run, file MAC time,
+  deletion time…) plus file/hash/process IOCs. Supported artifacts: **Prefetch** (PECmd), **Amcache**
+  (AmcacheParser — including the SHA1, with its Amcache leading-zero prefix stripped), **ShimCache /
+  AppCompatCache** (AppCompatCacheParser, incl. the `Executed` flag), **LNK** (LECmd), **JumpLists** (JLECmd),
+  **UsnJrnl $J** & **$MFT** (MFTECmd — files only, directories skipped), **SRUM** network usage (SrumECmd),
+  **Recycle Bin** (RBCmd), and **Shellbags** (SBECmd). These are evidence rows (no maliciousness verdict) so
+  severity is Info — their value is the super-timeline + cross-source correlation (synthesis + the
+  high-severity backfill still escalate anything that lines up with a real detection). The .NET min-date
+  sentinel (`0001-01-01`/`1601-01-01`) is dropped; 7-digit fractional seconds are truncated to ms; events are
+  tagged by artifact name (Prefetch/Amcache/…) so two artifacts showing the same binary corroborate; repetitive
+  rows aggregate into counted rows and cap; optional `minSeverity` floor. Evidence-first (raw CSV persisted +
+  audit-logged before analysis). Pure mapper (`kapeImport.ts`) reuses `csvImport`'s `parseCsv` and
+  `siemImport`'s `aggregateEvents` + IOC sink; unit-tested with no network.
 - **Suricata / Zeek network-log import.** A new **Import Suricata/Zeek** button (and
   `POST /cases/:id/import-network`) ingests network-monitor logs — Suricata `eve.json` and Zeek (Bro) JSON
   logs, the network side of Security Onion / Corelight — as the sixth deterministic ingest path (no AI call).

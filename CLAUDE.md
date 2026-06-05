@@ -94,8 +94,11 @@ IOC extractors and `csvImport`'s `parseCsv`), and **Velociraptor** native JSON (
 verdict-first for detections, reuses `siemImport`'s `mapWindows`/`aggregateEvents`, reads the artifact's
 own time not `_ts`), and **Suricata/Zeek** network logs (`importNetwork` → `networkImport.ts` — Suricata
 `eve.json` + Zeek JSON; the timeline is built from the **detections** only (Suricata `alert` + Zeek `notice`),
-while telemetry (`dns`/`http`/`tls`/`files`/…) contributes **IOCs only** so the timeline stays signal-rich).
-The last six are **fully
+while telemetry (`dns`/`http`/`tls`/`files`/…) contributes **IOCs only** so the timeline stays signal-rich),
+and **KAPE / Eric Zimmerman Tools** CSV (`importKape` → `kapeImport.ts` — host triage: detects the EZ tool
+from the CSV header (Prefetch/Amcache/ShimCache/LNK/JumpLists/UsnJrnl/MFT/SRUM/RecycleBin/Shellbags), maps each
+row to an Info evidence event reading the artifact's own time + file/hash/process IOCs; reuses `csvImport`'s
+`parseCsv` + `siemImport`'s `aggregateEvents`). The last seven are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
 

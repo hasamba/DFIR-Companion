@@ -156,6 +156,8 @@
     <button id="importVelociraptor" title="Upload Velociraptor native JSON output (collection results / hunt export — JSON array, JSONL, or an artifact map). Sigma & YARA detection rows are mapped verdict-first; parsed EVTX rows use the per-EID mapping; other artifacts auto-detect time/host/IOCs. No AI extraction.">Import Velociraptor</button>
     <input id="networkFile" type="file" accept=".json,.jsonl,.ndjson,.eve,.log,application/json,text/plain" style="display:none" />
     <button id="importNetwork" title="Upload Suricata eve.json or Zeek JSON logs (Security Onion's network side — NDJSON or array). Suricata alerts & Zeek notices become timeline detections; dns/http/tls/files telemetry contributes IOCs (domains, URLs, file hashes). No AI extraction.">Import Suricata/Zeek</button>
+    <input id="kapeFile" type="file" accept=".csv,text/csv,text/plain" style="display:none" />
+    <button id="importKape" title="Upload a KAPE / Eric Zimmerman Tools CSV (Prefetch, Amcache, ShimCache, LNK, JumpLists, UsnJrnl, MFT, SRUM, RecycleBin, Shellbags). The EZ tool is auto-detected from the header; each row becomes a timeline event with its own time + file/hash/process IOCs. No AI extraction.">Import KAPE/EZ</button>
     <input id="shotsFile" type="file" accept="image/png,image/jpeg,image/webp" multiple style="display:none" />
     <button id="importShots" title="Import external screenshots (PNG/JPEG/WebP) from another tool — select multiple at once. Each is stored as evidence and analyzed (when AI is on), exactly like the extension's captures.">Import Screenshots</button>
     <button id="generateReport" title="Write the report (Markdown + HTML) and CSVs; then export via the links that appear">Generate Report</button>
@@ -1798,6 +1800,38 @@
       } catch (err) {
         document.getElementById("status").textContent =
           "Suricata/Zeek import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
+      }
+      e.target.value = ""; // allow re-selecting the same file
+    };
+    document.getElementById("importKape").onclick = () => {
+      if (!document.getElementById("caseId").value.trim()) {
+        document.getElementById("status").textContent = "enter/connect a Case ID first";
+        return;
+      }
+      document.getElementById("kapeFile").click();
+    };
+    document.getElementById("kapeFile").onchange = async (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      const file = e.target.files && e.target.files[0];
+      if (!caseId || !file) return;
+      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
+      try {
+        const text = await file.text();
+        const r = await fetch(`/cases/${caseId}/import-kape`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ filename: file.name, text }),
+        });
+        if (!r.ok) {
+          let msg = "HTTP " + r.status;
+          try { msg = (await r.json()).error || msg; } catch {}
+          throw new Error(msg);
+        }
+        const p = await r.json();
+        document.getElementById("status").textContent =
+          `KAPE/${p.artifact}: ${p.events} event(s) from ${p.rows} row(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
+      } catch (err) {
+        document.getElementById("status").textContent =
+          "KAPE/EZ import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
       }
       e.target.value = ""; // allow re-selecting the same file
     };
