@@ -17,6 +17,7 @@ import { parseCsv, chunk, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
+import { parseSiemExport, type SiemImportOptions } from "./siemImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 
 export const SYSTEM_PROMPT = [
@@ -661,6 +662,54 @@ export class AnalysisPipeline {
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `THOR import: ${parsed.kept} finding(s) kept, ${parsed.dropped} info/lifecycle row(s) dropped` +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a SIEM / EDR JSON export (Elastic/Kibana, Splunk, an EDR console, a raw
+  // winlogbeat dump…). Like THOR, the mapping is DETERMINISTIC (no AI call): the
+  // container is unwrapped, Windows/Sysmon events get a per-EID mapping, other records
+  // fall back to field auto-detection, and repetitive events are aggregated. The
+  // detected tool name (from the filename / source) tags each event's `sources`.
+  async importSiem(
+    caseId: string,
+    jsonText: string,
+    opts: {
+      label: string;
+      idPrefix: string;          // unique per import (e.g. "s3") so ids never collide
+      importedAt: string;
+      siem?: SiemImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsed = parseSiemExport(jsonText, opts.siem);
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const source = detectTool(opts.label) ?? detectTool(parsed.format) ?? "SIEM import";
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [source],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `SIEM import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
       summary: "",
     };

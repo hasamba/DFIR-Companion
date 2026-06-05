@@ -12,6 +12,8 @@ import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { parseCsv } from "./analysis/csvImport.js";
 import { parseLogLines } from "./analysis/logImport.js";
 import { parseThorReport } from "./analysis/thorImport.js";
+import { parseSiemExport } from "./analysis/siemImport.js";
+import type { SiemImportOptions } from "./analysis/siemImport.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
 import type { EnrichmentProvider } from "./enrichment/provider.js";
@@ -24,7 +26,7 @@ import { YetiProvider } from "./enrichment/yeti.js";
 import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
-import type { InvestigationState, InvestigationQuestion, QuestionStatus } from "./analysis/stateTypes.js";
+import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
@@ -882,6 +884,65 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `THOR import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a SIEM / EDR JSON export — the second JSON ingest path besides THOR, for
+  // exports from Elastic/Kibana, Splunk, an EDR console, or a raw winlogbeat dump.
+  // Evidence-first like the other imports; mapping is DETERMINISTIC (no AI extraction):
+  // the container is unwrapped, Windows/Sysmon events get a per-EID mapping (others use
+  // field auto-detection), and repetitive events aggregate. Synthesis runs after.
+  app.post("/cases/:id/import-siem", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const json = typeof req.body?.json === "string" ? req.body.json
+      : typeof req.body?.text === "string" ? req.body.text : "";
+    const originalName = String(req.body?.filename ?? "siem.json");
+    if (!json.trim()) return res.status(400).json({ error: "json is required" });
+
+    // Optional severity floor: keep only events at/above this level (e.g. "low" drops
+    // Info noise like logoffs / process-terminated). Default = keep everything.
+    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const minSeverity: Severity | undefined =
+      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
+      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
+      : rawLevel === "info" ? "Info" : undefined;
+    const siemOpts: SiemImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      // Parse up-front: reject a file with no parseable records, and report counts to the UI.
+      const preview = parseSiemExport(json, siemOpts);
+      if (preview.total === 0) return res.status(400).json({ error: "no parseable SIEM/EDR records found (expected a JSON array, an Elastic/Kibana export, or NDJSON)" });
+      if (preview.kept === 0) return res.status(400).json({ error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)` });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "siem.json");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, json);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(json, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, records: preview.total, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} SIEM event(s)` });
+      void options.pipeline.importSiem(caseId, json, {
+        label: storedName,
+        idPrefix: `s${seq}`,
+        importedAt,
+        siem: siemOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `SIEM import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })

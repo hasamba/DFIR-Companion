@@ -13,6 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **SIEM / EDR JSON import.** A new **Import SIEM/EDR** button (and `POST /cases/:id/import-siem`)
+  ingests a JSON export from a SIEM or EDR — the second JSON ingest path besides THOR. It **unwraps the
+  common container envelopes** (Elastic/Kibana `{ data: [{ _source }] }`, an Elasticsearch
+  `{ hits: { hits } }` response, a plain JSON array, NDJSON, or `{ events\|records\|results\|logs }`) to a flat
+  record list, then maps each record to forensic events + IOCs **deterministically** (no AI extraction, like
+  THOR). **Windows Event Log + Sysmon** records (the dominant case) get a per-EID mapping: a human label,
+  a **derived severity** (Windows logs carry no maliciousness score — failed-logon 4625→Medium, explicit-cred
+  4648 / service-install 7045 / account & group changes→High, with a bump for LSASS process-access and
+  suspicious LOLBin command-lines, and a downgrade for benign csrss/wininit `CreateRemoteThread`), MITRE
+  technique tags, and IOC/asset/account extraction (IPv4-mapped `::ffff:` IPs unwrapped, Sysmon `Hashes`
+  parsed, `DOMAIN\user` accounts surfaced for the asset graph). Any **other** SIEM/EDR record falls back to
+  field auto-detection (timestamp / host / message / severity), so a CrowdStrike / Defender / SentinelOne
+  export still produces dated events + IOCs. Repetitive identical events are **aggregated** into one counted
+  row (with a first→last time span) and the total is capped, so an 11k-event export doesn't flood the
+  timeline; synthesis + the high-severity backfill still cover everything. Optional `minSeverity` floor
+  (the dashboard prompts for it) drops Info noise. Evidence-first: the raw export is persisted + audit-logged
+  before analysis. Pure mapper (`siemImport.ts`) unit-tested with no network; the source tool is tagged via
+  `detectTool` for cross-source correlation.
 - **Local LiteLLM models / any OpenAI-compatible endpoint.** New `DFIR_AI_PROVIDER=litellm`
   provider talks to a self-hosted [LiteLLM](https://docs.litellm.ai/) proxy — an OpenAI-compatible
   gateway over Ollama / vLLM / 100+ backends — so analysis can run **fully on-box** with evidence never

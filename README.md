@@ -67,6 +67,13 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **THOR (Nextron) import** — JSON-Lines, **deterministic** (no AI call). Drops scan info/
   lifecycle noise, optional **severity floor** (`minLevel`), maps level → severity, reads each
   finding's own artifact time.
+- **SIEM / EDR JSON import** — any JSON export, **deterministic** (no AI call). **Unwraps** the
+  common containers (Elastic/Kibana `data[]._source`, an Elasticsearch `hits.hits` response, a
+  plain array, NDJSON, `events`/`records`/`results`), maps **Windows Event Log + Sysmon** events
+  per-EID (label, **derived severity**, MITRE, IOC + asset/account extraction — `::ffff:` IPs
+  unwrapped, Sysmon hashes parsed), and **auto-detects** timestamp/host/message/severity for any
+  other SIEM/EDR record. Repetitive events are **aggregated** into counted rows and capped;
+  optional `minSeverity` floor.
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only

@@ -382,6 +382,69 @@ describe("server analysis wiring", () => {
     expect(res.status).toBe(400);
   });
 
+  it("imports a SIEM/EDR JSON export (Elastic envelope): unwraps, maps Windows events, then synthesizes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-siem-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      // No per-event AI extraction (SIEM mapping is deterministic); synthesis still runs.
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [{ id: "f1", severity: "High", title: "Service install", description: "d",
+          relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: [] }],
+        iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
+        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const siemApp = createApp(store, { pipeline, stateStore });
+    await request(siemApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+
+    const elastic = JSON.stringify({ data: [
+      { _source: { "@timestamp": "2017-03-20T06:33:40Z", log_name: "Security", computer_name: "DC1",
+        event_id: 4624, event_data: { TargetUserName: "martin", TargetDomainName: "WINDMILL", LogonType: "3", IpAddress: "::ffff:10.10.200.11" } } },
+      { _source: { "@timestamp": "2017-03-20T10:00:00Z", log_name: "System", computer_name: "DC1",
+        event_id: 7045, event_data: { ServiceName: "EvilSvc", ServiceFileName: "C:\\Temp\\evil.exe" } } },
+    ] });
+    const res = await request(siemApp).post("/cases/c1/import-siem").send({ filename: "windmill_elastic.json", json: elastic });
+
+    expect(res.status).toBe(202);
+    expect(res.body.format).toBe("elastic-data");
+    expect(res.body.records).toBe(2);
+    expect(res.body.events).toBe(2);
+
+    // Evidence-first: raw export + audit line written before analysis.
+    const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
+    expect(auditLog.trim().split("\n")).toHaveLength(1);
+
+    // Deterministic mapping populated the timeline; the ::ffff: IP was unwrapped.
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 60 && state.findings.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    expect(state.forensicTimeline.length).toBe(2);
+    expect(state.forensicTimeline.some((e) => e.severity === "High" && e.description.includes("7045"))).toBe(true);
+    expect(state.iocs.some((i) => i.type === "ip" && i.value === "10.10.200.11")).toBe(true);
+    expect(state.findings.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("rejects a SIEM import with no parseable records", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-siem-empty-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", "should not be called"),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app3 = createApp(store, { pipeline, stateStore });
+    await request(app3).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+
+    const res = await request(app3).post("/cases/c1/import-siem").send({ filename: "x.json", json: "garbage not json" });
+    expect(res.status).toBe(400);
+  });
+
   it("marks a forensic event legitimate (kind=event), storing its label and re-synthesizing", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-legit-ev-"));
     const store = new CaseStore(root);

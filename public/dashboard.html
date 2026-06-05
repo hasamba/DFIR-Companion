@@ -141,6 +141,8 @@
     <button id="importLog" title="Upload a generic log file (firewall, syslog, sshd, IIS/Apache/nginx, application logs — .log or .txt). Each line is analyzed for forensic events and IOCs.">Import Log</button>
     <input id="thorFile" type="file" accept=".json,.jsonl,application/json,text/plain" style="display:none" />
     <button id="importThor" title="Upload a THOR (Nextron) scanner report in JSON-Lines format (thor --jsonfile). Findings map deterministically to the timeline + IOCs; scan info/lifecycle noise is dropped automatically.">Import THOR</button>
+    <input id="siemFile" type="file" accept=".json,.jsonl,.ndjson,application/json,text/plain" style="display:none" />
+    <button id="importSiem" title="Upload a SIEM/EDR JSON export (Elastic/Kibana, Splunk, an EDR console, or a raw winlogbeat dump). The container is unwrapped and Windows/Sysmon events map deterministically to the timeline + IOCs (other records use field auto-detection); repetitive events are aggregated. No AI extraction.">Import SIEM/EDR</button>
     <input id="shotsFile" type="file" accept="image/png,image/jpeg,image/webp" multiple style="display:none" />
     <button id="importShots" title="Import external screenshots (PNG/JPEG/WebP) from another tool — select multiple at once. Each is stored as evidence and analyzed (when AI is on), exactly like the extension's captures.">Import Screenshots</button>
     <button id="generateReport" title="Write the report (Markdown + HTML) and CSVs; then export via the links that appear">Generate Report</button>
@@ -568,7 +570,7 @@
       renderAssetList();
       const el = document.getElementById("assetGraph");
       if (!assetGraphData || !assetGraphData.assets.length) {
-        el.innerHTML = "<div style='padding:16px;color:#9aa4b2'>No assets yet — import evidence (THOR/CSV) or run Synthesize. Hosts come from each event's affected asset.</div>";
+        el.innerHTML = "<div style='padding:16px;color:#9aa4b2'>No assets yet — import evidence (THOR / CSV / SIEM-EDR JSON) or run Synthesize. Hosts come from each event's affected asset.</div>";
         return;
       }
       const assets = assetGraphData.assets.filter(a => assetTypesEnabled.has(a.type));
@@ -1427,6 +1429,45 @@
       } catch (err) {
         document.getElementById("status").textContent =
           "THOR import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
+      }
+      e.target.value = ""; // allow re-selecting the same file
+    };
+
+    // SIEM / EDR JSON export import (Elastic/Kibana, Splunk, EDR console, winlogbeat dump).
+    // Deterministic mapping on the server; repetitive events are aggregated automatically.
+    document.getElementById("importSiem").onclick = () => {
+      if (!document.getElementById("caseId").value.trim()) {
+        document.getElementById("status").textContent = "enter/connect a Case ID first";
+        return;
+      }
+      document.getElementById("siemFile").click();
+    };
+    document.getElementById("siemFile").onchange = async (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      const file = e.target.files && e.target.files[0];
+      if (!caseId || !file) return;
+      // Severity floor: blank keeps everything; low drops Info noise (logoffs, etc.).
+      const ans = prompt("SIEM/EDR — minimum severity to import?\n  (blank) = keep everything (default)\n  low     = drop Info noise (logoffs, process-terminated…)\n  medium / high / critical = only that level and above", "");
+      if (ans === null) { e.target.value = ""; return; } // cancelled
+      const minSeverity = ans.trim().toLowerCase();
+      document.getElementById("status").textContent = `uploading ${file.name} (${Math.ceil(file.size/1024)} KB)…`;
+      try {
+        const text = await file.text();
+        const r = await fetch(`/cases/${caseId}/import-siem`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ filename: file.name, json: text, minSeverity }),
+        });
+        if (!r.ok) {
+          let msg = "HTTP " + r.status;
+          try { msg = (await r.json()).error || msg; } catch {}
+          throw new Error(msg);
+        }
+        const p = await r.json();
+        document.getElementById("status").textContent =
+          `SIEM (${p.format}): ${p.events} event(s) from ${p.records} record(s), ${p.iocs} IOC(s) — synthesizing (see AI status)`;
+      } catch (err) {
+        document.getElementById("status").textContent =
+          "SIEM import failed (" + (err && err.message ? err.message : "error") + ") — if it's a 404, restart the companion server (`npm run dev`).";
       }
       e.target.value = ""; // allow re-selecting the same file
     };

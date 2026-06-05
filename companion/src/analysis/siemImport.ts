@@ -1,0 +1,724 @@
+// Deterministic importer for SIEM / EDR JSON exports — the second JSON ingest path
+// besides THOR. Where THOR has a fixed JSON-Lines schema, SIEM/EDR exports vary wildly
+// (Elastic/Kibana, Splunk, an EDR console, a raw winlogbeat dump…), so this module:
+//
+//   1. UNWRAPS the common container envelopes to a flat array of event records:
+//      Elastic/Kibana table export ({ data: [{ _source }] }), an Elasticsearch search
+//      response ({ hits: { hits: [{ _source }] } }), a plain JSON array, NDJSON
+//      (one JSON object per line, optionally _source-wrapped), or { events|records|
+//      results|logs: [...] }.
+//   2. MAPS each record to a forensic event DETERMINISTICALLY (no AI call). Windows
+//      Event Log + Sysmon records (the dominant SIEM data, and the attached example
+//      file) get a rich per-EID mapping (label, derived severity, MITRE, structured
+//      IOC/asset extraction). Any OTHER SIEM/EDR record falls back to field
+//      auto-detection (timestamp / host / message / severity), so a CrowdStrike /
+//      Defender / SentinelOne export still produces dated events + IOCs.
+//   3. AGGREGATES repetitive identical events into one counted row (like THOR /
+//      logAggregate) and caps the total, so an 11k-event export does not flood the
+//      timeline. Synthesis + the high-severity backfill still cover everything.
+//
+// Windows logs carry no maliciousness score (`level` is "Information" for almost
+// everything), so severity is DERIVED from the event type (WIN_EVENTS / SYSMON_EVENTS),
+// with a conservative bump for LOLBin / suspicious command lines and LSASS access.
+
+import type { Severity } from "./stateTypes.js";
+import { toUtcIso } from "./timeUtc.js";
+
+export interface SiemImportOptions {
+  // Collapse repetitive identical events into one counted row. Default true.
+  aggregate?: boolean;
+  // Drop events below this severity floor (e.g. "Low" drops Info noise like logoffs /
+  // process-terminated). Default undefined = keep everything.
+  minSeverity?: Severity;
+  // Safety cap on emitted events (most-severe first). Default 2000.
+  maxEvents?: number;
+  // Safety cap on emitted IOCs. Default 5000.
+  maxIocs?: number;
+}
+
+// A delta-shaped forensic event (matches deltaSchema.forensicEvents), produced deterministically.
+export interface SiemEvent {
+  id: string;
+  timestamp: string;
+  description: string;
+  severity: Severity;
+  mitreTechniques: string[];
+  count?: number;
+  endTimestamp?: string;
+  sha256?: string;
+  md5?: string;
+  path?: string;
+  asset?: string;
+  sources?: string[];
+  processName?: string;
+  parentName?: string;
+}
+
+export interface SiemIoc {
+  type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "other";
+  value: string;
+}
+
+export interface SiemParseResult {
+  events: SiemEvent[];
+  iocs: SiemIoc[];
+  total: number;     // records found in the container
+  kept: number;      // events emitted (after aggregation + cap)
+  dropped: number;   // records not represented (below floor / capped / unparseable)
+  groups: number;    // distinct event groups before the cap
+  format: string;    // detected container shape (elastic-data / elastic-hits / ndjson / array / events:<key> / single)
+  hostname: string;  // best-effort dominant host
+}
+
+type Row = Record<string, unknown>;
+
+const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+
+// ───────────────────────────── small value helpers ─────────────────────────────
+
+function isObject(v: unknown): v is Row {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function str(v: unknown): string {
+  return typeof v === "string" ? v : v == null ? "" : typeof v === "object" ? "" : String(v);
+}
+function oneLine(s: string): string {
+  return s.replace(/\s*[\r\n]+\s*/g, " ").trim();
+}
+function baseName(p: string): string {
+  return (p.trim().split(/[\\/]/).pop() || p.trim());
+}
+// Case-insensitive single-key lookup.
+function getCI(row: Row, key: string): unknown {
+  if (key in row) return row[key];
+  const lower = key.toLowerCase();
+  for (const k of Object.keys(row)) if (k.toLowerCase() === lower) return row[k];
+  return undefined;
+}
+// First non-empty string across candidate keys (case-insensitive), supporting dotted paths.
+function firstStr(row: Row, keys: string[]): string {
+  for (const k of keys) {
+    const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
+    const s = str(v).trim();
+    if (s) return s;
+  }
+  return "";
+}
+// Dotted-path getter ("host.name", "event.action"), case-insensitive per segment.
+function getPath(row: Row, path: string): unknown {
+  let cur: unknown = row;
+  for (const seg of path.split(".")) {
+    if (!isObject(cur)) return undefined;
+    cur = getCI(cur, seg);
+  }
+  return cur;
+}
+
+// ───────────────────────────── container unwrapping ─────────────────────────────
+
+// If an element wraps its real fields under `_source` (Elastic), return that; else the element.
+function unwrapSource(el: unknown): Row | null {
+  if (!isObject(el)) return null;
+  const src = getCI(el, "_source");
+  return isObject(src) ? src : el;
+}
+
+const RECORD_ARRAY_KEYS = ["events", "Events", "records", "Records", "results", "Results", "logs", "Logs", "rows", "items", "alerts", "Alerts", "value"];
+
+// Parse the file and extract the flat array of event records + a label for the shape.
+export function extractRecords(text: string): { records: Row[]; format: string } {
+  const trimmed = text.trim();
+  if (!trimmed) return { records: [], format: "empty" };
+
+  // First try the whole thing as one JSON value.
+  let root: unknown;
+  let parsed = false;
+  try { root = JSON.parse(trimmed); parsed = true; } catch { /* fall through to NDJSON */ }
+
+  if (parsed) {
+    if (Array.isArray(root)) {
+      return { records: root.map(unwrapSource).filter((r): r is Row => r !== null), format: "array" };
+    }
+    if (isObject(root)) {
+      // Elastic/Kibana table export: { data: [ { _source } ] }
+      const data = getCI(root, "data");
+      if (Array.isArray(data)) {
+        return { records: data.map(unwrapSource).filter((r): r is Row => r !== null), format: "elastic-data" };
+      }
+      // Elasticsearch search response: { hits: { hits: [ { _source } ] } }
+      const hits = getPath(root, "hits.hits");
+      if (Array.isArray(hits)) {
+        return { records: hits.map(unwrapSource).filter((r): r is Row => r !== null), format: "elastic-hits" };
+      }
+      // { events: [...] } / { records: [...] } / { results: [...] } …
+      for (const key of RECORD_ARRAY_KEYS) {
+        const arr = getCI(root, key);
+        if (Array.isArray(arr)) {
+          return { records: arr.map(unwrapSource).filter((r): r is Row => r !== null), format: `events:${key}` };
+        }
+      }
+      // A single event object.
+      const single = unwrapSource(root);
+      return { records: single ? [single] : [], format: "single" };
+    }
+    return { records: [], format: "unknown" };
+  }
+
+  // NDJSON: one JSON object per line (winlogbeat / filebeat / `_source`-wrapped lines).
+  // Skip Elastic _bulk action lines ({ "index": {...} }) — those have no event fields.
+  const records: Row[] = [];
+  for (const line of trimmed.split(/\r\n|\r|\n/)) {
+    const l = line.trim();
+    if (!l) continue;
+    let obj: unknown;
+    try { obj = JSON.parse(l); } catch { continue; }
+    const rec = unwrapSource(obj);
+    if (rec && Object.keys(rec).length > 0) records.push(rec);
+  }
+  return { records, format: "ndjson" };
+}
+
+// ───────────────────────────── Windows / Sysmon tables ─────────────────────────────
+
+interface WinEventDef {
+  label: string;
+  severity: Severity;
+  mitre?: string[];
+  kind?: "process" | "network" | "dns" | "procaccess" | "file" | "service";
+}
+
+// Security + System channel events keyed by Event ID.
+const WIN_EVENTS: Record<number, WinEventDef> = {
+  // Authentication / logon
+  4624: { label: "Successful logon", severity: "Low" },
+  4625: { label: "Failed logon", severity: "Medium", mitre: ["T1110"] },
+  4634: { label: "Logoff", severity: "Info" },
+  4647: { label: "User-initiated logoff", severity: "Info" },
+  4648: { label: "Logon with explicit credentials", severity: "Medium", mitre: ["T1078"] },
+  4672: { label: "Special privileges assigned to new logon", severity: "Low" },
+  4768: { label: "Kerberos TGT requested (AS-REQ)", severity: "Low" },
+  4769: { label: "Kerberos service ticket requested (TGS-REQ)", severity: "Low" },
+  4771: { label: "Kerberos pre-authentication failed", severity: "Medium", mitre: ["T1110"] },
+  4776: { label: "NTLM credential validation", severity: "Low" },
+  // Account / group management
+  4720: { label: "User account created", severity: "High", mitre: ["T1136.001"] },
+  4722: { label: "User account enabled", severity: "Medium" },
+  4723: { label: "Password change attempt", severity: "Low" },
+  4724: { label: "Password reset attempt", severity: "Medium", mitre: ["T1098"] },
+  4725: { label: "User account disabled", severity: "Medium" },
+  4726: { label: "User account deleted", severity: "Medium" },
+  4728: { label: "Member added to global security group", severity: "High", mitre: ["T1098"] },
+  4732: { label: "Member added to local security group", severity: "High", mitre: ["T1098"] },
+  4756: { label: "Member added to universal security group", severity: "High", mitre: ["T1098"] },
+  4738: { label: "User account changed", severity: "Low" },
+  4740: { label: "User account locked out", severity: "Medium" },
+  4767: { label: "User account unlocked", severity: "Low" },
+  // Persistence / execution
+  4697: { label: "Service installed (Security)", severity: "High", kind: "service", mitre: ["T1543.003"] },
+  4698: { label: "Scheduled task created", severity: "High", mitre: ["T1053.005"] },
+  4699: { label: "Scheduled task deleted", severity: "Medium", mitre: ["T1053.005"] },
+  4700: { label: "Scheduled task enabled", severity: "Low", mitre: ["T1053.005"] },
+  4702: { label: "Scheduled task updated", severity: "Medium", mitre: ["T1053.005"] },
+  4688: { label: "Process created", severity: "Low", kind: "process", mitre: ["T1059"] },
+  4689: { label: "Process exited", severity: "Info" },
+  // Object / share / policy
+  4663: { label: "Object access attempt", severity: "Low" },
+  4670: { label: "Permissions on object changed", severity: "Medium" },
+  5140: { label: "Network share accessed", severity: "Low", mitre: ["T1021.002"] },
+  5142: { label: "Network share added", severity: "Medium" },
+  5143: { label: "Network share modified", severity: "Medium" },
+  5145: { label: "Network share object checked", severity: "Low", mitre: ["T1021.002"] },
+  4946: { label: "Windows Firewall rule added", severity: "Medium", mitre: ["T1562.004"] },
+  4947: { label: "Windows Firewall rule modified", severity: "Medium", mitre: ["T1562.004"] },
+  5058: { label: "Key file operation", severity: "Low" },
+  5059: { label: "Key migration operation", severity: "Low" },
+  // Defense evasion
+  1102: { label: "Security audit log cleared", severity: "High", mitre: ["T1070.001"] },
+  4719: { label: "System audit policy changed", severity: "High", mitre: ["T1562.002"] },
+  // System channel
+  7045: { label: "Service installed", severity: "High", kind: "service", mitre: ["T1543.003"] },
+  7034: { label: "Service crashed unexpectedly", severity: "Low" },
+  7036: { label: "Service state changed", severity: "Info" },
+  7040: { label: "Service start type changed", severity: "Low" },
+  104: { label: "Event log cleared", severity: "High", mitre: ["T1070.001"] },
+  6005: { label: "Event log service started", severity: "Info" },
+  6006: { label: "Event log service stopped", severity: "Low" },
+};
+
+// Sysmon (Microsoft-Windows-Sysmon/Operational) events — keyed separately because the
+// EID numbering overlaps the Security channel (Sysmon 1 ≠ Security 1).
+const SYSMON_EVENTS: Record<number, WinEventDef> = {
+  1: { label: "Process create", severity: "Low", kind: "process", mitre: ["T1059"] },
+  2: { label: "File creation time changed (timestomp)", severity: "Medium", mitre: ["T1070.006"] },
+  3: { label: "Network connection", severity: "Low", kind: "network" },
+  4: { label: "Sysmon service state changed", severity: "Info" },
+  5: { label: "Process terminated", severity: "Info" },
+  6: { label: "Driver loaded", severity: "Medium", mitre: ["T1543.003"] },
+  7: { label: "Image (DLL) loaded", severity: "Low", mitre: ["T1574.002"] },
+  8: { label: "CreateRemoteThread (possible injection)", severity: "High", mitre: ["T1055"] },
+  9: { label: "RawAccessRead", severity: "Medium", mitre: ["T1006"] },
+  10: { label: "Process accessed", severity: "Medium", kind: "procaccess", mitre: ["T1003"] },
+  11: { label: "File created", severity: "Low" },
+  12: { label: "Registry object created/deleted", severity: "Low", mitre: ["T1112"] },
+  13: { label: "Registry value set", severity: "Low", mitre: ["T1112"] },
+  14: { label: "Registry object renamed", severity: "Low", mitre: ["T1112"] },
+  15: { label: "Alternate data stream created", severity: "Medium", mitre: ["T1564.004"] },
+  17: { label: "Named pipe created", severity: "Low" },
+  18: { label: "Named pipe connected", severity: "Low" },
+  19: { label: "WMI event filter registered", severity: "Medium", mitre: ["T1546.003"] },
+  20: { label: "WMI event consumer registered", severity: "Medium", mitre: ["T1546.003"] },
+  21: { label: "WMI consumer-to-filter binding", severity: "Medium", mitre: ["T1546.003"] },
+  22: { label: "DNS query", severity: "Low", kind: "dns" },
+  23: { label: "File deleted (archived)", severity: "Low", mitre: ["T1070.004"] },
+  24: { label: "Clipboard changed", severity: "Low" },
+  25: { label: "Process image tampering", severity: "High", mitre: ["T1055.012"] },
+  26: { label: "File delete logged", severity: "Low", mitre: ["T1070.004"] },
+};
+
+// LOLBins whose appearance as the image (Sysmon 1 / 4688) bumps a benign process-create.
+const LOLBINS = new Set([
+  "powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe",
+  "rundll32.exe", "regsvr32.exe", "wmic.exe", "certutil.exe", "bitsadmin.exe", "msiexec.exe",
+  "installutil.exe", "regasm.exe", "regsvcs.exe", "msbuild.exe", "cmstp.exe", "schtasks.exe",
+  "at.exe", "sc.exe", "net.exe", "net1.exe", "psexec.exe", "psexesvc.exe", "vssadmin.exe",
+  "bcdedit.exe", "wevtutil.exe", "reg.exe", "curl.exe", "ftp.exe", "hh.exe", "odbcconf.exe",
+]);
+// Core OS processes that legitimately call CreateRemoteThread (Sysmon EID 8) during normal
+// session/process setup — csrss/wininit/services injecting is routine, so we downgrade those
+// from the default High (they stay in the timeline; synthesis/legit-marking can still act).
+const BENIGN_THREAD_SOURCES = new Set(["csrss.exe", "wininit.exe", "services.exe", "smss.exe", "svchost.exe", "wmiprvse.exe", "lsm.exe"]);
+// Command-line markers strongly associated with attacker tradecraft → stronger bump.
+const STRONG_CMD = /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal/i;
+const SUSP_CMD = /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run/i;
+
+// Channel → short tool label for the description and source tag.
+function channelLabel(channel: string): string {
+  if (/sysmon/i.test(channel)) return "Sysmon";
+  if (/security/i.test(channel)) return "Windows Security";
+  if (/system/i.test(channel)) return "Windows System";
+  if (/powershell/i.test(channel)) return "Windows PowerShell";
+  if (/application/i.test(channel)) return "Windows Application";
+  return "Windows Event Log";
+}
+
+// ───────────────────────────── timestamps ─────────────────────────────
+
+// Normalize a "YYYY-MM-DD HH:MM:SS(.fff)" (Sysmon UtcTime) to ISO "…Z"; pass ISO through
+// toUtcIso (which converts a numeric offset to UTC and leaves "…Z"/naive untouched).
+function normalizeTime(s: string): string {
+  const t = s.trim();
+  if (!t) return "";
+  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d+)?Z?$/.exec(t);
+  if (m && !/[+-]\d{2}:?\d{2}$|Z$/.test(t)) return `${m[1]}T${m[2]}${m[3] ?? ""}Z`;
+  return toUtcIso(t);
+}
+
+const TIME_KEYS = [
+  "@timestamp", "timestamp", "_time", "eventTime", "EventTime", "event_time",
+  "DeviceEventTime", "createdAt", "created", "event.created", "ingested",
+  "generated_time", "received_time", "observed_timestamp", "time", "date", "@time",
+];
+
+// The event's own time. For Sysmon prefer the structured UtcTime (the in-event clock —
+// the artifact's own time); otherwise the record's @timestamp / common time fields.
+// Never the import time.
+function pickTimestamp(rec: Row, ed: Row | undefined): string {
+  const sysmonUtc = ed ? str(getCI(ed, "UtcTime")).trim() : "";
+  return normalizeTime(sysmonUtc || firstStr(rec, TIME_KEYS));
+}
+
+const HOST_KEYS = [
+  "computer_name", "Computer", "hostname", "host.name", "host", "host_name",
+  "agent.hostname", "beat.hostname", "device.hostname", "endpoint.name", "MachineName",
+  "src_host", "source.host", "winlog.computer_name",
+];
+
+function pickHost(rec: Row): string {
+  for (const k of HOST_KEYS) {
+    const v = k.includes(".") ? getPath(rec, k) : getCI(rec, k);
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (isObject(v)) { const n = str(getCI(v, "name")).trim(); if (n) return n; } // ECS host:{name}
+  }
+  return "";
+}
+
+// ───────────────────────────── IOC / hash helpers ─────────────────────────────
+
+const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
+const NOISE_IP = new Set(["::1", "127.0.0.1", "0.0.0.0", "::", "-", "::ffff:127.0.0.1"]);
+
+// Strip an IPv4-mapped IPv6 prefix ("::ffff:10.0.0.1" → "10.0.0.1"); drop loopback/empty.
+function cleanIp(raw: string): string {
+  let v = raw.trim();
+  if (!v || NOISE_IP.has(v)) return "";
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(v);
+  if (mapped) v = mapped[1];
+  if (NOISE_IP.has(v)) return "";
+  if (IPV4.test(v)) return v;
+  // Keep a routable IPv6 (contains ':'), but not link-local/loopback.
+  if (v.includes(":") && !/^fe80:|^::$/i.test(v)) return v;
+  return "";
+}
+
+// Parse a Sysmon "Hashes" string ("SHA1=..,MD5=..,SHA256=..,IMPHASH=..") + a hashes_ex
+// object into { sha256, md5 } (lowercased).
+function parseHashes(rec: Row, ed: Row | undefined): { sha256?: string; md5?: string } {
+  const out: { sha256?: string; md5?: string } = {};
+  const take = (algo: string, val: string): void => {
+    const v = val.trim().toLowerCase();
+    if (!HEX_HASH.test(v)) return;
+    if (algo === "SHA256" && v.length === 64) out.sha256 ??= v;
+    if (algo === "MD5" && v.length === 32) out.md5 ??= v;
+  };
+  const hashStr = ed ? str(getCI(ed, "Hashes")).trim() : "";
+  for (const pair of hashStr.split(",")) {
+    const [k, val] = pair.split("=");
+    if (k && val) take(k.trim().toUpperCase(), val);
+  }
+  const hx = getCI(rec, "hashes_ex");
+  if (isObject(hx)) { take("SHA256", str(getCI(hx, "SHA256"))); take("MD5", str(getCI(hx, "MD5"))); }
+  return out;
+}
+
+// ───────────────────────────── Windows record → event ─────────────────────────────
+
+// event_data fields rendered into the description (curated + stable — no volatile ports,
+// GUIDs, or logon IDs, so identical events aggregate). User/domain handled by winAccounts.
+const SUBJECT_KEYS = [
+  "LogonType", "IpAddress", "WorkstationName", "ServiceName", "ServiceFileName",
+  "Image", "CommandLine", "NewProcessName", "ParentImage", "SourceImage", "TargetImage",
+  "TargetFilename", "ImageLoaded", "DestinationIp", "DestinationPort", "DestinationHostname",
+  "Protocol", "QueryName", "ShareName", "RelativeTargetName", "TaskName", "PipeName",
+  "TargetObject", "MemberName", "Status", "SubStatus", "FailureReason",
+];
+
+function renderFields(ed: Row, keys: string[]): string {
+  const parts: string[] = [];
+  for (const k of keys) {
+    const v = str(getCI(ed, k)).trim();
+    if (v && v !== "-" && v !== "%%1833") parts.push(`${k}=${oneLine(v).slice(0, 140)}`);
+  }
+  return parts.join(" ");
+}
+
+// Compose DOMAIN\user (or UPN) account references so the asset graph picks them up.
+function winAccounts(ed: Row): string[] {
+  const out = new Set<string>();
+  const pairs: [string, string][] = [["TargetDomainName", "TargetUserName"], ["SubjectDomainName", "SubjectUserName"]];
+  for (const [dk, uk] of pairs) {
+    const user = str(getCI(ed, uk)).trim();
+    if (!user || user === "-" || user === "*") continue;
+    const dom = str(getCI(ed, dk)).trim();
+    if (user.includes("@")) out.add(user);                       // already a UPN
+    else if (dom && dom !== "-") out.add(`${dom}\\${user}`);
+    else out.add(user);
+  }
+  return [...out];
+}
+
+function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" | null {
+  const blob = `${image} ${cmd}`;
+  if (STRONG_CMD.test(blob)) return "strong";
+  if (LOLBINS.has(baseName(image).toLowerCase()) || SUSP_CMD.test(blob)) return "weak";
+  return null;
+}
+
+interface MappedEvent {
+  timestamp: string;
+  description: string;
+  severity: Severity;
+  mitre: string[];
+  aggKey: string;
+  sha256?: string;
+  md5?: string;
+  path?: string;
+  asset?: string;
+  processName?: string;
+  parentName?: string;
+}
+
+// Map a Windows Event Log / Sysmon record. Returns null if it is not a Windows record.
+function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent | null {
+  const eidRaw = getCI(rec, "event_id") ?? getCI(rec, "EventID") ?? getPath(rec, "winlog.event_id") ?? getPath(rec, "event.code");
+  const eid = Number(typeof eidRaw === "object" && isObject(eidRaw) ? getCI(eidRaw, "#text") : eidRaw);
+  const channel = firstStr(rec, ["log_name", "channel", "Channel", "winlog.channel", "source_name"]);
+  if (!Number.isFinite(eid) || !channel) return null;
+
+  const edRaw = getCI(rec, "event_data") ?? getPath(rec, "winlog.event_data") ?? getCI(rec, "EventData");
+  const ed: Row = isObject(edRaw) ? edRaw : {};
+  const isSysmon = /sysmon/i.test(channel);
+  const def: WinEventDef = (isSysmon ? SYSMON_EVENTS[eid] : WIN_EVENTS[eid]) ?? {
+    label: oneLine(firstStr(rec, ["message", "Message"]).split(/[\r\n]/)[0] || `Event ${eid}`).slice(0, 120),
+    severity: "Info",
+  };
+
+  const tool = channelLabel(channel);
+  const accts = winAccounts(ed);
+  const subject = renderFields(ed, SUBJECT_KEYS);
+  let description = `${tool} ${def.label} (EID ${eid})`;
+  if (accts.length) description += ` — ${accts.join(", ")}`;
+  if (subject) description += ` | ${subject}`;
+  if (host) description += ` @ ${host}`;
+  description = description.slice(0, 600);
+
+  // Severity — start from the table, then bump on suspicious process/command.
+  let severity = def.severity;
+  const mitre = [...(def.mitre ?? [])];
+  if (def.kind === "process") {
+    const image = str(getCI(ed, "Image")) || str(getCI(ed, "NewProcessName"));
+    const cmd = str(getCI(ed, "CommandLine"));
+    const susp = isSuspiciousCmd(image, cmd);
+    if (susp === "strong") { severity = worst(severity, "High"); if (!mitre.includes("T1003")) mitre.push("T1003"); }
+    else if (susp === "weak") severity = worst(severity, "Medium");
+  }
+  if (def.kind === "procaccess" && /lsass\.exe$/i.test(str(getCI(ed, "TargetImage")))) {
+    severity = "High";
+    if (!mitre.includes("T1003.001")) mitre.push("T1003.001");
+  }
+  // CreateRemoteThread (Sysmon 8) from a core OS process is routine session setup, not
+  // injection — downgrade from the table's default High so it doesn't drown real signal.
+  if (isSysmon && eid === 8 && BENIGN_THREAD_SOURCES.has(baseName(str(getCI(ed, "SourceImage"))).toLowerCase())) {
+    severity = "Low";
+  }
+
+  // Structured correlation/IOC fields.
+  const { sha256, md5 } = parseHashes(rec, ed);
+  const imagePath = firstStr(ed, ["Image", "NewProcessName", "ImageLoaded", "TargetFilename", "ServiceFileName", "TargetImage"]);
+  const processName = def.kind === "process" || def.kind === "procaccess"
+    ? baseName(str(getCI(ed, "Image")) || str(getCI(ed, "SourceImage")) || str(getCI(ed, "NewProcessName"))) || undefined
+    : undefined;
+  const parentName = baseName(str(getCI(ed, "ParentImage"))) || undefined;
+
+  // IOCs from the structured fields.
+  for (const ipKey of ["IpAddress", "DestinationIp", "SourceIp", "ClientAddress"]) {
+    const ip = cleanIp(str(getCI(ed, ipKey)));
+    if (ip) addIoc(iocSink, "ip", ip);
+  }
+  if (sha256) addIoc(iocSink, "hash", sha256);
+  else if (md5) addIoc(iocSink, "hash", md5);
+  for (const fk of ["Image", "NewProcessName", "ImageLoaded", "TargetFilename", "ServiceFileName"]) {
+    const f = str(getCI(ed, fk)).trim();
+    if (f && f !== "-" && /[\\/]/.test(f)) addIoc(iocSink, "file", f);
+  }
+  if (processName) addIoc(iocSink, "process", processName);
+  const dns = str(getCI(ed, "QueryName")).trim();
+  if (def.kind === "dns" && dns && dns !== "-" && /\./.test(dns)) addIoc(iocSink, "domain", dns.replace(/\.$/, ""));
+
+  return {
+    timestamp: pickTimestamp(rec, ed),
+    description,
+    severity,
+    mitre,
+    aggKey: `win|${channel}|${eid}|${accts.join(",")}|${subject}`.toLowerCase(),
+    ...(sha256 ? { sha256 } : {}),
+    ...(md5 ? { md5 } : {}),
+    ...(imagePath ? { path: imagePath } : {}),
+    ...(host ? { asset: host } : {}),
+    ...(processName ? { processName } : {}),
+    ...(def.kind === "process" && parentName ? { parentName } : {}),
+  };
+}
+
+function worst(a: Severity, b: Severity): Severity {
+  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
+}
+
+// ───────────────────────────── generic record → event ─────────────────────────────
+
+const SEV_WORDS: Record<string, Severity> = {
+  critical: "Critical", crit: "Critical", emergency: "Critical", alert: "Critical", fatal: "Critical",
+  high: "High", error: "High", err: "High",
+  medium: "Medium", med: "Medium", moderate: "Medium", warning: "Medium", warn: "Medium",
+  low: "Low", notice: "Low",
+  info: "Info", informational: "Info", debug: "Info",
+};
+const SEVERITY_FIELD_KEYS = ["severity", "Severity", "alert.severity", "event.severity", "priority", "Priority", "risk", "risk_level", "risk_score", "score", "threat_level", "confidence", "level"];
+
+// Best-effort severity for a non-Windows record from an explicit severity/level field.
+function pickGenericSeverity(rec: Row): Severity {
+  for (const k of SEVERITY_FIELD_KEYS) {
+    const v = k.includes(".") ? getPath(rec, k) : getCI(rec, k);
+    if (v == null) continue;
+    if (typeof v === "number") {
+      // Common 0-10 / 0-100 risk scales: map high→Critical, etc.
+      if (v >= 90 || (v >= 9 && v <= 10)) return "Critical";
+      if (v >= 70 || (v >= 7 && v < 9)) return "High";
+      if (v >= 40 || (v >= 4 && v < 7)) return "Medium";
+      if (v > 0) return "Low";
+      continue;
+    }
+    const w = SEV_WORDS[str(v).trim().toLowerCase()];
+    if (w) return w;
+  }
+  return "Low";
+}
+
+const GENERIC_MSG_KEYS = [
+  "message", "Message", "description", "Description", "event.action", "action",
+  "rule.name", "ruleName", "signature", "signature_name", "name", "alert_name",
+  "title", "event.original", "_raw", "raw", "summary",
+];
+
+// Flatten a record to dotted key/value string pairs (objects one+ levels deep).
+function flatten(obj: Row, out: [string, string][], prefix = "", depth = 0): void {
+  if (depth > 3) return;
+  for (const [k, v] of Object.entries(obj)) {
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+      out.push([key, String(v)]);
+    } else if (isObject(v)) {
+      flatten(v, out, key, depth + 1);
+    } else if (Array.isArray(v)) {
+      for (const item of v) {
+        if (typeof item === "string" || typeof item === "number") out.push([key, String(item)]);
+        else if (isObject(item)) flatten(item, out, key, depth + 1);
+      }
+    }
+  }
+}
+
+// IOC extraction for non-Windows records, driven by key-name heuristics.
+function genericIocs(pairs: [string, string][], iocSink: Map<string, SiemIoc>): void {
+  for (const [key, value] of pairs) {
+    const k = key.toLowerCase();
+    const v = value.trim();
+    if (!v || v === "-") continue;
+    if (/(?:^|[._])(?:ip|ipaddr|ipaddress|src_ip|dst_ip|source_ip|dest_ip|destination_ip|remote_ip|client_ip|address)$/.test(k)) {
+      const ip = cleanIp(v); if (ip) addIoc(iocSink, "ip", ip); continue;
+    }
+    if (/sha256|sha1|\bmd5\b|imphash|(?:^|[._])hash$/.test(k) && HEX_HASH.test(v)) { addIoc(iocSink, "hash", v.toLowerCase()); continue; }
+    if (/(?:url|uri)$/.test(k) && /^https?:\/\//i.test(v)) { addIoc(iocSink, "url", v.slice(0, 300)); continue; }
+    if (/(?:domain|fqdn|dns|query|host_name|hostname)$/.test(k) && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(v) && !IPV4.test(v)) { addIoc(iocSink, "domain", v.toLowerCase()); continue; }
+    if (/(?:image|process|exe|process_name|processname|command_line|commandline|cmdline)$/.test(k)) {
+      const bn = baseName(v); if (/\.\w{2,4}$/.test(bn)) addIoc(iocSink, "process", bn); continue;
+    }
+    if (/(?:file|filename|filepath|file_path|path|target_filename)$/.test(k) && /[\\/]/.test(v)) { addIoc(iocSink, "file", v.slice(0, 300)); continue; }
+  }
+}
+
+function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent {
+  const vendor = detectVendor(rec);
+  const msg = firstStr(rec, GENERIC_MSG_KEYS);
+  const pairs: [string, string][] = [];
+  flatten(rec, pairs);
+  genericIocs(pairs, iocSink);
+
+  const base = msg ? oneLine(msg) : pairs.slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
+  let description = `${vendor ?? "SIEM event"}: ${base}`.slice(0, 600);
+  if (host && !description.toLowerCase().includes(host.toLowerCase())) description = `${description} @ ${host}`.slice(0, 600);
+
+  const severity = pickGenericSeverity(rec);
+  // Aggregate identical generic events, normalizing volatile numbers/GUIDs out of the key.
+  const aggKey = `gen|${vendor ?? ""}|${host}|${base}`
+    .toLowerCase()
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
+    .replace(/\d+/g, "#")
+    .slice(0, 400);
+
+  return { timestamp: pickTimestamp(rec, undefined), description, severity, mitre: [], aggKey, ...(host ? { asset: host } : {}) };
+}
+
+// Detect the vendor/tool behind a generic record from its source/provider/index fields.
+function detectVendor(rec: Row): string | undefined {
+  const blob = firstStr(rec, ["vendor", "product", "source_name", "provider", "provider_guid", "_index", "agent.type", "observer.vendor", "tags"]);
+  if (/sentinel.?one/i.test(blob)) return "SentinelOne";
+  if (/crowdstrike|falcon/i.test(blob)) return "CrowdStrike Falcon";
+  if (/defender|mde/i.test(blob)) return "Microsoft Defender";
+  if (/carbon.?black/i.test(blob)) return "Carbon Black";
+  if (/cortex|palo.?alto/i.test(blob)) return "Cortex XDR";
+  if (/splunk/i.test(blob)) return "Splunk";
+  if (/elastic|kibana|winlogbeat|filebeat|beats/i.test(blob)) return "Elastic";
+  if (/qradar/i.test(blob)) return "QRadar";
+  if (/wazuh/i.test(blob)) return "Wazuh";
+  return undefined;
+}
+
+// ───────────────────────────── IOC sink ─────────────────────────────
+
+function addIoc(sink: Map<string, SiemIoc>, type: SiemIoc["type"], value: string): void {
+  const v = value.trim();
+  if (!v) return;
+  const key = `${type}:${v.toLowerCase()}`;
+  if (!sink.has(key)) sink.set(key, { type, value: v });
+}
+
+// ───────────────────────────── top-level parse ─────────────────────────────
+
+export function parseSiemExport(text: string, opts: SiemImportOptions = {}): SiemParseResult {
+  const aggregate = opts.aggregate ?? true;
+  const maxEvents = opts.maxEvents ?? 2000;
+  const maxIocs = opts.maxIocs ?? 5000;
+  const floorRank = opts.minSeverity ? SEVERITY_RANK[opts.minSeverity] : Infinity;
+
+  const { records, format } = extractRecords(text);
+  const total = records.length;
+
+  const iocSink = new Map<string, SiemIoc>();
+  const byKey = new Map<string, SiemEvent>();
+  const order: string[] = [];
+  const hostTally = new Map<string, number>();
+
+  for (const rec of records) {
+    const host = pickHost(rec);
+    if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
+
+    const mapped = mapWindows(rec, host, iocSink) ?? mapGeneric(rec, host, iocSink);
+    if (SEVERITY_RANK[mapped.severity] > floorRank) continue;   // below the severity floor
+
+    const key = aggregate ? mapped.aggKey : `${order.length}`;  // no-agg ⇒ unique key per row
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.count = (existing.count ?? 1) + 1;
+      const t = mapped.timestamp;
+      if (t) {
+        if (!existing.timestamp || t < existing.timestamp) existing.timestamp = t;
+        if (!existing.endTimestamp || t > existing.endTimestamp) existing.endTimestamp = t;
+      }
+      existing.severity = worst(existing.severity, mapped.severity);
+      for (const m of mapped.mitre) if (!existing.mitreTechniques.includes(m)) existing.mitreTechniques.push(m);
+    } else {
+      byKey.set(key, {
+        id: "",
+        timestamp: mapped.timestamp,
+        description: mapped.description,
+        severity: mapped.severity,
+        mitreTechniques: [...mapped.mitre],
+        count: 1,
+        ...(mapped.sha256 ? { sha256: mapped.sha256 } : {}),
+        ...(mapped.md5 ? { md5: mapped.md5 } : {}),
+        ...(mapped.path ? { path: mapped.path } : {}),
+        ...(mapped.asset ? { asset: mapped.asset } : {}),
+        ...(mapped.processName ? { processName: mapped.processName } : {}),
+        ...(mapped.parentName ? { parentName: mapped.parentName } : {}),
+      });
+      order.push(key);
+    }
+  }
+
+  // Drop the synthetic count:1 marker on un-aggregated singletons for a cleaner timeline.
+  let events = order.map((k) => byKey.get(k)!);
+  for (const e of events) if (e.count === 1) delete e.count;
+  const groups = events.length;
+
+  // Most-severe first, then noisiest, then earliest — then cap.
+  events.sort((a, b) =>
+    SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
+    (b.count ?? 1) - (a.count ?? 1) ||
+    (a.timestamp || "~").localeCompare(b.timestamp || "~"));
+  const capped = events.slice(0, maxEvents);
+
+  const represented = capped.reduce((n, e) => n + (e.count ?? 1), 0);
+  const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+
+  return {
+    events: capped,
+    iocs: [...iocSink.values()].slice(0, maxIocs),
+    total,
+    kept: capped.length,
+    dropped: Math.max(0, total - represented),
+    groups,
+    format,
+    hostname,
+  };
+}
