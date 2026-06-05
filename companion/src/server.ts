@@ -149,7 +149,26 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     next();
   });
 
-  app.use(express.json({ limit: "25mb" }));
+  // JSON body limit. Bulk evidence imports (CSV / log / THOR / SIEM-EDR JSON exports) wrap the
+  // whole file in the request body, and SIEM/EDR exports in particular are routinely tens to
+  // hundreds of MB — so the cap is generous and configurable via DFIR_MAX_BODY_MB (default
+  // 256 MB). Localhost-only single-user tool, so a large limit is not a DoS concern. Files
+  // beyond a few hundred MB approach V8's max string length; for those, split the export.
+  const maxBodyMb = Number(process.env.DFIR_MAX_BODY_MB) || 256;
+  app.use(express.json({ limit: `${maxBodyMb}mb` }));
+
+  // Turn body-parser failures into actionable JSON (instead of Express's default HTML page):
+  // an over-limit upload → 413 with how to raise the cap; malformed JSON → 400. Placed right
+  // after the parser so it catches its errors; normal requests skip it (4-arg = error-only).
+  app.use((err: Error & { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction) => {
+    if (err?.type === "entity.too.large") {
+      return res.status(413).json({ error: `upload exceeds the ${maxBodyMb} MB limit — raise DFIR_MAX_BODY_MB and restart the companion, or split the export into smaller files` });
+    }
+    if (err?.type === "entity.parse.failed") {
+      return res.status(400).json({ error: "request body is not valid JSON" });
+    }
+    return next(err);
+  });
 
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
@@ -566,9 +585,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   app.post("/cases/:id/anon-control", async (req: Request, res: Response) => {
     try {
       const cur = await anonControl.load(req.params.id);
+      // Only accept KNOWN category keys with BOOLEAN values; anything else keeps the current value.
+      // (A blind spread would let `{categories:{IP:null}}` persist a falsy non-boolean and silently
+      // disable a category while `enabled` stays true.)
+      const reqCats = (req.body?.categories ?? {}) as Record<string, unknown>;
+      const categories = { ...cur.categories };
+      for (const k of Object.keys(categories) as (keyof AnonControl["categories"])[]) {
+        if (typeof reqCats[k] === "boolean") categories[k] = reqCats[k] as boolean;
+      }
       const next: AnonControl = {
         enabled: typeof req.body?.enabled === "boolean" ? req.body.enabled : cur.enabled,
-        categories: { ...cur.categories, ...(req.body?.categories ?? {}) },
+        categories,
         redactSecrets: typeof req.body?.redactSecrets === "boolean" ? req.body.redactSecrets : cur.redactSecrets,
       };
       await anonControl.save(req.params.id, next);

@@ -29,6 +29,15 @@ describe("/cases/:id/anon-control", () => {
     expect(res.body.enabled).toBe(false);
     expect((await request(app).get("/cases/c1/anon-control")).body.enabled).toBe(false);
   });
+  it("POST coerces categories: a boolean false disables; a non-boolean keeps the current value", async () => {
+    const res = await request(app).post("/cases/c1/anon-control").send({ categories: { IP: false, USER: null } });
+    expect(res.status).toBe(200);
+    expect(res.body.categories.IP).toBe(false);   // valid boolean applied
+    expect(res.body.categories.USER).toBe(true);  // non-boolean ignored → kept at default (true)
+    const reloaded = (await request(app).get("/cases/c1/anon-control")).body.categories;
+    expect(reloaded.IP).toBe(false);
+    expect(reloaded.USER).toBe(true);
+  });
 });
 
 describe("/cases/:id/anon-entities", () => {
