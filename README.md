@@ -154,6 +154,13 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   evidence event (Info) at its **own time** (l2tcsv `MM/DD/YYYY`+time+tz → UTC); **IOCs** (hashes, URLs, IPs)
   and the source file path are scraped from the message, and the l2tcsv `host` attributes the event. Tagged
   **Plaso**; repetitive rows aggregate; capped — *filter your psort output first* (date range / parsers).
+- **Malware-sandbox report import** — detonation reports, **deterministic** (no AI call). Ingests **CAPEv2**
+  (`report.json`) and **CrowdStrike Falcon Sandbox** (Hybrid Analysis summary JSON), auto-detected. The cleanest
+  "ingest a verdict" case: the **sample verdict** (CAPE `malscore`/family, Falcon `verdict`/`threat_score`/
+  `vx_family`) and **each behavioural signature** become timeline events carrying their **own severity** and
+  **MITRE** (CAPE signature `ttp`, Falcon `mitre_attcks`/`attck_id`); every **dropped/extracted-file hash** and
+  **network host/domain/URL** is harvested as an IOC. Tagged **CAPEv2** / **Falcon Sandbox**; aggregates + caps;
+  optional `minSeverity` floor.
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only
