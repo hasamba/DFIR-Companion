@@ -9,6 +9,15 @@ import { extractAccounts } from "./assetGraph.js";
 
 export type AnonCategory = "IP" | "EMAIL" | "USER" | "HOST" | "DOMAIN" | "PATH";
 
+// Token categories include OTHER (free-form analyst term). AnonCategory stays the 6 pattern
+// categories that drive the per-case `categories` toggle map; OTHER is token-only.
+export type AnonTokenCategory = AnonCategory | "OTHER";
+
+export interface CustomEntity {
+  value: string;
+  category: AnonTokenCategory;
+}
+
 export interface AnonPolicy {
   enabled: boolean;
   categories: Record<AnonCategory, boolean>;
@@ -22,6 +31,7 @@ export interface KnownEntities {
   hosts: string[];          // victim hostnames / FQDNs (longest-first)
   accounts: string[];       // DOMAIN\user or user@domain
   internalDomains: string[]; // AD/email domains to tokenize (lowercased, longest-first)
+  custom?: CustomEntity[];   // analyst-added exact-match entities (always tokenized when enabled)
 }
 
 export interface Anonymizer {
@@ -31,7 +41,7 @@ export interface Anonymizer {
 }
 
 export const SECRET_PLACEHOLDER = "[REDACTED_SECRET]";
-const TOKEN_RE = /ANON_(?:IP|EMAIL|USER|HOST|DOMAIN|PATH)_\d+/gi;
+const TOKEN_RE = /ANON_(?:IP|EMAIL|USER|HOST|DOMAIN|PATH|OTHER)_\d+/gi;
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -63,7 +73,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   const toReal = new Map<string, string>();   // token (UPPER) -> real value
   const counters: Record<string, number> = {};
 
-  function assign(category: AnonCategory, real: string): string {
+  function assign(category: AnonTokenCategory, real: string): string {
     const key = `${category}:${real.toLowerCase()}`;
     const existing = toToken.get(key);
     if (existing) return existing;
@@ -140,8 +150,20 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     return t.replace(IPV4_RE, (ip) => (isInternalIp(ip) ? assign("IP", ip) : ip));
   }
 
+  function anonCustom(t: string): string {
+    const custom = known.custom ?? [];
+    if (custom.length === 0) return t;
+    let out = t;
+    for (const { value, category } of [...custom].sort((a, b) => b.value.length - a.value.length)) {
+      if (!value || value.length < 1) continue;
+      out = out.replace(new RegExp(`\\b${escapeRegExp(value)}\\b`, "gi"), (m) => assign(category, m));
+    }
+    return out;
+  }
+
   function apply(text: string): string {
     let t = text;
+    t = anonCustom(t);                       // analyst-added entities always win
     if (policy.redactSecrets) t = redactSecrets(t);
     if (policy.categories.USER) t = anonAccounts(t);
     if (policy.categories.EMAIL) t = anonEmails(t);

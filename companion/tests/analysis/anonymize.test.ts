@@ -204,3 +204,23 @@ describe("isLocalAiProvider", () => {
     expect(isLocalAiProvider("openrouter", "https://openrouter.ai/api/v1")).toBe(false);
   });
 });
+
+describe("anonymizer — custom entities", () => {
+  it("tokenizes analyst-added exact-match entities even when that category's detector is OFF", () => {
+    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
+      { value: "203.0.113.9", category: "IP" },        // public IP the analyst marks as theirs
+      { value: "ProjectFalcon", category: "OTHER" },    // free-form codename
+    ]};
+    const a = createAnonymizer(policy({ IP: false }), known); // IP pattern detector OFF — custom still applies
+    const out = a.apply("beacon from 203.0.113.9 tagged ProjectFalcon");
+    expect(out).not.toContain("203.0.113.9");
+    expect(out).not.toContain("ProjectFalcon");
+    expect(out).toMatch(/ANON_IP_1/);
+    expect(out).toMatch(/ANON_OTHER_1/);
+    expect(a.restore(out)).toBe("beacon from 203.0.113.9 tagged ProjectFalcon");
+  });
+  it("no custom entities → unchanged", () => {
+    const a = createAnonymizer(policy({}), NONE);
+    expect(a.apply("nothing here")).toBe("nothing here");
+  });
+});
