@@ -1161,14 +1161,38 @@
     }
 
     // ── New case ── creation lives here (the extension only attaches to existing cases) ──
-    function openNewCase() {
-      document.getElementById("ncCaseId").value = "";
+    async function openNewCase() {
+      const idInput = document.getElementById("ncCaseId");
+      idInput.value = "";
       document.getElementById("ncName").value = "";
       document.getElementById("ncInvestigator").value =
         (document.getElementById("investigatorName").value || "").trim();
       document.getElementById("ncMsg").textContent = "";
       document.getElementById("newCaseOverlay").classList.add("open");
-      document.getElementById("ncCaseId").focus();
+      // Auto-suggest the next incident id — still fully editable (focus + select so a
+      // manually-typed id overtypes it in one keystroke).
+      idInput.value = await suggestCaseId();
+      idInput.focus();
+      idInput.select();
+    }
+    // Next free INC-YYYY-NNN: the highest NNN among this year's existing INC-YYYY-* cases,
+    // plus one, zero-padded to 3. Falls back to a date+time id if the case list can't be
+    // fetched, so the field is never left blank.
+    async function suggestCaseId() {
+      const year = new Date().getFullYear();
+      try {
+        const cases = await fetch("/cases").then(r => r.ok ? r.json() : []);
+        const re = new RegExp(`^INC-${year}-(\\d+)$`);
+        let max = 0;
+        for (const c of cases) {
+          const m = String(c.caseId || "").match(re);
+          if (m) max = Math.max(max, parseInt(m[1], 10));
+        }
+        return `INC-${year}-${String(max + 1).padStart(3, "0")}`;
+      } catch {
+        const d = new Date(), p = n => String(n).padStart(2, "0");
+        return `INC-${year}-${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+      }
     }
     function closeNewCase() { document.getElementById("newCaseOverlay").classList.remove("open"); }
     async function createNewCase() {
