@@ -72,7 +72,26 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   }
 
   // ── detectors (filled in across later tasks; order is fixed in apply()) ──
-  function redactSecrets(t: string): string { return t; }
+  function redactSecrets(t: string): string {
+    let out = t;
+    // key/value credentials: keep the key name, redact the value.
+    out = out.replace(
+      /\b(password|passwd|pwd|secret|api[_-]?key|apikey|token|authorization|bearer)\b(\s*[:=]\s*)["']?([^\s"'<>,;]{3,})/gi,
+      (_m, k: string, sep: string) => `${k}${sep}${SECRET_PLACEHOLDER}`,
+    );
+    // URL userinfo password (scheme://user:pass@host) — redact just the password.
+    out = out.replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s:@/]+)(@)/gi, (_m, a: string, _pw: string, c: string) => `${a}${SECRET_PLACEHOLDER}${c}`);
+    // Distinctive fixed-shape secrets. NOTE: deliberately NO generic high-entropy rule — it
+    // would clobber hashes (which we must keep as IOCs).
+    const fixed: RegExp[] = [
+      /\bAKIA[0-9A-Z]{16}\b/g,                                                   // AWS access key id
+      /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\b/g,         // JWT
+      /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,                                         // GitHub tokens
+      /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,                                       // Slack tokens
+    ];
+    for (const re of fixed) out = out.replace(re, SECRET_PLACEHOLDER);
+    return out;
+  }
   function isInternalDomain(domain: string): boolean {
     const d = domain.toLowerCase();
     return known.internalDomains.some((kd) => d === kd || d.endsWith("." + kd));

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAnonymizer, isInternalIp, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import { createAnonymizer, isInternalIp, SECRET_PLACEHOLDER, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
 function policy(over: Partial<AnonPolicy["categories"]> = {}, redactSecrets = false): AnonPolicy {
@@ -141,5 +141,28 @@ describe("anonymizer — internal domains", () => {
     expect(out).not.toMatch(/adatumlab\.local/i);
     expect(out).toMatch(/ANON_DOMAIN_/);
     expect(a.restore(out)).toBe("auth in ADATUMLAB to adatumlab.local; C2 at evil-c2.com");
+  });
+});
+
+describe("anonymizer — secret redaction (one-way)", () => {
+  it("redacts AWS keys, JWTs and key=value credentials", () => {
+    const a = createAnonymizer(policy({}, true), NONE);
+    const out = a.apply("AKIAIOSFODNN7EXAMPLE and password=Hunter2! token: eyJabc12345.eyJdef67890.sigsigsig9");
+    expect(out).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(out).not.toContain("Hunter2!");
+    expect(out).toContain(SECRET_PLACEHOLDER);
+    expect(out).toContain("password="); // key name kept, value redacted
+    expect(a.restore(out)).toBe(out);   // one-way: nothing to restore
+  });
+  it("PRESERVES a SHA-256 hash (it's an IOC, not a secret)", () => {
+    const sha = "2eeba4c80a6f91f06784c0c699512c22ff132233c71af336a423414cc84f574a";
+    const a = createAnonymizer(policy({}, true), NONE);
+    expect(a.apply(`malware sha256 ${sha}`)).toContain(sha);
+  });
+  it("redacts a URL userinfo password", () => {
+    const a = createAnonymizer(policy({}, true), NONE);
+    const out = a.apply("conn https://svc:s3cr3tPW@10.0.0.5/api");
+    expect(out).not.toContain("s3cr3tPW");
+    expect(out).toContain(SECRET_PLACEHOLDER);
   });
 });
