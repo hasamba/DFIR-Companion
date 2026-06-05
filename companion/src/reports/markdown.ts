@@ -19,7 +19,7 @@ const SEVERITY_ORDER: Record<Severity, number> = {
   Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4,
 };
 
-const TODO = "> _To be completed by the investigator — edit in the dashboard → **Report details**._";
+const TODO = "> _To be completed by the investigator — edit in the dashboard → **Case details**._";
 
 // A human value if present, otherwise a fallback (a derived value or the TODO placeholder).
 function humanOr(value: string, fallback = TODO): string {

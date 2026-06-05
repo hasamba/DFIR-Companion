@@ -285,7 +285,7 @@
     <section style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Investigation Log</h2><div id="timeline">—</div></section>
     <section style="grid-column: 1 / -1" class="collapsed">
-      <h2>Report Details (for the generated report)</h2>
+      <h2>Case Details (for the generated report)</h2>
       <div id="reportMeta">
         <p class="rm-hint">Human-authored sections of the incident report (AnttiKurittu template). Saved per case and merged into <code>report.md</code> when you click <em>Generate Report</em>. Leave a field blank to use the auto-derived value or a "to be completed" placeholder.</p>
         <div class="rm-grid">
@@ -307,7 +307,7 @@
         <label>Report revisions (1.1) — one per line: <code>version | date | author | comments</code><textarea id="rm-revisions" rows="2" placeholder="1.0 | 2026-06-04 | Jane Doe | Release version"></textarea></label>
         <label>Distribution list (1.2, optional — omitted if blank) — one per line: <code>name | role | method</code><textarea id="rm-distribution" rows="2" placeholder="Ellie Example | CISO | email"></textarea></label>
         <label>Glossary (2.4) — auto-calculated from the report; fill only to override. one per line: <code>term | explanation</code><textarea id="rm-glossary" rows="2" placeholder="(auto) EDR | Endpoint Detection and Response"></textarea></label>
-        <div><button id="saveReportMeta">Save report details</button> <span id="rmStatus" style="color:#9aa4b2; font-size:12px;"></span></div>
+        <div><button id="saveReportMeta">Save case details</button> <span id="rmStatus" style="color:#9aa4b2; font-size:12px;"></span></div>
       </div>
     </section>
   </main>
@@ -395,7 +395,7 @@
       }).catch(() => {});
     }
 
-    // --- Report Details (human-authored report-meta) ------------------------------
+    // --- Case Details (human-authored report-meta) ------------------------------
     // List/table fields are edited as one-entry-per-line text; the server normalizes.
     function parseRows(text, keys) {
       return text.split("\n").map(l => l.trim()).filter(Boolean).map(line => {

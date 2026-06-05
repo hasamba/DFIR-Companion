@@ -156,7 +156,7 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   auto-fill from the case (incl. an **auto-calculated glossary** from a curated DFIR dictionary);
   human-authored sections (title page with **multiple investigators / reviewer / incident manager**,
   optional incident ID + distribution, BIA, recommendations…) are filled in the dashboard
-  **Report Details** panel, persist per case, override the derived content, and show a
+  **Case Details** panel, persist per case, override the derived content, and show a
   "to be completed" placeholder until filled.
 
 ### Ops

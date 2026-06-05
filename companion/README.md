@@ -125,7 +125,7 @@ Examples:
 | `GET /cases/:id/incident-timeline.csv` | Export **just the incident (forensic) timeline** as CSV, generated on demand (same scope/legitimate filtering as the report) — no full report needed. The dashboard's **Export Timeline CSV** button calls this. |
 | `GET /cases/:id/asset-graph` | The **asset ↔ IoC graph**: `{ assets, iocs, edges }` — compromised assets (hosts from each event's `asset`, accounts parsed from event text) and the IoCs that touched each. Derived on demand with the report's scope/legitimate filtering. Powers the dashboard's *Compromised Assets* section and graph. |
 | `GET /cases/:id/report-meta` | Human-authored report metadata (title page, distribution, BIA, limitations, glossary, recommendations…) for the case, or defaults. Stored in `state/report-meta.json`. |
-| `PUT /cases/:id/report-meta` | Replace the report metadata with a normalized payload (unknown keys dropped, wrong-typed fields defaulted). The dashboard's **Report Details** panel calls this; values merge into `report.md` on generation. |
+| `PUT /cases/:id/report-meta` | Replace the report metadata with a normalized payload (unknown keys dropped, wrong-typed fields defaulted). The dashboard's **Case Details** panel calls this; values merge into `report.md` on generation. |
 | `GET /dashboard` | Live dashboard page. |
 | `WS /ws?caseId=<id>` | Live state + AI-status push for the dashboard. |
 

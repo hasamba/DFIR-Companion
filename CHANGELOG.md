@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata where the full UI lives and keeps the extension a pure capture client.
 
 ### Changed
+- **Renamed the dashboard "Report Details" panel to "Case Details."** Only the user-facing label
+  changed (heading + Save button, and the report's "to be completed" pointer); the `/report-meta`
+  endpoint, element ids, and `state/report-meta.json` are unchanged.
 - **The companion rejects captures to an unknown case.** `POST /captures` now returns **404** (instead of
   the old confusing 500-then-queue-forever) when the `caseId` doesn't exist — evidence never lands in a
   half-made case, and the extension surfaces it (amber `!` badge, "case missing" diagnostic) instead of

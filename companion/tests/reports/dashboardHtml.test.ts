@@ -11,7 +11,7 @@ describe("dashboard.html", () => {
     expect(html).toContain('id="generateReport"');
   });
 
-  it("wires the Report Details form (people fields + save) to /report-meta", async () => {
+  it("wires the Case Details form (people fields + save) to /report-meta", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="saveReportMeta"');
     expect(html).toContain('id="rm-investigators"');
