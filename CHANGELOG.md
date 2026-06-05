@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **One "Import" button — the server auto-detects the file type.** The dashboard's ~15 per-format
+  import buttons are replaced by a **single Import button** (multi-file). Each uploaded file is **sniffed
+  server-side** (`importDetect.ts` → new `POST /cases/:id/import`) — JSON object/array/NDJSON vs CSV vs
+  line-oriented log, then per-format key/header signatures — and routed to the right importer (THOR, SIEM/EDR,
+  Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, M365/Entra, AWS, GCP/Azure, Plaso, sandbox,
+  or the AI CSV/log path); **images are stored as screenshots**. The detected kind is returned and shown, so a
+  mis-route is visible. The per-format `POST /cases/:id/import-*` routes remain for programmatic use.
+- **One "Export" menu and one "Push" menu.** The separate Generate-report / Timeline-CSV / Timesketch-JSONL
+  buttons are now an **Export** dropdown (report, forensic-timeline CSV, Timesketch JSONL, full case-state JSON),
+  and the Push-to-IRIS / Push-to-Timesketch buttons are a **Push** dropdown whose options appear only when that
+  target is configured. The dashboard toolbar is dramatically decluttered without losing any capability.
+
 ### Added
 - **Malware-sandbox report import (CAPEv2 + CrowdStrike Falcon Sandbox).** A new **Import Sandbox** button (and
   `POST /cases/:id/import-sandbox`) ingests a sandbox detonation report — the twelfth deterministic ingest path
