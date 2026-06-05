@@ -886,6 +886,7 @@
     function anonUnavailable() {
       const b = document.getElementById("anonToggle");
       b.textContent = "Anon: ?";
+      b.title = "Anon control endpoint missing";
       document.getElementById("status").textContent =
         "Anon control endpoint missing — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
     }
@@ -898,8 +899,7 @@
     function loadAnonEntities(caseId) {
       return fetch(`/cases/${caseId}/anon-entities`)
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(d => { anonAuto = d.auto || { hosts: [], accounts: [], internalDomains: [] }; anonCustom = (d.custom || []).map(e => ({ ...e })); })
-        .catch(() => { anonAuto = { hosts: [], accounts: [], internalDomains: [] }; anonCustom = []; });
+        .then(d => { anonAuto = d.auto || { hosts: [], accounts: [], internalDomains: [] }; anonCustom = (d.custom || []).map(e => ({ ...e })); });
     }
     function renderAutoEntities() {
       const chip = v => `<span class="anon-chip">${esc(v)}</span>`;
@@ -936,7 +936,9 @@
       if (anonControl.screenshotWarning) { warn.style.display = "block"; warn.textContent = "⚠ Screenshots are sent to the external vision model un-anonymized — pixels can't be tokenized. Point DFIR_AI_MODEL at a local Ollama vision model to keep them on-box. Imported CSV/log text and synthesis ARE anonymized."; }
       else { warn.style.display = "none"; }
       document.getElementById("anonMsg").textContent = "loading entities…";
-      loadAnonEntities(caseId).then(() => { renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = ""; });
+      loadAnonEntities(caseId)
+        .then(() => { renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = ""; })
+        .catch(() => { anonAuto = { hosts: [], accounts: [], internalDomains: [] }; anonCustom = []; renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = "failed to load entities — restart the server if this persists"; });
       document.getElementById("anonOverlay").classList.add("open");
     }
     function saveAnon() {
