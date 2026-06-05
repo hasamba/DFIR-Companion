@@ -22,6 +22,8 @@ import { parseChainsawReport } from "./analysis/chainsawImport.js";
 import type { ChainsawImportOptions } from "./analysis/chainsawImport.js";
 import { parseHayabusaTimeline } from "./analysis/hayabusaImport.js";
 import type { HayabusaImportOptions } from "./analysis/hayabusaImport.js";
+import { parseVelociraptorJson } from "./analysis/velociraptorImport.js";
+import type { VelociraptorImportOptions } from "./analysis/velociraptorImport.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
 import { ProviderHealthCache } from "./enrichment/providerHealth.js";
@@ -1206,6 +1208,61 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `Hayabusa import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import Velociraptor native JSON (collection results / hunt export). Evidence-first;
+  // mapping is DETERMINISTIC (no AI extraction): rows are classified (Sigma/YARA/EventLog/
+  // generic) and mapped — detection rows verdict-driven, the rest auto-detect time + IOCs.
+  app.post("/cases/:id/import-velociraptor", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.json === "string" ? req.body.json : "";
+    const originalName = String(req.body?.filename ?? "velociraptor.json");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    // Optional severity floor (e.g. "low" drops the Info-level raw-collection rows).
+    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const minSeverity: Severity | undefined =
+      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
+      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
+      : rawLevel === "info" ? "Info" : undefined;
+    const vrOpts: VelociraptorImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      const preview = parseVelociraptorJson(text, vrOpts);
+      if (preview.total === 0) return res.status(400).json({ error: "no parseable Velociraptor rows found (expected JSON array, JSONL collection results, or an artifact map)" });
+      if (preview.kept === 0) return res.status(400).json({ error: `no events after the '${rawLevel}' severity floor (${preview.total} row(s) parsed)` });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "velociraptor.json");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, rows: preview.total, detections: preview.detections, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} Velociraptor event(s)` });
+      void options.pipeline.importVelociraptor(caseId, text, {
+        label: storedName,
+        idPrefix: `v${seq}`,
+        importedAt,
+        velociraptor: vrOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `Velociraptor import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })

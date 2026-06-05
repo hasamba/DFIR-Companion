@@ -89,7 +89,10 @@ Sigma rule's level→severity + `attack.tXXXX`→MITRE), and **Hayabusa** (`impo
 `hayabusaImport.ts` — Hayabusa `json-timeline`/`csv-timeline`; **verdict-first** since Hayabusa
 doesn't embed the raw EVTX node: rule `Level`→severity, `RuleTitle`→description, tactics/tags→MITRE,
 IOCs/host/process-chain from the rendered detail fields; reuses `siemImport`'s `aggregateEvents` +
-IOC extractors and `csvImport`'s `parseCsv`). The last four are **fully
+IOC extractors and `csvImport`'s `parseCsv`), and **Velociraptor** native JSON (`importVelociraptor` →
+`velociraptorImport.ts` — array/JSONL/artifact-map; classifies each VQL row Sigma/YARA/EventLog/generic,
+verdict-first for detections, reuses `siemImport`'s `mapWindows`/`aggregateEvents`, reads the artifact's
+own time not `_ts`). The last five are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
 

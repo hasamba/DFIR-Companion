@@ -98,6 +98,14 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   the matched **rule title** leads the event, its **level drives severity**, and its **tactics/tags** (`Txxxx`)
   become MITRE techniques; **IOCs, the affected host, and the process→parent chain** are pulled from the rendered
   detail fields. Tagged **Hayabusa** for cross-source correlation; aggregates + caps; optional `minSeverity` floor.
+- **Velociraptor native JSON import** — [Velociraptor](https://docs.velociraptor.app/) collection results / hunt
+  exports, **deterministic** (no AI call). Reads a JSON array, **JSONL** (the native collection-results form), or a
+  multi-artifact map (`{ "Artifact.Name": [rows] }`). Because VQL artifacts emit wildly different columns, each row is
+  **classified**: **Sigma** detections map verdict-first (rule level→severity, title→description, tags→MITRE) over the
+  parsed event; **YARA** hits become High detections with the rule + scanned file/process + hash; parsed **EVTX** rows
+  reuse the per-EID Windows mapping; any other artifact (pslist / netstat / file listing…) **auto-detects the
+  artifact's own time** (not the `_ts` collection time), host, and IOCs. Tagged **Velociraptor** for cross-source
+  correlation; aggregates + caps; optional `minSeverity` floor (drops the Info-level raw-collection rows).
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only
