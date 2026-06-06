@@ -121,7 +121,7 @@ describe("tokensToDocxChildren", () => {
     const lexer = new Marked({ gfm: true });
     const tokens = lexer.lexer(md);
     const children = tokensToDocxChildren(tokens);
-    expect(children.length).toBeGreaterThan(0);
+    expect(children.length).toBe(15);
 
     // Pack a minimal document and inspect document.xml.
     const { Document, Packer } = await import("docx");
@@ -145,6 +145,11 @@ describe("tokensToDocxChildren", () => {
     expect(xml).toContain("italic");
     expect(xml).toContain("code");
     expect(rels).toContain("https://example.com");
+
+    // Confirm bold/italic formatting actually emit run-properties (not just the text "bold"/"italic").
+    // <w:b/> and <w:i/> may carry attributes; match the opening with optional attributes.
+    expect(xml).toMatch(/<w:b\b/);
+    expect(xml).toMatch(/<w:i\b/);
 
     // Lists: each item text present.
     expect(xml).toContain("bullet one");
