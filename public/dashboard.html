@@ -1555,6 +1555,23 @@
       const images = files.filter(isImage);
       const data = files.filter((f) => !isImage(f));
 
+      // Minimum severity to import — restored across all import types. Asked once for the
+      // whole batch (data files only; screenshots have no severity). Imports that don't grade
+      // severity (e.g. KAPE, Plaso, plain telemetry) are kept in full regardless of this floor;
+      // "info" (or Cancel-then-keep) imports everything. The server normalizes the value.
+      let minSeverity = "";
+      if (data.length) {
+        const ans = prompt(
+          "Minimum severity to import? Events below this are dropped — but imports that carry NO " +
+          "severity (KAPE, Plaso, plain telemetry) are kept in full.\n\n" +
+          "  critical = only Critical\n  high     = Critical + High\n  medium   = Critical + High + Medium\n" +
+          "  low      = everything except Info\n  info     = import everything (default)",
+          "info",
+        );
+        if (ans === null) { e.target.value = ""; return; } // cancelled the whole import
+        minSeverity = ans.trim().toLowerCase();
+      }
+
       // Data files → the unified /import endpoint (server auto-detects + routes).
       const kinds = {};
       let dataFail = 0;
@@ -1565,7 +1582,7 @@
           const text = await f.text();
           const r = await fetch(`/cases/${caseId}/import`, {
             method: "POST", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ filename: f.name, text }),
+            body: JSON.stringify({ filename: f.name, text, minSeverity }),
           });
           const jr = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(jr.error || ("HTTP " + r.status));
@@ -1597,7 +1614,8 @@
 
       const parts = [];
       const kindList = Object.entries(kinds).map(([k, n]) => (n > 1 ? `${n}× ${k}` : k));
-      if (kindList.length) parts.push(`imported ${kindList.join(", ")} — analyzing (see AI status)`);
+      const floorNote = minSeverity && minSeverity !== "info" ? ` (min severity ${minSeverity})` : "";
+      if (kindList.length) parts.push(`imported ${kindList.join(", ")}${floorNote} — analyzing (see AI status)`);
       if (images.length) parts.push(`${imgOk} screenshot(s)` + (imgDup ? `, ${imgDup} dup` : "") + (imgFail ? `, ${imgFail} failed` : ""));
       if (dataFail) parts.push(`${dataFail} file(s) failed / unrecognized`);
       statusEl.textContent = parts.join(" · ") || "nothing imported";
@@ -1793,11 +1811,16 @@
       let saved; try { saved = JSON.parse(localStorage.getItem(ORDER_KEY) || "null"); } catch { saved = null; }
       if (!Array.isArray(saved)) return;                 // no saved order → use the HTML default
       const main = document.querySelector("main");
-      const byKey = new Map(sections().map(s => [sectionKey(s), s]));
-      const used = new Set();
-      const ordered = [];
-      saved.forEach(k => { const s = byKey.get(k); if (s) { ordered.push(s); used.add(s); } });
-      sections().forEach(s => { if (!used.has(s)) ordered.push(s); }); // new/unknown sections go to the end
+      const all = sections();                            // current DOM order == the HTML default order
+      const byKey = new Map(all.map(s => [sectionKey(s), s]));
+      const savedExisting = saved.filter(k => byKey.has(k)); // saved keys that still exist
+      const savedSet = new Set(savedExisting);
+      // Sections missing from the saved order (added in a newer build) stay ANCHORED at their
+      // natural HTML slot instead of being dumped at the end; the saved order only reshuffles the
+      // sections it actually names. So a new default-first section like "Ask the AI" still renders
+      // first for users whose saved order predates it.
+      let si = 0;
+      const ordered = all.map(s => (savedSet.has(sectionKey(s)) ? byKey.get(savedExisting[si++]) : s));
       ordered.forEach(s => main.appendChild(s));
     }
     function setupReorder() {

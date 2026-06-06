@@ -385,6 +385,80 @@ describe("server analysis wiring", () => {
     expect(res.status).toBe(400);
   });
 
+  it("unified /import applies the minimum-severity floor (THOR: keeps the Critical, drops the Medium Notice)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-import-floor-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", "synthesis must not run (AI off)"),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app = createApp(store, { pipeline, stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    // AI defaults OFF → deterministic mapping only, no synthesis to confuse the count.
+
+    const jsonl = [
+      JSON.stringify({ time: "t", hostname: "WIN11", level: "Alert", module: "Filescan",
+        message: "Malware file found", file: "C:\\Tools\\mimikatz.exe", modified: "2025-03-14T21:18:18Z" }),
+      JSON.stringify({ time: "t", hostname: "WIN11", level: "Notice", module: "Filescan",
+        message: "Minor finding", file: "C:\\Tools\\note.txt", modified: "2025-03-14T20:00:00Z" }),
+    ].join("\n") + "\n";
+
+    // The single Import button posts to /import with the chosen floor.
+    const res = await request(app).post("/cases/c1/import")
+      .send({ filename: "WIN11_thor.json", text: jsonl, minSeverity: "critical" });
+    expect(res.status).toBe(202);
+    expect(res.body.kind).toBe("thor");
+    expect(res.body.minSeverity).toBe("Critical"); // normalized + echoed back
+
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 80 && state.forensicTimeline.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    await new Promise((r) => setTimeout(r, 100)); // settle — the Medium Notice must never land
+    state = await stateStore.load("c1");
+    expect(state.forensicTimeline).toHaveLength(1);          // Alert(Critical) kept, Notice(Medium) dropped
+    expect(state.forensicTimeline[0].severity).toBe("Critical");
+  });
+
+  it("unified /import keeps an ungraded (all-Info) import in full despite a high floor (the 'no severities → import everything' rule)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-import-gate-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", "synthesis must not run (AI off)"),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app = createApp(store, { pipeline, stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+
+    // KAPE Prefetch (PECmd) CSV — every row maps to an Info evidence event (host triage, no grading).
+    const kape = [
+      "SourceFilename,ExecutableName,Hash,Size,RunCount,LastRun,PreviousRun0",
+      "C:\\Windows\\Prefetch\\EVIL.EXE-1234.pf,EVIL.EXE,ABCD,10000,3,2023-04-01 10:00:00,2023-03-31 09:00:00",
+      "C:\\Windows\\Prefetch\\CALC.EXE-5678.pf,CALC.EXE,EF01,9000,7,2023-04-02 11:00:00,2023-03-30 08:00:00",
+    ].join("\n");
+
+    const res = await request(app).post("/cases/c1/import")
+      .send({ filename: "Prefetch.csv", text: kape, minSeverity: "high" });
+    expect(res.status).toBe(202);
+    expect(res.body.kind).toBe("kape");
+
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 80 && state.forensicTimeline.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    await new Promise((r) => setTimeout(r, 100));
+    state = await stateStore.load("c1");
+    // The floor was "high" but this import grades nothing (all Info) → it is kept whole.
+    expect(state.forensicTimeline).toHaveLength(2);
+    expect(state.forensicTimeline.every((e) => e.severity === "Info")).toBe(true);
+  });
+
   it("imports a SIEM/EDR JSON export (Elastic envelope): unwraps, maps Windows events, then synthesizes", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-siem-"));
     const store = new CaseStore(root);

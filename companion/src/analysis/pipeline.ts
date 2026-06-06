@@ -6,10 +6,11 @@ import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
 import type { CustomEntitiesStore } from "./anonEntities.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
-import type { InvestigationState, InvestigationQuestion, ForensicEvent } from "./stateTypes.js";
+import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity } from "./stateTypes.js";
 import { deltaSchema, askSchema, type AskAnswer } from "./responseSchema.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
+import { applySeverityFloor } from "./severityFloor.js";
 import { parseJsonLoose } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
@@ -565,6 +566,7 @@ export class AnalysisPipeline {
       idPrefix: string;          // unique per import (e.g. "m3") so event ids never collide
       importedAt: string;        // ISO time used for timeline/firstSeen context
       rowsPerBatch?: number;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
@@ -601,7 +603,7 @@ export class AnalysisPipeline {
       // dedupes forensic events by id, and each batch independently emits e1, e2…).
       const renumbered = {
         ...delta,
-        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "CSV import"] })),
+        forensicEvents: applySeverityFloor(delta.forensicEvents ?? [], opts.minSeverity).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "CSV import"] })),
       };
 
       state = mergeDelta(state, renumbered, {
@@ -631,6 +633,7 @@ export class AnalysisPipeline {
       idPrefix: string;          // unique per import (e.g. "l3") so event ids never collide
       importedAt: string;        // ISO time used for timeline/firstSeen context
       patternsPerBatch?: number; // how many distinct patterns to triage per AI call
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
@@ -676,7 +679,7 @@ export class AnalysisPipeline {
 
       const renumbered = {
         ...delta,
-        forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "Log import"] })),
+        forensicEvents: applySeverityFloor(delta.forensicEvents ?? [], opts.minSeverity).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "Log import"] })),
       };
 
       state = mergeDelta(state, renumbered, {
@@ -704,10 +707,12 @@ export class AnalysisPipeline {
       idPrefix: string;          // unique per import (e.g. "t3") so ids never collide
       importedAt: string;
       thor?: ThorImportOptions;  // filtering overrides (dropInfo, dropLifecycleModules…)
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseThorReport(jsonText, opts.thor);
+    const parsedRaw = parseThorReport(jsonText, opts.thor);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     // Assign stable, collision-free ids and validate the delta against the schema
@@ -750,10 +755,12 @@ export class AnalysisPipeline {
       idPrefix: string;          // unique per import (e.g. "s3") so ids never collide
       importedAt: string;
       siem?: SiemImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseSiemExport(jsonText, opts.siem);
+    const parsedRaw = parseSiemExport(jsonText, opts.siem);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const source = detectTool(opts.label) ?? detectTool(parsed.format) ?? "SIEM import";
@@ -798,10 +805,12 @@ export class AnalysisPipeline {
       idPrefix: string;               // unique per import (e.g. "c3") so ids never collide
       importedAt: string;
       chainsaw?: ChainsawImportOptions; // filtering overrides (aggregate, minSeverity, maxEvents…)
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseChainsawReport(jsonText, opts.chainsaw);
+    const parsedRaw = parseChainsawReport(jsonText, opts.chainsaw);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const fallback = parsed.detections > 0 ? "Chainsaw" : "EVTX";
@@ -846,10 +855,12 @@ export class AnalysisPipeline {
       idPrefix: string;                  // unique per import (e.g. "h3") so ids never collide
       importedAt: string;
       hayabusa?: HayabusaImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseHayabusaTimeline(text, opts.hayabusa);
+    const parsedRaw = parseHayabusaTimeline(text, opts.hayabusa);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const raw = {
@@ -892,6 +903,7 @@ export class AnalysisPipeline {
       idPrefix: string;                       // unique per import (e.g. "v3") so ids never collide
       importedAt: string;
       velociraptor?: VelociraptorImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
@@ -900,7 +912,8 @@ export class AnalysisPipeline {
     const rawArtifact = opts.label.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
     let artifact = rawArtifact;
     try { artifact = decodeURIComponent(rawArtifact); } catch { /* malformed %xx — keep the raw label */ }
-    const parsed = parseVelociraptorJson(text, { artifact, ...opts.velociraptor });
+    const parsedRaw = parseVelociraptorJson(text, { artifact, ...opts.velociraptor });
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const raw = {
@@ -944,10 +957,12 @@ export class AnalysisPipeline {
       idPrefix: string;                // unique per import (e.g. "n3") so ids never collide
       importedAt: string;
       network?: NetworkImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseNetworkLogs(text, opts.network);
+    const parsedRaw = parseNetworkLogs(text, opts.network);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
 
     const raw = {
@@ -991,10 +1006,12 @@ export class AnalysisPipeline {
       idPrefix: string;             // unique per import (e.g. "k3") so ids never collide
       importedAt: string;
       kape?: KapeImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseKapeCsv(text, opts.kape);
+    const parsedRaw = parseKapeCsv(text, opts.kape);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const raw = {
@@ -1037,10 +1054,12 @@ export class AnalysisPipeline {
       idPrefix: string;                  // unique per import (e.g. "ct3") so ids never collide
       importedAt: string;
       cybertriage?: CybertriageImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseCybertriage(text, opts.cybertriage);
+    const parsedRaw = parseCybertriage(text, opts.cybertriage);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
 
     const raw = {
@@ -1085,10 +1104,12 @@ export class AnalysisPipeline {
       idPrefix: string;            // unique per import (e.g. "m3") so ids never collide
       importedAt: string;
       m365?: M365ImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseM365Audit(text, opts.m365);
+    const parsedRaw = parseM365Audit(text, opts.m365);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const raw = {
@@ -1130,10 +1151,12 @@ export class AnalysisPipeline {
       idPrefix: string;          // unique per import (e.g. "a3") so ids never collide
       importedAt: string;
       aws?: AwsImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseCloudTrail(text, opts.aws);
+    const parsedRaw = parseCloudTrail(text, opts.aws);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const raw = {
@@ -1175,10 +1198,12 @@ export class AnalysisPipeline {
       idPrefix: string;          // unique per import (e.g. "g3") so ids never collide
       importedAt: string;
       cloud?: CloudActivityImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseCloudActivity(text, opts.cloud);
+    const parsedRaw = parseCloudActivity(text, opts.cloud);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const raw = {
@@ -1220,10 +1245,12 @@ export class AnalysisPipeline {
       idPrefix: string;            // unique per import (e.g. "p3") so ids never collide
       importedAt: string;
       plaso?: PlasoImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parsePlasoCsv(text, opts.plaso);
+    const parsedRaw = parsePlasoCsv(text, opts.plaso);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const raw = {
@@ -1266,10 +1293,12 @@ export class AnalysisPipeline {
       idPrefix: string;            // unique per import (e.g. "sb3") so ids never collide
       importedAt: string;
       sandbox?: SandboxImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseSandboxReport(text, opts.sandbox);
+    const parsedRaw = parseSandboxReport(text, opts.sandbox);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const raw = {

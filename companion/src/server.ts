@@ -41,6 +41,7 @@ import type { PlasoImportOptions } from "./analysis/plasoImport.js";
 import { parseSandboxReport } from "./analysis/sandboxImport.js";
 import type { SandboxImportOptions } from "./analysis/sandboxImport.js";
 import { detectImportKind } from "./analysis/importDetect.js";
+import { parseMinSeverity } from "./analysis/severityFloor.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
 import { ProviderHealthCache } from "./enrichment/providerHealth.js";
@@ -970,6 +971,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / CSV / log)" });
     }
 
+    // Optional minimum-severity floor (the old per-format "which minimum severity?" prompt,
+    // restored for the single Import button). Gate-aware: imports that don't grade severity
+    // (all-Info telemetry like KAPE/Plaso) are kept whole — see applySeverityFloor. A missing
+    // / unrecognized value imports everything.
+    const minSeverity = parseMinSeverity(req.body?.minSeverity);
+
     try {
       const seq = await store.nextImportSeq(caseId);
       const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.dat");
@@ -981,14 +988,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         originalName, rows: 0, bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, kind, file: storedName });
+      res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
 
       const pipeline = options.pipeline;
       const onProgress = (done: number, total: number): void => options.onAiStatus?.(caseId, {
         status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}`,
       });
-      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress };
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind})` });
+      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress, minSeverity };
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}` });
 
       const run = (): Promise<unknown> => {
         switch (kind) {

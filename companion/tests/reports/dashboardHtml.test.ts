@@ -125,6 +125,9 @@ describe("dashboard.html", () => {
     expect(html).toContain('fetch("/captures"');        // images go through the capture ingest path
     expect(html).toContain("readAsDataURL");            // base64-encodes each image
     expect(html).toContain("/import");                  // data files are auto-detected + routed
+    // Restored minimum-severity floor: the import prompts once and forwards the chosen floor.
+    expect(html).toContain("Minimum severity to import");
+    expect(html).toContain("minSeverity");
   });
 
   it("offers zoom in/out/fit buttons and mouse-wheel zoom for the graph", async () => {
