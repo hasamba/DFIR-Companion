@@ -2067,7 +2067,7 @@ export function buildEnrichmentProviders(): EnrichmentProvider[] {
   return providers;
 }
 
-export function startServer(casesRoot: string, port = 4773): void {
+export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"): void {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStoreImpl(store);
   const hub = new LiveHub();
@@ -2137,8 +2137,12 @@ export function startServer(casesRoot: string, port = 4773): void {
     res.type("html").send(html);
   });
 
-  const server = app.listen(port, "127.0.0.1", () => {
-    logLine(`DFIR companion on http://127.0.0.1:${port} (dashboard at /dashboard)`);
+  // Bind host. Defaults to 127.0.0.1 (localhost-only — the OPSEC invariant for native runs).
+  // Inside a container set DFIR_HOST=0.0.0.0 so the published port is reachable; the compose
+  // file maps it to 127.0.0.1 on the HOST, so the localhost-only posture is preserved end-to-end.
+  const server = app.listen(port, host, () => {
+    const shownHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+    logLine(`DFIR companion on http://${shownHost}:${port} (dashboard at /dashboard)`);
   });
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.
@@ -2165,7 +2169,10 @@ export function startServer(casesRoot: string, port = 4773): void {
 
 // Entry point when run directly. Load companion/.env so users can keep config
 // (AI provider/model/key, cases root) in a file instead of typing env vars.
-if (process.argv[1] && process.argv[1].endsWith("server.ts")) {
+// Matches both the tsx dev entry (`server.ts`) and the compiled production entry
+// (`dist/server.js`, used by the Docker image) so `node dist/server.js` boots the server.
+const entryPath = process.argv[1] ?? "";
+if (entryPath.endsWith("server.ts") || entryPath.endsWith("server.js")) {
   loadDotenv();
   const raw = process.env.DFIR_CASES_ROOT ?? "cases";
   // Anchor a relative cases root to the companion package directory, so the SAME
@@ -2188,5 +2195,10 @@ if (process.argv[1] && process.argv[1].endsWith("server.ts")) {
       warnLine(`[DFIR] ignoring invalid DFIR_PORT="${rawPort}" — using default ${DEFAULT_PORT}.`);
     }
   }
-  startServer(casesRoot, port);
+
+  // Bind host. Default 127.0.0.1 keeps the server localhost-only for native runs. The Docker
+  // image sets DFIR_HOST=0.0.0.0 so the container's published port works; compose maps that
+  // port to 127.0.0.1 on the host, so it never listens on the host's public interfaces.
+  const host = process.env.DFIR_HOST && process.env.DFIR_HOST !== "" ? process.env.DFIR_HOST : "127.0.0.1";
+  startServer(casesRoot, port, host);
 }

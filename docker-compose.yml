@@ -1,0 +1,53 @@
+# DFIR Companion — Docker Compose.
+#
+# Localhost-only by design: the container binds 0.0.0.0 internally (DFIR_HOST) and the port is
+# published to 127.0.0.1 on the HOST, so it is never exposed on your machine's network interfaces.
+# Forensic evidence + case state persist in ./cases on the host. The pre-built browser add-on is
+# written to ./addon so you can load it unpacked into Chrome/Comet.
+#
+# No Ollama / LiteLLM here. For AI, point DFIR_AI_* at any OpenAI-compatible endpoint (a model you
+# host, a remote provider, or an Ollama/LiteLLM you run separately).
+#
+#   docker compose build         # build from source
+#   docker compose up -d         # start → http://127.0.0.1:4773/dashboard
+#   docker compose pull          # OR pull the prebuilt image from GHCR instead of building
+
+services:
+  companion:
+    # Build from source (default). Comment out `build:` to use the GHCR image only.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/hasamba/dfir-companion:latest
+    container_name: dfir-companion
+    restart: unless-stopped
+    # HOST:CONTAINER — bound to 127.0.0.1 on the host so the dashboard is localhost-only.
+    ports:
+      - "127.0.0.1:4773:4773"
+    environment:
+      DFIR_HOST: "0.0.0.0"
+      DFIR_PORT: "4773"
+      DFIR_CASES_ROOT: "/data/cases"
+      DFIR_MAX_BODY_MB: "256"
+      # --- AI analysis (optional). Leave DFIR_AI_PROVIDER unset for capture/import-only. ---
+      # DFIR_AI_PROVIDER: "openai"
+      # DFIR_AI_MODEL: "gpt-4o"
+      # DFIR_AI_KEY: "sk-replace-me"
+      # Reach an AI endpoint on the host (Docker Desktop): http://host.docker.internal:PORT/v1
+      # e.g. a local Ollama:  DFIR_AI_PROVIDER=ollama  DFIR_AI_BASE_URL=http://host.docker.internal:11434/v1
+      # DFIR_AI_BASE_URL: "http://host.docker.internal:11434/v1"
+    # Prefer a file for config? Copy companion/.env.example to .env and uncomment:
+    # env_file:
+    #   - .env
+    # Linux only (no Docker Desktop): make host.docker.internal resolve to the host gateway.
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    volumes:
+      - ./cases:/data/cases     # forensic evidence + case state (persists across restarts)
+      - ./addon:/out            # pre-built browser add-on → Chrome/Comet "Load unpacked" ./addon/dist
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4773/dashboard').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
