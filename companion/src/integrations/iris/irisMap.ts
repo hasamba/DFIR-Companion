@@ -258,7 +258,7 @@ export function buildNotes(state: InvestigationState, meta: ReportMeta): IrisNot
   const notes: IrisNote[] = [];
   const push = (title: string, content: string) => { if (content && content.trim()) notes.push({ title, content }); };
 
-  if (state.attackerPath) push("Attacker Path", state.attackerPath);
+  if (state.attackerPath) push("Attack Path", state.attackerPath);
   if (state.findings.length) push("Findings", findingsNote(state.findings));
   if (state.mitreTechniques.length) push("MITRE ATT&CK", mitreNote(state.mitreTechniques));
   if (state.keyQuestions.length) push("Key Investigative Questions", questionsNote(state.keyQuestions));

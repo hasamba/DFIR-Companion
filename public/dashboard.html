@@ -167,7 +167,7 @@
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/MalwareBazaar/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
-    <button id="synthesize" data-tip="Derive findings, MITRE and attacker path from the timeline">AI Re-synthesize</button>
+    <button id="synthesize" data-tip="Derive findings, MITRE and attack path from the timeline">AI Re-synthesize</button>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,application/json,text/csv,text/plain,image/png,image/jpeg,image/webp" style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import…</button>
     <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, Timesketch JSONL, JSON state)">
@@ -287,7 +287,7 @@
     </section>
     <section style="grid-column: 1 / -1"><h2>Executive Summary</h2><div id="summary">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Attacker Path</h2><div id="attackerPath">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)<button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Timestamp color = event severity" onclick="event.stopPropagation()"><span class="sev-item sev-Critical"><span class="sev-dot"></span>Critical</span><span class="sev-item sev-High"><span class="sev-dot"></span>High</span><span class="sev-item sev-Medium"><span class="sev-dot"></span>Medium</span><span class="sev-item sev-Low"><span class="sev-dot"></span>Low</span><span class="sev-item sev-Info"><span class="sev-dot"></span>Info</span></span></h2>
       <div style="font-size:11px; color:#9aa4b2; margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
@@ -1511,7 +1511,7 @@
         .then(p => {
           if (p.error) { document.getElementById("status").textContent = "synthesis failed: " + p.error; return; }
           document.getElementById("status").textContent =
-            `synthesized: ${p.findings} findings, ${p.mitreTechniques} techniques` + (p.attackerPath ? ", attacker path" : "");
+            `synthesized: ${p.findings} findings, ${p.mitreTechniques} techniques` + (p.attackerPath ? ", attack path" : "");
           // refresh state in case the WS push was missed
           fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
         })

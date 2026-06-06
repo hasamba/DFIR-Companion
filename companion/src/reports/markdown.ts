@@ -201,8 +201,8 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
 function investigation(state: InvestigationState, lines: string[]): void {
   lines.push("## 4 Investigation", "");
 
-  lines.push("### 4.1 Attacker path", "");
-  lines.push(state.attackerPath.trim().length > 0 ? state.attackerPath : "_Attacker path not yet reconstructed._", "");
+  lines.push("### 4.1 Attack path", "");
+  lines.push(state.attackerPath.trim().length > 0 ? state.attackerPath : "_Attack path not yet reconstructed._", "");
 
   // 4.2 Compromised assets — the victim hosts/accounts and the IoCs that touched each.
   lines.push("### 4.2 Compromised assets", "");
