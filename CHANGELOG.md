@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-06
+
 ### Added
 - **Run hunts across all endpoints (Velociraptor API)** — with a Velociraptor `api_client` config set (`DFIR_VELOCIRAPTOR_API_CONFIG`), the hunt-pivot modal's Velociraptor card becomes an editable VQL box with a **▶ Run hunt (all clients)** button that packages the pivot VQL as a CLIENT artifact (`artifact_set`) and launches a **hunt on every enrolled endpoint** (`hunt`) — not a server-side query — so "find this file" searches all clients. Results stream back into an inline table (with each row's source endpoint hostname) as clients check in, via `hunt_results` (addressed as `artifact/source`); a manual ↻ refresh plus a short auto-poll. Optional `DFIR_VELOCIRAPTOR_GUI_URL` deep-links to the hunt in the GUI. New `VelociraptorClient` (`integrations/velociraptor/velociraptorApi.ts`) drives it by shelling out to the `velociraptor` binary with `--api_config` (the binary handles gRPC + mTLS) via an injectable runner — no new dependency, no network/process in tests. Routes `POST /velociraptor/hunt` + `/velociraptor/hunt-results` (and a server-side `POST /velociraptor/run`); `/health` reports `velociraptorEnabled` (gates the button). Off by default (opt-in); localhost + analyst-driven; spawned without a shell (each VQL statement is a single argv — no command injection); ids validated before interpolation; per-query timeout + row/output caps. 22 unit tests.
 - **Hunt-pivot query generator** — a 🔍 chip on every forensic event and IOC opens a generator that emits ready-to-adapt hunt/pivot queries for the tools analysts already run: **Velociraptor notebook VQL** (paste-into-a-cell pivot queries — listed first), **Microsoft Defender / Sentinel KQL**, **Splunk SPL**, and a **Sigma** rule skeleton. Queries are templated deterministically from the entity's structured fields (sha256/md5, IP, domain, URL, path, process, parent process, affected host) — no AI call, no cost, fully offline — each with one-click copy-to-clipboard. File paths are normalized (the `\\.\` / `\\?\` device prefix that Sysmon/EDR attach to image paths is stripped; Velociraptor globs use forward slashes) so the queries actually run; process/IP matches are exact (not regex). Consistent with the post-detection product principle: these pivot off a confirmed indicator, they don't author detections. Pure client-side (no server change).
@@ -897,7 +899,8 @@ Initial baseline.
   report exports.
 - Scripts: `dev`, `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/hasamba/DFIR-Companion/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.7.0...v0.8.0
