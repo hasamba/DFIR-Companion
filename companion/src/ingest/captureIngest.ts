@@ -1,13 +1,14 @@
 import { z } from "zod";
 import type { CaptureMetadata } from "../types.js";
 import type { CaseStore } from "../storage/caseStore.js";
+import { isValidCaseId } from "../storage/caseStore.js";
 import { computeHash, isDuplicate } from "../dedup/perceptualHash.js";
 import { slugifyTitle } from "./titleSlug.js";
 
 const DUP_THRESHOLD = 5;
 
 const payloadSchema = z.object({
-  caseId: z.string().min(1),
+  caseId: z.string().min(1).refine(isValidCaseId, "invalid caseId"),
   timestamp: z.string().min(1),
   url: z.string().min(1),
   tabTitle: z.string(),

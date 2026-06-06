@@ -4,7 +4,7 @@ import { join, isAbsolute, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeFile, readFile, rm } from "node:fs/promises";
 import { ZodError } from "zod";
-import { CaseStore } from "./storage/caseStore.js";
+import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { AnonControlStore, type AnonControl } from "./analysis/anonControl.js";
@@ -98,6 +98,7 @@ export interface AiStatusEvent {
 
 export interface AppOptions {
   pipeline?: AnalysisPipeline;
+  aiConfigured?: boolean;
   windowSize?: number;
   stateStore?: StateStore;
   reportWriter?: ReportWriter;
@@ -159,6 +160,7 @@ function evidenceContentType(file: string): string {
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const app = express();
+  const hasAiProvider = (): boolean => options.aiConfigured ?? Boolean(options.pipeline?.hasAiProvider());
 
   // Allow the browser extension (a chrome-extension:// origin) to reach this
   // localhost-only server. Binding is 127.0.0.1, so this is local-machine access.
@@ -208,7 +210,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: Boolean(options.pipeline), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0 });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0 });
   });
 
   // How many captures have been recorded for a case (counts the audit-log lines).
@@ -250,7 +252,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const synthInFlight = new Set<string>();
 
   function scheduleSynthesis(caseId: string): void {
-    if (!autoSynth || !options.pipeline) return;
+    if (!autoSynth || !options.pipeline || !hasAiProvider()) return;
     const existing = synthTimers.get(caseId);
     if (existing) clearTimeout(existing);
     synthTimers.set(caseId, setTimeout(() => {
@@ -267,7 +269,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   async function flush(caseId: string): Promise<void> {
     const buf = buffers.get(caseId) ?? [];
-    if (buf.length === 0 || !options.pipeline) return;
+    if (buf.length === 0 || !options.pipeline || !hasAiProvider()) return;
     buffers.set(caseId, []);
     options.onAiStatus?.(caseId, {
       status: "analyzing",
@@ -302,7 +304,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Analyze every non-duplicate capture taken since lastAnalyzedSeq — used when AI
   // is switched back on after capturing with it off. Runs in the background.
   async function backfill(caseId: string): Promise<void> {
-    if (!options.pipeline) return;
+    if (!options.pipeline || !hasAiProvider()) return;
     let control = await getControl(caseId);
     let captures: CaptureMetadata[];
     try {
@@ -345,6 +347,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const { caseId, name, investigator, aiProvider } = req.body ?? {};
       if (!caseId || !name) return res.status(400).json({ error: "caseId and name are required" });
+      if (typeof caseId !== "string" || !isValidCaseId(caseId)) return res.status(400).json({ error: "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal" });
       if (await store.caseExists(caseId)) return res.status(409).json({ error: `case ${caseId} already exists` });
       const meta = await store.createCase({
         caseId, name, investigator: investigator ?? "unknown", aiProvider: aiProvider ?? null,
@@ -360,7 +363,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const metadata = await ingestCapture(store, req.body);
       res.status(201).json(metadata);
       // Evidence is always stored; AI analysis only runs when enabled for the case.
-      if (!metadata.isDuplicate && options.pipeline && (await getControl(metadata.caseId)).enabled) {
+      if (!metadata.isDuplicate && options.pipeline && hasAiProvider() && (await getControl(metadata.caseId)).enabled) {
         const buf = buffers.get(metadata.caseId) ?? [];
         buf.push(metadata);
         buffers.set(metadata.caseId, buf);
@@ -658,7 +661,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         redactSecrets: typeof req.body?.redactSecrets === "boolean" ? req.body.redactSecrets : cur.redactSecrets,
       };
       await anonControl.save(req.params.id, next);
-      if (next.enabled !== cur.enabled && options.pipeline) {
+      if (next.enabled !== cur.enabled && options.pipeline && hasAiProvider()) {
         void options.pipeline.synthesize(req.params.id, { force: true }).catch(() => {});
       }
       return res.status(200).json({ ...next, screenshotWarning: next.enabled && !visionIsLocal });
@@ -814,6 +817,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   function resynthesizeInBackground(caseId: string): void {
     const pipeline = options.pipeline;
     if (!pipeline) return;
+    if (!hasAiProvider()) { autoEnrichIfEnabled(caseId); return; }
     void (async () => {
       // Synthesis is an LLM call — respect the per-case AI toggle, exactly like the /captures
       // path (AI analysis only runs when enabled for the case). With AI off, a deterministic
@@ -970,6 +974,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (kind === "unknown") {
       return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / CSV / log)" });
     }
+    if ((kind === "csv" || kind === "log") && !hasAiProvider()) {
+      return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
+    }
 
     // Optional minimum-severity floor (the old per-format "which minimum severity?" prompt,
     // restored for the single Import button). Gate-aware: imports that don't grade severity
@@ -1031,7 +1038,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // timeline, then synthesize findings/TTPs/attacker-path. Evidence-first: the raw
   // CSV is persisted + audit-logged BEFORE any analysis; analysis runs in background.
   app.post("/cases/:id/import-csv", async (req: Request, res: Response) => {
-    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for CSV analysis" });
     const caseId = req.params.id;
     const csv = typeof req.body?.csv === "string" ? req.body.csv : "";
     const originalName = String(req.body?.filename ?? "import.csv");
@@ -1079,7 +1086,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Same evidence-first pattern as import-csv: persist + audit, then analyze in the
   // background (line-batched). The CSV path stays specialized for tabular exports.
   app.post("/cases/:id/import-log", async (req: Request, res: Response) => {
-    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for log analysis" });
     const caseId = req.params.id;
     const text = typeof req.body?.text === "string" ? req.body.text : "";
     const originalName = String(req.body?.filename ?? "import.log");
@@ -1917,7 +1924,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // forensic timeline. (Per-window capture builds the timeline; this writes the
   // conclusions.) Broadcasts the updated state to dashboard clients via onState.
   app.post("/cases/:id/synthesize", async (req: Request, res: Response) => {
-    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for synthesis" });
     const caseId = req.params.id;
     options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: "synthesizing conclusions" });
     try {
@@ -1939,7 +1946,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Ask the LLM a free-form question about the case ("was data exfiltrated?"). Single-shot,
   // no state change — returns a grounded answer + status + collection guidance (`pointer`).
   app.post("/cases/:id/ask", async (req: Request, res: Response) => {
-    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for case questions" });
     const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
     if (!question) return res.status(400).json({ error: "question is required" });
     try {
@@ -2165,6 +2172,29 @@ export function buildEnrichmentProviders(): EnrichmentProvider[] {
   return providers;
 }
 
+export interface RuntimePipelineParams {
+  provider?: AnalyzeProvider;
+  synthesisProvider?: AnalyzeProvider;
+  stateStore: StateStoreImpl;
+  store: CaseStore;
+  imageLoader?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["imageLoader"];
+  onState?: (state: InvestigationState) => void;
+}
+
+export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
+  return new AnalysisPipelineImpl({
+    provider: params.provider,
+    synthesisProvider: params.synthesisProvider,
+    stateStore: params.stateStore,
+    legitimateStore: new LegitimateStore(params.store),
+    scopeStore: new ScopeStore(params.store),
+    imageLoader: params.imageLoader ?? makeImageLoader(params.store),
+    onState: params.onState,
+    anonStore: new AnonControlStore(params.store),
+    customEntitiesStore: new CustomEntitiesStore(params.store),
+  });
+}
+
 export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"): void {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStoreImpl(store);
@@ -2175,9 +2205,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
-  const wiredPipeline = provider
-    ? new AnalysisPipelineImpl({ provider, synthesisProvider, stateStore, legitimateStore: new LegitimateStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), onState: (s) => hub.broadcast(s), anonStore: new AnonControlStore(store), customEntitiesStore: new CustomEntitiesStore(store) })
-    : undefined;
+  const wiredPipeline = buildRuntimePipeline({ provider, synthesisProvider, stateStore, store, onState: (s) => hub.broadcast(s) });
 
   // Live synthesis on by default — set DFIR_AI_AUTO_SYNTHESIZE=off to disable.
   const autoSynthesize = (process.env.DFIR_AI_AUTO_SYNTHESIZE ?? "on").toLowerCase() !== "off";
@@ -2185,6 +2213,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
 
   const app = createApp(store, {
     pipeline: wiredPipeline,
+    aiConfigured: Boolean(provider),
     stateStore,
     reportWriter,
     reportMetaStore,

@@ -17,6 +17,24 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function attr(name: string, value: string | null | undefined): string {
+  return value ? ` ${name}="${escapeHtml(value)}"` : "";
+}
+
+function safeLinkUrl(href: string): boolean {
+  try {
+    const u = new URL(href, "https://dfir-companion.local");
+    return u.protocol === "http:" || u.protocol === "https:" || u.protocol === "mailto:";
+  } catch {
+    return false;
+  }
+}
+
+function safeImageUrl(href: string): boolean {
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(href)) return true;
+  return safeLinkUrl(href);
+}
+
 // Self-contained, dependency-free stylesheet. Tuned for on-screen reading and for
 // "Print → Save as PDF" from the browser (A4 margins, avoids breaking rows across pages).
 const STYLE = `
@@ -96,6 +114,18 @@ export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = e
     renderer: {
       html(token: string | { text?: string }): string {
         return escapeHtml(typeof token === "string" ? token : token.text ?? "");
+      },
+      link(token: { href?: string; title?: string | null; text?: string }): string {
+        const href = token.href ?? "";
+        const text = token.text ?? href;
+        if (!safeLinkUrl(href)) return escapeHtml(`[${text}]`);
+        return `<a href="${escapeHtml(href)}"${attr("title", token.title)}>${escapeHtml(text)}</a>`;
+      },
+      image(token: { href?: string; title?: string | null; text?: string }): string {
+        const href = token.href ?? "";
+        const text = token.text ?? "";
+        if (!safeImageUrl(href)) return escapeHtml(`![${text}]`);
+        return `<img src="${escapeHtml(href)}" alt="${escapeHtml(text)}"${attr("title", token.title)}>`;
       },
     },
   });

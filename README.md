@@ -679,6 +679,26 @@ cd companion && npm test     # server unit tests
 cd extension && npm test     # extension unit tests
 ```
 
+## Disclaimer
+
+DFIR Companion is provided **"as is", without warranty of any kind**, whether express or
+implied, including but not limited to the warranties of merchantability, fitness for a
+particular purpose, accuracy, and non-infringement.
+
+It is an **analysis aid, not an authority.** Its output — the forensic timeline, findings,
+severities, IOCs, attacker-path narrative, reports, and any AI-generated conclusions — may be
+**incomplete, inaccurate, or misleading.** In particular, it may **overstate results** (false
+positives or inflated severity) or **miss incidents, events, or indicators entirely** (false
+negatives). All output must be **independently reviewed and verified by a qualified investigator**
+before it is relied upon, acted on, or included in any deliverable.
+
+To the maximum extent permitted by applicable law, **the author and contributors accept no
+liability** for any direct, indirect, incidental, consequential, or other damages, or for any
+decision, action, or omission arising from the use of — or inability to use — this software or its
+output, **including but not limited to overstated results or missed incidents.** You use the
+software **at your own risk** and remain solely responsible for your investigation, your
+conclusions, and your compliance with all applicable laws and authorizations.
+
 ## License
 
 DFIR Companion is free software, licensed under the **GNU Affero General Public License v3.0**
