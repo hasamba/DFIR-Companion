@@ -996,76 +996,26 @@
     // Velociraptor's glob() accessor uses FORWARD slashes — a `\\.\C:\…\x.exe` path is unusable as-is.
     const vqlGlob = (p) => cleanWinPath(p).replace(/\\/g, "/");
     const baseName = (p) => { const parts = cleanWinPath(p).split(/[\\/]/); return parts[parts.length - 1] || cleanWinPath(p); };
-    // Sanitize free-text (an event description) for embedding in a generated artifact/query: collapse
-    // newlines+whitespace to single spaces and drop "smart" punctuation / non-ASCII (e.g. … — “ ”) that
-    // Velociraptor's artifact/VQL lexer rejects as invalid tokens.
-    const asciiText = (s) => String(s)
-      .replace(/\s+/g, " ")
-      .replace(/[…]/g, "...")           // … → ...
-      .replace(/[‒-―−]/g, "-") // ‒–—― and minus → -
-      .replace(/[‘’]/g, "'")        // ' ' → '
-      .replace(/[“”]/g, '"')        // " " → "
-      .replace(/[^\x20-\x7E]/g, "")           // drop any remaining non-ASCII
-      .trim();
-
-    // Name for the generated Velociraptor artifact, derived from the primary indicator.
-    function huntArtifactName(c) {
-      let t = "";
-      if (c.processes.length) t = baseName(c.processes[0]);
-      else if (c.paths.length) t = baseName(c.paths[0]);
-      else if (c.hashes.length) t = c.hashes[0].slice(0, 12);
-      else if (c.ips.length) t = c.ips[0];
-      else if (c.domains.length) t = c.domains[0];
-      else if (c.urls.length) t = c.urls[0];
-      const slug = String(t).replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "Pivot";
-      return "Custom.Hunt." + slug;
-    }
-    // Velociraptor output as a runnable ARTIFACT (YAML with named sources) — not bare VQL — so it can
-    // be imported and launched as a hunt directly. Paths are normalized for the glob accessor; process
-    // and IP matches use exact (IN / lowcase) rather than regex so a value with `.` doesn't over-match.
+    // Velociraptor NOTEBOOK VQL — a set of paste-into-a-cell pivot queries (one per `--` block).
+    // Paths are normalized for the glob accessor; process/IP matches are exact (IN / lowcase) rather
+    // than regex so a value with `.` doesn't over-match.
     function huntVql(c) {
-      const sources = [];   // [name, [vql lines...]]
+      const out = [];
       if (c.processes.length) {
         const names = c.processes.map((p) => hq(baseName(p).toLowerCase())).join(", ");
-        sources.push(["RunningProcess", [
-          ...(c.parent ? [`-- expected parent: ${baseName(c.parent)}`] : []),
-          `SELECT Pid, Ppid, Name, CommandLine, Exe`,
-          `FROM pslist()`,
-          `WHERE lowcase(string=Name) IN (${names})`,
-        ]]);
+        out.push(`-- running process (live)\nSELECT Pid, Ppid, Name, CommandLine, Exe\nFROM pslist()\nWHERE lowcase(string=Name) IN (${names})${c.parent ? `\n-- expected parent: ${baseName(c.parent)}` : ""}`);
       }
       if (c.paths.length) {
-        sources.push(["FilePresence", [
-          `SELECT FullPath, Size, Mtime, hash(path=FullPath) AS Hashes`,
-          `FROM glob(globs=${hq(vqlGlob(c.paths[0]))})`,
-        ]]);
-        sources.push(["FileByName", [
-          `-- locate the file anywhere on C: by name`,
-          `SELECT FullPath, Size, Mtime FROM glob(globs=${hq("C:/**/" + baseName(c.paths[0]))})`,
-        ]]);
+        out.push(`-- file presence (exact path) + its hashes\nSELECT FullPath, Size, Mtime, hash(path=FullPath) AS Hashes\nFROM glob(globs=${hq(vqlGlob(c.paths[0]))})`);
+        out.push(`-- or locate it anywhere on C: by name\nSELECT FullPath, Size, Mtime FROM glob(globs=${hq("C:/**/" + baseName(c.paths[0]))})`);
       }
       if (c.hashes.length) {
-        sources.push(["HashSweep", [
-          `-- narrow the glob root — hashing every file is expensive`,
-          `SELECT FullPath, Size, Mtime, hash(path=FullPath) AS Hashes`,
-          `FROM glob(globs="C:/Users/**")`,
-          `WHERE hash(path=FullPath).SHA256 =~ ${hq("(?i)" + c.hashes[0])}`,
-        ]]);
+        out.push(`-- on-disk hash sweep (narrow the glob root — hashing every file is expensive)\nSELECT FullPath, Size, Mtime, hash(path=FullPath) AS Hashes\nFROM glob(globs="C:/Users/**")\nWHERE hash(path=FullPath).SHA256 =~ ${hq("(?i)" + c.hashes[0])}`);
       }
       if (c.ips.length) {
-        sources.push(["NetworkConnections", [
-          `SELECT Pid, Name, Status, Laddr.IP AS Local, Raddr.IP AS Remote, Raddr.Port AS RemotePort`,
-          `FROM netstat()`,
-          `WHERE Raddr.IP IN (${c.ips.map(hq).join(", ")})`,
-        ]]);
+        out.push(`-- active network connections\nSELECT Pid, Name, Status, Laddr.IP AS Local, Raddr.IP AS Remote, Raddr.Port AS RemotePort\nFROM netstat()\nWHERE Raddr.IP IN (${c.ips.map(hq).join(", ")})`);
       }
-      if (!sources.length) return "";   // no host-side indicator (e.g. a bare domain) → no artifact
-      const body = sources.map(([name, lines]) =>
-        `  - name: ${name}\n    query: |\n${lines.map((l) => "      " + l).join("\n")}`).join("\n");
-      return `name: ${huntArtifactName(c)}\n`
-        + `description: |\n  Pivot hunt generated by DFIR Companion for: ${asciiText(c.label).slice(0, 100)}.\n`
-        + `  Review the globs/accessors, then import and run as a hunt.\n`
-        + `type: CLIENT\nsources:\n${body}\n`;
+      return out.join("\n\n");
     }
     // Microsoft Defender / Sentinel KQL — one runnable query per relevant table.
     function huntKql(c) {
@@ -1114,7 +1064,7 @@
       document.getElementById("huntTitle").textContent = "Hunt queries";
       document.getElementById("huntSub").textContent = c.label;
       const cards = [
-        ["Velociraptor artifact (YAML)", huntVql(c)],
+        ["Velociraptor (notebook VQL)", huntVql(c)],
         ["Microsoft Defender / Sentinel (KQL)", huntKql(c)],
         ["Splunk (SPL)", huntSpl(c)],
         ["Sigma rule skeleton (YAML)", huntSigma(c)],
