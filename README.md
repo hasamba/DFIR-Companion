@@ -74,6 +74,11 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   to the right importer below — no need to pick the format. The detected kind is shown back so a mis-route is
   visible. Images are stored as screenshots. (Each importer also has a dedicated `POST /cases/:id/import-*`
   endpoint for programmatic use.)
+- **Minimum-severity import floor** — the Import button asks once per batch which minimum severity to keep
+  (`critical` / `high` / `medium` / `low` / `info`, default = everything), applied across **all** import kinds.
+  It is **gate-aware**: imports that grade severity keep only events at/above the floor (cutting timeline noise),
+  while imports with **no** severity (all-Info host triage like KAPE/Plaso, plain telemetry) are kept in full —
+  *if there are no severities, import everything*.
 - **CSV import** — Velociraptor / EDR result exports → forensic events + IOCs.
 - **Generic log import** — firewall / syslog / sshd / IIS·Apache·nginx / VPN. Repetitive lines
   are **deduplicated into counted patterns**, then the AI **triages only the suspicious ones**

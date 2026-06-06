@@ -13,6 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Minimum-severity import floor — restored for the single Import button, generalized to every
+  importer** (`analysis/severityFloor.ts`). The old dedicated THOR import used to ask *"which minimum
+  severity?"*; the unified Import button (which replaced the per-format buttons) had silently dropped
+  that prompt, so noisy imports flooded the timeline. The Import button now asks once per batch
+  (`critical` / `high` / `medium` / `low` / `info`, default `info` = everything) and the floor is
+  applied across **all** import kinds — THOR, SIEM/EDR, Chainsaw, Hayabusa, Velociraptor, network,
+  KAPE, Cyber Triage, M365/Entra, AWS, GCP/Azure, Plaso, sandbox, and the AI CSV/log paths. It is
+  **gate-aware** (`applySeverityFloor`): an import that grades severity keeps only events at/above the
+  chosen floor (below-floor + Info rows drop), but an import that carries **no** severity — every event
+  is Info, e.g. KAPE/Plaso host triage and plain telemetry — is **kept in full** ("if there are no
+  severities, import everything"). The gate is computed at runtime from the produced events, so mixed
+  importers (Velociraptor detections + EventLog Info; Cyber Triage scored + unscored) and any future
+  importer behave correctly. Threaded through the unified `POST /cases/:id/import` route (`minSeverity`
+  in the body, normalized + echoed back); the per-format `import-*` routes keep their own floor. +10
+  helper unit tests, +2 route tests (THOR floor; KAPE all-Info kept whole).
 - **Cyber Triage timeline import** (`importCybertriage` → `cybertriageImport.ts`) — the thirteenth
   deterministic ingest path (no AI call), the host-triage counterpart to KAPE. Reads a Cyber Triage
   (Sleuth Kit Labs) timeline export in **JSONL** (richest), **JSON array**, or **CSV** form.
@@ -107,6 +122,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Windows-event shape (top-level `Channel`/`EventID`/`EventData`, no `System` wrapper) is recognized.
   When a row carries no `_Source`, the importer uses the **Velociraptor-named filename** as the fallback
   artifact label, so generic events show their source (`Velociraptor [DetectRaptor.Windows.Detection.NamedPipes]: …`).
+- **README: explicit "as-is" / no-liability disclaimer.** Added a professional **Disclaimer**
+  section (before License) stating the software is provided "as is" without warranty, that its
+  output may overstate results (false positives / inflated severity) or miss incidents entirely
+  (false negatives) and must be independently verified by a qualified investigator, and that the
+  author and contributors accept no liability for any results or decisions arising from its use.
 
 ### Fixed
 - **Imports no longer run AI synthesis when AI is off for the case.** Every import (and manual
@@ -117,6 +137,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deterministic import populates the **forensic timeline + IOCs only** and findings / attack path /
   MITRE wait until AI is turned on and the case is re-synthesized. Threat-intel **enrichment** is a
   separate, independently-gated feature (not an LLM call) and still runs regardless of the AI toggle.
+- **"Ask the AI" now stays the first dashboard section by default.** The drag-to-reorder feature
+  appended any section missing from a browser's saved order to the *end*, so analysts whose
+  `dfir.sectionOrder` predated the Ask panel saw it dumped at the bottom instead of first. Sections
+  absent from a saved order now stay **anchored at their natural HTML slot** (the saved order only
+  reshuffles the sections it actually names), so the default-first Ask panel shows first again
+  without clearing localStorage — while an explicit drag of the Ask section is still honored.
 - **Velociraptor exports no longer mislabel as "SIEM event".** Two common Velociraptor artifact outputs
   were falling through to the SIEM importer: the **`Windows.Hayabusa.Rules`** artifact (Hayabusa verdict rows
   that use `Title`/`EID` and render `Details` as a `¦`-separated string, so `isHayabusaJson` missed them and
