@@ -4,6 +4,7 @@ import {
   Document,
   ExternalHyperlink,
   HeadingLevel,
+  ImageRun,
   Packer,
   Paragraph,
   ShadingType,
@@ -45,6 +46,116 @@ const ALL_TABLE_BORDERS = {
 // at body font size, which gives every non-major heading visible breathing room.
 const HEADING_SPACING_BEFORE = 240;
 
+// Max display dimension (in pixels) for an embedded raster like the company logo on the
+// title page. Keeps a high-resolution upload from dominating the page — the analyst can
+// still resize the image manually in Word after export.
+const IMAGE_MAX_PX = 150;
+
+// Parse a `data:image/<mime>[;base64],<payload>` URI into its mime and decoded bytes.
+// Returns `null` if the URI is not a recognized data URI or the payload can't be decoded.
+// Used to embed the company logo (a base64 data URI in report-meta.json) into the docx.
+function parseDataUri(uri: string): { mime: string; buffer: Buffer } | null {
+  const match = /^data:([^;,]+)(;base64)?,(.*)$/i.exec(uri);
+  if (!match) return null;
+  const mime = match[1].toLowerCase();
+  const isBase64 = !!match[2];
+  try {
+    if (isBase64) {
+      // Buffer.from accepts whitespace but not stray characters; validate by re-encoding
+      // and matching the original payload (case-insensitively, ignoring padding).
+      const cleaned = match[3].replace(/\s+/g, "");
+      const buffer = Buffer.from(cleaned, "base64");
+      if (buffer.length === 0) return null;
+      const reencoded = buffer.toString("base64").replace(/=+$/, "");
+      if (reencoded !== cleaned.replace(/=+$/, "")) return null;
+      return { mime, buffer };
+    }
+    return { mime, buffer: Buffer.from(decodeURIComponent(match[3]), "binary") };
+  } catch {
+    return null;
+  }
+}
+
+// Map a mime type to a docx ImageRun type tag. docx@9 supports png/jpg/gif/bmp/svg;
+// WebP and other formats degrade to the image's alt text at the caller.
+function mimeToDocxImageType(mime: string): "png" | "jpg" | "gif" | "bmp" | null {
+  if (mime === "image/png") return "png";
+  if (mime === "image/jpeg" || mime === "image/jpg") return "jpg";
+  if (mime === "image/gif") return "gif";
+  if (mime === "image/bmp") return "bmp";
+  return null;
+}
+
+// Read the intrinsic dimensions out of a raster's header so the embedded image is sized
+// proportionally instead of stretching to a default square. Returns `null` if the header
+// can't be parsed — callers fall back to the alt text in that case.
+function imageDimensions(buf: Buffer, mime: string): { width: number; height: number } | null {
+  if (mime === "image/png" && buf.length >= 24 &&
+      buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  }
+  if ((mime === "image/jpeg" || mime === "image/jpg") && buf.length >= 4 &&
+      buf[0] === 0xff && buf[1] === 0xd8) {
+    // Walk JPEG segments looking for an SOFn marker (frame header), which carries the
+    // image's height and width. Skip standalone markers (no payload) and unwanted SOFs
+    // (DHT=0xC4, DAC=0xCC, RST=0xC8).
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) { i++; continue; }
+      const marker = buf[i + 1];
+      if (marker === 0xd8 || marker === 0xd9 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+        i += 2;
+        continue;
+      }
+      const segLen = buf.readUInt16BE(i + 2);
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+      }
+      i += 2 + segLen;
+    }
+  }
+  if (mime === "image/gif" && buf.length >= 10 &&
+      buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
+    return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) };
+  }
+  if (mime === "image/bmp" && buf.length >= 26 && buf[0] === 0x42 && buf[1] === 0x4d) {
+    return { width: buf.readUInt32LE(18), height: Math.abs(buf.readInt32LE(22)) };
+  }
+  return null;
+}
+
+// Convert a Markdown image token to a docx ImageRun when the data URI is a raster format
+// Word can embed natively; otherwise degrade to a TextRun carrying the alt text so the
+// report still renders (the company name surrounding the logo on the title page stays
+// intact even when an unsupported logo is uploaded).
+function imageRunFor(
+  token: Tokens.Image,
+  ctx: { bold?: boolean; italic?: boolean },
+): (ImageRun | TextRun)[] {
+  const fallback = (): TextRun[] => [new TextRun({
+    text: token.text || token.title || "",
+    bold: ctx.bold, italics: ctx.italic,
+  })];
+
+  const parsed = parseDataUri(token.href);
+  if (!parsed) return fallback();
+  const docxType = mimeToDocxImageType(parsed.mime);
+  if (!docxType) return fallback();
+  const dims = imageDimensions(parsed.buffer, parsed.mime);
+  if (!dims || dims.width <= 0 || dims.height <= 0) return fallback();
+
+  // Cap the long edge at IMAGE_MAX_PX so a high-res raster doesn't blow out the page.
+  const scale = Math.min(1, IMAGE_MAX_PX / Math.max(dims.width, dims.height));
+  return [new ImageRun({
+    data: parsed.buffer,
+    transformation: {
+      width: Math.max(1, Math.round(dims.width * scale)),
+      height: Math.max(1, Math.round(dims.height * scale)),
+    },
+    type: docxType,
+  })];
+}
+
 // Classify a Markdown heading by its TEXT, not just its depth, so the docx outline matches
 // what an analyst expects:
 //  - the report title (h1) stays Heading 1.
@@ -84,8 +195,8 @@ function classifyHeading(depth: number, text: string): {
 function inlineRuns(
   tokens: Tokens.Generic[],
   ctx: { bold?: boolean; italic?: boolean } = {},
-): (TextRun | ExternalHyperlink)[] {
-  const out: (TextRun | ExternalHyperlink)[] = [];
+): (TextRun | ExternalHyperlink | ImageRun)[] {
+  const out: (TextRun | ExternalHyperlink | ImageRun)[] = [];
   for (const t of tokens) {
     switch (t.type) {
       case "text": {
@@ -136,6 +247,10 @@ function inlineRuns(
       }
       case "escape": {
         out.push(new TextRun({ text: (t as Tokens.Escape).text, bold: ctx.bold, italics: ctx.italic }));
+        break;
+      }
+      case "image": {
+        out.push(...imageRunFor(t as Tokens.Image, ctx));
         break;
       }
       default: {

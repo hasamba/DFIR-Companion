@@ -20,6 +20,19 @@ async function unzipDocumentRels(buf: Buffer): Promise<string> {
   return entry.async("text");
 }
 
+// Lex a small Markdown fixture through the mapper, pack a minimal Document around the
+// resulting children, and return the unzipped `word/document.xml`. Shared by tests that
+// only care about the body XML of a focused fixture.
+async function packAndUnzip(md: string): Promise<string> {
+  const lexer = new Marked({ gfm: true });
+  const tokens = lexer.lexer(md);
+  const children = tokensToDocxChildren(tokens);
+  const { Document, Packer } = await import("docx");
+  const doc = new Document({ sections: [{ children }] });
+  const buf = await Packer.toBuffer(doc);
+  return unzipDocumentXml(buf);
+}
+
 describe("renderDocxReport", () => {
   it("produces a valid .docx with the report's headings, tables, IOCs and summary", async () => {
     const state = emptyState("c1");
@@ -176,16 +189,6 @@ describe("heading classification", () => {
   // every numbered subsection lands at Heading 3 regardless of how it was written, and
   // every major section starts a new page in the printed report.
 
-  async function packAndUnzip(md: string): Promise<string> {
-    const lexer = new Marked({ gfm: true });
-    const tokens = lexer.lexer(md);
-    const children = tokensToDocxChildren(tokens);
-    const { Document, Packer } = await import("docx");
-    const doc = new Document({ sections: [{ children }] });
-    const buf = await Packer.toBuffer(doc);
-    return unzipDocumentXml(buf);
-  }
-
   it("renders a major numbered heading ('## 2 Executive summary') as Heading 2 + page break before", async () => {
     const xml = await packAndUnzip("## 2 Executive summary\n\nbody");
     expect(xml).toContain("2 Executive summary");
@@ -218,5 +221,55 @@ describe("heading classification", () => {
     // separation) and a numbered subsection (spacing.before set to 240 twips = 12pt).
     const xml = await packAndUnzip("## 2 Executive summary\n\nbody1\n\n## 2.1 Business Impact\n\nbody2");
     expect(xml).toMatch(/w:spacing[^/>]*w:before="240"/);
+  });
+});
+
+describe("image embedding", () => {
+  // The smallest valid PNG: 1×1 transparent. Used to verify the docx export actually
+  // embeds the logo instead of dropping it (or rendering only the alt text — the original
+  // bug behind "logo is missing" on the title page).
+  const PNG_1X1 =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+  it("embeds a Markdown image with a data: URI as a docx ImageRun (logo round-trips)", async () => {
+    const md = `![Company logo](${PNG_1X1})`;
+    const lexer = new Marked({ gfm: true });
+    const tokens = lexer.lexer(md);
+    const children = tokensToDocxChildren(tokens);
+    const { Document, Packer } = await import("docx");
+    const doc = new Document({ sections: [{ children }] });
+    const buf = await Packer.toBuffer(doc);
+
+    const zip = await JSZip.loadAsync(buf);
+    // Image bytes land in word/media/, referenced from document.xml as a drawing.
+    const mediaEntries = Object.keys(zip.files).filter(
+      (p) => p.startsWith("word/media/") && !zip.files[p].dir,
+    );
+    expect(mediaEntries.length).toBeGreaterThan(0);
+
+    const xml = await unzipDocumentXml(buf);
+    expect(xml).toContain("<w:drawing>");
+    // The alt text must NOT appear as a plain text run (that's the bug we're fixing).
+    expect(xml).not.toMatch(/<w:t[^>]*>Company logo<\/w:t>/);
+  });
+
+  it("falls back to alt text for image formats docx cannot embed (e.g. WebP)", async () => {
+    // docx@9 only embeds png/jpg/gif/bmp/svg. WebP isn't supported, so the export degrades
+    // to the alt text — the company name still shows on the title page, no broken file.
+    const md = "![Acme Inc. logo](data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAAA=)";
+    const xml = await packAndUnzip(md);
+    expect(xml).toContain("Acme Inc. logo");                  // alt text rendered as text
+    expect(xml).not.toContain("<w:drawing>");                 // no embedded drawing
+  });
+
+  it("falls back to alt text for non-data URIs and malformed data URIs", async () => {
+    // Remote http: image references aren't fetched (no network in the report pipeline);
+    // and a malformed data URI shouldn't crash the export. Both degrade to the alt text.
+    const remote = await packAndUnzip("![Remote logo](https://example.com/logo.png)");
+    expect(remote).toContain("Remote logo");
+    expect(remote).not.toContain("<w:drawing>");
+
+    const malformed = await packAndUnzip("![Broken](data:image/png;base64,not-real-base64!!!)");
+    expect(malformed).toContain("Broken");
   });
 });
