@@ -434,7 +434,7 @@ export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS
 export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
 
 export interface PipelineOptions {
-  provider: AIProvider;
+  provider?: AIProvider;
   // Optional stronger model for the holistic synthesis pass. Per-window extraction
   // can use a cheap model while synthesis (one text-only call) uses a better one.
   synthesisProvider?: AIProvider;
@@ -483,6 +483,15 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number, backoffMs: nu
 export class AnalysisPipeline {
   constructor(private readonly opts: PipelineOptions) {}
 
+  hasAiProvider(): boolean {
+    return Boolean(this.opts.provider);
+  }
+
+  private requireProvider(purpose: string): AIProvider {
+    if (!this.opts.provider) throw new Error(`AI provider not configured; ${purpose} requires an AI provider`);
+    return this.opts.provider;
+  }
+
   // Run one AI call with optional per-case anonymization. Tokenizes the userPrompt (images are
   // passed through — pixels can't be tokenized; that's the documented best-effort limitation),
   // then restores the parsed JSON response BEFORE schema validation, so real values containing
@@ -514,6 +523,7 @@ export class AnalysisPipeline {
   private readonly lastSynthHash = new Map<string, string>();
 
   async analyzeWindow(caseId: string, captures: CaptureMetadata[]): Promise<InvestigationState> {
+    const provider = this.requireProvider("screenshot analysis");
     const analyzable = captures.filter((c) => !c.isDuplicate);
     if (analyzable.length === 0) return this.opts.stateStore.load(caseId);
 
@@ -535,7 +545,7 @@ export class AnalysisPipeline {
     const backoffMs = this.opts.backoffMs ?? 500;
 
     const delta = await withRetry(async () => {
-      const parsed = await this.analyzeRestored(caseId, state, this.opts.provider, { systemPrompt: getSystemPrompt(), userPrompt, images });
+      const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getSystemPrompt(), userPrompt, images });
       return deltaSchema.parse(parsed);
     }, retries, backoffMs);
 
@@ -570,6 +580,7 @@ export class AnalysisPipeline {
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
+    const provider = this.requireProvider("CSV analysis");
     const { headers, rows } = parseCsv(csvText);
     if (rows.length === 0) return this.opts.stateStore.load(caseId);
 
@@ -595,7 +606,7 @@ export class AnalysisPipeline {
         `Return the JSON delta.`;
 
       const delta = await withRetry(async () => {
-        const parsed = await this.analyzeRestored(caseId, state, this.opts.provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [] });
+        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [] });
         return deltaSchema.parse(parsed);
       }, retries, backoffMs);
 
@@ -637,6 +648,7 @@ export class AnalysisPipeline {
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
+    const provider = this.requireProvider("log analysis");
     const { lines } = parseLogLines(logText);
     if (lines.length === 0) return this.opts.stateStore.load(caseId);
 
@@ -673,7 +685,7 @@ export class AnalysisPipeline {
         `Return the JSON delta.`;
 
       const delta = await withRetry(async () => {
-        const parsed = await this.analyzeRestored(caseId, state, this.opts.provider, { systemPrompt: getLogPrompt(), userPrompt, images: [] });
+        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [] });
         return deltaSchema.parse(parsed);
       }, retries, backoffMs);
 
@@ -1334,6 +1346,7 @@ export class AnalysisPipeline {
   // Answer a free-form analyst question about the case from its evidence (single-shot, no
   // state change). Returns a grounded answer + status + collection guidance (`pointer`).
   async ask(caseId: string, question: string): Promise<AskAnswer> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("case questions");
     const loaded = await this.opts.stateStore.load(caseId);
     const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
@@ -1362,7 +1375,6 @@ export class AnalysisPipeline {
       `CURRENT QUESTIONS:\n${questionsText}\n\n` +
       `ANALYST QUESTION: ${question.trim()}\n\nAnswer it as JSON.`;
 
-    const provider = this.opts.synthesisProvider ?? this.opts.provider;
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getAskPrompt(), userPrompt, images: [] });
       return askSchema.parse(parsed);
@@ -1370,6 +1382,7 @@ export class AnalysisPipeline {
   }
 
   async synthesize(caseId: string, opts: { force?: boolean } = {}): Promise<InvestigationState> {
+    const synthProvider = this.opts.synthesisProvider ?? this.requireProvider("synthesis");
     const loaded = await this.opts.stateStore.load(caseId);
     if (loaded.forensicTimeline.length === 0) return loaded;
 
@@ -1471,8 +1484,6 @@ export class AnalysisPipeline {
 
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
-    const synthProvider = this.opts.synthesisProvider ?? this.opts.provider;
-
     const delta = await withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, state, synthProvider, { systemPrompt: getSynthesisPrompt(), userPrompt, images: [] });
       return deltaSchema.parse(parsed);
