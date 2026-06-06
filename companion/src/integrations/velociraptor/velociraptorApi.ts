@@ -53,12 +53,36 @@ export function parseVqlOutput(stdout: string): unknown[] {
   return rows;
 }
 
-// The real runner: spawn the velociraptor binary with the api config, no shell (VQL is a single
-// argv element — no command injection). Kills the child on timeout or if output blows the cap.
+// Split a VQL blob (e.g. the notebook pivots, separated by blank lines) into individual statements
+// and STRIP comment lines. Critical for the CLI: a query passed to `velociraptor query` that begins
+// with a `-- comment` is parsed by the flag lexer as an unknown long flag ("--"), so each statement
+// must start with real VQL. Comment-only chunks are dropped. Each statement becomes its own
+// positional `query` arg (the command is variadic), so multiple pivots run in one invocation.
+export function splitVqlStatements(vql: string): string[] {
+  return String(vql || "")
+    .split(/\n\s*\n/)
+    .map((chunk) =>
+      chunk
+        .split(/\r?\n/)
+        .filter((line) => line.trim() && !line.trim().startsWith("--"))   // drop pure-comment lines
+        .join("\n")
+        .trim(),
+    )
+    .filter(Boolean);
+}
+
+// The real runner: spawn the velociraptor binary with the api config, no shell (each statement is a
+// single argv element — no command injection). Uses jsonl output so multiple queries parse robustly.
+// Kills the child on timeout or if output blows the cap.
 export function spawnVqlRunner(config: VelociraptorApiConfig): VqlRunner {
   return (vql, opts) =>
     new Promise<VqlRunResult>((resolve, reject) => {
-      const args = ["--api_config", config.apiConfigPath, "query", vql, "--format", "json"];
+      const statements = splitVqlStatements(vql);
+      if (statements.length === 0) {
+        reject(new Error("No runnable VQL found (the query is empty or only comments)"));
+        return;
+      }
+      const args = ["--api_config", config.apiConfigPath, "query", "--format", "jsonl", ...statements];
       const child = spawn(config.binary, args, { windowsHide: true });
       let out = "";
       let err = "";

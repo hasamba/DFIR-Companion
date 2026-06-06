@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parseVqlOutput,
+  splitVqlStatements,
   VelociraptorClient,
   loadVelociraptorConfig,
   buildVelociraptorClient,
@@ -32,6 +33,28 @@ describe("parseVqlOutput", () => {
   it("returns [] for empty or non-JSON output", () => {
     expect(parseVqlOutput("")).toEqual([]);
     expect(parseVqlOutput("not json")).toEqual([]);
+  });
+});
+
+describe("splitVqlStatements", () => {
+  it("strips the leading comment so the query does not start with '--' (the CLI flag-parse bug)", () => {
+    const vql = "-- file presence (exact path) + its hashes\nSELECT FullPath FROM glob(globs=\"C:/x\")";
+    const out = splitVqlStatements(vql);
+    expect(out).toHaveLength(1);
+    expect(out[0].startsWith("--")).toBe(false);
+    expect(out[0]).toBe('SELECT FullPath FROM glob(globs="C:/x")');
+  });
+  it("splits multiple blank-line-separated pivots into separate statements", () => {
+    const vql = "-- a\nSELECT 1\n\n-- b\nSELECT 2";
+    expect(splitVqlStatements(vql)).toEqual(["SELECT 1", "SELECT 2"]);
+  });
+  it("drops comment-only chunks and keeps inline comments on VQL lines", () => {
+    const vql = "-- header only\n\nSELECT 1 -- inline keeps";
+    expect(splitVqlStatements(vql)).toEqual(["SELECT 1 -- inline keeps"]);
+  });
+  it("returns [] when there is no real VQL", () => {
+    expect(splitVqlStatements("-- just a comment\n-- another")).toEqual([]);
+    expect(splitVqlStatements("   ")).toEqual([]);
   });
 });
 
