@@ -95,21 +95,21 @@ function disclaimer(lines: string[]): void {
     "discovered during the investigation, and are subject to change if new evidence is found.",
     "",
   );
-  lines.push("### Timestamps", "");
+  lines.push("### 1.3.1 Timestamps", "");
   lines.push(
     "Unless otherwise stated, all timestamps are in Coordinated Universal Time (UTC) following the " +
     "ISO 8601 format (`YYYY-MM-DDTHH:MM:SSZ`). A trailing `Z` denotes UTC; deviations are shown " +
     "explicitly (e.g. `UTC+2`).",
     "",
   );
-  lines.push("### Statements of probability", "");
+  lines.push("### 1.3.2 Statements of probability", "");
   lines.push("| Chance | Wording |", "| --- | --- |");
   lines.push("| 1–10% | Very Unlikely / Almost certainly not |");
   lines.push("| 11–40% | Unlikely / Improbable |");
   lines.push("| 41–60% | Even Chance |");
   lines.push("| 61–90% | Probably / Likely |");
   lines.push("| 90–99% | Very Likely / Almost Certainly |", "");
-  lines.push("### Statements of confidence", "");
+  lines.push("### 1.3.3 Statements of confidence", "");
   lines.push("| Confidence | Meaning |", "| --- | --- |");
   lines.push("| High | Strong, plentiful evidence; nothing contradicts the conclusion. |");
   lines.push("| Medium | Sufficient evidence, but other evidence could question it. |");
@@ -305,6 +305,10 @@ export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta
   const lines: string[] = [];
 
   titlePage(state, meta, lines);
+  // Section 1 — report metadata (revisions, distribution, disclaimer, intended audience).
+  // The major heading is rendered explicitly so the AnttiKurittu template's section
+  // structure is complete: "1 Report metadata" sits above 1.1 / 1.2 / 1.3 / 1.4.
+  lines.push("## 1 Report metadata", "");
   revisions(state, meta, lines);
   distribution(meta, lines);
   if (meta.includeDisclaimer) disclaimer(lines);

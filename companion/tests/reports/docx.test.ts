@@ -216,6 +216,15 @@ describe("heading classification", () => {
     expect(xml).not.toMatch(/<w:pageBreakBefore\b/);
   });
 
+  it("downshifts a three-level numbered subsection ('### 1.3.1 Timestamps') to Heading 4", async () => {
+    const xml = await packAndUnzip("### 1.3.1 Timestamps\n\nbody");
+    expect(xml).toContain("1.3.1 Timestamps");
+    expect(xml).toMatch(/w:pStyle w:val="Heading4"/);
+    // Must NOT be classified as the 2-level pattern — that's the bug this guard prevents.
+    expect(xml).not.toMatch(/w:pStyle w:val="Heading3"/);
+    expect(xml).not.toMatch(/<w:pageBreakBefore\b/);
+  });
+
   it("adds spacing.before to non-major headings (and skips it for majors, where the page break already separates)", async () => {
     // Two headings in one document: a major (no spacing.before — pageBreakBefore handles
     // separation) and a numbered subsection (spacing.before set to 240 twips = 12pt).
