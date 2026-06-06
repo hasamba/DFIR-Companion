@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Root URL now redirects to dashboard** — `GET /` returns a 302 to `/dashboard` instead of 404, so navigating to `http://localhost:4773` works as expected.
 - **Docker image now starts on Node 22** — bumped all three Dockerfile stages from `node:20-slim` to `node:22-slim` to match the `undici` v8 requirement (`webidl.util.markAsUncloneable` is only available in Node 22+).
 - **Windows portable EXE now starts correctly** — the SEA package script was missing `detect-libc` and seven other transitive runtime dependencies of `sharp` (`color`, `semver`, `color-convert`, `color-string`, `color-name`, `simple-swizzle`, `is-arrayish`), causing an immediate `MODULE_NOT_FOUND` crash on startup. All of sharp's runtime deps are now staged into `dist-sea/node_modules/`.
 - **Windows portable EXE now shows the DFIR Companion icon** — the build pipeline creates an ICO (16/32/48/256 px, with the same background-removal as `make-icons`) and embeds it into the EXE with `rcedit`, replacing the generic Node.js icon in Windows Explorer.

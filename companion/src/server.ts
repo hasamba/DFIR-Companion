@@ -2260,6 +2260,11 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     });
   }
 
+  // Redirect root to the dashboard.
+  app.get("/", (_req, res) => {
+    res.redirect("/dashboard");
+  });
+
   // Serve the dashboard.
   app.get("/dashboard", async (_req, res) => {
     const html = await readPublicAsset("dashboard.html", "utf8");
