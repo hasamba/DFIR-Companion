@@ -692,7 +692,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (allProviders.length === 0 || !options.stateStore) return;
     void (async () => {
       const providers = await enabledProvidersFor(caseId);
-      if (providers.length === 0) return;     // nothing enabled for this case
+      if (providers.length === 0) { enrichPending.delete(caseId); return; }     // nothing enabled — drop any stale pending mark so the poller can idle
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `enriching IOCs (${providers.map((p) => p.name).join(", ")})` });
       const state = await options.stateStore!.load(caseId);
       logLine(`[enrich] ${caseId} START providers=[${providers.map((p) => p.name).join(", ")}] force=${force} iocs=${state.iocs.length}`);
@@ -754,14 +754,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     enabledProvidersFor(caseId).then((ps) => { if (ps.length > 0) enrichInBackground(caseId); }).catch(() => {});
   }
 
-  // Background reachability poller (opt-in via enrichHealthPollMs, set by startServer). It
-  // re-probes only the providers currently known-down — cheap — and, when one recovers,
-  // resumes enrichment for the cases that had to skip it. `.unref()` so it never holds the
-  // process open; tests don't set the option, so no timer starts.
+  // Background reachability poller (opt-in via enrichHealthPollMs, set by startServer). It only
+  // runs while a case is actually waiting on a down provider to recover (enrichPending non-empty):
+  // its sole purpose is to resume those cases, so when enrichment is off everywhere it probes
+  // nothing and emits no "[enrich] health … DOWN" noise. When it does run it re-probes only the
+  // providers currently known-down — cheap — and, when one recovers, resumes the cases that had to
+  // skip it. `.unref()` so it never holds the process open; tests don't set the option, so no timer starts.
   if (options.enrichHealthPollMs && options.enrichHealthPollMs > 0 && allProviders.some((p) => p.probe)) {
     let polling = false;   // guard against overlap if a probe round runs long
     const timer = setInterval(() => {
       if (polling) return;
+      if (enrichPending.size === 0) return;   // no case waiting on a down provider — nothing to resume, so don't probe (or log)
       const down = allProviders.filter((p) => enrichHealth.peek(p.name)?.ok === false);
       if (down.length === 0) return;   // nothing to recover
       polling = true;
@@ -1779,6 +1782,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       await enrichControl.save(caseId, { providers });
       if (providers.length > 0) enrichInBackground(caseId);   // re-check; cache only queries newly-enabled / un-checked
+      else enrichPending.delete(caseId);                      // disabled — stop the poller from waiting on a down provider for this case
       return res.status(200).json({ providers });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

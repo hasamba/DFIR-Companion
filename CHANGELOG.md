@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **No more `[enrich] health … DOWN` log spam while enrichment is off.** The background reachability
+  poller used to re-probe every known-down provider (MISP/YETI) every 60s indefinitely — once they'd been
+  probed once (e.g. opening the enrichment panel), they were logged as DOWN every minute even when no case
+  had enrichment enabled. The poller now runs only while a case is actually waiting on a down provider to
+  recover (its sole purpose), and stale "waiting" marks are cleared when a case's enrichment is turned off,
+  so an idle/off Companion stays quiet.
+
 ## [0.8.0] - 2026-06-05
 
 ### Changed
