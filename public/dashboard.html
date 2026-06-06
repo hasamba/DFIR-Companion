@@ -671,7 +671,30 @@
       edges.forEach(e => { addN(e.asset, e.ioc); addN(e.ioc, e.asset); });
       const related = (id) => !assetFocus || id === assetFocus || (neighbors.get(assetFocus) && neighbors.get(assetFocus).has(id));
 
-      const { pos, lab, W, H } = assetLayoutPositions(assets, iocs, assetLayout);
+      let { pos, lab, W, H } = assetLayoutPositions(assets, iocs, assetLayout);
+      // Keep labels inside the canvas: estimate each label's horizontal extent and, if any
+      // overflows the left/right edge, shift every node+label right and widen the canvas.
+      // This only pads the canvas (node spacing and radius are untouched), so it cannot
+      // introduce overlap — it fixes labels clipping on the far-left arc of the radial
+      // layout (and the top corners of the vertical layout) without a geometry change.
+      const labelText = (it, isIoc) => isIoc
+        ? `${truncate(it.value, 26)} (${it.type})`
+        : truncate(it.name, 20);
+      const labelWidth = (s) => s.length * 6.5 + 6;   // ~6.5px/char at the 11px label font
+      let minX = 0, maxX = W;
+      const fitLabel = (it, isIoc) => {
+        const l = lab.get(it.id); if (!l) return;
+        const w = labelWidth(labelText(it, isIoc));
+        const lo = l.anchor === "end" ? l.x - w : l.anchor === "start" ? l.x : l.x - w / 2;
+        const hi = l.anchor === "end" ? l.x : l.anchor === "start" ? l.x + w : l.x + w / 2;
+        if (lo < minX) minX = lo;
+        if (hi > maxX) maxX = hi;
+      };
+      assets.forEach(a => fitLabel(a, false));
+      iocs.forEach(i => fitLabel(i, true));
+      const dx = minX < 0 ? Math.ceil(-minX) : 0;
+      if (dx > 0) { for (const m of [pos, lab]) for (const v of m.values()) v.x += dx; }
+      W = Math.max(W, Math.ceil(maxX) + dx);
       assetDims = { W, H };
       const iocColor = (v) => v === "malicious" ? "#ff5c5c" : v === "suspicious" ? "#ff9f43" : "#6aa9ff";
       // The SVG is rendered at intrinsic size × zoom; the container scrolls to pan.
