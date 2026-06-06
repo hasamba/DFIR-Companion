@@ -143,9 +143,15 @@ const HUNT_RE = /^H\.[A-Za-z0-9]+$/;        // valid hunt id
 function slugify(s: string): string {
   return String(s || "").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48) || "Pivot";
 }
-// Sanitize free text for embedding in a YAML scalar / VQL string (single line, no quotes, ASCII).
+// Sanitize free text (e.g. an event label with a `\\.\C:\…` path) for embedding in BOTH a YAML
+// double-quoted scalar and a VQL single-quoted string: collapse to one ASCII line and strip
+// backslashes and quotes (YAML treats `\` as an escape and a stray quote terminates the literal).
 function oneLine(s: string): string {
-  return String(s || "").replace(/[\r\n]+/g, " ").replace(/[^\x20-\x7E]/g, "").replace(/"/g, "").slice(0, 200);
+  return String(s || "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[^\x20-\x7E]/g, "")
+    .replace(/[\\'"]/g, "")
+    .slice(0, 200);
 }
 
 // A CLIENT artifact (YAML) with one source per pivot statement — collected by the hunt on every endpoint.

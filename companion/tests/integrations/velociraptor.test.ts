@@ -118,6 +118,17 @@ describe("VelociraptorClient.launchHunt", () => {
     expect(program).toContain("name: Pivot1");
   });
 
+  it("strips backslashes/quotes from an event-label description (YAML/VQL safety)", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.X2", state: "RUNNING" } }], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).launchHunt(
+      "SELECT FullPath FROM glob(globs=\"C:/x\")",
+      'Velociraptor detection: Mimikatz Tools - \\\\.\\C:\\Tools\\mimidrv.sys',
+    );
+    expect(program).not.toContain("\\");   // no backslashes survive into the embedded YAML/VQL
+    expect(program).toContain('description: "Velociraptor detection: Mimikatz Tools - .C:Toolsmimidrv.sys"');
+  });
+
   it("throws when no hunt id comes back", async () => {
     const runner: VqlRunner = async () => ({ rows: [{ Hunt: {} }], raw: "" });
     await expect(new VelociraptorClient(cfg, runner).launchHunt("SELECT 1", "x")).rejects.toThrow(/hunt id/);
