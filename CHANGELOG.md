@@ -68,6 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Severity colour legend on the Forensic Timeline.** A small inline legend next to the section's
   `+` button explains what the event-timestamp colours mean (Critical / High / Medium / Low / Info),
   reusing the same `.sev-*` colours the timestamps and finding tags already use.
+- **Word (.docx) report export** via the dashboard's **Export** menu (clean defaults, no
+  template — analyst applies branding in Word). Generated on demand from the canonical
+  `report.md`, with the same scope/legitimate filtering as the HTML and Markdown exports.
+  Served via `GET /cases/:id/report.docx`. Implemented in `companion/src/reports/docx.ts`
+  via `marked`'s token stream → the `docx` library.
 
 ### Changed
 - **Velociraptor importer: verdict-first detection mapping (DetectRaptor + friends).** The Velociraptor

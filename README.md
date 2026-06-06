@@ -269,6 +269,7 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   timeline incl. count/sources) + full JSON state export. All of these — generate report (MD+HTML),
   generate report (PDF), forensic-timeline CSV, Timesketch JSONL, full JSON state — are reachable from
   the dashboard's single **Export** menu.
+- **Word (.docx) report export** — download the incident report as a `.docx` for in-Word polish (one-way: edits don't round-trip).
 - **Push to DFIR-IRIS** — push a case into a [DFIR-IRIS](https://dfir-iris.org/) instance with one
   click (dashboard **Push** menu → **DFIR-IRIS**, or `npm run iris:push -- <caseId>`). It **find-or-creates
   the IRIS case by name** (= the Companion case id) — re-exporting an existing case *updates* it — and
