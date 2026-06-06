@@ -75,8 +75,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via `marked`'s token stream → the `docx` library.
 
 ### Changed
+- **Terminology: "Attacker Path" → "Attack Path" across the UI, reports, and DFIR-IRIS push.**
+  The dashboard section header, the `report.md` `### 4.1 Attack path` heading (and its "not yet
+  reconstructed" placeholder), and the DFIR-IRIS note title now read **Attack Path** (the standard
+  term). The internal field name (`attackerPath`) and the AI JSON key are unchanged, so existing
+  saved cases keep working.
 - **Dashboard: the "Synthesize" toolbar button is now "AI Re-synthesize".** Clearer that the button
-  runs an LLM pass over the timeline (deriving findings / MITRE / attacker path) and is the way to
+  runs an LLM pass over the timeline (deriving findings / MITRE / attack path) and is the way to
   produce conclusions after an AI-off import — the endpoint and behavior are unchanged.
 - **Velociraptor importer: verdict-first detection mapping (DetectRaptor + friends).** The Velociraptor
   importer already handled Sigma/YARA verdict rows; now it also recognizes the broader **detection-artifact
@@ -109,7 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   regardless of the per-case AI toggle, so importing a *deterministic* artifact (THOR / Cyber Triage /
   SIEM / …) with **AI: OFF** still kicked off "AI: synthesizing findings…". The post-import
   re-synthesis now respects the AI toggle exactly like the `/captures` path does: with AI off, a
-  deterministic import populates the **forensic timeline + IOCs only** and findings / attacker-path /
+  deterministic import populates the **forensic timeline + IOCs only** and findings / attack path /
   MITRE wait until AI is turned on and the case is re-synthesized. Threat-intel **enrichment** is a
   separate, independently-gated feature (not an LLM call) and still runs regardless of the AI toggle.
 - **Velociraptor exports no longer mislabel as "SIEM event".** Two common Velociraptor artifact outputs

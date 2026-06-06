@@ -128,7 +128,7 @@ describe("irisMap", () => {
     const meta = { ...emptyReportMeta(), businessImpact: "Prod down 4h", recommendations: ["Rotate creds"] };
     const notes = buildNotes(state, meta);
     const titles = notes.map((n) => n.title);
-    expect(titles).toContain("Attacker Path");
+    expect(titles).toContain("Attack Path");
     expect(titles).toContain("Business Impact Analysis");
     expect(titles).toContain("Recommendations");
     expect(titles).not.toContain("Findings");           // none present
@@ -204,7 +204,7 @@ describe("pushCaseToIris", () => {
     expect(m.addedTasks[0].task_title).toBe("[critical] Isolate DC01");
     expect(m.addedTasks[0].task_status_id).toBe(1);     // "To do"
     expect(m.addedTasks[0].task_assignees_id).toEqual([]);
-    expect(res.notes).toBeGreaterThanOrEqual(1);        // Attacker Path note
+    expect(res.notes).toBeGreaterThanOrEqual(1);        // Attack Path note
     expect(res.caseUrl).toBe("https://iris.example.org/case?cid=1");
   });
 

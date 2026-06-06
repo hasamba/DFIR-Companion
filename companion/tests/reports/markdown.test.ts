@@ -182,7 +182,7 @@ describe("renderMarkdownReport", () => {
     expect(without).not.toContain("Statements of probability");
   });
 
-  it("renders the attacker path and incident timeline ordered by event time", () => {
+  it("renders the attack path and incident timeline ordered by event time", () => {
     const state = emptyState("c1");
     state.attackerPath = "Initial access via phishing, then PsExec lateral movement, then ransomware.";
     state.forensicTimeline.push(
@@ -193,7 +193,7 @@ describe("renderMarkdownReport", () => {
     );
 
     const md = renderMarkdownReport(state);
-    expect(md).toContain("### 4.1 Attacker path");
+    expect(md).toContain("### 4.1 Attack path");
     expect(md).toContain("PsExec lateral movement");
     expect(md).toContain("### 3.1 Incident timeline");
     expect(md).toContain("Phishing email opened");
