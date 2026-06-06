@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAnonymizer, isInternalIp, SECRET_PLACEHOLDER, deriveKnownEntities, isLocalAiProvider, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import { createAnonymizer, isInternalIp, SECRET_PLACEHOLDER, deriveKnownEntities, isNoiseDomain, isNoiseAccount, isLocalAiProvider, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
@@ -194,6 +194,47 @@ describe("deriveKnownEntities", () => {
     expect(k.accounts).toContain("ADATUMLAB\\srv");
     expect(k.internalDomains).toContain("adatumlab");        // NETBIOS domain
     expect(k.internalDomains).toContain("adatumlab.local");  // from the FQDN host
+  });
+});
+
+describe("isNoiseDomain / isNoiseAccount", () => {
+  it("flags Windows principals, registry hives and ATT&CK tactic words as noise", () => {
+    for (const d of ["builtin", "authority", "service", "hku", "hklm", "persistence",
+      "escalation", "execution", "discovery", "movement", "evasion", "ransomware",
+      "defender", "explorer", "vgauth", "access", "impact", "tools", "code", "local"]) {
+      expect(isNoiseDomain(d)).toBe(true);
+    }
+  });
+  it("keeps real victim domains — single-label NETBIOS and dotted FQDNs", () => {
+    for (const d of ["windomain.local", "acme", "artifacts-main", "evtx-main", "win11", "adatumlab"]) {
+      expect(isNoiseDomain(d)).toBe(false);
+    }
+  });
+  it("isNoiseAccount keys off the DOMAIN / UPN-domain half", () => {
+    expect(isNoiseAccount("HKU\\Software")).toBe(true);
+    expect(isNoiseAccount("BUILTIN\\Administrators")).toBe(true);
+    expect(isNoiseAccount("AUTHORITY\\SYSTEM")).toBe(true);   // captured from "NT AUTHORITY\SYSTEM"
+    expect(isNoiseAccount("ACME\\jdoe")).toBe(false);
+    expect(isNoiseAccount("jdoe@acme.local")).toBe(false);
+  });
+});
+
+describe("deriveKnownEntities — noise filtering", () => {
+  it("drops registry hives, Windows principals and tactic folders; keeps real entities", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline = [
+      { id: "e1", timestamp: "", description: "HKU\\Software autorun; BUILTIN\\Administrators; NT AUTHORITY\\SYSTEM ran from Execution\\evil.exe", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "win11.windomain.local" },
+      { id: "e2", timestamp: "", description: "logon ACME\\jdoe", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    ];
+    const k = deriveKnownEntities(s);
+    expect(k.internalDomains).toContain("acme");             // real NETBIOS domain kept
+    expect(k.internalDomains).toContain("windomain.local");  // real FQDN parent kept
+    for (const noise of ["hku", "builtin", "authority", "execution"]) {
+      expect(k.internalDomains).not.toContain(noise);
+    }
+    expect(k.accounts).toContain("ACME\\jdoe");
+    expect(k.accounts).not.toContain("HKU\\Software");
+    expect(k.accounts).not.toContain("BUILTIN\\Administrators");
   });
 });
 
