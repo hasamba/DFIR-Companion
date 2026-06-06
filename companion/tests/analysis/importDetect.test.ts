@@ -41,6 +41,19 @@ describe("detectImportKind — JSON formats", () => {
   it("hayabusa: json-timeline", () => {
     expect(detectImportKind("hb.json", j([{ Timestamp: "t", RuleTitle: "x", Level: "high" }]))).toBe("hayabusa");
   });
+  it("hayabusa: Velociraptor Windows.Hayabusa.Rules variant (Title+Level+Channel, no RuleTitle/Mitre)", () => {
+    // Content match wins even though the filename also looks like a Velociraptor export.
+    const row = { Timestamp: "t", Computer: "WIN11", Channel: "Microsoft-Windows-Sysmon/Operational", EID: 1, Level: "high", Title: "Possible LOLBIN", RecordID: 9, Details: "Proc: x" };
+    expect(detectImportKind("Velociraptor-Windows.Hayabusa.Rules-sample.json", ndjson(row))).toBe("hayabusa");
+  });
+  it("velociraptor: artifact-named export with no content signature → filename hint (not 'siem')", () => {
+    // Windows.Triage.HighValueMemory rows have no distinctive content keys → generic SIEM fallback,
+    // but the Velociraptor-export filename routes them to the Velociraptor importer.
+    const mem = { ProcessName: "cmd.exe", CommandLine: "cmd.exe", Pid: 2432, FullPath: "x.dmp", CrashDump: { sha256: "a".repeat(64) } };
+    expect(detectImportKind("Velociraptor-Windows.Triage.HighValueMemory-sample.json", ndjson(mem))).toBe("velociraptor");
+    // Same content under a non-Velociraptor name has no signal → stays the SIEM catch-all.
+    expect(detectImportKind("dump.json", ndjson(mem))).toBe("siem");
+  });
   it("network: Suricata eve.json", () => {
     expect(detectImportKind("eve.json", ndjson({ event_type: "alert", alert: { signature: "x" } }))).toBe("network");
   });

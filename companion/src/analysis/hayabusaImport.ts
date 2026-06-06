@@ -114,6 +114,19 @@ function parseDetailCell(cell: string): Row {
   return out;
 }
 
+// Normalize a JSON `Details`/`ExtraFieldInfo` value to a field map. Standard Hayabusa
+// json-timeline gives an object (used as-is). Velociraptor's `Windows.Hayabusa.Rules` artifact
+// renders Details as a single "Key: value ¦ Key: value" STRING (the CSV cell shape) — parse it on
+// the "¦" separator so Proc/Parent/Tgt fields become individually usable; otherwise keep the raw
+// string under `Details` (genericIocs still scans its value for hashes/IPs/URLs).
+function detailObj(v: unknown): Row {
+  if (isObject(v)) return v as Row;
+  if (v == null) return {};
+  const s = str(v);
+  const parsed = s.includes("¦") ? parseDetailCell(s) : {};
+  return Object.keys(parsed).length ? parsed : { Details: s };
+}
+
 // Common Hayabusa detail-field aliases for the structured correlation fields.
 const PROC_KEYS = ["Proc", "Image", "Process", "NewProc", "NewProcessName", "ProcessName"];
 const PARENT_KEYS = ["ParentProc", "ParentImage", "ParentProcessName", "PProc", "ParentProcess"];
@@ -125,7 +138,7 @@ const PATH_KEYS = ["TgtFile", "TargetFilename", "Path", "File", "FilePath", "Ima
 function mapRecord(rec: Row, details: Row, iocSink: Map<string, SiemIoc>): { mapped: MappedEvent; host: string } | null {
   const ruleTitle = firstStr(rec, ["RuleTitle", "Rule Title", "RuleName", "Title"]);
   const channel = firstStr(rec, ["Channel"]);
-  const eid = firstStr(rec, ["EventID", "Event ID", "EventId"]);
+  const eid = firstStr(rec, ["EventID", "Event ID", "EventId", "EID"]);
   if (!ruleTitle && !eid) return null;
 
   const host = firstStr(rec, ["Computer", "Hostname", "ComputerName"]);
@@ -204,12 +217,7 @@ function extractHayabusaRecords(text: string): { records: { rec: Row; details: R
   if (trimmed[0] === "[" || trimmed[0] === "{") {
     const { records } = extractRecords(trimmed);
     const out = records.map((rec) => {
-      const det = getCI(rec, "Details");
-      const extra = getCI(rec, "ExtraFieldInfo") ?? getCI(rec, "Extra Field Info");
-      const details: Row = {
-        ...(isObject(det) ? det : det != null ? { Details: str(det) } : {}),
-        ...(isObject(extra) ? extra : {}),
-      };
+      const details: Row = { ...detailObj(getCI(rec, "Details")), ...detailObj(getCI(rec, "ExtraFieldInfo") ?? getCI(rec, "Extra Field Info")) };
       return { rec, details };
     });
     return { records: out, format: "json" };

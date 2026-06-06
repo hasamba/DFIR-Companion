@@ -88,6 +88,37 @@ describe("parseHayabusaTimeline — csv-timeline", () => {
   });
 });
 
+// Velociraptor's `Windows.Hayabusa.Rules` artifact emits Hayabusa verdict rows in NDJSON with
+// `Title` (not `RuleTitle`), `EID` (not `EventID`), no Mitre columns, and `Details` rendered as a
+// single " ¦ "-separated STRING rather than an object.
+describe("parseHayabusaTimeline — Velociraptor Windows.Hayabusa.Rules variant", () => {
+  const vrRow = (o: object): string => JSON.stringify(o);
+
+  it("maps Title/EID/string-Details rows verdict-first (never 'SIEM event')", () => {
+    const text = [
+      vrRow({ Timestamp: "2026-06-03T08:27:33.651497602Z", Computer: "WIN11.windomain.local", Channel: "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational", EID: 21, Level: "informational", Title: "RDP Logon", RecordID: 123, Details: "TgtUser: WIN11\\vagrant ¦ SessID: 1 ¦ SrcIP: LOCAL" }),
+      vrRow({ Timestamp: "2026-06-03T08:41:00.000000000Z", Computer: "WIN11.windomain.local", Channel: "Microsoft-Windows-Sysmon/Operational", EID: 3, Level: "medium", Title: "Net Conn (Sysmon Alert)", RecordID: 200, Details: "Proc: C:\\Windows\\System32\\cmd.exe ¦ DstIP: 45.77.12.34 ¦ DstPort: 4444" }),
+    ].join("\n");
+    const r = parseHayabusaTimeline(text);
+    expect(r.format).toBe("json");
+    expect(r.events).toHaveLength(2);
+    expect(r.events.some((e) => /SIEM event/i.test(e.description))).toBe(false);
+
+    const rdp = r.events.find((e) => e.description.includes("RDP Logon"))!;
+    expect(rdp.description).toContain("Hayabusa: RDP Logon");
+    expect(rdp.description).toContain("(EID 21");            // EID read despite the `EID` (not `EventID`) key
+    expect(rdp.severity).toBe("Info");                       // from Level
+    expect(rdp.sources).toEqual(["Hayabusa"]);
+    expect(rdp.asset).toBe("WIN11.windomain.local");
+    expect(rdp.timestamp).toMatch(/^2026-06-03T08:27:33/);
+
+    const net = r.events.find((e) => e.description.includes("Net Conn"))!;
+    expect(net.severity).toBe("Medium");
+    expect(net.processName).toBe("cmd.exe");                 // parsed out of the string Details cell
+    expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("45.77.12.34");
+  });
+});
+
 describe("parseHayabusaTimeline — levels, floor & edges", () => {
   it("accepts both abbreviated and spelled-out levels", () => {
     const mk = (level: string): object => ({ ...jsonProc(), Level: level, RuleTitle: `R-${level}` });

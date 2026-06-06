@@ -92,7 +92,16 @@ function isArtifactMap(root: unknown): boolean {
     entries.some(([, v]) => (v as unknown[]).some(isObject));
 }
 function isHayabusaJson(s: Row): boolean {
-  return !!getCI(s, "RuleTitle") || (!!getCI(s, "Level") && (!!getCI(s, "MitreTactics") || !!getCI(s, "MitreTags")));
+  if (!!getCI(s, "RuleTitle")) return true;
+  if (!!getCI(s, "Level") && (!!getCI(s, "MitreTactics") || !!getCI(s, "MitreTags"))) return true;
+  // Velociraptor's `Windows.Hayabusa.Rules` artifact emits Hayabusa VERDICT rows: a rule `Title`
+  // + `Level` over a Windows `Channel`/`EID`/`RecordID` (it uses `Title`, not `RuleTitle`, and
+  // carries no Mitre columns). A raw SIEM event has no rule `Title`, so this is specific enough to
+  // claim here — ahead of the `Channel`-based `isSiem` catch-all — and the Hayabusa importer maps
+  // it verdict-first instead of mislabeling each row "SIEM event:".
+  if (!!getCI(s, "Title") && !!getCI(s, "Level") &&
+      (!!getCI(s, "Channel") || getCI(s, "EID") != null || getCI(s, "RecordID") != null)) return true;
+  return false;
 }
 function isNetwork(s: Row): boolean {
   return !!getCI(s, "event_type") || !!getCI(s, "_path");
@@ -157,23 +166,40 @@ function detectCsv(text: string): ImportKind {
   return "log";
 }
 
+// Velociraptor names its JSON exports after the collected artifact, e.g.
+// `Velociraptor-Windows.Triage.HighValueMemory.json` or `Generic.System.Pstree.json`. Many
+// artifacts (process lists, file listings, memory acquisition) emit rows with no distinctive
+// content signature, so they sniff as the generic SIEM fallback. When the FILENAME marks a
+// Velociraptor export we route those to the Velociraptor importer instead — it reads each
+// artifact's own columns and tags the source, rather than mislabeling rows "SIEM event:".
+const VR_ARTIFACT = /\b(?:Windows|Linux|MacOS|Generic|Custom|Server|Exchange|Admin|Network)\.[A-Za-z]\w*(?:\.\w+)+/;
+function looksLikeVelociraptorFile(filename: string): boolean {
+  const n = filename ?? "";
+  return /velociraptor/i.test(n) || VR_ARTIFACT.test(n);
+}
+
 // ───────────────────────────── top-level ─────────────────────────────
 
 export function detectImportKind(filename: string, text: string): ImportKind {
   const t = (text ?? "").trim();
   if (!t) return "unknown";
 
+  // A Velociraptor-named export that only matched the generic SIEM fallback is better served by
+  // the Velociraptor importer (a more-specific content match — sandbox/hayabusa/… — always wins).
+  const vrHint = (k: ImportKind): ImportKind =>
+    k === "siem" && looksLikeVelociraptorFile(filename) ? "velociraptor" : k;
+
   // JSON / NDJSON.
   if (t[0] === "{" || t[0] === "[") {
     const { root, sample } = jsonSample(t);
-    if (sample) return detectJson(root, sample);
+    if (sample) return vrHint(detectJson(root, sample));
     return "unknown"; // looked like JSON but unparseable / not an object
   }
   // NDJSON that doesn't start with a brace is unusual; still try a first-line parse.
   const firstLine = t.split(/\r\n|\r|\n/, 1)[0]?.trim() ?? "";
   if (firstLine[0] === "{") {
     const { root, sample } = jsonSample(t);
-    if (sample) return detectJson(root, sample);
+    if (sample) return vrHint(detectJson(root, sample));
   }
 
   // Tabular (CSV / EZ / Plaso / Hayabusa-csv / M365-csv) vs a line-oriented log.
