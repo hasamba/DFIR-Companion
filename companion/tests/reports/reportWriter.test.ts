@@ -90,4 +90,36 @@ describe("ReportWriter", () => {
     expect(csv).toContain("attacker beacon callout");
     expect(csv).not.toContain("client admin maintenance window"); // legit event excluded
   });
+
+  it("exports the report as a .docx Buffer, applying scope/legitimate filtering", async () => {
+    const { default: JSZip } = await import("jszip");
+
+    const state = emptyState("c1");
+    state.lastSummary = "real summary text";
+    state.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "attacker beacon callout", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "client admin maintenance window", severity: "Low",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    await stateStore.save(state);
+
+    const legitimate = new LegitimateStore(caseStore);
+    await legitimate.save("c1", [
+      { id: markerId("event", "e2"), kind: "event", ref: "e2", note: "client's maintenance",
+        markedAt: "2026-05-28T10:00:00Z", label: "client admin maintenance window" },
+    ]);
+
+    const writer = new ReportWriter(caseStore, stateStore, undefined, legitimate);
+    const buf = await writer.docx("c1");
+
+    expect(Buffer.isBuffer(buf)).toBe(true);
+    expect(buf.length).toBeGreaterThan(1024);
+
+    const zip = await JSZip.loadAsync(buf);
+    const xml = await zip.file("word/document.xml")!.async("text");
+    expect(xml).toContain("real summary text");                        // canonical report content present
+    expect(xml).toContain("attacker beacon callout");                  // kept
+    expect(xml).not.toContain("client admin maintenance window");      // legit event excluded
+  });
 });
