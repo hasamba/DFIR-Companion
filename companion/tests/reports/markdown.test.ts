@@ -34,8 +34,12 @@ describe("renderMarkdownReport", () => {
   it("includes every template chapter and shows placeholders for empty human sections", () => {
     const md = renderMarkdownReport(emptyState("c9"));
     for (const heading of [
+      "## 1 Report metadata",
       "## 1.1 Report revisions",
       "## 1.3 Disclaimer and reading guide",
+      "### 1.3.1 Timestamps",
+      "### 1.3.2 Statements of probability",
+      "### 1.3.3 Statements of confidence",
       "## 1.4 Intended audience",
       "## 2 Executive summary",
       "## 2.2 Investigation limitations",

@@ -161,8 +161,11 @@ function imageRunFor(
 //  - the report title (h1) stays Heading 1.
 //  - a top-level numbered heading like "## 2 Executive summary" becomes Heading 2 and
 //    starts a new page in the printed report, so majors break cleanly between sections.
-//  - any numbered subsection ("## 1.1 …", "### 3.1 …") collapses to Heading 3 regardless
+//  - a numbered subsection ("## 1.1 …", "### 3.1 …") collapses to Heading 3 regardless
 //    of its Markdown depth — the Word outline groups every "N.M" under its "N" parent.
+//  - a deeper numbered subsection ("### 1.3.1 …") collapses to Heading 4 — every "N.M.K"
+//    groups under its "N.M" parent. Check this BEFORE the two-level pattern so "1.3.1"
+//    isn't matched as if it were just "1.3".
 //  - unnumbered subsections (e.g. "### Recommendations", per-finding h4) keep their
 //    Markdown depth.
 // Pure — no I/O, easy to unit-test by inspecting `word/document.xml`.
@@ -178,6 +181,9 @@ function classifyHeading(depth: number, text: string): {
     // Page break already separates the section — extra leading space would just push the
     // heading down on the new page.
     return { level: HeadingLevel.HEADING_2, pageBreakBefore: true, spacingBefore: 0 };
+  }
+  if (/^\d+\.\d+\.\d+/.test(text)) {
+    return { level: HeadingLevel.HEADING_4, pageBreakBefore: false, spacingBefore: HEADING_SPACING_BEFORE };
   }
   if (/^\d+\.\d+/.test(text)) {
     return { level: HeadingLevel.HEADING_3, pageBreakBefore: false, spacingBefore: HEADING_SPACING_BEFORE };
