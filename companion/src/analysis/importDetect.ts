@@ -11,7 +11,7 @@ import { parseCsv } from "./csvImport.js";
 
 export type ImportKind =
   | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "network"
-  | "kape" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "csv" | "log" | "unknown";
+  | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -106,6 +106,14 @@ function isHayabusaJson(s: Row): boolean {
 function isNetwork(s: Row): boolean {
   return !!getCI(s, "event_type") || !!getCI(s, "_path");
 }
+// Cyber Triage timeline JSONL: every row carries `epoch_timestamp` + (`timestamp_desc` |
+// `timestamp_description`) + `message`, with a Cyber Triage `score`/`scoreDescription` verdict.
+// Specific enough to claim ahead of the `message`-based SIEM catch-all.
+function isCybertriage(s: Row): boolean {
+  return getCI(s, "epoch_timestamp") != null &&
+    (getCI(s, "timestamp_desc") != null || getCI(s, "timestamp_description") != null) &&
+    (getCI(s, "message") != null || getCI(s, "score") != null || getCI(s, "scoreDescription") != null);
+}
 function isThor(s: Row): boolean {
   return !!getCI(s, "module") && !!getCI(s, "message") && !!getCI(s, "level");
 }
@@ -124,6 +132,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isChainsaw(sample)) return "chainsaw";
   if (isVelociraptor(sample, root)) return "velociraptor";
   if (isHayabusaJson(sample)) return "hayabusa";
+  if (isCybertriage(sample)) return "cybertriage";
   if (isNetwork(sample)) return "network";
   if (isThor(sample)) return "thor";
   if (isSiem(sample)) return "siem";
@@ -144,6 +153,10 @@ function plasoSig(h: Set<string>): boolean {
 function hayabusaCsvSig(h: Set<string>): boolean {
   return (h.has("ruletitle") || h.has("rule title")) && h.has("level");
 }
+function cybertriageCsvSig(h: Set<string>): boolean {
+  // Cyber Triage timeline CSV header: event_timestamp,epoch_timestamp,message,timestamp_description,item_type,threat_level
+  return h.has("event_timestamp") && h.has("epoch_timestamp") && h.has("timestamp_description");
+}
 function kapeSig(h: Set<string>): boolean {
   return has(h, "executablename", "runcount") || has(h, "fullpath", "sha1") || has(h, "fullpath", "filekeylastwritetimestamp") ||
     (h.has("path") && h.has("lastmodifiedtimeutc")) || has(h, "updatereasons", "updatetimestamp") ||
@@ -158,6 +171,7 @@ function detectCsv(text: string): ImportKind {
   if (headers.length === 0) return "unknown";
   const h = new Set(headers.map((x) => x.trim().toLowerCase()));
   if (m365CsvSig(h)) return "m365";
+  if (cybertriageCsvSig(h)) return "cybertriage";
   if (plasoSig(h)) return "plaso";
   if (hayabusaCsvSig(h)) return "hayabusa";
   if (kapeSig(h)) return "kape";

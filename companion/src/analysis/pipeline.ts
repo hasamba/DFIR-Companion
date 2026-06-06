@@ -26,6 +26,7 @@ import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImp
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
 import { parseKapeCsv, type KapeImportOptions } from "./kapeImport.js";
+import { parseCybertriage, type CybertriageImportOptions } from "./cybertriageImport.js";
 import { parseM365Audit, type M365ImportOptions } from "./m365Import.js";
 import { parseCloudTrail, type AwsImportOptions } from "./awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "./cloudActivityImport.js";
@@ -1007,6 +1008,55 @@ export class AnalysisPipeline {
       threadsClosed: [],
       timelineNote: `KAPE/${parsed.artifact} import: ${parsed.kept} event(s) from ${parsed.total} row(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a Cyber Triage timeline export (JSONL / JSON array / CSV). Deterministic (no AI call):
+  // scored rows map verdict-first (severity from the Bad/Suspicious verdict + reason keywords),
+  // unscored process/task rows become Info evidence, the bulk File super-timeline is dropped
+  // (unless `fileTelemetry`), and Active-Connection remote IPs become IOCs. Events tagged
+  // "Cyber Triage".
+  async importCybertriage(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;                  // unique per import (e.g. "ct3") so ids never collide
+      importedAt: string;
+      cybertriage?: CybertriageImportOptions;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsed = parseCybertriage(text, opts.cybertriage);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Cyber Triage"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Cyber Triage import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+        (parsed.notable > 0 ? `, ${parsed.notable} scored item(s)` : "") +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        `, ${parsed.iocs.length} IOC(s)` +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
       summary: "",
     };
     const delta = deltaSchema.parse(raw);

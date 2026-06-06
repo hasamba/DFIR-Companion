@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Cyber Triage timeline import** (`importCybertriage` → `cybertriageImport.ts`) — the thirteenth
+  deterministic ingest path (no AI call), the host-triage counterpart to KAPE. Reads a Cyber Triage
+  (Sleuth Kit Labs) timeline export in **JSONL** (richest), **JSON array**, or **CSV** form.
+  **Verdict-first** (Cyber Triage already scores items): scored rows (`Notable_Normal`=Bad /
+  `LikelyNotable_Normal`=Suspicious, or the CSV `threat_level`) map to events with severity derived
+  from the verdict + a keyword bump on the reason (lsass-dump/mimikatz/ransomware→Critical;
+  RAS/AnyDesk/PsExec/YARA→High), `scoreDescription` leading the description, MITRE from the reason
+  (T1003.001 / T1219 / T1053.005 / T1548.002), and the process chain / path / host / args carried
+  through. The export is mostly raw filesystem telemetry, so the feed is **split**: unscored
+  Process + Scheduled-Task rows → Info evidence; the unscored File MFT super-timeline is dropped by
+  default (`fileTelemetry` opts it in); Active-Connection remote IPs become IOCs. Events tagged
+  **Cyber Triage**; aggregates + caps; optional `minSeverity` floor. Wired into `importDetect.ts`
+  (JSON `epoch_timestamp`+`timestamp_desc`+verdict and the `event_timestamp,epoch_timestamp,
+  timestamp_description` CSV header both auto-route), the unified `/import` button, and a per-format
+  `POST /cases/:id/import-cybertriage` route. *(The CSV form is lossy — no host, no process chain;
+  prefer JSONL. The Excel incident report is a formatted human deliverable and is not ingested.)*
 - **Portable Windows EXE (Node SEA) release artifact.** A new `npm run package:sea` script
   (`companion/scripts/build-sea.mjs`) bundles the server with esbuild, generates a Node
   SEA blob, injects it into a copy of the node binary via `postject`, and stages a

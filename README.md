@@ -22,7 +22,7 @@ stays on disk, and the AI provider is yours to choose.
 > **Where it fits — a post-detection analysis layer.** DFIR Companion is **not** a detection
 > engine and deliberately does not run Sigma/YARA itself. Your detection tools already do that:
 > **Velociraptor** (Sigma/YARA hunts), **Security Onion** (Suricata/Zeek/Elastic), **Chainsaw**,
-> **Hayabusa**, **THOR**, your EDR/SIEM. The Companion is the layer **after** detection — it
+> **Hayabusa**, **THOR**, **Cyber Triage**, your EDR/SIEM. The Companion is the layer **after** detection — it
 > ingests *their* verdicts and hits, correlates them across tools into one forensic timeline,
 > and synthesizes the findings, attacker path, IOCs, and report. The value is the **"so what"**,
 > not re-deriving alerts. New ingest connectors should consume a tool's output; they should not
@@ -125,6 +125,19 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   **LNK** (LECmd), **JumpLists** (JLECmd), **UsnJrnl $J** & **$MFT** (MFTECmd), **SRUM** (SrumECmd),
   **Recycle Bin** (RBCmd), and **Shellbags** (SBECmd). Tagged by artifact name for cross-source correlation;
   aggregates + caps; optional `minSeverity` floor.
+- **Cyber Triage import** — [Cyber Triage](https://www.sleuthkit.org/) (Sleuth Kit Labs) host-triage timeline,
+  **deterministic** (no AI call), **verdict-first**. Reads the **JSONL** (richest), **JSON array**, or **CSV**
+  timeline export. Cyber Triage already scores items, so **scored rows** (`Notable_Normal`=Bad /
+  `LikelyNotable_Normal`=Suspicious) map to events with severity **derived from the verdict** + a keyword bump on
+  the reason (lsass-dump/mimikatz/ransomware → Critical; RAS/AnyDesk/PsExec/YARA → High), the **`scoreDescription`**
+  leading the description and MITRE from the reason (lsass→T1003.001, RAS→T1219, scheduled-task→T1053.005,
+  UAC-bypass→T1548.002), with the process chain / path / host / args carried through. Because the export is mostly
+  raw filesystem telemetry, the importer **keeps the timeline signal-rich**: unscored **Process + Scheduled-Task**
+  rows become **Info** evidence (a bounded execution/persistence timeline), the unscored **File** MFT
+  super-timeline is **dropped by default** (`fileTelemetry` opts it in), and **network** rows contribute the
+  **remote IP as an IOC** only. Tagged **Cyber Triage**; aggregates + caps; optional `minSeverity` floor. *(The CSV
+  form is lossy — no host, no process chain; prefer the JSONL export. The Excel incident report is a formatted
+  human deliverable and is not ingested.)*
 - **Microsoft 365 / Entra ID import** — cloud & identity IR (incl. business-email-compromise), **deterministic**
   (no AI call). Ingests the **M365 Unified Audit Log** (`Search-UnifiedAuditLog` CSV/JSON or the Management
   Activity API — the `AuditData` blob is parsed and merged), **Entra sign-in logs**, and **Entra directory

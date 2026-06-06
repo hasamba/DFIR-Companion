@@ -112,7 +112,14 @@ psort CSV, dynamic or l2tcsv; Info evidence events at the artifact's own time, I
 the free-text message + the `display_name` path; reuses `csvImport`'s `parseCsv` + `siemImport`'s
 `aggregateEvents`), and **malware-sandbox reports** (`importSandbox` → `sandboxImport.ts` — auto-detects
 CAPEv2 (`report.json`) vs CrowdStrike Falcon Sandbox; the sample verdict + each behavioural signature → events
-with their own severity + MITRE, dropped/extracted hashes + network host/domain/URL → IOCs). The last twelve
+with their own severity + MITRE, dropped/extracted hashes + network host/domain/URL → IOCs), and **Cyber Triage**
+(`importCybertriage` → `cybertriageImport.ts` — Sleuth Kit Labs host triage; JSONL/JSON-array/CSV timeline;
+**verdict-first** since Cyber Triage scores items: `score` `Notable_Normal`=Bad/`LikelyNotable_Normal`=Suspicious
+(or the CSV `threat_level`)→severity + reason-keyword bump, `scoreDescription`→description, reason→MITRE,
+process-chain/path/host/args carried through; the export is mostly MFT telemetry so it **splits the feed** —
+unscored Process+Task→Info evidence, unscored File super-timeline **dropped by default** (`fileTelemetry` opts in),
+Active-Connection remote IP→IOC; reuses `csvImport`'s `parseCsv` + `siemImport`'s `extractRecords`/`aggregateEvents`).
+The last thirteen
 are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
