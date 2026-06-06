@@ -12,6 +12,10 @@ dist/
 *.timestamp-*.mjs
 .gstack/
 
+# Node SEA build outputs (single-executable Windows EXE staging).
+build-sea/
+dist-sea/
+
 # Docker: the pre-built browser add-on the companion container copies out for "Load unpacked".
 /addon/
 
