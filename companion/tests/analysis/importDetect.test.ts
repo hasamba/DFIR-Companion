@@ -66,6 +66,14 @@ describe("detectImportKind — JSON formats", () => {
   it("siem: Windows event JSON (catch-all)", () => {
     expect(detectImportKind("win.json", j({ data: [{ event_id: 4624, log_name: "Security", event_data: {} }] }))).toBe("siem");
   });
+  it("cybertriage: timeline JSONL (epoch + timestamp_desc + score)", () => {
+    expect(detectImportKind("tl.jsonl", ndjson(
+      { epoch_timestamp: 1769593923, event_timestamp: "2026-01-28T01:52:03", hostName: "win11", message: "/x", score: "None", timestamp_desc: "File Modified" },
+    ))).toBe("cybertriage");
+  });
+  it("cybertriage: claimed ahead of the SIEM message catch-all", () => {
+    expect(detectImportKind("tl.json", j([{ epoch_timestamp: 1769593923, message: "/x", scoreDescription: "Yara pattern detected", timestamp_desc: "Process Created" }]))).toBe("cybertriage");
+  });
 });
 
 describe("detectImportKind — CSV formats", () => {
@@ -86,6 +94,9 @@ describe("detectImportKind — CSV formats", () => {
   });
   it("m365: UAL CSV with AuditData column", () => {
     expect(detectImportKind("ual.csv", "RecordType,CreationDate,UserIds,Operations,AuditData\n8,t,u,Op,{}")).toBe("m365");
+  });
+  it("cybertriage: timeline CSV header", () => {
+    expect(detectImportKind("tl.csv", "event_timestamp,epoch_timestamp,message,timestamp_description,item_type,threat_level\n2026-01-28T01:52:03,1769593923,/x,File Modified,File,None")).toBe("cybertriage");
   });
   it("csv: a generic comma table → AI CSV importer", () => {
     expect(detectImportKind("data.csv", "colA,colB,colC\n1,2,3\n4,5,6")).toBe("csv");
