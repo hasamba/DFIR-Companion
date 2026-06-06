@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-06-06
+
 ### Fixed
 - **Root URL now redirects to dashboard** — `GET /` returns a 302 to `/dashboard` instead of 404, so navigating to `http://localhost:4773` works as expected.
 - **Docker image now starts on Node 22** — bumped all three Dockerfile stages from `node:20-slim` to `node:22-slim` to match the `undici` v8 requirement (`webidl.util.markAsUncloneable` is only available in Node 22+).
@@ -884,7 +886,8 @@ Initial baseline.
   report exports.
 - Scripts: `dev`, `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/hasamba/DFIR-Companion/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.6.0...v0.7.0
