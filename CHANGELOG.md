@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Asset graph labels no longer clip at the canvas edge** — the IoC graph now estimates each node label's width and pads/widens the canvas (shifting nodes uniformly, without changing spacing or radius) so far-left labels in the Radial layout — and top-corner labels in the Vertical layout — render in full instead of having their leading characters cut off.
+
 ## [0.9.1] - 2026-06-06
 
 ### Fixed
