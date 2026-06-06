@@ -52,6 +52,7 @@ export interface VelociraptorImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  artifact?: string;   // fallback artifact/source label (e.g. the filename) when rows carry no _Source
 }
 
 export interface VelociraptorParseResult {
@@ -96,6 +97,48 @@ function flatStr(v: unknown): string {
   return String(v);
 }
 
+// ───────────────────────────── detection verdicts ─────────────────────────────
+
+// Many Velociraptor "*.Detection.*" artifacts (DetectRaptor et al.) carry their VERDICT in a
+// `Detection` field — a bare string ("Cobalt Strike: trick_ryuk.profile") or an object with a
+// rule `Name` (+ optional `Criticality`/`Severity`) — or in `RuleName`/`RuleID`. Per the
+// post-detection principle we consume that verdict (we don't re-evaluate the rule): its text
+// leads the description, its own criticality drives severity, and any Txxxx ids become MITRE.
+interface Verdict { title: string; critWord: string; mitre: string[] }
+
+function rowVerdict(row: Row): Verdict | null {
+  const d = getCI(row, "Detection");
+  let title = "";
+  let critWord = "";
+  if (typeof d === "string") title = d.trim();
+  else if (isObject(d)) {
+    title = str(getCI(d, "Name") ?? getCI(d, "Title") ?? getCI(d, "Rule") ?? getCI(d, "ID")).trim();
+    critWord = str(getCI(d, "Criticality") ?? getCI(d, "Severity") ?? getCI(d, "Level")).trim().toLowerCase();
+  }
+  if (!title) title = firstStr(row, ["RuleName", "RuleID"]).trim();
+  if (!title) return null;
+  const mitre = mitreFromText(title, firstStr(row, ["RuleName"]), flatStr(getCI(row, "Tags") ?? getCI(row, "Mitre")));
+  return { title, critWord, mitre };
+}
+
+// Known malware-family / offensive-tooling keywords in a verdict title → escalate. These read
+// the tool's OWN verdict wording, not the raw artifact, so it stays "consume, don't re-detect".
+const CRIT_KEYWORDS = /ransom|lockbit|\bconti\b|wannacry|black\s*cat|\balphv\b|emotet|trickbot|qakbot|\bhive\b/i;
+const HIGH_KEYWORDS = /cobalt\s*strike|mimikatz|web\s*shell|webshell|lazagne|rubeus|sharphound|bloodhound|meterpreter|\bbeacon\b|reverse\s*shell|secretsdump|psexec|\bsliver\b|brute\s*ratel|nanodump|seatbelt|\blsass\b|kerberoast|dcsync|impacket/i;
+
+// Severity for a detection verdict: the rule's explicit Criticality/Severity wins; else
+// DetectRaptor conventions (a "BAU …" baseline or an "IN DEVELOPMENT" rule → Low); else a
+// malware/tool keyword escalates; else Medium (a named detection rule fired — worth surfacing).
+function detectionSeverity({ title, critWord }: Verdict): Severity {
+  const explicit = critWord ? (SIGMA_LEVEL[critWord] ?? SEV_WORDS[critWord]) : undefined;
+  if (explicit) return explicit;
+  if (/\bin\s*development\b/i.test(title)) return "Low";
+  if (/^\s*bau\b/i.test(title)) return "Low";
+  if (CRIT_KEYWORDS.test(title)) return "Critical";
+  if (HIGH_KEYWORDS.test(title)) return "High";
+  return "Medium";
+}
+
 // ───────────────────────────── timestamps ─────────────────────────────
 
 // Velociraptor times arrive as RFC3339 strings, epoch numbers (`_ts` is collection-time
@@ -114,11 +157,16 @@ function vrTime(v: unknown): string {
   return normalizeTime(str(v));
 }
 
-// The artifact's OWN time first; `_ts` (collection time) only as a last resort.
+// The artifact's OWN time first; `_ts` (collection time) only as a last resort. Includes a few
+// nested forensic containers (MFT $SI/$FN, file-info, hit-context) and registry/app keys so the
+// detection artifacts that bury their time one level down still get a real timestamp.
 const TIME_KEYS = [
   "System.TimeCreated.SystemTime", "System.TimeCreated", "EventTime", "Mtime", "Btime",
-  "Ctime", "Created", "CreationTime", "LastWriteTime", "TimeGenerated", "Timestamp",
-  "timestamp", "time", "StartTime", "_ts",
+  "Ctime", "Created", "CreationTime", "LastWriteTime", "KeyLastWriteTimestamp", "TimeGenerated",
+  "Timestamp", "timestamp", "time", "StartTime",
+  "SITimestamps.LastModified0x10", "SITimestamps.Created0x10", "FNTimestamps.Created0x30",
+  "FileInfo.Mtime", "FileInfo.Ctime", "FileInfo.Btime", "HitContext.Mtime",
+  "_ts",
 ];
 function pickTime(row: Row): string {
   for (const k of TIME_KEYS) {
@@ -172,38 +220,61 @@ function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string
   return { sha256, md5 };
 }
 
+// Scrape IOCs out of a free-text detection field (a matched command Line, file Content, or
+// HitString) — `genericIocs` only fires on structured keys, so the download URL / C2 IP embedded
+// in a PowerShell-web-request or webshell hit (exactly the indicator the rule fired on) is
+// otherwise missed. URLs, octet-bounded IPv4 (so "10.0.22000" version strings aren't IPs), and
+// SHA256/SHA1/MD5 hashes.
+const TEXT_URL = /\bhttps?:\/\/[^\s"'<>)\]}]+/gi;
+const TEXT_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
+const TEXT_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
+function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
+  if (!text) return;
+  for (const m of text.matchAll(TEXT_URL)) addIoc(sink, "url", m[0].replace(/[.,;:)\]]+$/, "").slice(0, 300));
+  for (const m of text.matchAll(TEXT_IPV4)) { const ip = cleanIp(m[0]); if (ip) addIoc(sink, "ip", ip); }
+  for (const m of text.matchAll(TEXT_HASH)) addIoc(sink, "hash", m[0].toLowerCase());
+}
+
+// The free-text fields that carry a detection's evidence (and its embedded IOCs).
+const EVIDENCE_TEXT_KEYS = ["Line", "Content", "CommandLine", "HitString", "StringHit", "Message"];
+function scrapeEvidence(row: Row, sink: Map<string, SiemIoc>): void {
+  for (const k of EVIDENCE_TEXT_KEYS) scrapeText(str(getCI(row, k)), sink);
+}
+
 // ───────────────────────────── EVTX-row normalization ─────────────────────────────
 
-// A Velociraptor parsed-evtx row carries `System` + `EventData` (sometimes under `Event`).
-// Reshape to the flat record `mapWindows` consumes, normalizing the EventID (which can be a
-// number or `{ Value }`/`{ #text }`) to a bare value, plus the host.
+// A Velociraptor parsed-evtx row carries `System` + `EventData` (sometimes under `Event`), or —
+// for artifacts that flatten the event (e.g. DetectRaptor's Windows.Detection.Evtx) — top-level
+// `Channel`/`EventID`/`EventData`. Reshape either to the flat record `mapWindows` consumes,
+// normalizing the EventID (number or `{ Value }`/`{ #text }`) to a bare value, plus the host.
 function winRowToFlat(row: Row): { rec: Row; host: string } | null {
   const sys = isObject(getCI(row, "System")) ? (getCI(row, "System") as Row)
     : isObject(getPath(row, "Event.System")) ? (getPath(row, "Event.System") as Row) : null;
   const edRaw = getCI(row, "EventData") ?? getPath(row, "Event.EventData");
-  if (!sys) return null;
 
-  let eid: unknown = getCI(sys, "EventID");
-  if (isObject(eid)) eid = getCI(eid, "Value") ?? getCI(eid, "#text");
-  const channel = str(getCI(sys, "Channel")) || str(getPath(sys, "Provider.Name")) || str(getPath(sys, "Provider.#attributes.Name"));
-  const host = str(getCI(sys, "Computer")).trim();
-  const time = vrTime(getCI(sys, "TimeCreated"));
+  if (sys) {
+    let eid: unknown = getCI(sys, "EventID");
+    if (isObject(eid)) eid = getCI(eid, "Value") ?? getCI(eid, "#text");
+    const channel = str(getCI(sys, "Channel")) || str(getPath(sys, "Provider.Name")) || str(getPath(sys, "Provider.#attributes.Name"));
+    return {
+      host: str(getCI(sys, "Computer")).trim(),
+      rec: { event_id: eid, channel, event_data: isObject(edRaw) ? edRaw : {}, "@timestamp": vrTime(getCI(sys, "TimeCreated")), message: str(getCI(row, "Message")) },
+    };
+  }
 
+  // Flat shape: top-level Channel/EventID/EventData with no System wrapper.
+  let eidFlat: unknown = getCI(row, "EventID") ?? getCI(row, "EventId");
+  if (eidFlat == null && !isObject(edRaw)) return null;
+  if (isObject(eidFlat)) eidFlat = getCI(eidFlat, "Value") ?? getCI(eidFlat, "#text");
   return {
-    host,
-    rec: {
-      event_id: eid,
-      channel,
-      event_data: isObject(edRaw) ? edRaw : {},
-      "@timestamp": time,
-      message: str(getCI(row, "Message")),
-    },
+    host: str(getCI(row, "Computer")).trim(),
+    rec: { event_id: eidFlat, channel: str(getCI(row, "Channel")), event_data: isObject(edRaw) ? edRaw : {}, "@timestamp": pickTime(row), message: str(getCI(row, "Message")) },
   };
 }
 
 // ───────────────────────────── per-row mapping ─────────────────────────────
 
-type Kind = "sigma" | "yara" | "eventlog" | "generic";
+type Kind = "sigma" | "yara" | "detection" | "eventlog" | "generic";
 
 function artifactName(row: Row): string {
   return firstStr(row, ["_Source", "Artifact", "_Artifact", "artifact", "Source", "ArtifactName"]);
@@ -217,6 +288,10 @@ function classify(row: Row, artifact: string): Kind {
   const rule = getCI(row, "Rule");
   if (typeof rule === "string" && rule.trim() && (getCI(row, "Strings") || getCI(row, "Meta") || getCI(row, "Namespace") || getCI(row, "Rules"))) return "yara";
   if (isObject(rule) && (getCI(rule, "Title") || getCI(rule, "Level"))) return "sigma";
+
+  // A `Detection`/`RuleName` verdict → verdict-first, BEFORE the eventlog branch so a detection
+  // that also carries a parsed Windows event (DetectRaptor's Evtx) is overlaid, not flattened.
+  if (rowVerdict(row)) return "detection";
 
   if (getCI(row, "System") || getCI(row, "EventData") || getPath(row, "Event.System")) {
     if (firstStr(row, ["Level"]) && firstStr(row, ["Title", "SigmaTitle", "RuleTitle"])) return "sigma";
@@ -291,6 +366,70 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   };
 }
 
+// A DetectRaptor-style detection: the `Detection`/`RuleName` verdict leads. If a parsed Windows
+// event sits underneath (Evtx), overlay the verdict onto the per-EID mapping (like Sigma);
+// otherwise build the event from the row's file/process/pipe/path + hashes.
+function mapDetection(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+  const v = rowVerdict(row)!; // guaranteed by classify()
+  const severity = detectionSeverity(v);
+  scrapeEvidence(row, sink); // pull URLs/IPs/hashes out of the matched command line / file content
+
+  const flat = winRowToFlat(row);
+  const win = flat ? mapWindows(flat.rec, flat.host || host, sink) : null;
+  if (win) {
+    win.severity = worst(win.severity, severity);
+    for (const m of v.mitre) if (!win.mitre.includes(m)) win.mitre.push(m);
+    win.description = `Velociraptor detection: ${v.title} | ${win.description}`.slice(0, 600);
+    win.aggKey = `vr-det|${v.title.toLowerCase()}|${win.aggKey}`.slice(0, 400);
+    win.sources = ["Velociraptor"];
+    if (!win.timestamp) win.timestamp = pickTime(row);
+    return win;
+  }
+
+  // Non-event detection (file / registry / named-pipe / history-line hit).
+  const { sha256, md5 } = collectRowIocs(row, sink);
+  const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path", "KeyPath"]);
+  const procRaw = firstStr(row, ["Exe", "Image", "ProcessName", "ProcName", "NewProcessName"]);
+  const parentRaw = firstStr(row, ["ParentName", "ParentImage", "ParentProcessName"]);
+  const processName = procRaw ? baseName(procRaw) : undefined;
+  const parentName = parentRaw ? baseName(parentRaw) : undefined;
+  const pipe = firstStr(row, ["PipeName"]);
+  if (processName) addIoc(sink, "process", processName);
+
+  const subjectParts: string[] = [];
+  if (processName) subjectParts.push(processName);
+  if (pipe) subjectParts.push(`pipe ${pipe}`);
+  if (path && !processName) subjectParts.push(path);
+  const line = firstStr(row, ["Line", "StringHit", "HitString", "CommandLine"]);
+  if (line && subjectParts.length === 0) subjectParts.push(oneLine(line).slice(0, 160));
+  const subject = subjectParts.join(" ");
+
+  let description = `Velociraptor detection: ${v.title}`;
+  if (subject) description += ` — ${subject}`;
+  if (host) description += ` @ ${host}`;
+  description = description.slice(0, 600);
+
+  const aggKey = `vr-det|${v.title.toLowerCase()}|${(path || processName || pipe || subject).toLowerCase()}|${host.toLowerCase()}`
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
+    .replace(/\d+/g, "#")
+    .slice(0, 400);
+
+  return {
+    timestamp: pickTime(row),
+    description,
+    severity,
+    mitre: v.mitre,
+    aggKey,
+    sources: ["Velociraptor"],
+    ...(sha256 ? { sha256 } : {}),
+    ...(md5 && !sha256 ? { md5 } : {}),
+    ...(path ? { path } : {}),
+    ...(host ? { asset: host } : {}),
+    ...(processName ? { processName } : {}),
+    ...(parentName ? { parentName } : {}),
+  };
+}
+
 function mapEventlog(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent | null {
   const flat = winRowToFlat(row);
   if (!flat) return null;
@@ -301,14 +440,19 @@ function mapEventlog(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   return win;
 }
 
-const GENERIC_MSG_KEYS = ["Message", "message", "Description", "Line", "Stdout", "CommandLine", "OSPath", "FullPath", "Name"];
+const GENERIC_MSG_KEYS = ["Message", "message", "Description", "Category", "DisplayName", "Line", "Stdout", "CommandLine", "PipeName", "KeyPath", "OSPath", "FullPath", "Name"];
+// Keys whose values are big/structured (rule regexes, PE internals, raw file content) — useful
+// for IOC scanning but noise in a one-line description, so they're skipped in the key=value fallback.
+const NOISE_KEY = /regex|ignore|imports|exports|sections|resources|directories|versioninformation|dllinfo|hitcontext|\bmeta\b|content|reference|url|license/i;
 
 function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const { sha256, md5 } = collectRowIocs(row, sink);
+  scrapeEvidence(row, sink); // URLs/IPs/hashes embedded in Message/Line/Content (key-driven extractors miss these)
   const msg = firstStr(row, GENERIC_MSG_KEYS);
   const pairs: [string, string][] = [];
   flatten(row, pairs);
-  const base = msg ? oneLine(msg) : pairs.filter(([k]) => k !== "_ts").slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
+  const base = msg ? oneLine(msg)
+    : pairs.filter(([k, v]) => k !== "_ts" && !NOISE_KEY.test(k) && v.length <= 200).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
 
   const sevWord = firstStr(row, ["Severity", "Level", "Risk", "Priority"]).toLowerCase();
   const severity: Severity = SEV_WORDS[sevWord] ?? "Info";
@@ -387,8 +531,10 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
   const mapped: MappedEvent[] = [];
   let detections = 0;
 
+  const fallbackArtifact = (opts.artifact ?? "").trim();
+
   for (const row of rows) {
-    const artifact = artifactName(row);
+    const artifact = artifactName(row) || fallbackArtifact;
     const host = pickHost(row);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
 
@@ -396,6 +542,7 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     let m: MappedEvent | null;
     if (kind === "yara") { m = mapYara(row, artifact, host, iocSink); detections++; }
     else if (kind === "sigma") { m = mapSigma(row, host, iocSink); detections++; }
+    else if (kind === "detection") { m = mapDetection(row, artifact, host, iocSink); detections++; }
     else if (kind === "eventlog") { m = mapEventlog(row, host, iocSink) ?? mapGeneric(row, artifact, host, iocSink); }
     else { m = mapGeneric(row, artifact, host, iocSink); }
     if (m) mapped.push(m);

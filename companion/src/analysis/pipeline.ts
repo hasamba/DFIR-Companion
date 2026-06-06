@@ -894,7 +894,12 @@ export class AnalysisPipeline {
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsed = parseVelociraptorJson(text, opts.velociraptor);
+    // Rows often carry no _Source; use the (Velociraptor-named) filename as the fallback artifact
+    // label so generic/detection events show their source — e.g. "DetectRaptor.Windows.Detection.NamedPipes".
+    const rawArtifact = opts.label.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
+    let artifact = rawArtifact;
+    try { artifact = decodeURIComponent(rawArtifact); } catch { /* malformed %xx — keep the raw label */ }
+    const parsed = parseVelociraptorJson(text, { artifact, ...opts.velociraptor });
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const raw = {
