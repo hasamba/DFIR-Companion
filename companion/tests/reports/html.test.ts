@@ -26,6 +26,16 @@ describe("renderHtmlReport", () => {
     expect(html).toContain("<title>Incident Report — INC-42</title>");
   });
 
+  it("embeds the company logo as an <img> with the data URI preserved", () => {
+    const logo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const meta = emptyReportMeta();
+    meta.companyName = "Acme DFIR";
+    meta.companyLogo = logo;
+    const html = renderHtmlReport(emptyState("c1"), meta);
+    expect(html).toContain(`<img src="${logo}"`);
+    expect(html).toContain('alt="Acme DFIR logo"');
+  });
+
   it("escapes raw HTML from untrusted investigation text so it can't become live markup", () => {
     const state = emptyState("c1");
     state.findings.push({

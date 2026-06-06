@@ -37,6 +37,15 @@ function trimmedList(values: string[]): string[] {
 }
 
 function titlePage(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
+  // Optional report branding — the investigating firm's logo and name above the title.
+  // companyLogo is a validated raster data URI (see reportMeta.ts); the alt text strips
+  // brackets so an analyst-supplied company name can't break the Markdown image syntax.
+  const company = meta.companyName.trim();
+  if (meta.companyLogo.trim().length > 0) {
+    const alt = (company.length > 0 ? `${company} logo` : "Company logo").replace(/[[\]]/g, "");
+    lines.push(`![${alt}](${meta.companyLogo.trim()})`, "");
+  }
+  if (company.length > 0) lines.push(`**${company}**`, "");
   lines.push("# Incident Investigation Report", "");
   lines.push(`**Organization:** ${humanOr(meta.organization, "_(organization not set)_")}`, "");
   // Incident ID is optional — omit the line entirely when blank.

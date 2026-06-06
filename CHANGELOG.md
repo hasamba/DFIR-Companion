@@ -41,6 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GitHub Release, alongside the existing GHCR Docker image. Server runtime resolution
   (`dashboard.html`, favicons, `.env`, `cases/`) is now SEA-aware via a small
   `serverAssets.ts` helper — dev/Docker paths are unchanged.
+- **Docker / Docker Compose install option.** A single-image build (`Dockerfile` + `docker-compose.yml`
+  at the repo root) runs the companion server, the dashboard, and the browser add-on — **without
+  bundling Ollama or LiteLLM** (for AI you point `DFIR_AI_*` at any OpenAI-compatible endpoint; with AI
+  unset, full capture + all deterministic importers still work). Multi-stage build (`tsc` → `dist`,
+  pruned to prod deps; the extension is built and packaged); evidence/state persist in `./cases`; the
+  pre-built add-on is copied to `./addon` for *Load unpacked*. **Localhost-only is preserved:** the
+  container binds `0.0.0.0` internally while Compose publishes the port to `127.0.0.1` on the host. New
+  **`DFIR_HOST`** env var (default `127.0.0.1`) controls the bind interface; the server entry point now
+  also boots from the compiled `dist/server.js`. A GitHub Actions workflow publishes the image to
+  **GHCR** (`ghcr.io/hasamba/dfir-companion`, multi-arch amd64/arm64) on every `vX.Y.Z` tag.
 - **One-click PDF report export.** A new **Generate report (PDF)** option in the dashboard's **Export**
   menu (and a *Print / Save as PDF* link alongside the existing report links) generates the report and
   opens the print-styled HTML, auto-triggering the browser's print dialog where the destination is set to
@@ -48,8 +58,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing `@media print` stylesheet rather than bundling a headless browser. Served via
   `GET /cases/:id/report/report.html?print=1`, which injects a screen-only print trigger on the fly (the
   on-disk `report.html` and its download are never modified, so the saved PDF stays clean).
+- **Company name + logo on reports (optional branding).** Two new optional fields in the dashboard's
+  **Case Details** panel: a *company name* (the investigating firm) and a *company logo* upload
+  (PNG / JPG / GIF / WebP, ≤ ~750 KB). The logo is stored inline as a base64 data URI in
+  `state/report-meta.json` (so the report stays self-contained — no side file, no extra route) and
+  both render at the top of the report's title page in `report.md` and the HTML export. Both are
+  omitted when blank. The logo is server-validated to raster formats only (SVG is rejected so an
+  uploaded logo can't carry script into the rendered HTML report) and length-capped.
+- **Severity colour legend on the Forensic Timeline.** A small inline legend next to the section's
+  `+` button explains what the event-timestamp colours mean (Critical / High / Medium / Low / Info),
+  reusing the same `.sev-*` colours the timestamps and finding tags already use.
+
+### Changed
+- **Velociraptor importer: verdict-first detection mapping (DetectRaptor + friends).** The Velociraptor
+  importer already handled Sigma/YARA verdict rows; now it also recognizes the broader **detection-artifact
+  shape** every DetectRaptor `*.Detection.*` artifact (and similar packs) carries: a `Detection` field — a
+  bare string (`"Cobalt Strike: trick_ryuk.profile"`) or an object with a rule `Name` (+ optional
+  `Criticality`/`Severity`) — or a `RuleName`/`RuleID`. Per the post-detection principle these are consumed
+  as VERDICTS: the verdict text leads the description, its own criticality drives severity (else a
+  keyword bump — `cobalt strike`/`mimikatz`/`webshell` → High, ransomware families → Critical, an
+  `IN DEVELOPMENT` rule or `BAU` baseline → Low, otherwise Medium), and any `Txxxx` ids in the title/tags
+  become MITRE. When a parsed Windows event sits underneath (DetectRaptor's `Evtx`), the verdict is
+  **overlaid** on the per-EID Windows mapping rather than flattened — so a Mimikatz rule firing over EID
+  4688 keeps both the rule name and the process-create context. Pipe/path/process/parent + file hashes
+  become structured fields and IOCs; **URLs/IPs/SHA hashes embedded in free text** (the matched
+  PowerShell `Line`, file `Content`, EVTX `Message`) are now scraped, so the C2 IP or download URL the
+  rule fired on actually surfaces in the asset↔IoC graph.
+- **Velociraptor importer: cleaner descriptions and timestamps for generic detection rows.** Generic
+  artifact rows (no Sigma/YARA/Detection verdict) now lead with meaningful columns —
+  `Category`/`KeyPath`/`DisplayName`/`PipeName` — instead of dumping the first eight raw `key=value`
+  pairs, and the description skips large/noisy values (rule regexes, PE internals, file content blobs).
+  Time resolution reaches nested forensic times: MFT `SITimestamps.LastModified0x10`/`Created0x10`,
+  `FNTimestamps.Created0x30`, `FileInfo.Mtime`/`Ctime`/`Btime`, and `KeyLastWriteTimestamp` — so registry
+  / MFT / file-info rows show their real time instead of `—` or the `_ts` collection time. The flat
+  Windows-event shape (top-level `Channel`/`EventID`/`EventData`, no `System` wrapper) is recognized.
+  When a row carries no `_Source`, the importer uses the **Velociraptor-named filename** as the fallback
+  artifact label, so generic events show their source (`Velociraptor [DetectRaptor.Windows.Detection.NamedPipes]: …`).
 
 ### Fixed
+- **Velociraptor exports no longer mislabel as "SIEM event".** Two common Velociraptor artifact outputs
+  were falling through to the SIEM importer: the **`Windows.Hayabusa.Rules`** artifact (Hayabusa verdict rows
+  that use `Title`/`EID` and render `Details` as a `¦`-separated string, so `isHayabusaJson` missed them and
+  the `Channel` field routed them to SIEM) and **detail/triage artifacts with no content signature** (e.g.
+  `Windows.Triage.HighValueMemory` — process memory dumps), which hit the generic SIEM fallback. Now
+  `importDetect` recognizes the Velociraptor-Hayabusa shape (rule `Title` + `Level` + `Channel`/`EID`/`RecordID`)
+  and routes it to the **Hayabusa** importer (verdict-first: rule title → description, `Level` → severity, MITRE
+  from the detail fields), and a **Velociraptor-named export** (`Velociraptor-…` or a dotted artifact name like
+  `Windows.Triage.HighValueMemory`) that only matched the SIEM fallback is routed to the **Velociraptor** importer
+  instead. The Hayabusa importer also now accepts the `EID` alias and parses a `¦`-delimited string `Details`
+  cell so Proc/Parent/Tgt fields and their IOCs are extracted.
 - **No more `[enrich] health … DOWN` log spam while enrichment is off.** The background reachability
   poller used to re-probe every known-down provider (MISP/YETI) every 60s indefinitely — once they'd been
   probed once (e.g. opening the enrichment panel), they were logged as DOWN every minute even when no case

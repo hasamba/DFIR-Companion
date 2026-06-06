@@ -32,6 +32,16 @@ describe("dashboard.html", () => {
     expect(html).not.toContain('id="rm-investigator"'); // replaced by the plural field
   });
 
+  it("wires the optional company name + logo upload (with preview) for report branding", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="rm-companyName"');
+    expect(html).toContain('id="rm-companyLogoFile"');
+    expect(html).toContain('id="rm-logoPreview"');
+    expect(html).toContain('id="rm-removeLogo"');
+    expect(html).toContain("companyLogo:");   // sent in the report-meta PUT body
+    expect(html).toContain("readAsDataURL");   // logo is base64-encoded client-side
+  });
+
   it("offers Markdown and HTML export links after generating the report", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="reportLinks"');

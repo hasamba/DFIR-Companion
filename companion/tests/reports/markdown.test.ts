@@ -88,6 +88,23 @@ describe("renderMarkdownReport", () => {
     expect(md2).toContain("| Ellie | CISO | email |");
   });
 
+  it("renders the optional company name and logo on the title page (above the title)", () => {
+    const logo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const meta = emptyReportMeta();
+    meta.companyName = "Acme DFIR";
+    meta.companyLogo = logo;
+    const md = renderMarkdownReport(emptyState("c1"), meta);
+    expect(md).toContain(`![Acme DFIR logo](${logo})`);
+    expect(md).toContain("**Acme DFIR**");
+    // Branding sits before the report title.
+    expect(md.indexOf(logo)).toBeLessThan(md.indexOf("# Incident Investigation Report"));
+
+    // Both are optional — a default (empty) meta emits no image and no company line.
+    const plain = renderMarkdownReport(emptyState("c1"));
+    expect(plain).not.toContain("![");
+    expect(plain).not.toContain("data:image/");
+  });
+
   it("lists compromised assets with their related IoCs (4.2)", () => {
     const s = emptyState("c1");
     const hash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
