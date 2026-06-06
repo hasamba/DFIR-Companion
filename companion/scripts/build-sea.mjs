@@ -279,9 +279,12 @@ async function embedIcon(icoPath) {
   }
 }
 
-async function stageRuntimeAssets() {
+async function stageRuntimeAssets(icoPath) {
   console.log("[sea] stage public/ + sharp + sample .env");
   await copyTree(join(REPO_DIR, "public"), join(DIST_DIR, "public"));
+  if (icoPath && existsSync(icoPath)) {
+    await copyFile(icoPath, join(DIST_DIR, "dfir-companion.ico"));
+  }
 
   const sharpSources = await findSharpRoots();
   const nodeModulesDest = join(DIST_DIR, "node_modules");
@@ -331,9 +334,12 @@ async function main() {
   await generateBlob();
   await stageExe();
   await injectBlob();
+  // Icon embed skipped: rcedit hangs on the postject-modified binary because the
+  // injected SEA blob invalidates the original PE signature, leaving the file in a
+  // state rcedit can't lock for writing. createIco() still runs so the .ico is
+  // available for manual embedding or a future signing step.
   const icoPath = await createIco();
-  await embedIcon(icoPath);
-  await stageRuntimeAssets();
+  await stageRuntimeAssets(icoPath);
   await reportSize();
 
   console.log(`[sea] done → ${DIST_DIR}`);
