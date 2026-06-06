@@ -2039,6 +2039,7 @@ import { OpenRouterProvider } from "./providers/openrouter.js";
 import { OllamaCloudProvider } from "./providers/ollama.js";
 import { LiteLlmProvider } from "./providers/litellm.js";
 import { GeminiProvider } from "./providers/gemini.js";
+import { AnthropicProvider } from "./providers/anthropic.js";
 import { WebSocketServer } from "ws";
 import { LiveHub } from "./live/hub.js";
 import { ReportWriter as ReportWriterImpl } from "./reports/reportWriter.js";
@@ -2084,6 +2085,7 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
   registry.register(new OllamaCloudProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
   registry.register(new LiteLlmProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
   registry.register(new GeminiProvider({ apiKey, model, baseUrl, timeoutMs, maxTokens }));
+  registry.register(new AnthropicProvider({ apiKey, model, baseUrl, timeoutMs, maxTokens }));
   return registry.get(name);
 }
 

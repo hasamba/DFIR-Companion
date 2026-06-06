@@ -48,8 +48,11 @@
     .sev-legend { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 9px;
       margin-left: 10px; font-size: 10px; font-weight: 400; text-transform: none;
       letter-spacing: 0; cursor: default; }
-    .sev-legend .sev-item { display: inline-flex; align-items: center; gap: 3px; }
+    .sev-legend .sev-item { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; user-select: none; }
     .sev-legend .sev-dot { width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
+    .sev-legend .sev-filter { width: 11px; height: 11px; margin: 0; cursor: pointer; accent-color: currentColor; flex-shrink: 0; }
+    .sev-legend .sev-item:has(.sev-filter:not(:checked)) { opacity: 0.35; text-decoration: line-through; }
+    #timelineCount { font-size: 12px; font-weight: normal; color: #9aa4b2; margin: 0 6px; letter-spacing: 0; text-transform: none; }
     .finding { border-left: 3px solid #2a2f3a; padding: 6px 10px; margin-bottom: 8px; }
     button { background: #2d6cdf; color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
     input { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; padding: 6px; border-radius: 6px; }
@@ -288,7 +291,7 @@
     <section style="grid-column: 1 / -1"><h2>Executive Summary</h2><div id="summary">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)<button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Timestamp color = event severity" onclick="event.stopPropagation()"><span class="sev-item sev-Critical"><span class="sev-dot"></span>Critical</span><span class="sev-item sev-High"><span class="sev-dot"></span>High</span><span class="sev-item sev-Medium"><span class="sev-dot"></span>Medium</span><span class="sev-item sev-Low"><span class="sev-dot"></span>Low</span><span class="sev-item sev-Info"><span class="sev-dot"></span>Info</span></span></h2>
+    <section style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope (sorted by event time); updates in real time"></span><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
       <div style="font-size:11px; color:#9aa4b2; margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
@@ -395,6 +398,7 @@
     let scope = { start: null, end: null };  // active investigation window (ISO or null)
     let lastState = null;                    // last raw state from server, for re-render on scope change
     let legitMarkers = [];                    // confirmed-legitimate markers; events here are hidden from the timeline
+    let lastFt = [];                          // last scoped+legit-filtered forensic timeline, for severity re-filter without re-fetching
 
     // The case timeline is UTC, so the <input type="datetime-local"> pickers (scope, manual event)
     // are treated as UTC wall-clock, NOT the browser's local zone: show the UTC components, and parse
@@ -1198,6 +1202,57 @@
       }
     });
 
+    // Render the forensic timeline from a pre-scoped+legit-filtered list.
+    // Called both from render() (new state) and from the severity-filter checkboxes (re-filter only).
+    function renderTimelineEvents(ft) {
+      const checked = document.querySelectorAll('.sev-filter:checked');
+      const activeSevs = new Set([...checked].map(cb => cb.value));
+      const allSevs = ['Critical', 'High', 'Medium', 'Low', 'Info'];
+      const filtering = activeSevs.size < allSevs.length;
+      const visible = filtering ? ft.filter(e => activeSevs.has(e.severity)) : ft;
+
+      const countEl = document.getElementById('timelineCount');
+      if (countEl) {
+        const total = ft.length;
+        countEl.textContent = filtering
+          ? `(${visible.length} of ${total} events)`
+          : `(${total} event${total !== 1 ? 's' : ''})`;
+      }
+
+      const caseId = lastState && lastState.caseId;
+      document.getElementById("forensicTimeline").innerHTML = visible.length
+        ? visible.map(e => {
+            const span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
+              ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
+            const badge = (e.count && e.count > 1)
+              ? ` <span title="${esc(e.count)} occurrences collapsed into one event" style="background:#3a2f1a;color:#ffd93b;border:1px solid #5a4a1a;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">×${esc(e.count)}</span>` : "";
+            const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
+            const corro = (realSrc.length > 1)
+              ? ` <span title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}" style="background:#13331f;color:#6bcB77;border:1px solid #1f5a35;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">⊕ ${esc(realSrc.length)} sources</span>` : "";
+            let chain = "";
+            if (e.chainCheck) {
+              const cc = e.chainCheck;
+              const col = cc.observed ? "#6bcB77" : "#ff6b6b";
+              const label = cc.observed ? "⛓ chain seen" : "⚠ unusual parent";
+              const inner = `<span title="${escAttr(cc.note || "")}" style="color:${col};border:1px solid ${col};border-radius:4px;padding:0 6px;font-size:11px">${label}</span>`;
+              chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner);
+            }
+            const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
+            return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge}${corro}${chain} ` +
+              `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)} ${commentChip("event", e.id)}` +
+              `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}` +
+              `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
+              `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +
+              `${evidenceLinks(caseId, e.sourceScreenshots)}</div>`;
+          }).join("")
+        : "—";
+    }
+
+    // Re-filter the timeline whenever a severity checkbox is toggled (no server round-trip).
+    document.querySelector('.sev-legend').addEventListener('change', function(e) {
+      if (e.target.classList.contains('sev-filter')) renderTimelineEvents(lastFt);
+    });
+
     function render(rawState) {
       // Keep the raw state so scope-preset clicks can re-project without a refetch.
       lastState = rawState;
@@ -1245,37 +1300,8 @@
           (evByFinding[fid] = evByFinding[fid] || []).push(...(e.sourceScreenshots || []));
         }
       }
-      document.getElementById("forensicTimeline").innerHTML = ft.length
-        ? ft.map(e => {
-            // Aggregated events: show a time span and a ×N occurrence badge.
-            const span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
-              ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
-            const badge = (e.count && e.count > 1)
-              ? ` <span title="${esc(e.count)} occurrences collapsed into one event" style="background:#3a2f1a;color:#ffd93b;border:1px solid #5a4a1a;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">×${esc(e.count)}</span>` : "";
-            // Corroboration: the same artifact flagged by 2+ REAL tools raises confidence.
-            // Ignore the legacy "unknown source" placeholder so it never inflates the count.
-            const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
-            const corro = (realSrc.length > 1)
-              ? ` <span title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}" style="background:#13331f;color:#6bcB77;border:1px solid #1f5a35;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">⊕ ${esc(realSrc.length)} sources</span>` : "";
-            // Process-chain validation (RockyRaccoon): flag an anomalous parent→child.
-            let chain = "";
-            if (e.chainCheck) {
-              const cc = e.chainCheck;
-              const col = cc.observed ? "#6bcB77" : "#ff6b6b";
-              const label = cc.observed ? "⛓ chain seen" : "⚠ unusual parent";
-              const inner = `<span title="${escAttr(cc.note || "")}" style="color:${col};border:1px solid ${col};border-radius:4px;padding:0 6px;font-size:11px">${label}</span>`;
-              chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner);
-            }
-            // Strip any legacy "[corroborated by N sources: …]" note from old state for display.
-            const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
-            return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge}${corro}${chain} ` +
-              `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)} ${commentChip("event", e.id)}` +
-              `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}` +
-              `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
-              `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +
-              `${evidenceLinks(state.caseId, e.sourceScreenshots)}</div>`;
-          }).join("")
-        : "—";
+      lastFt = ft;
+      renderTimelineEvents(ft);
 
       const openThreads = state.openThreads.filter(t => t.status === "open");
       const closedThreads = state.openThreads.filter(t => t.status === "closed");
