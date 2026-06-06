@@ -8,7 +8,7 @@
 # endpoint (a model you host, a remote provider, or an Ollama/LiteLLM you run separately).
 
 # ---- Stage 1: build the companion server (TypeScript -> dist) + prune to prod deps ----
-FROM node:20-slim AS companion-build
+FROM node:22-slim AS companion-build
 WORKDIR /app/companion
 # Install with the lockfile first (better layer caching). npm ci inside the image fetches the
 # correct linux-native binaries (e.g. sharp's libvips) — never copy host node_modules in.
@@ -21,7 +21,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # ---- Stage 2: build the browser add-on (extension) ----
-FROM node:20-slim AS extension-build
+FROM node:22-slim AS extension-build
 RUN apt-get update \
   && apt-get install -y --no-install-recommends zip \
   && rm -rf /var/lib/apt/lists/*
@@ -33,7 +33,7 @@ RUN npm run build \
   && (cd dist && zip -r ../dfir-companion-extension.zip .)
 
 # ---- Stage 3: runtime ----
-FROM node:20-slim AS runtime
+FROM node:22-slim AS runtime
 LABEL org.opencontainers.image.title="DFIR Companion" \
       org.opencontainers.image.description="Post-detection DFIR analysis companion (server + dashboard + browser add-on)" \
       org.opencontainers.image.source="https://github.com/hasamba/DFIR-Companion" \
