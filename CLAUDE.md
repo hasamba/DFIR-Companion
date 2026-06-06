@@ -147,13 +147,14 @@ selection — the enabled provider names; **default = local-only** (MISP/YETI), 
 `pending_analysis.json`, `report-meta.json` (human-authored report
 sections — title page, distribution, BIA, glossary, recommendations…), `comments.json`
 (investigator comments on entities — never wiped by synthesis), `tags.json`
-(analyst triage labels on entities — confirmed-malicious/false-positive/key-evidence/… — also never wiped by synthesis).
+(analyst triage labels on entities — confirmed-malicious/false-positive/key-evidence/… — also never wiped by synthesis),
+`synth-meta.json` (when synthesis last actually ran + the findings diff for the "last synthesized N ago" / what-changed view; written by `synthesize` only on a real run, not a skip).
 
 **Per-case stores** follow the same pattern (atomic temp-file rename via `storage/atomicWrite.ts` —
 which **retries the rename through a transient `EPERM`/`EBUSY`/`EACCES` lock**, since `cases/` may live
 in a synced folder where Dropbox/OneDrive/AV briefly locks the file mid-rename; route every new store's
 save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
-`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`. Pure filters/transforms live next to
+`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`. Pure filters/transforms live next to
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`) and are unit-tested independently of I/O.
 
@@ -256,8 +257,8 @@ Providers use injectable `fetchFn` (no network in tests), configured only when t
 `npm run iris:push -- <case>` (push the case to a configured DFIR-IRIS instance) ·
 `npm run timesketch:push -- <case>` (push the case's forensic timeline to a configured Timesketch instance).
 
-**Customizable prompts.** The five prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
-consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`,
-which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK>_PROMPT` inline, or `…_PROMPT_FILE` —
+**Customizable prompts.** The six prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
+consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`,
+which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC>_PROMPT` inline, or `…_PROMPT_FILE` —
 re-read each call, so file edits apply with no restart; bad file → warn + fall back to default).
 When you change a prompt's wording, keep the example JSON shape it dictates in sync with `responseSchema.ts`.

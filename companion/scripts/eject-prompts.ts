@@ -1,11 +1,11 @@
-// Write the four built-in AI prompts to files so they can be customized, then point the
+// Write the built-in AI prompts to files so they can be customized, then point the
 // matching DFIR_AI_*_PROMPT_FILE env vars at them. Usage:
 //   npm run prompts:eject            -> writes to ./prompts
 //   npm run prompts:eject -- ./mine  -> writes to ./mine
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
-  SYSTEM_PROMPT, CSV_SYSTEM_PROMPT, LOG_SYSTEM_PROMPT, SYNTHESIS_PROMPT, ASK_PROMPT,
+  SYSTEM_PROMPT, CSV_SYSTEM_PROMPT, LOG_SYSTEM_PROMPT, SYNTHESIS_PROMPT, ASK_PROMPT, EXEC_SUMMARY_PROMPT,
 } from "../src/analysis/pipeline.js";
 
 const dir = resolve(process.argv[2] || "./prompts");
@@ -17,6 +17,7 @@ const files: Array<[string, string, string]> = [
   ["log.txt", LOG_SYSTEM_PROMPT, "DFIR_AI_LOG_PROMPT_FILE"],
   ["synthesis.txt", SYNTHESIS_PROMPT, "DFIR_AI_SYNTH_PROMPT_FILE"],
   ["ask.txt", ASK_PROMPT, "DFIR_AI_ASK_PROMPT_FILE"],
+  ["exec-summary.txt", EXEC_SUMMARY_PROMPT, "DFIR_AI_EXEC_PROMPT_FILE"],
 ];
 
 for (const [name, text] of files) {

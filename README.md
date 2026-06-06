@@ -239,6 +239,16 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   color-coded pills (threat=red, benign=green, review=yellow, evidence=blue) via a 🏷 chip with a
   one-click suggested-label palette plus free-form input; normalized + deduped per entity, stored
   per case (`state/tags.json`), survive synthesis, and sync live over the WS.
+- **Hunt-pivot query generator** — from any forensic event or IOC, a 🔍 chip generates ready-to-adapt
+  hunt/pivot queries for the tools you already run — **Velociraptor VQL**, **Microsoft Defender /
+  Sentinel KQL**, **Splunk SPL**, and a **Sigma** rule skeleton — filled from the entity's structured
+  fields (hash / IP / domain / path / process / parent / host), each with one-click copy. Deterministic
+  templating: no AI, no cost, runs offline. (Pivots off a confirmed indicator — it doesn't author
+  detections.)
+- **Synthesis freshness & what-changed diff** — the Findings section shows when synthesis last
+  actually ran ("🧠 Last synthesized N ago") and how the findings changed since the prior run (**+N
+  new / −M dropped / ↕ K severity**, with an expandable list), so a re-synthesis shows its effect
+  instead of findings silently reshuffling.
 
 ### Threat-intel enrichment (OPSEC — **per-source, default local-only**)
 - **Sources** — VirusTotal (hash/IP/domain/URL), MalwareBazaar (hash), AbuseIPDB (IP), **MISP** and
@@ -281,6 +291,10 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   generate report (PDF), forensic-timeline CSV, Timesketch JSONL, full JSON state — are reachable from
   the dashboard's single **Export** menu.
 - **Word (.docx) report export** — download the incident report as a `.docx` for in-Word polish (one-way: edits don't round-trip).
+- **AI executive summary** — one click (✨ Generate on the Executive Summary section) produces a
+  management-facing, plain-language summary over the synthesized case (no ATT&CK ids / hashes / tool
+  names); review it, then save it into the report's Executive Summary (it overrides the auto-derived
+  summary). Prompt is customizable like the others (`DFIR_AI_EXEC_PROMPT` / `…_PROMPT_FILE`).
 - **Push to DFIR-IRIS** — push a case into a [DFIR-IRIS](https://dfir-iris.org/) instance with one
   click (dashboard **Push** menu → **DFIR-IRIS**, or `npm run iris:push -- <caseId>`). It **find-or-creates
   the IRIS case by name** (= the Companion case id) — re-exporting an existing case *updates* it — and
