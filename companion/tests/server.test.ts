@@ -859,6 +859,49 @@ describe("state and report routes", () => {
     expect(res.text).toContain("Phishing email opened");
   });
 
+  it("exports the report as a .docx attachment on demand (no full report needed)", async () => {
+    const { default: JSZip } = await import("jszip");
+    const root = await mkdtemp(join(tmpdir(), "dfir-report-docx-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore);
+    const app = createApp(store, { stateStore, reportWriter });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.lastSummary = "Compromise summary.";
+    await stateStore.save(seeded);
+
+    const res = await request(app)
+      .get("/cases/c1/report.docx")
+      .buffer(true)
+      .parse((res, callback) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => callback(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    expect(res.headers["content-disposition"]).toContain('attachment; filename="report-c1.docx"');
+    const body = res.body as Buffer;
+    expect(Buffer.isBuffer(body)).toBe(true);
+    expect(body.length).toBeGreaterThan(1024);
+
+    const zip = await JSZip.loadAsync(body);
+    const xml = await zip.file("word/document.xml")!.async("text");
+    expect(xml).toContain("Compromise summary.");
+  });
+
+  it("returns 501 when no reportWriter is configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-report-docx-501-"));
+    const store = new CaseStore(root);
+    const app = createApp(store, {}); // no reportWriter
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const res = await request(app).get("/cases/c1/report.docx");
+    expect(res.status).toBe(501);
+  });
+
   it("GET/PUT /cases/:id/report-meta round-trips and flows into the generated report", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-report-meta-route-"));
     const store = new CaseStore(root);
