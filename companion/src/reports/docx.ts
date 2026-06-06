@@ -93,9 +93,12 @@ function inlineRuns(
         out.push(new TextRun({ break: 1 }));
         break;
       }
-      case "html":
+      case "html": {
+        out.push(new TextRun({ text: (t as Tokens.HTML).text, bold: ctx.bold, italics: ctx.italic }));
+        break;
+      }
       case "escape": {
-        out.push(new TextRun({ text: (t as unknown as { text: string }).text, bold: ctx.bold, italics: ctx.italic }));
+        out.push(new TextRun({ text: (t as Tokens.Escape).text, bold: ctx.bold, italics: ctx.italic }));
         break;
       }
       default: {
@@ -240,8 +243,8 @@ export async function renderDocxReport(
   meta: ReportMeta = emptyReportMeta(),
 ): Promise<Buffer> {
   const md = renderMarkdownReport(state, meta);
-  const lexer = new Marked({ gfm: true });
-  const tokens = lexer.lexer(md);
+  const marked = new Marked({ gfm: true });
+  const tokens = marked.lexer(md);
   const children = tokensToDocxChildren(tokens);
   const doc = new Document({
     creator: "DFIR Companion",
