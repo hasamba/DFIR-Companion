@@ -92,7 +92,7 @@
     .comment-del { background: transparent; border: 0; color: #ff7a7a; cursor: pointer; font-size: 11px; padding: 0 4px; }
     #commentText { width: 100%; box-sizing: border-box; background: #0f1115; color: #e6e6e6;
       border: 1px solid #2a2f3a; border-radius: 6px; padding: 6px; font-family: inherit; resize: vertical; }
-    /* Ask the AI panel */
+    /* Ask the LLM panel */
     .ask-row { display: flex; gap: 8px; margin-bottom: 10px; }
     .ask-row input { flex: 1; }
     .report-links { font-size: 12px; }
@@ -278,7 +278,7 @@
   </div>
   <main>
     <section style="grid-column: 1 / -1">
-      <h2>Ask the AI about this case</h2>
+      <h2>Ask the LLM about this case</h2>
       <div class="ask-row">
         <input id="askInput" placeholder="e.g. Was data exfiltrated? Was a USB connected? Any signs of persistence?" />
         <button id="askBtn">Ask</button>
@@ -765,7 +765,7 @@
       fetch(`/cases/${caseId}/comments/${id}`, { method: "DELETE" }).then(() => loadComments(caseId)).catch(() => {});
     }
 
-    // --- Ask the AI about this case ----------------------------------------------
+    // --- Ask the LLM about this case ----------------------------------------------
     function askStatusBadge(s) {
       const m = { answered: ["#1e3a2a", "#6bcB77"], partial: ["#3a3320", "#ffd93b"], unknown: ["#2a2f3a", "#9aa4b2"] };
       const [bg, fg] = m[s] || m.unknown;
@@ -1817,7 +1817,7 @@
       const savedSet = new Set(savedExisting);
       // Sections missing from the saved order (added in a newer build) stay ANCHORED at their
       // natural HTML slot instead of being dumped at the end; the saved order only reshuffles the
-      // sections it actually names. So a new default-first section like "Ask the AI" still renders
+      // sections it actually names. So a new default-first section like "Ask the LLM" still renders
       // first for users whose saved order predates it.
       let si = 0;
       const ordered = all.map(s => (savedSet.has(sectionKey(s)) ? byKey.get(savedExisting[si++]) : s));

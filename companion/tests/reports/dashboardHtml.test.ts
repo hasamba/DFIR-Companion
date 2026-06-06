@@ -114,7 +114,7 @@ describe("dashboard.html", () => {
     expect(html).toContain("drag-grip");
     expect(html).toContain('"dfir.sectionOrder"');
     // Ask section comes before Executive Summary in the default markup.
-    expect(html.indexOf("Ask the AI about this case")).toBeLessThan(html.indexOf("Executive Summary"));
+    expect(html.indexOf("Ask the LLM about this case")).toBeLessThan(html.indexOf("Executive Summary"));
   });
 
   it("offers a unified multi-file import (images → /captures, data → /import)", async () => {

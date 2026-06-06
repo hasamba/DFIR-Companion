@@ -128,6 +128,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (false negatives) and must be independently verified by a qualified investigator, and that the
   author and contributors accept no liability for any results or decisions arising from its use.
 
+### Changed
+- **Renamed the "Ask the AI" dashboard panel to "Ask the LLM".** Same free-form Q&A feature
+  (`POST /cases/:id/ask`) — clearer wording that it queries the configured LLM. The panel is keyed
+  by its content id, so saved section order / collapse state are unaffected.
+
 ### Fixed
 - **Imports no longer run AI synthesis when AI is off for the case.** Every import (and manual
   event / "mark legitimate" / scope change) triggered a background `synthesize()` — an LLM call —
@@ -137,7 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deterministic import populates the **forensic timeline + IOCs only** and findings / attack path /
   MITRE wait until AI is turned on and the case is re-synthesized. Threat-intel **enrichment** is a
   separate, independently-gated feature (not an LLM call) and still runs regardless of the AI toggle.
-- **"Ask the AI" now stays the first dashboard section by default.** The drag-to-reorder feature
+- **"Ask the LLM" now stays the first dashboard section by default.** The drag-to-reorder feature
   appended any section missing from a browser's saved order to the *end*, so analysts whose
   `dfir.sectionOrder` predated the Ask panel saw it dumped at the bottom instead of first. Sections
   absent from a saved order now stay **anchored at their natural HTML slot** (the saved order only

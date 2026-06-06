@@ -226,7 +226,7 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Per-case AI on/off** — **off by default** (capture-only); the dashboard's **AI: ON/OFF** button
   starts live analysis and backfills everything captured while it was off.
 - **Threads, key questions, next steps** — open/closed leads and standard DFIR questions with pointers.
-- **Ask the AI about the case** — free-form Q&A ("was data exfiltrated?", "was a USB connected?")
+- **Ask the LLM about the case** — free-form Q&A ("was data exfiltrated?", "was a USB connected?")
   grounded in everything known; when the answer is unknown it tells you **which artifact to collect
   and where**. One click pins the question to the case's open questions, and synthesis auto-answers
   it once the evidence arrives.
