@@ -233,6 +233,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Investigator comments** — attach comments to any entity (event, finding, IOC, question, thread)
   via a 💬 chip; authored by name, stored per case, and synced live over the WS so investigators
   collaborate in real time.
+- **Analyst triage tags** — hand-label any entity (event, finding, IOC, question, thread) with
+  short labels — `confirmed-malicious`, `false-positive`, `needs-review`, `key-evidence`,
+  `pivot-point`, … — independently of the AI-assigned severity/MITRE. Tags show inline as
+  color-coded pills (threat=red, benign=green, review=yellow, evidence=blue) via a 🏷 chip with a
+  one-click suggested-label palette plus free-form input; normalized + deduped per entity, stored
+  per case (`state/tags.json`), survive synthesis, and sync live over the WS.
 
 ### Threat-intel enrichment (OPSEC — **per-source, default local-only**)
 - **Sources** — VirusTotal (hash/IP/domain/URL), MalwareBazaar (hash), AbuseIPDB (IP), **MISP** and

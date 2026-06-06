@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Analyst triage tags** — investigators can now hand-label any case entity (forensic event, finding, IOC, key question, investigation thread) with short triage labels — `confirmed-malicious`, `false-positive`, `needs-review`, `key-evidence`, `pivot-point`, `c2-comms`, … — independently of the AI-assigned severity/MITRE. Tags render inline as color-coded pills (threat=red, benign=green, review=yellow, evidence=blue) next to a 🏷 chip that opens an editor with a one-click suggested-label palette plus a free-form input. Labels are normalized (lowercased, hyphenated) and deduped per entity. Backed by a new `TagsStore` (`state/tags.json`) that mirrors the comments side-file pattern — never wiped by synthesis, atomic-write persisted, and synced live to every dashboard client over the WebSocket (`tags_changed`). New routes: `GET`/`POST /cases/:id/tags`, `DELETE /cases/:id/tags/:tagId`.
+- **Kill Chain tactic-phase view** — a new dashboard section below the Forensic Timeline shows all 12 ATT&CK tactics as phase cards in kill-chain order (Initial Access → … → Impact). Each card displays the count of events mapped to that tactic and is color-coded by the highest severity present; empty tactics are shown dimmed. Clicking any active card expands the events inline. Events are classified by their MITRE T-codes first (the same technique→tactic mapping used for IRIS export), with a keyword-heuristic fallback for events without T-codes; unclassified events appear in an Uncategorized bucket.
+
 ### Fixed
 - **Asset graph labels no longer clip at the canvas edge** — the IoC graph now estimates each node label's width and pads/widens the canvas (shifting nodes uniformly, without changing spacing or radius) so far-left labels in the Radial layout — and top-corner labels in the Vertical layout — render in full instead of having their leading characters cut off.
 

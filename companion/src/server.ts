@@ -62,6 +62,7 @@ import type { ReportWriter } from "./reports/reportWriter.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
+import { TagsStore } from "./analysis/tags.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { byEventTime } from "./analysis/forensicSort.js";
@@ -109,6 +110,11 @@ export interface AppOptions {
   // clients over the WS to re-fetch when a comment is added/removed.
   commentsStore?: CommentsStore;
   onComments?: (caseId: string) => void;
+  // Analyst triage tags on case entities (hand labels like confirmed-malicious / false-positive
+  // / key-evidence, independent of AI severity). onTags pings dashboard clients over the WS to
+  // re-fetch when a tag is added/removed.
+  tagsStore?: TagsStore;
+  onTags?: (caseId: string) => void;
   // Called when an AI analysis window starts / finishes / fails, so the
   // server can push a live "AI status" indicator to dashboard clients.
   onAiStatus?: (caseId: string, event: AiStatusEvent) => void;
@@ -2026,6 +2032,48 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Analyst triage tags on case entities (hand labels). GET lists them; POST attaches one to a
+  // `(targetType, targetId)` entity (label normalized + deduped server-side); DELETE removes by
+  // id. Add/remove ping live clients. Survives synthesis (side file, not InvestigationState).
+  app.get("/cases/:id/tags", async (req: Request, res: Response) => {
+    if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
+    try {
+      return res.status(200).json(await options.tagsStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/tags", async (req: Request, res: Response) => {
+    if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
+    const targetType = typeof req.body?.targetType === "string" ? req.body.targetType.trim() : "";
+    const targetId = typeof req.body?.targetId === "string" ? req.body.targetId.trim() : "";
+    const label = typeof req.body?.label === "string" ? req.body.label.trim() : "";
+    if (!targetType || !targetId || !label) return res.status(400).json({ error: "targetType, targetId and label are required" });
+    try {
+      const tag = await options.tagsStore.add(req.params.id, {
+        targetType, targetId, label,
+        author: typeof req.body?.author === "string" ? req.body.author : "",
+      });
+      options.onTags?.(req.params.id);
+      return res.status(201).json(tag);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/cases/:id/tags/:tagId", async (req: Request, res: Response) => {
+    if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
+    try {
+      const removed = await options.tagsStore.remove(req.params.id, req.params.tagId);
+      if (!removed) return res.status(404).json({ error: "tag not found" });
+      options.onTags?.(req.params.id);
+      return res.status(204).end();
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   return app;
 }
 
@@ -2203,6 +2251,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const hub = new LiveHub();
   const reportMetaStore = new ReportMetaStore(store);
   const commentsStore = new CommentsStore(store);
+  const tagsStore = new TagsStore(store);
   const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore);
 
   const provider = buildProvider();
@@ -2221,6 +2270,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     reportMetaStore,
     commentsStore,
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
+    tagsStore,
+    onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
     autoSynthesize,
     autoSynthesizeDebounceMs,
     onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
