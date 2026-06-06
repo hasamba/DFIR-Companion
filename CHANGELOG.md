@@ -12,6 +12,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-06
+
+### Added
+- **Native Anthropic API provider** (`DFIR_AI_PROVIDER=anthropic`). Uses the Anthropic Messages API
+  directly (`x-api-key` + `anthropic-version: 2023-06-01` headers, `system` as a top-level field,
+  base64 image blocks with `source.type=base64`). HTTP 529 overloaded maps to `rate_limit` so callers
+  get the same retry behaviour as a 429. Registered alongside `openai` / `gemini` / `openrouter` /
+  `ollama` / `litellm`.
+- **Per-provider model recommendations in `.env.example`.** The two-tier section now documents the
+  recommended extraction and synthesis models for OpenAI (`gpt-4o-mini` / `gpt-4o`), Gemini
+  (`gemini-2.5-flash` / `gemini-2.5-pro`), and Anthropic (`claude-haiku-4-5-20251001` /
+  `claude-sonnet-4-6`), with copy-paste two-tier setup examples for each provider. Default extraction
+  model changed from `gpt-4o` to `gpt-4o-mini`.
+- **Live event count in the Forensic Timeline title.** The section heading now shows `(N events)` —
+  updated on every render (import, synthesis, manual add, live poll). When a severity filter is active
+  it reads `(X of N events)` so the total is always visible.
+- **Severity filter checkboxes on the Forensic Timeline legend.** Each severity label (Critical / High
+  / Medium / Low / Info) is now a checkbox. Unchecking a severity instantly hides matching events and
+  dims/strikes the label — no server round-trip. The `accent-color` of each checkbox matches its
+  severity colour.
+
 ### Security
 - **[P1] Path-traversal guard on case IDs** — `caseStore.ts` now exports `isValidCaseId()` (regex
   allowlist `^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$` + `..` rejection). `POST /cases` and the capture
@@ -857,7 +878,8 @@ Initial baseline.
   report exports.
 - Scripts: `dev`, `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.5.0...v0.6.0
