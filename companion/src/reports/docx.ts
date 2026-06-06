@@ -41,6 +41,43 @@ const ALL_TABLE_BORDERS = {
   insideHorizontal: TABLE_BORDER, insideVertical: TABLE_BORDER,
 };
 
+// Twips (twentieths of a point) — Word's native unit. 240 twips = 12pt, ~one blank line
+// at body font size, which gives every non-major heading visible breathing room.
+const HEADING_SPACING_BEFORE = 240;
+
+// Classify a Markdown heading by its TEXT, not just its depth, so the docx outline matches
+// what an analyst expects:
+//  - the report title (h1) stays Heading 1.
+//  - a top-level numbered heading like "## 2 Executive summary" becomes Heading 2 and
+//    starts a new page in the printed report, so majors break cleanly between sections.
+//  - any numbered subsection ("## 1.1 …", "### 3.1 …") collapses to Heading 3 regardless
+//    of its Markdown depth — the Word outline groups every "N.M" under its "N" parent.
+//  - unnumbered subsections (e.g. "### Recommendations", per-finding h4) keep their
+//    Markdown depth.
+// Pure — no I/O, easy to unit-test by inspecting `word/document.xml`.
+function classifyHeading(depth: number, text: string): {
+  level: (typeof HeadingLevel)[keyof typeof HeadingLevel];
+  pageBreakBefore: boolean;
+  spacingBefore: number;
+} {
+  if (depth === 1) {
+    return { level: HeadingLevel.HEADING_1, pageBreakBefore: false, spacingBefore: 0 };
+  }
+  if (/^\d+\s/.test(text)) {
+    // Page break already separates the section — extra leading space would just push the
+    // heading down on the new page.
+    return { level: HeadingLevel.HEADING_2, pageBreakBefore: true, spacingBefore: 0 };
+  }
+  if (/^\d+\.\d+/.test(text)) {
+    return { level: HeadingLevel.HEADING_3, pageBreakBefore: false, spacingBefore: HEADING_SPACING_BEFORE };
+  }
+  return {
+    level: HEADING_LEVELS[depth] ?? HeadingLevel.HEADING_6,
+    pageBreakBefore: false,
+    spacingBefore: HEADING_SPACING_BEFORE,
+  };
+}
+
 // Inline tokens (strong/em/codespan/link/text) → docx run primitives. We accept the parent
 // formatting context (bold/italic) so nested marks compose, e.g. **_both_**. Code spans
 // carry monospace font; links emit ExternalHyperlink wrapping a styled run.
@@ -154,8 +191,11 @@ export function tokensToDocxChildren(tokens: TokensList): DocxChild[] {
     switch (tok.type) {
       case "heading": {
         const h = tok as Tokens.Heading;
+        const cls = classifyHeading(h.depth, h.text);
         out.push(new Paragraph({
-          heading: HEADING_LEVELS[h.depth] ?? HeadingLevel.HEADING_6,
+          heading: cls.level,
+          pageBreakBefore: cls.pageBreakBefore,
+          spacing: cls.spacingBefore > 0 ? { before: cls.spacingBefore } : undefined,
           children: inlineRuns(h.tokens as Tokens.Generic[]),
         }));
         break;

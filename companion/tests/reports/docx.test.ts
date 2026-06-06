@@ -168,3 +168,55 @@ describe("tokensToDocxChildren", () => {
     expect(xml).toContain("trailing paragraph");
   });
 });
+
+describe("heading classification", () => {
+  // The Markdown report mixes major sections ("## 2 Executive summary") and subsections
+  // ("## 1.1 Report revisions", "### 3.1 Incident timeline") at heading depths 2 and 3.
+  // The docx export classifies by the heading TEXT (not just the Markdown depth) so that
+  // every numbered subsection lands at Heading 3 regardless of how it was written, and
+  // every major section starts a new page in the printed report.
+
+  async function packAndUnzip(md: string): Promise<string> {
+    const lexer = new Marked({ gfm: true });
+    const tokens = lexer.lexer(md);
+    const children = tokensToDocxChildren(tokens);
+    const { Document, Packer } = await import("docx");
+    const doc = new Document({ sections: [{ children }] });
+    const buf = await Packer.toBuffer(doc);
+    return unzipDocumentXml(buf);
+  }
+
+  it("renders a major numbered heading ('## 2 Executive summary') as Heading 2 + page break before", async () => {
+    const xml = await packAndUnzip("## 2 Executive summary\n\nbody");
+    expect(xml).toContain("2 Executive summary");
+    expect(xml).toMatch(/w:pStyle w:val="Heading2"/);
+    expect(xml).toMatch(/<w:pageBreakBefore\b/);
+  });
+
+  it("downshifts an h2 numbered subsection ('## 1.1 Report revisions') to Heading 3 with no page break", async () => {
+    const xml = await packAndUnzip("## 1.1 Report revisions\n\nbody");
+    expect(xml).toContain("1.1 Report revisions");
+    expect(xml).toMatch(/w:pStyle w:val="Heading3"/);
+    expect(xml).not.toMatch(/w:pStyle w:val="Heading2"/);
+    expect(xml).not.toMatch(/<w:pageBreakBefore\b/);
+  });
+
+  it("keeps an h3 numbered subsection ('### 3.1 Incident timeline') as Heading 3 with no page break", async () => {
+    const xml = await packAndUnzip("### 3.1 Incident timeline\n\nbody");
+    expect(xml).toMatch(/w:pStyle w:val="Heading3"/);
+    expect(xml).not.toMatch(/<w:pageBreakBefore\b/);
+  });
+
+  it("leaves an unnumbered h3 ('### Recommendations') at depth-based Heading 3", async () => {
+    const xml = await packAndUnzip("### Recommendations\n\nbody");
+    expect(xml).toMatch(/w:pStyle w:val="Heading3"/);
+    expect(xml).not.toMatch(/<w:pageBreakBefore\b/);
+  });
+
+  it("adds spacing.before to non-major headings (and skips it for majors, where the page break already separates)", async () => {
+    // Two headings in one document: a major (no spacing.before — pageBreakBefore handles
+    // separation) and a numbered subsection (spacing.before set to 240 twips = 12pt).
+    const xml = await packAndUnzip("## 2 Executive summary\n\nbody1\n\n## 2.1 Business Impact\n\nbody2");
+    expect(xml).toMatch(/w:spacing[^/>]*w:before="240"/);
+  });
+});
