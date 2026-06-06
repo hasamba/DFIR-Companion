@@ -126,6 +126,28 @@
     #reportMeta .rm-check { display: flex; align-items: center; gap: 6px; margin: 4px 0 12px; }
     #reportMeta .rm-check input { width: auto; margin: 0; }
     #reportMeta code { color: #6aa9ff; background: #11161d; padding: 1px 4px; border-radius: 3px; }
+    /* Toolbar state toggles (AI / Enrich / Anon) — ONE consistent look, distinct from the blue
+       action buttons: muted when inactive, teal when active. A box-shadow "border" keeps them
+       the same height as the borderless action buttons (no layout shift). */
+    .toggle-btn { background: #242a35; color: #9aa4b2; box-shadow: inset 0 0 0 1px #353c49; font-weight: 600; }
+    .toggle-btn:hover { color: #cbd3df; box-shadow: inset 0 0 0 1px #4a5466; }
+    .toggle-btn.on { background: #0e7c75; color: #eafffb; box-shadow: inset 0 0 0 1px #15a89d; }
+    .toggle-btn.on:hover { background: #0f8a82; }
+    .toggle-btn.na { color: #5b6472; box-shadow: inset 0 0 0 1px #2a3340; cursor: default; }
+    /* Toolbar dropdowns (Export / Push) — styled to match the buttons (the native select chrome
+       looked out of place), with a custom chevron and matching height/border. */
+    .toolbar-select { background: #242a35; color: #cbd3df; border: 1px solid #353c49; border-radius: 6px;
+      padding: 7px 30px 7px 12px; font: inherit; cursor: pointer; -webkit-appearance: none; appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%239aa4b2' stroke-width='1.6'/></svg>");
+      background-repeat: no-repeat; background-position: right 10px center; }
+    .toolbar-select:hover { border-color: #4a5466; }
+    .toolbar-select:focus { outline: none; border-color: #2d6cdf; }
+    .toolbar-select option { background: #161a22; color: #e6e6e6; }
+    /* Custom tooltip — uniform styling for [data-tip] controls. Native `title` tooltips can't be
+       CSS-styled (their first line rendered brighter than the rest); this gives one flat color. */
+    .tip { position: fixed; z-index: 1000; max-width: 360px; background: #0b0e13; color: #cbd3df;
+      border: 1px solid #2a3340; border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.45;
+      box-shadow: 0 8px 24px rgba(0,0,0,.55); pointer-events: none; white-space: normal; }
   </style>
 </head>
 <body>
@@ -133,27 +155,27 @@
     <strong>DFIR Companion</strong>
     <input id="caseId" placeholder="caseId" list="caseList" autocomplete="off" />
     <datalist id="caseList"></datalist>
-    <input id="investigatorName" placeholder="your name" title="Your name — used as the author when you comment. Saved in this browser." style="max-width:130px" />
+    <input id="investigatorName" placeholder="your name" data-tip="Your name — used as the author when you comment. Saved in this browser." style="max-width:130px" />
     <button id="connect">Connect</button>
-    <button id="newCaseBtn" title="Create a new case, then attach the capture extension to it">+ New case</button>
-    <button id="aiToggle" title="Turn AI analysis on/off for this case">AI: …</button>
-    <button id="synthesize" title="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
-    <button id="enrichToggle" title="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/MalwareBazaar/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
-    <button id="anonToggle" title="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
+    <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
+    <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
+    <button id="synthesize" data-tip="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
+    <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/MalwareBazaar/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
+    <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,application/json,text/csv,text/plain,image/png,image/jpeg,image/webp" style="display:none" />
-    <button id="importBtn" title="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import…</button>
-    <select id="exportSelect" title="Export this case (report, CSV, Timesketch JSONL, JSON state)">
+    <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import…</button>
+    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report, CSV, Timesketch JSONL, JSON state)">
       <option value="">Export…</option>
       <option value="report">Generate report (Markdown + HTML)</option>
       <option value="timeline-csv">Forensic timeline (CSV)</option>
       <option value="timesketch-jsonl">Timesketch JSONL</option>
       <option value="state-json">Full case state (JSON)</option>
     </select>
-    <select id="pushSelect" title="Push this case to an external platform" style="display:none">
+    <select id="pushSelect" class="toolbar-select" data-tip="Push this case to an external platform" style="display:none">
       <option value="">Push to…</option>
     </select>
     <span id="reportLinks" class="report-links"></span>
-    <button id="toggleAll" title="Collapse or expand all sections">Collapse all</button>
+    <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
     <span id="captureCount" style="font-weight:bold;">Screenshots: 0</span>
@@ -777,13 +799,15 @@
     function renderAiToggle() {
       const b = document.getElementById("aiToggle");
       b.textContent = aiEnabled ? "AI: ON" : "AI: OFF";
-      b.style.background = aiEnabled ? "#2d6cdf" : "#555";
+      b.classList.remove("na");
+      b.classList.toggle("on", aiEnabled);
     }
 
     function aiToggleUnavailable() {
       const b = document.getElementById("aiToggle");
       b.textContent = "AI: ?";
-      b.title = "AI control endpoint missing";
+      b.classList.remove("on"); b.classList.add("na");
+      b.setAttribute("data-tip", "AI control endpoint missing");
       document.getElementById("status").textContent =
         "AI toggle unavailable — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
     }
@@ -819,10 +843,11 @@
     const enrichOnCount = () => enrichProviders.filter(p => p.enabled).length;
     function renderEnrichToggle() {
       const b = document.getElementById("enrichToggle");
-      if (!enrichAvailable) { b.textContent = "Enrich: n/a"; b.style.background = "#3a3a3a"; b.title = "No enrichment provider configured — set DFIR_* keys and restart."; return; }
+      if (!enrichAvailable) { b.textContent = "Enrich: n/a"; b.classList.remove("on"); b.classList.add("na"); b.setAttribute("data-tip", "No enrichment provider configured — set DFIR_* keys and restart."); return; }
+      b.classList.remove("na");
       const on = enrichOnCount();
       b.textContent = on ? `Enrich: ${on} on` : "Enrich: off";
-      b.style.background = on ? "#1f8a4c" : "#555";
+      b.classList.toggle("on", on > 0);
     }
     function loadEnrichToggle(caseId) {
       fetch(`/cases/${caseId}/enrich-control`)
@@ -896,14 +921,16 @@
 
     function renderAnonToggle() {
       const b = document.getElementById("anonToggle");
-      if (!anonControl) { b.textContent = "Anon: …"; b.style.background = "#555"; return; }
+      if (!anonControl) { b.textContent = "Anon: …"; b.classList.remove("on", "na"); return; }
       b.textContent = anonControl.enabled ? "Anon: on" : "Anon: off";
-      b.style.background = anonControl.enabled ? "#7a5cff" : "#555";
+      b.classList.remove("na");
+      b.classList.toggle("on", anonControl.enabled);
     }
     function anonUnavailable() {
       const b = document.getElementById("anonToggle");
       b.textContent = "Anon: ?";
-      b.title = "Anon control endpoint missing";
+      b.classList.remove("on"); b.classList.add("na");
+      b.setAttribute("data-tip", "Anon control endpoint missing");
       document.getElementById("status").textContent =
         "Anon control endpoint missing — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
     }
@@ -1793,6 +1820,37 @@
         document.getElementById("caseId").value = caseId;
         connect();
       }
+    })();
+
+    // ── Custom tooltip ────────────────────────────────────────────────────────
+    // Native `title` tooltips can't be CSS-styled (Chrome rendered the first line brighter
+    // than the rest). For toolbar controls we use `data-tip` + this one styled element,
+    // positioned below the control and clamped to the viewport. Uniform flat colour.
+    (function () {
+      const tip = document.createElement("div");
+      tip.className = "tip";
+      tip.style.display = "none";
+      document.body.appendChild(tip);
+      let cur = null;
+      function show(el) {
+        const t = el.getAttribute("data-tip");
+        if (!t) return;
+        tip.textContent = t;
+        tip.style.display = "block";
+        const r = el.getBoundingClientRect();
+        let left = Math.min(r.left, window.innerWidth - tip.offsetWidth - 8);
+        if (left < 8) left = 8;
+        let top = r.bottom + 6;
+        if (top + tip.offsetHeight > window.innerHeight - 8) top = r.top - tip.offsetHeight - 6;
+        tip.style.left = left + "px";
+        tip.style.top = Math.max(8, top) + "px";
+      }
+      function hide() { tip.style.display = "none"; cur = null; }
+      document.addEventListener("mouseover", (e) => { const el = e.target.closest && e.target.closest("[data-tip]"); if (el && el !== cur) { cur = el; show(el); } });
+      document.addEventListener("mouseout", (e) => { const el = e.target.closest && e.target.closest("[data-tip]"); if (el && el === cur) hide(); });
+      document.addEventListener("focusin", (e) => { const el = e.target.closest && e.target.closest("[data-tip]"); if (el) { cur = el; show(el); } });
+      document.addEventListener("focusout", hide);
+      window.addEventListener("scroll", hide, true);
     })();
   </script>
 </body>
