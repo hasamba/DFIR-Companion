@@ -75,6 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via `marked`'s token stream → the `docx` library.
 
 ### Changed
+- **Dashboard: the "Synthesize" toolbar button is now "AI Re-synthesize".** Clearer that the button
+  runs an LLM pass over the timeline (deriving findings / MITRE / attacker path) and is the way to
+  produce conclusions after an AI-off import — the endpoint and behavior are unchanged.
 - **Velociraptor importer: verdict-first detection mapping (DetectRaptor + friends).** The Velociraptor
   importer already handled Sigma/YARA verdict rows; now it also recognizes the broader **detection-artifact
   shape** every DetectRaptor `*.Detection.*` artifact (and similar packs) carries: a `Detection` field — a
@@ -101,6 +104,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   artifact label, so generic events show their source (`Velociraptor [DetectRaptor.Windows.Detection.NamedPipes]: …`).
 
 ### Fixed
+- **Imports no longer run AI synthesis when AI is off for the case.** Every import (and manual
+  event / "mark legitimate" / scope change) triggered a background `synthesize()` — an LLM call —
+  regardless of the per-case AI toggle, so importing a *deterministic* artifact (THOR / Cyber Triage /
+  SIEM / …) with **AI: OFF** still kicked off "AI: synthesizing findings…". The post-import
+  re-synthesis now respects the AI toggle exactly like the `/captures` path does: with AI off, a
+  deterministic import populates the **forensic timeline + IOCs only** and findings / attacker-path /
+  MITRE wait until AI is turned on and the case is re-synthesized. Threat-intel **enrichment** is a
+  separate, independently-gated feature (not an LLM call) and still runs regardless of the AI toggle.
 - **Velociraptor exports no longer mislabel as "SIEM event".** Two common Velociraptor artifact outputs
   were falling through to the SIEM importer: the **`Windows.Hayabusa.Rules`** artifact (Hayabusa verdict rows
   that use `Title`/`EID` and render `Details` as a `¦`-separated string, so `isHayabusaJson` missed them and

@@ -811,11 +811,25 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   }
 
   function resynthesizeInBackground(caseId: string): void {
-    if (!options.pipeline) return;
-    options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "re-synthesizing without legitimate items" });
-    options.pipeline.synthesize(caseId)
-      .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); autoEnrichIfEnabled(caseId); })
-      .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+    const pipeline = options.pipeline;
+    if (!pipeline) return;
+    void (async () => {
+      // Synthesis is an LLM call — respect the per-case AI toggle, exactly like the /captures
+      // path (AI analysis only runs when enabled for the case). With AI off, a deterministic
+      // import still populates the forensic timeline + IOCs; it just doesn't trigger LLM
+      // synthesis — findings / attacker-path / MITRE wait until AI is turned on and the case is
+      // re-synthesized. Enrichment is a separate, independently-gated feature (threat-intel
+      // lookups, not an LLM call), so it still runs regardless of the AI toggle.
+      if (!(await getControl(caseId)).enabled) { autoEnrichIfEnabled(caseId); return; }
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "re-synthesizing without legitimate items" });
+      try {
+        await pipeline.synthesize(caseId);
+        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+        autoEnrichIfEnabled(caseId);
+      } catch (err) {
+        options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+      }
+    })();
   }
 
   app.get("/cases/:id/legitimate", async (req: Request, res: Response) => {
