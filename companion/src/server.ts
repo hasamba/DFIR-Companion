@@ -581,6 +581,39 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Launch a HUNT that runs the pivot VQL on ALL enrolled endpoints (packages it as a CLIENT
+  // artifact, then creates the hunt). This is the dashboard's "Run hunt on all clients" action.
+  app.post("/velociraptor/hunt", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
+    const description = typeof req.body?.description === "string" ? req.body.description : "";
+    if (!vql) return res.status(400).json({ error: "vql is required" });
+    try {
+      logLine(`[velociraptor] launch hunt: ${description.slice(0, 80)}`);
+      const result = await options.velociraptorClient.launchHunt(vql, description);
+      logLine(`[velociraptor] hunt launched -> ${result.huntId} (artifact ${result.artifact}, ${result.sources.length} source(s))`);
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[velociraptor] hunt ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Read a launched hunt's results (rows collected from the endpoints so far). Polled by the dashboard.
+  app.post("/velociraptor/hunt-results", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const huntId = typeof req.body?.huntId === "string" ? req.body.huntId.trim() : "";
+    const artifact = typeof req.body?.artifact === "string" ? req.body.artifact.trim() : "";
+    const sources = Array.isArray(req.body?.sources) ? req.body.sources.filter((s: unknown): s is string => typeof s === "string") : [];
+    if (!huntId || !artifact) return res.status(400).json({ error: "huntId and artifact are required" });
+    try {
+      const result = await options.velociraptorClient.huntResults(huntId, artifact, sources);
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
   // Push a case to DFIR-IRIS: find-or-create the case by name, then push assets→assets,
   // IOCs→IOCs, forensic timeline→timeline, executive summary→case summary, everything else→notes.
   app.post("/cases/:id/push/iris", async (req: Request, res: Response) => {

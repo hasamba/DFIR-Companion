@@ -260,9 +260,13 @@ Providers use injectable `fetchFn` (no network in tests), configured only when t
 **External integrations** (`integrations/`) follow the IRIS pattern — a client built from env at
 startup (`undefined` when unconfigured), passed into `createApp`, gated routes return 501 when absent:
 DFIR-IRIS (`irisClient`), Timesketch, and **Velociraptor API** (`velociraptorClient` →
-`integrations/velociraptor/velociraptorApi.ts`; runs the hunt-pivot VQL via the `velociraptor`
-binary's `--api_config` through an **injectable runner** — tests never spawn; route `POST
-/velociraptor/run`; `/health.velociraptorEnabled` gates the dashboard's "Run in Velociraptor" button).
+`integrations/velociraptor/velociraptorApi.ts`; drives the `velociraptor` binary's `--api_config`
+through an **injectable runner** — tests never spawn). The dashboard's "Run hunt (all clients)"
+button does NOT run server-side: `launchHunt()` packages the pivot VQL as a **CLIENT artifact**
+(`artifact_set`) and launches a **hunt** across all endpoints (`hunt`); `huntResults()` reads rows
+back addressed as `artifact/source`. Routes `POST /velociraptor/hunt` + `/velociraptor/hunt-results`
+(+ server-side `/velociraptor/run`); `/health.velociraptorEnabled` gates the button. VQL statements
+are passed as separate positional args with comments stripped (a leading `--` is parsed as a CLI flag).
 
 **Customizable prompts.** The six prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
 consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`,

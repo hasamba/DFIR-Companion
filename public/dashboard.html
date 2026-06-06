@@ -129,6 +129,8 @@
       color: #d6deea; border: 0; border-top: 1px solid #2a2f3a; padding: 10px; font-size: 11px;
       font-family: ui-monospace, Menlo, Consolas, monospace; }
     .hunt-run-res { padding: 8px 10px; border-top: 1px solid #2a2f3a; }
+    .hunt-refresh { background: #2a2f3a; border: 0; color: #cbd3df; border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
+    .hunt-refresh:hover { color: #fff; }
     .vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid #2a2f3a; border-radius: 5px; }
     .vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
     .vql-result th, .vql-result td { border: 1px solid #2a2f3a; padding: 3px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
@@ -972,6 +974,7 @@
     // server round-trip, no cost. The Companion stays a post-detection layer: these PIVOT off a
     // confirmed indicator, they don't author detections for it.
     let veloEnabled = false;   // set from /health — whether the Velociraptor API is configured (Run button)
+    let huntLabel = "";        // label of the entity whose hunt modal is open (used as the hunt description)
     function huntChip(kind, id) {
       return `<button class="hunt-add" data-hk="${escAttr(kind)}" data-hi="${escAttr(String(id))}" `
         + `title="Generate hunt / pivot queries (Velociraptor, KQL, Splunk, Sigma)">🔍</button>`;
@@ -1073,6 +1076,7 @@
       if (!entity) return;
       const c = huntContextFor(kind, entity);
       if (kind === "event" && entity.mitreTechniques) c._mitre = entity.mitreTechniques;
+      huntLabel = c.label;
       document.getElementById("huntTitle").textContent = "Hunt queries";
       document.getElementById("huntSub").textContent = c.label;
       const cards = [
@@ -1088,7 +1092,7 @@
             // button that executes it against the server and shows the rows inline.
             const runnable = tool.startsWith("Velociraptor") && veloEnabled;
             const head = `<div class="hunt-card-head"><span>${esc(tool)}</span><div>`
-              + (runnable ? `<button class="hunt-run" data-idx="${idx}" title="Run this VQL against the configured Velociraptor server">▶ Run in Velociraptor</button>` : "")
+              + (runnable ? `<button class="hunt-run" data-idx="${idx}" title="Launch a hunt that runs this VQL on ALL enrolled Velociraptor clients">▶ Run hunt (all clients)</button>` : "")
               + `<button class="hunt-copy" data-idx="${idx}">Copy</button></div></div>`;
             const content = runnable
               ? `<textarea class="hunt-vql-edit" id="huntQ${idx}" spellcheck="false">${esc(query)}</textarea>`
@@ -1102,7 +1106,7 @@
           setTimeout(() => { b.textContent = "Copy"; b.classList.remove("copied"); }, 1500);
         }).catch(() => { b.textContent = "copy failed"; });
       });
-      body.querySelectorAll(".hunt-run").forEach((b) => b.onclick = () => runVql(b.dataset.idx));
+      body.querySelectorAll(".hunt-run").forEach((b) => b.onclick = () => runHunt(b.dataset.idx));
       document.getElementById("huntOverlay").classList.add("open");
     }
     function closeHuntModal() { document.getElementById("huntOverlay").classList.remove("open"); }
@@ -1111,21 +1115,50 @@
       const el = document.getElementById("huntQ" + idx);
       return el.tagName === "TEXTAREA" ? el.value : el.textContent;
     }
-    // Run the card's VQL against Velociraptor via the API and render the rows inline.
-    function runVql(idx) {
+    // Launch a HUNT that runs the card's VQL on ALL enrolled Velociraptor clients, then poll for the
+    // rows endpoints return (results arrive asynchronously as clients check in).
+    function runHunt(idx) {
       const vql = huntText(idx);
       const res = document.getElementById("huntRunRes" + idx);
       const btn = document.querySelector('.hunt-run[data-idx="' + idx + '"]');
-      res.innerHTML = "<div style='color:#9aa4b2;font-size:12px'>running in Velociraptor…</div>";
+      res.innerHTML = "<div style='color:#9aa4b2;font-size:12px'>launching hunt on all clients…</div>";
       if (btn) btn.disabled = true;
-      fetch("/velociraptor/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vql }) })
+      fetch("/velociraptor/hunt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vql, description: huntLabel }) })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
-          if (!ok || j.error) { res.innerHTML = `<div style="color:#ff9f43;font-size:12px">error: ${esc(j.error || "query failed")}</div>`; return; }
-          res.innerHTML = renderVqlRows(j);
+          if (!ok || j.error) { res.innerHTML = `<div style="color:#ff9f43;font-size:12px">error: ${esc(j.error || "hunt failed")}</div>`; return; }
+          const link = j.guiUrl ? ` · <a href="${escAttr(j.guiUrl)}" target="_blank" rel="noopener" style="color:#6aa9ff">open in Velociraptor ↗</a>` : "";
+          res.innerHTML =
+            `<div style="font-size:12px;margin-bottom:6px">🎯 Hunt <strong>${esc(j.huntId)}</strong> launched on all clients · ${esc(j.state)}${link} `
+            + `<button class="hunt-refresh" data-hid="${escAttr(j.huntId)}" data-art="${escAttr(j.artifact)}" data-src="${escAttr((j.sources || []).join(","))}">↻ Refresh results</button></div>`
+            + `<div class="hunt-results-rows" style="color:#9aa4b2;font-size:12px">waiting for endpoints to respond…</div>`;
+          const rb = res.querySelector(".hunt-refresh");
+          const target = res.querySelector(".hunt-results-rows");
+          rb.onclick = () => fetchHuntResults(rb, target);
+          // Auto-poll a few times since hunt results trickle in as clients check in.
+          let tries = 0;
+          const poll = () => { tries++; fetchHuntResults(rb, target).then((n) => { if (!n && tries < 6) setTimeout(poll, 5000); }); };
+          setTimeout(poll, 3000);
         })
         .catch((e) => res.innerHTML = `<div style="color:#ff9f43;font-size:12px">error: ${esc(e.message)} — restart the companion server if this 404s</div>`)
         .finally(() => { if (btn) btn.disabled = false; });
+    }
+    // Fetch a launched hunt's collected results into `target`; resolves to the row count.
+    function fetchHuntResults(rb, target) {
+      const huntId = rb.dataset.hid, artifact = rb.dataset.art;
+      const sources = (rb.dataset.src || "").split(",").filter(Boolean);
+      target.innerHTML = "<span style='color:#9aa4b2'>fetching results…</span>";
+      return fetch("/velociraptor/hunt-results", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId, artifact, sources }) })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { target.innerHTML = `<div style="color:#ff9f43">error: ${esc(j.error || "failed")}</div>`; return 0; }
+          const n = (j.rows || []).length;
+          target.innerHTML = n
+            ? renderVqlRows(j)
+            : "<span style='color:#9aa4b2'>no results yet — endpoints report on their next poll. Click ↻ to refresh.</span>";
+          return n;
+        })
+        .catch((e) => { target.innerHTML = `<div style="color:#ff9f43">error: ${esc(e.message)}</div>`; return 0; });
     }
     function renderVqlRows(j) {
       const rows = j.rows || [];

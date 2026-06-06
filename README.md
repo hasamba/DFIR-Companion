@@ -246,10 +246,13 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   parent / host), each with one-click copy. Paths are normalized (device-prefix stripped, Velociraptor
   globs use forward slashes) so the queries actually run. Deterministic templating: no AI, no cost,
   runs offline. (Pivots off a confirmed indicator — it doesn't author detections.)
-- **Run hunts in Velociraptor** — when a Velociraptor API client is configured (`DFIR_VELOCIRAPTOR_*`),
-  the hunt modal's Velociraptor card becomes editable with a **▶ Run in Velociraptor** button that
-  executes the VQL against your server (via its API) and shows the result rows inline — no leaving the
-  dashboard. Off by default; opt in by pointing at an `api_client` config.
+- **Run hunts across all endpoints (Velociraptor)** — when a Velociraptor API client is configured
+  (`DFIR_VELOCIRAPTOR_*`), the hunt modal's Velociraptor card becomes editable with a **▶ Run hunt
+  (all clients)** button that packages the pivot VQL as a client artifact and launches a **hunt on
+  every enrolled endpoint** (not a server-side query) — so "find this file" searches all your clients.
+  Results stream back into a table inline (with the source endpoint's hostname per row) as clients
+  check in; an optional `DFIR_VELOCIRAPTOR_GUI_URL` deep-links to the hunt in the Velociraptor GUI.
+  Off by default; opt in by pointing at an `api_client` config.
 - **Synthesis freshness & what-changed diff** — the Findings section shows when synthesis last
   actually ran ("🧠 Last synthesized N ago") and how the findings changed since the prior run (**+N
   new / −M dropped / ↕ K severity**, with an expandable list), so a re-synthesis shows its effect
