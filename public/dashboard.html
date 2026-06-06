@@ -44,6 +44,12 @@
     h2 .add-toggle:hover, h2 .add-toggle.active { color: #ffd93b; border-color: #ffd93b; }
     .sev-Critical { color: #ff5c5c; } .sev-High { color: #ff9f43; }
     .sev-Medium { color: #ffd93b; } .sev-Low { color: #6bcB77; } .sev-Info { color: #6aa9ff; }
+    /* Severity legend next to a section heading — explains the timestamp colors. */
+    .sev-legend { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 9px;
+      margin-left: 10px; font-size: 10px; font-weight: 400; text-transform: none;
+      letter-spacing: 0; cursor: default; }
+    .sev-legend .sev-item { display: inline-flex; align-items: center; gap: 3px; }
+    .sev-legend .sev-dot { width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
     .finding { border-left: 3px solid #2a2f3a; padding: 6px 10px; margin-bottom: 8px; }
     button { background: #2d6cdf; color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
     input { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; padding: 6px; border-radius: 6px; }
@@ -281,7 +287,7 @@
     <section style="grid-column: 1 / -1"><h2>Executive Summary</h2><div id="summary">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attacker Path</h2><div id="attackerPath">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)<button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button></h2>
+    <section style="grid-column: 1 / -1"><h2>Forensic Timeline (by event time)<button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Timestamp color = event severity" onclick="event.stopPropagation()"><span class="sev-item sev-Critical"><span class="sev-dot"></span>Critical</span><span class="sev-item sev-High"><span class="sev-dot"></span>High</span><span class="sev-item sev-Medium"><span class="sev-dot"></span>Medium</span><span class="sev-item sev-Low"><span class="sev-dot"></span>Low</span><span class="sev-item sev-Info"><span class="sev-dot"></span>Info</span></span></h2>
       <div style="font-size:11px; color:#9aa4b2; margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
@@ -349,11 +355,19 @@
       <div id="reportMeta">
         <p class="rm-hint">Human-authored sections of the incident report (AnttiKurittu template). Saved per case and merged into <code>report.md</code> when you click <em>Generate Report</em>. Leave a field blank to use the auto-derived value or a "to be completed" placeholder.</p>
         <div class="rm-grid">
-          <label>Organization <input id="rm-organization" /></label>
+          <label>Company name (optional — your firm, shown on the report) <input id="rm-companyName" placeholder="Acme DFIR" /></label>
+          <label>Organization (the investigated org) <input id="rm-organization" /></label>
           <label>Incident ID (optional — omitted if blank) <input id="rm-incidentId" placeholder="INC-123456" /></label>
           <label>Reviewer (optional) <input id="rm-reviewer" /></label>
           <label>Incident manager (optional) <input id="rm-incidentManager" /></label>
           <label>Restrictions / TLP <input id="rm-restrictions" placeholder="CONFIDENTIAL / TLP:AMBER" /></label>
+        </div>
+        <label>Company logo (optional — PNG / JPG / GIF / WebP, ≤ ~750 KB; shown on the report title page)
+          <input type="file" id="rm-companyLogoFile" accept="image/png,image/jpeg,image/gif,image/webp" />
+        </label>
+        <div id="rm-logoPreviewWrap" style="display:none; align-items:center; gap:10px; margin:4px 0 12px;">
+          <img id="rm-logoPreview" alt="company logo preview" style="max-height:56px; max-width:200px; object-fit:contain; background:#fff; border:1px solid #2a313c; border-radius:4px; padding:3px;" />
+          <button type="button" id="rm-removeLogo">Remove logo</button>
         </div>
         <label>Investigator(s) — one per line<textarea id="rm-investigators" rows="2" placeholder="Jane Doe"></textarea></label>
         <label class="rm-check"><input type="checkbox" id="rm-includeDisclaimer" checked /> Include the standard disclaimer &amp; reading guide (timestamps, probability &amp; confidence scales)</label>
@@ -477,8 +491,21 @@
     }
     function linesToArray(text) { return text.split("\n").map(l => l.trim()).filter(Boolean); }
 
+    // Company logo is uploaded client-side, held as a base64 data URI, and sent inline with
+    // the rest of report-meta (the server re-validates: raster-only, length-capped).
+    let rmLogo = "";                       // current company-logo data URI, or ""
+    const LOGO_MAX_LEN = 1000000;          // mirror reportMeta.ts LOGO_MAX_LEN (~1 MB text)
+    function renderLogoPreview() {
+      const wrap = document.getElementById("rm-logoPreviewWrap");
+      const img = document.getElementById("rm-logoPreview");
+      if (rmLogo) { img.src = rmLogo; wrap.style.display = "flex"; }
+      else { img.removeAttribute("src"); wrap.style.display = "none"; }
+    }
+
     function fillReportMeta(m) {
       const v = (id, val) => document.getElementById(id).value = val || "";
+      v("rm-companyName", m.companyName);
+      rmLogo = m.companyLogo || ""; renderLogoPreview();
       v("rm-organization", m.organization); v("rm-incidentId", m.incidentId);
       v("rm-investigators", (m.investigators || []).join("\n"));
       v("rm-reviewer", m.reviewer); v("rm-incidentManager", m.incidentManager);
@@ -502,6 +529,7 @@
       if (!caseId) return;
       const g = (id) => document.getElementById(id).value;
       const body = {
+        companyName: g("rm-companyName"), companyLogo: rmLogo,
         organization: g("rm-organization"), incidentId: g("rm-incidentId"),
         investigators: linesToArray(g("rm-investigators")),
         reviewer: g("rm-reviewer"), incidentManager: g("rm-incidentManager"),
@@ -1405,6 +1433,25 @@
       setTimeout(fitAssetZoom, 60);   // wait for the fullscreen relayout before measuring
     });
     document.getElementById("saveReportMeta").onclick = saveReportMeta;
+    document.getElementById("rm-companyLogoFile").addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";                                   // allow re-selecting the same file
+      if (!file) return;
+      const st = document.getElementById("rmStatus");
+      if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) {
+        st.textContent = "logo must be PNG / JPG / GIF / WebP"; return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const uri = String(reader.result || "");
+        if (uri.length > LOGO_MAX_LEN) { st.textContent = "logo too large (max ~750 KB) — use a smaller image"; return; }
+        rmLogo = uri; renderLogoPreview();
+        st.textContent = "logo loaded — click Save case details"; setTimeout(() => st.textContent = "", 3000);
+      };
+      reader.onerror = () => { st.textContent = "could not read that image file"; };
+      reader.readAsDataURL(file);
+    });
+    document.getElementById("rm-removeLogo").onclick = () => { rmLogo = ""; renderLogoPreview(); };
     // Investigator name (comment author) — persisted per browser.
     document.getElementById("investigatorName").value = localStorage.getItem("dfir.investigator") || "";
     document.getElementById("investigatorName").addEventListener("input", (e) => localStorage.setItem("dfir.investigator", e.target.value));

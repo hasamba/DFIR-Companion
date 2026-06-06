@@ -28,6 +28,24 @@ describe("normalizeReportMeta", () => {
     expect(m).not.toHaveProperty("bogusKey");
   });
 
+  it("keeps a valid raster logo data URI and the company name", () => {
+    const logo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const m = normalizeReportMeta({ companyName: "Acme DFIR", companyLogo: logo });
+    expect(m.companyName).toBe("Acme DFIR");
+    expect(m.companyLogo).toBe(logo);
+  });
+
+  it("rejects non-raster / malformed / oversized logos (falls back to no logo)", () => {
+    // SVG is rejected (could carry script into the rendered HTML report).
+    expect(normalizeReportMeta({ companyLogo: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" }).companyLogo).toBe("");
+    // A non-data URL is not an inline image.
+    expect(normalizeReportMeta({ companyLogo: "https://evil.example/logo.png" }).companyLogo).toBe("");
+    // Wrong type entirely.
+    expect(normalizeReportMeta({ companyLogo: 12345 }).companyLogo).toBe("");
+    // Over the length cap collapses to "".
+    expect(normalizeReportMeta({ companyLogo: "data:image/png;base64," + "A".repeat(1_000_001) }).companyLogo).toBe("");
+  });
+
   it("never throws on garbage input — falls back to defaults", () => {
     expect(normalizeReportMeta("nonsense")).toEqual(emptyReportMeta());
     expect(normalizeReportMeta(null)).toEqual(emptyReportMeta());

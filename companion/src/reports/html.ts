@@ -26,6 +26,7 @@ const STYLE = `
     font: 15px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
   main.report { max-width: 900px; margin: 0 auto; padding: 48px 56px; background: #fff;
     box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  img { max-width: 280px; max-height: 96px; object-fit: contain; margin: 0 0 8px; }
   h1 { font-size: 28px; margin: 0 0 24px; padding-bottom: 12px; border-bottom: 3px solid #2d6cdf; }
   h2 { font-size: 20px; margin: 32px 0 10px; padding-top: 8px; border-top: 1px solid #e6e8ec; color: #16213a; }
   h3 { font-size: 16px; margin: 22px 0 8px; color: #2a3550; }

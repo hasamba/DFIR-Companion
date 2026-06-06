@@ -31,10 +31,30 @@ const glossarySchema = z.object({
   explanation: z.string().catch(""),
 });
 
+// Optional report branding: the investigating firm's name and logo, shown at the top of the
+// report's title page. The logo is carried inline as a base64 `data:` URI so the report stays
+// self-contained (the HTML export has no external deps) and the existing report-meta plumbing
+// transports it with no extra upload route or side file. Only raster formats are accepted —
+// SVG is rejected so an analyst-supplied logo can never smuggle script into the rendered HTML
+// report — and the URI is length-capped so report-meta.json stays small.
+const LOGO_MAX_LEN = 1_000_000; // ~1 MB of data-URI text (~750 KB binary) — ample for a logo
+const LOGO_DATA_URI = /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/i;
+
+// Coerce any input to a valid logo data URI or "". Never throws — non-strings, blanks,
+// over-cap, or non-raster/malformed URIs all collapse to "" (no logo).
+function normalizeLogo(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const v = value.trim();
+  if (v.length === 0 || v.length > LOGO_MAX_LEN) return "";
+  return LOGO_DATA_URI.test(v) ? v : "";
+}
+
 // Every field is lenient (.catch) so a partial or slightly-malformed payload still
 // normalizes instead of rejecting — same philosophy as the AI response schemas.
 export const reportMetaSchema = z.object({
   // 0 Title page
+  companyName: z.string().catch(""),            // optional — the investigating firm, shown with the logo
+  companyLogo: z.preprocess(normalizeLogo, z.string().catch("")), // optional — base64 image data URI
   organization: z.string().catch(""),
   incidentId: z.string().catch(""),             // optional — omitted from the report when blank
   investigators: z.array(z.string()).catch([]), // one or more investigators
