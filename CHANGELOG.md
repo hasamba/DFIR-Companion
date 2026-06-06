@@ -134,6 +134,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by its content id, so saved section order / collapse state are unaffected.
 
 ### Fixed
+- **Anonymizer auto-detection no longer floods "internal domains" with generic, non-customer words**
+  (`analysis/anonymize.ts`). `deriveKnownEntities()` derives the per-case "internal domains" from the
+  accounts `extractAccounts()` parses out of event text, but that `DOMAIN\user` regex mis-reads three
+  big non-account sources — **registry hives** (`HKU\Software` → `hku`), **Windows well-known principals**
+  (`BUILTIN\Administrators` → `builtin`, `NT AUTHORITY\SYSTEM` → `authority`, `FONT DRIVER HOST\…`), and
+  **EVTX-ATTACK-SAMPLES tactic folders** (`Execution\…`, `Persistence\…`, `Discovery\…`) plus tool/generic
+  folder names (`Defender`, `Tools`, `Samples`, `Code`, `vgauth`, `ransomware`…). Each was being promoted
+  to an "internal domain", which both polluted the analyst's anonymization list *and* — because
+  `anonDomains()` does a word-boundary replace — tokenized those ultra-common words ("access", "code",
+  "files", "execution") all over the timeline, degrading the text the model reads. A new noise filter
+  (`isNoiseDomain` / `isNoiseAccount` + the `NON_VICTIM_DOMAINS` set: Windows principals, registry hives,
+  the 14 ATT&CK tactics, bare LAN suffixes, and common tool/folder words) drops these at derivation time.
+  Real victim domains are kept: any **dotted FQDN** (`windomain.local`) is always preserved, and real
+  single-label NETBIOS domains (`acme`, `artifacts-main`) survive. Analysts can still add anything the
+  filter is too aggressive about via the custom-entities list. +3 unit tests.
 - **Imports no longer run AI synthesis when AI is off for the case.** Every import (and manual
   event / "mark legitimate" / scope change) triggered a background `synthesize()` — an LLM call —
   regardless of the per-case AI toggle, so importing a *deterministic* artifact (THOR / Cyber Triage /

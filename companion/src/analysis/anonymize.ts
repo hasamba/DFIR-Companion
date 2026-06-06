@@ -192,9 +192,61 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   return { apply, restore, restoreDeep };
 }
 
+// Tokens that LOOK like a "DOMAIN\user" or "host.domain" but are NEVER a victim/customer
+// domain. extractAccounts()'s DOMAIN\user regex has three big false-positive sources, and
+// deriveKnownEntities() would otherwise promote each to an "internal domain": registry hives
+// (HKU\Software), Windows well-known principals (BUILTIN\…, NT AUTHORITY\…, FONT DRIVER HOST\…),
+// and EVTX-ATTACK-SAMPLES-style tactic folders (Execution\…, Persistence\…). Promoting them is
+// doubly harmful: it pollutes the analyst's anonymization list AND, because anonDomains() does a
+// word-boundary replace, it tokenizes these ultra-common words ("access", "code", "files",
+// "execution") throughout the timeline — wrecking the text the model reads. All single-label,
+// lowercase. A dotted FQDN (windomain.local) is always treated as a real domain and kept.
+export const NON_VICTIM_DOMAINS: ReadonlySet<string> = new Set([
+  // Windows well-known principals / NETBIOS authorities (the DOMAIN half of e.g. BUILTIN\Administrators)
+  "nt", "authority", "service", "builtin", "workgroup", "virtual", "machine",
+  "iis", "apppool", "window", "manager", "font", "driver", "host", "dwm", "umfd",
+  "everyone", "system", "owner", "creator",
+  // Registry hives (HKU\Software → "hku")
+  "hku", "hklm", "hkcu", "hkcr", "hkcc",
+  "hkey_users", "hkey_local_machine", "hkey_current_user", "hkey_classes_root", "hkey_current_config",
+  // Bare single-label LAN suffixes (a 2-label host like dc.local would otherwise add "local")
+  "local", "localdomain", "lan", "home",
+  // MITRE ATT&CK tactics — the EVTX-ATTACK-SAMPLES folder names that keep getting mis-parsed
+  "reconnaissance", "resource", "development", "initial", "access", "execution",
+  "persistence", "privilege", "escalation", "defense", "evasion", "credential",
+  "discovery", "lateral", "movement", "collection", "command", "control",
+  "exfiltration", "impact", "tactics", "techniques", "mitre", "attack",
+  // Common tool / process / generic folder names that get mis-parsed as a DOMAIN
+  "defender", "explorer", "vgauth", "ransomware", "malware", "samples", "results",
+  "tools", "setup", "files", "hours", "global", "launch", "layers", "code", "jobs",
+  "lite", "csv", "zip", "logs", "temp", "data", "output", "report", "reports",
+  "evidence", "downloads", "desktop", "documents", "users", "public", "default",
+  "windows", "programdata", "program", "system32", "appdata",
+]);
+
+// A single-label token is "noise" when it's a known non-victim word; a dotted FQDN is kept.
+export function isNoiseDomain(domain: string): boolean {
+  const d = domain.toLowerCase().trim();
+  if (!d) return true;
+  if (d.includes(".")) return false;          // real FQDN (windomain.local) — always keep
+  return NON_VICTIM_DOMAINS.has(d);
+}
+
+// An extracted account is noise when its domain part is a non-victim word — e.g.
+// HKU\Software, BUILTIN\Administrators, NT AUTHORITY\SYSTEM, Execution\evil.exe.
+export function isNoiseAccount(account: string): boolean {
+  const slash = account.indexOf("\\");
+  if (slash > 0) return isNoiseDomain(account.slice(0, slash));
+  const at = account.indexOf("@");
+  if (at > 0) return isNoiseDomain(account.slice(at + 1));
+  return false;
+}
+
 // Derive the victim entities to tokenize from the case state: hosts (event.asset), accounts
 // (DOMAIN\user / UPN in event text) and the internal domains those imply (NETBIOS name, UPN
-// domain, and the parent domain of any FQDN host). Pure + deterministic.
+// domain, and the parent domain of any FQDN host). Pure + deterministic. Noise accounts/domains
+// (registry hives, Windows principals, ATT&CK tactic folders, generic words) are filtered out so
+// they neither pollute the analyst's list nor get tokenized as common words across the timeline.
 export function deriveKnownEntities(state: InvestigationState): KnownEntities {
   const hosts = new Set<string>();
   const accounts = new Set<string>();
@@ -202,6 +254,7 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
   for (const e of state.forensicTimeline) {
     if (e.asset && e.asset.trim()) hosts.add(e.asset.trim());
     for (const acct of extractAccounts(e.description)) {
+      if (isNoiseAccount(acct)) continue;       // registry hive / Windows principal / tactic folder, not a victim account
       accounts.add(acct);
       if (acct.includes("\\")) internalDomains.add(acct.split("\\")[0]);
       else if (acct.includes("@")) internalDomains.add(acct.split("@")[1]);
@@ -215,7 +268,10 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
   return {
     hosts: [...hosts].sort(byLenDesc),
     accounts: [...accounts],
-    internalDomains: [...internalDomains].map((d) => d.toLowerCase()).sort(byLenDesc),
+    internalDomains: [...internalDomains]
+      .map((d) => d.toLowerCase())
+      .filter((d) => !isNoiseDomain(d))         // belt-and-suspenders: also drops noisy FQDN-parent labels (dc.local → "local")
+      .sort(byLenDesc),
   };
 }
 
