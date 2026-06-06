@@ -252,10 +252,17 @@ Providers use injectable `fetchFn` (no network in tests), configured only when t
 `npm run coverage -- <case>` (how many screenshots were analyzed) ·
 `npm run reanalyze -- <case> [--reset --all --model … --synth-model …]` ·
 `npm run synthesize -- <case> [--model …]` · `npm run clean-timeline -- <case> [--apply]` ·
-`npm run prompts:eject -- [dir]` (write the 4 default prompts to files for customizing) ·
+`npm run prompts:eject -- [dir]` (write the 6 default prompts to files for customizing) ·
 `npm run yeti -- <indicator>` (CLI YETI lookup) ·
 `npm run iris:push -- <case>` (push the case to a configured DFIR-IRIS instance) ·
 `npm run timesketch:push -- <case>` (push the case's forensic timeline to a configured Timesketch instance).
+
+**External integrations** (`integrations/`) follow the IRIS pattern — a client built from env at
+startup (`undefined` when unconfigured), passed into `createApp`, gated routes return 501 when absent:
+DFIR-IRIS (`irisClient`), Timesketch, and **Velociraptor API** (`velociraptorClient` →
+`integrations/velociraptor/velociraptorApi.ts`; runs the hunt-pivot VQL via the `velociraptor`
+binary's `--api_config` through an **injectable runner** — tests never spawn; route `POST
+/velociraptor/run`; `/health.velociraptorEnabled` gates the dashboard's "Run in Velociraptor" button).
 
 **Customizable prompts.** The six prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
 consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`,

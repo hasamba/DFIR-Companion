@@ -68,6 +68,7 @@ import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
+import { VelociraptorClient, buildVelociraptorClient } from "./integrations/velociraptor/velociraptorApi.js";
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
 import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
 import { pushCaseToTimesketch, type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
@@ -144,6 +145,9 @@ export interface AppOptions {
   // (customer/classification ids, base URL for the case link).
   irisClient?: IrisClient;
   irisOptions?: IrisPushOptions;
+  // Velociraptor API: a configured client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) lets the
+  // dashboard run the generated hunt VQL against the server and show the rows inline.
+  velociraptorClient?: VelociraptorClient;
   // Timesketch push: a configured client (when DFIR_TIMESKETCH_URL/USER/PASSWORD are set) +
   // options (base URL for the sketch link, managed timeline name).
   timesketchClient?: TimesketchClient;
@@ -220,7 +224,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0 });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient });
   });
 
   // How many captures have been recorded for a case (counts the audit-log lines).
@@ -557,6 +561,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Whether a DFIR-IRIS push target is configured (so the dashboard can show/hide the button).
   app.get("/iris/status", (_req: Request, res: Response) => {
     res.status(200).json({ configured: !!options.irisClient, baseUrl: options.irisOptions?.baseUrl });
+  });
+
+  // Run a VQL query against the configured Velociraptor server (via its API) and return the rows.
+  // Powers the hunt-pivot modal's "Run in Velociraptor" button. 501 when not configured. The VQL is
+  // analyst-authored (from the generated pivots) — localhost only, opt-in via DFIR_VELOCIRAPTOR_*.
+  app.post("/velociraptor/run", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
+    if (!vql) return res.status(400).json({ error: "vql is required" });
+    try {
+      logLine(`[velociraptor] run query (${vql.length} chars)`);
+      const result = await options.velociraptorClient.run(vql);
+      logLine(`[velociraptor] query DONE -> ${result.total} rows${result.truncated ? " (truncated)" : ""}`);
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[velociraptor] query ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
   });
 
   // Push a case to DFIR-IRIS: find-or-create the case by name, then push assets→assets,
@@ -2316,6 +2338,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     enrichHealthTtlMs: Number(process.env.DFIR_ENRICH_HEALTH_TTL_MS) || undefined,
     enrichHealthPollMs: process.env.DFIR_ENRICH_HEALTH_POLL_MS === "0" ? 0 : (Number(process.env.DFIR_ENRICH_HEALTH_POLL_MS) || 60_000),
     irisClient: buildIrisClient(),
+    velociraptorClient: buildVelociraptorClient(),
     irisOptions: irisPushOptions(),
     timesketchClient: buildTimesketchClient(),
     timesketchOptions: timesketchPushOptions(),

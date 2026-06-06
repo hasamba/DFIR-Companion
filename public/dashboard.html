@@ -122,6 +122,17 @@
     .hunt-card pre { margin: 0; padding: 10px; background: #0f1115; color: #d6deea; font-size: 11px;
       white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Menlo, Consolas, monospace;
       max-height: 240px; overflow: auto; }
+    .hunt-card-head > div { display: flex; gap: 6px; }
+    .hunt-run { background: #2f8f4e; border: 0; color: #fff; border-radius: 5px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
+    .hunt-run:disabled { opacity: .6; cursor: default; }
+    .hunt-vql-edit { width: 100%; box-sizing: border-box; min-height: 120px; resize: vertical; background: #0f1115;
+      color: #d6deea; border: 0; border-top: 1px solid #2a2f3a; padding: 10px; font-size: 11px;
+      font-family: ui-monospace, Menlo, Consolas, monospace; }
+    .hunt-run-res { padding: 8px 10px; border-top: 1px solid #2a2f3a; }
+    .vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid #2a2f3a; border-radius: 5px; }
+    .vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
+    .vql-result th, .vql-result td { border: 1px solid #2a2f3a; padding: 3px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
+    .vql-result th { background: #11151c; position: sticky; top: 0; }
     /* Synthesis freshness + what-changed diff (shown above the findings) */
     .synth-meta { font-size: 12px; color: #9aa4b2; margin: 0 0 8px; padding: 6px 9px;
       border: 1px solid #2a2f3a; border-radius: 6px; background: #0f1115; }
@@ -960,6 +971,7 @@
     // Sigma skeleton). Deterministic templating from the entity's structured fields — no AI, no
     // server round-trip, no cost. The Companion stays a post-detection layer: these PIVOT off a
     // confirmed indicator, they don't author detections for it.
+    let veloEnabled = false;   // set from /health — whether the Velociraptor API is configured (Run button)
     function huntChip(kind, id) {
       return `<button class="hunt-add" data-hk="${escAttr(kind)}" data-hi="${escAttr(String(id))}" `
         + `title="Generate hunt / pivot queries (Velociraptor, KQL, Splunk, Sigma)">🔍</button>`;
@@ -1071,21 +1083,60 @@
       ].filter(([, q]) => q && q.trim());
       const body = document.getElementById("huntBody");
       body.innerHTML = hasAny(c)
-        ? cards.map(([tool, query], idx) =>
-            `<div class="hunt-card"><div class="hunt-card-head"><span>${esc(tool)}</span>`
-            + `<button class="hunt-copy" data-idx="${idx}">Copy</button></div>`
-            + `<pre id="huntQ${idx}">${esc(query)}</pre></div>`).join("")
+        ? cards.map(([tool, query], idx) => {
+            // The Velociraptor card is runnable when the API is configured: editable VQL + a Run
+            // button that executes it against the server and shows the rows inline.
+            const runnable = tool.startsWith("Velociraptor") && veloEnabled;
+            const head = `<div class="hunt-card-head"><span>${esc(tool)}</span><div>`
+              + (runnable ? `<button class="hunt-run" data-idx="${idx}" title="Run this VQL against the configured Velociraptor server">▶ Run in Velociraptor</button>` : "")
+              + `<button class="hunt-copy" data-idx="${idx}">Copy</button></div></div>`;
+            const content = runnable
+              ? `<textarea class="hunt-vql-edit" id="huntQ${idx}" spellcheck="false">${esc(query)}</textarea>`
+              : `<pre id="huntQ${idx}">${esc(query)}</pre>`;
+            return `<div class="hunt-card">${head}${content}${runnable ? `<div class="hunt-run-res" id="huntRunRes${idx}"></div>` : ""}</div>`;
+          }).join("")
         : "<div style='color:#9aa4b2;font-size:12px'>This entity carries no hash / IP / domain / path / process to pivot on. Add structured fields (or tag it) to enable hunt queries.</div>";
       body.querySelectorAll(".hunt-copy").forEach((b) => b.onclick = () => {
-        const text = document.getElementById("huntQ" + b.dataset.idx).textContent;
-        navigator.clipboard.writeText(text).then(() => {
+        navigator.clipboard.writeText(huntText(b.dataset.idx)).then(() => {
           b.textContent = "Copied ✓"; b.classList.add("copied");
           setTimeout(() => { b.textContent = "Copy"; b.classList.remove("copied"); }, 1500);
         }).catch(() => { b.textContent = "copy failed"; });
       });
+      body.querySelectorAll(".hunt-run").forEach((b) => b.onclick = () => runVql(b.dataset.idx));
       document.getElementById("huntOverlay").classList.add("open");
     }
     function closeHuntModal() { document.getElementById("huntOverlay").classList.remove("open"); }
+    // Read a hunt card's query text (textarea when runnable/editable, else the <pre>).
+    function huntText(idx) {
+      const el = document.getElementById("huntQ" + idx);
+      return el.tagName === "TEXTAREA" ? el.value : el.textContent;
+    }
+    // Run the card's VQL against Velociraptor via the API and render the rows inline.
+    function runVql(idx) {
+      const vql = huntText(idx);
+      const res = document.getElementById("huntRunRes" + idx);
+      const btn = document.querySelector('.hunt-run[data-idx="' + idx + '"]');
+      res.innerHTML = "<div style='color:#9aa4b2;font-size:12px'>running in Velociraptor…</div>";
+      if (btn) btn.disabled = true;
+      fetch("/velociraptor/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vql }) })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { res.innerHTML = `<div style="color:#ff9f43;font-size:12px">error: ${esc(j.error || "query failed")}</div>`; return; }
+          res.innerHTML = renderVqlRows(j);
+        })
+        .catch((e) => res.innerHTML = `<div style="color:#ff9f43;font-size:12px">error: ${esc(e.message)} — restart the companion server if this 404s</div>`)
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    function renderVqlRows(j) {
+      const rows = j.rows || [];
+      if (!rows.length) return "<div style='color:#9aa4b2;font-size:12px'>0 rows.</div>";
+      const cols = [...new Set(rows.flatMap((r) => (r && typeof r === "object" ? Object.keys(r) : [])))].slice(0, 12);
+      const cell = (v) => esc(v == null ? "" : (typeof v === "object" ? JSON.stringify(v) : String(v)));
+      const head = cols.map((col) => `<th>${esc(col)}</th>`).join("");
+      const trs = rows.slice(0, 200).map((r) => `<tr>${cols.map((col) => `<td>${cell(r && r[col])}</td>`).join("")}</tr>`).join("");
+      return `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>${head}</tr></thead><tbody>${trs}</tbody></table></div>`
+        + `<div style="color:#9aa4b2;font-size:11px;margin-top:4px">${esc(j.total)} row(s)${j.truncated ? " (capped)" : ""}${cols.length === 12 ? " · first 12 columns" : ""}</div>`;
+    }
 
     // --- Executive summary generator ----------------------------------------------
     // One AI call over the synthesized case → a management-facing prose summary. Shown for review;
@@ -1881,6 +1932,7 @@
       fetch("/health").then(r => r.json()).then(h => {
         if (h.aiEnabled) setAi("idle", "ready (waiting for activity)");
         else setAi("off", "off (no provider configured)");
+        veloEnabled = !!h.velociraptorEnabled;   // gates the "Run in Velociraptor" button in the hunt modal
       }).catch(() => setAi("unknown", "unknown"));
 
       ws = new WebSocket(`ws://${location.host}/ws?caseId=${encodeURIComponent(caseId)}`);
