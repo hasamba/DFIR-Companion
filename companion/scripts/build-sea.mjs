@@ -5,8 +5,9 @@
 //   2. node --experimental-sea-config writes the SEA blob.
 //   3. The matching node binary is copied to dist-sea/dfir-companion(.exe).
 //   4. postject injects the blob into that binary.
-//   5. dist-sea/ is staged with the EXE + public/ + node_modules/sharp (+ its @img/* deps)
-//      + a sample .env so the user can run the EXE from its own folder.
+//   5. An ICO is built from public/DFIR_Companion_favicon.png and embedded via rcedit (Windows).
+//   6. dist-sea/ is staged with the EXE + public/ + node_modules/sharp (+ @img/* + all transitive
+//      runtime deps: detect-libc, color, semver, …) + a sample .env.
 //
 // Run with:  npm run package:sea
 //
@@ -26,6 +27,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { platform } from "node:os";
 import { inject as postjectInject } from "postject";
+import sharp from "sharp";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const COMPANION_DIR = resolve(SCRIPT_DIR, "..");
@@ -148,26 +150,133 @@ async function injectBlob() {
   await postjectInject(EXE_PATH, "NODE_SEA_BLOB", blob, options);
 }
 
+// All packages that sharp requires at runtime (direct deps + their transitive deps).
+// These must be staged next to the EXE so Node can resolve them at startup.
+const SHARP_RUNTIME_DEPS = [
+  "detect-libc",   // sharp direct dep
+  "color",         // sharp direct dep
+  "semver",        // sharp direct dep
+  "color-convert", // color dep
+  "color-string",  // color dep
+  "color-name",    // color-convert + color-string dep
+  "simple-swizzle",// color-string dep
+  "is-arrayish",   // simple-swizzle dep
+];
+
 async function findSharpRoots() {
-  // Locate the sharp package + its @img/* prebuilt-binary siblings. They might live in
-  // companion/node_modules or be hoisted to repo-root node_modules — check both.
+  // Locate the sharp package + its @img/* prebuilt-binary siblings + all transitive runtime
+  // deps. They might live in companion/node_modules or be hoisted to repo-root node_modules
+  // — check both.
   const roots = [
     join(COMPANION_DIR, "node_modules"),
     join(REPO_DIR, "node_modules"),
   ];
-  const sources = [];
   for (const root of roots) {
     const sharpPath = join(root, "sharp");
-    if (existsSync(sharpPath)) {
-      sources.push({ kind: "package", name: "sharp", from: sharpPath });
-      const imgRoot = join(root, "@img");
-      if (existsSync(imgRoot)) {
-        sources.push({ kind: "scope", name: "@img", from: imgRoot });
-      }
-      return sources;
+    if (!existsSync(sharpPath)) continue;
+
+    const sources = [{ kind: "package", name: "sharp", from: sharpPath }];
+    const imgRoot = join(root, "@img");
+    if (existsSync(imgRoot)) {
+      sources.push({ kind: "scope", name: "@img", from: imgRoot });
     }
+    for (const dep of SHARP_RUNTIME_DEPS) {
+      const depPath = join(root, dep);
+      if (existsSync(depPath)) {
+        sources.push({ kind: "package", name: dep, from: depPath });
+      } else {
+        console.warn(`[sea] warning: sharp transitive dep "${dep}" not found in ${root}`);
+      }
+    }
+    return sources;
   }
   throw new Error("sharp not found in companion/ or repo-root node_modules; run `npm install` first.");
+}
+
+// Build a Windows ICO file from an array of {size, data: Buffer} PNG frames.
+// Uses the PNG-in-ICO container format (no BMP conversion needed; supported by all
+// modern Windows versions and browsers).
+function buildIco(frames) {
+  const count = frames.length;
+  const dirSize = 6 + count * 16;
+  const header = Buffer.alloc(dirSize);
+  header.writeUInt16LE(0, 0); // reserved
+  header.writeUInt16LE(1, 2); // type = 1 (icon)
+  header.writeUInt16LE(count, 4);
+  let offset = dirSize;
+  const parts = [header];
+  for (let i = 0; i < count; i++) {
+    const { size, data } = frames[i];
+    const w = size >= 256 ? 0 : size; // 0 encodes as 256 in ICO spec
+    const e = 6 + i * 16;
+    header.writeUInt8(w, e);           // width
+    header.writeUInt8(w, e + 1);       // height
+    header.writeUInt8(0, e + 2);       // color count (0 = truecolor)
+    header.writeUInt8(0, e + 3);       // reserved
+    header.writeUInt16LE(0, e + 4);    // planes
+    header.writeUInt16LE(32, e + 6);   // bits per pixel
+    header.writeUInt32LE(data.length, e + 8);  // size in bytes
+    header.writeUInt32LE(offset, e + 12);       // file offset
+    parts.push(data);
+    offset += data.length;
+  }
+  return Buffer.concat(parts);
+}
+
+async function createIco() {
+  console.log("[sea] create app.ico from DFIR_Companion_favicon.png");
+  const srcPng = join(REPO_DIR, "public", "DFIR_Companion_favicon.png");
+  const icoPath = join(BUILD_DIR, "app.ico");
+
+  // Replicate the same background-removal logic used in make-icons.ts so the icon
+  // uses the clean transparent emblem rather than the raw source with its gray background.
+  const { data, info } = await sharp(srcPng).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { width: W, height: H } = info;
+  const buf = Buffer.from(data);
+  const isBg = (i) => buf[i] > 185 && buf[i + 1] > 185 && buf[i + 2] > 185;
+  const visited = new Uint8Array(W * H);
+  const stack = [];
+  const seed = (x, y) => { if (x >= 0 && y >= 0 && x < W && y < H) stack.push(y * W + x); };
+  for (let x = 0; x < W; x++) { seed(x, 0); seed(x, H - 1); }
+  for (let y = 0; y < H; y++) { seed(0, y); seed(W - 1, y); }
+  while (stack.length) {
+    const p = stack.pop();
+    if (visited[p]) continue;
+    visited[p] = 1;
+    if (!isBg(p * 4)) continue;
+    buf[p * 4 + 3] = 0;
+    const x = p % W, y = (p / W) | 0;
+    seed(x + 1, y); seed(x - 1, y); seed(x, y + 1); seed(x, y - 1);
+  }
+  const emblem = sharp(buf, { raw: { width: W, height: H, channels: 4 } });
+
+  const SIZES = [16, 32, 48, 256];
+  const frames = await Promise.all(SIZES.map(async (size) => {
+    const data = await emblem.clone()
+      .trim({ threshold: 10 })
+      .resize(size, size, { fit: "cover", kernel: "lanczos3" })
+      .png({ compressionLevel: 9 })
+      .toBuffer();
+    return { size, data };
+  }));
+
+  await writeFile(icoPath, buildIco(frames));
+  return icoPath;
+}
+
+async function embedIcon(icoPath) {
+  if (process.platform !== "win32") {
+    console.log("[sea] skip icon embed (not Windows — run on Windows CI to get the icon)");
+    return;
+  }
+  console.log("[sea] embed icon with rcedit");
+  try {
+    const { default: rcedit } = await import("rcedit");
+    await rcedit(EXE_PATH, { icon: icoPath });
+  } catch (err) {
+    // rcedit is optional; a missing icon is cosmetic, not a crash.
+    console.warn(`[sea] icon embed skipped: ${err.message}`);
+  }
 }
 
 async function stageRuntimeAssets() {
@@ -222,6 +331,8 @@ async function main() {
   await generateBlob();
   await stageExe();
   await injectBlob();
+  const icoPath = await createIco();
+  await embedIcon(icoPath);
   await stageRuntimeAssets();
   await reportSize();
 
