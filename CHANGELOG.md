@@ -12,6 +12,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **[P1] Path-traversal guard on case IDs** — `caseStore.ts` now exports `isValidCaseId()` (regex
+  allowlist `^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$` + `..` rejection). `POST /cases` and the capture
+  ingest schema both validate the supplied `caseId` before any filesystem join, returning 400 for
+  path-like values (e.g. `../outside`). Prevents an adversarial browser page from escaping `casesRoot`
+  via the wide-open CORS + Private-Network-Access headers.
+- **[P1] Markdown link/image injection blocked in HTML report** — `renderHtmlReport` in `html.ts` now
+  overrides the `marked` `link` and `image` renderers. Only `http:`, `https:`, and `mailto:` hrefs are
+  passed through; everything else (e.g. `javascript:alert(1)`) is rendered as escaped plain text
+  `[label]` / `![alt]` — eliminating the XSS vector from untrusted finding descriptions and
+  attacker-path narrative.
+
+### Fixed
+- **[P2] Deterministic imports work without an AI provider** — `AnalysisPipeline` now accepts an
+  optional `provider`; a `hasAiProvider()` method guards extraction, synthesis, CSV/log analysis, and
+  Ask. `startServer` always wires a pipeline (via `buildRuntimePipeline`) and passes `aiConfigured` so
+  the server routes that genuinely need the LLM return 501 while THOR, SIEM/EDR, Chainsaw, Hayabusa,
+  Velociraptor, network, KAPE, Cyber Triage, M365/Entra, AWS, GCP/Azure, Plaso, and sandbox imports
+  remain fully usable with no API key configured.
+- **[P2] Correlation no longer drops process-chain validation metadata** — `mergeGroup()` in
+  `correlate.ts` now carries `processName`, `parentName`, and `chainCheck` through from any event in
+  the merged group (primary-preferring, first-non-null fallback), so chain-anomaly badges are not
+  silently lost when two tools report the same artifact.
+
 ### Added
 - **Minimum-severity import floor — restored for the single Import button, generalized to every
   importer** (`analysis/severityFloor.ts`). The old dedicated THOR import used to ask *"which minimum

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import request from "supertest";
 import sharp from "sharp";
 import { CaseStore } from "../src/storage/caseStore.js";
-import { createApp } from "../src/server.js";
+import { createApp, buildRuntimePipeline } from "../src/server.js";
 import { _resetDedupCache } from "../src/ingest/captureIngest.js";
 import { AnalysisPipeline } from "../src/analysis/pipeline.js";
 import { StateStore } from "../src/analysis/stateStore.js";
@@ -59,6 +59,11 @@ describe("HTTP server", () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "A", investigator: "y", aiProvider: null });
     const res = await request(app).post("/cases").send({ caseId: "c1", name: "A again", investigator: "y", aiProvider: null });
     expect(res.status).toBe(409);
+  });
+
+  it("POST /cases rejects path-like case IDs before touching storage paths", async () => {
+    const res = await request(app).post("/cases").send({ caseId: "..\\outside", name: "A", investigator: "y", aiProvider: null });
+    expect(res.status).toBe(400);
   });
 
   it("GET /cases lists created cases", async () => {
@@ -542,6 +547,29 @@ describe("server analysis wiring", () => {
     expect(state.forensicTimeline[0].severity).toBe("Critical");
     expect(state.iocs.some((i) => i.value.includes("mimikatz.exe"))).toBe(true);
     expect(state.findings).toHaveLength(0);                              // synthesis was gated off — no findings
+  });
+
+  it("builds a deterministic-import pipeline even when no AI provider is configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-deterministic-no-ai-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = buildRuntimePipeline({
+      provider: undefined,
+      synthesisProvider: undefined,
+      stateStore,
+      store,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app = createApp(store, { pipeline, stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+
+    const jsonl = JSON.stringify({ time: "t", hostname: "WIN11", level: "Alert", module: "Filescan",
+      message: "Malware file found", file: "C:\\Tools\\mimikatz.exe", modified: "2025-03-14T21:18:18Z",
+      reason_1: "YARA Powerkatz", sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef" }) + "\n";
+
+    const res = await request(app).post("/cases/c1/import-thor").send({ filename: "WIN11_thor.json", json: jsonl });
+
+    expect(res.status).toBe(202);
   });
 
   it("rejects a SIEM import with no parseable records", async () => {

@@ -94,4 +94,25 @@ describe("correlateEvents", () => {
     const b = ev({ id: "b", path: "c:\\u.exe", timestamp: "", sources: ["CSV import"] });
     expect(correlateEvents([a, b])).toHaveLength(1);
   });
+
+  it("preserves process-chain fields from any event in a merged group", () => {
+    const HASH = "d".repeat(64);
+    const primary = ev({ id: "a", description: "longer Velociraptor detection text", sha256: HASH, sources: ["Velociraptor"] });
+    const withChain = ev({
+      id: "b",
+      description: "THOR process chain",
+      sha256: HASH,
+      sources: ["THOR"],
+      processName: "powershell.exe",
+      parentName: "winword.exe",
+      chainCheck: { observed: false, note: "winword.exe -> powershell.exe is unusual", checkedAt: "2026-05-26T12:01:00Z" },
+    });
+
+    const out = correlateEvents([primary, withChain]);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].processName).toBe("powershell.exe");
+    expect(out[0].parentName).toBe("winword.exe");
+    expect(out[0].chainCheck?.observed).toBe(false);
+  });
 });
