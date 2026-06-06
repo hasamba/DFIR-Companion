@@ -201,6 +201,7 @@ describe("server analysis wiring", () => {
     const csvApp = createApp(store, { pipeline, stateStore });
 
     await request(csvApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(csvApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
     const csv = "Timestamp,Process,PID\n2026-05-20T09:00:00Z,mimikatz.exe,1234\n2026-05-20T09:01:00Z,rubeus.exe,5678\n";
     const res = await request(csvApp).post("/cases/c1/import-csv").send({ filename: "results.csv", csv });
 
@@ -272,6 +273,7 @@ describe("server analysis wiring", () => {
     const logApp = createApp(store, { pipeline, stateStore });
 
     await request(logApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(logApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
     const log = "May 28 09:00:01 host sshd[1]: Failed password for root from 10.0.0.5\nMay 28 09:00:02 host sshd[2]: Accepted password for admin from 10.0.0.5\n";
     const res = await request(logApp).post("/cases/c1/import-log").send({ filename: "auth.log", text: log });
 
@@ -332,6 +334,7 @@ describe("server analysis wiring", () => {
     });
     const thorApp = createApp(store, { pipeline, stateStore });
     await request(thorApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(thorApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
 
     const jsonl = [
       JSON.stringify({ time: "t", hostname: "WIN11", level: "Info", module: "Init", message: "startup noise" }),
@@ -399,6 +402,7 @@ describe("server analysis wiring", () => {
     });
     const siemApp = createApp(store, { pipeline, stateStore });
     await request(siemApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(siemApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
 
     const elastic = JSON.stringify({ data: [
       { _source: { "@timestamp": "2017-03-20T06:33:40Z", log_name: "Security", computer_name: "DC1",
@@ -427,6 +431,43 @@ describe("server analysis wiring", () => {
     expect(state.forensicTimeline.some((e) => e.severity === "High" && e.description.includes("7045"))).toBe(true);
     expect(state.iocs.some((i) => i.type === "ip" && i.value === "10.10.200.11")).toBe(true);
     expect(state.findings.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("import with AI OFF populates the timeline + IOCs deterministically but does NOT synthesize", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-import-aioff-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      // Synthesis must never run while AI is off — if this provider is invoked, the response
+      // is unparseable and the test would surface it (but the gate means it's never called).
+      provider: new MockProvider("mock", "AI synthesis must not run when AI is off"),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app = createApp(store, { pipeline, stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    // AI defaults OFF for a fresh case — leave it off (this is the scenario under test).
+
+    const jsonl = JSON.stringify({ time: "t", hostname: "WIN11", level: "Alert", module: "Filescan",
+      message: "Malware file found", file: "C:\\Tools\\mimikatz.exe", modified: "2025-03-14T21:18:18Z",
+      reason_1: "YARA Powerkatz", sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef" }) + "\n";
+    const res = await request(app).post("/cases/c1/import-thor").send({ filename: "WIN11_thor.json", json: jsonl });
+    expect(res.status).toBe(202);
+
+    // Deterministic THOR mapping runs in the background; give it time, then confirm the
+    // timeline + IOCs landed but synthesis never produced findings (AI is off).
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 60 && state.forensicTimeline.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    // Settle: ensure no delayed synthesis sneaks a finding in afterwards.
+    await new Promise((r) => setTimeout(r, 150));
+    state = await stateStore.load("c1");
+    expect(state.forensicTimeline.length).toBe(1);                       // deterministic mapping populated it
+    expect(state.forensicTimeline[0].severity).toBe("Critical");
+    expect(state.iocs.some((i) => i.value.includes("mimikatz.exe"))).toBe(true);
+    expect(state.findings).toHaveLength(0);                              // synthesis was gated off — no findings
   });
 
   it("rejects a SIEM import with no parseable records", async () => {
