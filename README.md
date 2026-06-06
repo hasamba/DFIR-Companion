@@ -240,11 +240,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   one-click suggested-label palette plus free-form input; normalized + deduped per entity, stored
   per case (`state/tags.json`), survive synthesis, and sync live over the WS.
 - **Hunt-pivot query generator** — from any forensic event or IOC, a 🔍 chip generates ready-to-adapt
-  hunt/pivot queries for the tools you already run — **Velociraptor VQL**, **Microsoft Defender /
-  Sentinel KQL**, **Splunk SPL**, and a **Sigma** rule skeleton — filled from the entity's structured
-  fields (hash / IP / domain / path / process / parent / host), each with one-click copy. Deterministic
-  templating: no AI, no cost, runs offline. (Pivots off a confirmed indicator — it doesn't author
-  detections.)
+  hunt/pivot queries for the tools you already run — a complete **Velociraptor artifact** (YAML,
+  importable + huntable as-is), **Microsoft Defender / Sentinel KQL**, **Splunk SPL**, and a **Sigma**
+  rule skeleton — filled from the entity's structured fields (hash / IP / domain / path / process /
+  parent / host), each with one-click copy. Paths are normalized (device-prefix stripped, Velociraptor
+  globs use forward slashes) so the queries actually run. Deterministic templating: no AI, no cost,
+  runs offline. (Pivots off a confirmed indicator — it doesn't author detections.)
 - **Synthesis freshness & what-changed diff** — the Findings section shows when synthesis last
   actually ran ("🧠 Last synthesized N ago") and how the findings changed since the prior run (**+N
   new / −M dropped / ↕ K severity**, with an expandable list), so a re-synthesis shows its effect
