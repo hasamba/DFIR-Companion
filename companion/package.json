@@ -23,6 +23,7 @@
     "package:sea": "node scripts/build-sea.mjs"
   },
   "dependencies": {
+    "docx": "^9.7.1",
     "dotenv": "^17.4.2",
     "express": "^4.19.2",
     "marked": "^18.0.4",
