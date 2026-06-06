@@ -95,6 +95,20 @@
     .comment-del { background: transparent; border: 0; color: #ff7a7a; cursor: pointer; font-size: 11px; padding: 0 4px; }
     #commentText { width: 100%; box-sizing: border-box; background: #0f1115; color: #e6e6e6;
       border: 1px solid #2a2f3a; border-radius: 6px; padding: 6px; font-family: inherit; resize: vertical; }
+    /* Analyst triage tags (hand labels — confirmed-malicious, false-positive, key-evidence, …) */
+    .tag-pill { display: inline-block; border: 1px solid; border-radius: 9px; padding: 0 7px;
+      font-size: 10px; line-height: 16px; margin-left: 4px; vertical-align: middle; background: #0f1115; }
+    .tag-add { background: transparent; border: 1px solid #2a2f3a; color: #6b7280; border-radius: 10px;
+      padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+    .tag-add:hover { color: #ffd93b; border-color: #ffd93b; }
+    .tag-suggest-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+    .tag-suggest-btn { background: #0f1115; border: 1px solid; border-radius: 9px; padding: 2px 9px;
+      font-size: 11px; cursor: pointer; }
+    .tag-current-pill { display: inline-flex; align-items: center; gap: 4px; border: 1px solid; border-radius: 10px;
+      padding: 2px 4px 2px 9px; font-size: 11px; margin: 0 5px 5px 0; background: #0f1115; }
+    .tag-current-pill .tag-del { background: transparent; border: 0; color: inherit; cursor: pointer; font-size: 12px; padding: 0 2px; opacity: .7; }
+    .tag-current-pill .tag-del:hover { opacity: 1; }
+    #tagInput { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 6px; padding: 6px; font-family: inherit; }
     /* Ask the LLM panel */
     .ask-row { display: flex; gap: 8px; margin-bottom: 10px; }
     .ask-row input { flex: 1; }
@@ -157,6 +171,22 @@
     .tip { position: fixed; z-index: 1000; max-width: 360px; background: #0b0e13; color: #cbd3df;
       border: 1px solid #2a3340; border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.45;
       box-shadow: 0 8px 24px rgba(0,0,0,.55); pointer-events: none; white-space: normal; }
+    /* Kill-chain tactic phase view */
+    .kc-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+    .kc-phase { min-width: 100px; flex: 1 1 100px; border: 1px solid #2a2f3a; border-radius: 6px;
+      background: #0f1115; cursor: pointer; transition: background .1s; }
+    .kc-phase:not(.kc-empty):hover { background: #161c27; }
+    .kc-phase.kc-empty { opacity: 0.35; cursor: default; }
+    .kc-phase.kc-active { background: #161c27; border-color: #3a4255; }
+    .kc-phase-header { padding: 8px 10px; border-top: 3px solid #2a2f3a; border-radius: 5px 5px 0 0; }
+    .kc-tac { display: block; font-size: 10px; color: #9aa4b2; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+    .kc-count { font-size: 20px; font-weight: 700; display: block; line-height: 1; }
+    .kc-events-panel { border-top: 1px solid #2a2f3a; padding: 8px 10px; font-size: 12px;
+      max-height: 280px; overflow-y: auto; }
+    .kc-event-row { padding: 3px 0; border-bottom: 1px solid #1a1f28; display: flex;
+      gap: 6px; flex-wrap: wrap; align-items: baseline; }
+    .kc-event-row:last-child { border-bottom: none; }
   </style>
 </head>
 <body>
@@ -260,6 +290,19 @@
       </div>
     </div>
   </div>
+  <div id="tagOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3 id="tagTitle">Tags</h3>
+      <div id="tagCurrent"></div>
+      <div class="tag-suggest-row" id="tagSuggest"></div>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <input id="tagInput" placeholder="custom label…" style="flex:1" />
+        <button id="tagAddBtn">Add tag</button>
+        <button id="tagClose" style="background:#2a2f3a;">Close</button>
+        <span id="tagMsg" style="color:#9aa4b2; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
   <div id="newCaseOverlay" class="comment-overlay">
     <div class="comment-modal">
       <h3>New case</h3>
@@ -305,6 +348,7 @@
         </form>
       </div>
       <div id="forensicTimeline">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
     <section style="grid-column: 1 / -1">
       <h2>Compromised Assets &amp; IoC Graph</h2>
       <div id="assetPanel">
@@ -792,6 +836,93 @@
       fetch(`/cases/${caseId}/comments/${id}`, { method: "DELETE" }).then(() => loadComments(caseId)).catch(() => {});
     }
 
+    // --- Analyst triage tags ------------------------------------------------------
+    // Hand labels on any entity, independent of AI severity. Stored in a per-case side file
+    // (state/tags.json); survive synthesis. Shown inline as colored pills + a 🏷 add button.
+    let tagsByTarget = new Map();   // "type:id" -> [tag]
+    let tagTarget = null;           // currently-open { type, id } in the tag modal
+    const SUGGESTED_TAGS = ["confirmed-malicious","false-positive","needs-review","benign-admin",
+      "key-evidence","pivot-point","persistence","lateral-movement","c2-comms","exfil",
+      "credential-access","initial-access"];
+
+    // Colour a label by triage meaning: threat=red, benign=green, review=yellow, evidence=blue.
+    function tagColor(label) {
+      const THREAT = ["confirmed-malicious","c2-comms","exfil","credential-access","initial-access","lateral-movement","persistence"];
+      const BENIGN = ["false-positive","benign-admin"];
+      if (THREAT.includes(label)) return "#ff6b6b";
+      if (BENIGN.includes(label)) return "#6bcB77";
+      if (label === "needs-review") return "#ffd93b";
+      if (label === "key-evidence" || label === "pivot-point") return "#6aa9ff";
+      return "#9aa4b2";
+    }
+    function tagChip(type, id) {
+      const list = tagsByTarget.get(targetKey(type, id)) || [];
+      const pills = list.map(t => {
+        const c = tagColor(t.label);
+        return `<span class="tag-pill" style="color:${c};border-color:${c}" title="tag by ${escAttr(t.author)}">${esc(t.label)}</span>`;
+      }).join("");
+      return pills + `<button class="tag-add" data-tt="${escAttr(type)}" data-ti="${escAttr(String(id))}" `
+        + `title="Add / edit triage tags">🏷</button>`;
+    }
+
+    function loadTags(caseId) {
+      fetch(`/cases/${caseId}/tags`).then(r => r.json()).then(list => {
+        tagsByTarget = new Map();
+        (list || []).forEach(t => {
+          const k = targetKey(t.targetType, t.targetId);
+          let arr = tagsByTarget.get(k); if (!arr) { arr = []; tagsByTarget.set(k, arr); }
+          arr.push(t);
+        });
+        if (lastState) render(lastState);     // refresh inline pills
+        if (tagTarget) renderTagModal();        // refresh an open editor (live collaboration)
+      }).catch(() => {});
+    }
+
+    function openTagModal(type, id) {
+      tagTarget = { type, id };
+      document.getElementById("tagOverlay").classList.add("open");
+      renderTagModal();
+      document.getElementById("tagInput").focus();
+    }
+    function closeTagModal() {
+      tagTarget = null;
+      document.getElementById("tagOverlay").classList.remove("open");
+      document.getElementById("tagInput").value = "";
+      document.getElementById("tagMsg").textContent = "";
+    }
+    function renderTagModal() {
+      if (!tagTarget) return;
+      const list = tagsByTarget.get(targetKey(tagTarget.type, tagTarget.id)) || [];
+      document.getElementById("tagTitle").textContent = `Tags on ${tagTarget.type} ${tagTarget.id}`;
+      const cur = document.getElementById("tagCurrent");
+      cur.innerHTML = list.length
+        ? list.map(t => { const c = tagColor(t.label);
+            return `<span class="tag-current-pill" style="color:${c};border-color:${c}" title="by ${escAttr(t.author)}">${esc(t.label)}`
+              + `<button class="tag-del" data-id="${escAttr(t.id)}" title="Remove">✕</button></span>`; }).join("")
+        : "<div style='color:#9aa4b2;font-size:12px'>No tags yet.</div>";
+      cur.querySelectorAll(".tag-del").forEach(b => b.onclick = () => deleteTag(b.getAttribute("data-id")));
+      const applied = new Set(list.map(t => t.label));
+      const sug = document.getElementById("tagSuggest");
+      sug.innerHTML = SUGGESTED_TAGS.filter(l => !applied.has(l)).map(l => { const c = tagColor(l);
+        return `<button class="tag-suggest-btn" style="color:${c};border-color:${c}" data-label="${escAttr(l)}">+ ${esc(l)}</button>`; }).join("");
+      sug.querySelectorAll(".tag-suggest-btn").forEach(b => b.onclick = () => addTag(b.getAttribute("data-label")));
+    }
+    function addTag(label) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !tagTarget || !String(label || "").trim()) return;
+      const msg = document.getElementById("tagMsg"); msg.textContent = "adding…";
+      fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ targetType: tagTarget.type, targetId: tagTarget.id, author: investigatorName(), label }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => { document.getElementById("tagInput").value = ""; msg.textContent = ""; loadTags(caseId); })
+        .catch(e => msg.textContent = "failed: " + e.message);
+    }
+    function deleteTag(id) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      fetch(`/cases/${caseId}/tags/${id}`, { method: "DELETE" }).then(() => loadTags(caseId)).catch(() => {});
+    }
+
     // --- Ask the LLM about this case ----------------------------------------------
     function askStatusBadge(s) {
       const m = { answered: ["#1e3a2a", "#6bcB77"], partial: ["#3a3320", "#ffd93b"], unknown: ["#2a2f3a", "#9aa4b2"] };
@@ -1142,6 +1273,141 @@
         return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" style="color:#6aa9ff">${esc(id)}</a>` : esc(id);
       }).join(", ");
     }
+
+    // Kill-chain tactic phase view — technique→tactic map replicated from mitreTactics.ts.
+    const KC_TECHNIQUE_TACTIC = {
+      T1566:"Initial Access",T1190:"Initial Access",T1133:"Initial Access",T1078:"Initial Access",
+      T1195:"Initial Access",T1199:"Initial Access",T1189:"Initial Access",T1091:"Initial Access",T1200:"Initial Access",
+      T1059:"Execution",T1204:"Execution",T1203:"Execution",T1106:"Execution",T1569:"Execution",
+      T1047:"Execution",T1129:"Execution",T1559:"Execution",T1610:"Execution",T1648:"Execution",
+      T1547:"Persistence",T1543:"Persistence",T1136:"Persistence",T1505:"Persistence",T1546:"Persistence",
+      T1574:"Persistence",T1098:"Persistence",T1137:"Persistence",T1037:"Persistence",T1176:"Persistence",
+      T1554:"Persistence",T1053:"Persistence",T1197:"Persistence",
+      T1548:"Privilege Escalation",T1134:"Privilege Escalation",T1068:"Privilege Escalation",
+      T1484:"Privilege Escalation",T1611:"Privilege Escalation",
+      T1070:"Defense Evasion",T1027:"Defense Evasion",T1036:"Defense Evasion",T1112:"Defense Evasion",
+      T1562:"Defense Evasion",T1218:"Defense Evasion",T1140:"Defense Evasion",T1497:"Defense Evasion",
+      T1480:"Defense Evasion",T1055:"Defense Evasion",T1564:"Defense Evasion",T1222:"Defense Evasion",
+      T1127:"Defense Evasion",T1006:"Defense Evasion",T1620:"Defense Evasion",T1535:"Defense Evasion",
+      T1207:"Defense Evasion",T1014:"Defense Evasion",
+      T1003:"Credential Access",T1110:"Credential Access",T1555:"Credential Access",T1552:"Credential Access",
+      T1558:"Credential Access",T1556:"Credential Access",T1187:"Credential Access",T1212:"Credential Access",
+      T1040:"Credential Access",T1539:"Credential Access",T1649:"Credential Access",
+      T1087:"Discovery",T1083:"Discovery",T1057:"Discovery",T1018:"Discovery",T1082:"Discovery",
+      T1016:"Discovery",T1049:"Discovery",T1033:"Discovery",T1007:"Discovery",T1069:"Discovery",
+      T1482:"Discovery",T1135:"Discovery",T1046:"Discovery",T1518:"Discovery",T1010:"Discovery",
+      T1124:"Discovery",T1201:"Discovery",T1012:"Discovery",T1614:"Discovery",
+      T1021:"Lateral Movement",T1570:"Lateral Movement",T1550:"Lateral Movement",T1563:"Lateral Movement",
+      T1080:"Lateral Movement",T1072:"Lateral Movement",T1210:"Lateral Movement",T1534:"Lateral Movement",
+      T1005:"Collection",T1114:"Collection",T1056:"Collection",T1560:"Collection",T1113:"Collection",
+      T1119:"Collection",T1213:"Collection",T1074:"Collection",T1115:"Collection",T1039:"Collection",T1125:"Collection",
+      T1071:"Command and Control",T1105:"Command and Control",T1571:"Command and Control",T1572:"Command and Control",
+      T1090:"Command and Control",T1219:"Command and Control",T1095:"Command and Control",T1102:"Command and Control",
+      T1568:"Command and Control",T1573:"Command and Control",T1104:"Command and Control",T1008:"Command and Control",
+      T1041:"Exfiltration",T1048:"Exfiltration",T1567:"Exfiltration",T1029:"Exfiltration",T1020:"Exfiltration",
+      T1011:"Exfiltration",T1052:"Exfiltration",T1030:"Exfiltration",
+      T1486:"Impact",T1490:"Impact",T1489:"Impact",T1485:"Impact",T1491:"Impact",T1561:"Impact",
+      T1499:"Impact",T1498:"Impact",T1531:"Impact",T1496:"Impact",T1565:"Impact",T1657:"Impact",
+    };
+    const KC_KEYWORD_TACTIC = [
+      [/\b(ransom\w*|encrypt(ed|ion)? for impact|vssadmin\s+delete|shadow\s*cop(y|ies)\s+delet|inhibit\s+recovery|wbadmin\s+delete)\b/i, "Impact"],
+      [/\b(exfiltrat\w+|data\s+staged|rclone|megacmd)\b/i, "Exfiltration"],
+      [/\b(mimikatz|lsass|sekurlsa|kerberoast|asreproast|dcsync|ntds\.dit|credential\s+dump\w*|hashdump|wdigest|pass-?the-?(hash|ticket))\b/i, "Credential Access"],
+      [/\b(psexec|wmiexec|smbexec|lateral\s+move\w*|remote\s+desktop|\brdp\b|winrm|\bwmic\b\s+\/node|pass-?the-?)\b/i, "Lateral Movement"],
+      [/\b(uac\s*bypass|fodhelper|token\s+manipulation|sedebugprivilege|getsystem|named\s+pipe\s+impersonat)\b/i, "Privilege Escalation"],
+      [/\b(run\s*key|currentversion\\run|scheduled\s+task|schtasks|new-?service|sc\s+create|webshell|web\s+shell|autorun|wmi\s+event\s+subscription)\b/i, "Persistence"],
+      [/\b(defender\s+tamper\w*|disable\s+(defender|antivirus|amsi)|amsi\s+bypass|clear(ed)?\s+event\s+log|wevtutil\s+cl|obfuscat\w+|process\s+(injection|hollow\w*)|rundll32|mshta|regsvr32)\b/i, "Defense Evasion"],
+      [/\b(c2|c&c|command\s+and\s+control|beacon\w*|cobalt\s*strike|reverse\s+shell|ingress\s+tool\s+transfer)\b/i, "Command and Control"],
+      [/\b(phish\w+|spear-?phish\w*|malicious\s+(attachment|link)|drive-?by|exploit\s+public)\b/i, "Initial Access"],
+      [/\b(bloodhound|sharphound|adfind|net\s+(group|user|view)|nltest|whoami\s+\/|domain\s+trust|reconnaissance)\b/i, "Discovery"],
+      [/\b(powershell|cmd\.exe|wscript|cscript|\bwmi\b|invoke-expression|iex\s*\(|encodedcommand)\b/i, "Execution"],
+    ];
+    const KC_TACTIC_PRIORITY = [
+      "Impact","Exfiltration","Credential Access","Lateral Movement","Privilege Escalation",
+      "Persistence","Collection","Command and Control","Initial Access","Discovery",
+      "Defense Evasion","Execution",
+    ];
+    const KC_CHAIN_ORDER = [
+      "Initial Access","Execution","Persistence","Privilege Escalation",
+      "Defense Evasion","Credential Access","Discovery","Lateral Movement",
+      "Collection","Command and Control","Exfiltration","Impact",
+    ];
+    const KC_SEV_COLOR = {Critical:"#ff5c5c",High:"#ff9f43",Medium:"#ffd93b",Low:"#6bcB77",Info:"#6aa9ff"};
+    const KC_SEV_ORDER = ["Critical","High","Medium","Low","Info"];
+
+    function kcTacticForEvent(e) {
+      const techs = e.mitreTechniques || [];
+      const found = new Set();
+      for (const t of techs) {
+        const base = ((/T\d{4}/i.exec(t) || [])[0] || t).toUpperCase();
+        const tac = KC_TECHNIQUE_TACTIC[base];
+        if (tac) found.add(tac);
+      }
+      if (found.size > 0) return KC_TACTIC_PRIORITY.find(t => found.has(t));
+      const desc = e.description || "";
+      for (const [re, tac] of KC_KEYWORD_TACTIC) if (re.test(desc)) return tac;
+      return null;
+    }
+
+    let kcSelectedTac = null;
+
+    function kcSelect(tac, el) {
+      if (kcSelectedTac === tac) {
+        kcSelectedTac = null;
+        document.querySelectorAll(".kc-phase").forEach(p => {
+          p.classList.remove("kc-active");
+          const panel = p.querySelector(".kc-events-panel");
+          if (panel) panel.hidden = true;
+        });
+        return;
+      }
+      kcSelectedTac = tac;
+      document.querySelectorAll(".kc-phase").forEach(p => {
+        p.classList.remove("kc-active");
+        const panel = p.querySelector(".kc-events-panel");
+        if (panel) panel.hidden = true;
+      });
+      el.classList.add("kc-active");
+      const panel = el.querySelector(".kc-events-panel");
+      if (panel) panel.hidden = false;
+    }
+
+    function renderKillChain(ft) {
+      const byTactic = {};
+      for (const tac of KC_CHAIN_ORDER) byTactic[tac] = [];
+      byTactic["Uncategorized"] = [];
+      for (const e of ft) {
+        const tac = kcTacticForEvent(e);
+        if (tac && byTactic[tac]) byTactic[tac].push(e);
+        else byTactic["Uncategorized"].push(e);
+      }
+      const order = [...KC_CHAIN_ORDER, "Uncategorized"];
+      const cards = order.map(tac => {
+        const events = byTactic[tac] || [];
+        const count = events.length;
+        const isEmpty = count === 0;
+        const maxSev = KC_SEV_ORDER.find(s => events.some(e => e.severity === s));
+        const topColor = maxSev ? KC_SEV_COLOR[maxSev] : "#2a2f3a";
+        const isActive = kcSelectedTac === tac && !isEmpty;
+        const evHtml = events.map(e => {
+          const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
+          return `<div class="kc-event-row">` +
+            `<span class="sev-${esc(e.severity)}" style="font-size:10px;flex-shrink:0">${esc(e.timestamp || "(undated)")}</span>` +
+            `<span>${esc(desc)}</span>` +
+            `${e.mitreTechniques && e.mitreTechniques.length ? `<small style="color:#9aa4b2;flex-shrink:0">${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
+            `</div>`;
+        }).join("");
+        return `<div class="kc-phase${isEmpty ? " kc-empty" : ""}${isActive ? " kc-active" : ""}" ` +
+          `onclick="if(!this.classList.contains('kc-empty'))kcSelect('${escAttr(tac)}',this)">` +
+          `<div class="kc-phase-header" style="border-top-color:${topColor}">` +
+          `<span class="kc-tac">${esc(tac)}</span>` +
+          `<span class="kc-count" style="color:${isEmpty ? "#2a2f3a" : topColor}">${count}</span>` +
+          `</div>` +
+          `<div class="kc-events-panel"${isActive ? "" : " hidden"}>${evHtml}</div>` +
+          `</div>`;
+      }).join("");
+      document.getElementById("killChain").innerHTML = `<div class="kc-strip">${cards}</div>`;
+    }
     function enrichBadges(ioc) {
       if (!ioc.enrichments) return ""; // not enriched yet
       if (!ioc.enrichments.length) return ` <span style="color:#5b6472;font-size:11px">· checked, no intel</span>`;
@@ -1262,7 +1528,7 @@
             }
             const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
             return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge}${corro}${chain} ` +
-              `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)} ${commentChip("event", e.id)}` +
+              `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)} ${commentChip("event", e.id)} ${tagChip("event", e.id)}` +
               `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}` +
               `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
               `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +
@@ -1301,13 +1567,13 @@
         ? kq.map(q =>
             `<div class="finding"><strong>${q.pinned ? "📌 " : ""}${QMARK[q.status] || "❓"} ${esc(q.question)}</strong>` +
             `<br><small>${esc(q.answer || "unknown")}</small>` +
-            `${q.pointer ? `<br><small style="color:#6aa9ff">→ ${esc(q.pointer)}</small>` : ""} ${commentChip("question", q.id)}</div>`
+            `${q.pointer ? `<br><small style="color:#6aa9ff">→ ${esc(q.pointer)}</small>` : ""} ${commentChip("question", q.id)} ${tagChip("question", q.id)}</div>`
           ).join("")
         : "<div style='color:#9aa4b2'>Not assessed yet — run Synthesize.</div>";
 
       const iocs = state.iocs || [];
       document.getElementById("iocs").innerHTML = iocs.length
-        ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)} ${commentChip("ioc", i.id)}</div>`).join("")
+        ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)} ${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)}</div>`).join("")
         : "<div style='color:#9aa4b2'>No IOCs yet</div>";
 
       // Already scope-projected above (events + findings/IOCs/MITRE consistently).
@@ -1325,11 +1591,12 @@
       }
       lastFt = ft;
       renderTimelineEvents(ft);
+      renderKillChain(ft);
 
       const openThreads = state.openThreads.filter(t => t.status === "open");
       const closedThreads = state.openThreads.filter(t => t.status === "closed");
       document.getElementById("openThreads").innerHTML =
-        openThreads.map(t => `<div>• <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)} ${commentChip("thread", t.id)}</div>`).join("") || "<div style='color:#9aa4b2'>No open threads</div>";
+        openThreads.map(t => `<div>• <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)} ${commentChip("thread", t.id)} ${tagChip("thread", t.id)}</div>`).join("") || "<div style='color:#9aa4b2'>No open threads</div>";
       document.getElementById("closedThreads").innerHTML = closedThreads.length
         ? `<div style='margin-top:8px;color:#6bcB77'>Closed (${closedThreads.length}):</div>` +
           closedThreads.map(t => `<div style='color:#9aa4b2;text-decoration:line-through'>✓ <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("")
@@ -1343,7 +1610,7 @@
           const auto = String(f.id).startsWith("f-auto-")
             ? ` <span title="Auto-flagged from a ${esc(f.severity)}-severity artifact row — review and refine" style="background:#2a2233;color:#c79bff;border:1px solid #4a3a5a;border-radius:4px;padding:0 6px;font-size:10px">AUTO</span>` : "";
           return `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> ` +
-            `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)} ${commentChip("finding", f.id)}` +
+            `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)} ${commentChip("finding", f.id)} ${tagChip("finding", f.id)}` +
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${evidenceLinks(state.caseId, evidence)}</div>`;
@@ -1371,6 +1638,7 @@
       loadReportMeta(caseId);
       loadAssetGraph(caseId);
       loadComments(caseId);
+      loadTags(caseId);
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
@@ -1386,6 +1654,7 @@
         if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "comments_changed") loadComments(caseId);
+        else if (msg.type === "tags_changed") loadTags(caseId);
       };
     }
 
@@ -1511,9 +1780,16 @@
     document.getElementById("commentOverlay").addEventListener("click", (e) => { if (e.target.id === "commentOverlay") closeCommentModal(); });
     document.querySelector("main").addEventListener("click", (e) => {
       const chip = e.target.closest && e.target.closest(".comment-chip");
-      if (chip) openCommentModal(chip.getAttribute("data-ct"), chip.getAttribute("data-ci"));
+      if (chip) { openCommentModal(chip.getAttribute("data-ct"), chip.getAttribute("data-ci")); return; }
+      const tag = e.target.closest && e.target.closest(".tag-add");
+      if (tag) openTagModal(tag.getAttribute("data-tt"), tag.getAttribute("data-ti"));
     });
     document.getElementById("commentText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) postComment(); });
+    // Tag modal + delegated chip clicks (the tag-add buttons are handled by the main click handler above).
+    document.getElementById("tagAddBtn").onclick = () => addTag(document.getElementById("tagInput").value);
+    document.getElementById("tagClose").onclick = closeTagModal;
+    document.getElementById("tagOverlay").addEventListener("click", (e) => { if (e.target.id === "tagOverlay") closeTagModal(); });
+    document.getElementById("tagInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTag(e.target.value); } });
     document.getElementById("askBtn").onclick = doAsk;
     document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
     document.getElementById("connect").onclick = connect;
