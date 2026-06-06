@@ -486,6 +486,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Export the incident report as a Word (.docx) attachment, generated on demand from the
+  // current state (same scope/legitimate filtering as the report). Not persisted on disk —
+  // the binary is built fresh per request so it doesn't churn the cases/ folder.
+  app.get("/cases/:id/report.docx", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const buf = await options.reportWriter.docx(req.params.id);
+      res.type("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      res.setHeader("Content-Disposition", `attachment; filename="report-${req.params.id}.docx"`);
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(buf);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export the incident (forensic) timeline as Timesketch-compatible JSONL, generated on demand
   // from the current state (same scope/legitimate filtering as the report). Upload it into a
   // Timesketch sketch manually, or use the Push-to-Timesketch button below to do it in one click.
