@@ -115,6 +115,10 @@ describe("dashboard.html", () => {
     expect(html).toContain('"dfir.sectionOrder"');
     // Ask section comes before Executive Summary in the default markup.
     expect(html.indexOf("Ask the LLM about this case")).toBeLessThan(html.indexOf("Executive Summary"));
+    // A saved order that predates a section keeps that section ANCHORED at its natural HTML
+    // slot (so the default-first Ask panel still shows first), instead of dumping it at the end.
+    expect(html).toContain("savedExisting");
+    expect(html).not.toContain("new/unknown sections go to the end");
   });
 
   it("offers a unified multi-file import (images → /captures, data → /import)", async () => {

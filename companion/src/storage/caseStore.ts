@@ -10,6 +10,10 @@ export interface CreateCaseInput {
   aiProvider: string | null;
 }
 
+export function isValidCaseId(caseId: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(caseId) && !caseId.includes("..");
+}
+
 export class CaseStore {
   constructor(private readonly root: string) {}
 

@@ -48,6 +48,19 @@ describe("renderHtmlReport", () => {
     expect(html).toContain("&lt;script&gt;");       // the attacker-controlled text is rendered inert
   });
 
+  it("does not render unsafe markdown links from untrusted investigation text", () => {
+    const state = emptyState("c1");
+    state.findings.push({
+      id: "f1", severity: "High", title: "Unsafe markdown",
+      description: "[open](javascript:alert(1)) ![pixel](javascript:alert(2))",
+      relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open",
+    });
+    const html = renderHtmlReport(state);
+    expect(html).not.toContain("javascript:");
+    expect(html).toContain("[open]");
+    expect(html).toContain("![pixel]");
+  });
+
   it("does not auto-print the base report (the saved/downloaded HTML stays clean)", () => {
     const html = renderHtmlReport(emptyState("c1"));
     expect(html).not.toContain("window.print()");

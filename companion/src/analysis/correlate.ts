@@ -96,6 +96,9 @@ function mergeGroup(events: ForensicEvent[]): ForensicEvent {
     md5: events.find((e) => e.md5)?.md5,
     path: primary.path ?? events.find((e) => e.path)?.path,
     asset: primary.asset ?? events.find((e) => e.asset)?.asset,
+    processName: primary.processName ?? events.find((e) => e.processName)?.processName,
+    parentName: primary.parentName ?? events.find((e) => e.parentName)?.parentName,
+    chainCheck: primary.chainCheck ?? events.find((e) => e.chainCheck)?.chainCheck,
   };
   const lastEnd = ends[ends.length - 1];
   if (lastEnd && lastEnd !== merged.timestamp) merged.endTimestamp = lastEnd;
