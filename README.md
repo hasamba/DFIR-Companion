@@ -288,6 +288,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   and company name render at the top of the report title page.
 
 ### Ops
+- **Portable Windows EXE (no install)** — every `vX.Y.Z` tag attaches a `dfir-companion-vX.Y.Z-win-x64.zip`
+  to the GitHub Release. Unzip, drop your `.env` next to `dfir-companion.exe`, double-click,
+  open `http://127.0.0.1:4773/dashboard`. The same zip ships the dashboard assets and the native
+  `sharp` runtime — no Node install required. The browser add-on is a sibling
+  `dfir-capture-extension-vX.Y.Z.zip` on the same release. Built with **Node SEA** + esbuild +
+  `postject` (`companion/scripts/build-sea.mjs`, `npm run package:sea`).
 - **Docker / Docker Compose** — one-command install of the whole stack (server + dashboard +
   browser add-on) with `docker compose up`; build-from-source or pull the multi-arch image from
   GHCR. Localhost-only is preserved, evidence persists on a volume, and **no Ollama/LiteLLM are

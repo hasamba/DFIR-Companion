@@ -19,7 +19,8 @@
     "yeti": "tsx scripts/yeti-lookup.ts",
     "iris:push": "tsx scripts/push-iris.ts",
     "timesketch:push": "tsx scripts/push-timesketch.ts",
-    "icons": "tsx scripts/make-icons.ts"
+    "icons": "tsx scripts/make-icons.ts",
+    "package:sea": "node scripts/build-sea.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
@@ -35,6 +36,8 @@
     "@types/node": "^20.14.0",
     "@types/supertest": "^6.0.2",
     "@types/ws": "^8.18.1",
+    "esbuild": "^0.24.0",
+    "postject": "^1.0.0-alpha.6",
     "supertest": "^7.0.0",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",

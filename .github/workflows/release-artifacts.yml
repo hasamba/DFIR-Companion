@@ -1,0 +1,135 @@
+name: Build release artifacts
+
+# On every version tag (vX.Y.Z) build the portable Windows EXE (Node SEA) and the
+# Chrome/Comet extension zip, then attach them to a GitHub Release. Runs in parallel
+# with docker-publish.yml — the Docker image stays the recommended path for Linux/macOS;
+# this workflow produces the "double-click on Windows" download.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to attach artifacts to (e.g. v0.9.0). Defaults to the workflow ref."
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows-exe:
+    name: Build Windows EXE (Node SEA)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: companion/package-lock.json
+
+      - name: Install companion dependencies
+        working-directory: companion
+        run: npm ci
+
+      - name: Type-check + tests
+        working-directory: companion
+        run: |
+          npm run build
+          npm test
+
+      - name: Package SEA EXE
+        working-directory: companion
+        run: npm run package:sea
+
+      - name: Zip dist-sea
+        working-directory: companion
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $zipName = "dfir-companion-$tag-win-x64.zip"
+          Compress-Archive -Path dist-sea\* -DestinationPath $zipName -Force
+          Get-FileHash $zipName -Algorithm SHA256 | Format-List
+          "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: companion/${{ env.ZIP_NAME }}
+          if-no-files-found: error
+
+  extension-zip:
+    name: Build extension zip
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install extension dependencies
+        working-directory: extension
+        run: npm ci
+
+      - name: Tests
+        working-directory: extension
+        run: npm test
+
+      - name: Build extension
+        working-directory: extension
+        run: npm run build
+
+      - name: Zip dist
+        working-directory: extension
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          ZIP_NAME="dfir-capture-extension-${TAG}.zip"
+          cd dist
+          zip -r "../${ZIP_NAME}" .
+          cd ..
+          sha256sum "${ZIP_NAME}"
+          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: extension/${{ env.ZIP_NAME }}
+          if-no-files-found: error
+
+  release:
+    name: Attach to GitHub Release
+    needs: [windows-exe, extension-zip]
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f -exec ls -lh {} \;
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            artifacts/windows-exe/*
+            artifacts/extension-zip/*
+          fail_on_unmatched_files: true
+          # Don't auto-create; the release is published manually per CLAUDE.md.
+          draft: false
+          prerelease: false

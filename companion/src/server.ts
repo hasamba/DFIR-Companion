@@ -1,6 +1,6 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { config as loadDotenv } from "dotenv";
-import { join, isAbsolute, resolve } from "node:path";
+import { join, isAbsolute, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeFile, readFile, rm } from "node:fs/promises";
 import { ZodError } from "zod";
@@ -28,6 +28,8 @@ import { parseNetworkLogs } from "./analysis/networkImport.js";
 import type { NetworkImportOptions } from "./analysis/networkImport.js";
 import { parseKapeCsv } from "./analysis/kapeImport.js";
 import type { KapeImportOptions } from "./analysis/kapeImport.js";
+import { parseCybertriage } from "./analysis/cybertriageImport.js";
+import type { CybertriageImportOptions } from "./analysis/cybertriageImport.js";
 import { parseM365Audit } from "./analysis/m365Import.js";
 import type { M365ImportOptions } from "./analysis/m365Import.js";
 import { parseCloudTrail } from "./analysis/awsImport.js";
@@ -59,6 +61,7 @@ import type { ReportWriter } from "./reports/reportWriter.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
+import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
@@ -934,7 +937,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
     const kind = detectImportKind(originalName, text);
     if (kind === "unknown") {
-      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / CSV / log)" });
+      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / CSV / log)" });
     }
 
     try {
@@ -966,6 +969,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           case "velociraptor": return pipeline.importVelociraptor(caseId, text, base);
           case "network": return pipeline.importNetwork(caseId, text, base);
           case "kape": return pipeline.importKape(caseId, text, base);
+          case "cybertriage": return pipeline.importCybertriage(caseId, text, base);
           case "m365": return pipeline.importM365(caseId, text, base);
           case "aws": return pipeline.importAws(caseId, text, base);
           case "cloud": return pipeline.importCloudActivity(caseId, text, base);
@@ -1467,6 +1471,63 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `${preview.artifact} import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a Cyber Triage timeline export (JSONL / JSON array / CSV). Evidence-first; mapping is
+  // DETERMINISTIC (no AI extraction): scored rows map verdict-first, unscored process/task rows
+  // become Info evidence, the bulk File super-timeline is dropped unless `fileTelemetry` is set.
+  app.post("/cases/:id/import-cybertriage", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.json === "string" ? req.body.json
+      : typeof req.body?.csv === "string" ? req.body.csv : "";
+    const originalName = String(req.body?.filename ?? "cybertriage.jsonl");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const minSeverity: Severity | undefined =
+      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
+      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
+      : rawLevel === "info" ? "Info" : undefined;
+    const fileTelemetry = req.body?.fileTelemetry === true || /^(1|true|yes)$/i.test(String(req.body?.fileTelemetry ?? ""));
+    const ctOpts: CybertriageImportOptions | undefined =
+      minSeverity || fileTelemetry ? { ...(minSeverity ? { minSeverity } : {}), ...(fileTelemetry ? { fileTelemetry } : {}) } : undefined;
+
+    try {
+      const preview = parseCybertriage(text, ctOpts);
+      if (preview.format === "empty") return res.status(400).json({ error: "unrecognized file — expected a Cyber Triage timeline export (JSONL / JSON array / CSV with event_timestamp,epoch_timestamp,timestamp_description columns)" });
+      if (preview.kept === 0 && preview.iocs.length === 0) return res.status(400).json({ error: `no events or IOCs from the Cyber Triage export (${preview.total} row(s) parsed)` });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cybertriage.jsonl");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, rows: preview.total, notable: preview.notable, groups: preview.groups, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} Cyber Triage event(s)` });
+      void options.pipeline.importCybertriage(caseId, text, {
+        label: storedName,
+        idPrefix: `ct${seq}`,
+        importedAt,
+        cybertriage: ctOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `Cyber Triage import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
@@ -2123,7 +2184,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     app.get(route, async (_req, res) => {
       const file = route === "/favicon.ico" ? "/favicon-32.png" : route;
       try {
-        const buf = await readFile(new URL("../../public" + file, import.meta.url));
+        const buf = await readPublicAsset(file);
         res.type(type).set("Cache-Control", "public, max-age=86400").send(buf);
       } catch {
         res.status(404).end();
@@ -2133,7 +2194,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
 
   // Serve the dashboard.
   app.get("/dashboard", async (_req, res) => {
-    const html = await readFile(new URL("../../public/dashboard.html", import.meta.url), "utf8");
+    const html = await readPublicAsset("dashboard.html", "utf8");
     res.type("html").send(html);
   });
 
@@ -2169,16 +2230,23 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
 
 // Entry point when run directly. Load companion/.env so users can keep config
 // (AI provider/model/key, cases root) in a file instead of typing env vars.
-// Matches both the tsx dev entry (`server.ts`) and the compiled production entry
-// (`dist/server.js`, used by the Docker image) so `node dist/server.js` boots the server.
+// Matches three entries: the tsx dev entry (`server.ts`), the compiled production entry
+// (`dist/server.js`, Docker image), and the single-executable bundle (`process.execPath`
+// ends in `.exe`/the SEA binary). All three boot the server.
 const entryPath = process.argv[1] ?? "";
-if (entryPath.endsWith("server.ts") || entryPath.endsWith("server.js")) {
-  loadDotenv();
+const seaRuntime = isSeaRuntime();
+if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.js")) {
+  // In SEA mode anchor the package dir to the EXE's folder so .env / cases / public live
+  // next to the binary. In dev/Docker mode keep the original behaviour (resolve against
+  // this module's location → companion/).
+  const companionDir = seaRuntime
+    ? dirname(process.execPath) + "/"
+    : fileURLToPath(new URL("../", import.meta.url)); // .../companion/
+  loadDotenv({ path: seaRuntime ? join(companionDir, ".env") : undefined });
   const raw = process.env.DFIR_CASES_ROOT ?? "cases";
   // Anchor a relative cases root to the companion package directory, so the SAME
   // physical folder is used no matter which directory the server is launched from.
   // (Otherwise "./cases" resolves against cwd and you can end up with two folders.)
-  const companionDir = fileURLToPath(new URL("../", import.meta.url)); // .../companion/
   const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);
   logLine(`[DFIR] cases root: ${casesRoot}`);
 

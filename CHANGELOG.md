@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Portable Windows EXE (Node SEA) release artifact.** A new `npm run package:sea` script
+  (`companion/scripts/build-sea.mjs`) bundles the server with esbuild, generates a Node
+  SEA blob, injects it into a copy of the node binary via `postject`, and stages a
+  `dist-sea/` folder containing `dfir-companion.exe`, the `public/` dashboard assets, the
+  native `sharp` runtime (`node_modules/sharp` + `@img/sharp-*`), and a sample `.env`.
+  Double-click the EXE and open `http://127.0.0.1:4773/dashboard`; `.env` and `cases/`
+  live next to the binary. A new GitHub Actions workflow
+  (`.github/workflows/release-artifacts.yml`) builds the Windows EXE zip **and** the
+  Chrome/Comet extension zip on every `vX.Y.Z` tag and attaches both to the matching
+  GitHub Release, alongside the existing GHCR Docker image. Server runtime resolution
+  (`dashboard.html`, favicons, `.env`, `cases/`) is now SEA-aware via a small
+  `serverAssets.ts` helper — dev/Docker paths are unchanged.
 - **One-click PDF report export.** A new **Generate report (PDF)** option in the dashboard's **Export**
   menu (and a *Print / Save as PDF* link alongside the existing report links) generates the report and
   opens the print-styled HTML, auto-triggering the browser's print dialog where the destination is set to
