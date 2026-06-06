@@ -58,16 +58,14 @@ describe("splitVqlStatements", () => {
   });
 });
 
-describe("VelociraptorClient", () => {
-  it("runs VQL via the injected runner and returns rows", async () => {
-    let seen = "";
-    const runner: VqlRunner = async (vql) => { seen = vql; return { rows: [{ Pid: 1 }, { Pid: 2 }], raw: "" }; };
-    const client = new VelociraptorClient(cfg, runner);
-    const res = await client.run("SELECT * FROM pslist()");
-    expect(seen).toBe("SELECT * FROM pslist()");
+describe("VelociraptorClient.run (server-side)", () => {
+  it("splits VQL into statements (comments stripped) and returns rows", async () => {
+    let seen: string[] = [];
+    const runner: VqlRunner = async (statements) => { seen = statements; return { rows: [{ Pid: 1 }, { Pid: 2 }], raw: "" }; };
+    const res = await new VelociraptorClient(cfg, runner).run("-- c\nSELECT * FROM pslist()");
+    expect(seen).toEqual(["SELECT * FROM pslist()"]);
     expect(res.rows).toHaveLength(2);
     expect(res.total).toBe(2);
-    expect(res.truncated).toBe(false);
   });
 
   it("caps rows at maxRows and flags truncation", async () => {
@@ -78,14 +76,77 @@ describe("VelociraptorClient", () => {
     expect(res.truncated).toBe(true);
   });
 
-  it("trims VQL and rejects an empty query", async () => {
+  it("rejects a query that has no runnable VQL", async () => {
     const runner: VqlRunner = async () => ({ rows: [], raw: "" });
-    await expect(new VelociraptorClient(cfg, runner).run("   ")).rejects.toThrow(/VQL is required/);
+    await expect(new VelociraptorClient(cfg, runner).run("-- only a comment")).rejects.toThrow(/No runnable VQL/);
   });
 
   it("propagates runner errors", async () => {
     const runner: VqlRunner = async () => { throw new Error("boom"); };
     await expect(new VelociraptorClient(cfg, runner).run("SELECT 1")).rejects.toThrow(/boom/);
+  });
+});
+
+describe("VelociraptorClient.launchHunt", () => {
+  it("packages the pivots as a CLIENT artifact and launches a hunt across all clients", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];   // launchHunt runs one orchestration program
+      return { rows: [{ Hunt: { HuntId: "H.ABC123", state: "RUNNING" } }], raw: "" };
+    };
+    const res = await new VelociraptorClient({ ...cfg, guiUrl: "https://velo.example/" }, runner)
+      .launchHunt("-- file presence\nSELECT FullPath FROM glob(globs=\"C:/**/x.exe\")", "find x.exe");
+    expect(res.huntId).toBe("H.ABC123");
+    expect(res.artifact).toBe("Custom.Hunt.Companion.find_x_exe");
+    expect(res.sources).toEqual(["Pivot0"]);
+    expect(res.state).toBe("RUNNING");
+    expect(res.guiUrl).toBe("https://velo.example/app/index.html#/hunts/H.ABC123");
+    // The orchestration program defines a CLIENT artifact and launches a hunt on it.
+    expect(program).toContain("artifact_set(");
+    expect(program).toContain("type: CLIENT");
+    expect(program).toContain("hunt(");
+    expect(program).toContain("Custom.Hunt.Companion.find_x_exe");
+    expect(program).not.toContain("-- file presence");   // comments stripped from the artifact source
+  });
+
+  it("makes one artifact source per pivot statement", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.X1", state: "RUNNING" } }], raw: "" }; };
+    const res = await new VelociraptorClient(cfg, runner).launchHunt("SELECT 1\n\nSELECT 2", "multi");
+    expect(res.sources).toEqual(["Pivot0", "Pivot1"]);
+    expect(program).toContain("name: Pivot0");
+    expect(program).toContain("name: Pivot1");
+  });
+
+  it("throws when no hunt id comes back", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ Hunt: {} }], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).launchHunt("SELECT 1", "x")).rejects.toThrow(/hunt id/);
+  });
+});
+
+describe("VelociraptorClient.huntResults", () => {
+  it("reads a single-source hunt's results via artifact/source notation", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Name: "evil.exe", ClientId: "C.1" }], raw: "" }; };
+    const res = await new VelociraptorClient(cfg, runner).huntResults("H.ABC123", "Custom.Hunt.Companion.x", ["Pivot0"]);
+    expect(program).toBe("SELECT * FROM hunt_results(hunt_id='H.ABC123', artifact='Custom.Hunt.Companion.x/Pivot0')");
+    expect(res.rows).toHaveLength(1);
+  });
+
+  it("chains hunt_results across multiple sources (artifact/source refs)", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).huntResults("H.ABC123", "Custom.Hunt.Companion.x", ["Pivot0", "Pivot1"]);
+    expect(program).toContain("chain(");
+    expect(program).toContain("artifact='Custom.Hunt.Companion.x/Pivot0'");
+    expect(program).toContain("artifact='Custom.Hunt.Companion.x/Pivot1'");
+  });
+
+  it("rejects malformed ids (no VQL-string injection)", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    const c = new VelociraptorClient(cfg, runner);
+    await expect(c.huntResults("H.x' OR 1=1--", "Custom.x", [])).rejects.toThrow(/invalid hunt id/);
+    await expect(c.huntResults("H.ABC", "bad name", [])).rejects.toThrow(/invalid artifact/);
   });
 });
 
