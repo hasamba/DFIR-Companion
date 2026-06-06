@@ -7,6 +7,7 @@ import { projectScope } from "../analysis/scopeProject.js";
 import { applyLegitimate, filterLegitimateEvents, type LegitimateStore } from "../analysis/legitimate.js";
 import { renderMarkdownReport } from "./markdown.js";
 import { renderHtmlReport } from "./html.js";
+import { renderDocxReport } from "./docx.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
@@ -44,6 +45,16 @@ export class ReportWriter {
       { ...scoped, forensicTimeline: filterLegitimateEvents(scoped.forensicTimeline, markers) },
       markers,
     );
+  }
+
+  // Build the Word (.docx) export on demand. Uses the same scope/legitimate filtering as
+  // the canonical report so the .docx matches report.md and report.html exactly. NOT added
+  // to writeAll: the .docx is a snapshot deliverable, and writing a binary into the
+  // (often-Dropbox-synced) cases/ folder on every report regeneration causes sync churn.
+  async docx(caseId: string): Promise<Buffer> {
+    const state = await this.loadFilteredState(caseId);
+    const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
+    return renderDocxReport(state, meta);
   }
 
   // Export just the incident (forensic) timeline as CSV, on demand — without writing the
