@@ -1,0 +1,8 @@
+# Shell scripts and Docker build files must stay LF even when checked out on Windows, or they
+# break inside the Linux image: a `\r` gives bad-interpreter errors in scripts, trailing `\r`
+# in .dockerignore patterns stops them matching, and CRLF can trip multi-line `RUN` continuations.
+*.sh                 text eol=lf
+docker-entrypoint.sh text eol=lf
+Dockerfile           text eol=lf
+.dockerignore        text eol=lf
+docker-compose.yml   text eol=lf

@@ -12,6 +12,9 @@ dist/
 *.timestamp-*.mjs
 .gstack/
 
+# Docker: the pre-built browser add-on the companion container copies out for "Load unpacked".
+/addon/
+
 # Atomic-write temp files. atomicWrite.ts writes `<target>.tmp` then renames it over
 # the target; formatters (Prettier-style write-file-atomic) write `<src>.tmp.<pid>.<hex>`.
 # In a Dropbox/OneDrive-synced tree a sync/AV lock can orphan one mid-rename — keep these

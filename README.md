@@ -280,13 +280,19 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   (title page → executive summary → BIA, limitations, goals, glossary → incident/investigation
   timelines → investigation → conclusions/recommendations → attachments). Technical sections
   auto-fill from the case (incl. an **auto-calculated glossary** from a curated DFIR dictionary);
-  human-authored sections (title page with **multiple investigators / reviewer / incident manager**,
-  optional incident ID + distribution, BIA, recommendations…) are filled in the dashboard
-  **Case Details** panel, persist per case, override the derived content, and show a
-  "to be completed" placeholder until filled.
+  human-authored sections (optional **company name + logo branding**, title page with **multiple
+  investigators / reviewer / incident manager**, optional incident ID + distribution, BIA,
+  recommendations…) are filled in the dashboard **Case Details** panel, persist per case, override
+  the derived content, and show a "to be completed" placeholder until filled. The optional company
+  logo (raster image, uploaded in the dashboard, stored inline so the report stays self-contained)
+  and company name render at the top of the report title page.
 
 ### Ops
-- **Configurable** — port (`DFIR_PORT`), cases root, all behavior via `DFIR_*` env vars.
+- **Docker / Docker Compose** — one-command install of the whole stack (server + dashboard +
+  browser add-on) with `docker compose up`; build-from-source or pull the multi-arch image from
+  GHCR. Localhost-only is preserved, evidence persists on a volume, and **no Ollama/LiteLLM are
+  bundled** (point `DFIR_AI_*` at any endpoint). See [Docker / Docker Compose](#docker--docker-compose).
+- **Configurable** — port (`DFIR_PORT`), bind host (`DFIR_HOST`), cases root, all behavior via `DFIR_*` env vars.
 - **Customizable AI prompts** — override any of the five prompts (extraction / CSV / log / synthesis /
   ask) via env (`DFIR_AI_*_PROMPT` or `*_PROMPT_FILE`); file edits apply with no restart.
   `npm run prompts:eject` dumps the defaults to start from.
@@ -302,6 +308,8 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 │   └── dashboard.html Live dashboard, served by the companion at /dashboard.
 ├── docs/
 │   └── superpowers/plans/   The original 4 implementation plans.
+├── Dockerfile         Single-image build (server + dashboard + add-on); no Ollama/LiteLLM.
+├── docker-compose.yml Localhost-only Compose: ./cases volume, add-on → ./addon.
 └── cases/             Evidence + state output (gitignored). Location set by DFIR_CASES_ROOT.
 ```
 
@@ -356,6 +364,50 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
 Full configuration, HTTP endpoints, the case-folder layout, and the analysis model
 are documented in **[companion/README.md](companion/README.md)**.
 
+## Docker / Docker Compose
+
+Run the whole thing — companion server + dashboard + the browser add-on — in one container.
+**No Ollama or LiteLLM are bundled**; for AI you point `DFIR_AI_*` at any OpenAI-compatible
+endpoint (a model you host, a remote provider, or an Ollama/LiteLLM you run separately). With AI
+left unset the container still does full capture and all the deterministic importers.
+
+> **Prerequisite:** [Docker](https://docs.docker.com/get-docker/) with the Compose plugin
+> (`docker compose version`).
+
+**Localhost-only by design:** the container binds `0.0.0.0` internally, but Compose publishes the
+port to `127.0.0.1` on your host — so the dashboard is never exposed on your network.
+
+1. **Start it** (build from source):
+
+   ```
+   git clone https://github.com/hasamba/DFIR-Companion.git
+   cd DFIR-Companion
+   docker compose up -d --build      # → http://127.0.0.1:4773/dashboard
+   ```
+
+   Or pull the prebuilt image from GHCR instead of building:
+
+   ```
+   docker compose pull && docker compose up -d
+   # image: ghcr.io/hasamba/dfir-companion:latest
+   ```
+
+2. **Load the add-on** (capture). The container writes the pre-built, unpacked extension to
+   `./addon` on first start. In Chrome/Comet open `chrome://extensions`, enable **Developer
+   mode**, click **Load unpacked**, and select **`./addon/dist`** (a packaged
+   `dfir-companion-extension.zip` is dropped there too).
+
+3. Open `http://127.0.0.1:4773/dashboard`, click **+ New case**, then pick that case in the
+   extension popup and **Start**.
+
+**Data & config:**
+- Evidence and case state persist in **`./cases`** on the host (mounted volume) — survives
+  restarts and image rebuilds.
+- Configure via the `environment:` block in [`docker-compose.yml`](docker-compose.yml), or
+  uncomment `env_file: - .env` to use a `.env` file (copy `companion/.env.example`).
+- To reach an AI endpoint running on the host, use `http://host.docker.internal:<port>/v1`
+  (on Linux without Docker Desktop, also uncomment the `extra_hosts` line in the compose file).
+
 ## Environment variables (`companion/.env`)
 
 All companion behavior is configured via env vars. Shell vars override `.env`.
@@ -364,6 +416,7 @@ All companion behavior is configured via env vars. Shell vars override `.env`.
 | --- | --- | --- | --- |
 | `DFIR_CASES_ROOT` | no | `./cases` | Where case folders are written. Relative paths resolve against `companion/`. |
 | `DFIR_PORT` | no | `4773` | Port the localhost server binds to (1–65535). Change to avoid `EADDRINUSE` or run multiple companions in parallel. The extension and dashboard must use the same port. |
+| `DFIR_HOST` | no | `127.0.0.1` | Interface the server binds to. Localhost-only by default. The Docker image sets `0.0.0.0` (Compose maps the port back to `127.0.0.1` on the host). Only set `0.0.0.0` natively if you intentionally want LAN access — then put it behind your own auth/firewall. |
 | `DFIR_AI_PROVIDER` | no (capture-only if unset) | — | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini`. |
 | `DFIR_AI_MODEL` | when provider set | — | Model id understood by the provider (e.g. `gpt-4o`, `openai/gpt-4o-mini`, `ollama/llama3.1`, `google/gemini-2.0-flash-001`). |
 | `DFIR_AI_KEY` | when provider set | — | Provider API key. Leave blank for an auth-less local LiteLLM proxy. |

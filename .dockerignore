@@ -1,0 +1,20 @@
+# Build context is the repo root. Keep the image lean & reproducible — never copy host-built
+# artifacts, secrets, or forensic evidence into the build. npm ci runs INSIDE the image and
+# fetches the correct linux-native binaries (e.g. sharp), so host node_modules must be excluded.
+**/node_modules
+**/dist
+**/.env
+cases/
+addon/
+.git
+.gitignore
+.gitattributes
+.github
+.planning
+.gstack
+docs
+*.md
+companion/prompts
+# Atomic-write temp files (see .gitignore).
+*.tmp
+*.tmp.*
