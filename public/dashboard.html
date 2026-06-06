@@ -109,6 +109,26 @@
     .tag-current-pill .tag-del { background: transparent; border: 0; color: inherit; cursor: pointer; font-size: 12px; padding: 0 2px; opacity: .7; }
     .tag-current-pill .tag-del:hover { opacity: 1; }
     #tagInput { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 6px; padding: 6px; font-family: inherit; }
+    /* Hunt-pivot query generator (Velociraptor / KQL / Splunk / Sigma templates from an entity) */
+    .hunt-add { background: transparent; border: 1px solid #2a2f3a; color: #6b7280; border-radius: 10px;
+      padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+    .hunt-add:hover { color: #6aa9ff; border-color: #6aa9ff; }
+    .hunt-modal { width: min(740px, 95vw); }
+    .hunt-card { border: 1px solid #2a2f3a; border-radius: 6px; margin: 8px 0; overflow: hidden; }
+    .hunt-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 6px 10px; background: #11151c; font-size: 12px; color: #cbd3df; font-weight: 600; }
+    .hunt-copy { background: #2d6cdf; border: 0; color: #fff; border-radius: 5px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
+    .hunt-copy.copied { background: #2f8f4e; }
+    .hunt-card pre { margin: 0; padding: 10px; background: #0f1115; color: #d6deea; font-size: 11px;
+      white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Menlo, Consolas, monospace;
+      max-height: 240px; overflow: auto; }
+    /* Synthesis freshness + what-changed diff (shown above the findings) */
+    .synth-meta { font-size: 12px; color: #9aa4b2; margin: 0 0 8px; padding: 6px 9px;
+      border: 1px solid #2a2f3a; border-radius: 6px; background: #0f1115; }
+    .synth-meta .sm-line { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .synth-meta .sm-added { color: #6bcB77; } .synth-meta .sm-removed { color: #ff7a7a; } .synth-meta .sm-changed { color: #ffd93b; }
+    .synth-meta details { margin-top: 5px; } .synth-meta summary { cursor: pointer; color: #6aa9ff; }
+    .synth-meta .sm-item { display: block; margin: 2px 0 2px 8px; }
     /* Ask the LLM panel */
     .ask-row { display: flex; gap: 8px; margin-bottom: 10px; }
     .ask-row input { flex: 1; }
@@ -303,6 +323,17 @@
       </div>
     </div>
   </div>
+  <div id="huntOverlay" class="comment-overlay">
+    <div class="comment-modal hunt-modal">
+      <h3 id="huntTitle">Hunt queries</h3>
+      <div id="huntSub" style="color:#9aa4b2;font-size:12px;margin-bottom:6px"></div>
+      <div id="huntBody"></div>
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+        <button id="huntClose" style="background:#2a2f3a;">Close</button>
+        <span style="color:#9aa4b2;font-size:11px">Pivot templates — review &amp; adapt field/table names to your schema before running.</span>
+      </div>
+    </div>
+  </div>
   <div id="newCaseOverlay" class="comment-overlay">
     <div class="comment-modal">
       <h3>New case</h3>
@@ -331,7 +362,7 @@
       </div>
       <div id="askAnswer"></div>
     </section>
-    <section style="grid-column: 1 / -1"><h2>Executive Summary</h2><div id="summary">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>Executive Summary<button id="genExecBtn" type="button" title="Generate a management-facing executive summary with AI (review before saving it to the report)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genExecMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#9aa4b2"></span></h2><div id="summary">—</div><div id="execGenResult"></div></section>
     <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope (sorted by event time); updates in real time"></span><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
@@ -382,7 +413,7 @@
         <div id="assetList">—</div>
       </div>
     </section>
-    <section><h2>Findings</h2><div id="findings">—</div></section>
+    <section><h2>Findings</h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="findings">—</div></section>
     <section style="grid-column: 1 / -1"><h2>IOCs<button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
@@ -921,6 +952,192 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
       fetch(`/cases/${caseId}/tags/${id}`, { method: "DELETE" }).then(() => loadTags(caseId)).catch(() => {});
+    }
+
+    // --- Hunt-pivot query generator -----------------------------------------------
+    // From a forensic event or IOC, generate ready-to-adapt hunt/pivot queries for the tools
+    // analysts already run (Velociraptor VQL, Microsoft Defender/Sentinel KQL, Splunk SPL, and a
+    // Sigma skeleton). Deterministic templating from the entity's structured fields — no AI, no
+    // server round-trip, no cost. The Companion stays a post-detection layer: these PIVOT off a
+    // confirmed indicator, they don't author detections for it.
+    function huntChip(kind, id) {
+      return `<button class="hunt-add" data-hk="${escAttr(kind)}" data-hi="${escAttr(String(id))}" `
+        + `title="Generate hunt / pivot queries (Velociraptor, KQL, Splunk, Sigma)">🔍</button>`;
+    }
+    // Pull the indicators an entity carries into typed buckets the generators consume.
+    function huntContextFor(kind, e) {
+      const c = { hashes: [], ips: [], domains: [], urls: [], paths: [], processes: [], parent: "", host: "", label: "" };
+      if (kind === "ioc") {
+        const v = String(e.value || "");
+        c.label = `${e.type}: ${v}`;
+        if (e.type === "hash") c.hashes.push(v);
+        else if (e.type === "ip") c.ips.push(v);
+        else if (e.type === "domain") c.domains.push(v);
+        else if (e.type === "url") c.urls.push(v);
+        else if (e.type === "file") c.paths.push(v);
+        else if (e.type === "process") c.processes.push(v);
+        else c.paths.push(v);   // "other" — treat as a free string to match on
+      } else {
+        c.label = e.description || e.id;
+        if (e.sha256) c.hashes.push(e.sha256);
+        if (e.md5) c.hashes.push(e.md5);
+        if (e.path) c.paths.push(e.path);
+        if (e.processName) c.processes.push(e.processName);
+        if (e.parentName) c.parent = e.parentName;
+        if (e.asset) c.host = e.asset;
+      }
+      return c;
+    }
+    const hq = (s) => `"${String(s).replace(/"/g, '\\"')}"`;            // quote a value for a query
+    const hasAny = (c) => c.hashes.length || c.ips.length || c.domains.length || c.urls.length || c.paths.length || c.processes.length;
+
+    // Microsoft Defender / Sentinel KQL — one runnable query per relevant table.
+    function huntKql(c) {
+      const out = [];
+      if (c.host) out.push(`// scope to the affected host: | where DeviceName =~ ${hq(c.host)}`);
+      if (c.hashes.length) out.push(`DeviceFileEvents\n| where SHA256 in~ (${c.hashes.map(hq).join(", ")}) or MD5 in~ (${c.hashes.map(hq).join(", ")})`);
+      if (c.processes.length) out.push(`DeviceProcessEvents\n| where FileName in~ (${c.processes.map(hq).join(", ")})${c.parent ? `\n| where InitiatingProcessFileName =~ ${hq(c.parent)}` : ""}`);
+      if (c.ips.length) out.push(`DeviceNetworkEvents\n| where RemoteIP in~ (${c.ips.map(hq).join(", ")})`);
+      if (c.domains.length || c.urls.length) out.push(`DeviceNetworkEvents\n| where RemoteUrl has_any (${[...c.domains, ...c.urls].map(hq).join(", ")})`);
+      if (c.paths.length) out.push(`DeviceFileEvents\n| where FolderPath has_any (${c.paths.map(hq).join(", ")}) or FileName has_any (${c.paths.map(hq).join(", ")})`);
+      return out.join("\n\n");
+    }
+    // Velociraptor VQL — live-response style pivots.
+    function huntVql(c) {
+      const out = [];
+      if (c.processes.length) out.push(`-- running process\nSELECT Name, Pid, Ppid, CommandLine, Exe FROM pslist()\nWHERE ${c.processes.map((p) => `Name =~ ${hq(p)}`).join(" OR ")}${c.parent ? `\n-- parent: ${c.parent}` : ""}`);
+      if (c.hashes.length) out.push(`-- on-disk hash sweep (narrow the glob root before running — this is expensive)\nSELECT FullPath, Size, Mtime, hash(path=FullPath).SHA256 AS SHA256\nFROM glob(globs="C:/Users/**")\nWHERE SHA256 =~ ${hq(c.hashes[0])}`);
+      if (c.ips.length) out.push(`-- active connections\nSELECT Pid, Name, Status, Laddr.IP AS Local, Raddr.IP AS Remote FROM netstat()\nWHERE ${c.ips.map((ip) => `Raddr.IP =~ ${hq(ip)}`).join(" OR ")}`);
+      if (c.paths.length) out.push(`-- file presence\nSELECT FullPath, Size, Mtime FROM glob(globs=${hq(c.paths[0])})`);
+      return out.join("\n\n");
+    }
+    // Splunk SPL.
+    function huntSpl(c) {
+      const terms = [];
+      if (c.hashes.length) terms.push(`(${c.hashes.map((h) => `SHA256=${hq(h)} OR MD5=${hq(h)}`).join(" OR ")})`);
+      if (c.processes.length) terms.push(`(${c.processes.map((p) => `process_name=${hq(p)}`).join(" OR ")})`);
+      if (c.parent) terms.push(`parent_process_name=${hq(c.parent)}`);
+      if (c.ips.length) terms.push(`(${c.ips.map((ip) => `dest_ip=${hq(ip)} OR src_ip=${hq(ip)}`).join(" OR ")})`);
+      if (c.domains.length || c.urls.length) terms.push(`(${[...c.domains, ...c.urls].map((d) => `query="*${d}*" OR url="*${d}*"`).join(" OR ")})`);
+      if (c.paths.length) terms.push(`(${c.paths.map((p) => `file_path="*${p}*"`).join(" OR ")})`);
+      if (!terms.length) return "";
+      return `index=* ${c.host ? `host=${hq(c.host)} ` : ""}${terms.join(" OR ")}\n| table _time host process_name parent_process_name dest_ip url file_path`;
+    }
+    // Sigma rule skeleton — only meaningful for process/hash indicators.
+    function huntSigma(c) {
+      if (!c.processes.length && !c.hashes.length) return "";
+      const sel = [];
+      if (c.processes.length) sel.push(`    Image|endswith: '\\${c.processes[0]}'`);
+      if (c.parent) sel.push(`    ParentImage|endswith: '\\${c.parent}'`);
+      if (c.hashes.length) sel.push(`    Hashes|contains: '${c.hashes[0]}'`);
+      const tags = (lastState && Array.isArray(c._mitre) && c._mitre.length)
+        ? c._mitre.map((t) => `  - attack.${String(t).toLowerCase()}`).join("\n") : "  - attack.execution";
+      return `title: Hunt - ${String(c.label).slice(0, 60)}\nstatus: experimental\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n${sel.join("\n")}\n  condition: selection\nlevel: high\ntags:\n${tags}`;
+    }
+
+    function openHuntModal(kind, id) {
+      const entity = kind === "ioc"
+        ? ((lastState && lastState.iocs) || []).find((i) => String(i.id) === String(id))
+        : (lastFt || []).find((e) => String(e.id) === String(id));
+      if (!entity) return;
+      const c = huntContextFor(kind, entity);
+      if (kind === "event" && entity.mitreTechniques) c._mitre = entity.mitreTechniques;
+      document.getElementById("huntTitle").textContent = "Hunt queries";
+      document.getElementById("huntSub").textContent = c.label;
+      const cards = [
+        ["Microsoft Defender / Sentinel (KQL)", huntKql(c)],
+        ["Velociraptor (VQL)", huntVql(c)],
+        ["Splunk (SPL)", huntSpl(c)],
+        ["Sigma rule skeleton (YAML)", huntSigma(c)],
+      ].filter(([, q]) => q && q.trim());
+      const body = document.getElementById("huntBody");
+      body.innerHTML = hasAny(c)
+        ? cards.map(([tool, query], idx) =>
+            `<div class="hunt-card"><div class="hunt-card-head"><span>${esc(tool)}</span>`
+            + `<button class="hunt-copy" data-idx="${idx}">Copy</button></div>`
+            + `<pre id="huntQ${idx}">${esc(query)}</pre></div>`).join("")
+        : "<div style='color:#9aa4b2;font-size:12px'>This entity carries no hash / IP / domain / path / process to pivot on. Add structured fields (or tag it) to enable hunt queries.</div>";
+      body.querySelectorAll(".hunt-copy").forEach((b) => b.onclick = () => {
+        const text = document.getElementById("huntQ" + b.dataset.idx).textContent;
+        navigator.clipboard.writeText(text).then(() => {
+          b.textContent = "Copied ✓"; b.classList.add("copied");
+          setTimeout(() => { b.textContent = "Copy"; b.classList.remove("copied"); }, 1500);
+        }).catch(() => { b.textContent = "copy failed"; });
+      });
+      document.getElementById("huntOverlay").classList.add("open");
+    }
+    function closeHuntModal() { document.getElementById("huntOverlay").classList.remove("open"); }
+
+    // --- Executive summary generator ----------------------------------------------
+    // One AI call over the synthesized case → a management-facing prose summary. Shown for review;
+    // "Save" copies it into the report-meta Executive Summary field (which overrides the auto
+    // summary in the generated report).
+    function genExecSummary() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const btn = document.getElementById("genExecBtn");
+      const msg = document.getElementById("genExecMsg");
+      const out = document.getElementById("execGenResult");
+      btn.disabled = true; msg.textContent = "generating… (one AI call)"; out.innerHTML = "";
+      fetch(`/cases/${caseId}/executive-summary`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(d => {
+          msg.textContent = "";
+          const text = d.summary || "(no summary returned)";
+          out.innerHTML = `<div class="finding" style="border-left-color:#6aa9ff;margin-top:8px">`
+            + `<div style="white-space:pre-wrap">${esc(text)}</div>`
+            + `<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">`
+            + `<button id="execSaveBtn">Save to report's Executive Summary</button>`
+            + `<span id="execSaveMsg" style="color:#9aa4b2;font-size:12px"></span></div></div>`;
+          document.getElementById("execSaveBtn").onclick = () => {
+            const ta = document.getElementById("rm-executiveSummary");
+            if (ta) ta.value = text;
+            saveReportMeta();   // persists rm-executiveSummary alongside the rest of the report meta
+            document.getElementById("execSaveMsg").textContent = "saved ✓ — overrides the auto summary in the report";
+            document.getElementById("execSaveBtn").disabled = true;
+          };
+        })
+        .catch(e => { msg.textContent = ""; out.innerHTML = `<div style="color:#ff9f43;margin-top:8px">generate failed: ${esc(e.message)} — restart the companion server if this 404s</div>`; })
+        .finally(() => { btn.disabled = false; });
+    }
+
+    // --- Synthesis freshness + what-changed diff ----------------------------------
+    // Shows when synthesis last actually ran and how the findings changed since the prior run, so
+    // the analyst can see the effect of a re-synthesis instead of findings silently shuffling.
+    function relTime(iso) {
+      if (!iso) return "never";
+      const t = Date.parse(iso); if (isNaN(t)) return "unknown";
+      const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+      if (s < 60) return s + "s ago";
+      const m = Math.round(s / 60); if (m < 60) return m + "m ago";
+      const h = Math.round(m / 60); if (h < 24) return h + "h ago";
+      return Math.round(h / 24) + "d ago";
+    }
+    function loadSynthMeta(caseId) {
+      fetch(`/cases/${caseId}/synth-meta`).then(r => r.json()).then(renderSynthMeta).catch(() => {});
+    }
+    function renderSynthMeta(m) {
+      const el = document.getElementById("synthMeta");
+      if (!el) return;
+      if (!m || !m.lastSynthesizedAt) { el.innerHTML = ""; el.style.display = "none"; return; }
+      el.style.display = "block";
+      const d = m.lastDiff || { added: [], removed: [], severityChanged: [] };
+      const a = d.added.length, r = d.removed.length, c = d.severityChanged.length;
+      const counts = [];
+      if (a) counts.push(`<span class="sm-added">+${a} new</span>`);
+      if (r) counts.push(`<span class="sm-removed">−${r} dropped</span>`);
+      if (c) counts.push(`<span class="sm-changed">↕ ${c} severity</span>`);
+      const summary = counts.length ? counts.join(" · ") : "no change in findings";
+      let detail = "";
+      if (a || r || c) {
+        const items = [
+          ...d.added.map(t => `<span class="sm-item sm-added">+ ${esc(t)}</span>`),
+          ...d.removed.map(t => `<span class="sm-item sm-removed">− ${esc(t)}</span>`),
+          ...d.severityChanged.map(x => `<span class="sm-item sm-changed">↕ ${esc(x.title)} (${esc(x.from)} → ${esc(x.to)})</span>`),
+        ].join("");
+        detail = `<details><summary>what changed since the prior run</summary>${items}</details>`;
+      }
+      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span><span>${summary}</span></div>${detail}`;
     }
 
     // --- Ask the LLM about this case ----------------------------------------------
@@ -1528,7 +1745,7 @@
             }
             const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
             return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge}${corro}${chain} ` +
-              `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)} ${commentChip("event", e.id)} ${tagChip("event", e.id)}` +
+              `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)} ${commentChip("event", e.id)} ${tagChip("event", e.id)} ${huntChip("event", e.id)}` +
               `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}` +
               `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
               `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +
@@ -1573,7 +1790,7 @@
 
       const iocs = state.iocs || [];
       document.getElementById("iocs").innerHTML = iocs.length
-        ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)} ${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)}</div>`).join("")
+        ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)} ${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)} ${huntChip("ioc", i.id)}</div>`).join("")
         : "<div style='color:#9aa4b2'>No IOCs yet</div>";
 
       // Already scope-projected above (events + findings/IOCs/MITRE consistently).
@@ -1639,6 +1856,7 @@
       loadAssetGraph(caseId);
       loadComments(caseId);
       loadTags(caseId);
+      loadSynthMeta(caseId);
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
@@ -1651,7 +1869,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); loadSynthMeta(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
@@ -1782,7 +2000,9 @@
       const chip = e.target.closest && e.target.closest(".comment-chip");
       if (chip) { openCommentModal(chip.getAttribute("data-ct"), chip.getAttribute("data-ci")); return; }
       const tag = e.target.closest && e.target.closest(".tag-add");
-      if (tag) openTagModal(tag.getAttribute("data-tt"), tag.getAttribute("data-ti"));
+      if (tag) { openTagModal(tag.getAttribute("data-tt"), tag.getAttribute("data-ti")); return; }
+      const hunt = e.target.closest && e.target.closest(".hunt-add");
+      if (hunt) openHuntModal(hunt.getAttribute("data-hk"), hunt.getAttribute("data-hi"));
     });
     document.getElementById("commentText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) postComment(); });
     // Tag modal + delegated chip clicks (the tag-add buttons are handled by the main click handler above).
@@ -1790,6 +2010,11 @@
     document.getElementById("tagClose").onclick = closeTagModal;
     document.getElementById("tagOverlay").addEventListener("click", (e) => { if (e.target.id === "tagOverlay") closeTagModal(); });
     document.getElementById("tagInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTag(e.target.value); } });
+    // Hunt-pivot modal (the 🔍 buttons are handled by the main click handler above).
+    document.getElementById("huntClose").onclick = closeHuntModal;
+    document.getElementById("huntOverlay").addEventListener("click", (e) => { if (e.target.id === "huntOverlay") closeHuntModal(); });
+    // Executive summary generator (stopPropagation so the h2 click doesn't collapse the section).
+    document.getElementById("genExecBtn").addEventListener("click", (e) => { e.stopPropagation(); genExecSummary(); });
     document.getElementById("askBtn").onclick = doAsk;
     document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
     document.getElementById("connect").onclick = connect;
@@ -1839,6 +2064,7 @@
             `synthesized: ${p.findings} findings, ${p.mitreTechniques} techniques` + (p.attackerPath ? ", attack path" : "");
           // refresh state in case the WS push was missed
           fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
+          loadSynthMeta(caseId);
         })
         .catch(e => document.getElementById("status").textContent = "synthesis error: " + e.message);
     };

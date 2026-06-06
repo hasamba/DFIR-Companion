@@ -7,13 +7,15 @@ import type { CustomEntitiesStore } from "./anonEntities.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity } from "./stateTypes.js";
-import { deltaSchema, askSchema, type AskAnswer } from "./responseSchema.js";
+import { deltaSchema, askSchema, execSummarySchema, type AskAnswer, type ExecSummary } from "./responseSchema.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
 import { applySeverityFloor } from "./severityFloor.js";
 import { parseJsonLoose } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
+import { diffFindings } from "./findingsDiff.js";
+import type { SynthMetaStore } from "./synthMeta.js";
 import { correlateEvents } from "./correlate.js";
 import { detectTool } from "./toolDetect.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
@@ -380,7 +382,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -427,11 +429,34 @@ export const ASK_PROMPT = [
   }, null, 2),
 ].join("\n");
 
+// Write a management-facing executive summary of ONE case from its synthesized digest. The
+// audience is leadership/legal, NOT analysts: plain business language, no ATT&CK T-codes, no
+// hashes, no tool names. Grounded only in the provided evidence — no invented impact.
+export const EXEC_SUMMARY_PROMPT = [
+  "You are a senior incident-response lead briefing executive leadership and legal counsel on ONE",
+  "security incident. Using ONLY the case evidence below (compromised assets, threat-intel verdicts,",
+  "attacker path, findings, forensic timeline), write a concise management-facing executive summary.",
+  "",
+  "Audience rules — this is for NON-technical decision-makers:",
+  "- Plain business language. NO ATT&CK technique ids, NO hashes, NO tool/product names, NO event ids.",
+  "- Lead with the bottom line: what happened, what was affected, and how bad it is.",
+  "- Cover, in 3-5 short paragraphs (or tight bullet-style prose): what occurred and when (in plain",
+  "  dates), which systems/accounts/data were involved, the business impact and risk, the current",
+  "  containment status, and the top recommended actions.",
+  "- Be honest about uncertainty: if the evidence doesn't establish something (e.g. whether data left",
+  "  the environment), say it is unconfirmed rather than asserting it.",
+  "- Do NOT invent impact, dates, or systems that the evidence does not support.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({ summary: "the executive summary as a few plain-language paragraphs (use \\n\\n between them)" }, null, 2),
+].join("\n");
+
 export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROMPT);
 export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
 export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS_PROMPT);
 export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
+export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUMMARY_PROMPT);
 
 export interface PipelineOptions {
   provider?: AIProvider;
@@ -453,6 +478,9 @@ export interface PipelineOptions {
   retries?: number;
   backoffMs?: number;
   onState?: (state: InvestigationState) => void;
+  // Optional: record when synthesis actually ran + what changed in the findings, so the
+  // dashboard can show "last synthesized N ago" and a what-changed diff. Absent → not recorded.
+  synthMetaStore?: SynthMetaStore;
 }
 
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
@@ -1381,6 +1409,42 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
+  // Generate a management-facing executive summary of the case (single-shot, no state change).
+  // Text-only over the synthesized digest, like ask(); returns plain prose for the analyst to
+  // review and save into the report's executive-summary section.
+  async executiveSummary(caseId: string): Promise<ExecSummary> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("executive summary");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+
+    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    let events = selectSynthesisEvents(scopedEvents, max);
+    const renderEvent = (e: ForensicEvent) =>
+      `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
+    const findingsText = loaded.findings.slice(0, 150).map((f) => `[${f.severity}] ${f.title}`).join("\n") || "(none)";
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents);
+
+    const overhead = estimateTokens(getExecSummaryPrompt())
+      + estimateTokens(contextBlock + (loaded.attackerPath || "") + findingsText) + 300;
+    const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
+    if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
+    const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
+
+    const userPrompt =
+      contextBlock +
+      `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
+      `FINDINGS:\n${findingsText}\n\n` +
+      `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
+      `Write the executive summary as JSON.`;
+
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getExecSummaryPrompt(), userPrompt, images: [] });
+      return execSummarySchema.parse(parsed);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
   async synthesize(caseId: string, opts: { force?: boolean } = {}): Promise<InvestigationState> {
     const synthProvider = this.opts.synthesisProvider ?? this.requireProvider("synthesis");
     const loaded = await this.opts.stateStore.load(caseId);
@@ -1536,6 +1600,9 @@ export class AnalysisPipeline {
 
     await this.opts.stateStore.save(next);
     this.lastSynthHash.set(caseId, synthHash);   // remember these inputs so an identical re-run skips the AI call
+    // Record what this run changed (diff vs the findings that existed before the AI call) and
+    // when it ran — surfaced on the dashboard. Only reached on a real run; skips return early above.
+    await this.opts.synthMetaStore?.record(caseId, diffFindings(loaded.findings, next.findings));
     this.opts.onState?.(next);
     return next;
   }

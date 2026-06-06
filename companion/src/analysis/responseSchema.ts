@@ -85,3 +85,11 @@ export const askSchema = z.object({
 });
 
 export type AskAnswer = z.infer<typeof askSchema>;
+
+// Management-facing executive summary of the whole case (plain-language, no T-codes/hashes).
+// Lenient like the others so a slightly-off model response still parses.
+export const execSummarySchema = z.object({
+  summary: z.string().catch(""),
+});
+
+export type ExecSummary = z.infer<typeof execSummarySchema>;

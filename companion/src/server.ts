@@ -63,6 +63,7 @@ import { ReportMetaStore } from "./reports/reportMeta.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore } from "./analysis/tags.js";
+import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { byEventTime } from "./analysis/forensicSort.js";
@@ -115,6 +116,9 @@ export interface AppOptions {
   // re-fetch when a tag is added/removed.
   tagsStore?: TagsStore;
   onTags?: (caseId: string) => void;
+  // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
+  // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
+  synthMetaStore?: SynthMetaStore;
   // Called when an AI analysis window starts / finishes / fails, so the
   // server can push a live "AI status" indicator to dashboard clients.
   onAiStatus?: (caseId: string, event: AiStatusEvent) => void;
@@ -1963,6 +1967,30 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Generate a management-facing executive summary over the synthesized case (one text-only AI
+  // call). The dashboard shows it and can save it into report-meta.executiveSummary, which then
+  // overrides the auto-derived summary in the generated report.
+  app.post("/cases/:id/executive-summary", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for executive summary" });
+    try {
+      const result = await options.pipeline.executiveSummary(req.params.id);
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Last-synthesis metadata: when synthesis last actually ran + what changed in the findings.
+  // Backs the dashboard's "last synthesized N ago" indicator and the what-changed diff view.
+  app.get("/cases/:id/synth-meta", async (req: Request, res: Response) => {
+    if (!options.synthMetaStore) return res.status(501).json({ error: "synth metadata not configured" });
+    try {
+      return res.status(200).json(await options.synthMetaStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Add an analyst question to the case's open key questions (e.g. from Ask, when unknown).
   // It's pinned, so synthesis preserves it and answers it once the evidence supports it.
   app.post("/cases/:id/questions", async (req: Request, res: Response) => {
@@ -2242,6 +2270,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     onState: params.onState,
     anonStore: new AnonControlStore(params.store),
     customEntitiesStore: new CustomEntitiesStore(params.store),
+    synthMetaStore: new SynthMetaStore(params.store),
   });
 }
 
@@ -2252,6 +2281,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const reportMetaStore = new ReportMetaStore(store);
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
+  const synthMetaStore = new SynthMetaStore(store);
   const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore);
 
   const provider = buildProvider();
@@ -2272,6 +2302,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     tagsStore,
     onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
+    synthMetaStore,
     autoSynthesize,
     autoSynthesizeDebounceMs,
     onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
