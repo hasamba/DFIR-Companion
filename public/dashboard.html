@@ -164,9 +164,10 @@
     <button id="synthesize" data-tip="Derive findings, MITRE and attacker path from the timeline">Synthesize</button>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,application/json,text/csv,text/plain,image/png,image/jpeg,image/webp" style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import…</button>
-    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report, CSV, Timesketch JSONL, JSON state)">
+    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML or PDF, CSV, Timesketch JSONL, JSON state)">
       <option value="">Export…</option>
       <option value="report">Generate report (Markdown + HTML)</option>
+      <option value="report-pdf">Generate report (PDF)</option>
       <option value="timeline-csv">Forensic timeline (CSV)</option>
       <option value="timesketch-jsonl">Timesketch JSONL</option>
       <option value="state-json">Full case state (JSON)</option>
@@ -1573,9 +1574,32 @@
             document.getElementById("reportLinks").innerHTML =
               `<a href="/cases/${c}/report/report.html" target="_blank" rel="noopener">Open HTML</a>` +
               ` · <a href="/cases/${c}/report/report.html?download=1">Download HTML</a>` +
+              ` · <a href="/cases/${c}/report/report.html?print=1" target="_blank" rel="noopener">Print / Save as PDF</a>` +
               ` · <a href="/cases/${c}/report/report.md?download=1">Download Markdown</a>`;
           })
           .catch((err) => document.getElementById("status").textContent = "report failed: " + err.message);
+      } else if (action === "report-pdf") {
+        // PDF = generate the report, then open the print-styled HTML which auto-triggers the
+        // browser print dialog ("Save as PDF"). Open the tab synchronously (within this click
+        // gesture) so it isn't pop-up-blocked, then point it at the print view once generated.
+        const printUrl = `/cases/${c}/report/report.html?print=1`;
+        const win = window.open("about:blank", "_blank");
+        document.getElementById("status").textContent = "generating report…";
+        document.getElementById("reportLinks").innerHTML = "";
+        fetch(`/cases/${c}/report`, { method: "POST" })
+          .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+          .then(() => {
+            document.getElementById("status").textContent = "report written — opening print dialog";
+            if (win && !win.closed) win.location.href = printUrl; else window.open(printUrl, "_blank", "noopener");
+            document.getElementById("reportLinks").innerHTML =
+              `<a href="${printUrl}" target="_blank" rel="noopener">Print / Save as PDF</a>` +
+              ` · <a href="/cases/${c}/report/report.html" target="_blank" rel="noopener">Open HTML</a>` +
+              ` · <a href="/cases/${c}/report/report.md?download=1">Download Markdown</a>`;
+          })
+          .catch((err) => {
+            if (win && !win.closed) win.close();
+            document.getElementById("status").textContent = "report failed: " + err.message;
+          });
       } else if (action === "timeline-csv") {
         window.location.href = `/cases/${c}/incident-timeline.csv`;
       } else if (action === "timesketch-jsonl") {

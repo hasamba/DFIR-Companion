@@ -44,8 +44,8 @@ For each case the AI builds and keeps up to date:
   users/hosts, exfiltration, dwell time… each with an answer and a pointer to where to
   find/confirm it (or what to collect next).
 - **Investigation threads** — open leads and resolved ones.
-- **Reports** — a full incident-report in **Markdown and HTML** (print-to-PDF ready), plus
-  CSV and JSON exports.
+- **Reports** — a full incident-report in **Markdown, HTML, and PDF** (one-click print-to-PDF),
+  plus CSV and JSON exports.
 
 ## Features
 
@@ -250,10 +250,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   (which IoC touched each asset, and per asset all its IoCs) with Host/Account/Service toggles,
   **fullscreen**, **horizontal / vertical / radial** layouts, **zoom** (buttons + mouse-wheel), and
   click-a-node-to-focus. A *Compromised assets* section also appears in the report.
-- **Reports** — Markdown **and HTML** report (standalone, print-friendly → Save-as-PDF) + CSVs
-  (findings, IOCs incl. enrichment, capture timeline, forensic timeline incl. count/sources) + full
-  JSON state export. All of these — generate report (MD+HTML), forensic-timeline CSV, Timesketch JSONL, full
-  JSON state — are reachable from the dashboard's single **Export** menu.
+- **Reports** — Markdown **and HTML** report (standalone, print-friendly), plus a one-click **PDF**
+  export that opens the print-styled HTML and triggers the browser's *Save as PDF* dialog (zero
+  dependencies, fully offline) + CSVs (findings, IOCs incl. enrichment, capture timeline, forensic
+  timeline incl. count/sources) + full JSON state export. All of these — generate report (MD+HTML),
+  generate report (PDF), forensic-timeline CSV, Timesketch JSONL, full JSON state — are reachable from
+  the dashboard's single **Export** menu.
 - **Push to DFIR-IRIS** — push a case into a [DFIR-IRIS](https://dfir-iris.org/) instance with one
   click (dashboard **Push** menu → **DFIR-IRIS**, or `npm run iris:push -- <caseId>`). It **find-or-creates
   the IRIS case by name** (= the Companion case id) — re-exporting an existing case *updates* it — and

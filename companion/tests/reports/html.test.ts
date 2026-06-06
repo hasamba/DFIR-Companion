@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderHtmlReport } from "../../src/reports/html.js";
+import { renderHtmlReport, injectPrintTrigger } from "../../src/reports/html.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
@@ -36,5 +36,29 @@ describe("renderHtmlReport", () => {
     const html = renderHtmlReport(state);
     expect(html).not.toContain("<script>");        // the document contains no real <script> tag
     expect(html).toContain("&lt;script&gt;");       // the attacker-controlled text is rendered inert
+  });
+
+  it("does not auto-print the base report (the saved/downloaded HTML stays clean)", () => {
+    const html = renderHtmlReport(emptyState("c1"));
+    expect(html).not.toContain("window.print()");
+    expect(html).not.toContain("print-hint");
+  });
+});
+
+describe("injectPrintTrigger", () => {
+  it("inserts a print trigger + Save-as-PDF hint before </body>", () => {
+    const out = injectPrintTrigger(renderHtmlReport(emptyState("c1")));
+    expect(out).toContain("window.print()");
+    expect(out).toContain("print-hint");
+    expect(out).toContain("Save as PDF");
+    // The trigger lives inside the document body, not after it.
+    expect(out.indexOf("window.print()")).toBeLessThan(out.indexOf("</body>"));
+    // Screen-only chrome: the banner is hidden when actually printing so the saved PDF is clean.
+    expect(out).toContain(".print-hint { display: none !important; }");
+    expect(out.trim().endsWith("</html>")).toBe(true);
+  });
+
+  it("appends the trigger when the document has no </body>", () => {
+    expect(injectPrintTrigger("<p>hi</p>")).toContain("window.print()");
   });
 });

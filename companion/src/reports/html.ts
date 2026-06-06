@@ -54,6 +54,38 @@ function reportTitle(state: InvestigationState, meta: ReportMeta): string {
   return id.length > 0 ? `Incident Report — ${id}` : `Incident Report — ${state.caseId}`;
 }
 
+// PDF export, zero-dependency / offline-safe: rather than bundle a headless browser, we reuse
+// the report's existing print stylesheet and let the analyst's own browser render the PDF. This
+// fragment opens the print dialog on load (where the destination is set to "Save as PDF") and
+// shows an on-screen hint with a manual re-print button. Both the banner and the script are
+// screen-only (`@media print` hides them), so the saved PDF stays clean. It is injected on the
+// fly only when the report is opened with `?print=1`; the on-disk `report.html` is never altered.
+const PRINT_TRIGGER = `
+<div class="print-hint" role="note">
+  Use your browser's print dialog → set the destination to <b>Save as PDF</b>.
+  <button type="button" onclick="window.print()">Print again</button>
+</div>
+<style>
+  .print-hint { position: fixed; top: 0; left: 0; right: 0; z-index: 9999; margin: 0;
+    padding: 10px 16px; background: #16213a; color: #fff; text-align: center;
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+  .print-hint button { margin-left: 12px; padding: 2px 10px; cursor: pointer; color: #fff;
+    background: #24314f; border: 1px solid #4a587a; border-radius: 4px; }
+  body { padding-top: 48px; }
+  @media print { .print-hint { display: none !important; } body { padding-top: 0 !important; } }
+</style>
+<script>window.addEventListener("load", function () { setTimeout(function () { window.print(); }, 350); });</script>
+`;
+
+// Inject the print trigger into an already-rendered report HTML (before </body>). Pure string
+// transform — the caller applies it only for the in-browser "Save as PDF" view, never for the
+// downloadable file. Falls back to appending if the document has no </body>.
+export function injectPrintTrigger(html: string): string {
+  const idx = html.lastIndexOf("</body>");
+  return idx === -1 ? html + PRINT_TRIGGER : html.slice(0, idx) + PRINT_TRIGGER + html.slice(idx);
+}
+
 export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta()): string {
   const markdown = renderMarkdownReport(state, meta);
 

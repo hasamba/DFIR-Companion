@@ -39,6 +39,13 @@ describe("dashboard.html", () => {
     expect(html).toContain("/report/report.md?download=1");
   });
 
+  it("offers a PDF export (print-to-PDF) via the Export menu", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('value="report-pdf"');
+    expect(html).toContain("/report/report.html?print=1"); // opens the print-styled view
+    expect(html).toContain("Save as PDF");                  // the link/label the user sees
+  });
+
   it("offers an incident-timeline CSV export via the Export menu", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="exportSelect"');
