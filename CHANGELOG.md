@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **One-click PDF report export.** A new **Generate report (PDF)** option in the dashboard's **Export**
+  menu (and a *Print / Save as PDF* link alongside the existing report links) generates the report and
+  opens the print-styled HTML, auto-triggering the browser's print dialog where the destination is set to
+  **Save as PDF**. Zero new dependencies and fully offline/air-gap safe — it reuses the HTML export's
+  existing `@media print` stylesheet rather than bundling a headless browser. Served via
+  `GET /cases/:id/report/report.html?print=1`, which injects a screen-only print trigger on the fly (the
+  on-disk `report.html` and its download are never modified, so the saved PDF stays clean).
+
 ### Fixed
 - **No more `[enrich] health … DOWN` log spam while enrichment is off.** The background reachability
   poller used to re-probe every known-down provider (MISP/YETI) every 60s indefinitely — once they'd been

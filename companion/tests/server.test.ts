@@ -695,6 +695,15 @@ describe("state and report routes", () => {
     expect(dl.headers["content-type"]).toContain("text/markdown");
     expect(dl.headers["content-disposition"]).toContain('attachment; filename="report.md"');
 
+    // PDF export: ?print=1 serves the same HTML with a print trigger injected (no auto-print
+    // in the plain inline view), so the browser opens its "Save as PDF" dialog on load.
+    const print = await request(app).get("/cases/c1/report/report.html?print=1");
+    expect(print.status).toBe(200);
+    expect(print.headers["content-type"]).toContain("text/html");
+    expect(print.text).toContain("window.print()");
+    expect(print.headers["content-disposition"]).toBeUndefined(); // viewed in a tab, not downloaded
+    expect(html.text).not.toContain("window.print()");            // the plain view is untouched
+
     // Only known report files are served.
     expect((await request(app).get("/cases/c1/report/secrets.txt")).status).toBe(400);
   });

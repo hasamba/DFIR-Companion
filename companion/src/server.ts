@@ -57,6 +57,7 @@ import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
+import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { byEventTime } from "./analysis/forensicSort.js";
@@ -422,7 +423,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   });
 
   // Serve a generated report file for viewing or download (export as Markdown or HTML).
-  // Only the known report artifacts are served; `?download=1` forces a save dialog.
+  // Only the known report artifacts are served; `?download=1` forces a save dialog, and
+  // `?print=1` (HTML only) injects a print trigger so the browser opens its print dialog —
+  // the zero-dependency "Save as PDF" export. The on-disk file is never modified.
   app.get("/cases/:id/report/:file", async (req: Request, res: Response) => {
     const types: Record<string, string> = {
       "report.md": "text/markdown; charset=utf-8",
@@ -435,10 +438,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const buf = await readFile(join(store.reportsDir(req.params.id), file));
       res.type(types[file]);
-      if (req.query.download !== undefined) {
+      const download = req.query.download !== undefined;
+      if (download) {
         res.setHeader("Content-Disposition", `attachment; filename="${file}"`);
       }
       res.setHeader("Cache-Control", "private, no-cache");
+      // PDF export: an opened-in-browser HTML report that auto-triggers the print dialog.
+      // Mutually exclusive with download — the saved PDF must come from the print dialog, not a file.
+      if (file === "report.html" && req.query.print !== undefined && !download) {
+        return res.send(injectPrintTrigger(buf.toString("utf8")));
+      }
       return res.send(buf);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
