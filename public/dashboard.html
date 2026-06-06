@@ -990,36 +990,56 @@
     }
     const hq = (s) => `"${String(s).replace(/"/g, '\\"')}"`;            // quote a value for a query
     const hasAny = (c) => c.hashes.length || c.ips.length || c.domains.length || c.urls.length || c.paths.length || c.processes.length;
+    // Tools (Sysmon, EDR, the artifact) report image paths with a device prefix like
+    // `\\.\C:\…` or `\\?\C:\…` — strip it so the path is a usable filesystem path.
+    const cleanWinPath = (p) => String(p).trim().replace(/^\\\\[.?]\\/, "");
+    // Velociraptor's glob() accessor uses FORWARD slashes — a `\\.\C:\…\x.exe` path is unusable as-is.
+    const vqlGlob = (p) => cleanWinPath(p).replace(/\\/g, "/");
+    const baseName = (p) => { const parts = cleanWinPath(p).split(/[\\/]/); return parts[parts.length - 1] || cleanWinPath(p); };
 
+    // Velociraptor VQL — live-response pivots. Paths are normalized for the glob accessor; process
+    // and IP matches use exact (IN / lowcase) rather than regex so a value with `.` doesn't over-match.
+    function huntVql(c) {
+      const out = [];
+      if (c.processes.length) {
+        const names = c.processes.map((p) => hq(baseName(p).toLowerCase())).join(", ");
+        out.push(`-- running process (live)\nSELECT Pid, Ppid, Name, CommandLine, Exe\nFROM pslist()\nWHERE lowcase(string=Name) IN (${names})${c.parent ? `\n-- expected parent: ${baseName(c.parent)}` : ""}`);
+      }
+      if (c.paths.length) {
+        const g = vqlGlob(c.paths[0]);
+        const name = baseName(c.paths[0]);
+        out.push(`-- file presence (exact path) + its hashes\nSELECT FullPath, Size, Mtime, hash(path=FullPath) AS Hashes\nFROM glob(globs=${hq(g)})\n\n-- or locate it anywhere on C: by name\nSELECT FullPath, Size, Mtime FROM glob(globs=${hq("C:/**/" + name)})`);
+      }
+      if (c.hashes.length) {
+        out.push(`-- on-disk hash sweep (narrow the glob root — hashing every file is expensive)\nSELECT FullPath, Size, Mtime, hash(path=FullPath) AS Hashes\nFROM glob(globs="C:/Users/**")\nWHERE hash(path=FullPath).SHA256 =~ ${hq("(?i)" + c.hashes[0])}`);
+      }
+      if (c.ips.length) {
+        out.push(`-- active network connections\nSELECT Pid, Name, Status, Laddr.IP AS Local, Raddr.IP AS Remote, Raddr.Port AS RemotePort\nFROM netstat()\nWHERE Raddr.IP IN (${c.ips.map(hq).join(", ")})`);
+      }
+      return out.join("\n\n");
+    }
     // Microsoft Defender / Sentinel KQL — one runnable query per relevant table.
     function huntKql(c) {
       const out = [];
       if (c.host) out.push(`// scope to the affected host: | where DeviceName =~ ${hq(c.host)}`);
       if (c.hashes.length) out.push(`DeviceFileEvents\n| where SHA256 in~ (${c.hashes.map(hq).join(", ")}) or MD5 in~ (${c.hashes.map(hq).join(", ")})`);
-      if (c.processes.length) out.push(`DeviceProcessEvents\n| where FileName in~ (${c.processes.map(hq).join(", ")})${c.parent ? `\n| where InitiatingProcessFileName =~ ${hq(c.parent)}` : ""}`);
+      if (c.processes.length) out.push(`DeviceProcessEvents\n| where FileName in~ (${c.processes.map((p) => hq(baseName(p))).join(", ")})${c.parent ? `\n| where InitiatingProcessFileName =~ ${hq(baseName(c.parent))}` : ""}`);
       if (c.ips.length) out.push(`DeviceNetworkEvents\n| where RemoteIP in~ (${c.ips.map(hq).join(", ")})`);
       if (c.domains.length || c.urls.length) out.push(`DeviceNetworkEvents\n| where RemoteUrl has_any (${[...c.domains, ...c.urls].map(hq).join(", ")})`);
-      if (c.paths.length) out.push(`DeviceFileEvents\n| where FolderPath has_any (${c.paths.map(hq).join(", ")}) or FileName has_any (${c.paths.map(hq).join(", ")})`);
-      return out.join("\n\n");
-    }
-    // Velociraptor VQL — live-response style pivots.
-    function huntVql(c) {
-      const out = [];
-      if (c.processes.length) out.push(`-- running process\nSELECT Name, Pid, Ppid, CommandLine, Exe FROM pslist()\nWHERE ${c.processes.map((p) => `Name =~ ${hq(p)}`).join(" OR ")}${c.parent ? `\n-- parent: ${c.parent}` : ""}`);
-      if (c.hashes.length) out.push(`-- on-disk hash sweep (narrow the glob root before running — this is expensive)\nSELECT FullPath, Size, Mtime, hash(path=FullPath).SHA256 AS SHA256\nFROM glob(globs="C:/Users/**")\nWHERE SHA256 =~ ${hq(c.hashes[0])}`);
-      if (c.ips.length) out.push(`-- active connections\nSELECT Pid, Name, Status, Laddr.IP AS Local, Raddr.IP AS Remote FROM netstat()\nWHERE ${c.ips.map((ip) => `Raddr.IP =~ ${hq(ip)}`).join(" OR ")}`);
-      if (c.paths.length) out.push(`-- file presence\nSELECT FullPath, Size, Mtime FROM glob(globs=${hq(c.paths[0])})`);
+      // Match on FileName (reliable) + FolderPath (device prefix stripped, native backslashes kept).
+      if (c.paths.length) out.push(`DeviceFileEvents\n| where FileName has_any (${c.paths.map((p) => hq(baseName(p))).join(", ")}) or FolderPath has_any (${c.paths.map((p) => hq(cleanWinPath(p))).join(", ")})`);
       return out.join("\n\n");
     }
     // Splunk SPL.
     function huntSpl(c) {
       const terms = [];
       if (c.hashes.length) terms.push(`(${c.hashes.map((h) => `SHA256=${hq(h)} OR MD5=${hq(h)}`).join(" OR ")})`);
-      if (c.processes.length) terms.push(`(${c.processes.map((p) => `process_name=${hq(p)}`).join(" OR ")})`);
-      if (c.parent) terms.push(`parent_process_name=${hq(c.parent)}`);
+      if (c.processes.length) terms.push(`(${c.processes.map((p) => `process_name=${hq(baseName(p))}`).join(" OR ")})`);
+      if (c.parent) terms.push(`parent_process_name=${hq(baseName(c.parent))}`);
       if (c.ips.length) terms.push(`(${c.ips.map((ip) => `dest_ip=${hq(ip)} OR src_ip=${hq(ip)}`).join(" OR ")})`);
       if (c.domains.length || c.urls.length) terms.push(`(${[...c.domains, ...c.urls].map((d) => `query="*${d}*" OR url="*${d}*"`).join(" OR ")})`);
-      if (c.paths.length) terms.push(`(${c.paths.map((p) => `file_path="*${p}*"`).join(" OR ")})`);
+      // Match on file name (avoids backslash-escaping the full path).
+      if (c.paths.length) terms.push(`(${c.paths.map((p) => `file_name=${hq(baseName(p))} OR file_path="*${baseName(p)}*"`).join(" OR ")})`);
       if (!terms.length) return "";
       return `index=* ${c.host ? `host=${hq(c.host)} ` : ""}${terms.join(" OR ")}\n| table _time host process_name parent_process_name dest_ip url file_path`;
     }
@@ -1027,8 +1047,8 @@
     function huntSigma(c) {
       if (!c.processes.length && !c.hashes.length) return "";
       const sel = [];
-      if (c.processes.length) sel.push(`    Image|endswith: '\\${c.processes[0]}'`);
-      if (c.parent) sel.push(`    ParentImage|endswith: '\\${c.parent}'`);
+      if (c.processes.length) sel.push(`    Image|endswith: '\\${baseName(c.processes[0])}'`);
+      if (c.parent) sel.push(`    ParentImage|endswith: '\\${baseName(c.parent)}'`);
       if (c.hashes.length) sel.push(`    Hashes|contains: '${c.hashes[0]}'`);
       const tags = (lastState && Array.isArray(c._mitre) && c._mitre.length)
         ? c._mitre.map((t) => `  - attack.${String(t).toLowerCase()}`).join("\n") : "  - attack.execution";
@@ -1045,8 +1065,8 @@
       document.getElementById("huntTitle").textContent = "Hunt queries";
       document.getElementById("huntSub").textContent = c.label;
       const cards = [
-        ["Microsoft Defender / Sentinel (KQL)", huntKql(c)],
         ["Velociraptor (VQL)", huntVql(c)],
+        ["Microsoft Defender / Sentinel (KQL)", huntKql(c)],
         ["Splunk (SPL)", huntSpl(c)],
         ["Sigma rule skeleton (YAML)", huntSigma(c)],
       ].filter(([, q]) => q && q.trim());
