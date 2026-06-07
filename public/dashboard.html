@@ -98,7 +98,7 @@
     /* Analyst triage tags (hand labels — confirmed-malicious, false-positive, key-evidence, …) */
     .tag-pill { display: inline-block; border: 1px solid; border-radius: 9px; padding: 0 7px;
       font-size: 10px; line-height: 16px; margin-left: 4px; vertical-align: middle; background: #0f1115; }
-    .tag-add { background: transparent; border: 1px solid #2a2f3a; color: #6b7280; border-radius: 10px;
+    .tag-add { background: transparent; border: 1px solid #2a2f3a; color: #9aa4b2; border-radius: 10px;
       padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .tag-add:hover { color: #ffd93b; border-color: #ffd93b; }
     .tag-suggest-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
@@ -937,7 +937,9 @@
       }).join("");
     }
     function tagAddBtn(type, id) {
-      return `<button class="tag-add" data-tt="${escAttr(type)}" data-ti="${escAttr(String(id))}" title="Add / edit triage tags">🏷</button>`;
+      // 🏷 needs the emoji variation selector (U+FE0F) or Windows renders it as a faint
+      // monochrome glyph (picks up the dim .tag-add color) instead of the colored tag emoji.
+      return `<button class="tag-add" data-tt="${escAttr(type)}" data-ti="${escAttr(String(id))}" title="Add / edit triage tags">🏷️</button>`;
     }
     function tagChip(type, id) {
       return tagPills(type, id) + tagAddBtn(type, id);
