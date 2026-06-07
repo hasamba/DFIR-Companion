@@ -130,6 +130,10 @@ key/header signatures, most-specific→generic) and the route dispatches to the 
 `analyzeCsv`/`analyzeLog`). Images go to `POST /captures`. The per-format `import-*` routes still exist for
 programmatic use. When you add a new importer, **also add its signature to `importDetect.ts` + a dispatch case in
 the `/import` route**, or the unified button won't route to it. Export/Push are single dashboard menus too.
+The `/import` route also snapshots the forensic timeline before/after the importer and records what it added
+(`diffTimeline` → `ImportMetaStore`, `state/import-meta.json`) so the dashboard can show a "📥 last import N ago /
++N new events" banner + per-row `NEW` highlight above the timeline (the timeline analog of `synth-meta.json`) —
+this is at the route level, so the per-format `import-*` routes and script imports don't record it.
 
 **Cross-source correlation runs in `mergeDelta`** (`correlate.ts`): events describing the
 same artifact collapse into one — by exact dup (time+description, so re-imports don't
@@ -148,15 +152,16 @@ selection — the enabled provider names; **default = local-only** (MISP/YETI), 
 sections — title page, distribution, BIA, glossary, recommendations…), `comments.json`
 (investigator comments on entities — never wiped by synthesis), `tags.json`
 (analyst triage labels on entities — confirmed-malicious/false-positive/key-evidence/… — also never wiped by synthesis),
-`synth-meta.json` (when synthesis last actually ran + the findings diff for the "last synthesized N ago" / what-changed view; written by `synthesize` only on a real run, not a skip).
+`synth-meta.json` (when synthesis last actually ran + the findings diff for the "last synthesized N ago" / what-changed view; written by `synthesize` only on a real run, not a skip),
+`import-meta.json` (when the last import ran + its kind/file + the forensic-timeline diff for the "📥 last import N ago / +N new events" banner + per-row `NEW` highlight; written by the unified `/import` route after the importer completes — the timeline analog of `synth-meta.json`).
 
 **Per-case stores** follow the same pattern (atomic temp-file rename via `storage/atomicWrite.ts` —
 which **retries the rename through a transient `EPERM`/`EBUSY`/`EACCES` lock**, since `cases/` may live
 in a synced folder where Dropbox/OneDrive/AV briefly locks the file mid-rename; route every new store's
 save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
-`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`. Pure filters/transforms live next to
+`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `ImportMetaStore`. Pure filters/transforms live next to
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
-`backfillHighSeverityFindings`) and are unit-tested independently of I/O.
+`backfillHighSeverityFindings`, `diffFindings`, `diffTimeline`) and are unit-tested independently of I/O.
 
 **Threat-intel enrichment** (`enrichment/`): `EnrichmentProvider`s (VirusTotal, MalwareBazaar,
 AbuseIPDB, MISP, YETI, RockyRaccoon) look up IOCs by kind; `enrichService.ts` routes/throttles/
