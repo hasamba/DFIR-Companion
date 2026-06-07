@@ -103,6 +103,11 @@ export interface AppOptions {
   pipeline?: AnalysisPipeline;
   aiConfigured?: boolean;
   windowSize?: number;
+  // Safety-net flush interval. A `timer`/`click` capture buffers until `windowSize`
+  // accumulates (only a `navigation`/`tab_switch` flushes early), so a lone screenshot could
+  // sit unanalyzed indefinitely. A background sweep drains any non-empty buffer on this
+  // interval so even a single capture is analyzed. Default 5 min; set 0 to disable.
+  flushIntervalMs?: number;
   stateStore?: StateStore;
   reportWriter?: ReportWriter;
   // Human-authored report metadata (title page, distribution, BIA, glossary, recommendations…)
@@ -313,6 +318,23 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         detail: (err as Error).message,
       });
     }
+  }
+
+  // Safety-net periodic flush. A `timer`/`click` capture buffers until `windowSize` accumulates
+  // (only a `navigation`/`tab_switch` flushes early), so a single (or sub-window) capture could
+  // otherwise sit unanalyzed indefinitely. Every `flushIntervalMs` (default 5 min) drain any
+  // non-empty buffer so even one screenshot gets analyzed. `flush` is a no-op on an empty buffer
+  // or when AI is unconfigured, and per-case buffers only hold captures for AI-enabled cases
+  // (the route gates on `enabled`; pausing clears the buffer). `unref()` so the timer never keeps
+  // the process — or a test runner — alive.
+  const flushIntervalMs = options.flushIntervalMs ?? 5 * 60_000;
+  if (flushIntervalMs > 0 && options.pipeline) {
+    const sweep = setInterval(() => {
+      for (const [caseId, buf] of buffers) {
+        if (buf.length > 0) void flush(caseId);
+      }
+    }, flushIntervalMs);
+    sweep.unref?.();
   }
 
   // Analyze every non-duplicate capture taken since lastAnalyzedSeq — used when AI
@@ -910,23 +932,58 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Build a marker from one request item (kind/ref/note/label). Returns null when ref is empty
+  // so the caller can reject (single) or skip (batch). Shared by the single + batch routes.
+  const buildLegitMarker = (item: {
+    kind?: unknown; ref?: unknown; note?: unknown; label?: unknown;
+  }): LegitimateMarker | null => {
+    const rawKind = item?.kind;
+    const kind: LegitimateMarker["kind"] =
+      rawKind === "ioc" ? "ioc" : rawKind === "event" ? "event" : "finding";
+    const ref = String(item?.ref ?? "").trim();
+    if (!ref) return null;
+    const note = String(item?.note ?? "");
+    // Optional human-readable label (e.g. a forensic event's description) so the
+    // "Confirmed Legitimate" panel can show something meaningful for opaque ids.
+    const label = item?.label != null ? String(item.label) : undefined;
+    return { id: markerId(kind, ref), kind, ref, note, markedAt: new Date().toISOString(), ...(label ? { label } : {}) };
+  };
+
   app.post("/cases/:id/legitimate", async (req: Request, res: Response) => {
     try {
-      const rawKind = req.body?.kind;
-      const kind: LegitimateMarker["kind"] =
-        rawKind === "ioc" ? "ioc" : rawKind === "event" ? "event" : "finding";
-      const ref = String(req.body?.ref ?? "").trim();
-      if (!ref) return res.status(400).json({ error: "ref is required" });
-      const note = String(req.body?.note ?? "");
-      // Optional human-readable label (e.g. a forensic event's description) so the
-      // "Confirmed Legitimate" panel can show something meaningful for opaque ids.
-      const label = req.body?.label != null ? String(req.body.label) : undefined;
+      const marker = buildLegitMarker(req.body ?? {});
+      if (!marker) return res.status(400).json({ error: "ref is required" });
       const markers = await legitimate.load(req.params.id);
-      const id = markerId(kind, ref);
-      const marker: LegitimateMarker = { id, kind, ref, note, markedAt: new Date().toISOString(), ...(label ? { label } : {}) };
-      const next = [...markers.filter((m) => m.id !== id), marker];
+      const next = [...markers.filter((m) => m.id !== marker.id), marker];
       await legitimate.save(req.params.id, next);
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it
+      return res.status(200).json(next);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Mark MANY entities legitimate in one shot — one read-modify-write + a SINGLE re-synthesis,
+  // instead of N concurrent /legitimate calls that would race on legitimate.json (last write wins)
+  // and each kick off their own re-synthesis. The dashboard's bulk "Mark Legitimate" uses this.
+  // Body: { items: [{ kind, ref, note?, label? }, …], note? } — a top-level note is the fallback
+  // reason for items that don't carry their own.
+  app.post("/cases/:id/legitimate/batch", async (req: Request, res: Response) => {
+    try {
+      const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
+      const fallbackNote = req.body?.note != null ? String(req.body.note) : "";
+      const built = rawItems
+        .map((it: { kind?: unknown; ref?: unknown; note?: unknown; label?: unknown }) =>
+          buildLegitMarker({ ...it, note: it?.note ?? fallbackNote }))
+        .filter((m: LegitimateMarker | null): m is LegitimateMarker => m !== null);
+      if (!built.length) return res.status(400).json({ error: "at least one valid item (with a ref) is required" });
+      const markers = await legitimate.load(req.params.id);
+      // De-dupe within the batch and against existing markers (last occurrence wins) by id.
+      const byId = new Map<string, LegitimateMarker>(markers.map((m) => [m.id, m]));
+      for (const m of built) byId.set(m.id, m);
+      const next = [...byId.values()];
+      await legitimate.save(req.params.id, next);
+      resynthesizeInBackground(req.params.id); // ONE re-synthesis for the whole batch
       return res.status(200).json(next);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -2347,9 +2404,17 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const autoSynthesize = (process.env.DFIR_AI_AUTO_SYNTHESIZE ?? "on").toLowerCase() !== "off";
   const autoSynthesizeDebounceMs = Number(process.env.DFIR_AI_AUTO_SYNTHESIZE_MS) || 8000;
 
+  // Safety-net flush: drain any non-empty capture buffer on this interval so a lone
+  // `timer`/`click` screenshot is still analyzed instead of waiting for a full window.
+  // Default 5 min; set DFIR_FLUSH_INTERVAL_MS=0 to disable.
+  const flushIntervalMs = process.env.DFIR_FLUSH_INTERVAL_MS === "0"
+    ? 0
+    : (Number(process.env.DFIR_FLUSH_INTERVAL_MS) || undefined);
+
   const app = createApp(store, {
     pipeline: wiredPipeline,
     aiConfigured: Boolean(provider),
+    flushIntervalMs,
     stateStore,
     reportWriter,
     reportMetaStore,

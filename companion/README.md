@@ -292,10 +292,16 @@ always contain the real data ("tokenize-in-transit").
   saved setting).
 
 **Live capture and conclusions.** While you browse, the per-window extraction builds
-the forensic timeline + investigation log. Findings, MITRE and the attacker path come
-from the synthesis pass, which by default now runs **automatically and debounced**
-during live capture (`DFIR_AI_AUTO_SYNTHESIZE=on`, ~8 s after the last screenshot in a
-burst) and pushes updates to the dashboard. You can also trigger it manually with the
+the forensic timeline + investigation log. Screenshots are analyzed in **windows** (a
+window of `--window` captures, default 4); a `timer`/`click` capture buffers until the
+window fills, while a page **navigation** or **tab switch** flushes the buffer early. So
+the AI doesn't always wait for four — a navigation flushes a lone screenshot immediately — but a
+single hotkey snap (trigger `timer`) followed by idle would otherwise sit unanalyzed. A
+**safety-net sweep** (`DFIR_FLUSH_INTERVAL_MS`, default 5 min; `0` disables) drains any
+leftover buffer on its interval so even one screenshot is eventually analyzed. Findings,
+MITRE and the attacker path come from the synthesis pass, which by default now runs
+**automatically and debounced** during live capture (`DFIR_AI_AUTO_SYNTHESIZE=on`, ~8 s
+after the last screenshot in a burst) and pushes updates to the dashboard. You can also trigger it manually with the
 dashboard **Synthesize** button, `POST /cases/:id/synthesize`, or `npm run synthesize`.
 Set `DFIR_AI_AUTO_SYNTHESIZE=off` (or raise `DFIR_AI_AUTO_SYNTHESIZE_MS`) to reduce
 cost. After changing server code, **restart `npm run dev`** so the live pipeline picks

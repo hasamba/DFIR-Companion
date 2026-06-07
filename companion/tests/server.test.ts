@@ -139,6 +139,41 @@ describe("server analysis wiring", () => {
     expect(state.findings).toHaveLength(1);
   });
 
+  it("periodic flush analyzes a lone buffered capture that never fills a window", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-flush-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [{ id: "f1", severity: "High", title: "Hit", description: "d",
+          relatedIocs: [], mitreTechniques: [], status: "open" }],
+        iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        timelineNote: "n", summary: "s",
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    // windowSize 10 so a single capture never fills a window; a short flush interval is the
+    // only thing that can drain it. `timer` is NOT a SIGNIFICANT trigger, so it stays buffered.
+    const app = createApp(store, { pipeline, windowSize: 10, flushIntervalMs: 40 });
+
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
+    await request(app).post("/captures").send({
+      caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
+      triggerType: "timer", imageBase64: await pngBase64(),
+    });
+
+    // No navigation/tab_switch and the window is far from full, so analysis only happens once
+    // the periodic sweep fires. Poll the state until the finding lands.
+    let state = await stateStore.load("c1");
+    for (let i = 0; i < 40 && state.findings.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      state = await stateStore.load("c1");
+    }
+    expect(state.findings).toHaveLength(1);
+  });
+
   it("auto-synthesizes (debounced) after a capture window when enabled", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-autosynth-"));
     const store = new CaseStore(root);
@@ -641,6 +676,54 @@ describe("server analysis wiring", () => {
     const stored = res.body.find((m: { kind: string }) => m.kind === "event");
     expect(stored).toMatchObject({ kind: "event", ref: "e1", label: "client admin task" });
     expect(stored.id).toBe("event:e1");
+  });
+
+  it("marks many events legitimate in one batch request (single write, fallback note, dedupe)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-legit-batch-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "admin task 1", severity: "Medium",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "admin task 2", severity: "Medium",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await stateStore.save(seeded);
+
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        timelineNote: "", summary: "", forensicEvents: [],
+      })),
+      stateStore,
+      legitimateStore: new (await import("../src/analysis/legitimate.js")).LegitimateStore(store),
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const legitApp = createApp(store, { pipeline, stateStore });
+
+    const res = await request(legitApp).post("/cases/c1/legitimate/batch").send({
+      note: "client's own admin",
+      items: [
+        { kind: "event", ref: "e1", label: "admin task 1" },
+        { kind: "event", ref: "e2", label: "admin task 2", note: "specific reason" },
+        { kind: "event", ref: "" }, // skipped: no ref
+      ],
+    });
+    expect(res.status).toBe(200);
+    const events = res.body.filter((m: { kind: string }) => m.kind === "event");
+    expect(events).toHaveLength(2);
+    expect(events.find((m: { ref: string }) => m.ref === "e1")).toMatchObject({ id: "event:e1", note: "client's own admin" });
+    expect(events.find((m: { ref: string }) => m.ref === "e2")).toMatchObject({ id: "event:e2", note: "specific reason" });
+
+    // Persisted (one write) — reload via GET reflects the same two markers.
+    const after = await request(legitApp).get("/cases/c1/legitimate");
+    expect(after.body.filter((m: { kind: string }) => m.kind === "event")).toHaveLength(2);
+
+    // Empty/invalid batch is rejected.
+    const bad = await request(legitApp).post("/cases/c1/legitimate/batch").send({ items: [] });
+    expect(bad.status).toBe(400);
   });
 
   it("enriches IOCs via configured providers and annotates them in state", async () => {
