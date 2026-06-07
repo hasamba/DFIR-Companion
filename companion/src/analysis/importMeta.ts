@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { TimelineDiff } from "./timelineDiff.js";
+import type { IocsDiff } from "./iocsDiff.js";
 
 // Lightweight per-case record of the LAST import: when it ran, the detected kind/file, and what it
 // added to (or merged in) the forensic timeline. Kept in a side file (`state/import-meta.json`) so
@@ -17,15 +18,29 @@ const diffEventSchema = z.object({
   severity: z.string().catch("Info"),
 });
 
+const diffIocSchema = z.object({
+  value: z.string().catch(""),
+  type: z.string().catch("other"),
+});
+
 export const importMetaSchema = z.object({
   lastImportedAt: z.string().catch(""),
   lastImportKind: z.string().catch(""),
   lastImportFile: z.string().catch(""),
+  // Forensic-timeline diff (events the import added / correlation absorbed).
   addedCount: z.number().catch(0),     // true total added (the detail list may be capped)
   removedCount: z.number().catch(0),   // true total absorbed/merged by correlation
   lastDiff: z.object({
     added: z.array(diffEventSchema).catch([]),
     removed: z.array(diffEventSchema).catch([]),
+  }).nullable().catch(null),
+  // IOC diff (indicators the import added). Older import-meta.json files predate these — the
+  // .catch defaults make them load cleanly as "no IOC change".
+  iocsAddedCount: z.number().catch(0),
+  iocsRemovedCount: z.number().catch(0),
+  iocsDiff: z.object({
+    added: z.array(diffIocSchema).catch([]),
+    removed: z.array(diffIocSchema).catch([]),
   }).nullable().catch(null),
 });
 
@@ -34,6 +49,7 @@ export type ImportMeta = z.infer<typeof importMetaSchema>;
 const EMPTY: ImportMeta = {
   lastImportedAt: "", lastImportKind: "", lastImportFile: "",
   addedCount: 0, removedCount: 0, lastDiff: null,
+  iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
 };
 
 // Cap how many added/removed events we store in the detail list — a single import can add
@@ -44,7 +60,8 @@ const MAX_LISTED = 500;
 export interface ImportRecord {
   kind: string;   // detected import kind: "thor" | "siem" | "chainsaw" | ...
   file: string;   // stored filename of the imported evidence
-  diff: TimelineDiff;
+  diff: TimelineDiff;   // forensic-timeline diff
+  iocsDiff: IocsDiff;   // IOC diff
 }
 
 export class ImportMetaStore {
@@ -74,6 +91,12 @@ export class ImportMetaStore {
       lastDiff: {
         added: rec.diff.added.slice(0, MAX_LISTED),
         removed: rec.diff.removed.slice(0, MAX_LISTED),
+      },
+      iocsAddedCount: rec.iocsDiff.added.length,
+      iocsRemovedCount: rec.iocsDiff.removed.length,
+      iocsDiff: {
+        added: rec.iocsDiff.added.slice(0, MAX_LISTED),
+        removed: rec.iocsDiff.removed.slice(0, MAX_LISTED),
       },
     };
     await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));

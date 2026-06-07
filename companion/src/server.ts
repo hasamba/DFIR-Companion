@@ -56,7 +56,7 @@ import { YetiProvider } from "./enrichment/yeti.js";
 import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
-import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity, ForensicEvent } from "./analysis/stateTypes.js";
+import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity, ForensicEvent, IOC } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
@@ -67,6 +67,7 @@ import { TagsStore } from "./analysis/tags.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
+import { diffIocs } from "./analysis/iocsDiff.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { byEventTime } from "./analysis/forensicSort.js";
@@ -1158,22 +1159,27 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         }
       };
 
-      // Snapshot the forensic timeline BEFORE the import so the .then() below can record what this
-      // import added (the "last import" diff the dashboard shows above the timeline). Best-effort.
+      // Snapshot the forensic timeline + IOCs BEFORE the import so the .then() below can record what
+      // this import added (the "last import" diff the dashboard shows above the timeline and IOCs).
       let timelineBefore: ForensicEvent[] = [];
+      let iocsBefore: IOC[] = [];
       if (options.importMetaStore && options.stateStore) {
-        try { timelineBefore = (await options.stateStore.load(caseId)).forensicTimeline; } catch { /* keep [] */ }
+        try { const s = await options.stateStore.load(caseId); timelineBefore = s.forensicTimeline; iocsBefore = s.iocs; } catch { /* keep [] */ }
       }
 
       run()
         .then(async () => {
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          // Record what this import added to the forensic timeline, BEFORE resynthesis (which
-          // preserves the timeline). Best-effort: a meta failure must not break the import.
+          // Record what this import added to the forensic timeline + IOCs, BEFORE resynthesis (which
+          // preserves both). Best-effort: a meta failure must not break the import.
           if (options.importMetaStore && options.stateStore) {
             try {
-              const timelineAfter = (await options.stateStore.load(caseId)).forensicTimeline;
-              await options.importMetaStore.record(caseId, { kind, file: storedName, diff: diffTimeline(timelineBefore, timelineAfter) });
+              const s = await options.stateStore.load(caseId);
+              await options.importMetaStore.record(caseId, {
+                kind, file: storedName,
+                diff: diffTimeline(timelineBefore, s.forensicTimeline),
+                iocsDiff: diffIocs(iocsBefore, s.iocs),
+              });
               options.onImportMeta?.(caseId);
             } catch { /* non-fatal */ }
           }

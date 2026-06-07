@@ -164,8 +164,9 @@
     .synth-meta .sm-added { color: #6bcB77; } .synth-meta .sm-removed { color: #ff7a7a; } .synth-meta .sm-changed { color: #ffd93b; }
     .synth-meta details { margin-top: 5px; } .synth-meta summary { cursor: pointer; color: #6aa9ff; }
     .synth-meta .sm-item { display: block; margin: 2px 0 2px 8px; }
-    /* "New since last import" highlight on forensic-timeline rows + its badge (see #importMeta) */
+    /* "New since last import" highlight on forensic-timeline / IOC rows + its badge (see #importMeta) */
     .ev-row.ev-new { box-shadow: inset 3px 0 0 #6bcB77; }
+    .ioc-new { box-shadow: inset 3px 0 0 #6bcB77; padding-left: 6px; border-radius: 3px; }
     .ev-new-badge { background:#13331f; color:#6bcB77; border:1px solid #1f5a35; border-radius:4px; padding:0 5px; font-size:10px; font-weight:bold; }
     /* Ask the LLM panel */
     .ask-row { display: flex; gap: 8px; margin-bottom: 10px; }
@@ -471,6 +472,7 @@
           <span id="addIocMsg" class="manual-msg"></span>
         </form>
       </div>
+      <div id="iocImportMeta" class="synth-meta" style="display:none"></div>
       <div id="iocs">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
@@ -1569,18 +1571,25 @@
       el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span><span>${summary}</span></div>${detail}`;
     }
 
-    // --- Last-import change tracking (what the last import added to the timeline) --------------
-    // The timeline analog of the synthesis what-changed view above: a banner showing when the last
-    // import ran and how many events it added, plus a per-row "new" highlight keyed the SAME way the
-    // server computed the diff (normalized time + description — see timelineDiff.ts). newEventKeys is
-    // rebuilt whenever import-meta loads, then the timeline is re-rendered to paint the highlight.
+    // --- Last-import change tracking (what the last import added to the timeline + IOCs) -------
+    // The import analog of the synthesis what-changed view above: banners (above the Forensic
+    // Timeline and above the IOCs) showing when the last import ran and how many events / IOCs it
+    // added, plus per-row "new" highlights keyed the SAME way the server computed each diff (events
+    // by normalized time+description — see timelineDiff.ts; IOCs by exact value — see iocsDiff.ts).
+    // The key sets are rebuilt whenever import-meta loads, then both lists are re-rendered.
+    const CAP_IMPORT_LIST = 50;                 // how many added items to list in a banner detail
     let newEventKeys = new Set();
+    let newIocKeys = new Set();
     const evNorm = (s) => String(s == null ? "" : s).trim().toLowerCase().replace(/\s+/g, " ");
     const evKey = (e) => `${evNorm(e.timestamp)}|${evNorm(e.description)}`;
     function loadImportMeta(caseId) {
       fetch(`/cases/${caseId}/import-meta`).then(r => r.json()).then(renderImportMeta).catch(() => {});
     }
     function renderImportMeta(m) {
+      paintTimelineImportMeta(m);
+      paintIocImportMeta(m);
+    }
+    function paintTimelineImportMeta(m) {
       const el = document.getElementById("importMeta");
       if (!el) return;
       const d = (m && m.lastDiff) || { added: [], removed: [] };
@@ -1599,15 +1608,40 @@
       let detail = "";
       const list = d.added || [];
       if (list.length) {
-        const CAP = 50;
-        const items = list.slice(0, CAP).map(x =>
+        const items = list.slice(0, CAP_IMPORT_LIST).map(x =>
           `<span class="sm-item sm-added">+ <span class="sev-${esc(x.severity)}">${esc(x.timestamp || "(undated)")}</span> ${esc(x.description)}</span>`
         ).join("");
-        const remaining = added - Math.min(CAP, list.length);
+        const remaining = added - Math.min(CAP_IMPORT_LIST, list.length);
         const more = remaining > 0 ? `<span class="sm-item" style="color:#9aa4b2">…and ${remaining} more</span>` : "";
         detail = `<details><summary>what this import added to the timeline</summary>${items}${more}</details>`;
       }
       el.innerHTML = `<div class="sm-line"><span>📥 Last import <strong>${esc(relTime(m.lastImportedAt))}</strong>${src}${kind}</span><span>${summary}</span></div>${detail}`;
+    }
+    function paintIocImportMeta(m) {
+      const el = document.getElementById("iocImportMeta");
+      if (!el) return;
+      const d = (m && m.iocsDiff) || { added: [], removed: [] };
+      // Rebuild the "new IOC" set (keyed by exact value), then re-render the IOC list.
+      newIocKeys = new Set((d.added || []).map(x => x.value));
+      if (lastState) renderIocs(lastState.iocs || []);
+      if (!m || !m.lastImportedAt) { el.innerHTML = ""; el.style.display = "none"; return; }
+      el.style.display = "block";
+      const added = m.iocsAddedCount || 0, removed = m.iocsRemovedCount || 0;
+      const counts = [];
+      if (added) counts.push(`<span class="sm-added">+${added} new IOC${added !== 1 ? "s" : ""}</span>`);
+      if (removed) counts.push(`<span class="sm-removed">⊖ ${removed} removed</span>`);
+      const summary = counts.length ? counts.join(" · ") : "no new IOCs";
+      let detail = "";
+      const list = d.added || [];
+      if (list.length) {
+        const items = list.slice(0, CAP_IMPORT_LIST).map(x =>
+          `<span class="sm-item sm-added">+ <span style="color:#9aa4b2">${esc(x.type)}:</span> ${esc(x.value)}</span>`
+        ).join("");
+        const remaining = added - Math.min(CAP_IMPORT_LIST, list.length);
+        const more = remaining > 0 ? `<span class="sm-item" style="color:#9aa4b2">…and ${remaining} more</span>` : "";
+        detail = `<details><summary>what this import added to the IOCs</summary>${items}${more}</details>`;
+      }
+      el.innerHTML = `<div class="sm-line"><span>📥 Last import <strong>${esc(relTime(m.lastImportedAt))}</strong></span><span>${summary}</span></div>${detail}`;
     }
 
     // --- Ask the LLM about this case ----------------------------------------------
@@ -2185,6 +2219,20 @@
       }
     });
 
+    // Render the IOC list. Extracted from render() so paintIocImportMeta() can re-render it to paint
+    // the "new since last import" highlight (green accent + NEW badge) without a full state re-render.
+    function renderIocs(iocs) {
+      const el = document.getElementById("iocs");
+      if (!el) return;
+      el.innerHTML = iocs.length
+        ? iocs.map(i => {
+            const isNew = newIocKeys.has(i.value);
+            const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
+            return `<div class="${isNew ? "ioc-new" : ""}">${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} <span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}</div>`;
+          }).join("")
+        : "<div style='color:#9aa4b2'>No IOCs yet</div>";
+    }
+
     // Render the forensic timeline from a pre-scoped+legit-filtered list.
     // Called both from render() (new state) and from the severity-filter checkboxes (re-filter only).
     function renderTimelineEvents(ft) {
@@ -2300,10 +2348,7 @@
           ).join("")
         : "<div style='color:#9aa4b2'>Not assessed yet — run Synthesize.</div>";
 
-      const iocs = state.iocs || [];
-      document.getElementById("iocs").innerHTML = iocs.length
-        ? iocs.map(i => `<div>${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)} ${huntChip("ioc", i.id)} <span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}</div>`).join("")
-        : "<div style='color:#9aa4b2'>No IOCs yet</div>";
+      renderIocs(state.iocs || []);
 
       // Already scope-projected above (events + findings/IOCs/MITRE consistently).
       // Then hide events the client confirmed legitimate (preserved in state; just
