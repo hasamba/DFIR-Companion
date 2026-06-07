@@ -1925,7 +1925,7 @@
     function applyAiStatus(evt) {
       if (evt.status === "analyzing") {
         if (evt.phase === "synthesizing") setAi("analyzing", "synthesizing findings… " + (evt.detail || ""));
-        else setAi("analyzing", "processing screenshots… " + (evt.detail || ""));
+        else setAi("analyzing", "processing evidence… " + (evt.detail || ""));
       } else if (evt.status === "idle") {
         setAi("idle", "idle — up to date (" + fmtTime(evt.at) + ")");
         clearTransientStatus();  // re-synthesis finished → drop the "…re-synthesizing" line
@@ -2741,7 +2741,7 @@
 
       // Data files → the unified /import endpoint (server auto-detects + routes).
       const kinds = {};
-      let dataFail = 0;
+      let dataFail = 0, aiOffSkipped = 0;
       for (let i = 0; i < data.length; i++) {
         const f = data[i];
         statusEl.textContent = `importing ${i + 1}/${data.length}: ${f.name}…`;
@@ -2753,7 +2753,10 @@
           });
           const jr = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(jr.error || ("HTTP " + r.status));
-          kinds[jr.kind] = (kinds[jr.kind] || 0) + 1;
+          // CSV/log need the LLM to interpret them; with AI off the server saves the evidence but
+          // skips analysis (jr.analyzed === false). Surface that honestly instead of "analyzing".
+          if (jr.analyzed === false && jr.reason === "ai-off") aiOffSkipped++;
+          else kinds[jr.kind] = (kinds[jr.kind] || 0) + 1;
         } catch (err) { dataFail++; console.warn("import failed:", f.name, err && err.message); }
       }
 
@@ -2783,6 +2786,7 @@
       const kindList = Object.entries(kinds).map(([k, n]) => (n > 1 ? `${n}× ${k}` : k));
       const floorNote = minSeverity && minSeverity !== "info" ? ` (min severity ${minSeverity})` : "";
       if (kindList.length) parts.push(`imported ${kindList.join(", ")}${floorNote} — analyzing (see AI status)`);
+      if (aiOffSkipped) parts.push(`${aiOffSkipped} CSV/log saved as evidence but NOT analyzed — AI is off (turn AI on, then re-import)`);
       if (images.length) parts.push(`${imgOk} screenshot(s)` + (imgDup ? `, ${imgDup} dup` : "") + (imgFail ? `, ${imgFail} failed` : ""));
       if (dataFail) parts.push(`${dataFail} file(s) failed / unrecognized`);
       statusEl.textContent = parts.join(" · ") || "nothing imported";

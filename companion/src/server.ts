@@ -1129,6 +1129,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         originalName, rows: 0, bytes: Buffer.byteLength(text, "utf8"),
       });
 
+      // CSV/log imports are themselves an LLM call (free-form data the model must interpret), so
+      // they respect the per-case AI toggle exactly like screenshot analysis + synthesis: with AI
+      // OFF, the evidence is saved (above) but NOT sent to the model. Deterministic imports have no
+      // LLM call, so they proceed and populate the timeline + IOCs regardless (synthesis still waits
+      // for AI — see resynthesizeInBackground). This keeps "AI off" meaning no LLM call / nothing
+      // leaves for the model, and stops the dashboard from claiming the AI is analyzing while off.
+      const aiDependent = kind === "csv" || kind === "log";
+      if (aiDependent && !(await getControl(caseId)).enabled) {
+        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)` });
+        return res.status(202).json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
+      }
+
       res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
 
       const pipeline = options.pipeline;
