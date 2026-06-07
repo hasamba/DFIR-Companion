@@ -68,6 +68,7 @@
     .asset-graph { overflow: auto; max-height: 460px; border: 1px solid #2a2f3a; border-radius: 6px; background: #0f1115; }
     .asset-graph svg text { fill: #cbd3df; font-size: 11px; }
     .asset-node { cursor: pointer; }
+    .legend-ico { vertical-align: middle; margin-right: 2px; }
     /* Fullscreen: the wrapper fills the screen and the graph grows to fit. */
     .asset-graph-wrap:fullscreen { background: #11161d; padding: 12px; display: flex; flex-direction: column; }
     .asset-graph-wrap:fullscreen .asset-graph { flex: 1; max-height: none; }
@@ -430,9 +431,9 @@
         <div id="assetGraphWrap" class="asset-graph-wrap">
           <div class="asset-controls">
             <span>Show:</span>
-            <label><input type="checkbox" class="asset-type-toggle" value="host" checked> Hosts</label>
-            <label><input type="checkbox" class="asset-type-toggle" value="account" checked> Accounts</label>
-            <label><input type="checkbox" class="asset-type-toggle" value="service" checked> Services</label>
+            <label><input type="checkbox" class="asset-type-toggle" value="host" checked> <span class="legend-slot" data-ltype="host"></span>Hosts</label>
+            <label><input type="checkbox" class="asset-type-toggle" value="account" checked> <span class="legend-slot" data-ltype="account"></span>Accounts</label>
+            <label><input type="checkbox" class="asset-type-toggle" value="service" checked> <span class="legend-slot" data-ltype="service"></span>Services</label>
             <button id="assetTypeAll" type="button" title="Show all asset types">All</button>
             <span class="asset-ctrl-sep"></span>
             <label>Layout
@@ -770,6 +771,52 @@
       return { pos, lab, W, H };
     }
 
+    // A gear/cog outline with flat-topped (trapezoidal) teeth for the "service" asset icon —
+    // each tooth = a raised flat top (R) then a flat valley (r), so it reads as a cog, not a star.
+    function gearPath(cx, cy, R, r, teeth) {
+      const step = (Math.PI * 2) / teeth;
+      const pt = (rad, a) => (cx + rad * Math.cos(a)).toFixed(1) + "," + (cy + rad * Math.sin(a)).toFixed(1);
+      let d = "";
+      for (let i = 0; i < teeth; i++) {
+        const a0 = i * step - Math.PI / 2;   // tooth-top start
+        const a1 = a0 + step * 0.5;          // tooth-top end (raised flat)
+        const a2 = a0 + step;                // valley end (next tooth start)
+        d += (i === 0 ? "M" : "L") + pt(R, a0) + "L" + pt(R, a1) + "L" + pt(r, a1) + "L" + pt(r, a2);
+      }
+      return d + "Z";
+    }
+    // Type glyph for an asset node: monitor=host, person=account, gear=service (anything else → a
+    // plain dot). Filled in the node's compromise color (red=compromised, blue=clean) with a dark
+    // edge for contrast on the dark canvas. A transparent hit-circle keeps the click target generous.
+    function assetIcon(type, cx, cy, color) {
+      const bg = "#0f1115";
+      const f = (n) => n.toFixed(1);
+      const hit = `<circle cx="${f(cx)}" cy="${f(cy)}" r="11" fill="transparent"/>`;
+      if (type === "host") {                       // monitor: screen + stand
+        return hit
+          + `<rect x="${f(cx - 8)}" y="${f(cy - 7)}" width="16" height="11" rx="1.5" fill="${color}" stroke="${bg}" stroke-width="1"/>`
+          + `<rect x="${f(cx - 1)}" y="${f(cy + 4)}" width="2" height="3" fill="${color}"/>`
+          + `<rect x="${f(cx - 4.5)}" y="${f(cy + 7)}" width="9" height="2.2" rx="1" fill="${color}" stroke="${bg}" stroke-width="0.5"/>`;
+      }
+      if (type === "account") {                    // person: head + shoulders
+        return hit
+          + `<circle cx="${f(cx)}" cy="${f(cy - 4)}" r="4" fill="${color}" stroke="${bg}" stroke-width="1"/>`
+          + `<path d="M ${f(cx - 7)},${f(cy + 8)} C ${f(cx - 7)},${f(cy - 1)} ${f(cx + 7)},${f(cy - 1)} ${f(cx + 7)},${f(cy + 8)} Z" fill="${color}" stroke="${bg}" stroke-width="1"/>`;
+      }
+      if (type === "service") {                    // gear: cog + hub hole
+        return hit
+          + `<path d="${gearPath(cx, cy, 9, 6.3, 8)}" fill="${color}" stroke="${bg}" stroke-width="0.6" stroke-linejoin="round"/>`
+          + `<circle cx="${f(cx)}" cy="${f(cy)}" r="2.9" fill="${bg}"/>`;
+      }
+      return hit + `<circle cx="${f(cx)}" cy="${f(cy)}" r="6" fill="${color}" stroke="${bg}" stroke-width="1.5"/>`;
+    }
+    // Small standalone SVG of an asset-type icon, for the Show-toggle legend (neutral gray).
+    function legendIcon(type) {
+      return `<svg class="legend-ico" width="16" height="16" viewBox="0 0 22 22">${assetIcon(type, 11, 11, "#cbd3df")}</svg>`;
+    }
+    // Paint the legend glyph into each Show-toggle (doubles as the graph's icon key).
+    document.querySelectorAll(".legend-slot").forEach((s) => { s.innerHTML = legendIcon(s.dataset.ltype); });
+
     function renderAssetGraph() {
       renderAssetList();
       const el = document.getElementById("assetGraph");
@@ -824,16 +871,25 @@
         const vis = related(e.asset) && related(e.ioc) && (!assetFocus || e.asset === assetFocus || e.ioc === assetFocus);
         svg += `<line x1="${p.x.toFixed(1)}" y1="${p.y.toFixed(1)}" x2="${q.x.toFixed(1)}" y2="${q.y.toFixed(1)}" stroke="#3a4456" stroke-width="1" opacity="${vis ? 0.85 : 0.05}"/>`;
       }
-      const node = (it, fill, r, isIoc) => {
-        const p = pos.get(it.id), l = lab.get(it.id);
+      // Wrap a node's body (icon/circle) with its label + click/focus group. Assets render as a
+      // type-shaped glyph (host=monitor, account=person, service=gear) colored by compromise state;
+      // IoCs stay as small verdict-colored circles.
+      const wrapNode = (it, isIoc, body) => {
+        const l = lab.get(it.id);
         const label = isIoc ? `${esc(truncate(it.value, 26))} <tspan fill="#6b7585">(${esc(it.type)})</tspan>` : esc(truncate(it.name, 20));
         const rot = l.rotate ? ` transform="rotate(${l.rotate} ${l.x.toFixed(1)} ${l.y.toFixed(1)})"` : "";
         return `<g class="asset-node" data-id="${escAttr(it.id)}" opacity="${related(it.id) ? 1 : 0.1}">`
           + `<text x="${l.x.toFixed(1)}" y="${l.y.toFixed(1)}" text-anchor="${l.anchor}"${rot}>${label}</text>`
-          + `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r}" fill="${fill}" stroke="#0f1115" stroke-width="1.5"/></g>`;
+          + body + `</g>`;
       };
-      for (const a of assets) svg += node(a, a.compromised ? "#ff5c5c" : "#6aa9ff", 6, false);
-      for (const i of iocs) svg += node(i, iocColor(i.verdict), 5, true);
+      for (const a of assets) {
+        const p = pos.get(a.id);
+        svg += wrapNode(a, false, assetIcon(a.type, p.x, p.y, a.compromised ? "#ff5c5c" : "#6aa9ff"));
+      }
+      for (const i of iocs) {
+        const p = pos.get(i.id);
+        svg += wrapNode(i, true, `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5" fill="${iocColor(i.verdict)}" stroke="#0f1115" stroke-width="1.5"/>`);
+      }
       svg += `</svg>`;
       el.innerHTML = svg;
       updateZoomLabel();
