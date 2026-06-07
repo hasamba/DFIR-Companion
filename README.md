@@ -269,12 +269,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   actually ran ("🧠 Last synthesized N ago") and how the findings changed since the prior run (**+N
   new / −M dropped / ↕ K severity**, with an expandable list), so a re-synthesis shows its effect
   instead of findings silently reshuffling.
-- **Import change tracking on the timeline** — the Forensic Timeline shows a **📥 Last import N ago —
+- **Import change tracking (timeline + IOCs)** — the Forensic Timeline shows a **📥 Last import N ago —
   +N new events** banner (source file + detected kind, with an expandable list of exactly what was
-  added) and highlights the events the last import brought in (green accent + a `NEW` badge), so after
-  dropping in a new artifact you immediately see what it contributed. Diffs by normalized time +
-  description, so re-importing the same file shows *no* new events; the highlight clears on the next
-  import.
+  added) and the IOCs section shows a matching **+N new IOCs** banner; both highlight the entities the
+  last import brought in (green accent + a `NEW` badge), so after dropping in a new artifact you
+  immediately see what it contributed. Events diff by normalized time + description, IOCs by exact
+  value, so re-importing the same file shows *nothing* new; the highlights clear on the next import.
 
 ### Threat-intel enrichment (OPSEC — **per-source, default local-only**)
 - **Sources** — VirusTotal (hash/IP/domain/URL), MalwareBazaar (hash), AbuseIPDB (IP), **MISP** and
