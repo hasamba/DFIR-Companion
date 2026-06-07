@@ -224,7 +224,9 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Mark legitimate** — flag a finding / IOC / **forensic event** as benign (reversible); excluded
   from analysis and reports.
 - **Per-case AI on/off** — **off by default** (capture-only); the dashboard's **AI: ON/OFF** button
-  starts live analysis and backfills everything captured while it was off.
+  starts live analysis and backfills everything captured while it was off. With AI off, deterministic
+  imports still populate the timeline + IOCs, but CSV/log imports (which need the LLM to interpret
+  them) are saved as evidence and only analyzed once AI is on — nothing is sent to the model while off.
 - **Threads, key questions, next steps** — open/closed leads and standard DFIR questions with pointers.
 - **Ask the LLM about the case** — free-form Q&A ("was data exfiltrated?", "was a USB connected?")
   grounded in everything known; when the answer is unknown it tells you **which artifact to collect

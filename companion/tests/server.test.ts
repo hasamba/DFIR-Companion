@@ -584,6 +584,38 @@ describe("server analysis wiring", () => {
     expect(state.findings).toHaveLength(0);                              // synthesis was gated off — no findings
   });
 
+  it("CSV/log import via /import is gated by the AI toggle — saved as evidence, NOT sent to the model, when AI is off", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-import-csv-aioff-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = new AnalysisPipeline({
+      // CSV extraction IS an LLM call. If it runs while AI is off, this mock returns unparseable
+      // output — but the gate means the provider must never be invoked, so the timeline stays empty.
+      provider: new MockProvider("mock", "CSV extraction must not run when AI is off"),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app = createApp(store, { pipeline, stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    // AI defaults OFF for a fresh case — leave it off (the scenario under test).
+
+    const csv = "Timestamp,Process,PID\n2026-05-20T09:00:00Z,mimikatz.exe,1234\n";
+    const res = await request(app).post("/cases/c1/import").send({ filename: "results.csv", text: csv });
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({ accepted: true, kind: "csv", analyzed: false, reason: "ai-off" });
+
+    // Evidence-first still holds: the raw CSV is persisted even though it wasn't analyzed.
+    const saved = await readFile(join(store.importsDir("c1"), res.body.file), "utf8");
+    expect(saved).toBe(csv);
+
+    // Settle, then confirm the LLM never ran: no events, no IOCs, no findings.
+    await new Promise((r) => setTimeout(r, 200));
+    const state = await stateStore.load("c1");
+    expect(state.forensicTimeline).toHaveLength(0);
+    expect(state.iocs).toHaveLength(0);
+    expect(state.findings).toHaveLength(0);
+  });
+
   it("builds a deterministic-import pipeline even when no AI provider is configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-deterministic-no-ai-"));
     const store = new CaseStore(root);
