@@ -57,6 +57,10 @@ function worstVerdict(i: IOC): string | undefined {
 const NETBIOS_ACCT = /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
 const UPN_ACCT = /([A-Za-z0-9._-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
 const PATH_DOMAINS = /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
+// The right-hand side ends in a file extension → it's a path segment (e.g. Zip\7z.exe), not a
+// DOMAIN\user. Real Windows usernames don't end in .exe/.dll/etc. Curated (not "any dotted suffix")
+// so legitimate dotted accounts like CORP\first.last are NOT rejected.
+const FILE_EXT_USER = /\.(exe|dll|sys|drv|scr|com|cpl|ocx|ps1|psm1|bat|cmd|vbs|vbe|js|jse|wsf|wsh|hta|msi|msp|lnk|url|reg|inf|zip|rar|7z|gz|tgz|tar|cab|iso|img|txt|log|csv|tsv|json|xml|yaml|yml|ini|cfg|conf|dat|bin|db|sqlite|tmp|temp|dmp|mem|evtx|pcap|doc|docx|xls|xlsx|ppt|pptx|pdf|rtf|png|jpe?g|gif|bmp|svg|ico|md|sh|py|pl|rb|php|jar|so|dylib|key|pem|crt|cer|pfx)$/i;
 
 export function extractAccounts(text: string): string[] {
   const out = new Set<string>();
@@ -64,6 +68,7 @@ export function extractAccounts(text: string): string[] {
   NETBIOS_ACCT.lastIndex = 0;
   while ((m = NETBIOS_ACCT.exec(text))) {
     if (PATH_DOMAINS.test(m[1])) continue;           // skip path segments masquerading as DOMAIN\user
+    if (FILE_EXT_USER.test(m[2])) continue;          // skip Folder\file.ext (e.g. Zip\7z.exe) — a file, not a user
     out.add(`${m[1]}\\${m[2]}`);
   }
   UPN_ACCT.lastIndex = 0;

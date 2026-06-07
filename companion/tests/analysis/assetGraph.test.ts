@@ -49,6 +49,21 @@ describe("buildAssetGraph", () => {
     expect(names).toContain("DC01");
     expect(names.some((n) => /users\\srv/i.test(n))).toBe(false); // path segment must not become an account
 
+    // Regression: a relative file path like Zip\7z.exe matches DOMAIN\user but is a FILE, not a user.
+    s.forensicTimeline.push({
+      id: "e3", description: "process execution from archive Zip\\7z.exe extracted Mimikatz",
+      timestamp: "", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    });
+    const g2 = buildAssetGraph(s);
+    const names2 = g2.assets.map((a) => a.name);
+    expect(names2.some((n) => /7z\.exe/i.test(n))).toBe(false);   // file path must not become an account
+    // ...but a real username that happens to contain a dot is still extracted.
+    s.forensicTimeline.push({
+      id: "e4", description: "logon by CORP\\first.last succeeded", timestamp: "", severity: "Low",
+      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    });
+    expect(buildAssetGraph(s).assets.map((a) => a.name)).toContain("CORP\\first.last");
+
     const acct = g.assets.find((a) => a.name === "ADATUMLAB\\jdoe")!;
     expect(acct.type).toBe("account");
     expect(acct.iocIds).toContain("i1");                      // account linked to the IP in its event
