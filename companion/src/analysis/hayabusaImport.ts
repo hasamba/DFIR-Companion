@@ -5,7 +5,9 @@
 // Chainsaw, Hayabusa) — no AI call.
 //
 // Two output forms are handled, auto-detected:
-//   1. JSON / JSONL  (`hayabusa json-timeline [-J]`) — a JSON array, or NDJSON, of records.
+//   1. JSON / JSONL  (`hayabusa json-timeline [-J]`) — a JSON array, NDJSON, OR the default
+//      `json-timeline` output, which is PRETTY-PRINTED objects concatenated with no array
+//      wrapper and no commas (handled via `parseConcatenatedJson` in siemImport's extractRecords).
 //   2. CSV           (`hayabusa csv-timeline`, the default) — a header row + rows; the
 //      Details / ExtraFieldInfo cells are " ¦ "-separated `Key: value` pairs.
 //

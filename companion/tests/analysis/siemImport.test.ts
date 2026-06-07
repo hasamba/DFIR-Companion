@@ -66,6 +66,19 @@ describe("extractRecords — container unwrapping", () => {
     expect(format).toBe("events:events");
     expect(records).toHaveLength(1);
   });
+  it("reads concatenated pretty-printed objects (Hayabusa json-timeline default — no array/commas)", () => {
+    const text = `${JSON.stringify(LOGON_4624, null, 2)}\n${JSON.stringify(SVC_7045, null, 2)}\n`;
+    const { records, format } = extractRecords(text);
+    expect(format).toBe("concatenated-json");
+    expect(records).toHaveLength(2);
+    expect(records[0].event_id).toBe(4624);
+  });
+  it("does not misparse braces inside string values", () => {
+    const rec = { msg: "value with } and { braces", event_id: 1 };
+    const { records } = extractRecords(`${JSON.stringify(rec, null, 2)}\n${JSON.stringify(rec, null, 2)}`);
+    expect(records).toHaveLength(2);
+    expect(records[0].msg).toBe("value with } and { braces");
+  });
 });
 
 describe("parseSiemExport — Windows Event Log mapping", () => {

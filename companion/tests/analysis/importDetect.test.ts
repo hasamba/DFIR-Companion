@@ -41,6 +41,11 @@ describe("detectImportKind — JSON formats", () => {
   it("hayabusa: json-timeline", () => {
     expect(detectImportKind("hb.json", j([{ Timestamp: "t", RuleTitle: "x", Level: "high" }]))).toBe("hayabusa");
   });
+  it("hayabusa: concatenated pretty-printed objects (json-timeline default, no array/commas)", () => {
+    const rec = { Timestamp: "t", RuleTitle: "x", Level: "high", Computer: "h", EventID: 1 };
+    const pretty = JSON.stringify(rec, null, 4);
+    expect(detectImportKind("timeline.json", `${pretty}\n${pretty}\n`)).toBe("hayabusa");
+  });
   it("hayabusa: Velociraptor Windows.Hayabusa.Rules variant (Title+Level+Channel, no RuleTitle/Mitre)", () => {
     // Content match wins even though the filename also looks like a Velociraptor export.
     const row = { Timestamp: "t", Computer: "WIN11", Channel: "Microsoft-Windows-Sysmon/Operational", EID: 1, Level: "high", Title: "Possible LOLBIN", RecordID: 9, Details: "Proc: x" };
