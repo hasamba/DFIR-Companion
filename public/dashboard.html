@@ -1206,9 +1206,11 @@
     // Velociraptor's glob() accessor uses FORWARD slashes — a `\\.\C:\…\x.exe` path is unusable as-is.
     const vqlGlob = (p) => cleanWinPath(p).replace(/\\/g, "/");
     const baseName = (p) => { const parts = cleanWinPath(p).split(/[\\/]/); return parts[parts.length - 1] || cleanWinPath(p); };
-    // Velociraptor NOTEBOOK VQL — a set of paste-into-a-cell pivot queries (one per `--` block).
-    // Paths are normalized for the glob accessor; process/IP matches are exact (IN / lowcase) rather
-    // than regex so a value with `.` doesn't over-match.
+    // Velociraptor HUNT artifact VQL — client-side pivot queries (one per `--` block), each becomes a
+    // source of the CLIENT artifact the "Run hunt (all clients)" button packages, so glob()/pslist()/
+    // netstat() run ON each endpoint. (These are client-side plugins: pasted into a server-side notebook
+    // cell they'd run against the SERVER and find nothing — use the notebook query below for that.)
+    // Paths are normalized for the glob accessor; process/IP matches are exact (IN / lowcase).
     function huntVql(c) {
       const out = [];
       if (c.processes.length) {
@@ -1226,6 +1228,55 @@
         out.push(`-- active network connections\nSELECT Pid, Name, Status, Laddr.IP AS Local, Raddr.IP AS Remote, Raddr.Port AS RemotePort\nFROM netstat()\nWHERE Raddr.IP IN (${c.ips.map(hq).join(", ")})`);
       }
       return out.join("\n\n");
+    }
+    // Velociraptor NOTEBOOK query — runs against ONE client from a notebook cell. A notebook runs
+    // server-side VQL, so to reach an endpoint you COLLECT a built-in artifact on it
+    // (collect_client), wait for the flow to finish (watch_monitoring on System.Flow.Completion), then
+    // read the rows (source()) — the documented collect_client → source idiom. Each indicator maps to
+    // the artifact that finds it: processes/hashes → Windows.System.Pslist (collection-side
+    // ProcessRegex; Hash.SHA256 filter), files → Windows.Search.FileFinder (glob), on-disk hash →
+    // FileFinder + Calculate_Hash, IPs → Windows.Network.Netstat.
+    function huntVqlNotebook(c) {
+      // A regex-safe process name with NO backslashes (so it never breaks the VQL double-quoted
+      // string): keep word chars / dot / hyphen, turn any other char into `.` (regex any). The
+      // unescaped `.` matching any char is a harmless over-match for an exe-name pivot.
+      const rxSafe = (s) => baseName(s).replace(/[^\w.\- ]/g, ".");
+      const wait = (v) => `LET _ <= SELECT * FROM watch_monitoring(artifact="System.Flow.Completion")\n         WHERE FlowId = ${v}.flow_id LIMIT 1`;
+      const blocks = [];
+      if (c.processes.length) {
+        const rx = c.processes.map((p) => rxSafe(p)).join("|");
+        blocks.push(`-- Running processes matching the indicator (filtered at collection via ProcessRegex)\n`
+          + `LET proc_flow <= collect_client(client_id=client_id, artifacts="Windows.System.Pslist",\n    env=dict(ProcessRegex=${hq("(?i)^(" + rx + ")$")}))\n`
+          + `${wait("proc_flow")}\n`
+          + `SELECT Pid, Ppid, Name, CommandLine, Exe, Hash.SHA256 AS SHA256\n`
+          + `FROM source(client_id=client_id, flow_id=proc_flow.flow_id, artifact="Windows.System.Pslist")`);
+      }
+      if (c.paths.length) {
+        blocks.push(`-- File presence by path / name (FileFinder glob on the client)\n`
+          + `LET file_flow <= collect_client(client_id=client_id, artifacts="Windows.Search.FileFinder",\n    env=dict(SearchFilesGlobTable=${hq("Glob\\n" + vqlGlob(c.paths[0]))}))\n`
+          + `${wait("file_flow")}\n`
+          + `SELECT OSPath, Size, Mtime FROM source(client_id=client_id, flow_id=file_flow.flow_id, artifact="Windows.Search.FileFinder")`);
+      }
+      if (c.hashes.length) {
+        blocks.push(`-- On-disk file(s) matching the hash (FileFinder hashes under the glob root — narrow it; hashing is expensive)\n`
+          + `LET hash_flow <= collect_client(client_id=client_id, artifacts="Windows.Search.FileFinder",\n    env=dict(SearchFilesGlobTable="Glob\\nC:/Users/**", Calculate_Hash="Y"))\n`
+          + `${wait("hash_flow")}\n`
+          + `SELECT OSPath, Size, Mtime, Hash.SHA256 AS SHA256\n`
+          + `FROM source(client_id=client_id, flow_id=hash_flow.flow_id, artifact="Windows.Search.FileFinder")\n`
+          + `WHERE SHA256 =~ ${hq("(?i)" + c.hashes[0])}`);
+      }
+      if (c.ips.length) {
+        blocks.push(`-- Active network connections — collect all sockets, then look for the indicator IP(s): ${c.ips.join(", ")}\n`
+          + `LET net_flow <= collect_client(client_id=client_id, artifacts="Windows.Network.Netstat", env=dict())\n`
+          + `${wait("net_flow")}\n`
+          + `SELECT * FROM source(client_id=client_id, flow_id=net_flow.flow_id, artifact="Windows.Network.Netstat")`);
+      }
+      if (!blocks.length) return "";
+      const header = `-- ── Velociraptor NOTEBOOK query — runs against ONE client (paste into a notebook cell) ──\n`
+        + `-- Set client_id below, then run. Find it with:\n`
+        + `--   SELECT client_id, os_info.hostname FROM clients() WHERE os_info.hostname =~ "HOSTNAME"\n`
+        + `LET client_id <= "C.0000000000000000"`;
+      return header + "\n\n" + blocks.join("\n\n");
     }
     // Microsoft Defender / Sentinel KQL — one runnable query per relevant table.
     function huntKql(c) {
@@ -1344,7 +1395,8 @@
       // [platformKey, label, query]. The key gates the card against the server's enabled-platforms
       // allowlist (DFIR_HUNT_PLATFORMS, delivered via /health) — keys must match huntPlatforms.ts.
       const cards = [
-        ["velociraptor", "Velociraptor (notebook VQL)", huntVql(c)],
+        ["velociraptor", "Velociraptor — hunt (all clients)", huntVql(c)],
+        ["velociraptor", "Velociraptor — notebook (one client)", huntVqlNotebook(c)],
         ["defender", "Microsoft Defender / Sentinel (KQL)", huntKql(c)],
         ["elastic", "Elastic / Kibana (ES|QL)", huntEsql(c)],
         ["splunk", "Splunk (SPL)", huntSpl(c)],
@@ -1358,9 +1410,10 @@
         : !cards.length
         ? "<div style='color:#9aa4b2;font-size:12px'>No hunt platforms are enabled for this entity. Platforms are limited by <code>DFIR_HUNT_PLATFORMS</code> in the server environment — clear or widen it to show more.</div>"
         : cards.map(([, tool, query], idx) => {
-            // The Velociraptor card is runnable when the API is configured: editable VQL + a Run
-            // button that executes it against the server and shows the rows inline.
-            const runnable = tool.startsWith("Velociraptor") && veloEnabled;
+            // The Velociraptor HUNT card is runnable when the API is configured: editable VQL + a Run
+            // button that launches it across all clients. The notebook card is copy-only (it runs in a
+            // Velociraptor notebook, not via this server-side hunt path).
+            const runnable = tool.startsWith("Velociraptor — hunt") && veloEnabled;
             const head = `<div class="hunt-card-head"><span>${esc(tool)}</span><div>`
               + (runnable ? `<button class="hunt-run" data-idx="${idx}" title="Launch a hunt that runs this VQL on ALL enrolled Velociraptor clients">▶ Run hunt (all clients)</button>` : "")
               + `<button class="hunt-copy" data-idx="${idx}">Copy</button></div></div>`;
