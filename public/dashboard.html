@@ -236,11 +236,19 @@
     .kc-tac { display: block; font-size: 10px; color: #9aa4b2; font-weight: 600;
       text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
     .kc-count { font-size: 20px; font-weight: 700; display: block; line-height: 1; }
-    .kc-events-panel { border-top: 1px solid #2a2f3a; padding: 8px 10px; font-size: 12px;
-      max-height: 280px; overflow-y: auto; }
-    .kc-event-row { padding: 3px 0; border-bottom: 1px solid #1a1f28; display: flex;
-      gap: 6px; flex-wrap: wrap; align-items: baseline; }
+    /* Selected tactic's events render full-width below the strip — one wide wrapping line
+       per alert, so no narrow-column horizontal/vertical scrolling. */
+    .kc-detail { margin-top: 8px; border: 1px solid #2a3340; border-radius: 6px;
+      background: #0f1115; padding: 10px 14px; }
+    .kc-detail-head { font-size: 14px; font-weight: 700; margin-bottom: 8px;
+      display: flex; align-items: baseline; gap: 10px; }
+    .kc-detail-rows { max-height: 60vh; overflow-y: auto; }
+    .kc-event-row { padding: 5px 0; border-bottom: 1px solid #1a1f28; display: flex;
+      gap: 12px; align-items: baseline; font-size: 13px; }
     .kc-event-row:last-child { border-bottom: none; }
+    .kc-ev-time { flex-shrink: 0; font-size: 11px; }
+    .kc-ev-desc { flex: 1; min-width: 0; word-break: break-word; }
+    .kc-ev-mitre { flex-shrink: 0; color: #9aa4b2; }
   </style>
 </head>
 <body>
@@ -1795,26 +1803,36 @@
     }
 
     let kcSelectedTac = null;
+    let kcByTactic = {}; // last-rendered tactic→events grouping, so kcSelect can fill the detail panel
 
-    function kcSelect(tac, el) {
-      if (kcSelectedTac === tac) {
-        kcSelectedTac = null;
-        document.querySelectorAll(".kc-phase").forEach(p => {
-          p.classList.remove("kc-active");
-          const panel = p.querySelector(".kc-events-panel");
-          if (panel) panel.hidden = true;
-        });
-        return;
-      }
-      kcSelectedTac = tac;
-      document.querySelectorAll(".kc-phase").forEach(p => {
-        p.classList.remove("kc-active");
-        const panel = p.querySelector(".kc-events-panel");
-        if (panel) panel.hidden = true;
-      });
-      el.classList.add("kc-active");
-      const panel = el.querySelector(".kc-events-panel");
-      if (panel) panel.hidden = false;
+    function kcSelect(tac) {
+      kcSelectedTac = (kcSelectedTac === tac) ? null : tac;
+      document.querySelectorAll(".kc-phase").forEach(p =>
+        p.classList.toggle("kc-active", p.dataset.tac === kcSelectedTac));
+      renderKcDetail();
+    }
+
+    // Render the selected tactic's events into the full-width panel below the strip.
+    function renderKcDetail() {
+      const box = document.getElementById("kcDetail");
+      if (!box) return;
+      const events = (kcSelectedTac && kcByTactic[kcSelectedTac]) || [];
+      if (!kcSelectedTac || !events.length) { box.hidden = true; box.innerHTML = ""; return; }
+      const maxSev = KC_SEV_ORDER.find(s => events.some(e => e.severity === s));
+      const topColor = maxSev ? KC_SEV_COLOR[maxSev] : "#9aa4b2";
+      const rows = events.map(e => {
+        const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
+        return `<div class="kc-event-row">` +
+          `<span class="kc-ev-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
+          `<span class="kc-ev-desc">${esc(desc)}</span>` +
+          `${e.mitreTechniques && e.mitreTechniques.length ? `<small class="kc-ev-mitre">${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
+          `</div>`;
+      }).join("");
+      box.innerHTML =
+        `<div class="kc-detail-head"><span style="color:${topColor}">${esc(kcSelectedTac)}</span>` +
+        `<span style="color:#9aa4b2;font-weight:400;font-size:12px">${events.length} event${events.length === 1 ? "" : "s"}</span></div>` +
+        `<div class="kc-detail-rows">${rows}</div>`;
+      box.hidden = false;
     }
 
     function renderKillChain(ft) {
@@ -1826,6 +1844,9 @@
         if (tac && byTactic[tac]) byTactic[tac].push(e);
         else byTactic["Uncategorized"].push(e);
       }
+      kcByTactic = byTactic;
+      // Drop a stale selection if the re-rendered data no longer has events for it.
+      if (kcSelectedTac && !(byTactic[kcSelectedTac] || []).length) kcSelectedTac = null;
       const order = [...KC_CHAIN_ORDER, "Uncategorized"];
       const cards = order.map(tac => {
         const events = byTactic[tac] || [];
@@ -1834,24 +1855,18 @@
         const maxSev = KC_SEV_ORDER.find(s => events.some(e => e.severity === s));
         const topColor = maxSev ? KC_SEV_COLOR[maxSev] : "#2a2f3a";
         const isActive = kcSelectedTac === tac && !isEmpty;
-        const evHtml = events.map(e => {
-          const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
-          return `<div class="kc-event-row">` +
-            `<span class="sev-${esc(e.severity)}" style="font-size:10px;flex-shrink:0">${esc(e.timestamp || "(undated)")}</span>` +
-            `<span>${esc(desc)}</span>` +
-            `${e.mitreTechniques && e.mitreTechniques.length ? `<small style="color:#9aa4b2;flex-shrink:0">${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
-            `</div>`;
-        }).join("");
         return `<div class="kc-phase${isEmpty ? " kc-empty" : ""}${isActive ? " kc-active" : ""}" ` +
-          `onclick="if(!this.classList.contains('kc-empty'))kcSelect('${escAttr(tac)}',this)">` +
+          `data-tac="${escAttr(tac)}" ` +
+          `onclick="if(!this.classList.contains('kc-empty'))kcSelect('${escAttr(tac)}')">` +
           `<div class="kc-phase-header" style="border-top-color:${topColor}">` +
           `<span class="kc-tac">${esc(tac)}</span>` +
           `<span class="kc-count" style="color:${isEmpty ? "#2a2f3a" : topColor}">${count}</span>` +
           `</div>` +
-          `<div class="kc-events-panel"${isActive ? "" : " hidden"}>${evHtml}</div>` +
           `</div>`;
       }).join("");
-      document.getElementById("killChain").innerHTML = `<div class="kc-strip">${cards}</div>`;
+      document.getElementById("killChain").innerHTML =
+        `<div class="kc-strip">${cards}</div><div id="kcDetail" class="kc-detail" hidden></div>`;
+      renderKcDetail();
     }
     function enrichBadges(ioc) {
       if (!ioc.enrichments) return ""; // not enriched yet
