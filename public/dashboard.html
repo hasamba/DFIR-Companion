@@ -164,6 +164,9 @@
     .synth-meta .sm-added { color: #6bcB77; } .synth-meta .sm-removed { color: #ff7a7a; } .synth-meta .sm-changed { color: #ffd93b; }
     .synth-meta details { margin-top: 5px; } .synth-meta summary { cursor: pointer; color: #6aa9ff; }
     .synth-meta .sm-item { display: block; margin: 2px 0 2px 8px; }
+    /* "New since last import" highlight on forensic-timeline rows + its badge (see #importMeta) */
+    .ev-row.ev-new { box-shadow: inset 3px 0 0 #6bcB77; }
+    .ev-new-badge { background:#13331f; color:#6bcB77; border:1px solid #1f5a35; border-radius:4px; padding:0 5px; font-size:10px; font-weight:bold; }
     /* Ask the LLM panel */
     .ask-row { display: flex; gap: 8px; margin-bottom: 10px; }
     .ask-row input { flex: 1; }
@@ -423,6 +426,7 @@
           <span id="addEventMsg" class="manual-msg"></span>
         </form>
       </div>
+      <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="forensicTimeline">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
     <section style="grid-column: 1 / -1">
@@ -1565,6 +1569,47 @@
       el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span><span>${summary}</span></div>${detail}`;
     }
 
+    // --- Last-import change tracking (what the last import added to the timeline) --------------
+    // The timeline analog of the synthesis what-changed view above: a banner showing when the last
+    // import ran and how many events it added, plus a per-row "new" highlight keyed the SAME way the
+    // server computed the diff (normalized time + description — see timelineDiff.ts). newEventKeys is
+    // rebuilt whenever import-meta loads, then the timeline is re-rendered to paint the highlight.
+    let newEventKeys = new Set();
+    const evNorm = (s) => String(s == null ? "" : s).trim().toLowerCase().replace(/\s+/g, " ");
+    const evKey = (e) => `${evNorm(e.timestamp)}|${evNorm(e.description)}`;
+    function loadImportMeta(caseId) {
+      fetch(`/cases/${caseId}/import-meta`).then(r => r.json()).then(renderImportMeta).catch(() => {});
+    }
+    function renderImportMeta(m) {
+      const el = document.getElementById("importMeta");
+      if (!el) return;
+      const d = (m && m.lastDiff) || { added: [], removed: [] };
+      // Rebuild the "new event" set used to highlight timeline rows, then re-render the timeline.
+      newEventKeys = new Set((d.added || []).map(evKey));
+      if (lastFt) renderTimelineEvents(lastFt);
+      if (!m || !m.lastImportedAt) { el.innerHTML = ""; el.style.display = "none"; return; }
+      el.style.display = "block";
+      const added = m.addedCount || 0, removed = m.removedCount || 0;
+      const counts = [];
+      if (added) counts.push(`<span class="sm-added">+${added} new event${added !== 1 ? "s" : ""}</span>`);
+      if (removed) counts.push(`<span class="sm-removed">⊖ ${removed} merged</span>`);
+      const summary = counts.length ? counts.join(" · ") : "no new events";
+      const src = m.lastImportFile ? ` from <strong>${esc(m.lastImportFile)}</strong>` : "";
+      const kind = m.lastImportKind ? ` <span style="color:#6aa9ff">(${esc(m.lastImportKind)})</span>` : "";
+      let detail = "";
+      const list = d.added || [];
+      if (list.length) {
+        const CAP = 50;
+        const items = list.slice(0, CAP).map(x =>
+          `<span class="sm-item sm-added">+ <span class="sev-${esc(x.severity)}">${esc(x.timestamp || "(undated)")}</span> ${esc(x.description)}</span>`
+        ).join("");
+        const remaining = added - Math.min(CAP, list.length);
+        const more = remaining > 0 ? `<span class="sm-item" style="color:#9aa4b2">…and ${remaining} more</span>` : "";
+        detail = `<details><summary>what this import added to the timeline</summary>${items}${more}</details>`;
+      }
+      el.innerHTML = `<div class="sm-line"><span>📥 Last import <strong>${esc(relTime(m.lastImportedAt))}</strong>${src}${kind}</span><span>${summary}</span></div>${detail}`;
+    }
+
     // --- Ask the LLM about this case ----------------------------------------------
     function askStatusBadge(s) {
       const m = { answered: ["#1e3a2a", "#6bcB77"], partial: ["#3a3320", "#ffd93b"], unknown: ["#2a2f3a", "#9aa4b2"] };
@@ -2179,6 +2224,8 @@
         const id = String(e.id);
         const starred = starredEvents.has(id);
         const isSelected = selectedEvents.has(id);
+        const isNew = newEventKeys.has(evKey(e));   // added by the last import (see #importMeta)
+        const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
 
         const span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
           ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
@@ -2197,14 +2244,14 @@
         }
         const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
 
-        return `<div class="ev-row${isSelected ? " ev-selected" : ""}" data-evid="${escAttr(id)}">`
+        return `<div class="ev-row${isSelected ? " ev-selected" : ""}${isNew ? " ev-new" : ""}" data-evid="${escAttr(id)}">`
           + `<div class="ev-col-ctrl">`
           + `<input type="checkbox" class="ev-checkbox ev-row-cb" data-evid="${escAttr(id)}" ${isSelected ? "checked" : ""} title="Select event" />`
           + `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>`
           + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)}`
           + `</div>`
           + `<div class="ev-col-time"><span class="sev-${esc(e.severity)}">${span}</span></div>`
-          + `<div class="ev-col-content">${tagPills("event", e.id)}${badge}${corro}${chain} <strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}`
+          + `<div class="ev-col-content">${tagPills("event", e.id)}${newBadge}${badge}${corro}${chain} <strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}`
           + `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}`
           + `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}`
           + `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}`
@@ -2329,6 +2376,7 @@
       const sfBtn = document.getElementById("evStarFilterBtn");
       if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
       loadSynthMeta(caseId);
+      loadImportMeta(caseId);
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
@@ -2347,6 +2395,7 @@
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
+        else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
       };
     }
 

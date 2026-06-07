@@ -56,7 +56,7 @@ import { YetiProvider } from "./enrichment/yeti.js";
 import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
-import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity } from "./analysis/stateTypes.js";
+import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity, ForensicEvent } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
@@ -65,6 +65,8 @@ import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore } from "./analysis/tags.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
+import { ImportMetaStore } from "./analysis/importMeta.js";
+import { diffTimeline } from "./analysis/timelineDiff.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { byEventTime } from "./analysis/forensicSort.js";
@@ -126,6 +128,11 @@ export interface AppOptions {
   // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
   // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
   synthMetaStore?: SynthMetaStore;
+  // Last-import record (when it ran + forensic-timeline diff) for the dashboard's "last import N
+  // ago - +N new events" indicator and what-was-added view above the timeline. The unified /import
+  // route writes it after the importer completes; onImportMeta pings dashboard clients to re-fetch.
+  importMetaStore?: ImportMetaStore;
+  onImportMeta?: (caseId: string) => void;
   // Called when an AI analysis window starts / finishes / fails, so the
   // server can push a live "AI status" indicator to dashboard clients.
   onAiStatus?: (caseId: string, event: AiStatusEvent) => void;
@@ -1150,8 +1157,28 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           default: return Promise.reject(new Error(`unhandled import kind: ${kind as string}`));
         }
       };
+
+      // Snapshot the forensic timeline BEFORE the import so the .then() below can record what this
+      // import added (the "last import" diff the dashboard shows above the timeline). Best-effort.
+      let timelineBefore: ForensicEvent[] = [];
+      if (options.importMetaStore && options.stateStore) {
+        try { timelineBefore = (await options.stateStore.load(caseId)).forensicTimeline; } catch { /* keep [] */ }
+      }
+
       run()
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .then(async () => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          // Record what this import added to the forensic timeline, BEFORE resynthesis (which
+          // preserves the timeline). Best-effort: a meta failure must not break the import.
+          if (options.importMetaStore && options.stateStore) {
+            try {
+              const timelineAfter = (await options.stateStore.load(caseId)).forensicTimeline;
+              await options.importMetaStore.record(caseId, { kind, file: storedName, diff: diffTimeline(timelineBefore, timelineAfter) });
+              options.onImportMeta?.(caseId);
+            } catch { /* non-fatal */ }
+          }
+          resynthesizeInBackground(caseId);
+        })
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
@@ -2107,6 +2134,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Last-import metadata: when the last import ran + what it added to the forensic timeline.
+  // Backs the dashboard's "last import N ago - +N new events" banner and per-row "new" highlight.
+  app.get("/cases/:id/import-meta", async (req: Request, res: Response) => {
+    if (!options.importMetaStore) return res.status(501).json({ error: "import metadata not configured" });
+    try {
+      return res.status(200).json(await options.importMetaStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Add an analyst question to the case's open key questions (e.g. from Ask, when unknown).
   // It's pinned, so synthesis preserves it and answers it once the evidence supports it.
   app.post("/cases/:id/questions", async (req: Request, res: Response) => {
@@ -2398,6 +2436,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
   const synthMetaStore = new SynthMetaStore(store);
+  const importMetaStore = new ImportMetaStore(store);
   const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore);
 
   const provider = buildProvider();
@@ -2427,6 +2466,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     tagsStore,
     onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
     synthMetaStore,
+    importMetaStore,
+    onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
     autoSynthesize,
     autoSynthesizeDebounceMs,
     onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
