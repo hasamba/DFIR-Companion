@@ -247,11 +247,15 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   Legitimate** (excludes them from analysis via a single batched write + one re-synthesis).
 - **Hunt-pivot query generator** — from any forensic event or IOC, a 🔍 chip generates ready-to-adapt
   hunt/pivot queries for the tools you already run — **Velociraptor notebook VQL**
-  (paste-into-a-cell pivots), **Microsoft Defender / Sentinel KQL**, **Splunk SPL**, and a **Sigma**
-  rule skeleton — filled from the entity's structured fields (hash / IP / domain / path / process /
-  parent / host), each with one-click copy. Paths are normalized (device-prefix stripped, Velociraptor
-  globs use forward slashes) so the queries actually run. Deterministic templating: no AI, no cost,
-  runs offline. (Pivots off a confirmed indicator — it doesn't author detections.)
+  (paste-into-a-cell pivots), **Microsoft Defender / Sentinel KQL**, **Elastic ES|QL** (ECS fields,
+  for Kibana Discover / Security), **Splunk SPL**, a **Sigma** rule skeleton, a **YARA** retro-hunt
+  rule (hash-gated — keys on the sample's hash via the `hash` module for fleet-wide retro-hunting),
+  and **Suricata** network rules (IP/domain/URL-gated — DNS / TLS-SNI / HTTP-host/URI alerts) —
+  filled from the entity's structured fields (hash / IP / domain / URL / path / process / parent /
+  host), each with one-click copy. Cards only appear when the entity carries a relevant indicator.
+  Paths are normalized (device-prefix stripped, Velociraptor globs use forward slashes) so the queries
+  actually run. Deterministic templating: no AI, no cost, runs offline. (Pivots off a confirmed
+  indicator — it doesn't author detections.)
 - **Run hunts across all endpoints (Velociraptor)** — when a Velociraptor API client is configured
   (`DFIR_VELOCIRAPTOR_*`), the hunt modal's Velociraptor card becomes editable with a **▶ Run hunt
   (all clients)** button that packages the pivot VQL as a client artifact and launches a **hunt on
