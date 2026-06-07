@@ -61,6 +61,20 @@ describe("parseHayabusaTimeline — json-timeline", () => {
     expect(r.events).toHaveLength(1); // two identical records aggregate
     expect(r.events[0].count).toBe(2);
   });
+
+  // Regression: `hayabusa json-timeline` (without -J) emits PRETTY-PRINTED objects concatenated
+  // with no array wrapper and no commas — neither valid JSON nor NDJSON. This used to import as
+  // "0 records / unrecognized". See parseConcatenatedJson in siemImport.
+  it("reads concatenated pretty-printed objects (json-timeline default output)", () => {
+    const pretty = JSON.stringify(jsonProc(), null, 4);
+    const text = `${pretty}\n${pretty}\n`;   // two multi-line objects back to back, no commas/array
+    const r = parseHayabusaTimeline(text);
+    expect(r.total).toBe(2);
+    expect(r.events).toHaveLength(1);          // identical records aggregate
+    expect(r.events[0].count).toBe(2);
+    expect(r.events[0].description).toContain("Hayabusa: PowerShell Download Cradle");
+    expect(r.events[0].severity).toBe("High");
+  });
 });
 
 describe("parseHayabusaTimeline — csv-timeline", () => {

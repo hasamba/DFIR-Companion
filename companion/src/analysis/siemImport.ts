@@ -126,6 +126,36 @@ function unwrapSource(el: unknown): Row | null {
 const RECORD_ARRAY_KEYS = ["events", "Events", "records", "Records", "results", "Results", "logs", "Logs", "rows", "items", "alerts", "Alerts", "value"];
 
 // Parse the file and extract the flat array of event records + a label for the shape.
+// Parse a stream of CONCATENATED top-level JSON values (objects/arrays), tolerating pretty-
+// printing and any separators (commas / whitespace / newlines) between them. This is the shape
+// Hayabusa's `json-timeline` emits by default: many multi-line `{ … }` objects with NO array
+// wrapper and NO commas — which is neither a single JSON document nor NDJSON, so both the
+// whole-file parse and the line-by-line NDJSON parse miss it. Walks the string tracking brace/
+// bracket depth (ignoring braces inside string literals) and JSON.parses each depth-0 value.
+// Pure; malformed chunks are skipped rather than throwing.
+export function parseConcatenatedJson(text: string): unknown[] {
+  const out: unknown[] = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === "{" || ch === "[") { if (depth === 0) start = i; depth++; }
+    else if (ch === "}" || ch === "]") {
+      if (depth > 0 && --depth === 0 && start !== -1) {
+        try { out.push(JSON.parse(text.slice(start, i + 1))); } catch { /* skip malformed chunk */ }
+        start = -1;
+      }
+    }
+  }
+  return out;
+}
+
 export function extractRecords(text: string): { records: Row[]; format: string } {
   const trimmed = text.trim();
   if (!trimmed) return { records: [], format: "empty" };
@@ -175,7 +205,17 @@ export function extractRecords(text: string): { records: Row[]; format: string }
     const rec = unwrapSource(obj);
     if (rec && Object.keys(rec).length > 0) records.push(rec);
   }
-  return { records, format: "ndjson" };
+  if (records.length > 0) return { records, format: "ndjson" };
+
+  // Last resort: concatenated pretty-printed JSON values (Hayabusa `json-timeline` default —
+  // multi-line objects, no array, no commas). NDJSON's per-line parse can't see these.
+  const concat: Row[] = [];
+  for (const v of parseConcatenatedJson(trimmed)) {
+    if (Array.isArray(v)) { for (const e of v) { const r = unwrapSource(e); if (r && Object.keys(r).length > 0) concat.push(r); } }
+    else { const r = unwrapSource(v); if (r && Object.keys(r).length > 0) concat.push(r); }
+  }
+  if (concat.length > 0) return { records: concat, format: "concatenated-json" };
+  return { records: [], format: "ndjson" };
 }
 
 // ───────────────────────────── Windows / Sysmon tables ─────────────────────────────

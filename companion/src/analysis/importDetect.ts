@@ -6,7 +6,7 @@
 // Returns a kind that maps 1:1 to a pipeline import method (see server `/cases/:id/import`).
 // The detected kind is shown back to the analyst, so a mis-route is visible, not silent.
 
-import { isObject, getCI, getPath, str } from "./siemImport.js";
+import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
 import { parseCsv } from "./csvImport.js";
 
 export type ImportKind =
@@ -36,6 +36,10 @@ function jsonSample(text: string): { root: unknown; sample: Row | null } {
       if (!l || (l[0] !== "{" && l[0] !== "[")) continue;
       try { root = JSON.parse(l); break; } catch { /* keep scanning */ }
     }
+  }
+  if (root === undefined && (t[0] === "{" || t[0] === "[")) {
+    // Concatenated pretty-printed JSON values (Hayabusa `json-timeline` default) — sample the first.
+    root = parseConcatenatedJson(t)[0];
   }
   if (Array.isArray(root)) return { root, sample: firstObj(root) };
   if (isObject(root)) {
