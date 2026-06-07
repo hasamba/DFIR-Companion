@@ -1110,6 +1110,9 @@
     }
 
     let veloEnabled = false;   // set from /health — whether the Velociraptor API is configured (Run button)
+    // Which hunt-query platforms the server allows (DFIR_HUNT_PLATFORMS); replaced from /health.
+    // Defaults to all so the modal is fully populated before /health returns. Keys match huntPlatforms.ts.
+    let enabledHuntPlatforms = new Set(["velociraptor", "defender", "elastic", "splunk", "sigma", "yara", "suricata"]);
     let huntLabel = "";        // label of the entity whose hunt modal is open (used as the hunt description)
     function huntChip(kind, id) {
       return `<button class="hunt-add" data-hk="${escAttr(kind)}" data-hi="${escAttr(String(id))}" `
@@ -1282,18 +1285,23 @@
       huntLabel = c.label;
       document.getElementById("huntTitle").textContent = "Hunt queries";
       document.getElementById("huntSub").textContent = c.label;
+      // [platformKey, label, query]. The key gates the card against the server's enabled-platforms
+      // allowlist (DFIR_HUNT_PLATFORMS, delivered via /health) — keys must match huntPlatforms.ts.
       const cards = [
-        ["Velociraptor (notebook VQL)", huntVql(c)],
-        ["Microsoft Defender / Sentinel (KQL)", huntKql(c)],
-        ["Elastic / Kibana (ES|QL)", huntEsql(c)],
-        ["Splunk (SPL)", huntSpl(c)],
-        ["Sigma rule skeleton (YAML)", huntSigma(c)],
-        ["YARA rule (retro-hunt the sample)", huntYara(c)],
-        ["Suricata rules (network)", huntSuricata(c)],
-      ].filter(([, q]) => q && q.trim());
+        ["velociraptor", "Velociraptor (notebook VQL)", huntVql(c)],
+        ["defender", "Microsoft Defender / Sentinel (KQL)", huntKql(c)],
+        ["elastic", "Elastic / Kibana (ES|QL)", huntEsql(c)],
+        ["splunk", "Splunk (SPL)", huntSpl(c)],
+        ["sigma", "Sigma rule skeleton (YAML)", huntSigma(c)],
+        ["yara", "YARA rule (retro-hunt the sample)", huntYara(c)],
+        ["suricata", "Suricata rules (network)", huntSuricata(c)],
+      ].filter(([key, , q]) => q && q.trim() && enabledHuntPlatforms.has(key));
       const body = document.getElementById("huntBody");
-      body.innerHTML = hasAny(c)
-        ? cards.map(([tool, query], idx) => {
+      body.innerHTML = !hasAny(c)
+        ? "<div style='color:#9aa4b2;font-size:12px'>This entity carries no hash / IP / domain / path / process to pivot on. Add structured fields (or tag it) to enable hunt queries.</div>"
+        : !cards.length
+        ? "<div style='color:#9aa4b2;font-size:12px'>No hunt platforms are enabled for this entity. Platforms are limited by <code>DFIR_HUNT_PLATFORMS</code> in the server environment — clear or widen it to show more.</div>"
+        : cards.map(([, tool, query], idx) => {
             // The Velociraptor card is runnable when the API is configured: editable VQL + a Run
             // button that executes it against the server and shows the rows inline.
             const runnable = tool.startsWith("Velociraptor") && veloEnabled;
@@ -1304,8 +1312,7 @@
               ? `<textarea class="hunt-vql-edit" id="huntQ${idx}" spellcheck="false">${esc(query)}</textarea>`
               : `<pre id="huntQ${idx}">${esc(query)}</pre>`;
             return `<div class="hunt-card">${head}${content}${runnable ? `<div class="hunt-run-res" id="huntRunRes${idx}"></div>` : ""}</div>`;
-          }).join("")
-        : "<div style='color:#9aa4b2;font-size:12px'>This entity carries no hash / IP / domain / path / process to pivot on. Add structured fields (or tag it) to enable hunt queries.</div>";
+          }).join("");
       body.querySelectorAll(".hunt-copy").forEach((b) => b.onclick = () => {
         navigator.clipboard.writeText(huntText(b.dataset.idx)).then(() => {
           b.textContent = "Copied ✓"; b.classList.add("copied");
@@ -2217,6 +2224,7 @@
         if (h.aiEnabled) setAi("idle", "ready (waiting for activity)");
         else setAi("off", "off (no provider configured)");
         veloEnabled = !!h.velociraptorEnabled;   // gates the "Run in Velociraptor" button in the hunt modal
+        if (Array.isArray(h.huntPlatforms)) enabledHuntPlatforms = new Set(h.huntPlatforms);   // hunt-modal allowlist
       }).catch(() => setAi("unknown", "unknown"));
 
       ws = new WebSocket(`ws://${location.host}/ws?caseId=${encodeURIComponent(caseId)}`);
