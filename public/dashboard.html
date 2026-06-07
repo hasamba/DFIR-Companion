@@ -109,7 +109,7 @@
     .tag-current-pill .tag-del { background: transparent; border: 0; color: inherit; cursor: pointer; font-size: 12px; padding: 0 2px; opacity: .7; }
     .tag-current-pill .tag-del:hover { opacity: 1; }
     #tagInput { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 6px; padding: 6px; font-family: inherit; }
-    /* Hunt-pivot query generator (Velociraptor / KQL / Splunk / Sigma templates from an entity) */
+    /* Hunt-pivot query generator (Velociraptor / KQL / ES|QL / Splunk / Sigma / YARA / Suricata templates from an entity) */
     .hunt-add { background: transparent; border: 1px solid #2a2f3a; color: #6b7280; border-radius: 10px;
       padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .hunt-add:hover { color: #6aa9ff; border-color: #6aa9ff; }
@@ -1033,8 +1033,9 @@
 
     // --- Hunt-pivot query generator -----------------------------------------------
     // From a forensic event or IOC, generate ready-to-adapt hunt/pivot queries for the tools
-    // analysts already run (Velociraptor VQL, Microsoft Defender/Sentinel KQL, Splunk SPL, and a
-    // Sigma skeleton). Deterministic templating from the entity's structured fields — no AI, no
+    // analysts already run: Velociraptor VQL, Microsoft Defender/Sentinel KQL, Elastic ES|QL,
+    // Splunk SPL, a Sigma skeleton, a YARA retro-hunt rule (hash-gated), and Suricata network rules
+    // (IP/domain/URL-gated). Deterministic templating from the entity's structured fields — no AI, no
     // server round-trip, no cost. The Companion stays a post-detection layer: these PIVOT off a
     // confirmed indicator, they don't author detections for it.
     // --- Starred events (per case, localStorage) ---------------------------------
@@ -1110,7 +1111,7 @@
     let huntLabel = "";        // label of the entity whose hunt modal is open (used as the hunt description)
     function huntChip(kind, id) {
       return `<button class="hunt-add" data-hk="${escAttr(kind)}" data-hi="${escAttr(String(id))}" `
-        + `title="Generate hunt / pivot queries (Velociraptor, KQL, Splunk, Sigma)">🔍</button>`;
+        + `title="Generate hunt / pivot queries (Velociraptor, Defender KQL, Elastic ES|QL, Splunk, Sigma, YARA, Suricata)">🔍</button>`;
     }
     // Pull the indicators an entity carries into typed buckets the generators consume.
     function huntContextFor(kind, e) {
@@ -1202,6 +1203,73 @@
       return `title: Hunt - ${String(c.label).slice(0, 60)}\nstatus: experimental\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n${sel.join("\n")}\n  condition: selection\nlevel: high\ntags:\n${tags}`;
     }
 
+    // Elastic ES|QL — one piped query over ECS fields, runnable in Kibana Discover / Security.
+    // Distinct from the Microsoft KQL card above (that's Kusto). Process names are lowercased
+    // (TO_LOWER) to match the VQL card's case-insensitive behavior.
+    function huntEsql(c) {
+      const terms = [];
+      if (c.hashes.length) {
+        const hs = c.hashes.map((h) => hq(h.toLowerCase())).join(", ");
+        terms.push(`process.hash.sha256 IN (${hs}) OR process.hash.md5 IN (${hs}) OR file.hash.sha256 IN (${hs}) OR file.hash.md5 IN (${hs})`);
+      }
+      if (c.processes.length) terms.push(`TO_LOWER(process.name) IN (${c.processes.map((p) => hq(baseName(p).toLowerCase())).join(", ")})`);
+      if (c.parent) terms.push(`TO_LOWER(process.parent.name) == ${hq(baseName(c.parent).toLowerCase())}`);
+      if (c.ips.length) { const ips = c.ips.map(hq).join(", "); terms.push(`source.ip IN (${ips}) OR destination.ip IN (${ips})`); }
+      if (c.domains.length || c.urls.length) {
+        const ds = [...c.domains, ...c.urls].map(hq).join(", ");
+        terms.push(`dns.question.name IN (${ds}) OR url.domain IN (${ds}) OR url.full IN (${ds})`);
+      }
+      if (c.paths.length) {
+        const ps = c.paths.map((p) => hq(cleanWinPath(p))).join(", ");
+        terms.push(`file.path IN (${ps}) OR process.executable IN (${ps})`);
+      }
+      if (!terms.length) return "";
+      return `FROM logs-*\n${c.host ? `| WHERE host.name == ${hq(c.host)}\n` : ""}| WHERE ${terms.join("\n   OR ")}\n` +
+        `| KEEP @timestamp, host.name, user.name, process.name, process.parent.name, source.ip, destination.ip, dns.question.name, url.full, file.path\n| SORT @timestamp DESC\n| LIMIT 100`;
+    }
+    // Fingerprint length → YARA hash-module function.
+    const yaraHashFn = (h) => h.length === 32 ? "hash.md5" : h.length === 40 ? "hash.sha1" : "hash.sha256";
+    // YARA rule — retro-hunt the confirmed sample across a fleet (Velociraptor yara(), THOR, etc.).
+    // Hash-gated: we hold the file's fingerprint, not its bytes, so the rule keys on the hash module;
+    // the analyst adds a strings: block with real patterns from the sample for variant coverage.
+    function huntYara(c) {
+      if (!c.hashes.length) return "";
+      const name = ("Hunt_" + String(c.label).replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "")).slice(0, 60) || "Hunt_indicator";
+      const conds = c.hashes.map((h) => `${yaraHashFn(h)}(0, filesize) == ${hq(h.toLowerCase())}`).join(" or\n            ");
+      const desc = String(c.label).replace(/"/g, "'").slice(0, 80);
+      return `import "hash"\n\nrule ${name}\n{\n    meta:\n        description = "Retro-hunt for confirmed indicator: ${desc}"\n        author = "DFIR Companion"\n` +
+        `    // Keys on the sample's hash (its fingerprint, not its bytes). For variant coverage add a\n` +
+        `    // strings: block with real byte/string patterns from the sample and OR them into the condition.\n` +
+        `    condition:\n        filesize < 50MB and (\n            ${conds}\n        )\n}`;
+    }
+    // Suricata content escaping — the four content metacharacters must be hex-escaped (|HH|).
+    const suriContent = (s) => String(s).replace(/\|/g, "|7C|").replace(/\\/g, "|5C|").replace(/"/g, "|22|").replace(/;/g, "|3B|");
+    const suriMsg = (s) => String(s).replace(/[";]/g, "");   // keep the msg string well-formed
+    // Suricata/Snort-style rules — hunt the confirmed NETWORK indicator across sensors (IP/domain/URL).
+    // Local sid range (9000001+); reassign to your allocated block before deploying.
+    function huntSuricata(c) {
+      if (!c.ips.length && !c.domains.length && !c.urls.length) return "";
+      const out = [];
+      let sid = 9000001;
+      for (const ip of c.ips) {
+        out.push(`alert ip $HOME_NET any -> ${ip} any (msg:"DFIR hunt - traffic to confirmed IP ${suriMsg(ip)}"; flow:to_server; sid:${sid++}; rev:1;)`);
+      }
+      for (const d of c.domains) {
+        const dd = suriContent(d), dm = suriMsg(d);
+        out.push(`alert dns $HOME_NET any -> any any (msg:"DFIR hunt - DNS query for ${dm}"; dns.query; content:"${dd}"; nocase; sid:${sid++}; rev:1;)`);
+        out.push(`alert tls $HOME_NET any -> any any (msg:"DFIR hunt - TLS SNI ${dm}"; tls.sni; content:"${dd}"; nocase; sid:${sid++}; rev:1;)`);
+        out.push(`alert http $HOME_NET any -> any any (msg:"DFIR hunt - HTTP host ${dm}"; http.host; content:"${dd}"; nocase; sid:${sid++}; rev:1;)`);
+      }
+      for (const u of c.urls) {
+        let host = "", path = "";
+        try { const url = new URL(u); host = url.hostname; path = (url.pathname || "") + (url.search || ""); } catch (_) { host = u; }
+        if (host) out.push(`alert tls $HOME_NET any -> any any (msg:"DFIR hunt - TLS SNI ${suriMsg(host)}"; tls.sni; content:"${suriContent(host)}"; nocase; sid:${sid++}; rev:1;)`);
+        if (path && path !== "/") out.push(`alert http $HOME_NET any -> any any (msg:"DFIR hunt - HTTP URI ${suriMsg(path)}"; http.uri; content:"${suriContent(path)}"; nocase; sid:${sid++}; rev:1;)`);
+        if (host) out.push(`alert http $HOME_NET any -> any any (msg:"DFIR hunt - HTTP host ${suriMsg(host)}"; http.host; content:"${suriContent(host)}"; nocase; sid:${sid++}; rev:1;)`);
+      }
+      return out.join("\n");
+    }
+
     function openHuntModal(kind, id) {
       const entity = kind === "ioc"
         ? ((lastState && lastState.iocs) || []).find((i) => String(i.id) === String(id))
@@ -1215,8 +1283,11 @@
       const cards = [
         ["Velociraptor (notebook VQL)", huntVql(c)],
         ["Microsoft Defender / Sentinel (KQL)", huntKql(c)],
+        ["Elastic / Kibana (ES|QL)", huntEsql(c)],
         ["Splunk (SPL)", huntSpl(c)],
         ["Sigma rule skeleton (YAML)", huntSigma(c)],
+        ["YARA rule (retro-hunt the sample)", huntYara(c)],
+        ["Suricata rules (network)", huntSuricata(c)],
       ].filter(([, q]) => q && q.trim());
       const body = document.getElementById("huntBody");
       body.innerHTML = hasAny(c)
