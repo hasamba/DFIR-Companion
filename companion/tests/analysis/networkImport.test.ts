@@ -60,7 +60,7 @@ describe("parseNetworkLogs — Suricata eve.json", () => {
     expect(e.severity).toBe("High");              // Suricata priority 1
     expect(e.mitreTechniques).toContain("T1071.001");
     expect(e.sources).toEqual(["Suricata"]);
-    expect(e.timestamp).toBe("2017-12-01T08:00:00.123Z"); // offset → UTC
+    expect(e.timestamp).toBe("2017-12-01T08:00:00.123456Z"); // offset → UTC, microseconds preserved
     const ips = r.iocs.filter((i) => i.type === "ip").map((i) => i.value);
     expect(ips).toContain("203.0.113.9");
   });
