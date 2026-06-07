@@ -254,7 +254,9 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   rule (hash-gated — keys on the sample's hash via the `hash` module for fleet-wide retro-hunting),
   and **Suricata** network rules (IP/domain/URL-gated — DNS / TLS-SNI / HTTP-host/URI alerts) —
   filled from the entity's structured fields (hash / IP / domain / URL / path / process / parent /
-  host), each with one-click copy. Cards only appear when the entity carries a relevant indicator.
+  host) — and for events, also from indicators **harvested out of the description text** (refanged) and
+  **matched case IOCs**, so a network/IDS alert's domain + IPs are pivotable too — each with one-click
+  copy. Cards only appear when the entity carries a relevant indicator.
   Paths are normalized (device-prefix stripped, Velociraptor globs use forward slashes) so the queries
   actually run. Deterministic templating: no AI, no cost, runs offline. (Pivots off a confirmed
   indicator — it doesn't author detections.) **Trim the modal to your stack** with the

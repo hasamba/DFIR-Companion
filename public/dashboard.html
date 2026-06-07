@@ -1180,6 +1180,42 @@
       return `<button class="hunt-add" data-hk="${escAttr(kind)}" data-hi="${escAttr(String(id))}" `
         + `title="Generate hunt / pivot queries (Velociraptor, Defender KQL, Elastic ES|QL, Splunk, Sigma, YARA, Suricata)">🔍</button>`;
     }
+    // Indicator harvesting for EVENT hunts. Events often carry indicators only in free text — a
+    // Suricata/Zeek alert puts the domain + IPs in its description, not in structured fields — so a
+    // hunt built purely from structured fields wrongly shows "nothing to pivot on". Refang the text,
+    // then (a) regex out the unambiguous types (IPv4 / hash / URL) and (b) match any case IOC whose
+    // value appears in it. (b) reuses the deterministic, correctly-typed IOC extraction, so a
+    // defanged "soulversr .com" in the description maps to the clean soulversr.com domain IOC.
+    function huntRefang(s) {
+      return String(s || "")
+        .replace(/hxxp(s?)\b/gi, "http$1")                                   // hxxp[s] -> http[s]
+        .replace(/\[\.\]|\(\.\)|\{\.\}|\[dot\]|\(dot\)|\bdot\b/gi, ".")       // evil[.]com / evil(dot)com / evil dot com
+        .replace(/\[:\]/g, ":")
+        .replace(/\s*\.\s*/g, ".");                                          // collapse spaces around dots: "soulversr .com" -> "soulversr.com"
+    }
+    const HUNT_IPV4 = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+    const HUNT_HASH = /\b(?:[a-f0-9]{64}|[a-f0-9]{40}|[a-f0-9]{32})\b/gi;
+    const HUNT_URL = /\bhttps?:\/\/[^\s)<>"']+/gi;
+    const isIpv4 = (v) => v.split(".").length === 4 && v.split(".").every((o) => o !== "" && +o >= 0 && +o <= 255);
+    const pushUniq = (arr, v) => { const lv = String(v).toLowerCase(); if (v && !arr.some((x) => String(x).toLowerCase() === lv)) arr.push(v); };
+    function huntHarvestText(text, c) {
+      const t = huntRefang(text);
+      (t.match(HUNT_IPV4) || []).forEach((v) => { if (isIpv4(v)) pushUniq(c.ips, v); });
+      (t.match(HUNT_HASH) || []).forEach((v) => pushUniq(c.hashes, v.toLowerCase()));
+      (t.match(HUNT_URL) || []).forEach((v) => pushUniq(c.urls, v.replace(/[).,]+$/, "")));
+      const tl = t.toLowerCase();
+      for (const ioc of (lastState && lastState.iocs) || []) {
+        const val = String(ioc.value || ""); if (!val) continue;
+        const esc = val.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        if (!new RegExp(`(^|[^a-z0-9.])${esc}([^a-z0-9.]|$)`).test(tl)) continue;   // boundary-matched
+        if (ioc.type === "ip") pushUniq(c.ips, val);
+        else if (ioc.type === "domain") pushUniq(c.domains, val);
+        else if (ioc.type === "url") pushUniq(c.urls, val);
+        else if (ioc.type === "hash") pushUniq(c.hashes, val);
+        else if (ioc.type === "file") pushUniq(c.paths, val);
+        else if (ioc.type === "process") pushUniq(c.processes, val);
+      }
+    }
     // Pull the indicators an entity carries into typed buckets the generators consume.
     function huntContextFor(kind, e) {
       const c = { hashes: [], ips: [], domains: [], urls: [], paths: [], processes: [], parent: "", host: "", label: "" };
@@ -1201,6 +1237,9 @@
         if (e.processName) c.processes.push(e.processName);
         if (e.parentName) c.parent = e.parentName;
         if (e.asset) c.host = e.asset;
+        // Network/IDS alerts (and many others) carry the real indicators in the description text and
+        // as linked case IOCs — harvest those so the hunt has something to pivot on.
+        huntHarvestText(e.description || "", c);
       }
       return c;
     }
