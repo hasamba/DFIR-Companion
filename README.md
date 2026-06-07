@@ -255,7 +255,9 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   host), each with one-click copy. Cards only appear when the entity carries a relevant indicator.
   Paths are normalized (device-prefix stripped, Velociraptor globs use forward slashes) so the queries
   actually run. Deterministic templating: no AI, no cost, runs offline. (Pivots off a confirmed
-  indicator — it doesn't author detections.)
+  indicator — it doesn't author detections.) **Trim the modal to your stack** with the
+  `DFIR_HUNT_PLATFORMS` allowlist (e.g. `velociraptor` to show only Velociraptor, or
+  `velociraptor,sigma,yara`) — unset shows all.
 - **Run hunts across all endpoints (Velociraptor)** — when a Velociraptor API client is configured
   (`DFIR_VELOCIRAPTOR_*`), the hunt modal's Velociraptor card becomes editable with a **▶ Run hunt
   (all clients)** button that packages the pivot VQL as a client artifact and launches a **hunt on
