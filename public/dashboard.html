@@ -131,6 +131,27 @@
     .hunt-run-res { padding: 8px 10px; border-top: 1px solid #2a2f3a; }
     .hunt-refresh { background: #2a2f3a; border: 0; color: #cbd3df; border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
     .hunt-refresh:hover { color: #fff; }
+    /* Timeline table layout — checkbox · star · icons | timestamp | tags+message */
+    #forensicTimeline { container-type: inline-size; }
+    .ev-row { display: flex; align-items: flex-start; border-bottom: 1px solid #1a1f28; padding: 3px 0; }
+    .ev-row:hover { background: #0d1117; }
+    .ev-row.ev-selected { background: #142038; }
+    .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 118px; padding-top: 1px; }
+    .ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add { margin-left: 0; }
+    .ev-checkbox { width: 13px; height: 13px; cursor: pointer; accent-color: #6aa9ff; flex-shrink: 0; margin: 0; }
+    .ev-star { background: transparent; border: 0; color: #3a4050; font-size: 13px; cursor: pointer; padding: 0 1px; line-height: 1; flex-shrink: 0; }
+    .ev-star.starred, .ev-star:hover { color: #ffd93b; }
+    .ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; padding-top: 2px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+    .ev-col-content { flex: 1; min-width: 0; padding-top: 1px; }
+    .ev-header-row { display: flex; align-items: center; padding: 2px 0 5px; border-bottom: 1px solid #2a2f3a; margin-bottom: 1px; font-size: 11px; color: #6b7280; }
+    .ev-header-ctrl { width: 118px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
+    .ev-header-time { width: 192px; flex-shrink: 0; }
+    .ev-bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 0 4px; font-size: 12px; color: #9aa4b2; border-bottom: 1px solid #2a2f3a; margin-bottom: 4px; }
+    .ev-bulk-bar.active { display: flex; }
+    .ev-bulk-btn { background: #1e2330; border: 1px solid #3a4050; color: #cbd3df; border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+    .ev-bulk-btn:hover { background: #2a3050; color: #fff; border-color: #6aa9ff; }
+    #evStarFilterBtn { background: transparent; border: 1px solid #3a4050; color: #6b7280; border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+    #evStarFilterBtn.active { color: #ffd93b; border-color: #ffd93b; background: #1c1500; }
     .vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid #2a2f3a; border-radius: 5px; }
     .vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
     .vql-result th, .vql-result td { border: 1px solid #2a2f3a; padding: 3px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
@@ -164,7 +185,7 @@
       background: transparent; color: #5b6472; border: 1px solid #2a2f3a;
       border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity .12s, color .12s, border-color .12s;
     }
-    .finding:hover .legit-btn, #iocs > div:hover .legit-btn, .legit-btn:focus { opacity: 1; }
+    .finding:hover .legit-btn, #iocs > div:hover .legit-btn, .ev-row:hover .legit-btn, .legit-btn:focus { opacity: 1; }
     .legit-btn:hover { color: #ffd93b; border-color: #ffd93b; }
     .unlegit-btn {
       font-size: 10px; padding: 1px 7px; margin-left: 6px; background: transparent;
@@ -378,7 +399,8 @@
     <section style="grid-column: 1 / -1"><h2>Executive Summary<button id="genExecBtn" type="button" title="Generate a management-facing executive summary with AI (review before saving it to the report)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genExecMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#9aa4b2"></span></h2><div id="summary">—</div><div id="execGenResult"></div></section>
     <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope (sorted by event time); updates in real time"></span><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
+    <section style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope (sorted by event time); updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
+      <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:#6aa9ff"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkLegitBtn" title="Mark all selected events as legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:#9aa4b2">✕ Clear</button></div>
       <div style="font-size:11px; color:#9aa4b2; margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
@@ -899,14 +921,18 @@
       if (label === "key-evidence" || label === "pivot-point") return "#6aa9ff";
       return "#9aa4b2";
     }
-    function tagChip(type, id) {
+    function tagPills(type, id) {
       const list = tagsByTarget.get(targetKey(type, id)) || [];
-      const pills = list.map(t => {
+      return list.map(t => {
         const c = tagColor(t.label);
         return `<span class="tag-pill" style="color:${c};border-color:${c}" title="tag by ${escAttr(t.author)}">${esc(t.label)}</span>`;
       }).join("");
-      return pills + `<button class="tag-add" data-tt="${escAttr(type)}" data-ti="${escAttr(String(id))}" `
-        + `title="Add / edit triage tags">🏷</button>`;
+    }
+    function tagAddBtn(type, id) {
+      return `<button class="tag-add" data-tt="${escAttr(type)}" data-ti="${escAttr(String(id))}" title="Add / edit triage tags">🏷</button>`;
+    }
+    function tagChip(type, id) {
+      return tagPills(type, id) + tagAddBtn(type, id);
     }
 
     function loadTags(caseId) {
@@ -936,6 +962,17 @@
     }
     function renderTagModal() {
       if (!tagTarget) return;
+      // Bulk mode: tag N events at once (current tags not shown, only add-flow)
+      if (tagTarget.bulk) {
+        document.getElementById("tagTitle").textContent = `Add tags to ${tagTarget.ids.length} selected event${tagTarget.ids.length !== 1 ? "s" : ""}`;
+        document.getElementById("tagCurrent").innerHTML = `<div style='color:#9aa4b2;font-size:12px'>Tags will be added to all selected events. Individual existing tags are not shown in bulk mode.</div>`;
+        const sug = document.getElementById("tagSuggest");
+        sug.innerHTML = SUGGESTED_TAGS.map(l => { const c = tagColor(l);
+          return `<button class="tag-suggest-btn" style="color:${c};border-color:${c}" data-label="${escAttr(l)}">+ ${esc(l)}</button>`; }).join("");
+        sug.querySelectorAll(".tag-suggest-btn").forEach(b => b.onclick = () => addTag(b.getAttribute("data-label")));
+        return;
+      }
+      // Single-target mode
       const list = tagsByTarget.get(targetKey(tagTarget.type, tagTarget.id)) || [];
       document.getElementById("tagTitle").textContent = `Tags on ${tagTarget.type} ${tagTarget.id}`;
       const cur = document.getElementById("tagCurrent");
@@ -955,6 +992,25 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId || !tagTarget || !String(label || "").trim()) return;
       const msg = document.getElementById("tagMsg"); msg.textContent = "adding…";
+      // Bulk mode: add the tag to every selected event. Serialize the POSTs — the server's
+      // TagsStore.add() is read-modify-write on tags.json, so concurrent requests clobber each
+      // other (last write wins) and only one tag would survive. Await each before the next.
+      if (tagTarget.bulk) {
+        (async () => {
+          try {
+            const ids = tagTarget.ids;
+            for (let i = 0; i < ids.length; i++) {
+              msg.textContent = `adding… (${i + 1}/${ids.length})`;
+              const r = await fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
+                body: JSON.stringify({ targetType: "event", targetId: ids[i], author: investigatorName(), label }) });
+              if (!r.ok) throw new Error("HTTP " + r.status);
+            }
+            document.getElementById("tagInput").value = ""; msg.textContent = ""; loadTags(caseId);
+          } catch (e) { msg.textContent = "failed: " + e.message; }
+        })();
+        return;
+      }
+      // Single-target mode
       fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ targetType: tagTarget.type, targetId: tagTarget.id, author: investigatorName(), label }) })
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
@@ -973,6 +1029,75 @@
     // Sigma skeleton). Deterministic templating from the entity's structured fields — no AI, no
     // server round-trip, no cost. The Companion stays a post-detection layer: these PIVOT off a
     // confirmed indicator, they don't author detections for it.
+    // --- Starred events (per case, localStorage) ---------------------------------
+    let starredEvents = new Set();
+    let showStarredOnly = false;
+    const starredKey = caseId => `dfir_starred_${caseId}`;
+    function loadStarred(caseId) {
+      try { starredEvents = new Set(JSON.parse(localStorage.getItem(starredKey(caseId)) || "[]")); }
+      catch { starredEvents = new Set(); }
+    }
+    function saveStarred(caseId) {
+      try { localStorage.setItem(starredKey(caseId), JSON.stringify([...starredEvents])); } catch {}
+    }
+    function toggleStar(caseId, id) {
+      if (starredEvents.has(id)) starredEvents.delete(id); else starredEvents.add(id);
+      saveStarred(caseId);
+      renderTimelineEvents(lastFt);
+    }
+
+    // --- Multi-select (session-only, cleared on re-render) ----------------------
+    let selectedEvents = new Set();
+    function updateBulkBar() {
+      const bar = document.getElementById("evBulkBar");
+      if (!bar) return;
+      if (selectedEvents.size > 0) {
+        bar.classList.add("active");
+        document.getElementById("evBulkCount").textContent = `${selectedEvents.size} event${selectedEvents.size !== 1 ? "s" : ""} selected`;
+      } else {
+        bar.classList.remove("active");
+      }
+    }
+    function clearSelection() { selectedEvents.clear(); renderTimelineEvents(lastFt); }
+    function bulkToggleStar() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const anyUnstarred = [...selectedEvents].some(id => !starredEvents.has(id));
+      selectedEvents.forEach(id => { if (anyUnstarred) starredEvents.add(id); else starredEvents.delete(id); });
+      saveStarred(caseId);
+      renderTimelineEvents(lastFt);
+    }
+    function openBulkTagModal(ids) {
+      tagTarget = { bulk: true, ids };
+      document.getElementById("tagOverlay").classList.add("open");
+      renderTagModal();
+      document.getElementById("tagInput").focus();
+    }
+    // Mark every selected event legitimate (benign, excluded from analysis) in ONE request —
+    // the /legitimate/batch route writes all markers with a single read-modify-write and a single
+    // re-synthesis, avoiding the race (and N re-synths) of firing one /legitimate call per event.
+    async function bulkMarkLegitimate() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !selectedEvents.size) return;
+      const ids = [...selectedEvents];
+      const note = prompt(`Mark ${ids.length} selected event${ids.length !== 1 ? "s" : ""} as legitimate (benign — exclude from analysis). Reason (optional):`, "");
+      if (note === null) return; // cancelled
+      const descById = new Map((lastFt || []).map(e => [String(e.id), String(e.description || "")]));
+      const items = ids.map(id => ({ kind: "event", ref: id, label: descById.get(id) ?? "" }));
+      const statusEl = document.getElementById("status");
+      statusEl.textContent = `marking ${ids.length} legitimate…`;
+      try {
+        const r = await fetch(`/cases/${caseId}/legitimate/batch`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ items, note }) });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        renderLegitimate(await r.json());
+        selectedEvents.clear();
+        renderTimelineEvents(lastFt);
+        statusEl.textContent = "marked legitimate — AI is re-synthesizing (see AI status)";
+      } catch {
+        statusEl.textContent = "mark failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
+      }
+    }
+
     let veloEnabled = false;   // set from /health — whether the Velociraptor API is configured (Run button)
     let huntLabel = "";        // label of the entity whose hunt modal is open (used as the hunt description)
     function huntChip(kind, id) {
@@ -1818,43 +1943,76 @@
       const activeSevs = new Set([...checked].map(cb => cb.value));
       const allSevs = ['Critical', 'High', 'Medium', 'Low', 'Info'];
       const filtering = activeSevs.size < allSevs.length;
-      const visible = filtering ? ft.filter(e => activeSevs.has(e.severity)) : ft;
+      let visible = filtering ? ft.filter(e => activeSevs.has(e.severity)) : ft;
+      if (showStarredOnly) visible = visible.filter(e => starredEvents.has(String(e.id)));
 
       const countEl = document.getElementById('timelineCount');
       if (countEl) {
         const total = ft.length;
-        countEl.textContent = filtering
+        countEl.textContent = (filtering || showStarredOnly)
           ? `(${visible.length} of ${total} events)`
           : `(${total} event${total !== 1 ? 's' : ''})`;
       }
 
       const caseId = lastState && lastState.caseId;
-      document.getElementById("forensicTimeline").innerHTML = visible.length
-        ? visible.map(e => {
-            const span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
-              ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
-            const badge = (e.count && e.count > 1)
-              ? ` <span title="${esc(e.count)} occurrences collapsed into one event" style="background:#3a2f1a;color:#ffd93b;border:1px solid #5a4a1a;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">×${esc(e.count)}</span>` : "";
-            const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
-            const corro = (realSrc.length > 1)
-              ? ` <span title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}" style="background:#13331f;color:#6bcB77;border:1px solid #1f5a35;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold">⊕ ${esc(realSrc.length)} sources</span>` : "";
-            let chain = "";
-            if (e.chainCheck) {
-              const cc = e.chainCheck;
-              const col = cc.observed ? "#6bcB77" : "#ff6b6b";
-              const label = cc.observed ? "⛓ chain seen" : "⚠ unusual parent";
-              const inner = `<span title="${escAttr(cc.note || "")}" style="color:${col};border:1px solid ${col};border-radius:4px;padding:0 6px;font-size:11px">${label}</span>`;
-              chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner);
-            }
-            const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
-            return `<div class="finding"><span class="sev-${esc(e.severity)}">${span}</span>${badge}${corro}${chain} ` +
-              `<strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)} ${commentChip("event", e.id)} ${tagChip("event", e.id)} ${huntChip("event", e.id)}` +
-              `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}` +
-              `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
-              `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}` +
-              `${evidenceLinks(caseId, e.sourceScreenshots)}</div>`;
-          }).join("")
-        : "—";
+
+      if (!visible.length) {
+        document.getElementById("forensicTimeline").innerHTML = "—";
+        return;
+      }
+
+      const allIds = visible.map(e => String(e.id));
+      const allSelected = allIds.length > 0 && allIds.every(id => selectedEvents.has(id));
+      const someSelected = allIds.some(id => selectedEvents.has(id));
+
+      const headerRow = `<div class="ev-header-row">`
+        + `<div class="ev-header-ctrl"><input type="checkbox" class="ev-checkbox" id="evSelectAll" ${allSelected ? "checked" : ""} title="Select / deselect all visible events" /></div>`
+        + `<div class="ev-header-time">Timestamp (UTC)</div>`
+        + `<div style="flex:1">Message</div>`
+        + `</div>`;
+
+      const rows = visible.map(e => {
+        const id = String(e.id);
+        const starred = starredEvents.has(id);
+        const isSelected = selectedEvents.has(id);
+
+        const span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
+          ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
+        const badge = (e.count && e.count > 1)
+          ? ` <span title="${esc(e.count)} occurrences collapsed into one event" style="background:#3a2f1a;color:#ffd93b;border:1px solid #5a4a1a;border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">×${esc(e.count)}</span>` : "";
+        const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
+        const corro = (realSrc.length > 1)
+          ? ` <span title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}" style="background:#13331f;color:#6bcB77;border:1px solid #1f5a35;border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">⊕ ${esc(realSrc.length)}</span>` : "";
+        let chain = "";
+        if (e.chainCheck) {
+          const cc = e.chainCheck;
+          const col = cc.observed ? "#6bcB77" : "#ff6b6b";
+          const label = cc.observed ? "⛓ chain seen" : "⚠ unusual parent";
+          const inner = `<span title="${escAttr(cc.note || "")}" style="color:${col};border:1px solid ${col};border-radius:4px;padding:0 5px;font-size:10px">${label}</span>`;
+          chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner);
+        }
+        const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
+
+        return `<div class="ev-row${isSelected ? " ev-selected" : ""}" data-evid="${escAttr(id)}">`
+          + `<div class="ev-col-ctrl">`
+          + `<input type="checkbox" class="ev-checkbox ev-row-cb" data-evid="${escAttr(id)}" ${isSelected ? "checked" : ""} title="Select event" />`
+          + `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>`
+          + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)}`
+          + `</div>`
+          + `<div class="ev-col-time"><span class="sev-${esc(e.severity)}">${span}</span></div>`
+          + `<div class="ev-col-content">${tagPills("event", e.id)}${badge}${corro}${chain} <strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}`
+          + `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}`
+          + `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}`
+          + `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}`
+          + `${evidenceLinks(caseId, e.sourceScreenshots)}</div>`
+          + `</div>`;
+      }).join("");
+
+      document.getElementById("forensicTimeline").innerHTML = headerRow + rows;
+
+      // indeterminate can only be set via JS, not HTML attribute
+      const selAll = document.getElementById("evSelectAll");
+      if (selAll && someSelected && !allSelected) selAll.indeterminate = true;
     }
 
     // Re-filter the timeline whenever a severity checkbox is toggled (no server round-trip).
@@ -1885,15 +2043,15 @@
       const kq = state.keyQuestions || [];
       document.getElementById("keyQuestions").innerHTML = kq.length
         ? kq.map(q =>
-            `<div class="finding"><strong>${q.pinned ? "📌 " : ""}${QMARK[q.status] || "❓"} ${esc(q.question)}</strong>` +
+            `<div class="finding">${commentChip("question", q.id)} ${tagChip("question", q.id)} <strong>${q.pinned ? "📌 " : ""}${QMARK[q.status] || "❓"} ${esc(q.question)}</strong>` +
             `<br><small>${esc(q.answer || "unknown")}</small>` +
-            `${q.pointer ? `<br><small style="color:#6aa9ff">→ ${esc(q.pointer)}</small>` : ""} ${commentChip("question", q.id)} ${tagChip("question", q.id)}</div>`
+            `${q.pointer ? `<br><small style="color:#6aa9ff">→ ${esc(q.pointer)}</small>` : ""}</div>`
           ).join("")
         : "<div style='color:#9aa4b2'>Not assessed yet — run Synthesize.</div>";
 
       const iocs = state.iocs || [];
       document.getElementById("iocs").innerHTML = iocs.length
-        ? iocs.map(i => `<div><span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)} ${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)} ${huntChip("ioc", i.id)}</div>`).join("")
+        ? iocs.map(i => `<div>${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)} ${huntChip("ioc", i.id)} <span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}</div>`).join("")
         : "<div style='color:#9aa4b2'>No IOCs yet</div>";
 
       // Already scope-projected above (events + findings/IOCs/MITRE consistently).
@@ -1916,7 +2074,7 @@
       const openThreads = state.openThreads.filter(t => t.status === "open");
       const closedThreads = state.openThreads.filter(t => t.status === "closed");
       document.getElementById("openThreads").innerHTML =
-        openThreads.map(t => `<div>• <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)} ${commentChip("thread", t.id)} ${tagChip("thread", t.id)}</div>`).join("") || "<div style='color:#9aa4b2'>No open threads</div>";
+        openThreads.map(t => `<div>• ${commentChip("thread", t.id)} ${tagChip("thread", t.id)} <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("") || "<div style='color:#9aa4b2'>No open threads</div>";
       document.getElementById("closedThreads").innerHTML = closedThreads.length
         ? `<div style='margin-top:8px;color:#6bcB77'>Closed (${closedThreads.length}):</div>` +
           closedThreads.map(t => `<div style='color:#9aa4b2;text-decoration:line-through'>✓ <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("")
@@ -1929,8 +2087,8 @@
           // carry the f-auto- id prefix — badge them so the analyst knows to review/refine.
           const auto = String(f.id).startsWith("f-auto-")
             ? ` <span title="Auto-flagged from a ${esc(f.severity)}-severity artifact row — review and refine" style="background:#2a2233;color:#c79bff;border:1px solid #4a3a5a;border-radius:4px;padding:0 6px;font-size:10px">AUTO</span>` : "";
-          return `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> ` +
-            `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)} ${commentChip("finding", f.id)} ${tagChip("finding", f.id)}` +
+          return `<div class="finding"><span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> ${commentChip("finding", f.id)} ${tagChip("finding", f.id)} ` +
+            `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${evidenceLinks(state.caseId, evidence)}</div>`;
@@ -1959,6 +2117,11 @@
       loadAssetGraph(caseId);
       loadComments(caseId);
       loadTags(caseId);
+      loadStarred(caseId);
+      selectedEvents.clear();
+      showStarredOnly = false;
+      const sfBtn = document.getElementById("evStarFilterBtn");
+      if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
       loadSynthMeta(caseId);
 
       // Show whether AI analysis is configured at all.
@@ -2101,12 +2264,60 @@
     document.getElementById("commentClose").onclick = closeCommentModal;
     document.getElementById("commentOverlay").addEventListener("click", (e) => { if (e.target.id === "commentOverlay") closeCommentModal(); });
     document.querySelector("main").addEventListener("click", (e) => {
+      // Star toggle (individual row)
+      const star = e.target.closest && e.target.closest(".ev-star");
+      if (star) {
+        const caseId = document.getElementById("caseId").value.trim();
+        toggleStar(caseId, star.getAttribute("data-evid"));
+        return;
+      }
+      // Bulk action bar buttons
+      if (e.target.id === "evBulkStarBtn") { bulkToggleStar(); return; }
+      if (e.target.id === "evBulkTagBtn") { if (selectedEvents.size) openBulkTagModal([...selectedEvents]); return; }
+      if (e.target.id === "evBulkLegitBtn") { bulkMarkLegitimate(); return; }
+      if (e.target.id === "evBulkClearBtn") { clearSelection(); return; }
+      // Star filter toggle
+      if (e.target.id === "evStarFilterBtn") {
+        showStarredOnly = !showStarredOnly;
+        e.target.textContent = showStarredOnly ? "★ Starred" : "☆ Starred";
+        e.target.classList.toggle("active", showStarredOnly);
+        renderTimelineEvents(lastFt);
+        return;
+      }
       const chip = e.target.closest && e.target.closest(".comment-chip");
       if (chip) { openCommentModal(chip.getAttribute("data-ct"), chip.getAttribute("data-ci")); return; }
       const tag = e.target.closest && e.target.closest(".tag-add");
       if (tag) { openTagModal(tag.getAttribute("data-tt"), tag.getAttribute("data-ti")); return; }
       const hunt = e.target.closest && e.target.closest(".hunt-add");
       if (hunt) openHuntModal(hunt.getAttribute("data-hk"), hunt.getAttribute("data-hi"));
+    });
+    // Row checkboxes + select-all (change, not click, so we read the post-toggle checked state)
+    document.querySelector("main").addEventListener("change", (e) => {
+      const rowCb = e.target.classList.contains("ev-row-cb") && e.target;
+      if (rowCb) {
+        const id = rowCb.getAttribute("data-evid");
+        if (e.target.checked) selectedEvents.add(id); else selectedEvents.delete(id);
+        const row = rowCb.closest(".ev-row");
+        if (row) row.classList.toggle("ev-selected", e.target.checked);
+        updateBulkBar();
+        // keep select-all checkbox in sync
+        const allIds = [...document.querySelectorAll(".ev-row-cb")].map(cb => cb.getAttribute("data-evid"));
+        const allSel = allIds.every(id => selectedEvents.has(id));
+        const someSel = allIds.some(id => selectedEvents.has(id));
+        const sa = document.getElementById("evSelectAll");
+        if (sa) { sa.checked = allSel; sa.indeterminate = someSel && !allSel; }
+        return;
+      }
+      if (e.target.id === "evSelectAll") {
+        document.querySelectorAll(".ev-row-cb").forEach(cb => {
+          const id = cb.getAttribute("data-evid");
+          if (e.target.checked) selectedEvents.add(id); else selectedEvents.delete(id);
+          cb.checked = e.target.checked;
+          const row = cb.closest(".ev-row");
+          if (row) row.classList.toggle("ev-selected", e.target.checked);
+        });
+        updateBulkBar();
+      }
     });
     document.getElementById("commentText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) postComment(); });
     // Tag modal + delegated chip clicks (the tag-add buttons are handled by the main click handler above).

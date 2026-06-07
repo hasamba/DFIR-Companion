@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Safety-net periodic flush so a lone screenshot still gets analyzed.** Captures are analyzed in windows (default 4); a `timer`/`click` capture buffers until the window fills, and only a page `navigation` or `tab_switch` flushes early — so a single screenshot (e.g. one snapped with the hotkey, then idle) could sit unanalyzed indefinitely. A background sweep now drains any non-empty per-case buffer every `DFIR_FLUSH_INTERVAL_MS` (default 5 min; set `0` to disable), analyzing whatever is pending even if it's just one. The sweep is a no-op on empty buffers and only touches AI-enabled cases (pausing AI still clears the buffer); evidence persistence is unchanged (screenshots are always saved on ingest regardless). New `flushIntervalMs` `AppOptions`, `unref()`'d so it never blocks shutdown.
+- **Timeline event triage controls — star, multi-select, and bulk actions.** The Forensic Timeline is now a compact table: per-row controls (select checkbox · ★ star · 💬 comment · 🏷 tag · 🔍 hunt) sit at the **start** of the line, before the timestamp column, with the tag pills and message after it (matching common timeline-tool layouts). New per-row **★ star** (persisted per case in `localStorage`) plus a **☆ Starred** header toggle to show only starred events. New **multi-select**: a row checkbox + select-all header checkbox, and when any events are selected a bulk-action bar offers **★ Toggle Star**, **🏷 Modify Tags** (applies one label to every selected event), and **⚑ Mark Legitimate** (excludes all selected from analysis). Bulk legitimate uses a new **`POST /cases/:id/legitimate/batch`** endpoint that writes all markers in a single read-modify-write and triggers **one** re-synthesis (instead of N racing single-marker calls).
+
+### Fixed
+- **"Mark legitimate" button was invisible on timeline rows** — the reveal-on-hover CSS still targeted the old `.finding` row class after the timeline became a `.ev-row` table; added `.ev-row:hover` so the ⚑ button shows again.
+- **Bulk tagging only tagged one event** — the dashboard fired the per-event tag POSTs concurrently, and `TagsStore.add()` is read-modify-write on `tags.json`, so concurrent requests clobbered each other (last write wins). Bulk tag POSTs are now serialized; bulk legitimate uses the new single-write batch endpoint.
+
 ## [0.10.0] - 2026-06-06
 
 ### Added

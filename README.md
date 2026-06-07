@@ -239,6 +239,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   color-coded pills (threat=red, benign=green, review=yellow, evidence=blue) via a 🏷 chip with a
   one-click suggested-label palette plus free-form input; normalized + deduped per entity, stored
   per case (`state/tags.json`), survive synthesis, and sync live over the WS.
+- **Timeline star, multi-select & bulk actions** — the Forensic Timeline is a compact table with the
+  per-row controls (select · ★ star · 💬 · 🏷 · 🔍) at the **start** of the line, before the timestamp.
+  **★ Star** events to flag them (persisted per case) and toggle a **☆ Starred** filter to show only
+  those. **Select multiple** events (row checkboxes + select-all), then act on all of them at once from
+  the bulk bar: **Toggle Star**, **Modify Tags** (one label → every selected event), or **Mark
+  Legitimate** (excludes them from analysis via a single batched write + one re-synthesis).
 - **Hunt-pivot query generator** — from any forensic event or IOC, a 🔍 chip generates ready-to-adapt
   hunt/pivot queries for the tools you already run — **Velociraptor notebook VQL**
   (paste-into-a-cell pivots), **Microsoft Defender / Sentinel KQL**, **Splunk SPL**, and a **Sigma**
@@ -482,6 +488,7 @@ All companion behavior is configured via env vars. Shell vars override `.env`.
 | `DFIR_AI_SYNTH_BASE_URL` | no | = `DFIR_AI_BASE_URL` | Synthesis base URL override (e.g. a separate local LiteLLM proxy for the synthesis model). |
 | `DFIR_AI_AUTO_SYNTHESIZE` | no | `on` | Live synthesis during capture. `on` \| `off`. |
 | `DFIR_AI_AUTO_SYNTHESIZE_MS` | no | `8000` | Debounce window in ms after the last screenshot before auto-synthesis fires. |
+| `DFIR_FLUSH_INTERVAL_MS` | no | `300000` | Safety-net flush: drains a leftover capture buffer on this interval so a lone `timer`/`click` screenshot is analyzed even if it never fills a window. `0` disables. |
 
 Example `.env` (two-tier):
 
