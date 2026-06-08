@@ -65,6 +65,7 @@ import { ReportMetaStore } from "./reports/reportMeta.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore } from "./analysis/tags.js";
+import { NotebookStore, type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "./analysis/notebookStore.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
@@ -140,6 +141,10 @@ export interface AppOptions {
   // re-fetch when a tag is added/removed.
   tagsStore?: TagsStore;
   onTags?: (caseId: string) => void;
+  // Per-case analyst notebook (hypotheses, notes, open questions). onNotebook pings dashboard
+  // clients over the WS to re-fetch when an entry is added, updated, or removed.
+  notebookStore?: NotebookStore;
+  onNotebook?: (caseId: string) => void;
   // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
   // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
   synthMetaStore?: SynthMetaStore;
@@ -736,9 +741,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   app.post("/cases/:id/ai-control", async (req: Request, res: Response) => {
     try {
-      const enabled = Boolean(req.body?.enabled);
+      const body = req.body ?? {};
+      const enabled = Boolean(body.enabled);
+      const patch: Parameters<typeof setControl>[1] = { enabled };
+      // Optional: toggle whether the analyst notebook is sent to the synthesis prompt.
+      if (typeof body.includeNotebook === "boolean") patch.includeNotebook = body.includeNotebook;
       const prev = await getControl(req.params.id);
-      const next = await setControl(req.params.id, { enabled });
+      const next = await setControl(req.params.id, patch);
       if (!enabled) {
         buffers.set(req.params.id, []); // drop pending buffer when pausing
         options.onAiStatus?.(req.params.id, { status: "idle", at: new Date().toISOString(), detail: "AI paused" });
@@ -2367,6 +2376,70 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Per-case analyst notebook (hypotheses, notes, open questions). GET lists all entries;
+  // POST adds one; PATCH updates text/type/linkedEntityIds; DELETE removes by id.
+  // Entries survive synthesis (side file, not InvestigationState). The AI synthesis pass
+  // reads notebook entries when ai-control.includeNotebook is true (opt-in).
+  app.get("/cases/:id/notebook", async (req: Request, res: Response) => {
+    if (!options.notebookStore) return res.status(501).json({ error: "notebook not configured" });
+    try {
+      return res.status(200).json(await options.notebookStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/notebook", async (req: Request, res: Response) => {
+    if (!options.notebookStore) return res.status(501).json({ error: "notebook not configured" });
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    if (!text) return res.status(400).json({ error: "text is required" });
+    const typeIn = String(req.body?.type ?? "note");
+    const type: NotebookEntryType = NOTEBOOK_ENTRY_TYPES.includes(typeIn as NotebookEntryType)
+      ? (typeIn as NotebookEntryType)
+      : "note";
+    try {
+      const entry = await options.notebookStore.add(req.params.id, {
+        text,
+        type,
+        linkedEntityIds: Array.isArray(req.body?.linkedEntityIds) ? req.body.linkedEntityIds.map(String) : undefined,
+      });
+      options.onNotebook?.(req.params.id);
+      return res.status(201).json(entry);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/cases/:id/notebook/:entryId", async (req: Request, res: Response) => {
+    if (!options.notebookStore) return res.status(501).json({ error: "notebook not configured" });
+    const patch: { text?: string; type?: NotebookEntryType; linkedEntityIds?: string[] } = {};
+    if (typeof req.body?.text === "string") patch.text = req.body.text;
+    if (typeof req.body?.type === "string" && NOTEBOOK_ENTRY_TYPES.includes(req.body.type as NotebookEntryType)) {
+      patch.type = req.body.type as NotebookEntryType;
+    }
+    if (Array.isArray(req.body?.linkedEntityIds)) patch.linkedEntityIds = req.body.linkedEntityIds.map(String);
+    try {
+      const updated = await options.notebookStore.update(req.params.id, req.params.entryId, patch);
+      if (!updated) return res.status(404).json({ error: "notebook entry not found" });
+      options.onNotebook?.(req.params.id);
+      return res.status(200).json(updated);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/cases/:id/notebook/:entryId", async (req: Request, res: Response) => {
+    if (!options.notebookStore) return res.status(501).json({ error: "notebook not configured" });
+    try {
+      const removed = await options.notebookStore.remove(req.params.id, req.params.entryId);
+      if (!removed) return res.status(404).json({ error: "notebook entry not found" });
+      options.onNotebook?.(req.params.id);
+      return res.status(204).end();
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   return app;
 }
 
@@ -2575,6 +2648,8 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     anonStore: new AnonControlStore(params.store),
     customEntitiesStore: new CustomEntitiesStore(params.store),
     synthMetaStore: new SynthMetaStore(params.store),
+    notebookStore: new NotebookStore(params.store),
+    aiControlStore: new AiControlStore(params.store),
   });
 }
 
@@ -2585,9 +2660,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const reportMetaStore = new ReportMetaStore(store);
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
+  const notebookStore = new NotebookStore(store);
   const synthMetaStore = new SynthMetaStore(store);
   const importMetaStore = new ImportMetaStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store));
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore);
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
@@ -2615,6 +2691,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     tagsStore,
     onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
+    notebookStore,
+    onNotebook: (caseId) => hub.broadcastTo(caseId, { type: "notebook_changed" }),
     synthMetaStore,
     importMetaStore,
     onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
