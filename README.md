@@ -334,6 +334,15 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   (which IoC touched each asset, and per asset all its IoCs) with Host/Account/Service toggles,
   **fullscreen**, **horizontal / vertical / radial** layouts, **zoom** (buttons + mouse-wheel), and
   click-a-node-to-focus. A *Compromised assets* section also appears in the report.
+- **Evidence Chain graph (causal: process trees + lateral movement)** — the *how it happened* view to
+  complement the *what happened when* timeline. Derived deterministically (no AI) from fields the
+  importers already populate: **process trees** (parent→child from `processName`/`parentName`, chained
+  through shared `(asset, process)` nodes) and **lateral movement** (same binary **hash** across hosts →
+  high confidence; same **account** across hosts → medium — Windows virtual principals like DWM/UMFD/MSI
+  filtered out so they don't fake edges). Every edge carries **confidence + the rule that derived it + its
+  backing events**, so a causal claim is auditable. Dashboard **Evidence Chain** panel (process-tree /
+  lateral toggles, confidence legend, layered SVG with arrowheads, zoom, fullscreen, click-to-focus) and a
+  report **§4.8 Chain of evidence** section. Derived on read (`GET /cases/:id/evidence-graph`).
 - **Reports** — Markdown **and HTML** report (standalone, print-friendly), plus a one-click **PDF**
   export that opens the print-styled HTML and triggers the browser's *Save as PDF* dialog (zero
   dependencies, fully offline) + CSVs (findings, IOCs incl. enrichment, capture timeline, forensic
@@ -739,7 +748,8 @@ into the **Features** section (and `CHANGELOG.md`) once shipped.
 - [ ] `_execute_action` hotkey to open the extension popup.
 - [ ] Embed the interactive **asset ↔ IoC graph** in the HTML report export (currently dashboard-only).
 - [ ] Manual editing of assets and asset↔IoC links (currently auto-derived).
-- [ ] **Service**-type asset extraction, and asset↔asset (lateral-movement) edges in the graph.
+- [ ] **Service**-type asset extraction in the asset↔IoC graph. (Asset↔asset **lateral-movement** edges now ship in the **Evidence Chain** graph.)
+- [ ] Evidence Chain graph — **file-lineage** (`wrote → executed`) and **network-flow** (`src → dst`) edges. Needs structured `action`/direction + src/dst fields on `ForensicEvent` populated at import time (today's importers don't carry them), so deferred from the process-tree/lateral-movement first cut.
 - [ ] **Prompt caching** for the synthesis/extraction prompts (provider-layer change to `AIProvider`)
   to cut token cost on repeated calls — the static system prompt prefix is re-sent every synthesis.
 
