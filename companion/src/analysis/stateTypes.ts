@@ -4,7 +4,8 @@ export type ThreadStatus = "open" | "closed";
 
 // One threat-intel lookup result for an IOC (VirusTotal, MalwareBazaar, AbuseIPDB…).
 export interface IocEnrichment {
-  source: string;                                              // "VirusTotal" | "MalwareBazaar" | "AbuseIPDB"
+  source: string;                                              // display label, e.g. "VirusTotal" | "MalwareBazaar" | "ThreatFox"
+  provider?: string;                                           // owning provider name (e.g. "Hunting.ch") when it differs from `source` — a fan-out provider emits several sources; dedup/re-check key on this, falling back to `source`
   verdict: "malicious" | "suspicious" | "harmless" | "unknown";
   score?: string;                                              // human summary, e.g. "52/73 detections", "100% abuse"
   detections?: number;                                         // malicious engine count (where applicable)

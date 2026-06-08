@@ -49,6 +49,7 @@ import { ProviderHealthCache } from "./enrichment/providerHealth.js";
 import type { EnrichmentProvider } from "./enrichment/provider.js";
 import { VirusTotalProvider } from "./enrichment/virustotal.js";
 import { MalwareBazaarProvider } from "./enrichment/malwarebazaar.js";
+import { HuntingChProvider } from "./enrichment/huntingch.js";
 import { AbuseIpdbProvider } from "./enrichment/abuseipdb.js";
 import { MispProvider } from "./enrichment/misp.js";
 import { RockyRaccoonProvider, type ParentChildResult } from "./enrichment/rockyraccoon.js";
@@ -2057,7 +2058,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // (preferred) or legacy `{ enabled: boolean }`. Saving re-runs enrichment; per-provider
   // caching means only the newly-enabled providers query the existing IOCs.
   app.post("/cases/:id/enrich-control", async (req: Request, res: Response) => {
-    if (allProviders.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_ABUSEIPDB_KEY / DFIR_MISP_* / DFIR_YETI_*)" });
+    if (allProviders.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_MISP_* / DFIR_YETI_*)" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     let providers: string[];
@@ -2078,7 +2079,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // change the toggle. `{ force: true }` re-queries already-enriched IOCs.
   app.post("/cases/:id/enrich", async (req: Request, res: Response) => {
     const providers = options.enrichmentProviders ?? [];
-    if (providers.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_ABUSEIPDB_KEY)" });
+    if (providers.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY)" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     const force = req.body?.force === true || req.query.force === "true";
@@ -2415,6 +2416,10 @@ export function buildEnrichmentProviders(): EnrichmentProvider[] {
   const providers: EnrichmentProvider[] = [];
   if (process.env.DFIR_VT_KEY) providers.push(new VirusTotalProvider({ apiKey: process.env.DFIR_VT_KEY }));
   if (process.env.DFIR_MB_KEY) providers.push(new MalwareBazaarProvider({ apiKey: process.env.DFIR_MB_KEY }));
+  // Hunting.ch shares the ONE abuse.ch Auth-Key — fall back to DFIR_MB_KEY so an existing
+  // MalwareBazaar key powers the unified hunt with no extra config.
+  const abuseChKey = process.env.DFIR_HUNTINGCH_KEY || process.env.DFIR_MB_KEY;
+  if (abuseChKey) providers.push(new HuntingChProvider({ apiKey: abuseChKey }));
   if (process.env.DFIR_ABUSEIPDB_KEY) providers.push(new AbuseIpdbProvider({ apiKey: process.env.DFIR_ABUSEIPDB_KEY }));
   if (process.env.DFIR_MISP_URL && process.env.DFIR_MISP_KEY) providers.push(new MispProvider({ baseUrl: process.env.DFIR_MISP_URL, apiKey: process.env.DFIR_MISP_KEY, fetchFn: tlsFetchFor("MISP") }));
   if (process.env.DFIR_ROCKYRACCOON_KEY) providers.push(new RockyRaccoonProvider({ apiKey: process.env.DFIR_ROCKYRACCOON_KEY }));
