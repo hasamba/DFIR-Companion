@@ -88,6 +88,28 @@ describe("enrichIocs", () => {
     expect(calls).toEqual(["MISP:hash:h1"]);               // force re-queries
   });
 
+  it("flattens a fan-out provider's array into separate enrichments, stamps the owner, and dedups on re-run", async () => {
+    // A provider (like Hunting.ch) returning several sub-source results from one lookup.
+    const fanout: EnrichmentProvider = {
+      name: "Hunting.ch", scope: "external",
+      supports: (k) => k === "hash",
+      lookup: async () => [
+        { source: "MalwareBazaar", verdict: "malicious", score: "known: Neshta" },
+        { source: "YARAify", verdict: "malicious", score: "2 YARA rule(s)" },
+      ],
+    };
+    const r1 = await enrichIocs([ioc({ value: "h1", type: "hash" })], { providers: [fanout], sleep: noSleep, now });
+    const e1 = r1.iocs[0].enrichments!;
+    expect(e1.map((e) => e.source).sort()).toEqual(["MalwareBazaar", "YARAify"]);   // two separate badges
+    expect(e1.every((e) => e.provider === "Hunting.ch")).toBe(true);                // owner stamped
+    expect(r1.iocs[0].enrichedBy).toEqual(["Hunting.ch"]);
+    expect(r1.summary.withHits).toBe(1);
+
+    // Re-run with force: the whole fan-out set is replaced (keyed on the owner), not duplicated.
+    const r2 = await enrichIocs(r1.iocs, { providers: [fanout], sleep: noSleep, now, force: true });
+    expect(r2.iocs[0].enrichments!.map((e) => e.source).sort()).toEqual(["MalwareBazaar", "YARAify"]);
+  });
+
   it("routes a process IOC only to providers that support 'process'", async () => {
     const calls: string[] = [];
     const vt = fakeProvider("VirusTotal", ["hash", "ip", "domain", "url"], { source: "VirusTotal", verdict: "malicious" }, calls);

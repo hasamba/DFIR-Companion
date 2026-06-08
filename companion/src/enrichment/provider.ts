@@ -27,8 +27,11 @@ export interface EnrichmentProvider {
   readonly scope: ProviderScope;
   supports(kind: IocKind): boolean;
   // Resolve to a result, or null if the indicator isn't found / no data. Throws only on
-  // hard errors (auth, rate limit) so the service can react (skip / back off).
-  lookup(kind: IocKind, value: string): Promise<EnrichmentResult | null>;
+  // hard errors (auth, rate limit) so the service can react (skip / back off). A provider
+  // that fans out across several back-ends (e.g. Hunting.ch → MalwareBazaar/ThreatFox/URLhaus/
+  // YARAify) may return an ARRAY of results — one per back-end that has a hit — and they show
+  // as separate badges. An empty array means "checked, nothing found" (same as null).
+  lookup(kind: IocKind, value: string): Promise<EnrichmentResult | EnrichmentResult[] | null>;
   // OPTIONAL reachability check: a cheap request that verifies the server is up and auth
   // works WITHOUT sending a real indicator. Resolves when reachable; throws (like lookup)
   // when the server is unreachable / auth is broken. Used to gate sending hundreds of IOCs

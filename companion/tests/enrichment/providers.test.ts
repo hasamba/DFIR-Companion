@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { VirusTotalProvider } from "../../src/enrichment/virustotal.js";
 import { MalwareBazaarProvider } from "../../src/enrichment/malwarebazaar.js";
+import { HuntingChProvider } from "../../src/enrichment/huntingch.js";
 import { AbuseIpdbProvider } from "../../src/enrichment/abuseipdb.js";
 import { MispProvider } from "../../src/enrichment/misp.js";
 import { RockyRaccoonProvider } from "../../src/enrichment/rockyraccoon.js";
@@ -62,6 +63,94 @@ describe("MalwareBazaarProvider", () => {
     expect(await mb.lookup("hash", "x")).toBeNull();
     expect(mb.supports("ip")).toBe(false);
     expect(mb.supports("hash")).toBe(true);
+  });
+});
+
+describe("HuntingChProvider (abuse.ch unified hunt)", () => {
+  // Route an abuse.ch POST by its host to the right per-platform fixture.
+  function huntFetch(byHost: Record<string, unknown>, opts: { authFail?: boolean; failHosts?: string[] } = {}) {
+    return vi.fn(async (url: string, init?: RequestInit) => {
+      // Every back-end must carry the unified Auth-Key.
+      expect((init!.headers as Record<string, string>)["Auth-Key"]).toBe("k");
+      if (opts.authFail) return new Response("", { status: 403 });
+      const host = new URL(url).host;
+      if (opts.failHosts?.includes(host)) return new Response("", { status: 500 });
+      const body = byHost[host];
+      if (body === undefined) throw new Error("unexpected host " + host);
+      return jsonResponse(body);
+    });
+  }
+
+  it("a hash fans out to MalwareBazaar + ThreatFox + URLhaus + YARAify as four separate, clickable results", async () => {
+    const fetchFn = huntFetch({
+      "mb-api.abuse.ch": { query_status: "ok", data: [{ sha256_hash: "ABCD", signature: "Neshta", tags: ["neshta"], file_type: "exe" }] },
+      "threatfox-api.abuse.ch": { query_status: "ok", data: [{ id: "9", threat_type: "payload_delivery", malware_printable: "Neshta", confidence_level: 75 }] },
+      "urlhaus-api.abuse.ch": { query_status: "ok", signature: "Neshta", url_count: 3, urlhaus_reference: "https://urlhaus.abuse.ch/browse.php?search=ABCD" },
+      "yaraify-api.abuse.ch": { query_status: "ok", data: { metadata: { sha256_hash: "ABCD" }, tasks: [{ static_results: [{ rule_name: "MALWARE_Win_Neshta" }], clamav_results: ["Win.Dropper-1"] }] } },
+    });
+    const h = new HuntingChProvider({ apiKey: "k", fetchFn });
+    const r = await h.lookup("hash", "00c3e0990cada07e01a3b842cf3d36f36c6ec7dd7d3c1aba430c08d885d66567");
+    expect(Array.isArray(r)).toBe(true);
+    const bySource = Object.fromEntries((r as Array<{ source: string }>).map((e) => [e.source, e]));
+    expect(Object.keys(bySource).sort()).toEqual(["MalwareBazaar", "ThreatFox", "URLhaus", "YARAify"]);
+    expect(bySource["MalwareBazaar"]).toMatchObject({ verdict: "malicious", link: "https://bazaar.abuse.ch/sample/ABCD/" });
+    expect(bySource["YARAify"]).toMatchObject({ verdict: "malicious", link: "https://yaraify.abuse.ch/sample/ABCD/" });
+    expect((bySource["YARAify"] as { score: string }).score).toContain("YARA rule");
+    expect((bySource["URLhaus"] as { link: string }).link).toContain("urlhaus.abuse.ch");
+    expect((bySource["ThreatFox"] as { link: string }).link).toBe("https://threatfox.abuse.ch/ioc/9/");
+  });
+
+  it("an IP queries only ThreatFox + URLhaus(host); platforms with no hit are omitted", async () => {
+    const fetchFn = huntFetch({
+      "threatfox-api.abuse.ch": { query_status: "ok", data: [{ id: "2", threat_type: "botnet_cc", malware_printable: "Cobalt Strike", confidence_level: 100 }] },
+      "urlhaus-api.abuse.ch": { query_status: "no_results" },
+    });
+    const h = new HuntingChProvider({ apiKey: "k", fetchFn });
+    const r = (await h.lookup("ip", "139.180.203.104")) as Array<{ source: string }>;
+    expect(r.map((e) => e.source)).toEqual(["ThreatFox"]);   // URLhaus had no_results → dropped
+    // search_ioc with exact match, never search_hash, for a non-hash indicator.
+    const tfBody = JSON.parse((fetchFn.mock.calls.find((c) => String(c[0]).includes("threatfox"))![1] as RequestInit).body as string);
+    expect(tfBody).toMatchObject({ query: "search_ioc", search_term: "139.180.203.104", exact_match: true });
+    expect(h.supports("process")).toBe(false);
+    expect(h.supports("url")).toBe(true);
+  });
+
+  it("returns [] (checked, nothing tracked) when no platform has the indicator", async () => {
+    const fetchFn = huntFetch({
+      "threatfox-api.abuse.ch": { query_status: "no_result", data: "" },
+      "urlhaus-api.abuse.ch": { query_status: "no_results" },
+    });
+    const h = new HuntingChProvider({ apiKey: "k", fetchFn });
+    expect(await h.lookup("domain", "evil.test")).toEqual([]);
+  });
+
+  it("surfaces an auth error only when NOTHING answered (shared key rejected, no anon hit)", async () => {
+    const h = new HuntingChProvider({ apiKey: "k", fetchFn: huntFetch({}, { authFail: true }) });
+    await expect(h.lookup("ip", "1.2.3.4")).rejects.toThrow(/auth failed/i);
+  });
+
+  it("still returns YARAify (anonymous) even when the key-gated platforms 401", async () => {
+    // A missing/expired key 401s MalwareBazaar/ThreatFox/URLhaus, but YARAify needs no key —
+    // its hit must NOT be discarded by the others' auth failure.
+    const fetchFn = vi.fn(async (url: string) => {
+      if (new URL(url).host === "yaraify-api.abuse.ch") {
+        return jsonResponse({ query_status: "ok", data: { metadata: { sha256_hash: "ABCD" }, tasks: [{ static_results: [{ rule_name: "MALWARE_Win_X" }] }] } });
+      }
+      return new Response("", { status: 401 });   // MB / ThreatFox / URLhaus
+    });
+    const h = new HuntingChProvider({ apiKey: "k", fetchFn });
+    const r = (await h.lookup("hash", "7c26003b25a03f34ac2ddd11324d2501506ef7fa694cac3ec9d63717d3071783")) as Array<{ source: string }>;
+    expect(r.map((e) => e.source)).toEqual(["YARAify"]);
+  });
+
+  it("still returns the platforms that answered when another is transiently down", async () => {
+    const fetchFn = huntFetch(
+      { "threatfox-api.abuse.ch": { query_status: "ok", data: [{ id: "5", malware_printable: "Qakbot", confidence_level: 80 }] }, "urlhaus-api.abuse.ch": {} },
+      { failHosts: ["urlhaus-api.abuse.ch"] },
+    );
+    const h = new HuntingChProvider({ apiKey: "k", fetchFn });
+    const r = (await h.lookup("domain", "bad.test")) as Array<{ source: string }>;
+    expect(r.map((e) => e.source)).toEqual(["ThreatFox"]);   // URLhaus 500 swallowed, ThreatFox hit kept
   });
 });
 

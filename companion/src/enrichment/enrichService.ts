@@ -117,11 +117,24 @@ export async function enrichIocs(
       const startedAt = monotonic();
       try {
         const r = await provider.lookup(kind, ioc.value);
-        if (r) fresh.push({ ...r, fetchedAt: now() });
+        // A provider may return a single result, several (a fan-out source like Hunting.ch),
+        // or null/[] for a miss. When a result's displayed `source` differs from the provider
+        // (a fan-out emits sub-sources like "MalwareBazaar"), stamp the OWNING provider so
+        // re-checks/dedup key on it; single-source providers keep `source` as the key.
+        const list = Array.isArray(r) ? r : r ? [r] : [];
+        for (const one of list) {
+          const owned = one.source !== provider.name ? { provider: provider.name } : {};
+          fresh.push({ ...one, ...owned, fetchedAt: now() });
+        }
         succeeded.add(provider.name);
         opts.onLookup?.({
           provider: provider.name, kind, value: ioc.value,
-          outcome: r ? "hit" : "miss", detail: r?.verdict, ms: monotonic() - startedAt,
+          outcome: list.length ? "hit" : "miss",
+          // verdict per result; prefix the sub-source only when a fan-out makes it differ from the provider.
+          detail: list.length
+            ? list.map((x) => (x.source && x.source !== provider.name ? `${x.source}:${x.verdict}` : x.verdict)).join(", ")
+            : undefined,
+          ms: monotonic() - startedAt,
         });
       } catch (err) {
         summary.errors += 1;
@@ -143,8 +156,10 @@ export async function enrichIocs(
     // leave it untouched (don't mark it "checked, no intel" when it actually errored).
     if (succeeded.size === 0 && (ioc.enrichments === undefined)) continue;
     // Keep existing hits from providers we did NOT successfully re-run (errored providers
-    // retain their last-known result); successful providers are superseded by `fresh`.
-    const keptHits = (ioc.enrichments ?? []).filter((e) => !succeeded.has(e.source));
+    // retain their last-known result); successful providers are superseded by `fresh`. Match on
+    // the owning `provider` (falling back to `source` for older single-source enrichments) so a
+    // fan-out provider's whole set is replaced, not left to accumulate duplicates.
+    const keptHits = (ioc.enrichments ?? []).filter((e) => !succeeded.has(e.provider ?? e.source));
     const enrichedBy = [...new Set([...(ioc.enrichedBy ?? []), ...succeeded])];
     updates.set(idx, { enrichments: [...keptHits, ...fresh], enrichedBy });
     if (fresh.length) summary.withHits += 1;
