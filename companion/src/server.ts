@@ -65,6 +65,8 @@ import { ReportMetaStore } from "./reports/reportMeta.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore } from "./analysis/tags.js";
+import { AssetOverridesStore } from "./analysis/assetOverrides.js";
+import type { AssetType } from "./analysis/assetGraph.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
@@ -140,6 +142,11 @@ export interface AppOptions {
   // re-fetch when a tag is added/removed.
   tagsStore?: TagsStore;
   onTags?: (caseId: string) => void;
+  // Manual edits to the asset ↔ IoC graph (renames, additions, suppressions, link overrides).
+  // Persisted per case in state/asset-overrides.json; survives synthesis. onAssetOverrides
+  // pings dashboard clients over the WS to re-fetch the graph when overrides change.
+  assetOverridesStore?: AssetOverridesStore;
+  onAssetOverrides?: (caseId: string) => void;
   // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
   // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
   synthMetaStore?: SynthMetaStore;
@@ -2367,6 +2374,99 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Manual asset-graph edits (renames, additions, suppressions, link overrides). Each write
+  // pings live dashboard clients so the graph refreshes without a page reload.
+  app.get("/cases/:id/asset-overrides", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    try {
+      return res.status(200).json(await options.assetOverridesStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Rename (or un-rename) an asset by its graph id. Pass an empty name to clear the rename.
+  app.put("/cases/:id/asset-overrides/assets/:assetId", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    const name = typeof req.body?.name === "string" ? req.body.name : "";
+    try {
+      const ov = await options.assetOverridesStore.rename(req.params.id, req.params.assetId, name);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(200).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Create a manual asset (one not auto-derived from the forensic timeline).
+  app.post("/cases/:id/asset-overrides/assets", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const type = typeof req.body?.type === "string" ? req.body.type.trim() : "host";
+    if (!name) return res.status(400).json({ error: "name is required" });
+    try {
+      const result = await options.assetOverridesStore.addAsset(req.params.id, { name, type: type as AssetType });
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(201).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Suppress an auto-derived asset or delete a manual one.
+  app.delete("/cases/:id/asset-overrides/assets/:assetId", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    try {
+      const ov = await options.assetOverridesStore.removeAsset(req.params.id, req.params.assetId);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(200).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Restore a suppressed auto-derived asset (remove it from the removed list).
+  app.post("/cases/:id/asset-overrides/assets/:assetId/restore", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    try {
+      const ov = await options.assetOverridesStore.restoreAsset(req.params.id, req.params.assetId);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(200).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Add a manual link between an asset and an IoC. Body: { asset, ioc }.
+  app.post("/cases/:id/asset-overrides/links", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    const asset = typeof req.body?.asset === "string" ? req.body.asset.trim() : "";
+    const ioc = typeof req.body?.ioc === "string" ? req.body.ioc.trim() : "";
+    if (!asset || !ioc) return res.status(400).json({ error: "asset and ioc are required" });
+    try {
+      const ov = await options.assetOverridesStore.addLink(req.params.id, asset, ioc);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(201).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Suppress (or delete) a link. Query params: ?asset=...&ioc=...
+  app.delete("/cases/:id/asset-overrides/links", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    const asset = typeof req.query?.asset === "string" ? req.query.asset : "";
+    const ioc = typeof req.query?.ioc === "string" ? req.query.ioc : "";
+    if (!asset || !ioc) return res.status(400).json({ error: "asset and ioc query params are required" });
+    try {
+      const ov = await options.assetOverridesStore.removeLink(req.params.id, asset, ioc);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(200).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   return app;
 }
 
@@ -2585,9 +2685,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const reportMetaStore = new ReportMetaStore(store);
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
+  const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
   const importMetaStore = new ImportMetaStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store));
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), assetOverridesStore);
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
@@ -2615,6 +2716,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     tagsStore,
     onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
+    assetOverridesStore,
+    onAssetOverrides: (caseId) => hub.broadcastTo(caseId, { type: "asset_overrides_changed" }),
     synthMetaStore,
     importMetaStore,
     onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
