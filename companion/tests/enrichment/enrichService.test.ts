@@ -110,6 +110,24 @@ describe("enrichIocs", () => {
     expect(r2.iocs[0].enrichments!.map((e) => e.source).sort()).toEqual(["MalwareBazaar", "YARAify"]);
   });
 
+  it("a fresh result supersedes a stale same-source hit from a retired provider (no duplicate)", async () => {
+    // IOC was enriched by the now-removed standalone MalwareBazaar provider (no `provider` field).
+    const stale = ioc({
+      value: "h1", type: "hash",
+      enrichments: [{ source: "MalwareBazaar", verdict: "malicious", score: "old", fetchedAt: "t-1" }],
+      enrichedBy: ["MalwareBazaar"],
+    });
+    const hunting: EnrichmentProvider = {
+      name: "Hunting.ch", scope: "external",
+      supports: (k) => k === "hash",
+      lookup: async () => [{ source: "MalwareBazaar", verdict: "malicious", score: "new" }],
+    };
+    const { iocs: out } = await enrichIocs([stale], { providers: [hunting], sleep: noSleep, now });
+    const mb = out[0].enrichments!.filter((e) => e.source === "MalwareBazaar");
+    expect(mb).toHaveLength(1);                         // the stale one was replaced, not duplicated
+    expect(mb[0]).toMatchObject({ score: "new", provider: "Hunting.ch" });
+  });
+
   it("routes a process IOC only to providers that support 'process'", async () => {
     const calls: string[] = [];
     const vt = fakeProvider("VirusTotal", ["hash", "ip", "domain", "url"], { source: "VirusTotal", verdict: "malicious" }, calls);

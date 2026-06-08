@@ -48,7 +48,6 @@ import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrich
 import { ProviderHealthCache } from "./enrichment/providerHealth.js";
 import type { EnrichmentProvider } from "./enrichment/provider.js";
 import { VirusTotalProvider } from "./enrichment/virustotal.js";
-import { MalwareBazaarProvider } from "./enrichment/malwarebazaar.js";
 import { HuntingChProvider } from "./enrichment/huntingch.js";
 import { AbuseIpdbProvider } from "./enrichment/abuseipdb.js";
 import { MispProvider } from "./enrichment/misp.js";
@@ -2415,9 +2414,9 @@ export function timesketchPushOptions(): TimesketchPushOptions {
 export function buildEnrichmentProviders(): EnrichmentProvider[] {
   const providers: EnrichmentProvider[] = [];
   if (process.env.DFIR_VT_KEY) providers.push(new VirusTotalProvider({ apiKey: process.env.DFIR_VT_KEY }));
-  if (process.env.DFIR_MB_KEY) providers.push(new MalwareBazaarProvider({ apiKey: process.env.DFIR_MB_KEY }));
-  // Hunting.ch shares the ONE abuse.ch Auth-Key — fall back to DFIR_MB_KEY so an existing
-  // MalwareBazaar key powers the unified hunt with no extra config.
+  // Hunting.ch — the abuse.ch unified hunt (MalwareBazaar + ThreatFox + URLhaus + YARAify).
+  // There's no separate MalwareBazaar source anymore: MalwareBazaar is one of its back-ends.
+  // Uses the ONE abuse.ch Auth-Key; DFIR_MB_KEY (the legacy name for that key) still works.
   const abuseChKey = process.env.DFIR_HUNTINGCH_KEY || process.env.DFIR_MB_KEY;
   if (abuseChKey) providers.push(new HuntingChProvider({ apiKey: abuseChKey }));
   if (process.env.DFIR_ABUSEIPDB_KEY) providers.push(new AbuseIpdbProvider({ apiKey: process.env.DFIR_ABUSEIPDB_KEY }));

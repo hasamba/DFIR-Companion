@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { VirusTotalProvider } from "../../src/enrichment/virustotal.js";
-import { MalwareBazaarProvider } from "../../src/enrichment/malwarebazaar.js";
 import { HuntingChProvider } from "../../src/enrichment/huntingch.js";
 import { AbuseIpdbProvider } from "../../src/enrichment/abuseipdb.js";
 import { MispProvider } from "../../src/enrichment/misp.js";
@@ -42,27 +41,6 @@ describe("VirusTotalProvider", () => {
     const calledUrl = fetchFn.mock.calls[0][0] as string;
     expect(calledUrl).toContain("/urls/");
     expect(calledUrl).not.toContain("=");           // base64url, no padding
-  });
-});
-
-describe("MalwareBazaarProvider", () => {
-  it("reports a known sample as malicious with its signature", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
-      query_status: "ok", data: [{ sha256_hash: "ABCD", signature: "TrickBot", tags: ["trickbot", "exe"], file_type: "exe" }],
-    }));
-    const mb = new MalwareBazaarProvider({ fetchFn });
-    const r = await mb.lookup("hash", "abcd");
-    expect(r).toMatchObject({ source: "MalwareBazaar", verdict: "malicious" });
-    expect(r!.score).toContain("TrickBot");
-    expect(r!.tags).toEqual(expect.arrayContaining(["TrickBot", "trickbot"]));
-    expect(r!.link).toContain("bazaar.abuse.ch/sample/ABCD");
-  });
-
-  it("returns null when the hash is not found, and only supports hashes", async () => {
-    const mb = new MalwareBazaarProvider({ fetchFn: vi.fn(async () => jsonResponse({ query_status: "hash_not_found" })) });
-    expect(await mb.lookup("hash", "x")).toBeNull();
-    expect(mb.supports("ip")).toBe(false);
-    expect(mb.supports("hash")).toBe(true);
   });
 });
 
