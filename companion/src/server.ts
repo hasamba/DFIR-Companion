@@ -541,6 +541,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // The causal evidence chain graph (process trees + lateral movement), derived on demand
+  // from the current state with the same scope/legitimate filtering as the report.
+  app.get("/cases/:id/evidence-graph", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.evidenceGraph(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export just the incident (forensic) timeline as CSV, generated on demand from the
   // current state (same scope/legitimate filtering as the report) — no full report needed.
   app.get("/cases/:id/incident-timeline.csv", async (req: Request, res: Response) => {

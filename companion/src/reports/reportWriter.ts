@@ -12,6 +12,7 @@ import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
+import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGraph.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 
@@ -86,6 +87,12 @@ export class ReportWriter {
   // The asset ↔ IoC graph for the case (same scope/legitimate filtering as the report).
   async assetGraph(caseId: string): Promise<AssetGraph> {
     return buildAssetGraph(await this.loadFilteredState(caseId));
+  }
+
+  // The causal evidence chain graph (process trees + lateral movement) for the case,
+  // derived on demand with the same scope/legitimate filtering as the report.
+  async evidenceGraph(caseId: string): Promise<EvidenceGraph> {
+    return buildEvidenceGraph(await this.loadFilteredState(caseId));
   }
 
   async writeAll(caseId: string): Promise<ReportPaths> {
