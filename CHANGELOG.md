@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Analyst Notebook — per-case scratchpad for hypotheses, notes, and open questions.** A new collapsible **Analyst Notebook** panel in the dashboard lets investigators write free-form hypotheses, working notes, and open questions as they move through a case. Entries are typed (`hypothesis` / `note` / `question`) with colored type badges, can be edited or deleted, and are stored in `state/notebook.json` — a side file that **survives synthesis resets** just like comments and tags, never wiped by AI re-analysis. When the analyst opts in (checkbox in the panel → `ai-control.json` `includeNotebook: true`), the notebook entries are **appended to the synthesis prompt** so the AI can incorporate investigator thinking into its findings and attacker-path reconstruction. Notebook changes are included in the skip-if-unchanged hash, so adding a new entry always triggers a fresh synthesis when the option is on. When the case report is generated, entries appear in an **Analyst Notebook appendix** (Markdown + HTML). API: `GET/POST /cases/:id/notebook`, `PATCH /cases/:id/notebook/:entryId`, `DELETE /cases/:id/notebook/:entryId`; the existing `POST /cases/:id/ai-control` also accepts `{ includeNotebook: boolean }`. Pure store logic (`analysis/notebookStore.ts`) is fully unit-tested. Closes #8.
+
 ## [0.12.0] - 2026-06-08
 
 ### Added

@@ -3,6 +3,7 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { renderMarkdownReport } from "./markdown.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
+import type { NotebookEntry } from "../analysis/notebookStore.js";
 
 // Standalone HTML export of the incident report. We render the canonical Markdown report
 // (single source of truth) and convert it to HTML with `marked` (GFM tables), then wrap it
@@ -106,8 +107,8 @@ export function injectPrintTrigger(html: string): string {
   return idx === -1 ? html + PRINT_TRIGGER : html.slice(0, idx) + PRINT_TRIGGER + html.slice(idx);
 }
 
-export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary): string {
-  const markdown = renderMarkdownReport(state, meta, exposure);
+export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary, notebookEntries?: NotebookEntry[]): string {
+  const markdown = renderMarkdownReport(state, meta, exposure, notebookEntries);
 
   const marked = new Marked({ gfm: true });
   // Escape any raw HTML tokens in the source instead of emitting them verbatim.

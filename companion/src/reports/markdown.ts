@@ -6,6 +6,7 @@ import { buildAssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph } from "../analysis/evidenceGraph.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
+import type { NotebookEntry } from "../analysis/notebookStore.js";
 
 // Renders report.md following the AnttiKurittu incident-report-template structure
 // (https://github.com/AnttiKurittu/incident-report-template). Technical sections are
@@ -370,7 +371,32 @@ function conclusions(state: InvestigationState, meta: ReportMeta, lines: string[
   }
 }
 
-export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary): string {
+function analystNotebook(entries: NotebookEntry[], lines: string[]): void {
+  lines.push("## Analyst Notebook", "");
+  lines.push("_Investigator working notes — hypotheses, open questions, and observations recorded during the investigation._", "");
+  if (!entries.length) {
+    lines.push("_(no notebook entries)_", "");
+    return;
+  }
+  const TYPE_LABEL: Record<NotebookEntry["type"], string> = {
+    hypothesis: "Hypothesis",
+    note: "Note",
+    question: "Question",
+  };
+  for (const e of entries) {
+    const label = TYPE_LABEL[e.type] ?? e.type;
+    const ts = e.timestamp ? ` _(${e.timestamp.slice(0, 16).replace("T", " ")} UTC)_` : "";
+    lines.push(`**[${label}]**${ts}`, "");
+    lines.push(e.text, "");
+  }
+}
+
+export function renderMarkdownReport(
+  state: InvestigationState,
+  meta: ReportMeta = emptyReportMeta(),
+  exposure?: CustomerExposureSummary,
+  notebookEntries?: NotebookEntry[],
+): string {
   const lines: string[] = [];
 
   titlePage(state, meta, lines);
@@ -394,6 +420,10 @@ export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta
 
   investigation(state, lines, exposure);
   conclusions(state, meta, lines);
+
+  if (notebookEntries && notebookEntries.length > 0) {
+    analystNotebook(notebookEntries, lines);
+  }
 
   return lines.join("\n");
 }
