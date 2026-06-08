@@ -339,8 +339,10 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   importers already populate: **process trees** (parent→child from `processName`/`parentName`, chained
   through shared `(asset, process)` nodes) and **lateral movement** (same binary **hash** across hosts →
   high confidence; same **account** across hosts → medium — Windows virtual principals like DWM/UMFD/MSI
-  filtered out so they don't fake edges). Every edge carries **confidence + the rule that derived it + its
-  backing events**, so a causal claim is auditable. Dashboard **Evidence Chain** panel (process-tree /
+  filtered out so they don't fake edges), and a **host→tree anchor** that hangs each process tree off its
+  host so lateral movement **stitches them into one cross-host attack graph** (`evil.exe` runs on HOST-A →
+  moves to HOST-B → spawns there) rather than disconnected islands. Every edge carries **confidence + the
+  rule that derived it + its backing events**, so a causal claim is auditable. Dashboard **Evidence Chain** panel (process-tree /
   lateral toggles, confidence legend, layered SVG with arrowheads, zoom, fullscreen, click-to-focus, and
   **drag-to-reposition nodes** — positions persist per case, ↺ Reset layout restores the auto layout) and a
   report **§4.8 Chain of evidence** section. Derived on read (`GET /cases/:id/evidence-graph`).

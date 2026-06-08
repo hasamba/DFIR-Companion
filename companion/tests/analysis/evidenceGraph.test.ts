@@ -117,6 +117,40 @@ describe("buildEvidenceGraph — lateral_move", () => {
   });
 });
 
+describe("buildEvidenceGraph — ran_on (host anchoring connects the two halves)", () => {
+  it("anchors each process tree to its host so lateral movement bridges them into one graph", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", parentName: "wmiprvse.exe", processName: "evil.exe", sha256: HASH, severity: "Critical" }),
+      ev({ id: "e2", asset: "HOST-B", parentName: "services.exe", processName: "evil.exe", sha256: HASH, severity: "High" }),
+      ev({ id: "e3", asset: "HOST-B", parentName: "evil.exe", processName: "powershell.exe" }),
+    );
+    const g = buildEvidenceGraph(s);
+
+    // Each tree ROOT (not its children) anchors to its host via ran_on.
+    const ranOn = g.edges.filter((e) => e.type === "ran_on");
+    expect(ranOn.some((e) => e.source === "host:host-a" && e.target === "proc:host-a:wmiprvse.exe")).toBe(true);
+    expect(ranOn.some((e) => e.source === "host:host-b" && e.target === "proc:host-b:services.exe")).toBe(true);
+    expect(ranOn.every((e) => e.confidence === "high" && e.rule === "process-on-host")).toBe(true);
+    // A non-root (evil.exe on HOST-B has a parent) does NOT get a host anchor.
+    expect(ranOn.some((e) => e.target === "proc:host-b:evil.exe")).toBe(false);
+
+    // The shared hash links the two hosts (lateral), so the whole thing is ONE component.
+    const adj = new Map<string, string[]>();
+    for (const e of g.edges) {
+      (adj.get(e.source) ?? adj.set(e.source, []).get(e.source)!).push(e.target);
+      (adj.get(e.target) ?? adj.set(e.target, []).get(e.target)!).push(e.source);
+    }
+    const seen = new Set<string>(["proc:host-a:evil.exe"]);
+    const queue = ["proc:host-a:evil.exe"];
+    while (queue.length) {
+      const u = queue.shift()!;
+      for (const v of adj.get(u) ?? []) if (!seen.has(v)) { seen.add(v); queue.push(v); }
+    }
+    expect(seen.has("proc:host-b:powershell.exe")).toBe(true);   // reachable across hosts
+  });
+});
+
 describe("buildEvidenceGraph — invariants", () => {
   it("returns an empty graph for an empty case", () => {
     expect(buildEvidenceGraph(emptyState("c1"))).toEqual({ nodes: [], edges: [] });
