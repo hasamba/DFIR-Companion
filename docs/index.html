@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DFIR Companion — AI-Assisted DFIR Triage, On Your Machine</title>
+  <meta name="description" content="Turn investigation screenshots and imported artifacts into a forensic timeline, findings, IOCs, and reports — all running locally on your machine.">
+  <meta property="og:title" content="DFIR Companion — AI-Assisted DFIR Triage">
+  <meta property="og:description" content="Localhost DFIR companion. Screenshots + artifacts → timeline, findings, IOCs, attacker path, reports. 100% on your machine.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="dfir-companion-logo.jpg">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0a0e17;
+      --bg-secondary: #0f1520;
+      --bg-card: #131b2e;
+      --bg-card-hover: #1a2540;
+      --border: #1e2d4a;
+      --border-glow: #2a4a7f;
+      --text-primary: #e2e8f0;
+      --text-secondary: #8b9dc3;
+      --text-muted: #5a6d8f;
+      --accent-cyan: #00d4ff;
+      --accent-green: #00ff88;
+      --accent-amber: #ffb020;
+      --accent-red: #ff3355;
+      --accent-purple: #a855f7;
+      --gradient-hero: linear-gradient(135deg, #0a0e17 0%, #0d1a2f 40%, #0f1520 100%);
+      --font-display: 'Space Grotesk', sans-serif;
+      --font-body: 'Inter', -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.7;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Scanline overlay */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 212, 255, 0.008) 2px,
+        rgba(0, 212, 255, 0.008) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* Grid background */
+    .grid-bg {
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    a { color: var(--accent-cyan); text-decoration: none; transition: color 0.2s; }
+    a:hover { color: #4de8ff; }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      background: rgba(10, 14, 23, 0.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+    nav .container {
+      display: flex; align-items: center; justify-content: space-between;
+      height: 64px;
+    }
+    .nav-logo {
+      display: flex; align-items: center; gap: 12px;
+      font-family: var(--font-display); font-weight: 700; font-size: 18px;
+      color: var(--text-primary);
+    }
+    .nav-logo img { height: 32px; border-radius: 6px; }
+    .nav-links { display: flex; align-items: center; gap: 32px; }
+    .nav-links a { color: var(--text-secondary); font-size: 14px; font-weight: 500; }
+    .nav-links a:hover { color: var(--accent-cyan); }
+    .nav-cta {
+      padding: 8px 20px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent-cyan), #0088cc);
+      color: #000 !important; font-weight: 600; font-size: 13px;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .nav-cta:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3); color: #000 !important; }
+
+    @media (max-width: 768px) {
+      .nav-links a:not(.nav-cta) { display: none; }
+    }
+
+    /* ── HERO ── */
+    .hero {
+      min-height: 100vh; display: flex; align-items: center;
+      background: var(--gradient-hero);
+      padding-top: 64px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute; top: -200px; right: -200px;
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, rgba(0, 212, 255, 0.06) 0%, transparent 70%);
+      border-radius: 50%;
+    }
+    .hero::after {
+      content: '';
+      position: absolute; bottom: -100px; left: -100px;
+      width: 400px; height: 400px;
+      background: radial-gradient(circle, rgba(0, 255, 136, 0.04) 0%, transparent 70%);
+      border-radius: 50%;
+    }
+    .hero .container { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; }
+    .hero-text { position: relative; z-index: 2; }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 14px; border-radius: 20px;
+      background: rgba(0, 212, 255, 0.08);
+      border: 1px solid rgba(0, 212, 255, 0.2);
+      font-family: var(--font-mono); font-size: 12px; color: var(--accent-cyan);
+      margin-bottom: 24px;
+    }
+    .hero-badge .pulse {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--accent-green);
+      animation: pulse-glow 2s ease-in-out infinite;
+    }
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(0, 255, 136, 0); }
+    }
+    .hero h1 {
+      font-family: var(--font-display);
+      font-size: clamp(36px, 5vw, 56px);
+      font-weight: 700;
+      line-height: 1.1;
+      margin-bottom: 20px;
+      letter-spacing: -0.02em;
+    }
+    .hero h1 .gradient {
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero-sub {
+      font-size: 18px; color: var(--text-secondary);
+      line-height: 1.7; margin-bottom: 32px; max-width: 520px;
+    }
+    .hero-actions { display: flex; gap: 16px; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 14px 28px; border-radius: 10px;
+      font-family: var(--font-display); font-weight: 600; font-size: 15px;
+      transition: all 0.2s; cursor: pointer; border: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-cyan), #0088cc);
+      color: #000;
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 30px rgba(0, 212, 255, 0.35); }
+    .btn-secondary {
+      background: rgba(0, 212, 255, 0.08);
+      border: 1px solid rgba(0, 212, 255, 0.25);
+      color: var(--accent-cyan);
+    }
+    .btn-secondary:hover { background: rgba(0, 212, 255, 0.15); border-color: rgba(0, 212, 255, 0.4); }
+    .hero-visual {
+      position: relative; z-index: 2;
+      display: flex; justify-content: center;
+    }
+    .terminal-mock {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      width: 100%; max-width: 520px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 212, 255, 0.05);
+    }
+    .terminal-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 12px 16px;
+      background: rgba(0, 0, 0, 0.3);
+      border-bottom: 1px solid var(--border);
+    }
+    .terminal-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .terminal-dot.red { background: #ff5f57; }
+    .terminal-dot.yellow { background: #febc2e; }
+    .terminal-dot.green { background: #28c840; }
+    .terminal-title {
+      margin-left: 8px; font-family: var(--font-mono);
+      font-size: 12px; color: var(--text-muted);
+    }
+    .terminal-body {
+      padding: 20px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--text-secondary);
+      max-height: 340px;
+      overflow: hidden;
+    }
+    .terminal-body .prompt { color: var(--accent-green); }
+    .terminal-body .cmd { color: var(--accent-cyan); }
+    .terminal-body .flag { color: var(--accent-amber); }
+    .terminal-body .comment { color: var(--text-muted); }
+    .terminal-body .output { color: var(--text-secondary); }
+    .terminal-body .highlight { color: var(--accent-cyan); font-weight: 500; }
+    .terminal-body .success { color: var(--accent-green); }
+    .terminal-body .critical { color: var(--accent-red); }
+
+    @media (max-width: 768px) {
+      .hero .container { grid-template-columns: 1fr; text-align: center; }
+      .hero-sub { margin: 0 auto 32px; }
+      .hero-actions { justify-content: center; }
+      .hero-visual { order: -1; }
+    }
+
+    /* ── SECTION BASE ── */
+    section { padding: 100px 0; position: relative; z-index: 1; }
+    .section-label {
+      font-family: var(--font-mono); font-size: 12px; color: var(--accent-cyan);
+      text-transform: uppercase; letter-spacing: 2px; margin-bottom: 12px;
+    }
+    .section-title {
+      font-family: var(--font-display);
+      font-size: clamp(28px, 4vw, 42px);
+      font-weight: 700; line-height: 1.2;
+      margin-bottom: 16px;
+    }
+    .section-desc {
+      font-size: 17px; color: var(--text-secondary);
+      max-width: 600px; margin-bottom: 48px;
+    }
+
+    /* ── PHILOSOPHY ── */
+    .philosophy { background: var(--bg-secondary); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .philosophy-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 40px;
+      position: relative;
+      overflow: hidden;
+    }
+    .philosophy-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green));
+    }
+    .philosophy-quote {
+      font-family: var(--font-display);
+      font-size: clamp(20px, 3vw, 28px);
+      font-weight: 500;
+      line-height: 1.5;
+      color: var(--text-primary);
+      margin-bottom: 20px;
+    }
+    .philosophy-quote em { color: var(--accent-cyan); font-style: normal; }
+    .philosophy-explain {
+      color: var(--text-secondary); font-size: 16px; line-height: 1.8;
+    }
+
+    /* ── FEATURES GRID ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 24px;
+    }
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 32px;
+      transition: border-color 0.3s, transform 0.2s;
+    }
+    .feature-card:hover {
+      border-color: var(--border-glow);
+      transform: translateY(-2px);
+    }
+    .feature-icon {
+      width: 44px; height: 44px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; margin-bottom: 16px;
+    }
+    .feature-icon.cyan { background: rgba(0, 212, 255, 0.1); border: 1px solid rgba(0, 212, 255, 0.2); }
+    .feature-icon.green { background: rgba(0, 255, 136, 0.1); border: 1px solid rgba(0, 255, 136, 0.2); }
+    .feature-icon.amber { background: rgba(255, 176, 32, 0.1); border: 1px solid rgba(255, 176, 32, 0.2); }
+    .feature-icon.purple { background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.2); }
+    .feature-icon.red { background: rgba(255, 51, 85, 0.1); border: 1px solid rgba(255, 51, 85, 0.2); }
+    .feature-card h3 {
+      font-family: var(--font-display); font-size: 18px; font-weight: 600;
+      margin-bottom: 10px;
+    }
+    .feature-card p { color: var(--text-secondary); font-size: 14px; line-height: 1.7; }
+    .feature-card .tag {
+      display: inline-block; margin-top: 12px;
+      font-family: var(--font-mono); font-size: 11px;
+      padding: 3px 10px; border-radius: 4px;
+      background: rgba(0, 212, 255, 0.08);
+      color: var(--accent-cyan);
+      border: 1px solid rgba(0, 212, 255, 0.15);
+    }
+
+    /* ── IMPORT SOURCES ── */
+    .sources { background: var(--bg-secondary); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+    }
+    .source-pill {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 18px; border-radius: 10px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      transition: border-color 0.2s, background 0.2s;
+      font-family: var(--font-mono); font-size: 13px; color: var(--text-secondary);
+    }
+    .source-pill:hover { border-color: var(--border-glow); background: var(--bg-card-hover); }
+    .source-pill .icon { font-size: 18px; }
+    .source-pill .label { font-family: var(--font-body); }
+
+    /* ── HOW IT WORKS ── */
+    .flow-diagram {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;
+      margin-top: 48px;
+    }
+    .flow-step {
+      text-align: center; position: relative;
+    }
+    .flow-step-number {
+      width: 56px; height: 56px; border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 20px;
+      font-family: var(--font-mono); font-size: 20px; font-weight: 700;
+      background: rgba(0, 212, 255, 0.1); border: 1px solid rgba(0, 212, 255, 0.25);
+      color: var(--accent-cyan);
+    }
+    .flow-step h3 { font-family: var(--font-display); font-size: 18px; margin-bottom: 8px; }
+    .flow-step p { color: var(--text-secondary); font-size: 14px; }
+    .flow-arrow {
+      display: none;
+    }
+    @media (min-width: 769px) {
+      .flow-arrow {
+        display: block;
+        position: absolute; top: 28px;
+        right: -18px;
+        color: var(--text-muted); font-size: 20px;
+      }
+    }
+    @media (max-width: 768px) {
+      .flow-diagram { grid-template-columns: 1fr; }
+    }
+
+    /* ── SECURITY ── */
+    .security-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px;
+    }
+    .security-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+    }
+    .security-card .shield {
+      font-size: 32px; margin-bottom: 16px;
+    }
+    .security-card h3 {
+      font-family: var(--font-display); font-size: 17px; margin-bottom: 8px;
+    }
+    .security-card p { color: var(--text-secondary); font-size: 14px; line-height: 1.7; }
+
+    /* ── QUICKSTART ── */
+    .quickstart { background: var(--bg-secondary); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .code-block {
+      background: #080c14;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .code-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px;
+      background: rgba(0, 0, 0, 0.4);
+      border-bottom: 1px solid var(--border);
+    }
+    .code-header span { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+    .code-body {
+      padding: 20px;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 2;
+      overflow-x: auto;
+    }
+    .code-body .line { display: block; }
+    .code-body .comment { color: #5a6d8f; }
+    .code-body .cmd { color: var(--accent-cyan); }
+    .code-body .flag { color: var(--accent-amber); }
+    .code-body .string { color: var(--accent-green); }
+    .code-body .var { color: var(--accent-purple); }
+
+    /* ── CTA ── */
+    .cta-section {
+      text-align: center; padding: 120px 0;
+    }
+    .cta-section h2 {
+      font-family: var(--font-display);
+      font-size: clamp(32px, 4vw, 48px);
+      font-weight: 700; margin-bottom: 16px;
+    }
+    .cta-section p { color: var(--text-secondary); font-size: 18px; margin-bottom: 36px; }
+    .cta-section .btn { font-size: 17px; padding: 16px 36px; }
+    .badges { display: flex; justify-content: center; gap: 12px; margin-top: 24px; flex-wrap: wrap; }
+    .badges img { height: 28px; }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    footer a { color: var(--text-secondary); }
+    footer .links { display: flex; justify-content: center; gap: 24px; margin-bottom: 16px; flex-wrap: wrap; }
+
+    /* ── ANIMATIONS ── */
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(30px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate { opacity: 0; animation: fade-up 0.6s ease forwards; }
+    .animate-d1 { animation-delay: 0.1s; }
+    .animate-d2 { animation-delay: 0.2s; }
+    .animate-d3 { animation-delay: 0.3s; }
+    .animate-d4 { animation-delay: 0.4s; }
+    .animate-d5 { animation-delay: 0.5s; }
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      .animate { animation: none; opacity: 1; }
+      .hero-badge .pulse { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="grid-bg"></div>
+
+  <nav>
+    <div class="container">
+      <a href="#" class="nav-logo">
+        <img src="dfir-companion-logo.jpg" alt="DFIR Companion" width="32" height="32">
+        DFIR Companion
+      </a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#imports">Imports</a>
+        <a href="#security">Security</a>
+        <a href="#quickstart">Quick Start</a>
+        <a href="https://github.com/hasamba/dfir-companion" class="nav-cta" target="_blank" rel="noopener">GitHub ↗</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ════ HERO ════ -->
+  <section class="hero">
+    <div class="container">
+      <div class="hero-text">
+        <div class="hero-badge animate">
+          <span class="pulse"></span>
+          v0.10.0 — open source, AGPL-3.0
+        </div>
+        <h1 class="animate animate-d1">
+          DFIR triage,<br>
+          <span class="gradient">on your machine.</span>
+        </h1>
+        <p class="hero-sub animate animate-d2">
+          Turn investigation screenshots and imported artifacts into a forensic timeline, findings, IOCs, an asset↔IoC graph, and shareable reports — with AI running locally. Nothing leaves your box.
+        </p>
+        <div class="hero-actions animate animate-d3">
+          <a href="https://github.com/hasamba/dfir-companion" target="_blank" rel="noopener" class="btn btn-primary">⬇ Get Started</a>
+          <a href="#quickstart" class="btn btn-secondary">See Setup →</a>
+        </div>
+      </div>
+      <div class="hero-visual animate animate-d4">
+        <div class="terminal-mock">
+          <div class="terminal-bar">
+            <span class="terminal-dot red"></span>
+            <span class="terminal-dot yellow"></span>
+            <span class="terminal-dot green"></span>
+            <span class="terminal-title">dfir-companion — 127.0.0.1:4773</span>
+          </div>
+          <div class="terminal-body">
+            <span class="comment"># Start the companion</span><br>
+            <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
+            <span class="output">[DFIR] companion v0.10.0 — localhost only</span><br>
+            <span class="output">[DFIR] cases root: ./cases</span><br>
+            <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
+            <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
+            <span class="comment"># Create a case, start capturing</span><br>
+            <span class="output">✓ Case INC-2026-001 created</span><br>
+            <span class="output">✓ Extension connected — recording</span><br>
+            <span class="output">✓ Capture → window (4 screenshots)</span><br>
+            <span class="output">✓ AI extraction → 12 forensic events</span><br>
+            <span class="highlight">✓ Synthesis → findings + attacker path</span><br><br>
+            <span class="critical">⚠ HIGH: T1059.001 — PowerShell spawned by Word</span><br>
+            <span class="critical">⚠ CRIT: T1003.001 — LSASS memory dump</span><br>
+            <span class="success">✓ Report ready (MD + HTML + PDF)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ PHILOSOPHY ════ -->
+  <section class="philosophy">
+    <div class="container">
+      <div class="section-label">Philosophy</div>
+      <div class="philosophy-card animate">
+        <p class="philosophy-quote">
+          The <em>"so what"</em> layer — not another detection engine.
+        </p>
+        <p class="philosophy-explain">
+          Your detection tools (Velociraptor, Security Onion, Chainsaw, Hayabusa, THOR, EDR/SIEM) already find the hits. DFIR Companion ingests <em>their</em> verdicts, correlates them across tools into one forensic timeline, and synthesizes the findings, attacker path, IOCs, and report. The value is in the <strong>correlation and narrative</strong>, not re-deriving alerts.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ FEATURES ════ -->
+  <section id="features">
+    <div class="container">
+      <div class="section-label">Capabilities</div>
+      <h2 class="section-title">What it builds — automatically</h2>
+      <p class="section-desc">
+        For each case the AI constructs and maintains a complete investigation state from your evidence.
+      </p>
+      <div class="features-grid">
+        <div class="feature-card animate">
+          <div class="feature-icon cyan">🔍</div>
+          <h3>Forensic Timeline</h3>
+          <p>Real incident events with true timestamps from artifacts — process creation, logons, network connections, file MAC times. Not the capture log.</p>
+          <span class="tag">cross-source correlation</span>
+        </div>
+        <div class="feature-card animate animate-d1">
+          <div class="feature-icon red">⚠️</div>
+          <h3>Findings &amp; MITRE ATT&amp;CK</h3>
+          <p>Per-technique analytic conclusions with severity and MITRE mapping. Safety net auto-creates findings for any high-severity events synthesis missed.</p>
+          <span class="tag">severity-aware</span>
+        </div>
+        <div class="feature-card animate animate-d2">
+          <div class="feature-icon amber">🎯</div>
+          <h3>IOCs &amp; Attacker Path</h3>
+          <p>Indicators with enrichment verdicts (VirusTotal, MISP, YETI, AbuseIPDB). Full kill-chain narrative from initial access to exfiltration.</p>
+          <span class="tag">enriched + cached</span>
+        </div>
+        <div class="feature-card animate animate-d3">
+          <div class="feature-icon green">🔗</div>
+          <h3>Asset ↔ IoC Graph</h3>
+          <p>Interactive graph showing which indicators touched each compromised host, account, or service. Zoom, fullscreen, multiple layouts.</p>
+          <span class="tag">interactive</span>
+        </div>
+        <div class="feature-card animate animate-d4">
+          <div class="feature-icon purple">💬</div>
+          <h3>Ask the Case</h3>
+          <p>Free-form Q&A grounded in the evidence: "was data exfiltrated?", "was a USB connected?". If unknown, tells you what to collect next.</p>
+          <span class="tag">evidence-grounded</span>
+        </div>
+        <div class="feature-card animate animate-d5">
+          <div class="feature-icon cyan">📄</div>
+          <h3>Reports — MD / HTML / PDF / DOCX</h3>
+          <p>Full incident report following the AnttiKurittu template. Executive summary, BIA, timelines, conclusions. One-click PDF. Push to DFIR-IRIS &amp; Timesketch.</p>
+          <span class="tag">exportable</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon amber">🔎</div>
+          <h3>Hunt-Pivot Generator</h3>
+          <p>From any event or IOC, generate ready-to-run queries: Velociraptor VQL, KQL, SPL, Sigma, YARA, Suricata, Elastic ES|QL. Zero AI cost — deterministic templates.</p>
+          <span class="tag">7 platforms</span>
+        </div>
+        <div class="feature-card animate animate-d1">
+          <div class="feature-icon green">📸</div>
+          <h3>Browser Extension Capture</h3>
+          <p>MV3 extension: timer + event-driven (navigation, tab switch, click). Ctrl+Shift+S hotkey. Offline queue. Per-case attach. Evidence-first persistence.</p>
+          <span class="tag">lossless PNG</span>
+        </div>
+        <div class="feature-card animate animate-d2">
+          <div class="feature-icon purple">🔒</div>
+          <h3>AI Input Anonymization</h3>
+          <p>Reversibly tokenizes internal IPs, usernames, hostnames before the LLM sees them. Adversary IOCs preserved. Per-case toggle. Default on.</p>
+          <span class="tag">OPSEC-first</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ IMPORTS ════ -->
+  <section id="imports" class="sources">
+    <div class="container">
+      <div class="section-label">Ingest</div>
+      <h2 class="section-title">One Import button — auto-detects the format</h2>
+      <p class="section-desc">
+        Drop any file. The server sniffs the structure and routes it to the right importer. Most are deterministic — zero AI calls, zero cost.
+      </p>
+      <div class="source-grid">
+        <div class="source-pill"><span class="icon">🦅</span><span class="label">Velociraptor</span></div>
+        <div class="source-pill"><span class="icon">🧅</span><span class="label">Security Onion</span></div>
+        <div class="source-pill"><span class="icon">🪚</span><span class="label">Chainsaw</span></div>
+        <div class="source-pill"><span class="icon">🦅</span><span class="label">Hayabusa</span></div>
+        <div class="source-pill"><span class="icon">⚡</span><span class="label">THOR / Nextron</span></div>
+        <div class="source-pill"><span class="icon">🔬</span><span class="label">Cyber Triage</span></div>
+        <div class="source-pill"><span class="icon">🌊</span><span class="label">Suricata</span></div>
+        <div class="source-pill"><span class="icon">🦓</span><span class="label">Zeek</span></div>
+        <div class="source-pill"><span class="icon">📂</span><span class="label">KAPE / EZ Tools</span></div>
+        <div class="source-pill"><span class="icon">⏳</span><span class="label">Plaso / log2timeline</span></div>
+        <div class="source-pill"><span class="icon">☁️</span><span class="label">M365 / Entra ID</span></div>
+        <div class="source-pill"><span class="icon">☁️</span><span class="label">AWS CloudTrail</span></div>
+        <div class="source-pill"><span class="icon">☁️</span><span class="label">GCP / Azure</span></div>
+        <div class="source-pill"><span class="icon">🧪</span><span class="label">CAPEv2</span></div>
+        <div class="source-pill"><span class="icon">🦅</span><span class="label">Falcon Sandbox</span></div>
+        <div class="source-pill"><span class="icon">📊</span><span class="label">SIEM / EDR JSON</span></div>
+        <div class="source-pill"><span class="icon">📝</span><span class="label">CSV / Generic Log</span></div>
+        <div class="source-pill"><span class="icon">📸</span><span class="label">Screenshots (any)</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ HOW IT WORKS ════ -->
+  <section id="how-it-works">
+    <div class="container">
+      <div class="section-label">Pipeline</div>
+      <h2 class="section-title">Two-phase analysis</h2>
+      <p class="section-desc">
+        Cheap vision extraction per screenshot batch → forensic timeline. One strong text-only synthesis → findings, attacker path, conclusions.
+      </p>
+      <div class="flow-diagram">
+        <div class="flow-step animate">
+          <div class="flow-step-number">1</div>
+          <h3>Capture &amp; Import</h3>
+          <p>Browser extension screenshots your investigation. Import any artifact file — auto-detected, zero config.</p>
+          <span class="flow-arrow">→</span>
+        </div>
+        <div class="flow-step animate animate-d1">
+          <div class="flow-step-number">2</div>
+          <h3>Extract &amp; Correlate</h3>
+          <p>Deterministic parsers + cheap AI vision extract forensic events. Cross-source deduplication. Evidence stays on disk.</p>
+          <span class="flow-arrow">→</span>
+        </div>
+        <div class="flow-step animate animate-d2">
+          <div class="flow-step-number">3</div>
+          <h3>Synthesize &amp; Report</h3>
+          <p>One strong model call: findings, IOCs, MITRE, attacker path, key questions. Markdown + HTML + PDF + push to IRIS/Timesketch.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ SECURITY ════ -->
+  <section id="security" class="sources">
+    <div class="container">
+      <div class="section-label">Security</div>
+      <h2 class="section-title">Built for OPSEC-conscious teams</h2>
+      <p class="section-desc">
+        Every design decision favors local-first, evidence-stays-on-box, your-AI-your-choice.
+      </p>
+      <div class="security-grid">
+        <div class="security-card animate">
+          <div class="shield">🔒</div>
+          <h3>Localhost Only</h3>
+          <p>Binds 127.0.0.1. Evidence on disk. AI provider is yours to choose — OpenAI, Ollama, local LiteLLM, Gemini. Nothing phone-home.</p>
+        </div>
+        <div class="security-card animate animate-d1">
+          <div class="shield">🛡️</div>
+          <h3>AI Input Anonymization</h3>
+          <p>Internal IPs, usernames, hostnames reversibly tokenized before the LLM. Adversary IOCs preserved. Per-case toggle, default on.</p>
+        </div>
+        <div class="security-card animate animate-d2">
+          <div class="shield">📡</div>
+          <h3>Threat Intel — Per-Source OPSEC</h3>
+          <p>Local sources (your MISP/YETI) by default. External (VirusTotal, AbuseIPDB) opt-in with confirm. Reachability gate — down servers skip, not fail.</p>
+        </div>
+        <div class="security-card animate animate-d3">
+          <div class="shield">🖥️</div>
+          <h3>Portable Windows EXE</h3>
+          <p>No install. Unzip, double-click, dashboard opens. Built with Node SEA — single portable binary with dashboard assets embedded.</p>
+        </div>
+        <div class="security-card animate animate-d4">
+          <div class="shield">🐳</div>
+          <h3>Docker / Docker Compose</h3>
+          <p>One command: <code>docker compose up</code>. Localhost-only by design (Compose maps port back to 127.0.0.1). Evidence persists on volume.</p>
+        </div>
+        <div class="security-card animate animate-d5">
+          <div class="shield">⚙️</div>
+          <h3>AI On/Off Per Case</h3>
+          <p>Capture-only mode by default. Turn AI on when ready — it backfills everything captured while off. Deterministic imports still populate timeline.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ QUICKSTART ════ -->
+  <section id="quickstart" class="quickstart">
+    <div class="container">
+      <div class="section-label">Quick Start</div>
+      <h2 class="section-title">Running in 60 seconds</h2>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 32px; margin-top: 32px;">
+        <div>
+          <h3 style="font-family: var(--font-display); font-size: 18px; margin-bottom: 16px; color: var(--accent-cyan);">From Source</h3>
+          <div class="code-block">
+            <div class="code-header"><span>terminal</span></div>
+            <div class="code-body">
+              <span class="line"><span class="comment"># Clone &amp; install</span></span>
+              <span class="line"><span class="cmd">git</span> clone https://github.com/hasamba/dfir-companion.git</span>
+              <span class="line"><span class="cmd">cd</span> dfir-companion/companion</span>
+              <span class="line"><span class="cmd">npm</span> install</span>
+              <span class="line"></span>
+              <span class="line"><span class="comment"># Configure AI (or leave off for capture-only)</span></span>
+              <span class="line"><span class="cmd">cp</span> .env.example .env</span>
+              <span class="line"></span>
+              <span class="line"><span class="comment"># Start the server</span></span>
+              <span class="line"><span class="cmd">npm</span> run dev</span>
+              <span class="line"></span>
+              <span class="line"><span class="comment"># Load the extension</span></span>
+              <span class="line"><span class="cmd">cd</span> ../extension</span>
+              <span class="line"><span class="cmd">npm</span> install && <span class="cmd">npm</span> run build</span>
+              <span class="line"><span class="comment"># → Load extension/dist as unpacked</span></span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <h3 style="font-family: var(--font-display); font-size: 18px; margin-bottom: 16px; color: var(--accent-green);">Docker</h3>
+          <div class="code-block">
+            <div class="code-header"><span>terminal</span></div>
+            <div class="code-body">
+              <span class="line"><span class="comment"># Build &amp; run</span></span>
+              <span class="line"><span class="cmd">git</span> clone https://github.com/hasamba/dfir-companion.git</span>
+              <span class="line"><span class="cmd">cd</span> dfir-companion</span>
+              <span class="line"><span class="cmd">docker</span> compose up -d --build</span>
+              <span class="line"></span>
+              <span class="line"><span class="comment"># Or pull prebuilt</span></span>
+              <span class="line"><span class="cmd">docker</span> compose pull && <span class="cmd">docker</span> compose up -d</span>
+              <span class="line"></span>
+              <span class="line"><span class="comment"># → http://127.0.0.1:4773/dashboard</span></span>
+              <span class="line"><span class="comment"># Load ./addon/dist as unpacked extension</span></span>
+            </div>
+          </div>
+          <h3 style="font-family: var(--font-display); font-size: 18px; margin-bottom: 16px; margin-top: 24px; color: var(--accent-amber);">Portable EXE</h3>
+          <div class="code-block">
+            <div class="code-header"><span>windows</span></div>
+            <div class="code-body">
+              <span class="line"><span class="comment"># Download from GitHub Releases</span></span>
+              <span class="line"><span class="comment"># Unzip → drop .env next to exe → double-click</span></span>
+              <span class="line"><span class="comment"># → http://127.0.0.1:4773/dashboard</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ CTA ════ -->
+  <section class="cta-section">
+    <div class="container">
+      <h2 class="animate">Ready to investigate smarter?</h2>
+      <p class="animate animate-d1">Open source. Free. Runs on your machine. Your evidence stays yours.</p>
+      <div class="animate animate-d2">
+        <a href="https://github.com/hasamba/dfir-companion" target="_blank" rel="noopener" class="btn btn-primary" style="margin-right: 12px;">⬇ GitHub Repository</a>
+        <a href="https://github.com/hasamba/dfir-companion/releases" target="_blank" rel="noopener" class="btn btn-secondary">📦 Releases</a>
+      </div>
+      <div class="badges animate animate-d3">
+        <img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL v3">
+        <img src="https://img.shields.io/badge/Node-20%2B-339933.svg" alt="Node 20+">
+        <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20Docker-00d4ff.svg" alt="Platforms">
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ FOOTER ════ -->
+  <footer>
+    <div class="container">
+      <div class="links">
+        <a href="https://github.com/hasamba/dfir-companion">GitHub</a>
+        <a href="https://github.com/hasamba/dfir-companion/issues">Issues</a>
+        <a href="https://github.com/hasamba/dfir-companion/releases">Releases</a>
+        <a href="https://github.com/hasamba/dfir-companion/blob/main/CHANGELOG.md">Changelog</a>
+      </div>
+      <p>DFIR Companion — AI-assisted DFIR triage, on your machine.</p>
+      <p style="margin-top: 8px;">Copyright © 2026 Yaniv Radunsky. Licensed under AGPL-3.0.</p>
+    </div>
+  </footer>
+
+  <script>
+    // Intersection Observer for scroll animations
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.style.animationPlayState = 'running';
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.1 });
+
+    document.querySelectorAll('.animate').forEach(el => {
+      el.style.animationPlayState = 'paused';
+      observer.observe(el);
+    });
+
+    // Unpause hero animations immediately
+    document.querySelectorAll('.hero .animate').forEach(el => {
+      el.style.animationPlayState = 'running';
+    });
+  </script>
+</body>
+</html>
