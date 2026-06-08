@@ -70,7 +70,9 @@
     .asset-hint { margin-left: auto; color: #ffd93b; }
     .asset-graph { overflow: auto; max-height: 460px; border: 1px solid #2a2f3a; border-radius: 6px; background: #0f1115; }
     .asset-graph svg text { fill: #cbd3df; font-size: 11px; }
-    .asset-node { cursor: pointer; }
+    .asset-node { cursor: grab; }
+    .asset-node:active { cursor: grabbing; }
+    .asset-node.moved text { fill: #ffd93b; }            /* a repositioned (pinned) node's label is tinted */
     .ev-node { cursor: grab; }
     .ev-node:active { cursor: grabbing; }
     .ev-node.moved text { fill: #ffd93b; }                /* a repositioned node's label is tinted */
@@ -476,6 +478,8 @@
             <button id="assetZoomReset" type="button" title="Reset / fit zoom">Fit</button>
             <span class="asset-ctrl-sep"></span>
             <button id="assetFullscreen" type="button" title="Enlarge the graph to full screen">⤢ Fullscreen</button>
+            <button id="assetResetLayout" type="button" title="Clear manual node positions — back to the chosen layout">↺ Reset layout</button>
+            <span class="ev-drag-hint">drag nodes to rearrange</span>
             <span id="assetFocusHint" class="asset-hint"></span>
           </div>
           <div id="assetGraph" class="asset-graph">—</div>
@@ -757,6 +761,26 @@
     let assetZoom = 1;                                       // graph zoom factor
     let assetDims = { W: 0, H: 0 };                          // intrinsic graph size of the last render
     const assetTypesEnabled = new Set(["host", "account", "service"]);
+    // Drag-to-reposition (same model as the Evidence Chain graph). assetPos = effective id→{x,y}
+    // for the current draw; assetLabOffset = each label's offset from its node (so the label
+    // follows when the node moves); assetPosOverride = the persisted manual positions ("pins").
+    let assetPos = new Map(), assetLabOffset = new Map(), assetBaseDims = { W: 0, H: 0 };
+    let assetDrawAssets = [], assetDrawIocs = [], assetDrawEdges = [];
+    let assetPosOverride = new Map();                        // id -> {x,y}, persisted per case
+    let assetDrag = null;                                    // { id, startX, startY, origX, origY, scale, moved }
+
+    const assetPosKey = () => "dfir.assetpos." + (document.getElementById("caseId").value.trim() || "");
+    function loadAssetPosOverride() {
+      assetPosOverride = new Map();
+      try {
+        const o = JSON.parse(localStorage.getItem(assetPosKey()) || "{}");
+        for (const [k, v] of Object.entries(o)) if (Array.isArray(v)) assetPosOverride.set(k, { x: v[0], y: v[1] });
+      } catch (e) { /* ignore corrupt state */ }
+    }
+    function saveAssetPosOverride() {
+      const o = {}; assetPosOverride.forEach((v, k) => { o[k] = [Math.round(v.x), Math.round(v.y)]; });
+      try { localStorage.setItem(assetPosKey(), JSON.stringify(o)); } catch (e) { /* quota — non-fatal */ }
+    }
 
     function clampZoom(z) { return Math.min(5, Math.max(0.25, z)); }
     function updateZoomLabel() { const el = document.getElementById("assetZoomLevel"); if (el) el.textContent = Math.round(assetZoom * 100) + "%"; }
@@ -779,6 +803,7 @@
     function truncate(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
     function loadAssetGraph(caseId) {
+      loadAssetPosOverride();   // restore this case's manual node positions
       fetch(`/cases/${caseId}/asset-graph`).then(r => r.json()).then(g => {
         assetGraphData = g; assetFocus = null; renderAssetGraph();
       }).catch(() => {});
@@ -905,11 +930,6 @@
       const edges = assetGraphData.edges.filter(e => assetIds.has(e.asset) && iocIds.has(e.ioc));
       if (!assets.length) { el.innerHTML = "<div style='padding:16px;color:#9aa4b2'>No assets of the selected type(s).</div>"; return; }
 
-      const neighbors = new Map();
-      const addN = (a, b) => { let s = neighbors.get(a); if (!s) { s = new Set(); neighbors.set(a, s); } s.add(b); };
-      edges.forEach(e => { addN(e.asset, e.ioc); addN(e.ioc, e.asset); });
-      const related = (id) => !assetFocus || id === assetFocus || (neighbors.get(assetFocus) && neighbors.get(assetFocus).has(id));
-
       let { pos, lab, W, H } = assetLayoutPositions(assets, iocs, assetLayout);
       // Keep labels inside the canvas: estimate each label's horizontal extent and, if any
       // overflows the left/right edge, shift every node+label right and widen the canvas.
@@ -934,44 +954,82 @@
       const dx = minX < 0 ? Math.ceil(-minX) : 0;
       if (dx > 0) { for (const m of [pos, lab]) for (const v of m.values()) v.x += dx; }
       W = Math.max(W, Math.ceil(maxX) + dx);
+
+      // Record each label's offset from its node so the label follows when the node is dragged,
+      // then apply any saved manual positions ("pins"). Non-pinned nodes keep the auto layout —
+      // so you can re-arrange a few nodes for clarity and still re-flow the rest by switching layout.
+      assetLabOffset = new Map();
+      for (const it of [...assets, ...iocs]) {
+        const p = pos.get(it.id), l = lab.get(it.id);
+        if (p && l) assetLabOffset.set(it.id, { dx: l.x - p.x, dy: l.y - p.y, anchor: l.anchor, rotate: l.rotate });
+      }
+      assetPos = new Map();
+      for (const it of [...assets, ...iocs]) assetPos.set(it.id, assetPosOverride.get(it.id) || pos.get(it.id));
+      assetDrawAssets = assets; assetDrawIocs = iocs; assetDrawEdges = edges;
+      assetBaseDims = { W, H };
+      drawAssetGraph();
+    }
+
+    // Render the asset↔IoC SVG from assetPos/assetLabOffset (+ focus) and wire drag + focus. Split
+    // from renderAssetGraph so a drag redraws without recomputing the layout; the canvas grows to
+    // fit dragged-out nodes. Mirrors the Evidence Chain graph's draw/drag.
+    function drawAssetGraph() {
+      const el = document.getElementById("assetGraph");
+      if (!assetDrawAssets.length) return;
+      const neighbors = new Map();
+      const addN = (a, b) => { let s = neighbors.get(a); if (!s) { s = new Set(); neighbors.set(a, s); } s.add(b); };
+      assetDrawEdges.forEach(e => { addN(e.asset, e.ioc); addN(e.ioc, e.asset); });
+      const related = (id) => !assetFocus || id === assetFocus || (neighbors.get(assetFocus) && neighbors.get(assetFocus).has(id));
+
+      let W = assetBaseDims.W, H = assetBaseDims.H;            // grow to fit any dragged-out node
+      for (const [id, p] of assetPos) {
+        const o = assetLabOffset.get(id) || { dx: 0, dy: 0 };
+        W = Math.max(W, p.x + 30, p.x + o.dx + 90); H = Math.max(H, p.y + 30, p.y + o.dy + 16);
+      }
       assetDims = { W, H };
       const iocColor = (v) => v === "malicious" ? "#ff5c5c" : v === "suspicious" ? "#ff9f43" : "#6aa9ff";
-      // The SVG is rendered at intrinsic size × zoom; the container scrolls to pan.
       const zw = Math.round(W * assetZoom), zh = Math.round(H * assetZoom);
 
       let svg = `<svg width="${zw}" height="${zh}" viewBox="0 0 ${W} ${H}">`;
-      for (const e of edges) {
-        const p = pos.get(e.asset), q = pos.get(e.ioc);
+      for (const e of assetDrawEdges) {
+        const p = assetPos.get(e.asset), q = assetPos.get(e.ioc);
+        if (!p || !q) continue;
         const vis = related(e.asset) && related(e.ioc) && (!assetFocus || e.asset === assetFocus || e.ioc === assetFocus);
         svg += `<line x1="${p.x.toFixed(1)}" y1="${p.y.toFixed(1)}" x2="${q.x.toFixed(1)}" y2="${q.y.toFixed(1)}" stroke="#3a4456" stroke-width="1" opacity="${vis ? 0.85 : 0.05}"/>`;
       }
-      // Wrap a node's body (icon/circle) with its label + click/focus group. Assets render as a
-      // type-shaped glyph (host=monitor, account=person, service=gear) colored by compromise state;
-      // IoCs stay as small verdict-colored circles.
+      // Wrap a node's body (icon/circle) with its label + drag/focus group. The label sits at the
+      // node position plus its recorded offset, so it tracks the node when dragged.
       const wrapNode = (it, isIoc, body) => {
-        const l = lab.get(it.id);
+        const p = assetPos.get(it.id), o = assetLabOffset.get(it.id) || { dx: 0, dy: 0, anchor: "middle", rotate: 0 };
+        const lx = p.x + o.dx, ly = p.y + o.dy;
         const label = isIoc ? `${esc(truncate(it.value, 26))} <tspan fill="#6b7585">(${esc(it.type)})</tspan>` : esc(truncate(it.name, 20));
-        const rot = l.rotate ? ` transform="rotate(${l.rotate} ${l.x.toFixed(1)} ${l.y.toFixed(1)})"` : "";
-        return `<g class="asset-node" data-id="${escAttr(it.id)}" opacity="${related(it.id) ? 1 : 0.1}">`
-          + `<text x="${l.x.toFixed(1)}" y="${l.y.toFixed(1)}" text-anchor="${l.anchor}"${rot}>${label}</text>`
+        const rot = o.rotate ? ` transform="rotate(${o.rotate} ${lx.toFixed(1)} ${ly.toFixed(1)})"` : "";
+        const pinned = assetPosOverride.has(it.id) ? " moved" : "";
+        return `<g class="asset-node${pinned}" data-id="${escAttr(it.id)}" opacity="${related(it.id) ? 1 : 0.1}">`
+          + `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="${o.anchor}"${rot}>${label}</text>`
           + body + `</g>`;
       };
-      for (const a of assets) {
-        const p = pos.get(a.id);
+      for (const a of assetDrawAssets) {
+        const p = assetPos.get(a.id);
         svg += wrapNode(a, false, assetIcon(a.type, p.x, p.y, a.compromised ? "#ff5c5c" : "#6aa9ff"));
       }
-      for (const i of iocs) {
-        const p = pos.get(i.id);
+      for (const i of assetDrawIocs) {
+        const p = assetPos.get(i.id);
         svg += wrapNode(i, true, `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5" fill="${iocColor(i.verdict)}" stroke="#0f1115" stroke-width="1.5"/>`);
       }
       svg += `</svg>`;
       el.innerHTML = svg;
       updateZoomLabel();
-      el.querySelectorAll(".asset-node").forEach(n => n.addEventListener("click", () => {
-        const id = n.getAttribute("data-id");
-        assetFocus = (assetFocus === id) ? null : id;
-        document.getElementById("assetFocusHint").textContent = assetFocus ? "showing related only — click the node again to reset" : "";
-        renderAssetGraph();
+      // Press starts a potential drag (document mousemove/mouseup carry it); a press with no
+      // movement is a focus toggle, preserving click-to-focus.
+      el.querySelectorAll(".asset-node").forEach(node => node.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        const id = node.getAttribute("data-id");
+        const s = el.querySelector("svg"); if (!s) return;
+        const rect = s.getBoundingClientRect();
+        const scale = rect.width ? assetDims.W / rect.width : 1;   // viewBox units per screen pixel
+        const cur = assetPos.get(id);
+        assetDrag = { id, startX: ev.clientX, startY: ev.clientY, origX: cur.x, origY: cur.y, scale, moved: false };
       }));
     }
 
@@ -2942,6 +3000,29 @@
       if (!assetGraphData) return;
       renderAssetGraph();
       setTimeout(fitAssetZoom, 60);   // wait for the fullscreen relayout before measuring
+    });
+    // Drag a node to reposition it (positions persist per case as "pins"); ↺ clears them.
+    document.getElementById("assetResetLayout").onclick = () => {
+      assetPosOverride = new Map(); saveAssetPosOverride(); renderAssetGraph();
+    };
+    // Drag carry, wired once. assetDrag is set on a node mousedown; move + redraw, commit on
+    // release. A release with no real movement is a focus toggle (preserves click-to-focus).
+    document.addEventListener("mousemove", (ev) => {
+      if (!assetDrag) return;
+      if (Math.abs(ev.clientX - assetDrag.startX) > 3 || Math.abs(ev.clientY - assetDrag.startY) > 3) assetDrag.moved = true;
+      assetPos.set(assetDrag.id, { x: assetDrag.origX + (ev.clientX - assetDrag.startX) * assetDrag.scale,
+                                   y: assetDrag.origY + (ev.clientY - assetDrag.startY) * assetDrag.scale });
+      drawAssetGraph();
+    });
+    document.addEventListener("mouseup", () => {
+      if (!assetDrag) return;
+      const d = assetDrag; assetDrag = null;
+      if (d.moved) { assetPosOverride.set(d.id, assetPos.get(d.id)); saveAssetPosOverride(); drawAssetGraph(); }
+      else {
+        assetFocus = (assetFocus === d.id) ? null : d.id;
+        document.getElementById("assetFocusHint").textContent = assetFocus ? "showing related only — click the node again to reset" : "";
+        drawAssetGraph();
+      }
     });
 
     // Evidence Chain graph controls (mirror the asset-graph chrome).
