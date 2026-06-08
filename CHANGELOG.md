@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Per-provider enrichment throttle (`DFIR_ENRICH_DELAY_MS_<PROVIDER>`).** Each enrichment provider now runs at its own configurable rate instead of sharing a single `DFIR_ENRICH_DELAY_MS` global. Fast providers (AbuseIPDB, CrowdStrike, MISP, YETI) proceed at their own pace while slow-rate ones (RockyRaccoon free tier: 10/min → 6 000 ms; VirusTotal free tier: 4/min → 15 000 ms) wait independently. Set `DFIR_ENRICH_DELAY_MS_ROCKYRACCOON=6000`, `DFIR_ENRICH_DELAY_MS_VIRUSTOTAL=15000`, etc.; unset providers fall back to `DFIR_ENRICH_DELAY_MS`. The per-provider delay also applies to the RockyRaccoon process-chain validation pass.
+
 ## [0.12.0] - 2026-06-08
 
 ### Added
