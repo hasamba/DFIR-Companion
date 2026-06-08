@@ -1,8 +1,10 @@
 import { Marked } from "marked";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
+import { buildAssetGraph } from "../analysis/assetGraph.js";
 import { renderMarkdownReport } from "./markdown.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
+import { renderAssetGraphSvg } from "./assetGraphSvg.js";
 
 // Standalone HTML export of the incident report. We render the canonical Markdown report
 // (single source of truth) and convert it to HTML with `marked` (GFM tables), then wrap it
@@ -61,10 +63,13 @@ const STYLE = `
   th { background: #f0f3f7; font-weight: 600; }
   tr:nth-child(even) td { background: #fafbfc; }
   ul { margin: 8px 0; padding-left: 22px; }
+  .asset-graph { margin: 12px 0; overflow-x: auto; }
+  .asset-graph svg { display: block; max-width: 100%; }
   @media print {
     body { background: #fff; }
     main.report { box-shadow: none; max-width: none; padding: 0; }
     tr, table, blockquote { break-inside: avoid; }
+    .asset-graph { break-inside: avoid; }
     @page { margin: 18mm; }
   }
 `;
@@ -132,6 +137,11 @@ export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = e
   });
   const body = marked.parse(markdown, { async: false }) as string;
 
+  const graphSvg = renderAssetGraphSvg(buildAssetGraph(state));
+  const graphSection = graphSvg
+    ? `\n<h2>Asset–IoC Graph</h2>\n<div class="asset-graph">\n${graphSvg}\n</div>`
+    : "";
+
   return [
     "<!doctype html>",
     '<html lang="en">',
@@ -143,7 +153,7 @@ export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = e
     "</head>",
     "<body>",
     '<main class="report">',
-    body.trim(),
+    body.trim() + graphSection,
     "</main>",
     "</body>",
     "</html>",
