@@ -3,6 +3,7 @@ import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
 import { buildAssetGraph } from "../analysis/assetGraph.js";
+import { buildEvidenceGraph } from "../analysis/evidenceGraph.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 
@@ -296,6 +297,43 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
     lines.push("| | Question | Answer | Where to find it |", "| --- | --- | --- | --- |");
     for (const q of state.keyQuestions) {
       lines.push(`| ${mark(q.status)} | ${cellMd(q.question)} | ${cellMd(q.answer || "_unknown_")} | ${cellMd(q.pointer || "—")} |`);
+    }
+    lines.push("");
+  }
+
+  chainOfEvidence(state, lines);
+}
+
+// 4.8 Chain of evidence — the causal view derived from the forensic timeline: which process
+// spawned which (process execution chains) and which binary/account moved between hosts
+// (lateral movement). Each row carries the confidence of the derived link.
+function chainOfEvidence(state: InvestigationState, lines: string[]): void {
+  lines.push("### 4.8 Chain of evidence", "");
+  const graph = buildEvidenceGraph(state);
+  if (graph.edges.length === 0) {
+    lines.push("_No causal chains derived yet — import process-creation events or evidence spanning multiple hosts._", "");
+    return;
+  }
+  const label = new Map(graph.nodes.map((n) => [n.id, n] as const));
+  const name = (id: string) => label.get(id)?.label ?? id;
+  const host = (id: string) => label.get(id)?.asset ?? "—";
+
+  const spawned = graph.edges.filter((e) => e.type === "spawned");
+  if (spawned.length > 0) {
+    lines.push("**Process execution chains**", "");
+    lines.push("| Parent process | Child process | Host | Confidence |", "| --- | --- | --- | --- |");
+    for (const e of spawned) {
+      lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(host(e.target))} | ${e.confidence} |`);
+    }
+    lines.push("");
+  }
+
+  const lateral = graph.edges.filter((e) => e.type === "lateral_move");
+  if (lateral.length > 0) {
+    lines.push("**Lateral movement**", "");
+    lines.push("| From | To | Basis | Confidence |", "| --- | --- | --- | --- |");
+    for (const e of lateral) {
+      lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`);
     }
     lines.push("");
   }
