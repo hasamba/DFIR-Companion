@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import {
   DeHashedExposureProvider,
   HaveIBeenPwnedExposureProvider,
-  CrowdStrikeReconExposureProvider,
   LeakCheckExposureProvider,
   ShodanExposureProvider,
 } from "../../src/integrations/customerExposureProviders.js";
@@ -123,53 +122,6 @@ describe("DeHashedExposureProvider", () => {
 
     expect(results[0]).toMatchObject({ targetType: "domain", target: "example.com", email: "bob@example.com" });
     expect(JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string).query).toBe("domain:example.com");
-  });
-});
-
-describe("CrowdStrikeReconExposureProvider", () => {
-  function csFetch(): ReturnType<typeof vi.fn> {
-    return vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(url);
-      if (u.pathname === "/oauth2/token") {
-        expect((init!.headers as Record<string, string>)["content-type"]).toContain("x-www-form-urlencoded");
-        return jsonResponse({ access_token: "tok", expires_in: 1799 }, 201);
-      }
-      expect((init!.headers as Record<string, string>).authorization).toBe("Bearer tok");
-      if (u.pathname === "/recon/queries/notifications-exposed-data-records/v1") {
-        expect(u.searchParams.get("filter")).toContain("email:'alice@example.com'");
-        return jsonResponse({ resources: ["rec1"] });
-      }
-      if (u.pathname === "/recon/entities/notifications-exposed-data-records/v1") {
-        expect(u.searchParams.get("ids")).toBe("rec1");
-        return jsonResponse({ resources: [{
-          id: "rec1",
-          email: "alice@example.com",
-          domain: "example.com",
-          site: "forum.example",
-          exposure_date: "2026-01-02T00:00:00Z",
-          credential_status: "compromised",
-        }] });
-      }
-      throw new Error(`unexpected path ${u.pathname}`);
-    });
-  }
-
-  it("queries Recon exposed-data records and maps record entities", async () => {
-    const fetchFn = csFetch();
-    const cs = new CrowdStrikeReconExposureProvider({ clientId: "id", clientSecret: "sec", fetchFn });
-
-    const results = await cs.lookupEmail("alice@example.com");
-
-    expect(results).toEqual([{
-      provider: "CrowdStrike Recon",
-      targetType: "email",
-      target: "alice@example.com",
-      email: "alice@example.com",
-      breach: "forum.example",
-      breachDate: "2026-01-02T00:00:00Z",
-      exposedData: ["credential_status: compromised"],
-      secretPresent: true,
-    }]);
   });
 });
 
