@@ -272,7 +272,13 @@ export class CrowdStrikeReconExposureProvider implements CustomerExposureProvide
     if (res.status === 403) throw new Error("CrowdStrike Recon 403 — add the 'Monitoring rules (Falcon Intelligence): Read' scope to your DFIR_CROWDSTRIKE_* API client");
     if (res.status === 429) throw new Error("CrowdStrike Recon rate limit");
     if (res.status === 404) return {};
-    if (!res.ok) throw new Error(`CrowdStrike Recon HTTP ${res.status}`);
+    if (!res.ok) {
+      // CrowdStrike returns { errors: [{ code, message }] } — surface the real message (a 400 is
+      // usually an FQL filter CrowdStrike rejected, not a generic failure).
+      const body = (await res.json().catch(() => ({}))) as { errors?: Array<{ message?: string }> };
+      const msg = (body.errors ?? []).map((e) => e.message).filter(Boolean).join("; ");
+      throw new Error(`CrowdStrike Recon HTTP ${res.status}${msg ? ` — ${msg}` : ""}`);
+    }
     return (await res.json()) as Record<string, unknown>;
   }
 
