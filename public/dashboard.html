@@ -301,6 +301,7 @@
       <option value="timeline-csv">Forensic timeline (CSV)</option>
       <option value="timesketch-jsonl">Timesketch JSONL</option>
       <option value="state-json">Full case state (JSON)</option>
+      <option value="save-template">Save as Template…</option>
     </select>
     <select id="pushSelect" class="toolbar-select" data-tip="Push this case to an external platform" style="display:none">
       <option value="">Push to…</option>
@@ -416,10 +417,31 @@
         <input id="ncName" placeholder="short description" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
       <label style="display:block; font-size:12px; margin-bottom:8px;">Investigator
         <input id="ncInvestigator" placeholder="your name" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
+      <label style="display:block; font-size:12px; margin-bottom:8px;">Template (optional)
+        <select id="ncTemplate" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:#1e2330; color:#c9d1d9; border:1px solid #444;">
+          <option value="">No template — blank case</option>
+        </select></label>
+      <div id="ncTemplateDesc" style="color:#9aa4b2; font-size:11px; margin:-4px 0 8px; padding:6px 8px; background:#1a1f2e; border-radius:4px; display:none;"></div>
       <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="ncCreate">Create case</button>
         <button id="ncCancel" style="background:#2a2f3a;">Cancel</button>
         <span id="ncMsg" style="color:#9aa4b2; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+  <div id="saveTemplateOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Save as Template</h3>
+      <p style="color:#9aa4b2; font-size:12px; margin:0 0 10px">
+        Saves the current case's key questions as a reusable template for future cases.</p>
+      <label style="display:block; font-size:12px; margin-bottom:8px;">Template name
+        <input id="stName" placeholder="e.g. Ransomware — SMB Lateral Movement" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
+      <label style="display:block; font-size:12px; margin-bottom:8px;">Description
+        <input id="stDesc" placeholder="one-line summary of when to use this template" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="stSave">Save template</button>
+        <button id="stCancel" style="background:#2a2f3a;">Cancel</button>
+        <span id="stMsg" style="color:#9aa4b2; font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -2908,6 +2930,82 @@
       };
     }
 
+    // ── Case templates ────────────────────────────────────────────────────────────────────
+    let _cachedTemplates = null;
+    async function loadTemplates() {
+      if (_cachedTemplates) return _cachedTemplates;
+      try {
+        const r = await fetch("/templates");
+        _cachedTemplates = r.ok ? await r.json() : [];
+      } catch { _cachedTemplates = []; }
+      return _cachedTemplates;
+    }
+    async function populateTemplateSelect() {
+      const sel = document.getElementById("ncTemplate");
+      const templates = await loadTemplates();
+      // Remove all options except the first ("No template")
+      while (sel.options.length > 1) sel.remove(1);
+      for (const t of templates) {
+        const opt = document.createElement("option");
+        opt.value = t.id;
+        opt.textContent = (t.builtIn ? "" : "★ ") + t.name;
+        sel.appendChild(opt);
+      }
+    }
+    function onTemplateSelectChange() {
+      const sel = document.getElementById("ncTemplate");
+      const descEl = document.getElementById("ncTemplateDesc");
+      const templates = _cachedTemplates || [];
+      const t = templates.find(t => t.id === sel.value);
+      if (t && t.description) {
+        const hints = [];
+        if (t.recommendedImports?.length) hints.push("Imports: " + esc(t.recommendedImports.join(", ")));
+        if (t.huntPlatforms?.length) hints.push("Platforms: " + esc(t.huntPlatforms.join(", ")));
+        const hintText = hints.length ? " · " + hints.join(" · ") : "";
+        descEl.innerHTML = esc(t.description) + hintText;
+        descEl.style.display = "block";
+      } else {
+        descEl.style.display = "none";
+      }
+    }
+    // ── Save as Template ──────────────────────────────────────────────────────────────────
+    function openSaveTemplate() {
+      document.getElementById("stName").value = "";
+      document.getElementById("stDesc").value = "";
+      document.getElementById("stMsg").textContent = "";
+      document.getElementById("saveTemplateOverlay").classList.add("open");
+      document.getElementById("stName").focus();
+    }
+    function closeSaveTemplate() { document.getElementById("saveTemplateOverlay").classList.remove("open"); }
+    async function saveAsTemplate() {
+      const name = document.getElementById("stName").value.trim();
+      const description = document.getElementById("stDesc").value.trim();
+      const msg = document.getElementById("stMsg");
+      if (!name) { msg.textContent = "template name is required"; return; }
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { msg.textContent = "no case loaded"; return; }
+      msg.textContent = "saving…";
+      try {
+        // Collect the current case's key questions to pre-populate the template
+        const state = await fetch(`/cases/${encodeURIComponent(caseId)}/state`).then(r => r.ok ? r.json() : null);
+        const initialKeyQuestions = (state?.keyQuestions ?? []).map(q => q.question).filter(Boolean);
+        const res = await fetch("/templates", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name, description, initialKeyQuestions, recommendedImports: [], huntPlatforms: [], severityFloor: null }),
+        });
+        if (res.status === 201) {
+          _cachedTemplates = null; // invalidate cache
+          closeSaveTemplate();
+          document.getElementById("status").textContent = "template saved";
+        } else {
+          const body = await res.json().catch(() => ({}));
+          msg.textContent = "save failed: HTTP " + res.status + (body.error ? " — " + body.error : "");
+        }
+      } catch (err) {
+        msg.textContent = "save failed: " + err.message;
+      }
+    }
+
     // ── New case ── creation lives here (the extension only attaches to existing cases) ──
     async function openNewCase() {
       const idInput = document.getElementById("ncCaseId");
@@ -2916,6 +3014,8 @@
       document.getElementById("ncInvestigator").value =
         (document.getElementById("investigatorName").value || "").trim();
       document.getElementById("ncMsg").textContent = "";
+      document.getElementById("ncTemplateDesc").style.display = "none";
+      populateTemplateSelect();  // async, fills while user edits fields
       document.getElementById("newCaseOverlay").classList.add("open");
       // Auto-suggest the next incident id — still fully editable (focus + select so a
       // manually-typed id overtypes it in one keystroke).
@@ -2947,13 +3047,14 @@
       const caseId = document.getElementById("ncCaseId").value.trim();
       const name = document.getElementById("ncName").value.trim();
       const investigator = document.getElementById("ncInvestigator").value.trim();
+      const templateId = document.getElementById("ncTemplate").value || undefined;
       const msg = document.getElementById("ncMsg");
       if (!caseId || !name) { msg.textContent = "case id and name are required"; return; }
       msg.textContent = "creating…";
       try {
         const res = await fetch("/cases", {
           method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ caseId, name, investigator: investigator || "unknown", aiProvider: null }),
+          body: JSON.stringify({ caseId, name, investigator: investigator || "unknown", aiProvider: null, templateId }),
         });
         if (res.status === 201) {
           closeNewCase();
@@ -3182,9 +3283,14 @@
     document.getElementById("newCaseBtn").onclick = openNewCase;
     document.getElementById("ncCreate").onclick = createNewCase;
     document.getElementById("ncCancel").onclick = closeNewCase;
+    document.getElementById("ncTemplate").onchange = onTemplateSelectChange;
     document.getElementById("newCaseOverlay").addEventListener("click", (e) => { if (e.target.id === "newCaseOverlay") closeNewCase(); });
     ["ncCaseId", "ncName", "ncInvestigator"].forEach((id) =>
       document.getElementById(id).addEventListener("keydown", (e) => { if (e.key === "Enter") createNewCase(); }));
+    document.getElementById("stSave").onclick = saveAsTemplate;
+    document.getElementById("stCancel").onclick = closeSaveTemplate;
+    document.getElementById("saveTemplateOverlay").addEventListener("click", (e) => { if (e.target.id === "saveTemplateOverlay") closeSaveTemplate(); });
+    document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
     document.getElementById("aiToggle").onclick = toggleAi;
     document.getElementById("applyScope").onclick = applyScope;
     document.getElementById("clearScope").onclick = () => {
@@ -3381,6 +3487,8 @@
         window.location.href = `/cases/${c}/timeline.jsonl`;
       } else if (action === "state-json") {
         window.open(`/cases/${c}/state`, "_blank", "noopener");
+      } else if (action === "save-template") {
+        openSaveTemplate();
       }
     };
 

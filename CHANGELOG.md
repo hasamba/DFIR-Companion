@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Case templates — start new cases pre-loaded with investigation questions and artifact hints.** A new **Template (optional)** selector in the *+ New case* modal lets you pick from five built-in templates (Ransomware, BEC/Email Compromise, Insider Threat, Web App Intrusion, General Malware) or any custom template you have saved. Selecting a template shows a brief description + recommended import types and hunt platforms; creating the case pre-populates the **Key Questions** section with template-specific investigation questions (pinned, so synthesis can answer them over time). Templates are served from `GET /templates` (built-ins always present) and saved to a `templates/` directory alongside `cases/`. Custom templates can be saved from the Export menu's **Save as Template…** option — it captures the current case's key questions plus a name and description. The API also supports `GET /templates/:id`, `POST /templates`, and `DELETE /templates/:id` (built-ins are read-only). Built-in templates: **Ransomware** (chainsaw/hayabusa/thor/velociraptor/kape, High severity floor), **BEC/Email Compromise** (m365/siem, Medium), **Insider Threat** (siem/kape/m365/aws, Medium), **Web App Intrusion** (network/siem/chainsaw/hayabusa, Medium), **General Malware** (thor/chainsaw/hayabusa/velociraptor/sandbox, High). The template store is pure + unit-tested (`TemplateStore`, `buildInitialQuestions`).
+
 ## [0.12.0] - 2026-06-08
 
 ### Added

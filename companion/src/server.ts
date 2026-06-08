@@ -67,6 +67,7 @@ import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore } from "./analysis/tags.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
+import { TemplateStore, buildInitialQuestions } from "./analysis/templateStore.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
@@ -187,6 +188,8 @@ export interface AppOptions {
   // options (base URL for the sketch link, managed timeline name).
   timesketchClient?: TimesketchClient;
   timesketchOptions?: TimesketchPushOptions;
+  // Case templates: built-in + user-saved templates selectable at case creation.
+  templateStore?: TemplateStore;
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -409,17 +412,74 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Create a case. This is the one place a case is born (the dashboard's New case form and
   // `npm run`-style tooling call it); the extension no longer creates cases. Rejects a
   // duplicate id so the form can't silently clobber an existing case's metadata/evidence.
+  // Optional `templateId`: pre-populates key questions from the named template.
   app.post("/cases", async (req: Request, res: Response) => {
     try {
-      const { caseId, name, investigator, aiProvider } = req.body ?? {};
+      const { caseId, name, investigator, aiProvider, templateId } = req.body ?? {};
       if (!caseId || !name) return res.status(400).json({ error: "caseId and name are required" });
       if (typeof caseId !== "string" || !isValidCaseId(caseId)) return res.status(400).json({ error: "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal" });
       if (await store.caseExists(caseId)) return res.status(409).json({ error: `case ${caseId} already exists` });
       const meta = await store.createCase({
         caseId, name, investigator: investigator ?? "unknown", aiProvider: aiProvider ?? null,
       });
+      if (templateId && options.templateStore && options.stateStore) {
+        const template = await options.templateStore.get(String(templateId));
+        if (template?.initialKeyQuestions.length) {
+          const state = await options.stateStore.load(caseId);
+          state.keyQuestions = buildInitialQuestions(template);
+          state.updatedAt = new Date().toISOString();
+          await options.stateStore.save(state);
+        }
+      }
       return res.status(201).json(meta);
     } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Case templates ──────────────────────────────────────────────────────────────────────
+  // Built-in templates are always available; custom templates are saved to the templates dir.
+
+  app.get("/templates", async (_req: Request, res: Response) => {
+    if (!options.templateStore) return res.status(200).json([]);
+    try {
+      return res.status(200).json(await options.templateStore.list());
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/templates/:id", async (req: Request, res: Response) => {
+    if (!options.templateStore) return res.status(404).json({ error: "template store not configured" });
+    try {
+      const template = await options.templateStore.get(req.params.id);
+      if (!template) return res.status(404).json({ error: `template "${req.params.id}" not found` });
+      return res.status(200).json(template);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/templates", async (req: Request, res: Response) => {
+    if (!options.templateStore) return res.status(501).json({ error: "template store not configured" });
+    try {
+      const { name, description, recommendedImports, initialKeyQuestions, severityFloor, huntPlatforms, id } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: "name is required" });
+      const saved = await options.templateStore.save({ id, name, description, recommendedImports, initialKeyQuestions, severityFloor: severityFloor ?? null, huntPlatforms });
+      return res.status(201).json(saved);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/templates/:id", async (req: Request, res: Response) => {
+    if (!options.templateStore) return res.status(501).json({ error: "template store not configured" });
+    try {
+      const found = await options.templateStore.delete(req.params.id);
+      if (!found) return res.status(404).json({ error: `template "${req.params.id}" not found` });
+      return res.status(204).send();
+    } catch (err) {
+      if ((err as Error).message.includes("built-in")) return res.status(400).json({ error: (err as Error).message });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -2581,6 +2641,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
 export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"): void {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStoreImpl(store);
+  const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   const hub = new LiveHub();
   const reportMetaStore = new ReportMetaStore(store);
   const commentsStore = new CommentsStore(store);
@@ -2639,6 +2700,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     irisOptions: irisPushOptions(),
     timesketchClient: buildTimesketchClient(),
     timesketchOptions: timesketchPushOptions(),
+    templateStore,
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
