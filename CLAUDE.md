@@ -165,12 +165,16 @@ them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEv
 `backfillHighSeverityFindings`, `diffFindings`, `diffTimeline`, `diffIocs`) and are unit-tested independently of I/O.
 
 **Threat-intel enrichment** (`enrichment/`): `EnrichmentProvider`s (VirusTotal, Hunting.ch,
-AbuseIPDB, MISP, YETI, RockyRaccoon) look up IOCs by kind; `enrichService.ts` routes/throttles/
-caps/caches; `chainValidate.ts` checks RockyRaccoon parent→child chains. **Hunting.ch**
+CrowdStrike, AbuseIPDB, MISP, YETI, RockyRaccoon) look up IOCs by kind; `enrichService.ts` routes/
+throttles/caps/caches; `chainValidate.ts` checks RockyRaccoon parent→child chains. **Hunting.ch**
 (`huntingch.ts`) is the abuse.ch unified hunt — one indicator fans out across MalwareBazaar +
 ThreatFox + URLhaus + YARAify (one **abuse.ch Auth-Key**: `DFIR_HUNTINGCH_KEY`, falling back to the
 legacy `DFIR_MB_KEY`) and returns **one result per back-end** that hits (there's no standalone
-MalwareBazaar provider — it's a Hunting.ch back-end). To allow that, `EnrichmentProvider.lookup` may
+MalwareBazaar provider — it's a Hunting.ch back-end). **CrowdStrike** (`crowdstrike.ts`) is
+Threat-Intel-only (NOT endpoint/SIEM): OAuth2 client-credentials (`DFIR_CROWDSTRIKE_CLIENT_ID`/
+`_SECRET`, `_CLOUD` region, token cached+refreshed) fanning a hash across **Falcon Intelligence
+Indicators + MalQuery** and IP/domain/URL across Indicators only; needs scopes *Indicators (Falcon
+Intelligence): Read* (+ *MalQuery: Read*). To allow that, `EnrichmentProvider.lookup` may
 return an **array**; `enrichService` flattens it and stamps each result's owning `provider` (distinct
 from its display `source`) so re-checks/dedup stay correct and a fresh hit supersedes a stale
 same-`source` one. Each provider has a `scope`: **local** (MISP/YETI — your own instance, OPSEC-safe)

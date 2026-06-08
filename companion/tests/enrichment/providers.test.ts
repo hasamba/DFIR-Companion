@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { VirusTotalProvider } from "../../src/enrichment/virustotal.js";
 import { HuntingChProvider } from "../../src/enrichment/huntingch.js";
+import { CrowdStrikeProvider } from "../../src/enrichment/crowdstrike.js";
 import { AbuseIpdbProvider } from "../../src/enrichment/abuseipdb.js";
 import { MispProvider } from "../../src/enrichment/misp.js";
 import { RockyRaccoonProvider } from "../../src/enrichment/rockyraccoon.js";
@@ -129,6 +130,85 @@ describe("HuntingChProvider (abuse.ch unified hunt)", () => {
     const h = new HuntingChProvider({ apiKey: "k", fetchFn });
     const r = (await h.lookup("domain", "bad.test")) as Array<{ source: string }>;
     expect(r.map((e) => e.source)).toEqual(["ThreatFox"]);   // URLhaus 500 swallowed, ThreatFox hit kept
+  });
+});
+
+describe("CrowdStrikeProvider (Falcon Intelligence + MalQuery)", () => {
+  // Route the OAuth token exchange + the two intel back-ends by URL.
+  function csFetch(routes: { intel?: unknown; malquery?: unknown; intelStatus?: number; malqueryStatus?: number; tokenStatus?: number; base?: string }) {
+    return vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(url);
+      if (u.pathname === "/oauth2/token") {
+        if (routes.base) expect(`${u.protocol}//${u.host}`).toBe(routes.base);
+        expect((init!.headers as Record<string, string>)["content-type"]).toContain("x-www-form-urlencoded");
+        return routes.tokenStatus && routes.tokenStatus !== 201
+          ? new Response("", { status: routes.tokenStatus })
+          : jsonResponse({ access_token: "tok-abc", expires_in: 1799 }, 201);
+      }
+      // Authenticated calls must carry the bearer.
+      expect((init!.headers as Record<string, string>).authorization).toBe("Bearer tok-abc");
+      if (u.pathname.startsWith("/intel/combined/indicators")) {
+        return routes.intelStatus && routes.intelStatus !== 200 ? new Response("", { status: routes.intelStatus }) : jsonResponse(routes.intel ?? { resources: [] });
+      }
+      if (u.pathname.startsWith("/malquery/entities/metadata")) {
+        return routes.malqueryStatus && routes.malqueryStatus !== 200 ? new Response("", { status: routes.malqueryStatus }) : jsonResponse(routes.malquery ?? { resources: [] });
+      }
+      throw new Error("unexpected path " + u.pathname);
+    });
+  }
+
+  const SHA = "7c26003b25a03f34ac2ddd11324d2501506ef7fa694cac3ec9d63717d3071783";
+
+  it("a hash fans out to Falcon Intelligence + MalQuery as two separate results", async () => {
+    const fetchFn = csFetch({
+      intel: { resources: [{ indicator: SHA, type: "hash_sha256", malicious_confidence: "high", malware_families: ["Cobalt Strike"], actors: ["WIZARD SPIDER"], threat_types: ["Criminal"] }] },
+      malquery: { resources: [{ sha256: SHA, family: "CobaltStrike", label: "malicious", filetype: "PE64" }] },
+    });
+    const cs = new CrowdStrikeProvider({ clientId: "id", clientSecret: "sec", fetchFn });
+    const r = (await cs.lookup("hash", SHA)) as Array<{ source: string; verdict: string; tags?: string[]; score?: string }>;
+    const bySource = Object.fromEntries(r.map((e) => [e.source, e]));
+    expect(Object.keys(bySource).sort()).toEqual(["CrowdStrike Intel", "CrowdStrike MalQuery"]);
+    expect(bySource["CrowdStrike Intel"]).toMatchObject({ verdict: "malicious" });
+    expect(bySource["CrowdStrike Intel"].score).toContain("high confidence");
+    expect(bySource["CrowdStrike Intel"].tags).toEqual(expect.arrayContaining(["Cobalt Strike", "actor: WIZARD SPIDER"]));
+    expect(bySource["CrowdStrike MalQuery"]).toMatchObject({ verdict: "malicious" });
+    expect(bySource["CrowdStrike MalQuery"].tags).toEqual(expect.arrayContaining(["CobaltStrike", "PE64"]));
+  });
+
+  it("a domain queries Intel only (no MalQuery), maps medium confidence to suspicious", async () => {
+    const fetchFn = csFetch({ intel: { resources: [{ indicator: "evil.test", malicious_confidence: "medium", malware_families: ["Emotet"] }] } });
+    const cs = new CrowdStrikeProvider({ clientId: "id", clientSecret: "sec", fetchFn });
+    const r = (await cs.lookup("domain", "evil.test")) as Array<{ source: string; verdict: string }>;
+    expect(r.map((e) => e.source)).toEqual(["CrowdStrike Intel"]);
+    expect(r[0].verdict).toBe("suspicious");
+    expect(fetchFn.mock.calls.some((c) => String(c[0]).includes("/malquery/"))).toBe(false);
+    // FQL filter built from the value.
+    const intelCall = fetchFn.mock.calls.find((c) => String(c[0]).includes("/intel/combined/indicators"))![0] as string;
+    expect(decodeURIComponent(intelCall)).toContain("indicator:'evil.test'");
+  });
+
+  it("returns [] when CrowdStrike has no intel on the indicator", async () => {
+    const cs = new CrowdStrikeProvider({ clientId: "id", clientSecret: "sec", fetchFn: csFetch({ intel: { resources: [] }, malquery: { resources: [] } }) });
+    expect(await cs.lookup("hash", SHA)).toEqual([]);
+  });
+
+  it("throws an auth error when the OAuth credentials are rejected", async () => {
+    const cs = new CrowdStrikeProvider({ clientId: "id", clientSecret: "bad", fetchFn: csFetch({ tokenStatus: 401 }) });
+    await expect(cs.lookup("ip", "1.2.3.4")).rejects.toThrow(/auth failed/i);
+  });
+
+  it("still returns MalQuery when the Intel scope is missing (403) — resilient to partial scope", async () => {
+    const fetchFn = csFetch({ intelStatus: 403, malquery: { resources: [{ sha256: SHA, family: "Qakbot", label: "malicious" }] } });
+    const cs = new CrowdStrikeProvider({ clientId: "id", clientSecret: "sec", fetchFn });
+    const r = (await cs.lookup("hash", SHA)) as Array<{ source: string }>;
+    expect(r.map((e) => e.source)).toEqual(["CrowdStrike MalQuery"]);
+  });
+
+  it("resolves the cloud region to the right API base", async () => {
+    const fetchFn = csFetch({ base: "https://api.eu-1.crowdstrike.com", intel: { resources: [] }, malquery: { resources: [] } });
+    const cs = new CrowdStrikeProvider({ clientId: "id", clientSecret: "sec", cloud: "eu-1", fetchFn });
+    await cs.lookup("ip", "9.9.9.9");
+    expect(fetchFn.mock.calls.every((c) => String(c[0]).startsWith("https://api.eu-1.crowdstrike.com"))).toBe(true);
   });
 });
 
