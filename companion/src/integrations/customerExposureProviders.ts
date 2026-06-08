@@ -162,7 +162,10 @@ export class DeHashedExposureProvider implements CustomerExposureProvider {
       body: JSON.stringify({ query, page: 1, size: 100, regex: false, wildcard: false, de_dupe: false }),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
-    if (res.status === 401 || res.status === 403) throw new Error("DeHashed auth failed");
+    if (res.status === 401 || res.status === 403) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`DeHashed auth failed (${res.status})${body ? `: ${body.slice(0, 200)}` : ""} — check DFIR_DEHASHED_KEY (v2 API key, sent as the DeHashed-Api-Key header)`);
+    }
     if (res.status === 429) throw new Error("DeHashed rate limit");
     if (res.status === 404) return [];
     if (!res.ok) throw new Error(`DeHashed HTTP ${res.status}`);
