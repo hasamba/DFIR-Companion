@@ -80,6 +80,14 @@ describe("LeakCheckExposureProvider", () => {
     });
     expect(JSON.stringify(results)).not.toContain('"secret"');
   });
+
+  it("surfaces LeakCheck's own error text on a 403 (not a guessed plan-tier message)", async () => {
+    const lc = new LeakCheckExposureProvider({
+      apiKey: "lc-key",
+      fetchFn: vi.fn(async () => jsonResponse({ success: false, error: "Limit reached" }, 403)),
+    });
+    await expect(lc.lookupEmail("alice@example.com")).rejects.toThrow(/Limit reached/);
+  });
 });
 
 describe("DeHashedExposureProvider", () => {

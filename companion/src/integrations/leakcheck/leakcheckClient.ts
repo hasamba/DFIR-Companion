@@ -74,14 +74,23 @@ export class LeakCheckClient {
       headers: { "X-API-Key": this.opts.apiKey, accept: "application/json" },
       signal: AbortSignal.timeout(this.timeoutMs),
     });
-    if (res.status === 401) throw new LeakCheckError("LeakCheck auth failed (check DFIR_LEAKCHECK_KEY)", 401, "auth");
-    if (res.status === 403) throw new LeakCheckError("LeakCheck 403 — your plan may not allow this query (domain search needs the Enterprise tier)", 403, "permission");
-    if (res.status === 429) throw new LeakCheckError("LeakCheck rate limit (slow down DFIR_LEAKCHECK_DELAY_MS)", 429, "ratelimit");
-    if (res.status === 400 || res.status === 422) {
-      const j = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new LeakCheckError(`LeakCheck rejected the query: ${j.error ?? res.status}`, res.status, "badrequest");
+    // Surface LeakCheck's OWN error text from the body for every failure — its 4xx codes are
+    // ambiguous on their own (e.g. a 403 is "Active plan required" OR "Limit reached", never a
+    // per-query-type thing), so the reason must come from `error`, not a guessed message.
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      const reason = body.error ? ` — ${body.error}` : "";
+      if (res.status === 401) throw new LeakCheckError(`LeakCheck 401 (auth)${reason} — check DFIR_LEAKCHECK_KEY`, 401, "auth");
+      if (res.status === 403) {
+        throw new LeakCheckError(
+          `LeakCheck 403 (forbidden)${reason} — LeakCheck returns 403 only for "Active plan required" or `
+          + `"Limit reached": confirm DFIR_LEAKCHECK_KEY is the API key of your active (Enterprise) plan and the quota isn't exhausted`,
+          403, "permission");
+      }
+      if (res.status === 429) throw new LeakCheckError(`LeakCheck rate limit${reason} (slow down DFIR_LEAKCHECK_DELAY_MS)`, 429, "ratelimit");
+      if (res.status === 400 || res.status === 422) throw new LeakCheckError(`LeakCheck ${res.status}${reason || `: ${res.status}`}`, res.status, "badrequest");
+      throw new LeakCheckError(`LeakCheck HTTP ${res.status}${reason}`, res.status, "http");
     }
-    if (!res.ok) throw new LeakCheckError(`LeakCheck HTTP ${res.status}`, res.status, "http");
 
     const json = (await res.json()) as Partial<LeakCheckResult>;
     // A genuine "no breaches" answer is success:true / found:0; success:false is an API-level error.
