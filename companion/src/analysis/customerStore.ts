@@ -10,6 +10,9 @@ import type { InvestigationState } from "./stateTypes.js";
 export interface CustomerTargets {
   domains: string[];
   emails: string[];
+  // Which exposure providers to run, by name (like the enrichment per-source picker). Omitted or
+  // empty = run all configured providers; a non-empty list restricts the check to those.
+  providers?: string[];
 }
 
 export const NO_CUSTOMER: CustomerTargets = { domains: [], emails: [] };
@@ -40,10 +43,17 @@ export function parseList(input: unknown): string[] {
 }
 
 export function sanitizeTargets(raw: unknown): CustomerTargets {
-  const r = (raw ?? {}) as { domains?: unknown; emails?: unknown };
+  const r = (raw ?? {}) as { domains?: unknown; emails?: unknown; providers?: unknown };
   const domains = [...new Set(parseList(r.domains).map(normalizeDomain).filter((x): x is string => Boolean(x)))];
   const emails = [...new Set(parseList(r.emails).map(normalizeEmail).filter((x): x is string => Boolean(x)))];
-  return { domains, emails };
+  const out: CustomerTargets = { domains, emails };
+  // Only carry a provider selection when one was explicitly provided (so older files without it
+  // keep defaulting to "all"). Names are kept as-is (the route intersects them with the configured
+  // providers); empty after sanitising means "all".
+  if (r.providers !== undefined) {
+    out.providers = [...new Set(parseList(r.providers).map((s) => s.trim()).filter(Boolean))];
+  }
+  return out;
 }
 
 // Distinct emails that APPEAR in the case (event descriptions), EXCLUDING any that are themselves

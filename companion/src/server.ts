@@ -71,7 +71,7 @@ import { diffTimeline } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
-import { CustomerStore, sanitizeTargets } from "./analysis/customerStore.js";
+import { CustomerStore, parseList, sanitizeTargets } from "./analysis/customerStore.js";
 import {
   buildCustomerExposureTargets,
   CustomerExposureStore,
@@ -89,6 +89,7 @@ import {
   DeHashedExposureProvider,
   HaveIBeenPwnedExposureProvider,
   LeakCheckExposureProvider,
+  ShodanExposureProvider,
 } from "./integrations/customerExposureProviders.js";
 
 // Server console logging — every line is prefixed with an ISO-8601 timestamp so the local
@@ -849,14 +850,21 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   app.post("/cases/:id/customer-exposure/check", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     if (customerExposureProviders.length === 0) {
-      return res.status(501).json({ error: "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET)" });
+      return res.status(501).json({ error: "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_SHODAN_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET)" });
     }
     const caseId = req.params.id;
     try {
       const state = await options.stateStore.load(caseId);
       const targets = await customerStore.load(caseId);
+      // Provider selection (like the enrichment per-source picker): a `providers` list in the
+      // request body wins (one-off run), else the saved selection (customer.json), else all
+      // configured. A name not matching a configured provider is simply ignored.
+      const requested = parseList(req.body?.providers).map((s) => s.trim()).filter(Boolean);
+      const selection = requested.length ? requested : (targets.providers?.length ? targets.providers : null);
+      const active = selection ? customerExposureProviders.filter((p) => selection.includes(p.name)) : customerExposureProviders;
+      if (active.length === 0) return res.status(400).json({ error: "no matching exposure providers selected" });
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: "checking customer exposure" });
-      const summary = await summarizeExposure(state, targets, customerExposureProviders, {
+      const summary = await summarizeExposure(state, targets, active, {
         delayMs: options.customerExposureDelayMs,
       });
       await customerExposureStore.save(caseId, summary);
@@ -2529,6 +2537,9 @@ export function buildCustomerExposureProviders(): CustomerExposureProvider[] {
       apiKey: process.env.DFIR_HIBP_KEY,
       userAgent: process.env.DFIR_HIBP_USER_AGENT || "DFIR Companion",
     }));
+  }
+  if (process.env.DFIR_SHODAN_KEY) {
+    providers.push(new ShodanExposureProvider({ apiKey: process.env.DFIR_SHODAN_KEY }));
   }
   // CrowdStrike Recon reuses the SAME Falcon API client as the Intel enrichment provider
   // (DFIR_CROWDSTRIKE_CLIENT_ID/_SECRET, same tenant → same cloud). To enable it, add the

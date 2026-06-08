@@ -187,10 +187,13 @@ Providers use injectable `fetchFn` (no network in tests), configured only when t
 **Customer exposure (credential-leak check) is a SEPARATE feature, NOT IOC enrichment** — don't
 confuse the two. It checks the *victim org's own* domains/emails against breach DBs
 (`analysis/customerExposure.ts` orchestration + `analysis/customerStore.ts` targets, with
-`integrations/customerExposureProviders.ts` adapters over LeakCheck/HIBP/DeHashed/CrowdStrike-Recon,
-each a `CustomerExposureProvider` with `lookupEmail`/`lookupDomain`; CrowdStrike Recon reuses the SAME
-`DFIR_CROWDSTRIKE_CLIENT_ID`/`_SECRET` as the Intel enrichment provider — add the *Monitoring rules
-(Falcon Intelligence): Read* scope to that client). **Hard OPSEC boundary
+`integrations/customerExposureProviders.ts` adapters over LeakCheck/HIBP/DeHashed/CrowdStrike-Recon/
+**Shodan**, each a `CustomerExposureProvider` with `lookupEmail`/`lookupDomain`; CrowdStrike Recon reuses
+the SAME `DFIR_CROWDSTRIKE_CLIENT_ID`/`_SECRET` as the Intel enrichment provider — add the *Monitoring
+rules (Falcon Intelligence): Read* scope to that client; **Shodan** (`DFIR_SHODAN_KEY`) is domain-only
+(attack surface — exposed hosts/ports/CVEs), no email lookup). Which providers run is **selectable
+per case** (`CustomerTargets.providers`, like the enrichment picker): the `/check` route uses the request
+body's `providers` if given, else the saved selection, else all configured. **Hard OPSEC boundary
 (`buildCustomerExposureTargets`):** domain searches use ONLY the analyst-entered customer domains
 (`state/customer.json`) — adversary/IOC domains are NEVER sent — and case-discovered emails are checked
 only when their domain is a customer domain AND the email isn't itself an IOC. The saved summary

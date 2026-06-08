@@ -143,6 +143,33 @@ describe("HTTP server", () => {
     expect(checked.body.results).toHaveLength(1);
   });
 
+  it("runs only the selected exposure providers (body override and persisted selection)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-exposure-sel-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const calls: string[] = [];
+    const mk = (name: string): CustomerExposureProvider => ({
+      name,
+      lookupDomain: async (d) => { calls.push(`${name}:${d}`); return []; },
+      lookupEmail: async () => [],
+    });
+    const app = createApp(store, { stateStore, customerExposureProviders: [mk("LeakCheck"), mk("Shodan")], customerExposureDelayMs: 0 });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    await request(app).put("/cases/c1/customer-exposure/targets").send({ domains: "example.com", emails: "" });
+
+    // Body override: run only Shodan this time.
+    calls.length = 0;
+    await request(app).post("/cases/c1/customer-exposure/check").send({ providers: ["Shodan"] });
+    expect(calls).toEqual(["Shodan:example.com"]);
+
+    // Persisted selection: save providers=[LeakCheck]; a check with no override uses it.
+    await request(app).put("/cases/c1/customer-exposure/targets").send({ domains: "example.com", emails: "", providers: ["LeakCheck"] });
+    calls.length = 0;
+    await request(app).post("/cases/c1/customer-exposure/check").send({});
+    expect(calls).toEqual(["LeakCheck:example.com"]);
+  });
+
   it("returns 501 for customer exposure checks when no provider is configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-exposure-none-"));
     const store = new CaseStore(root);

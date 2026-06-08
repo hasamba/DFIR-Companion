@@ -4,6 +4,7 @@ import {
   HaveIBeenPwnedExposureProvider,
   CrowdStrikeReconExposureProvider,
   LeakCheckExposureProvider,
+  ShodanExposureProvider,
 } from "../../src/integrations/customerExposureProviders.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -161,5 +162,44 @@ describe("CrowdStrikeReconExposureProvider", () => {
       exposedData: ["credential_status: compromised"],
       secretPresent: true,
     }]);
+  });
+});
+
+describe("ShodanExposureProvider", () => {
+  it("maps a domain's exposed hosts/services/CVEs and never reports credentials", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({
+      matches: [
+        { ip_str: "203.0.113.10", port: 443, transport: "tcp", product: "nginx", version: "1.18.0",
+          org: "Example Org", hostnames: ["www.example.com"], timestamp: "2026-06-01T00:00:00.000000",
+          vulns: { "CVE-2021-23017": {}, "CVE-2019-9511": {} } },
+      ],
+    }));
+    const shodan = new ShodanExposureProvider({ apiKey: "shodankey", fetchFn });
+
+    const results = await shodan.lookupDomain("example.com");
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      provider: "Shodan",
+      targetType: "domain",
+      target: "example.com",
+      breach: "203.0.113.10:443 nginx 1.18.0",
+      sourceUrl: "https://www.shodan.io/host/203.0.113.10",
+      secretPresent: false,
+    });
+    expect(results[0].exposedData).toEqual(expect.arrayContaining(["443/tcp", "nginx", "Example Org", "vuln:CVE-2021-23017", "vuln:CVE-2019-9511"]));
+    // Searches by hostname filter with the key as a query param.
+    const url = fetchFn.mock.calls[0][0] as string;
+    expect(url).toContain("/shodan/host/search");
+    expect(url).toContain("key=shodankey");
+    expect(decodeURIComponent(url)).toContain("query=hostname:example.com");
+  });
+
+  it("has no email lookup (returns []) and surfaces auth errors", async () => {
+    const shodan = new ShodanExposureProvider({ apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ matches: [] })) });
+    expect(await shodan.lookupEmail("alice@example.com")).toEqual([]);
+
+    const bad = new ShodanExposureProvider({ apiKey: "bad", fetchFn: vi.fn(async () => jsonResponse({ error: "Invalid API key" }, 401)) });
+    await expect(bad.lookupDomain("example.com")).rejects.toThrow(/auth failed/i);
   });
 });
