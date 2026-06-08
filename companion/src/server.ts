@@ -158,6 +158,7 @@ export interface AppOptions {
   // Threat-intel enrichment providers (VirusTotal, MalwareBazaar, AbuseIPDB…).
   enrichmentProviders?: EnrichmentProvider[];
   enrichDelayMs?: number;
+  enrichProviderDelayMs?: Record<string, number>;  // per-provider throttle overrides (keyed by provider.name)
   enrichMaxIocs?: number;
   // Customer Exposure is separate from IOC enrichment: only customer-owned domains/emails are
   // sent to breach-data providers. IOC domains are never queried here.
@@ -923,6 +924,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const { iocs, summary } = await enrichIocs(state.iocs, {
         providers,
         delayMs: options.enrichDelayMs,
+        perProviderDelayMs: options.enrichProviderDelayMs,
         maxIocs: options.enrichMaxIocs,
         force,
         health: enrichHealth,   // probe each provider (cached ~60s) before sending — skip the dead ones
@@ -955,7 +957,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (rocky) {
         const { events, summary: cs } = await validateProcessChains(merged.forensicTimeline, {
           check: (p, c) => rocky.checkParentChild(p, c),
-          delayMs: options.enrichDelayMs,
+          delayMs: options.enrichProviderDelayMs?.["RockyRaccoon"] ?? options.enrichDelayMs,
           maxChecks: options.enrichMaxIocs,
           force,
         });
@@ -2528,6 +2530,26 @@ export function buildEnrichmentProviders(): EnrichmentProvider[] {
   return providers;
 }
 
+// Build a per-provider delay map from `DFIR_ENRICH_DELAY_MS_<PROVIDER>` env vars.
+// Keys must match the `provider.name` strings used in enrichService.
+export function buildEnrichProviderDelayMap(): Record<string, number> | undefined {
+  const entries: Array<[string, string]> = [
+    ["VIRUSTOTAL", "VirusTotal"],
+    ["ABUSEIPDB", "AbuseIPDB"],
+    ["HUNTINGCH", "Hunting.ch"],
+    ["CROWDSTRIKE", "CrowdStrike"],
+    ["ROCKYRACCOON", "RockyRaccoon"],
+    ["MISP", "MISP"],
+    ["YETI", "YETI"],
+  ];
+  const map: Record<string, number> = {};
+  for (const [suffix, name] of entries) {
+    const v = Number(process.env[`DFIR_ENRICH_DELAY_MS_${suffix}`]);
+    if (v > 0) map[name] = v;
+  }
+  return Object.keys(map).length > 0 ? map : undefined;
+}
+
 export function buildCustomerExposureProviders(): CustomerExposureProvider[] {
   const providers: CustomerExposureProvider[] = [];
   if (process.env.DFIR_LEAKCHECK_KEY) {
@@ -2624,6 +2646,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     onState: (s) => hub.broadcast(s),
     enrichmentProviders: buildEnrichmentProviders(),
     enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,
+    enrichProviderDelayMs: buildEnrichProviderDelayMap(),
     enrichMaxIocs: Number(process.env.DFIR_ENRICH_MAX) || undefined,
     customerExposureProviders: buildCustomerExposureProviders(),
     customerExposureDelayMs: Number(process.env.DFIR_EXPOSURE_DELAY_MS) || undefined,
