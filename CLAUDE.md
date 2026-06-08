@@ -254,9 +254,10 @@ only when their domain is a customer domain AND the email isn't itself an IOC. T
    single source of truth; the HTML export (`reports/html.ts`) renders that Markdown via `marked`
    (raw HTML escaped) — so a Markdown change flows to HTML automatically.
 6. Update `companion/README.md` + `.env.example` + `CHANGELOG.md [Unreleased]` + the **Features
-   list in the root `README.md`** (and remove the item from its **Todo / Roadmap** if it was
-   listed there), then run both test suites. Keeping the root README Features section current is a
-   standing instruction — it's the living catalogue of what the tool does.
+   list in the root `README.md`** (and **close the corresponding GitHub issue** if one tracked it —
+   planned work lives in GitHub Issues under the `enhancement` label, not a README checklist), then
+   run both test suites. Keeping the root README Features section current is a standing instruction —
+   it's the living catalogue of what the tool does.
 
 ## Git
 
