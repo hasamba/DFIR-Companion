@@ -81,6 +81,7 @@
     .ev-leg-line { display: inline-block; width: 18px; height: 0; vertical-align: middle; }
     .ev-leg-high { border-top: 2px solid #ff8a5c; }
     .ev-leg-med { border-top: 2px dashed #7f8aa0; }
+    .ev-leg-ran { border-top: 2px solid #52617a; }
     .legend-ico { vertical-align: middle; margin-right: 2px; }
     /* Fullscreen: the wrapper fills the screen and the graph grows to fit. */
     .asset-graph-wrap:fullscreen { background: #11161d; padding: 12px; display: flex; flex-direction: column; }
@@ -493,7 +494,8 @@
             <label><input type="checkbox" class="ev-type-toggle" value="lateral_move" checked> Lateral movement</label>
             <span class="asset-ctrl-sep"></span>
             <span class="ev-legend"><span class="ev-leg-line ev-leg-high"></span>high
-              <span class="ev-leg-line ev-leg-med"></span>medium</span>
+              <span class="ev-leg-line ev-leg-med"></span>medium
+              <span class="ev-leg-line ev-leg-ran"></span>ran on</span>
             <span class="asset-ctrl-sep"></span>
             <button id="evZoomOut" type="button" title="Zoom out">−</button>
             <span id="evZoomLevel" title="Zoom level (scroll the mouse wheel over the graph to zoom)">100%</span>
@@ -1082,7 +1084,10 @@
         evNodes = []; evEdges = []; evDims = { W: 0, H: 0 }; updateEvZoomLabel();
         return;
       }
-      evEdges = evGraphData.edges.filter(e => evTypesEnabled.has(e.type));
+      // ran_on (host→process-tree anchor) rides with the Process-trees toggle — it's the
+      // connective tissue that hangs each tree off its host so lateral movement bridges them.
+      evEdges = evGraphData.edges.filter(e =>
+        evTypesEnabled.has(e.type) || (e.type === "ran_on" && evTypesEnabled.has("spawned")));
       const keep = new Set(evEdges.flatMap(e => [e.source, e.target]));
       evNodes = evGraphData.nodes.filter(n => keep.has(n.id));
       if (!evEdges.length) { el.innerHTML = "<div style='padding:16px;color:#9aa4b2'>No links of the selected type(s).</div>"; evNodes = []; evDims = { W: 0, H: 0 }; updateEvZoomLabel(); return; }
@@ -1112,21 +1117,25 @@
       svg += `<defs>`
         + `<marker id="evArrowHigh" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#ff8a5c"/></marker>`
         + `<marker id="evArrowMed" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#7f8aa0"/></marker>`
+        + `<marker id="evArrowRan" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#52617a"/></marker>`
         + `</defs>`;
       for (const e of evEdges) {
         const p = evPos.get(e.source), q = evPos.get(e.target);
         if (!p || !q) continue;
         const vis = related(e.source) && related(e.target);
-        const high = e.confidence === "high";
-        const stroke = high ? "#ff8a5c" : "#7f8aa0";
-        const dash = high ? "" : ` stroke-dasharray="5 4"`;
-        const marker = high ? "url(#evArrowHigh)" : "url(#evArrowMed)";
+        // ran_on = the muted host→tree anchor (thin, subordinate). The causal edges pop:
+        // solid orange = high, dashed gray = medium.
+        const isRan = e.type === "ran_on", high = e.confidence === "high";
+        const stroke = isRan ? "#52617a" : high ? "#ff8a5c" : "#7f8aa0";
+        const dash = (isRan || high) ? "" : ` stroke-dasharray="5 4"`;
+        const marker = isRan ? "url(#evArrowRan)" : high ? "url(#evArrowHigh)" : "url(#evArrowMed)";
+        const sw = isRan ? "1.1" : "1.6";
         // Trim the segment to the node radius so the arrowhead lands at the glyph edge, not its center.
         const ang = Math.atan2(q.y - p.y, q.x - p.x), r = 13;
         const x1 = (p.x + r * Math.cos(ang)).toFixed(1), y1 = (p.y + r * Math.sin(ang)).toFixed(1);
         const x2 = (q.x - r * Math.cos(ang)).toFixed(1), y2 = (q.y - r * Math.sin(ang)).toFixed(1);
-        svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="1.6"${dash} marker-end="${marker}" opacity="${vis ? 0.9 : 0.07}">`
-          + `<title>${esc(e.basis + " — " + e.confidence + " confidence")}</title></line>`;
+        svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${sw}"${dash} marker-end="${marker}" opacity="${vis ? (isRan ? 0.6 : 0.9) : 0.06}">`
+          + `<title>${esc(e.basis + (isRan ? "" : " — " + e.confidence + " confidence"))}</title></line>`;
       }
       for (const n of evNodes) {
         const p = evPos.get(n.id);
