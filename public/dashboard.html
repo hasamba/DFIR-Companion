@@ -485,6 +485,7 @@
           <span id="customerExposureMsg" class="manual-msg"></span>
         </form>
       </div>
+      <div id="ceProviders" style="font-size:12px;color:#9aa4b2;margin:2px 0 8px"></div>
       <div id="customerExposure">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
@@ -2211,6 +2212,16 @@
       const errors = exposure.errors || [];
       const configured = !!j.anyConfigured;
       document.getElementById("runCustomerExposure").disabled = !configured;
+      // Provider picker (like the enrichment per-source selection): a checkbox per configured
+      // provider, checked when in the saved selection (or all when no selection is stored).
+      const allProviders = j.providers || [];
+      const sel = (targets.providers && targets.providers.length) ? targets.providers : null;   // null = all
+      const provBox = document.getElementById("ceProviders");
+      if (provBox) {
+        provBox.innerHTML = allProviders.length
+          ? "Run on: " + allProviders.map(name => `<label style="margin-right:12px;cursor:pointer"><input type="checkbox" class="ce-prov" value="${escAttr(name)}" ${(!sel || sel.includes(name)) ? "checked" : ""}> ${esc(name)}</label>`).join("")
+          : "<span style='color:#ff9f43'>No exposure providers configured — set DFIR_LEAKCHECK_KEY / DFIR_HIBP_KEY / DFIR_DEHASHED_KEY / DFIR_SHODAN_KEY / DFIR_CROWDSTRIKE_CLIENT_ID and restart.</span>";
+      }
       const providers = (j.providers || []).join(", ") || "none configured";
       const checked = exposure.checkedAt ? `Last checked ${esc(new Date(exposure.checkedAt).toLocaleString())}` : "Not checked yet";
       const targetLine = `Domains: ${(effective.domains || []).map(esc).join(", ") || "none"} · Emails: ${(effective.emails || []).map(esc).join(", ") || "none"}`;
@@ -2233,13 +2244,16 @@
         .then(renderCustomerExposure)
         .catch(() => { document.getElementById("customerExposure").innerHTML = "<span style='color:#ff9f43'>Customer exposure endpoints unavailable — restart the companion server.</span>"; });
     }
+    function selectedExposureProviders() {
+      return Array.from(document.querySelectorAll(".ce-prov:checked")).map(c => c.value);
+    }
     function saveCustomerExposureTargets() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
       const msg = document.getElementById("customerExposureMsg"); msg.textContent = "saving…";
       fetch(`/cases/${encodeURIComponent(caseId)}/customer-exposure/targets`, {
         method: "PUT", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ domains: document.getElementById("ceDomains").value, emails: document.getElementById("ceEmails").value }),
+        body: JSON.stringify({ domains: document.getElementById("ceDomains").value, emails: document.getElementById("ceEmails").value, providers: selectedExposureProviders() }),
       })
         .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
         .then(() => { msg.textContent = "saved"; loadCustomerExposure(caseId); setTimeout(() => { msg.textContent = ""; }, 2000); })
@@ -2249,7 +2263,7 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
       const msg = document.getElementById("customerExposureMsg"); msg.textContent = "checking…";
-      fetch(`/cases/${encodeURIComponent(caseId)}/customer-exposure/check`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+      fetch(`/cases/${encodeURIComponent(caseId)}/customer-exposure/check`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ providers: selectedExposureProviders() }) })
         .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
         .then(j => { msg.textContent = `checked: ${j.results.length} hit(s), ${j.errors.length} error(s)`; loadCustomerExposure(caseId); })
         .catch(e => { msg.textContent = "failed: " + e.message; });

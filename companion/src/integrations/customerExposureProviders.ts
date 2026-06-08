@@ -313,3 +313,66 @@ export class CrowdStrikeReconExposureProvider implements CustomerExposureProvide
     return this.queryRecords("domain", domain);
   }
 }
+
+export interface ShodanExposureOptions {
+  apiKey: string;
+  fetchFn?: FetchFn;
+  timeoutMs?: number;
+  baseUrl?: string;
+  maxMatches?: number;
+}
+
+// Shodan — internet attack-surface exposure (NOT credential leaks). For a customer DOMAIN it
+// returns the org's internet-exposed hosts/services (open ports, products, known CVEs) via
+// `hostname:<domain>` search. Shodan has no email lookup, so lookupEmail is a no-op.
+export class ShodanExposureProvider implements CustomerExposureProvider {
+  readonly name = "Shodan";
+  private readonly fetchFn: FetchFn;
+  private readonly base: string;
+  private readonly timeoutMs: number;
+  private readonly maxMatches: number;
+
+  constructor(private readonly opts: ShodanExposureOptions) {
+    this.fetchFn = opts.fetchFn ?? fetch;
+    this.base = (opts.baseUrl ?? "https://api.shodan.io").replace(/\/+$/, "");
+    this.timeoutMs = opts.timeoutMs ?? 20_000;
+    this.maxMatches = opts.maxMatches ?? 50;
+  }
+
+  async lookupEmail(): Promise<CustomerExposureResult[]> {
+    return [];   // Shodan maps exposed hosts/services, not email breaches
+  }
+
+  async lookupDomain(domain: string): Promise<CustomerExposureResult[]> {
+    const url = `${this.base}/shodan/host/search?key=${encodeURIComponent(this.opts.apiKey)}`
+      + `&query=${encodeURIComponent(`hostname:${domain}`)}`;
+    const res = await this.fetchFn(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(this.timeoutMs) });
+    if (res.status === 401 || res.status === 403) throw new Error("Shodan auth failed (check DFIR_SHODAN_KEY)");
+    if (res.status === 429) throw new Error("Shodan rate limit / out of query credits");
+    if (!res.ok) throw new Error(`Shodan HTTP ${res.status}`);
+    const json = (await res.json()) as { matches?: unknown };
+    return asArray(json.matches).filter(isObject).slice(0, this.maxMatches).map((m) => {
+      const ip = str(m.ip_str);
+      const port = str(m.port);
+      const transport = str(m.transport) || "tcp";
+      const service = [str(m.product), str(m.version)].filter(Boolean).join(" ") || str(m.transport) || "service";
+      const vulns = isObject(m.vulns) ? Object.keys(m.vulns) : asArray(m.vulns).map(str).filter(Boolean);
+      const exposedData = unique([
+        port ? `${port}/${transport}` : "",
+        str(m.product),
+        str(m.org),
+        ...vulns.map((v) => `vuln:${v}`),
+      ]);
+      return {
+        provider: this.name,
+        targetType: "domain" as ExposureTargetType,
+        target: domain,
+        breach: `${ip}:${port} ${service}`.trim(),
+        breachDate: str(m.timestamp) || undefined,
+        exposedData,
+        sourceUrl: ip ? `https://www.shodan.io/host/${encodeURIComponent(ip)}` : undefined,
+        secretPresent: false,   // exposed services/CVEs, not credentials (CVEs surface in exposedData)
+      };
+    });
+  }
+}

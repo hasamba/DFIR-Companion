@@ -305,9 +305,13 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 
 ### Customer exposure / credential-leak check (separate from IOC enrichment)
 - **Checks the victim org's OWN assets, not IOCs.** A dedicated **Customer Exposure** panel checks the
-  customer's domains and emails against breach/leak databases — **LeakCheck**, **Have I Been Pwned**,
-  **DeHashed**, and **CrowdStrike Recon** (each enabled by its own `DFIR_*` key). Domain searches return
-  leaked accounts; email searches return each address's breaches.
+  customer's domains and emails against breach/leak/exposure databases — **LeakCheck**, **Have I Been
+  Pwned**, **DeHashed**, **CrowdStrike Recon**, and **Shodan** (each enabled by its own `DFIR_*` key).
+  Domain searches return leaked accounts (and, via Shodan, the org's internet-exposed hosts / ports /
+  services / CVEs); email searches return each address's breaches.
+- **Pick which providers to run** — like the enrichment per-source picker, a checkbox per configured
+  source lets you run only the ones you want (the selection persists per case), so you don't have to
+  query all of them every time.
 - **Strict customer boundary (OPSEC).** Domain lookups use **only the customer domains you enter** — adversary
   domains collected as IOCs are **never** sent. Emails seen in the case are auto-discovered and checked **only
   when their domain is one of those customer domains** (and never an email that is itself an IOC).
