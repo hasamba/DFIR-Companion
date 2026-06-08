@@ -2250,12 +2250,21 @@
       const checked = exposure.checkedAt ? `Last checked ${esc(new Date(exposure.checkedAt).toLocaleString())}` : "Not checked yet";
       const targetLine = `Domains: ${(effective.domains || []).map(esc).join(", ") || "none"} · Emails: ${(effective.emails || []).map(esc).join(", ") || "none"}`;
       const rows = results.length
-        ? results.map(r => `<div>${esc(r.provider)} · <span style="color:#9aa4b2">${esc(r.targetType)}:</span> ${esc(r.target)}`
-            + `${r.email ? ` · ${esc(r.email)}` : ""}`
-            + `${r.breach ? ` · <strong>${esc(r.breach)}</strong>` : ""}`
-            + `${r.breachDate ? ` · ${esc(r.breachDate)}` : ""}`
-            + `${r.secretPresent ? ` · <span class="sev-High">credential material present</span>` : ""}`
-            + `${r.exposedData && r.exposedData.length ? ` · <small>${esc(r.exposedData.slice(0, 6).join(", "))}</small>` : ""}</div>`).join("")
+        ? results.map(r => {
+            // The headline (breach / exposed host) links to the provider's report when one exists
+            // — e.g. Shodan's https://www.shodan.io/host/<ip>.
+            const head = r.breach
+              ? (r.sourceUrl
+                  ? ` · <a href="${escAttr(r.sourceUrl)}" target="_blank" rel="noopener" style="color:#6aa9ff;text-decoration:none"><strong>${esc(r.breach)}</strong> ↗</a>`
+                  : ` · <strong>${esc(r.breach)}</strong>`)
+              : "";
+            return `<div>${esc(r.provider)} · <span style="color:#9aa4b2">${esc(r.targetType)}:</span> ${esc(r.target)}`
+              + `${r.email ? ` · ${esc(r.email)}` : ""}`
+              + head
+              + `${r.breachDate ? ` · ${esc(r.breachDate)}` : ""}`
+              + `${r.secretPresent ? ` · <span class="sev-High">credential material present</span>` : ""}`
+              + `${r.exposedData && r.exposedData.length ? ` · <small>${esc(r.exposedData.slice(0, 6).join(", "))}</small>` : ""}</div>`;
+          }).join("")
         : "<div style='color:#9aa4b2'>No exposure results stored.</div>";
       const errs = errors.length
         ? `<details><summary>${errors.length} provider error${errors.length !== 1 ? "s" : ""}</summary>${errors.map(e => `<div style="color:#ff9f43">${esc(e.provider)} ${esc(e.targetType)} ${esc(e.target)}: ${esc(e.error)}</div>`).join("")}</details>`
