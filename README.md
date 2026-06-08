@@ -743,20 +743,9 @@ npm run reanalyze -- mycase --reset \
   --synth-model google/gemini-2.5-pro
 ```
 
-## Todo / Roadmap
+## Roadmap
 
-Ideas and planned work, not yet committed. Add to this list as new ideas come up; move items
-into the **Features** section (and `CHANGELOG.md`) once shipped.
-
-- [ ] Per-provider enrichment throttle (so RockyRaccoon's tight rate limit doesn't slow VT/AbuseIPDB).
-- [ ] Configurable companion host/port in the **extension** (currently `127.0.0.1:4773`).
-- [ ] `_execute_action` hotkey to open the extension popup.
-- [ ] Embed the interactive **asset ↔ IoC graph** in the HTML report export (currently dashboard-only).
-- [ ] Manual editing of assets and asset↔IoC links (currently auto-derived).
-- [ ] **Service**-type asset extraction in the asset↔IoC graph. (Asset↔asset **lateral-movement** edges now ship in the **Evidence Chain** graph.)
-- [ ] Evidence Chain graph — **file-lineage** (`wrote → executed`) and **network-flow** (`src → dst`) edges. Needs structured `action`/direction + src/dst fields on `ForensicEvent` populated at import time (today's importers don't carry them), so deferred from the process-tree/lateral-movement first cut.
-- [ ] **Prompt caching** for the synthesis/extraction prompts (provider-layer change to `AIProvider`)
-  to cut token cost on repeated calls — the static system prompt prefix is re-sent every synthesis.
+Planned work and ideas are tracked as **[GitHub Issues](https://github.com/hasamba/DFIR-Companion/issues?q=is%3Aissue%20state%3Aopen%20label%3Aenhancement)** under the `enhancement` label — open a new issue for a new idea rather than a checklist here. When an item ships, add it to the **Features** section above and `CHANGELOG.md`.
 
 ## Tests
 
