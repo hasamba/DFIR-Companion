@@ -75,6 +75,13 @@
     .asset-subhead { font-size: 12px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 6px; }
     .asset-chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px;
       font-size: 12px; background: #0f1115; border: 1px solid #2a2f3a; color: #e6e6e6; }
+    /* Removable customer-exposure target chips (like the asset chips, with an × and an "auto" variant) */
+    .ce-chip { display: inline-block; padding: 2px 6px 2px 9px; margin: 0 5px 5px 0; border-radius: 10px;
+      font-size: 12px; background: #11202e; border: 1px solid #2d4a6a; color: #e6e6e6; }
+    .ce-chip.auto { background: #0f1115; border-style: dashed; border-color: #2a2f3a; color: #9aa4b2; }
+    .ce-chip small { color: #6b7686; margin-left: 4px; }
+    .ce-chip .x { cursor: pointer; margin-left: 7px; color: #9aa4b2; font-weight: 600; }
+    .ce-chip .x:hover { color: #ff7a7a; }
     /* Investigator comments */
     .comment-chip { background: transparent; border: 1px solid #2a2f3a; color: #9aa4b2; border-radius: 10px;
       padding: 0 7px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
@@ -477,10 +484,15 @@
     <section style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
       <div style="color:#9aa4b2;font-size:12px;margin:-4px 0 8px">Breach/leak check of the <strong>customer's own</strong> domains &amp; emails (not IOCs). Domain searches use only the customer domains below; case emails are checked only under those domains. ⚠ sends the customer's domains/emails to third-party services.</div>
       <div class="manual-add" style="display:block">
-        <form class="manual-form" onsubmit="return false">
-          <input id="ceDomains" placeholder="customer domains (example.com)" style="flex:1; min-width:240px" />
-          <input id="ceEmails" placeholder="specific customer emails" style="flex:1; min-width:240px" />
-          <button id="saveCustomerExposureTargets">Save targets</button>
+        <form class="manual-form" onsubmit="return false" style="flex-wrap:wrap; gap:12px; align-items:flex-start">
+          <div style="flex:1; min-width:260px">
+            <input id="ceDomainInput" placeholder="add customer domain + Enter (e.g. example.com)" style="width:100%; box-sizing:border-box" />
+            <div id="ceDomainChips" style="margin-top:6px"></div>
+          </div>
+          <div style="flex:1; min-width:260px">
+            <input id="ceEmailInput" placeholder="add customer email + Enter" style="width:100%; box-sizing:border-box" />
+            <div id="ceEmailChips" style="margin-top:6px"></div>
+          </div>
           <button id="runCustomerExposure">Check leaks</button>
           <span id="customerExposureMsg" class="manual-msg"></span>
         </form>
@@ -2204,9 +2216,14 @@
       const el = document.getElementById("customerExposure");
       if (!el) return;
       const targets = j.targets || { domains: [], emails: [] };
-      document.getElementById("ceDomains").value = (targets.domains || []).join(", ");
-      document.getElementById("ceEmails").value = (targets.emails || []).join(", ");
       const effective = j.effectiveTargets || targets;
+      // Chip state: manual domains/emails (removable) + emails auto-discovered by the investigation
+      // (shown as dashed "auto" chips, always included). New/typed items appear as chips and are
+      // included by default — remove an unwanted one with its ×.
+      ceDomains = (targets.domains || []).slice();
+      ceEmails = (targets.emails || []).slice();
+      ceAutoEmails = (effective.emails || []).filter(e => !ceEmails.includes(e));
+      renderCeChips();
       const exposure = j.exposure || {};
       const results = exposure.results || [];
       const errors = exposure.errors || [];
@@ -2244,20 +2261,46 @@
         .then(renderCustomerExposure)
         .catch(() => { document.getElementById("customerExposure").innerHTML = "<span style='color:#ff9f43'>Customer exposure endpoints unavailable — restart the companion server.</span>"; });
     }
+    let ceDomains = [], ceEmails = [], ceAutoEmails = [];
     function selectedExposureProviders() {
       return Array.from(document.querySelectorAll(".ce-prov:checked")).map(c => c.value);
     }
-    function saveCustomerExposureTargets() {
+    function ceChip(value, kind, auto) {
+      return `<span class="ce-chip${auto ? " auto" : ""}" title="${auto ? "auto-discovered in the investigation — checked automatically" : "remove with ×"}">${esc(value)}`
+        + (auto ? " <small>auto</small>" : ` <span class="x" data-kind="${escAttr(kind)}" data-val="${escAttr(value)}">×</span>`) + "</span>";
+    }
+    function renderCeChips() {
+      const dom = document.getElementById("ceDomainChips");
+      const em = document.getElementById("ceEmailChips");
+      if (dom) dom.innerHTML = ceDomains.length ? ceDomains.map(d => ceChip(d, "domain", false)).join("") : "<span style='color:#5b6472;font-size:11px'>no customer domains yet</span>";
+      if (em) em.innerHTML = (ceEmails.map(e => ceChip(e, "email", false)).join("") + ceAutoEmails.map(e => ceChip(e, "email", true)).join(""))
+        || "<span style='color:#5b6472;font-size:11px'>no customer emails yet</span>";
+    }
+    // Persist the current chip + provider state. Called on every add/remove/toggle so a new item is
+    // active immediately (no separate Save step), then reload to refresh auto-discovered emails.
+    function ceAutosaveTargets() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
+      renderCeChips();
       const msg = document.getElementById("customerExposureMsg"); msg.textContent = "saving…";
       fetch(`/cases/${encodeURIComponent(caseId)}/customer-exposure/targets`, {
         method: "PUT", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ domains: document.getElementById("ceDomains").value, emails: document.getElementById("ceEmails").value, providers: selectedExposureProviders() }),
+        body: JSON.stringify({ domains: ceDomains, emails: ceEmails, providers: selectedExposureProviders() }),
       })
         .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
-        .then(() => { msg.textContent = "saved"; loadCustomerExposure(caseId); setTimeout(() => { msg.textContent = ""; }, 2000); })
-        .catch(e => { msg.textContent = "failed: " + e.message; });
+        .then(() => { msg.textContent = "saved"; loadCustomerExposure(caseId); setTimeout(() => { if (msg.textContent === "saved") msg.textContent = ""; }, 1500); })
+        .catch(e => { msg.textContent = "save failed: " + e.message; });
+    }
+    function ceAddTarget(kind, value) {
+      const n = String(value || "").trim().toLowerCase();
+      if (!n) return;
+      const list = kind === "domain" ? ceDomains : ceEmails;
+      if (!list.includes(n)) { list.push(n); ceAutosaveTargets(); }
+    }
+    function ceRemoveTarget(kind, value) {
+      if (kind === "domain") ceDomains = ceDomains.filter(d => d !== value);
+      else ceEmails = ceEmails.filter(e => e !== value);
+      ceAutosaveTargets();
     }
     function runCustomerExposureCheck() {
       const caseId = document.getElementById("caseId").value.trim();
@@ -3012,8 +3055,13 @@
         document.getElementById("miValue").value = "";
       });
     };
-    document.getElementById("saveCustomerExposureTargets").onclick = saveCustomerExposureTargets;
     document.getElementById("runCustomerExposure").onclick = runCustomerExposureCheck;
+    // Chip inputs: Enter adds a domain/email (auto-saved + checked); clicking a chip's × removes it.
+    document.getElementById("ceDomainInput").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); ceAddTarget("domain", e.target.value); e.target.value = ""; } });
+    document.getElementById("ceEmailInput").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); ceAddTarget("email", e.target.value); e.target.value = ""; } });
+    document.getElementById("ceDomainChips").addEventListener("click", e => { const x = e.target.closest(".x"); if (x) ceRemoveTarget(x.dataset.kind, x.dataset.val); });
+    document.getElementById("ceEmailChips").addEventListener("click", e => { const x = e.target.closest(".x"); if (x) ceRemoveTarget(x.dataset.kind, x.dataset.val); });
+    document.getElementById("ceProviders").addEventListener("change", e => { if (e.target.classList && e.target.classList.contains("ce-prov")) ceAutosaveTargets(); });
     // The (+) next to a section heading toggles that section's manual add-entry form. We stop the
     // click from bubbling to the h2 (which would collapse the section), and expand the section if
     // it was collapsed so the form is visible.
