@@ -232,4 +232,27 @@ describe("mergeDelta", () => {
     expect(e1.mitreTechniques).toContain("T1566.001");
     expect(e1.sourceScreenshots).toEqual(["s1.webp", "s3.webp"]);
   });
+
+  it("carries narrativeTimeline from delta into state, preserving prior value when omitted", () => {
+    let state = emptyState("c1");
+    expect(state.narrativeTimeline).toBe("");
+
+    // Synthesis provides a narrative — it should be stored.
+    state = mergeDelta(state, {
+      ...baseDelta,
+      narrativeTimeline: "At 09:00 the attacker gained initial access. This was followed by credential dumping.",
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+    expect(state.narrativeTimeline).toBe("At 09:00 the attacker gained initial access. This was followed by credential dumping.");
+
+    // A per-window delta without narrativeTimeline must NOT clear it.
+    state = mergeDelta(state, { ...baseDelta }, { windowSequence: 2, timestamp: "2026-05-28T10:05:00.000Z", sourceScreenshots: [] });
+    expect(state.narrativeTimeline).toBe("At 09:00 the attacker gained initial access. This was followed by credential dumping.");
+
+    // A later synthesis with a new narrative replaces the old one.
+    state = mergeDelta(state, {
+      ...baseDelta,
+      narrativeTimeline: "Updated narrative after more evidence.",
+    }, { windowSequence: 3, timestamp: "2026-05-28T10:10:00.000Z", sourceScreenshots: [] });
+    expect(state.narrativeTimeline).toBe("Updated narrative after more evidence.");
+  });
 });

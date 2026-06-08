@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Narrative Timeline — prose story-mode view of the incident.** A new **Narrative Timeline** section in the dashboard (and report §3.2) generates a flowing, chronological prose narrative of the incident written for management and non-technical stakeholders: "At [time], the attacker gained initial access by… This was followed by…" The narrative is generated as part of synthesis (stored in `state.narrativeTimeline`, re-generated on each synthesis run alongside the `attackerPath`). A **✨ Generate** button on the dashboard triggers a standalone AI call (saves automatically). An **✏ Edit** button opens an inline textarea so the analyst can refine the narrative before export (saved via `PUT /cases/:id/narrative`). The report always includes §3.2 even when the narrative is absent (placeholder text guides the analyst to generate it). No new prompt-override env var is needed — the narrative output is added to the existing `SYNTH` prompt; `DFIR_AI_SYNTH_PROMPT` / `DFIR_AI_SYNTH_PROMPT_FILE` overrides apply. A standalone `NARRATIVE_PROMPT` (overridable via `DFIR_AI_NARRATIVE_PROMPT`) drives the Generate-button path when re-generating without a full synthesis.
+
 ## [0.12.0] - 2026-06-08
 
 ### Added

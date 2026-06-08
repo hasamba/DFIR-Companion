@@ -132,6 +132,7 @@ export interface InvestigationState {
   nextSteps: NextStep[];               // AI-recommended next investigative actions, most important first
   lastSummary: string;
   attackerPath: string;                // narrative reconstruction of the attacker's path
+  narrativeTimeline: string;           // prose story of the incident for stakeholders (re-generated on synthesis)
   updatedAt: string;
 }
 
@@ -148,6 +149,7 @@ export function emptyState(caseId: string): InvestigationState {
     nextSteps: [],
     lastSummary: "",
     attackerPath: "",
+    narrativeTimeline: "",
     updatedAt: new Date(0).toISOString(),
   };
 }
