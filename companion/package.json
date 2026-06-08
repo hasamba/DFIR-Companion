@@ -19,6 +19,7 @@
     "yeti": "tsx scripts/yeti-lookup.ts",
     "iris:push": "tsx scripts/push-iris.ts",
     "timesketch:push": "tsx scripts/push-timesketch.ts",
+    "misp:push": "tsx scripts/push-misp.ts",
     "icons": "tsx scripts/make-icons.ts",
     "package:sea": "node scripts/build-sea.mjs"
   },
