@@ -281,11 +281,11 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   value, so re-importing the same file shows *nothing* new; the highlights clear on the next import.
 
 ### Threat-intel enrichment (OPSEC — **per-source, default local-only**)
-- **Sources** — VirusTotal (hash/IP/domain/URL), MalwareBazaar (hash), **Hunting.ch** (abuse.ch
-  unified hunt — one indicator looked up across MalwareBazaar + ThreatFox + URLhaus + YARAify, each
-  platform's hit shown as its own clickable result, like `hunting.abuse.ch/hunt/<ioc>/`),
-  AbuseIPDB (IP), **MISP** and **YETI** (your own instances), **RockyRaccoon** (Windows **process**
-  intel — prevalence / LOLBIN / risk / expected parent / ATT&CK).
+- **Sources** — VirusTotal (hash/IP/domain/URL), **Hunting.ch** (abuse.ch unified hunt — one
+  indicator looked up across MalwareBazaar + ThreatFox + URLhaus + YARAify, each platform's hit
+  shown as its own clickable result, like `hunting.abuse.ch/hunt/<ioc>/`), AbuseIPDB (IP),
+  **MISP** and **YETI** (your own instances), **RockyRaccoon** (Windows **process** intel —
+  prevalence / LOLBIN / risk / expected parent / ATT&CK).
 - **Per-source selection** — each source is **local** (your own MISP/YETI — queries stay on-box,
   OPSEC-safe) or **external** (third-party — sends indicators off-box). Pick which to use; the
   **default is local-only**, external is opt-in with a confirm. **Enabling a source re-checks every

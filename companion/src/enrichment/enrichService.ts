@@ -158,8 +158,14 @@ export async function enrichIocs(
     // Keep existing hits from providers we did NOT successfully re-run (errored providers
     // retain their last-known result); successful providers are superseded by `fresh`. Match on
     // the owning `provider` (falling back to `source` for older single-source enrichments) so a
-    // fan-out provider's whole set is replaced, not left to accumulate duplicates.
-    const keptHits = (ioc.enrichments ?? []).filter((e) => !succeeded.has(e.provider ?? e.source));
+    // fan-out provider's whole set is replaced, not left to accumulate duplicates. Also drop any
+    // stale hit whose `source` a fresh result now owns — so an enrichment from a retired provider
+    // (e.g. the old standalone MalwareBazaar) is replaced by Hunting.ch's "MalwareBazaar" instead
+    // of both showing.
+    const freshSources = new Set(fresh.map((f) => f.source));
+    const keptHits = (ioc.enrichments ?? []).filter(
+      (e) => !succeeded.has(e.provider ?? e.source) && !freshSources.has(e.source),
+    );
     const enrichedBy = [...new Set([...(ioc.enrichedBy ?? []), ...succeeded])];
     updates.set(idx, { enrichments: [...keptHits, ...fresh], enrichedBy });
     if (fresh.length) summary.withHits += 1;
