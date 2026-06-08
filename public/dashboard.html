@@ -482,23 +482,25 @@
       <div id="iocImportMeta" class="synth-meta" style="display:none"></div>
       <div id="iocs">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
-      <div style="color:#9aa4b2;font-size:12px;margin:-4px 0 8px">Breach/leak check of the <strong>customer's own</strong> domains &amp; emails (not IOCs). Domain searches use only the customer domains below; case emails are checked only under those domains. ⚠ sends the customer's domains/emails to third-party services.</div>
-      <div class="manual-add" style="display:block">
-        <form class="manual-form" onsubmit="return false" style="flex-wrap:wrap; gap:12px; align-items:flex-start">
-          <div style="flex:1; min-width:260px">
+      <div class="ce-body">
+        <div style="color:#9aa4b2;font-size:12px;margin:0 0 8px">Breach/leak check of the <strong>customer's own</strong> domains &amp; emails (not IOCs). Domain searches use only the customer domains below; case emails are checked only under those domains. ⚠ sends the customer's domains/emails to third-party services.</div>
+        <div class="manual-form" style="gap:12px; align-items:flex-start; margin-bottom:8px">
+          <div style="flex:1; min-width:240px">
             <input id="ceDomainInput" placeholder="add customer domain + Enter (e.g. example.com)" style="width:100%; box-sizing:border-box" />
             <div id="ceDomainChips" style="margin-top:6px"></div>
           </div>
-          <div style="flex:1; min-width:260px">
+          <div style="flex:1; min-width:240px">
             <input id="ceEmailInput" placeholder="add customer email + Enter" style="width:100%; box-sizing:border-box" />
             <div id="ceEmailChips" style="margin-top:6px"></div>
           </div>
-          <button id="runCustomerExposure">Check leaks</button>
+        </div>
+        <div id="ceProviders" style="font-size:12px;color:#9aa4b2;margin:2px 0 8px"></div>
+        <div class="manual-form" style="margin-bottom:6px">
+          <button id="runCustomerExposure">Check Exposure</button>
           <span id="customerExposureMsg" class="manual-msg"></span>
-        </form>
-      </div>
-      <div id="ceProviders" style="font-size:12px;color:#9aa4b2;margin:2px 0 8px"></div>
-      <div id="customerExposure">—</div></section>
+        </div>
+        <div id="customerExposure">—</div>
+      </div></section>
     <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>

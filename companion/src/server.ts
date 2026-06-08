@@ -85,7 +85,6 @@ import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPu
 import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
 import { pushCaseToTimesketch, type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
 import {
-  CrowdStrikeReconExposureProvider,
   DeHashedExposureProvider,
   HaveIBeenPwnedExposureProvider,
   LeakCheckExposureProvider,
@@ -850,7 +849,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   app.post("/cases/:id/customer-exposure/check", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     if (customerExposureProviders.length === 0) {
-      return res.status(501).json({ error: "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_SHODAN_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET)" });
+      return res.status(501).json({ error: "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_SHODAN_KEY)" });
     }
     const caseId = req.params.id;
     try {
@@ -2540,17 +2539,6 @@ export function buildCustomerExposureProviders(): CustomerExposureProvider[] {
   }
   if (process.env.DFIR_SHODAN_KEY) {
     providers.push(new ShodanExposureProvider({ apiKey: process.env.DFIR_SHODAN_KEY }));
-  }
-  // CrowdStrike Recon reuses the SAME Falcon API client as the Intel enrichment provider
-  // (DFIR_CROWDSTRIKE_CLIENT_ID/_SECRET, same tenant → same cloud). To enable it, add the
-  // "Monitoring rules (Falcon Intelligence): Read" scope to that existing client.
-  if (process.env.DFIR_CROWDSTRIKE_CLIENT_ID && process.env.DFIR_CROWDSTRIKE_CLIENT_SECRET) {
-    providers.push(new CrowdStrikeReconExposureProvider({
-      clientId: process.env.DFIR_CROWDSTRIKE_CLIENT_ID,
-      clientSecret: process.env.DFIR_CROWDSTRIKE_CLIENT_SECRET,
-      cloud: process.env.DFIR_CROWDSTRIKE_CLOUD,
-      baseUrl: process.env.DFIR_CROWDSTRIKE_BASE_URL,
-    }));
   }
   return providers;
 }
