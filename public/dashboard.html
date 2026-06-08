@@ -31,7 +31,10 @@
     h2 .chev { font-size: 10px; color: #6aa9ff; transition: transform .12s; }
     section.collapsed h2 { margin-bottom: 0; }
     section.collapsed h2 .chev { transform: rotate(-90deg); }
-    section.collapsed > :not(h2) { display: none; }
+    /* !important so it beats inline display set by JS (e.g. the synth-meta / import-meta banners,
+       which set style.display = "block" when they have content — otherwise they'd stay visible
+       in a collapsed Findings / Forensic Timeline / IOCs section). */
+    section.collapsed > :not(h2) { display: none !important; }
     .manual-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 10px; font-size: 12px; }
     .manual-form input, .manual-form select { font-size: 12px; padding: 4px; background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 4px; }
     .manual-form button { padding: 4px 10px; font-size: 12px; }
@@ -2241,7 +2244,9 @@
           ? "Run on: " + allProviders.map(name => `<label style="margin-right:12px;cursor:pointer"><input type="checkbox" class="ce-prov" value="${escAttr(name)}" ${(!sel || sel.includes(name)) ? "checked" : ""}> ${esc(name)}</label>`).join("")
           : "<span style='color:#ff9f43'>No exposure providers configured — set DFIR_LEAKCHECK_KEY / DFIR_HIBP_KEY / DFIR_DEHASHED_KEY / DFIR_SHODAN_KEY / DFIR_CROWDSTRIKE_CLIENT_ID and restart.</span>";
       }
-      const providers = (j.providers || []).join(", ") || "none configured";
+      // Show the providers that ACTUALLY ran in the last check (exposure.providers), not every
+      // configured provider (j.providers) — otherwise a Shodan-only run still listed LeakCheck.
+      const providers = (exposure.providers || []).join(", ") || "none";
       const checked = exposure.checkedAt ? `Last checked ${esc(new Date(exposure.checkedAt).toLocaleString())}` : "Not checked yet";
       const targetLine = `Domains: ${(effective.domains || []).map(esc).join(", ") || "none"} · Emails: ${(effective.emails || []).map(esc).join(", ") || "none"}`;
       const rows = results.length
