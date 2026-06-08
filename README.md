@@ -187,7 +187,7 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only
-  **synthesis** → findings, IOCs, MITRE ATT&CK, attacker path, key questions, next steps, threads.
+  **synthesis** → findings, IOCs, MITRE ATT&CK, attacker path, **narrative timeline**, key questions, next steps, threads.
 - **Providers** — OpenAI, OpenRouter, Ollama, **local LiteLLM** (an OpenAI-compatible gateway over
   Ollama / vLLM / 100+ backends — keeps evidence fully on-box) or any OpenAI-compatible endpoint via
   `DFIR_AI_BASE_URL`, Gemini; optional **two-tier** (cheap extraction + strong synthesis); high-detail
@@ -359,6 +359,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   management-facing, plain-language summary over the synthesized case (no ATT&CK ids / hashes / tool
   names); review it, then save it into the report's Executive Summary (it overrides the auto-derived
   summary). Prompt is customizable like the others (`DFIR_AI_EXEC_PROMPT` / `…_PROMPT_FILE`).
+- **Narrative Timeline** — a flowing prose story of the incident generated for management and
+  non-technical stakeholders ("At [time], the attacker gained initial access by…"). Generated as
+  part of synthesis (stored in `state.narrativeTimeline`, always re-generated with the attacker path);
+  a **✨ Generate** button on the dashboard also regenerates it standalone. **✏ Edit** opens an inline
+  textarea for analyst refinement before export; edits persist via `PUT /cases/:id/narrative`. Included
+  in the report as **§3.2 Narrative timeline** right after the incident-timeline table.
 - **Push to DFIR-IRIS** — push a case into a [DFIR-IRIS](https://dfir-iris.org/) instance with one
   click (dashboard **Push** menu → **DFIR-IRIS**, or `npm run iris:push -- <caseId>`). It **find-or-creates
   the IRIS case by name** (= the Companion case id) — re-exporting an existing case *updates* it — and
