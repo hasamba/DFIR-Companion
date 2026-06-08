@@ -60,6 +60,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Case management in the dashboard** — a **+ New case** form is the one place cases are born
   (id, name, investigator); the companion rejects captures to an unknown case so evidence never
   lands in a half-made one.
+- **Case templates** — the New case modal offers five built-in templates (Ransomware, BEC/Email
+  Compromise, Insider Threat, Web App Intrusion, General Malware) that pre-populate the Key
+  Questions list with incident-type–specific investigation questions (pinned so synthesis can
+  answer them). Each template also lists recommended import types and hunt platforms as hints.
+  Custom templates can be saved from the Export menu (**Save as Template…**) and reused across
+  cases; they're stored in a `templates/` directory alongside `cases/`.
 - **Evidence-first ingest** — screenshot written to disk + append-only `captures.jsonl` audit
   line **before** any analysis; perceptual-hash duplicate detection.
 - **Import external screenshots** — dashboard **Import Screenshots** button (multi-select PNG/JPEG/WebP)
