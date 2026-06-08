@@ -332,8 +332,10 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Compromised assets + asset↔IoC graph** — events carry the affected **host** (from THOR / CSV /
   screenshots); the dashboard lists compromised hosts/users and draws an interactive **asset ↔ IoC graph**
   (which IoC touched each asset, and per asset all its IoCs) with Host/Account/Service toggles,
-  **fullscreen**, **horizontal / vertical / radial** layouts, **zoom** (buttons + mouse-wheel), and
-  click-a-node-to-focus. A *Compromised assets* section also appears in the report.
+  **fullscreen**, **horizontal / vertical / radial** layouts, **zoom** (buttons + mouse-wheel),
+  click-a-node-to-focus, and **drag-to-reposition nodes** (manual positions persist per case as "pins"
+  on top of the chosen layout; ↺ Reset layout clears them). A *Compromised assets* section also appears
+  in the report.
 - **Evidence Chain graph (causal: process trees + lateral movement)** — the *how it happened* view to
   complement the *what happened when* timeline. Derived deterministically (no AI) from fields the
   importers already populate: **process trees** (parent→child from `processName`/`parentName`, chained
