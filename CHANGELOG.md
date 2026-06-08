@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Manual editing of assets and asset ↔ IoC links.** Analysts can now correct the auto-derived asset graph: **rename** a misidentified host or account, **add** new assets not visible in the timeline, **suppress** a false-positive asset or link, and **add** manual links between assets and IoCs. All edits persist per case in `state/asset-overrides.json` — a side file outside `InvestigationState`, so **synthesis never wipes them** (same pattern as comments and tags). Applied via a pure `applyAssetOverrides()` function on top of `buildAssetGraph()`, so the deterministic baseline is always preserved; the dashboard graph, report section 4.2, and markdown/HTML exports all reflect the overrides. Dashboard controls: a **+** toggle on the Compromised Assets section header opens add-asset and link-management forms; each asset chip in the list gains pencil (rename) and × (suppress) buttons, and suppressed assets are shown with a ↺ restore button. API: `GET /cases/:id/asset-overrides`, `PUT .../assets/:assetId` (rename), `POST .../assets` (add), `DELETE .../assets/:assetId` (suppress/delete), `POST .../assets/:assetId/restore`, `POST .../links` (add link), `DELETE .../links?asset=...&ioc=...` (suppress link). WS push: `asset_overrides_changed` refreshes the dashboard graph on every write.
+
 ## [0.12.0] - 2026-06-08
 
 ### Added
