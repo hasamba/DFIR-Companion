@@ -184,6 +184,19 @@ external opt-in per case (`enrich-control` stores the enabled provider names). e
 per (IOC, provider) via the IOC's `enrichedBy`, so enabling a source re-checks every IOC on it.
 Providers use injectable `fetchFn` (no network in tests), configured only when their `DFIR_*` key(s) are set.
 
+**Customer exposure (credential-leak check) is a SEPARATE feature, NOT IOC enrichment** — don't
+confuse the two. It checks the *victim org's own* domains/emails against breach DBs
+(`analysis/customerExposure.ts` orchestration + `analysis/customerStore.ts` targets, with
+`integrations/customerExposureProviders.ts` adapters over LeakCheck/HIBP/DeHashed/CrowdStrike-Recon,
+each a `CustomerExposureProvider` with `lookupEmail`/`lookupDomain`). **Hard OPSEC boundary
+(`buildCustomerExposureTargets`):** domain searches use ONLY the analyst-entered customer domains
+(`state/customer.json`) — adversary/IOC domains are NEVER sent — and case-discovered emails are checked
+only when their domain is a customer domain AND the email isn't itself an IOC. The saved summary
+(`state/customer-exposure.json`, `CustomerExposureStore`) **strips raw passwords** — only a
+`secretPresent` flag + exposed field names persist. Routes: `GET /cases/:id/customer-exposure`,
+`PUT …/targets`, `POST …/check` (501 when no provider key). Surfaced in the dashboard panel and report
+§4.5 (always rendered, placeholder when not run, so section numbering stays stable).
+
 ## Conventions / invariants — don't break these
 
 - **Evidence-first:** the ingest path writes the screenshot to disk and appends the

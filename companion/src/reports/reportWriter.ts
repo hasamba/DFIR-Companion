@@ -13,6 +13,7 @@ import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
+import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 
 export interface ReportPaths {
   markdown: string;
@@ -31,6 +32,7 @@ export class ReportWriter {
     private readonly scope?: ScopeStore,
     private readonly legitimate?: LegitimateStore,
     private readonly reportMeta?: ReportMetaStore,
+    private readonly customerExposure?: CustomerExposureStore,
   ) {}
 
   // Load the case state with the same deterministic report filters applied: drop
@@ -54,7 +56,13 @@ export class ReportWriter {
   async docx(caseId: string): Promise<Buffer> {
     const state = await this.loadFilteredState(caseId);
     const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
-    return renderDocxReport(state, meta);
+    return renderDocxReport(state, meta, await this.loadExposure(caseId));
+  }
+
+  private async loadExposure(caseId: string): Promise<CustomerExposureSummary | undefined> {
+    if (!this.customerExposure) return undefined;
+    const exposure = await this.customerExposure.load(caseId);
+    return exposure.checkedAt ? exposure : undefined;
   }
 
   // Export just the incident (forensic) timeline as CSV, on demand — without writing the
@@ -93,8 +101,9 @@ export class ReportWriter {
       stateJson: join(dir, "state-export.json"),
     };
     const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
-    await writeFile(paths.markdown, renderMarkdownReport(state, meta), "utf8");
-    await writeFile(paths.html, renderHtmlReport(state, meta), "utf8");
+    const exposure = await this.loadExposure(caseId);
+    await writeFile(paths.markdown, renderMarkdownReport(state, meta, exposure), "utf8");
+    await writeFile(paths.html, renderHtmlReport(state, meta, exposure), "utf8");
     await writeFile(paths.findingsCsv, findingsCsv(state), "utf8");
     await writeFile(paths.iocsCsv, iocsCsv(state), "utf8");
     await writeFile(paths.timelineCsv, timelineCsv(state), "utf8");

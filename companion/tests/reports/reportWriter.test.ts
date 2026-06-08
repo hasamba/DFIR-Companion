@@ -121,5 +121,5 @@ describe("ReportWriter", () => {
     expect(xml).toContain("real summary text");                        // canonical report content present
     expect(xml).toContain("attacker beacon callout");                  // kept
     expect(xml).not.toContain("client admin maintenance window");      // legit event excluded
-  });
+  }, 30_000);   // docx generation is CPU-heavy; give it headroom under full-suite parallel load
 });

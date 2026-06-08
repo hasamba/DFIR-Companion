@@ -1,5 +1,6 @@
 import { Marked } from "marked";
 import type { InvestigationState } from "../analysis/stateTypes.js";
+import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { renderMarkdownReport } from "./markdown.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
 
@@ -105,8 +106,8 @@ export function injectPrintTrigger(html: string): string {
   return idx === -1 ? html + PRINT_TRIGGER : html.slice(0, idx) + PRINT_TRIGGER + html.slice(idx);
 }
 
-export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta()): string {
-  const markdown = renderMarkdownReport(state, meta);
+export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary): string {
+  const markdown = renderMarkdownReport(state, meta, exposure);
 
   const marked = new Marked({ gfm: true });
   // Escape any raw HTML tokens in the source instead of emitting them verbatim.

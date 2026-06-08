@@ -17,6 +17,7 @@ import {
 import { Marked } from "marked";
 import type { Tokens, TokensList } from "marked";
 import type { InvestigationState } from "../analysis/stateTypes.js";
+import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { renderMarkdownReport } from "./markdown.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
 
@@ -402,8 +403,9 @@ export function tokensToDocxChildren(tokens: TokensList): DocxChild[] {
 export async function renderDocxReport(
   state: InvestigationState,
   meta: ReportMeta = emptyReportMeta(),
+  exposure?: CustomerExposureSummary,
 ): Promise<Buffer> {
-  const md = renderMarkdownReport(state, meta);
+  const md = renderMarkdownReport(state, meta, exposure);
   const marked = new Marked({ gfm: true });
   const tokens = marked.lexer(md);
   const children = tokensToDocxChildren(tokens);
