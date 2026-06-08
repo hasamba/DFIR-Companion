@@ -151,6 +151,135 @@ describe("buildEvidenceGraph — ran_on (host anchoring connects the two halves)
   });
 });
 
+describe("buildEvidenceGraph — file_lineage (wrote→executed)", () => {
+  it("creates a file node and two edges when a hash is both written and executed", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", action: "write", sha256: HASH, path: "C:\\Temp\\evil.exe", severity: "High" }),
+      ev({ id: "e2", asset: "HOST-B", action: "execute", sha256: HASH, severity: "Critical" }),
+    );
+    const g = buildEvidenceGraph(s);
+    const lineage = g.edges.filter((e) => e.type === "file_lineage");
+    expect(lineage).toHaveLength(2); // wrote edge + executed edge
+    expect(lineage.every((e) => e.confidence === "high")).toBe(true);
+
+    const fileNode = g.nodes.find((n) => n.kind === "file");
+    expect(fileNode).toBeDefined();
+    expect(fileNode!.label).toBe("evil.exe");   // filename derived from path
+    // The file node is the common hub: one edge points IN (wrote), one OUT (exec).
+    const intoFile = lineage.find((e) => e.target === fileNode!.id);
+    const outOfFile = lineage.find((e) => e.source === fileNode!.id);
+    expect(intoFile?.rule).toBe("wrote-file");
+    expect(outOfFile?.rule).toBe("executed-file");
+  });
+
+  it("produces no file-lineage edges when only write events exist (no matching execute)", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(ev({ id: "e1", asset: "HOST-A", action: "write", sha256: HASH }));
+    expect(buildEvidenceGraph(s).edges.filter((e) => e.type === "file_lineage")).toHaveLength(0);
+  });
+
+  it("produces no file-lineage edges when only execute events exist (no matching write)", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(ev({ id: "e1", asset: "HOST-A", action: "execute", sha256: HASH }));
+    expect(buildEvidenceGraph(s).edges.filter((e) => e.type === "file_lineage")).toHaveLength(0);
+  });
+
+  it("uses process node for execute-context when processName is set", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", action: "write", sha256: HASH }),
+      ev({ id: "e2", asset: "HOST-B", action: "execute", sha256: HASH, processName: "evil.exe" }),
+    );
+    const g = buildEvidenceGraph(s);
+    const execEdge = g.edges.find((e) => e.type === "file_lineage" && e.rule === "executed-file");
+    expect(execEdge).toBeDefined();
+    const targetNode = g.nodes.find((n) => n.id === execEdge!.target);
+    expect(targetNode?.kind).toBe("process");
+  });
+
+  it("skips write or execute events without an asset (no context to anchor)", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      // write event has no asset — cannot create a write-host node
+      ev({ id: "e1", action: "write", sha256: HASH }),
+      ev({ id: "e2", asset: "HOST-B", action: "execute", sha256: HASH }),
+    );
+    const g = buildEvidenceGraph(s);
+    const lineage = g.edges.filter((e) => e.type === "file_lineage");
+    // The wrote edge is skipped (no write asset); the exec edge still creates file→HOST-B.
+    expect(lineage).toHaveLength(1);
+    expect(lineage[0].rule).toBe("executed-file");
+  });
+});
+
+describe("buildEvidenceGraph — network_flow (src→dst)", () => {
+  it("creates network nodes and a flow edge from srcIp to dstIp:port", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", srcIp: "10.0.0.5", dstIp: "8.8.8.8", port: 443, severity: "High" }),
+    );
+    const g = buildEvidenceGraph(s);
+    const flows = g.edges.filter((e) => e.type === "network_flow");
+    expect(flows).toHaveLength(1);
+    expect(flows[0].confidence).toBe("high");
+    expect(flows[0].rule).toBe("network-connection");
+
+    const srcNode = g.nodes.find((n) => n.id === flows[0].source);
+    const dstNode = g.nodes.find((n) => n.id === flows[0].target);
+    expect(srcNode?.kind).toBe("network");
+    expect(dstNode?.kind).toBe("network");
+    expect(dstNode?.label).toBe("8.8.8.8:443");
+    expect(dstNode?.ip).toBe("8.8.8.8");
+  });
+
+  it("falls back to event.asset as source host node when srcIp is absent", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(ev({ id: "e1", asset: "HOST-A", dstIp: "1.2.3.4", severity: "Medium" }));
+    const g = buildEvidenceGraph(s);
+    const flows = g.edges.filter((e) => e.type === "network_flow");
+    expect(flows).toHaveLength(1);
+    const srcNode = g.nodes.find((n) => n.id === flows[0].source);
+    expect(srcNode?.label).toBe("HOST-A");
+    expect(srcNode?.kind).toBe("host");  // asset → host node, not a network node
+  });
+
+  it("deduplicates flows between the same src→dst pair", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", srcIp: "10.0.0.1", dstIp: "8.8.8.8", port: 443 }),
+      ev({ id: "e2", srcIp: "10.0.0.1", dstIp: "8.8.8.8", port: 443 }),
+    );
+    const flows = buildEvidenceGraph(s).edges.filter((e) => e.type === "network_flow");
+    expect(flows).toHaveLength(1);
+    expect(new Set(flows[0].eventIds)).toEqual(new Set(["e1", "e2"]));
+  });
+
+  it("produces no network-flow edge when dstIp is absent", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(ev({ id: "e1", srcIp: "10.0.0.1" }));
+    expect(buildEvidenceGraph(s).edges.filter((e) => e.type === "network_flow")).toHaveLength(0);
+  });
+
+  it("produces no network-flow edge when neither srcIp nor asset is set", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(ev({ id: "e1", dstIp: "8.8.8.8" }));
+    expect(buildEvidenceGraph(s).edges.filter((e) => e.type === "network_flow")).toHaveLength(0);
+  });
+
+  it("treats different destination ports as distinct target nodes", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", srcIp: "10.0.0.1", dstIp: "8.8.8.8", port: 80 }),
+      ev({ id: "e2", srcIp: "10.0.0.1", dstIp: "8.8.8.8", port: 443 }),
+    );
+    const flows = buildEvidenceGraph(s).edges.filter((e) => e.type === "network_flow");
+    expect(flows).toHaveLength(2);
+    const targets = new Set(flows.map((e) => e.target));
+    expect(targets.size).toBe(2);
+  });
+});
+
 describe("buildEvidenceGraph — invariants", () => {
   it("returns an empty graph for an empty case", () => {
     expect(buildEvidenceGraph(emptyState("c1"))).toEqual({ nodes: [], edges: [] });
