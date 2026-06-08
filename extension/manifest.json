@@ -11,6 +11,9 @@
     "toggle-capture": {
       "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
       "description": "Toggle DFIR screenshot capture on/off"
+    },
+    "_execute_action": {
+      "description": "Open the DFIR Companion popup"
     }
   },
   "content_scripts": [

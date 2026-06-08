@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`_execute_action` keyboard shortcut to open the extension popup.** Added the Chrome MV3 reserved `_execute_action` command to the extension's `manifest.json` `commands` block — Chrome natively opens the popup when the user triggers it. No suggested default key is set so the shortcut stays conflict-free; configure it at `chrome://extensions/shortcuts`. Complements the existing `Ctrl+Shift+S` capture-toggle shortcut.
+
 ## [0.12.0] - 2026-06-08
 
 ### Added
