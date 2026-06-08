@@ -266,7 +266,7 @@ export class CrowdStrikeReconExposureProvider implements CustomerExposureProvide
     });
     let res = await call(await this.ensureToken());
     if (res.status === 401) res = await call(await this.ensureToken(true));
-    if (res.status === 403) throw new Error("CrowdStrike Recon 403 — API client needs Monitoring Rules (Falcon Intelligence): Read");
+    if (res.status === 403) throw new Error("CrowdStrike Recon 403 — add the 'Monitoring rules (Falcon Intelligence): Read' scope to your DFIR_CROWDSTRIKE_* API client");
     if (res.status === 429) throw new Error("CrowdStrike Recon rate limit");
     if (res.status === 404) return {};
     if (!res.ok) throw new Error(`CrowdStrike Recon HTTP ${res.status}`);

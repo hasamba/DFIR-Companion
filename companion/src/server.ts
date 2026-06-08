@@ -849,7 +849,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   app.post("/cases/:id/customer-exposure/check", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     if (customerExposureProviders.length === 0) {
-      return res.status(501).json({ error: "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_CROWDSTRIKE_RECON_CLIENT_ID+_SECRET)" });
+      return res.status(501).json({ error: "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET)" });
     }
     const caseId = req.params.id;
     try {
@@ -2530,14 +2530,15 @@ export function buildCustomerExposureProviders(): CustomerExposureProvider[] {
       userAgent: process.env.DFIR_HIBP_USER_AGENT || "DFIR Companion",
     }));
   }
-  const csReconId = process.env.DFIR_CROWDSTRIKE_RECON_CLIENT_ID || process.env.DFIR_CROWDSTRIKE_CLIENT_ID;
-  const csReconSecret = process.env.DFIR_CROWDSTRIKE_RECON_CLIENT_SECRET || process.env.DFIR_CROWDSTRIKE_CLIENT_SECRET;
-  if (csReconId && csReconSecret) {
+  // CrowdStrike Recon reuses the SAME Falcon API client as the Intel enrichment provider
+  // (DFIR_CROWDSTRIKE_CLIENT_ID/_SECRET, same tenant → same cloud). To enable it, add the
+  // "Monitoring rules (Falcon Intelligence): Read" scope to that existing client.
+  if (process.env.DFIR_CROWDSTRIKE_CLIENT_ID && process.env.DFIR_CROWDSTRIKE_CLIENT_SECRET) {
     providers.push(new CrowdStrikeReconExposureProvider({
-      clientId: csReconId,
-      clientSecret: csReconSecret,
-      cloud: process.env.DFIR_CROWDSTRIKE_RECON_CLOUD || process.env.DFIR_CROWDSTRIKE_CLOUD,
-      baseUrl: process.env.DFIR_CROWDSTRIKE_RECON_BASE_URL || process.env.DFIR_CROWDSTRIKE_BASE_URL,
+      clientId: process.env.DFIR_CROWDSTRIKE_CLIENT_ID,
+      clientSecret: process.env.DFIR_CROWDSTRIKE_CLIENT_SECRET,
+      cloud: process.env.DFIR_CROWDSTRIKE_CLOUD,
+      baseUrl: process.env.DFIR_CROWDSTRIKE_BASE_URL,
     }));
   }
   return providers;

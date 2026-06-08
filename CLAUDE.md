@@ -188,7 +188,9 @@ Providers use injectable `fetchFn` (no network in tests), configured only when t
 confuse the two. It checks the *victim org's own* domains/emails against breach DBs
 (`analysis/customerExposure.ts` orchestration + `analysis/customerStore.ts` targets, with
 `integrations/customerExposureProviders.ts` adapters over LeakCheck/HIBP/DeHashed/CrowdStrike-Recon,
-each a `CustomerExposureProvider` with `lookupEmail`/`lookupDomain`). **Hard OPSEC boundary
+each a `CustomerExposureProvider` with `lookupEmail`/`lookupDomain`; CrowdStrike Recon reuses the SAME
+`DFIR_CROWDSTRIKE_CLIENT_ID`/`_SECRET` as the Intel enrichment provider — add the *Monitoring rules
+(Falcon Intelligence): Read* scope to that client). **Hard OPSEC boundary
 (`buildCustomerExposureTargets`):** domain searches use ONLY the analyst-entered customer domains
 (`state/customer.json`) — adversary/IOC domains are NEVER sent — and case-discovered emails are checked
 only when their domain is a customer domain AND the email isn't itself an IOC. The saved summary
