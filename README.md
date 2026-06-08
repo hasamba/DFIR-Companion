@@ -745,7 +745,7 @@ npm run reanalyze -- mycase --reset \
 
 ## Roadmap
 
-Planned work and ideas are tracked as **[GitHub Issues](https://github.com/hasamba/DFIR-Companion/issues?q=is%3Aissue%20state%3Aopen%20label%3Aenhancement)** under the `enhancement` label — open a new issue for a new idea rather than a checklist here. When an item ships, add it to the **Features** section above and `CHANGELOG.md`.
+Planned work and ideas are tracked as **[GitHub Issues](https://github.com/hasamba/DFIR-Companion/issues?q=is%3Aissue%20state%3Aopen%20label%3Aenhancement)** under the `enhancement` label.
 
 ## Tests
 
