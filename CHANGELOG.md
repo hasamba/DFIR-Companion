@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Configurable companion host/port in the extension (closes #12).** The companion URL (host + port) is now configurable via the extension's **Options page** (right-click the extension icon → Options, or chrome://extensions → Details → Extension options). The URL is persisted in `chrome.storage.local` and shared with the popup's existing Companion URL field. The manifest's redundant `http://127.0.0.1:4773/*` host permission has been removed (the already-present `<all_urls>` covers any custom host/port). A `normalizeCompanionUrl()` helper strips trailing slashes so a URL like `http://host:port/` doesn't produce a double-slash in POST paths.
+
 ## [0.12.0] - 2026-06-08
 
 ### Added
