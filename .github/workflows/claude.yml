@@ -4,7 +4,8 @@ name: Claude Code
 # Runs entirely in GitHub Actions (no local machine needed): it implements the request on a
 # branch and opens a pull request for review. Requires:
 #   1. The "Claude" GitHub App installed on this repo  -> https://github.com/apps/claude
-#   2. A repo secret ANTHROPIC_API_KEY                  -> Settings > Secrets and variables > Actions
+#   2. A repo secret CLAUDE_CODE_OAUTH_TOKEN — generated from a Claude Pro/Max subscription with
+#      `claude setup-token` (no Anthropic API key needed). Settings > Secrets and variables > Actions
 #   3. Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests"
 # Trigger: comment "@claude implement this and open a PR" on an issue.
 
@@ -42,6 +43,8 @@ jobs:
       - name: Run Claude Code
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Pro/Max subscription auth (generate with `claude setup-token`). Use
+          # `anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}` instead if you have an API key.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Optional: pin a model or pass extra flags, e.g.
           # claude_args: "--model claude-opus-4-8"
