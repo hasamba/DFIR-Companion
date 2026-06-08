@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Evidence Chain graph — the causal view of an incident (process trees + lateral movement).** Alongside the chronological forensic timeline and the (associative) asset↔IoC graph, the dashboard now has an **Evidence Chain** panel — and the report a **§4.8 Chain of evidence** section — that answers *how it happened*, not just *what happened when*. Two edge types, both **derived deterministically from fields the importers already populate (no AI call, no new store):** **`spawned`** (parent→child from each event's own `processName`/`parentName`, keyed by `(asset, name)` so `excel.exe → powershell.exe → cmd.exe` chains into one tree through the shared node), and **`lateral_move`** (the same binary **hash** on ≥2 hosts → host↔host, **high** confidence; the same **account** active on ≥2 hosts → account→host star, **medium** confidence). Every edge carries its **confidence**, the **rule** that produced it, a human **basis** line, and the **backing event ids** — a causal claim is auditable, because a wrong causal edge misleads in a way a wrong association edge does not. The account-lateral rule **filters Windows virtual principals** (DWM-*/UMFD-*/MSI namespaces, `Global\…`, service accounts) so it doesn't manufacture host↔host edges from machine noise that every host has. Derived **on read** with the same scope/legitimate filtering as the report (`buildEvidenceGraph`, pure + unit-tested; `GET /cases/:id/evidence-graph`). Dashboard panel reuses the asset-graph chrome — process-tree / lateral-movement toggles, confidence legend (solid = high, dashed = medium), a layered left→right SVG layout with directional arrowheads, zoom (buttons + wheel), fullscreen, and click-a-node-to-focus.
+
 ## [0.11.0] - 2026-06-08
 
 ### Added
