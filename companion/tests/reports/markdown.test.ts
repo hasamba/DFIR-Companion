@@ -22,7 +22,8 @@ describe("renderMarkdownReport", () => {
     expect(md).toContain("### 3.1 Incident timeline");
     expect(md).toContain("### 4.3 Findings");
     expect(md).toContain("Ransomware");
-    expect(md).toContain("### 4.5 MITRE ATT&CK");
+    expect(md).toContain("### 4.5 Customer exposure");
+    expect(md).toContain("### 4.6 MITRE ATT&CK");
     expect(md).toContain("T1486");
     // The investigation timeline and the attachments section are no longer in the report.
     expect(md).not.toContain("Investigation timeline");
@@ -225,7 +226,7 @@ describe("renderMarkdownReport", () => {
     state.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "2026-05-20T09:00:00Z" });
 
     const md = renderMarkdownReport(state);
-    expect(md).toContain("### 4.6 Key investigative questions");
+    expect(md).toContain("### 4.7 Key investigative questions");
     expect(md).toContain("What was the initial access vector?");
     expect(md).toContain("collect 4624 logs on targets");
     expect(md).toContain("### 4.4 Indicators of compromise");
@@ -264,5 +265,28 @@ describe("renderMarkdownReport", () => {
     );
     const md = renderMarkdownReport(state);
     expect(md).not.toContain("Answered investigation questions");
+  });
+
+  it("includes customer exposure when provided", () => {
+    const md = renderMarkdownReport(emptyState("c1"), undefined, {
+      checkedAt: "2026-06-08T12:00:00Z",
+      providers: ["Have I Been Pwned"],
+      targets: { domains: ["example.com"], emails: ["alice@example.com"] },
+      results: [{
+        provider: "Have I Been Pwned",
+        targetType: "email",
+        target: "alice@example.com",
+        email: "alice@example.com",
+        breach: "Adobe",
+        breachDate: "2013-10-04",
+        exposedData: ["Email addresses", "Passwords"],
+        secretPresent: true,
+      }],
+      errors: [],
+    });
+
+    expect(md).toContain("### 4.5 Customer exposure");
+    expect(md).toContain("Have I Been Pwned");
+    expect(md).toContain("credential material present");
   });
 });

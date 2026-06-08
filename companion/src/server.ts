@@ -71,12 +71,25 @@ import { diffTimeline } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
+import { CustomerStore, sanitizeTargets } from "./analysis/customerStore.js";
+import {
+  buildCustomerExposureTargets,
+  CustomerExposureStore,
+  summarizeExposure,
+  type CustomerExposureProvider,
+} from "./analysis/customerExposure.js";
 import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
 import { VelociraptorClient, buildVelociraptorClient } from "./integrations/velociraptor/velociraptorApi.js";
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
 import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
 import { pushCaseToTimesketch, type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
+import {
+  CrowdStrikeReconExposureProvider,
+  DeHashedExposureProvider,
+  HaveIBeenPwnedExposureProvider,
+  LeakCheckExposureProvider,
+} from "./integrations/customerExposureProviders.js";
 
 // Server console logging — every line is prefixed with an ISO-8601 timestamp so the local
 // log can be correlated with case events and outbound threat-intel API calls. This is a
@@ -146,6 +159,10 @@ export interface AppOptions {
   enrichmentProviders?: EnrichmentProvider[];
   enrichDelayMs?: number;
   enrichMaxIocs?: number;
+  // Customer Exposure is separate from IOC enrichment: only customer-owned domains/emails are
+  // sent to breach-data providers. IOC domains are never queried here.
+  customerExposureProviders?: CustomerExposureProvider[];
+  customerExposureDelayMs?: number;
   // Provider reachability gate. A self-hosted MISP / YETI can be down; rather than fire one
   // doomed request per IOC, each provider is probed (cached `enrichHealthTtlMs`, default 60s)
   // before sending — a down provider is skipped this run. When `enrichHealthPollMs` is set
@@ -198,7 +215,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // localhost-only server. Binding is 127.0.0.1, so this is local-machine access.
   app.use((req: Request, res: Response, next: NextFunction) => {
     res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type");
     // Chromium Private Network Access: a request from an extension page to a
     // private address (127.0.0.1) is blocked unless the preflight allows it.
@@ -242,7 +259,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS] });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS] });
   });
 
   // How many captures have been recorded for a case (counts the audit-log lines).
@@ -791,6 +808,63 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await customEntities.save(req.params.id, entities);
       return res.status(200).json({ custom: entities });
     } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Customer exposure / breach-data lookups. This is deliberately NOT IOC enrichment:
+  // only manually entered customer domains/emails plus observed emails under those customer
+  // domains are sent to providers. Remote domains collected as IOCs are never queried here.
+  const customerStore = new CustomerStore(store);
+  const customerExposureStore = new CustomerExposureStore(store);
+  const customerExposureProviders = options.customerExposureProviders ?? [];
+
+  app.get("/cases/:id/customer-exposure", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    try {
+      const state = await options.stateStore.load(req.params.id);
+      const targets = await customerStore.load(req.params.id);
+      return res.status(200).json({
+        anyConfigured: customerExposureProviders.length > 0,
+        providers: customerExposureProviders.map((p) => p.name),
+        targets,
+        effectiveTargets: buildCustomerExposureTargets(state, targets),
+        exposure: await customerExposureStore.load(req.params.id),
+      });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.put("/cases/:id/customer-exposure/targets", async (req: Request, res: Response) => {
+    try {
+      const targets = sanitizeTargets(req.body ?? {});
+      await customerStore.save(req.params.id, targets);
+      return res.status(200).json({ targets });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/customer-exposure/check", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    if (customerExposureProviders.length === 0) {
+      return res.status(501).json({ error: "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_CROWDSTRIKE_RECON_CLIENT_ID+_SECRET)" });
+    }
+    const caseId = req.params.id;
+    try {
+      const state = await options.stateStore.load(caseId);
+      const targets = await customerStore.load(caseId);
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: "checking customer exposure" });
+      const summary = await summarizeExposure(state, targets, customerExposureProviders, {
+        delayMs: options.customerExposureDelayMs,
+      });
+      await customerExposureStore.save(caseId, summary);
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `customer exposure: ${summary.results.length} hit(s), ${summary.errors.length} error(s)` });
+      logLine(`[exposure] ${caseId} providers=[${summary.providers.join(", ")}] domains=${summary.targets.domains.length} emails=${summary.targets.emails.length} hits=${summary.results.length} errors=${summary.errors.length}`);
+      return res.status(200).json(summary);
+    } catch (err) {
+      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -2436,6 +2510,39 @@ export function buildEnrichmentProviders(): EnrichmentProvider[] {
   return providers;
 }
 
+export function buildCustomerExposureProviders(): CustomerExposureProvider[] {
+  const providers: CustomerExposureProvider[] = [];
+  if (process.env.DFIR_LEAKCHECK_KEY) {
+    providers.push(new LeakCheckExposureProvider({
+      apiKey: process.env.DFIR_LEAKCHECK_KEY,
+      domainLimit: Number(process.env.DFIR_LEAKCHECK_DOMAIN_LIMIT) || undefined,
+    }));
+  }
+  if (process.env.DFIR_DEHASHED_KEY) {
+    providers.push(new DeHashedExposureProvider({
+      apiKey: process.env.DFIR_DEHASHED_KEY,
+      baseUrl: process.env.DFIR_DEHASHED_BASE_URL,
+    }));
+  }
+  if (process.env.DFIR_HIBP_KEY) {
+    providers.push(new HaveIBeenPwnedExposureProvider({
+      apiKey: process.env.DFIR_HIBP_KEY,
+      userAgent: process.env.DFIR_HIBP_USER_AGENT || "DFIR Companion",
+    }));
+  }
+  const csReconId = process.env.DFIR_CROWDSTRIKE_RECON_CLIENT_ID || process.env.DFIR_CROWDSTRIKE_CLIENT_ID;
+  const csReconSecret = process.env.DFIR_CROWDSTRIKE_RECON_CLIENT_SECRET || process.env.DFIR_CROWDSTRIKE_CLIENT_SECRET;
+  if (csReconId && csReconSecret) {
+    providers.push(new CrowdStrikeReconExposureProvider({
+      clientId: csReconId,
+      clientSecret: csReconSecret,
+      cloud: process.env.DFIR_CROWDSTRIKE_RECON_CLOUD || process.env.DFIR_CROWDSTRIKE_CLOUD,
+      baseUrl: process.env.DFIR_CROWDSTRIKE_RECON_BASE_URL || process.env.DFIR_CROWDSTRIKE_BASE_URL,
+    }));
+  }
+  return providers;
+}
+
 export interface RuntimePipelineParams {
   provider?: AnalyzeProvider;
   synthesisProvider?: AnalyzeProvider;
@@ -2469,7 +2576,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const tagsStore = new TagsStore(store);
   const synthMetaStore = new SynthMetaStore(store);
   const importMetaStore = new ImportMetaStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store));
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
@@ -2507,6 +2614,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     enrichmentProviders: buildEnrichmentProviders(),
     enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,
     enrichMaxIocs: Number(process.env.DFIR_ENRICH_MAX) || undefined,
+    customerExposureProviders: buildCustomerExposureProviders(),
+    customerExposureDelayMs: Number(process.env.DFIR_EXPOSURE_DELAY_MS) || undefined,
     // Reachability gate: probe a self-hosted MISP/YETI before sending IOCs, cached this long
     // (default 60s in the cache). The poller re-checks down servers on the same cadence and
     // auto-resumes skipped cases on recovery — set DFIR_ENRICH_HEALTH_POLL_MS=0 to disable it.

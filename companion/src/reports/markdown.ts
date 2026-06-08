@@ -4,6 +4,7 @@ import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportM
 import { deriveGlossary } from "./glossary.js";
 import { buildAssetGraph } from "../analysis/assetGraph.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
+import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 
 // Renders report.md following the AnttiKurittu incident-report-template structure
 // (https://github.com/AnttiKurittu/incident-report-template). Technical sections are
@@ -198,7 +199,35 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
   lines.push("");
 }
 
-function investigation(state: InvestigationState, lines: string[]): void {
+function customerExposure(exposure: CustomerExposureSummary | undefined, lines: string[]): void {
+  // Always present (like 4.7 Key questions) so the section numbering stays consistent whether or
+  // not a leak/breach check was run; a placeholder makes "not assessed" explicit to the reader.
+  lines.push("### 4.5 Customer exposure", "");
+  if (!exposure || !exposure.checkedAt) {
+    lines.push("_Not assessed — configure a leak/breach provider and run the customer exposure check from the dashboard._", "");
+    return;
+  }
+  lines.push(`Checked: ${exposure.checkedAt}`, "");
+  lines.push(`Providers: ${exposure.providers.join(", ") || "none"}`, "");
+  lines.push(`Customer domains: ${exposure.targets.domains.join(", ") || "none"}`, "");
+  lines.push(`Customer emails: ${exposure.targets.emails.join(", ") || "none"}`, "");
+  if (exposure.results.length === 0) {
+    lines.push("_No customer exposure results returned._", "");
+  } else {
+    lines.push("| Provider | Target | Email | Breach/source | Date | Data |", "| --- | --- | --- | --- | --- | --- |");
+    for (const r of exposure.results) {
+      lines.push(`| ${cellMd(r.provider)} | ${cellMd(`${r.targetType}:${r.target}`)} | ${cellMd(r.email ?? "")} | ${cellMd(r.breach ?? "")} | ${cellMd(r.breachDate ?? "")} | ${cellMd([...(r.exposedData ?? []), ...(r.secretPresent ? ["credential material present"] : [])].join(", "))} |`);
+    }
+    lines.push("");
+  }
+  if (exposure.errors.length > 0) {
+    lines.push("_Provider errors:_", "");
+    for (const e of exposure.errors) lines.push(`- ${e.provider} ${e.targetType}:${e.target} — ${e.error}`);
+    lines.push("");
+  }
+}
+
+function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary): void {
   lines.push("## 4 Investigation", "");
 
   lines.push("### 4.1 Attack path", "");
@@ -246,7 +275,9 @@ function investigation(state: InvestigationState, lines: string[]): void {
     lines.push("");
   }
 
-  lines.push("### 4.5 MITRE ATT&CK", "");
+  customerExposure(exposure, lines);
+
+  lines.push("### 4.6 MITRE ATT&CK", "");
   if (state.mitreTechniques.length === 0) {
     lines.push("_No techniques mapped yet._", "");
   } else {
@@ -257,7 +288,7 @@ function investigation(state: InvestigationState, lines: string[]): void {
     lines.push("");
   }
 
-  lines.push("### 4.6 Key investigative questions", "");
+  lines.push("### 4.7 Key investigative questions", "");
   if (state.keyQuestions.length === 0) {
     lines.push("_Not assessed yet — run synthesis._", "");
   } else {
@@ -301,7 +332,7 @@ function conclusions(state: InvestigationState, meta: ReportMeta, lines: string[
   }
 }
 
-export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta()): string {
+export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary): string {
   const lines: string[] = [];
 
   titlePage(state, meta, lines);
@@ -323,7 +354,7 @@ export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta
   lines.push("## 3 Timeline of events", "");
   incidentTimeline(state, lines);
 
-  investigation(state, lines);
+  investigation(state, lines, exposure);
   conclusions(state, meta, lines);
 
   return lines.join("\n");

@@ -13,6 +13,8 @@ import { MockProvider } from "../src/providers/provider.js";
 import { ReportWriter } from "../src/reports/reportWriter.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
 import { CommentsStore } from "../src/analysis/comments.js";
+import { emptyState } from "../src/analysis/stateTypes.js";
+import type { CustomerExposureProvider } from "../src/analysis/customerExposure.js";
 
 let app: ReturnType<typeof createApp>;
 
@@ -103,6 +105,54 @@ describe("HTTP server", () => {
       triggerType: "timer", imageBase64: await pngBase64(),
     });
     expect(res.status).toBe(404);
+  });
+
+  it("stores customer exposure targets and checks only customer-domain emails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-exposure-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const calls: string[] = [];
+    const provider: CustomerExposureProvider = {
+      name: "MockExposure",
+      lookupDomain: async (domain) => { calls.push(`domain:${domain}`); return []; },
+      lookupEmail: async (email) => {
+        calls.push(`email:${email}`);
+        return [{ provider: "MockExposure", targetType: "email", target: email, email, breach: "Breach" }];
+      },
+    };
+    const app = createApp(store, { stateStore, customerExposureProviders: [provider], customerExposureDelayMs: 0 });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save({
+      ...emptyState("c1"),
+      forensicTimeline: [{
+        id: "e1", timestamp: "2026-06-01T00:00:00Z",
+        description: "alice@example.com received a phish from attacker@evil.test",
+        severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+      }],
+      iocs: [{ id: "i1", type: "domain", value: "evil.test", firstSeen: "2026-06-01T00:00:00Z" }],
+    });
+
+    const saved = await request(app).put("/cases/c1/customer-exposure/targets").send({ domains: "example.com", emails: "" });
+    expect(saved.status).toBe(200);
+    expect(saved.body.targets).toEqual({ domains: ["example.com"], emails: [] });
+
+    const checked = await request(app).post("/cases/c1/customer-exposure/check").send({});
+    expect(checked.status).toBe(200);
+    expect(calls).toEqual(["domain:example.com", "email:alice@example.com"]);
+    expect(checked.body.targets).toEqual({ domains: ["example.com"], emails: ["alice@example.com"] });
+    expect(checked.body.results).toHaveLength(1);
+  });
+
+  it("returns 501 for customer exposure checks when no provider is configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-exposure-none-"));
+    const store = new CaseStore(root);
+    const app = createApp(store, { stateStore: new StateStore(store) });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+
+    const res = await request(app).post("/cases/c1/customer-exposure/check").send({});
+
+    expect(res.status).toBe(501);
+    expect(res.body.error).toContain("no customer exposure providers configured");
   });
 });
 
