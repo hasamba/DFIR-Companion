@@ -3579,9 +3579,9 @@
       });
     });
 
-    // ── Push to an external platform (DFIR-IRIS / Timesketch) ─────────────────
+    // ── Push to an external platform (DFIR-IRIS / Timesketch / MISP) ──────────
     // Each option appears in the Push menu only when the server has that target configured
-    // (GET /iris/status, /timesketch/status); the menu stays hidden until at least one does.
+    // (GET /iris/status, /timesketch/status, /misp/status); the menu stays hidden until at least one does.
     const pushSelect = document.getElementById("pushSelect");
     function addPushOption(value, label) {
       if ([...pushSelect.options].some((o) => o.value === value)) return;
@@ -3592,6 +3592,7 @@
     }
     fetch("/iris/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("iris", "Push to DFIR-IRIS"); }).catch(() => {});
     fetch("/timesketch/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("timesketch", "Push to Timesketch"); }).catch(() => {});
+    fetch("/misp/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("misp", "Push to MISP"); }).catch(() => {});
     pushSelect.onchange = (e) => {
       const sel = e.target;
       const target = sel.value;
@@ -3600,7 +3601,8 @@
       if (!target || !caseId) return;
       const c = encodeURIComponent(caseId);
       sel.disabled = true;
-      document.getElementById("status").textContent = `pushing to ${target === "iris" ? "IRIS" : "Timesketch"}…`;
+      const targetLabel = target === "iris" ? "IRIS" : target === "timesketch" ? "Timesketch" : "MISP";
+      document.getElementById("status").textContent = `pushing to ${targetLabel}…`;
       document.getElementById("reportLinks").innerHTML = "";
       fetch(`/cases/${c}/push/${target}`, { method: "POST" })
         .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
@@ -3613,13 +3615,21 @@
               `tasks +${res.tasks.added}, notes ${res.notes}` +
               (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
             if (res.caseUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.caseUrl)}" target="_blank" rel="noopener">Open in IRIS</a>`;
-          } else {
+          } else if (target === "timesketch") {
             const verb = res.created ? "created" : "updated";
             document.getElementById("status").textContent =
               `Timesketch sketch #${res.sketchId} ${verb}: ${res.events} event(s) → "${res.timelineName}"` +
               (res.replacedTimeline ? " (replaced)" : "") +
               (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
             if (res.sketchUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.sketchUrl)}" target="_blank" rel="noopener">Open in Timesketch</a>`;
+          } else {
+            const verb = res.created ? "created" : "updated";
+            document.getElementById("status").textContent =
+              `MISP event #${res.eventId} ${verb}: ${res.attributes.added} attribute(s) added` +
+              (res.attributes.existing ? ` (${res.attributes.existing} existing)` : "") +
+              (res.tags ? `, ${res.tags} tag(s)` : "") +
+              (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
+            if (res.eventUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.eventUrl)}" target="_blank" rel="noopener">Open in MISP</a>`;
           }
           if (res.warnings && res.warnings.length) console.warn("push warnings:", res.warnings);
         })

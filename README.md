@@ -389,6 +389,14 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   The pushed/exported timeline matches the report (same scope/legitimate filtering). Configure with
   `DFIR_TIMESKETCH_URL` + `DFIR_TIMESKETCH_USER` + `DFIR_TIMESKETCH_PASSWORD` (self-signed/internal-CA
   supported via `DFIR_TIMESKETCH_CA`/`_INSECURE`).
+- **MISP export** — push IOCs and MITRE findings from a case to a [MISP](https://www.misp-project.org/)
+  instance. Dashboard **Push** menu → **MISP** (or `npm run misp:push -- <caseId>`) creates one MISP
+  event per case and pushes each IOC as a typed attribute (`ip-dst`, `domain`, `md5`/`sha1`/`sha256`,
+  `url`, `filename`). **Idempotent**: each event is tagged `dfir-companion:case-{id}` so re-pushing finds
+  the existing event and adds only new attributes (deduplicated by value). MITRE techniques from findings
+  become `mitre-attack:T*` tags; threat level is derived from the worst finding severity. Distribution
+  defaults to "org only" (OPSEC-safe); configure with `DFIR_MISP_URL` + `DFIR_MISP_KEY` (reuses the
+  existing enrichment keys; self-signed/internal-CA supported via `DFIR_MISP_CA`/`_INSECURE`).
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template)
   (title page → executive summary → BIA, limitations, goals, glossary → incident/investigation
   timelines → investigation → conclusions/recommendations → attachments). Technical sections
