@@ -25,6 +25,12 @@ export const DEFAULT_SETTINGS: Settings = {
   running: false,
 };
 
+/** Strip trailing slashes and whitespace; fall back to the default when blank. */
+export function normalizeCompanionUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  return trimmed || DEFAULT_SETTINGS.companionUrl;
+}
+
 export interface ConnectionStatus {
   online: boolean;
   queued: number;
