@@ -318,39 +318,162 @@ port to `127.0.0.1` on your host — so the dashboard is never exposed on your n
 
 ## Environment variables (`companion/.env`)
 
-All companion behavior is configured via env vars. Shell vars override `.env`.
+All companion behavior is configured via env vars (`companion/.env` or shell). Copy `companion/.env.example` to start — it has inline comments for every variable.
 
-| Variable | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `DFIR_CASES_ROOT` | no | `./cases` | Where case folders are written. Relative paths resolve against `companion/`. |
-| `DFIR_PORT` | no | `4773` | Port the localhost server binds to (1–65535). Change to avoid `EADDRINUSE` or run multiple companions in parallel. The extension and dashboard must use the same port. |
-| `DFIR_HOST` | no | `127.0.0.1` | Interface the server binds to. Localhost-only by default. The Docker image sets `0.0.0.0` (Compose maps the port back to `127.0.0.1` on the host). Only set `0.0.0.0` natively if you intentionally want LAN access — then put it behind your own auth/firewall. |
-| `DFIR_AI_PROVIDER` | no (capture-only if unset) | — | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini`. |
-| `DFIR_AI_MODEL` | when provider set | — | Model id understood by the provider (e.g. `gpt-4o`, `openai/gpt-4o-mini`, `ollama/llama3.1`, `google/gemini-2.0-flash-001`). |
-| `DFIR_AI_KEY` | when provider set | — | Provider API key. Leave blank for an auth-less local LiteLLM proxy. |
-| `DFIR_AI_BASE_URL` | no | provider default | Override the provider's API base URL — for a self-hosted **LiteLLM** proxy or any OpenAI-compatible local endpoint. `litellm` defaults to `http://localhost:4000/v1`. |
-| `DFIR_AI_TIMEOUT_MS` | no | `180000` | Per-request timeout in ms. Raise for strong models on large timelines. |
-| `DFIR_AI_IMAGE_DETAIL` | no | `high` | `high` \| `low` \| `auto`. OpenAI/OpenRouter only — tiles screenshots at full res for small-text OCR. |
-| `DFIR_AI_SYNTH_PROVIDER` | no | = `DFIR_AI_PROVIDER` | Optional stronger model for the synthesis pass (findings / MITRE / attacker path). |
-| `DFIR_AI_SYNTH_MODEL` | no | = `DFIR_AI_MODEL` | Synthesis model id. |
-| `DFIR_AI_SYNTH_KEY` | no | = `DFIR_AI_KEY` | Synthesis provider API key. |
-| `DFIR_AI_SYNTH_BASE_URL` | no | = `DFIR_AI_BASE_URL` | Synthesis base URL override (e.g. a separate local LiteLLM proxy for the synthesis model). |
-| `DFIR_AI_AUTO_SYNTHESIZE` | no | `on` | Live synthesis during capture. `on` \| `off`. |
-| `DFIR_AI_AUTO_SYNTHESIZE_MS` | no | `8000` | Debounce window in ms after the last screenshot before auto-synthesis fires. |
-| `DFIR_FLUSH_INTERVAL_MS` | no | `300000` | Safety-net flush: drains a leftover capture buffer on this interval so a lone `timer`/`click` screenshot is analyzed even if it never fills a window. `0` disables. |
+### Core
 
-Example `.env` (two-tier):
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_CASES_ROOT` | `./cases` | Case folder location; relative paths resolve against `companion/` |
+| `DFIR_PORT` | `4773` | Server port (must match the extension and dashboard) |
+| `DFIR_HOST` | `127.0.0.1` | Bind interface; Docker image sets `0.0.0.0`, Compose re-maps to localhost on the host |
+| `DFIR_MAX_BODY_MB` | `256` | Max upload size in MB; raise if large SIEM/EDR exports fail with HTTP 413 |
+
+### AI — extraction (required to enable analysis)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_AI_PROVIDER` | — | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini` \| `anthropic`; unset = capture-only |
+| `DFIR_AI_MODEL` | — | Model id (e.g. `gpt-4o-mini`, `gemini-2.5-flash`); **must support vision** for screenshot extraction |
+| `DFIR_AI_KEY` | — | Provider API key; leave blank for an auth-less local proxy |
+| `DFIR_AI_BASE_URL` | provider default | Override base URL — for a local LiteLLM proxy or any OpenAI-compatible endpoint |
+| `DFIR_AI_TIMEOUT_MS` | `180000` | Per-request timeout (ms); raise for strong models on large timelines |
+| `DFIR_AI_MAX_TOKENS` | `16000` | Max completion tokens; too low truncates synthesis, prevents OpenRouter 402 on low balance |
+| `DFIR_AI_SYNTH_MAX_EVENTS` | `300` | Cap on forensic events sent to synthesis; Critical/High always get a finding regardless |
+| `DFIR_AI_CONTEXT_TOKENS` | `128000` | Model context window; raise for Claude/Gemini (200k/1M) to send more per call |
+| `DFIR_AI_IMAGE_DETAIL` | `high` | `high` \| `low` \| `auto` (OpenAI/OpenRouter); `high` tiles at full res for small-text OCR |
+| `DFIR_AI_AUTO_SYNTHESIZE` | `on` | Re-synthesize during capture: `on` \| `off` |
+| `DFIR_AI_AUTO_SYNTHESIZE_MS` | `8000` | Debounce window before auto-synthesis fires (ms) |
+| `DFIR_FLUSH_INTERVAL_MS` | `300000` | Safety-net flush of leftover capture buffers (ms); `0` disables |
+| `DFIR_ANONYMIZE` | `on` | Tokenize victim IPs/hosts/users/paths before AI calls: `on` \| `off` |
+
+### AI — synthesis (two-tier, optional)
+
+If unset, synthesis reuses the extraction model. Recommended: cheap vision model for extraction, strong text model for synthesis.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_AI_SYNTH_PROVIDER` | = `DFIR_AI_PROVIDER` | Provider for the one-call synthesis pass |
+| `DFIR_AI_SYNTH_MODEL` | = `DFIR_AI_MODEL` | Synthesis model id (e.g. `gpt-4o`, `gemini-2.5-pro`, `claude-sonnet-4-6`) |
+| `DFIR_AI_SYNTH_KEY` | = `DFIR_AI_KEY` | Synthesis API key |
+| `DFIR_AI_SYNTH_BASE_URL` | = `DFIR_AI_BASE_URL` | Synthesis base URL |
+
+### AI — custom prompts (optional)
+
+Each prompt has two override forms (priority order): `DFIR_AI_<NAME>_PROMPT` (inline text, read at startup) and `DFIR_AI_<NAME>_PROMPT_FILE` (path to file, re-read each call — edit and it applies immediately). `npm run prompts:eject` writes the built-in defaults as a starting point.
+
+| Prompt name | `<NAME>` token |
+|---|---|
+| Per-screenshot extraction | `SYSTEM` |
+| CSV import triage | `CSV` |
+| Log import triage | `LOG` |
+| Holistic synthesis | `SYNTH` |
+| Case Q&A | `ASK` |
+| Executive summary | `EXEC` |
+
+### Threat-intel enrichment (optional — off by default)
+
+Add a key to enable that provider. All external providers are opt-in per case from the dashboard.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_VT_KEY` | — | VirusTotal API key (hash / IP / domain / URL) |
+| `DFIR_HUNTINGCH_KEY` | — | abuse.ch Auth-Key for Hunting.ch (MalwareBazaar · ThreatFox · URLhaus · YARAify); falls back to `DFIR_MB_KEY` |
+| `DFIR_MB_KEY` | — | Legacy abuse.ch key — powers Hunting.ch; prefer `DFIR_HUNTINGCH_KEY` |
+| `DFIR_ABUSEIPDB_KEY` | — | AbuseIPDB API key (IP reputation) |
+| `DFIR_CROWDSTRIKE_CLIENT_ID` | — | CrowdStrike Falcon TI OAuth2 client ID |
+| `DFIR_CROWDSTRIKE_CLIENT_SECRET` | — | CrowdStrike OAuth2 secret (needs *Indicators: Read* + *MalQuery: Read*) |
+| `DFIR_CROWDSTRIKE_CLOUD` | `us-1` | Tenant cloud: `us-1` \| `us-2` \| `eu-1` \| `gov-us-1` \| `gov-us-2` |
+| `DFIR_CROWDSTRIKE_BASE_URL` | from cloud | Explicit API base URL (overrides `DFIR_CROWDSTRIKE_CLOUD`) |
+| `DFIR_ROCKYRACCOON_KEY` | — | RockyRaccoon key for Windows process prevalence / LOLBIN / ATT&CK |
+| `DFIR_MISP_URL` | — | MISP instance URL — both URL + key required for enrichment and push |
+| `DFIR_MISP_KEY` | — | MISP API auth key |
+| `DFIR_MISP_CA` | — | PEM CA bundle for internal-CA MISP (verification stays on) |
+| `DFIR_MISP_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+| `DFIR_MISP_DISTRIBUTION` | `0` | New event distribution: `0`=org, `1`=community, `2`=connected, `3`=all |
+| `DFIR_MISP_ANALYSIS` | `1` | New event analysis state: `0`=initial, `1`=ongoing, `2`=complete |
+| `DFIR_YETI_URL` | — | YETI instance URL — both URL + key required |
+| `DFIR_YETI_KEY` | — | YETI API key |
+| `DFIR_YETI_CA` | — | PEM CA bundle for internal-CA YETI |
+| `DFIR_YETI_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+| `DFIR_ENRICH_DELAY_MS` | `1500` | Throttle between lookups (ms) |
+| `DFIR_ENRICH_MAX` | `100` | Max IOCs per enrich run |
+| `DFIR_ENRICH_HEALTH_TTL_MS` | `60000` | Cache up/down verdict for self-hosted providers (ms) |
+| `DFIR_ENRICH_HEALTH_POLL_MS` | `60000` | Re-probe interval for down providers; `0` disables background poller |
+
+### Customer exposure (optional)
+
+Checks the **victim org's own** domains/emails against breach databases — never adversary/IOC domains.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_HIBP_KEY` | — | Have I Been Pwned API key |
+| `DFIR_HIBP_USER_AGENT` | `DFIR Companion` | HIBP User-Agent header |
+| `DFIR_LEAKCHECK_KEY` | — | LeakCheck Pro API key |
+| `DFIR_LEAKCHECK_DOMAIN_LIMIT` | `1000` | Max records per domain search |
+| `DFIR_DEHASHED_KEY` | — | DeHashed v2 API key |
+| `DFIR_DEHASHED_BASE_URL` | DeHashed default | Override DeHashed API base URL |
+| `DFIR_SHODAN_KEY` | — | Shodan key (domain → exposed hosts / ports / CVEs; no email lookup) |
+| `DFIR_EXPOSURE_DELAY_MS` | `1500` | Throttle between provider lookups (ms) |
+
+### DFIR-IRIS push (optional)
+
+Both URL and key are required to enable.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_IRIS_URL` | — | IRIS instance URL |
+| `DFIR_IRIS_KEY` | — | IRIS API key |
+| `DFIR_IRIS_CA` | — | PEM CA bundle for internal-CA IRIS |
+| `DFIR_IRIS_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+| `DFIR_IRIS_CUSTOMER_ID` | `1` | Customer id for new IRIS cases |
+| `DFIR_IRIS_CLASSIFICATION_ID` | `1` | Classification id for new IRIS cases |
+
+### Timesketch push (optional)
+
+URL + user + password all required to enable push. Export to JSONL works without any config.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_TIMESKETCH_URL` | — | Timesketch instance URL |
+| `DFIR_TIMESKETCH_USER` | — | Local-auth username |
+| `DFIR_TIMESKETCH_PASSWORD` | — | Local-auth password |
+| `DFIR_TIMESKETCH_TIMELINE` | `DFIR Companion timeline` | Managed timeline name |
+| `DFIR_TIMESKETCH_CA` | — | PEM CA bundle for internal-CA Timesketch |
+| `DFIR_TIMESKETCH_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+
+### Velociraptor live hunts (optional)
+
+Set `DFIR_VELOCIRAPTOR_API_CONFIG` to enable. Generate the config once with:
+```
+velociraptor --config server.config.yaml config api_client --name dfir --role administrator,api api.config.yaml
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_VELOCIRAPTOR_API_CONFIG` | — | Path to `api_client` config file |
+| `DFIR_VELOCIRAPTOR_BINARY` | `velociraptor` | Executable path (full `.exe` path on Windows) |
+| `DFIR_VELOCIRAPTOR_GUI_URL` | — | GUI base URL for deep-linking to launched hunts |
+| `DFIR_VELOCIRAPTOR_TIMEOUT_MS` | `60000` | Per-query timeout (ms) |
+| `DFIR_VELOCIRAPTOR_MAX_ROWS` | `1000` | Max rows returned to the dashboard |
+| `DFIR_VELOCIRAPTOR_MAX_OUTPUT` | `52428800` | Hard cap on query output bytes (50 MB) |
+
+### Analysis tuning
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_HUNT_PLATFORMS` | all | Comma-separated platform allowlist for hunt-pivot cards: `velociraptor`, `defender`, `elastic`, `splunk`, `sigma`, `yara`, `suricata` |
+| `DFIR_CORRELATE_WINDOW_S` | `2` | Time window (s) for same-path cross-source event merge |
+| `DFIR_PHASE_GAP_S` | `300` | Gap between events (s) that starts a new attack phase |
+
+Example `.env` (two-tier OpenRouter setup):
 
 ```
-DFIR_CASES_ROOT=./cases
-DFIR_PORT=4773
 DFIR_AI_PROVIDER=openrouter
 DFIR_AI_MODEL=openai/gpt-4o-mini          # cheap extraction (per screenshot)
 DFIR_AI_KEY=sk-or-...
 DFIR_AI_SYNTH_MODEL=google/gemini-2.5-pro # strong synthesis (one call)
 DFIR_AI_IMAGE_DETAIL=high
-DFIR_AI_AUTO_SYNTHESIZE=on
-DFIR_AI_AUTO_SYNTHESIZE_MS=8000
 ```
 
 ## npm scripts — full CLI reference
