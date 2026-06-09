@@ -16,6 +16,7 @@ import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGrap
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
+import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
 
 export interface ReportPaths {
   markdown: string;
@@ -35,6 +36,7 @@ export class ReportWriter {
     private readonly legitimate?: LegitimateStore,
     private readonly reportMeta?: ReportMetaStore,
     private readonly customerExposure?: CustomerExposureStore,
+    private readonly assetOverrides?: AssetOverridesStore,
   ) {}
 
   // Load the case state with the same deterministic report filters applied: drop
@@ -85,9 +87,13 @@ export class ReportWriter {
     return this.loadFilteredState(caseId);
   }
 
-  // The asset ↔ IoC graph for the case (same scope/legitimate filtering as the report).
+  // The asset ↔ IoC graph for the case (same scope/legitimate filtering as the report),
+  // with any analyst overrides (renames, additions, suppressions) applied on top.
   async assetGraph(caseId: string): Promise<AssetGraph> {
-    return buildAssetGraph(await this.loadFilteredState(caseId));
+    const state = await this.loadFilteredState(caseId);
+    const graph = buildAssetGraph(state);
+    const overrides = this.assetOverrides ? await this.assetOverrides.load(caseId) : emptyOverrides();
+    return applyAssetOverrides(graph, overrides);
   }
 
   // The causal evidence chain graph (process trees + lateral movement) for the case,
@@ -119,8 +125,10 @@ export class ReportWriter {
     };
     const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
     const exposure = await this.loadExposure(caseId);
-    await writeFile(paths.markdown, renderMarkdownReport(state, meta, exposure), "utf8");
-    await writeFile(paths.html, renderHtmlReport(state, meta, exposure), "utf8");
+    const overrides = this.assetOverrides ? await this.assetOverrides.load(caseId) : emptyOverrides();
+    const graph = applyAssetOverrides(buildAssetGraph(state), overrides);
+    await writeFile(paths.markdown, renderMarkdownReport(state, meta, exposure, graph), "utf8");
+    await writeFile(paths.html, renderHtmlReport(state, meta, exposure, graph), "utf8");
     await writeFile(paths.findingsCsv, findingsCsv(state), "utf8");
     await writeFile(paths.iocsCsv, iocsCsv(state), "utf8");
     await writeFile(paths.timelineCsv, timelineCsv(state), "utf8");
