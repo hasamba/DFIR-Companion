@@ -496,10 +496,10 @@
         <div id="evGraphWrap" class="asset-graph-wrap">
           <div class="asset-controls">
             <span>Show:</span>
-            <label><input type="checkbox" class="ev-type-toggle" value="spawned" checked> Process trees</label>
-            <label><input type="checkbox" class="ev-type-toggle" value="lateral_move" checked> Lateral movement</label>
-            <label><input type="checkbox" class="ev-type-toggle" value="file_lineage" checked> File lineage</label>
-            <label><input type="checkbox" class="ev-type-toggle" value="network_flow" checked> Network flows</label>
+            <label title="Parent → child process spawn chains (processName / parentName fields). Shows how an initial process (e.g. Word) spawned a shell, which spawned further tools."><input type="checkbox" class="ev-type-toggle" value="spawned" checked> Process trees</label>
+            <label title="Same binary hash or account seen on ≥ 2 hosts — indicates the attacker moved laterally between machines."><input type="checkbox" class="ev-type-toggle" value="lateral_move"> Lateral movement</label>
+            <label title="A file written (action=write) then executed (action=execute) with the same hash — shows dropper → payload chains."><input type="checkbox" class="ev-type-toggle" value="file_lineage"> File lineage</label>
+            <label title="Directed network connections from Suricata alerts / Zeek notices (srcIp → dstIp:port). Shows C2 call-outs and lateral network movement."><input type="checkbox" class="ev-type-toggle" value="network_flow"> Network flows</label>
             <span class="asset-ctrl-sep"></span>
             <span class="ev-legend"><span class="ev-leg-line ev-leg-high"></span>high
               <span class="ev-leg-line ev-leg-med"></span>medium
@@ -1045,7 +1045,9 @@
     let evGraphTimer = null;
     let evZoom = 1;
     let evDims = { W: 0, H: 0 };
-    const evTypesEnabled = new Set(["spawned", "lateral_move", "file_lineage", "network_flow"]);
+    const evTypesEnabled = new Set(
+      [...document.querySelectorAll(".ev-type-toggle")].filter(cb => cb.checked).map(cb => cb.value)
+    );
     // Drag-to-reposition state. evPos = effective id→{x,y} for the current draw (auto layout
     // with any manual overrides applied); evPosOverride = the persisted manual positions.
     let evPos = new Map(), evNodes = [], evEdges = [];
