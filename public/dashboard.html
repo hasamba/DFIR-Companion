@@ -2297,7 +2297,11 @@
     function applyAiStatus(evt) {
       if (evt.status === "analyzing") {
         if (evt.phase === "synthesizing") setAi("analyzing", "synthesizing findings… " + (evt.detail || ""));
-        else setAi("analyzing", "processing evidence… " + (evt.detail || ""));
+        else if (evt.detail && /^enriching IOC/.test(evt.detail)) {
+          const el = document.getElementById("aiStatus");
+          el.className = "ai-analyzing";
+          el.textContent = evt.detail;
+        } else setAi("analyzing", "processing evidence… " + (evt.detail || ""));
       } else if (evt.status === "idle") {
         setAi("idle", "idle — up to date (" + fmtTime(evt.at) + ")");
         clearTransientStatus();  // re-synthesis finished → drop the "…re-synthesizing" line
