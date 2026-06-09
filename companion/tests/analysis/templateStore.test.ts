@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TemplateStore, BUILT_IN_TEMPLATES, buildInitialQuestions } from "../../src/analysis/templateStore.js";
+import { TemplateStore, BUILT_IN_TEMPLATES, buildInitialQuestions, buildInitialNextSteps } from "../../src/analysis/templateStore.js";
 
 describe("TemplateStore", () => {
   let root: string;
@@ -121,5 +121,47 @@ describe("buildInitialQuestions()", () => {
     const ids1 = q1.map((q) => q.id);
     const ids2 = q2.map((q) => q.id);
     expect(ids1).not.toEqual(ids2);
+  });
+});
+
+describe("buildInitialNextSteps()", () => {
+  it("creates one NextStep per entry with correct fields", () => {
+    const template = BUILT_IN_TEMPLATES.find((t) => t.id === "ransomware")!;
+    const steps = buildInitialNextSteps(template);
+    expect(steps).toHaveLength(template.initialNextSteps.length);
+    for (const [i, s] of steps.entries()) {
+      expect(s.id).toBeTruthy();
+      expect(s.action).toBe(template.initialNextSteps[i].action);
+      expect(s.priority).toBe(template.initialNextSteps[i].priority);
+      expect(s.rationale).toBe(template.initialNextSteps[i].rationale);
+      expect(s.pointer).toBe(template.initialNextSteps[i].pointer);
+    }
+  });
+
+  it("all built-in templates have at least 5 next steps", () => {
+    for (const t of BUILT_IN_TEMPLATES) {
+      expect(t.initialNextSteps.length).toBeGreaterThanOrEqual(5);
+    }
+  });
+
+  it("all next steps have valid priority values", () => {
+    const valid = new Set(["critical", "high", "medium", "low"]);
+    for (const t of BUILT_IN_TEMPLATES) {
+      for (const s of t.initialNextSteps) {
+        expect(valid.has(s.priority)).toBe(true);
+      }
+    }
+  });
+
+  it("returns distinct ids across calls", () => {
+    const template = BUILT_IN_TEMPLATES.find((t) => t.id === "general-malware")!;
+    const s1 = buildInitialNextSteps(template);
+    const s2 = buildInitialNextSteps(template);
+    expect(s1.map((s) => s.id)).not.toEqual(s2.map((s) => s.id));
+  });
+
+  it("returns empty array when template has no initialNextSteps", () => {
+    const bare = { ...BUILT_IN_TEMPLATES[0], initialNextSteps: [] as never[] };
+    expect(buildInitialNextSteps(bare)).toEqual([]);
   });
 });
