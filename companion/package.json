@@ -1,6 +1,6 @@
 {
   "name": "dfir-companion",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
@@ -19,6 +19,8 @@
     "yeti": "tsx scripts/yeti-lookup.ts",
     "iris:push": "tsx scripts/push-iris.ts",
     "timesketch:push": "tsx scripts/push-timesketch.ts",
+    "misp:push": "tsx scripts/push-misp.ts",
+    "seed-demo": "tsx scripts/seed-demo-case.ts",
     "icons": "tsx scripts/make-icons.ts",
     "package:sea": "node scripts/build-sea.mjs"
   },
