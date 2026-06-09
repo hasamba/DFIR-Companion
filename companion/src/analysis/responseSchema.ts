@@ -61,6 +61,8 @@ export const deltaSchema = z.object({
   })).optional(),
   // Narrative reconstruction of the attacker's path (kill-chain story).
   attackerPath: z.string().optional(),
+  // Prose narrative of the incident for management/stakeholders.
+  narrativeTimeline: z.string().optional(),
   // Standard DFIR questions with current answers + where to find them.
   keyQuestions: z.array(z.object({
     id: z.string().min(1),

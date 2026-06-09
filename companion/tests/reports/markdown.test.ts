@@ -48,6 +48,7 @@ describe("renderMarkdownReport", () => {
       "## 2.4 Glossary of terms",
       "## 3 Timeline of events",
       "### 3.1 Incident timeline",
+      "### 3.2 Narrative timeline",
       "## 4 Investigation",
       "## 5 Conclusions and recommendations",
     ]) {
@@ -288,5 +289,19 @@ describe("renderMarkdownReport", () => {
     expect(md).toContain("### 4.5 Customer exposure");
     expect(md).toContain("Have I Been Pwned");
     expect(md).toContain("credential material present");
+  });
+
+  it("renders the narrative timeline section from state when populated, placeholder when empty", () => {
+    const empty = emptyState("c1");
+    const mdEmpty = renderMarkdownReport(empty);
+    expect(mdEmpty).toContain("### 3.2 Narrative timeline");
+    expect(mdEmpty).toContain("_Narrative not yet generated");
+
+    const withNarrative = emptyState("c1");
+    withNarrative.narrativeTimeline = "At 09:00 UTC the attacker sent a phishing email.\n\nThis led to execution of a malicious macro.";
+    const mdWithNarrative = renderMarkdownReport(withNarrative);
+    expect(mdWithNarrative).toContain("### 3.2 Narrative timeline");
+    expect(mdWithNarrative).toContain("At 09:00 UTC the attacker sent a phishing email.");
+    expect(mdWithNarrative).not.toContain("_Narrative not yet generated");
   });
 });

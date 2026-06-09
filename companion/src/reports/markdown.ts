@@ -179,6 +179,16 @@ function glossary(state: InvestigationState, meta: ReportMeta, lines: string[]):
   lines.push("");
 }
 
+function narrativeTimeline(state: InvestigationState, lines: string[]): void {
+  lines.push("### 3.2 Narrative timeline", "");
+  lines.push("_Chronological prose account of the incident for management and stakeholders._", "");
+  if (!state.narrativeTimeline || state.narrativeTimeline.trim().length === 0) {
+    lines.push("_Narrative not yet generated — run Synthesize or use the Generate button in the dashboard._", "");
+    return;
+  }
+  lines.push(state.narrativeTimeline, "");
+}
+
 function incidentTimeline(state: InvestigationState, lines: string[]): void {
   lines.push("### 3.1 Incident timeline", "");
   lines.push("_Real incident events, ordered by when they actually happened._", "");
@@ -439,6 +449,7 @@ export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta
 
   lines.push("## 3 Timeline of events", "");
   incidentTimeline(state, lines);
+  narrativeTimeline(state, lines);
   attackPhases(state, lines);
 
   investigation(state, lines, exposure, assetGraph);

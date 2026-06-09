@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getSystemPrompt, getSynthesisPrompt, SYSTEM_PROMPT } from "../../src/analysis/pipeline.js";
+import { getSystemPrompt, getSynthesisPrompt, getNarrativePrompt, NARRATIVE_PROMPT, SYSTEM_PROMPT } from "../../src/analysis/pipeline.js";
 
 const ENVS = ["DFIR_AI_SYSTEM_PROMPT", "DFIR_AI_SYSTEM_PROMPT_FILE", "DFIR_AI_SYNTH_PROMPT", "DFIR_AI_SYNTH_PROMPT_FILE"];
 afterEach(() => { for (const e of ENVS) delete process.env[e]; });
@@ -43,5 +43,15 @@ describe("user-overridable prompts", () => {
     process.env.DFIR_AI_SYSTEM_PROMPT_FILE = f;
     expect(getSystemPrompt()).toBe(SYSTEM_PROMPT);
     await rm(dir, { recursive: true, force: true });
+  });
+
+  it("narrative prompt returns the built-in default and requires JSON shape with narrativeTimeline", () => {
+    expect(getNarrativePrompt()).toBe(NARRATIVE_PROMPT);
+    // The prompt must ask for a narrativeTimeline JSON field.
+    expect(NARRATIVE_PROMPT).toContain("narrativeTimeline");
+    // The prompt must instruct prose paragraphs, not bullet points.
+    expect(NARRATIVE_PROMPT).toContain("prose");
+    // The synthesis prompt must also include narrativeTimeline in its output spec.
+    expect(getSynthesisPrompt()).toContain("narrativeTimeline");
   });
 });

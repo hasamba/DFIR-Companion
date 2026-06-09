@@ -212,6 +212,7 @@ export function mergeDelta(
     nextSteps,
     lastSummary: delta.summary.trim().length > 0 ? delta.summary : state.lastSummary,
     attackerPath: (delta.attackerPath ?? "").trim().length > 0 ? (delta.attackerPath as string) : state.attackerPath,
+    narrativeTimeline: (delta.narrativeTimeline ?? "").trim().length > 0 ? (delta.narrativeTimeline as string) : state.narrativeTimeline,
     updatedAt: ctx.timestamp,
   };
 }
