@@ -496,7 +496,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.12.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.13.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -521,7 +521,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.12.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.13.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -572,15 +572,15 @@
         </div>
         <div class="feature-card animate animate-d1">
           <div class="feature-icon red">⚠️</div>
-          <h3>Findings &amp; MITRE ATT&amp;CK</h3>
-          <p>Per-technique analytic conclusions with severity and MITRE mapping. Safety net auto-creates findings for any high-severity events synthesis missed.</p>
-          <span class="tag">severity-aware</span>
+          <h3>Findings &amp; Confidence</h3>
+          <p>Per-technique analytic conclusions with severity, MITRE mapping, and AI confidence score (0–100). Color-coded badges: green ≥80, yellow 50–79, red &lt;50. Filter by min confidence.</p>
+          <span class="tag">confidence-scored</span>
         </div>
         <div class="feature-card animate animate-d2">
           <div class="feature-icon amber">🎯</div>
           <h3>IOCs &amp; Attack Path</h3>
-          <p>Indicators with enrichment verdicts (VirusTotal, MISP, YETI, AbuseIPDB, CrowdStrike, Hunting.ch). Full kill-chain narrative from initial access to exfiltration.</p>
-          <span class="tag">enriched + cached</span>
+          <p>Indicators with enrichment verdicts (VirusTotal, MISP, YETI, AbuseIPDB, CrowdStrike, Hunting.ch). Push IOCs + MITRE to MISP. Full kill-chain narrative.</p>
+          <span class="tag">enriched + MISP export</span>
         </div>
         <div class="feature-card animate animate-d3">
           <div class="feature-icon green">🔗</div>
@@ -591,8 +591,8 @@
         <div class="feature-card animate animate-d4">
           <div class="feature-icon purple">🔗</div>
           <h3>Evidence Chain Graph</h3>
-          <p>Causal view of the incident: process trees + lateral movement in one cross-host attack graph. Trace the full path end to end — spawned, lateral-move, and ran-on edges with confidence levels.</p>
-          <span class="tag">v0.12 — deterministic</span>
+          <p>Causal attack graph: process trees + lateral movement + file lineage + network flows. Trace the full path end to end — spawned, lateral-move, ran-on, wrote-file, executed-file, network edges with confidence levels.</p>
+          <span class="tag">deterministic — no AI</span>
         </div>
         <div class="feature-card animate animate-d5">
           <div class="feature-icon cyan">💬</div>
@@ -603,7 +603,7 @@
         <div class="feature-card animate">
           <div class="feature-icon cyan">📄</div>
           <h3>Reports — MD / HTML / PDF / DOCX</h3>
-          <p>Full incident report following the AnttiKurittu template. Executive summary, BIA, timelines, conclusions. One-click PDF. Push to DFIR-IRIS &amp; Timesketch.</p>
+          <p>Full incident report following the AnttiKurittu template. Executive summary, BIA, timelines, conclusions. One-click PDF. Push to DFIR-IRIS, Timesketch, and MISP.</p>
           <span class="tag">exportable</span>
         </div>
         <div class="feature-card animate animate-d1">
@@ -635,6 +635,18 @@
           <h3>AI Input Anonymization</h3>
           <p>Reversibly tokenizes internal IPs, usernames, hostnames before the LLM sees them. Adversary IOCs preserved. Per-case toggle. Default on.</p>
           <span class="tag">OPSEC-first</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon amber">⚡</div>
+          <h3>Attack Phases</h3>
+          <p>Groups timeline events into bursts by time gaps — initial access, persistence, lateral movement, exfil. Each phase labeled with dominant ATT&amp;CK tactic. No AI, purely algorithmic.</p>
+          <span class="tag">v0.13 — temporal clustering</span>
+        </div>
+        <div class="feature-card animate animate-d1">
+          <div class="feature-icon green">⚙️</div>
+          <h3>Settings Modal</h3>
+          <p>All configuration in one place: investigator name, AI provider/model/keys, enrichment &amp; exposure provider keys, integrations (IRIS, Timesketch, Velociraptor, MISP), and section visibility — drag-reorderable.</p>
+          <span class="tag">v0.13</span>
         </div>
       </div>
     </div>
