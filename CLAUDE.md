@@ -229,6 +229,14 @@ only when their domain is a customer domain AND the email isn't itself an IOC. T
   model; synthesis is one text-only call → can use a strong model. Configure via
   `DFIR_AI_MODEL` / `DFIR_AI_SYNTH_MODEL`. Be mindful of API cost when running
   `reanalyze`/`synthesize` against real cases.
+- **Prompt caching (Anthropic) — system prompt ONLY, never case content.** `AnthropicProvider`
+  marks the static system prompt as the cacheable prefix (`cache_control: ephemeral`) so it's
+  billed once across the many extraction calls. **OPSEC invariant:** the breakpoint must stay on
+  the system prompt — the user message + screenshots follow it and must NEVER be the cached region
+  (caching retains the prefix provider-side for the TTL; that must never be forensic evidence). Usage
+  (`cacheCreationTokens`/`cacheReadTokens`) comes back on `AnalyzeResult.usage`; `DFIR_AI_DEBUG_USAGE`
+  logs it (a sub-threshold prefix — 1024 tok, 2048 on Haiku — silently no-ops). OpenAI/OpenRouter
+  cache automatically; synthesis (single call) is intentionally not cached.
 - **Secrets:** `.env` is gitignored (so are `cases/`). Never commit keys or evidence.
   Config is via `DFIR_*` env vars — see `companion/.env.example`.
 - **Immutability:** the merge (`stateMerge.ts`) returns new objects, never mutates input

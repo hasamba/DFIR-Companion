@@ -1,4 +1,4 @@
-import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, ProviderError, httpErrorKind, httpErrorMessage } from "./provider.js";
+import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, type ProviderUsage, ProviderError, httpErrorKind, httpErrorMessage } from "./provider.js";
 
 type FetchFn = typeof fetch;
 
@@ -44,7 +44,14 @@ export class AnthropicProvider implements AIProvider {
         body: JSON.stringify({
           model: this.opts.model,
           max_tokens: maxTokens,
-          system: req.systemPrompt,
+          // Prompt caching (GA — no beta header). Mark ONLY the static system prompt as the
+          // cacheable prefix: extraction reuses it across many screenshot batches, so the
+          // prefix is billed once and read cheaply thereafter. The case content (user message
+          // + screenshots) follows this breakpoint and is NEVER cached — OPSEC: only the
+          // static instructions are retained provider-side for the (5-min) cache TTL, never
+          // forensic evidence. A prefix under the model's minimum (1024 tokens; 2048 on Haiku)
+          // silently no-ops — confirm via usage.cache_* below (DFIR_AI_DEBUG_USAGE), don't assume.
+          system: [{ type: "text", text: req.systemPrompt, cache_control: { type: "ephemeral" } }],
           messages: [{ role: "user", content }],
         }),
         signal: AbortSignal.timeout(timeoutMs),
@@ -61,9 +68,30 @@ export class AnthropicProvider implements AIProvider {
       const body = await res.text().catch(() => "");
       throw new ProviderError(httpErrorMessage("Anthropic", res.status, body), kind);
     }
-    const json = (await res.json()) as { content?: { type: string; text?: string }[] };
+    const json = (await res.json()) as {
+      content?: { type: string; text?: string }[];
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?: number;
+      };
+    };
     const text = json.content?.find(b => b.type === "text")?.text;
     if (!text) throw new ProviderError("Anthropic returned no content", "other");
-    return { rawText: text };
+    const u = json.usage;
+    const usage: ProviderUsage | undefined = u && {
+      ...(u.input_tokens !== undefined ? { inputTokens: u.input_tokens } : {}),
+      ...(u.output_tokens !== undefined ? { outputTokens: u.output_tokens } : {}),
+      ...(u.cache_creation_input_tokens !== undefined ? { cacheCreationTokens: u.cache_creation_input_tokens } : {}),
+      ...(u.cache_read_input_tokens !== undefined ? { cacheReadTokens: u.cache_read_input_tokens } : {}),
+    };
+    // Confirm prompt caching actually fired (default-quiet: extraction makes many calls).
+    // Set DFIR_AI_DEBUG_USAGE to see per-call cache read/write so a sub-threshold no-op is
+    // visible rather than silently assumed.
+    if (process.env.DFIR_AI_DEBUG_USAGE && usage && ((usage.cacheReadTokens ?? 0) > 0 || (usage.cacheCreationTokens ?? 0) > 0)) {
+      console.warn(`[DFIR] anthropic cache: read=${usage.cacheReadTokens ?? 0} write=${usage.cacheCreationTokens ?? 0} input=${usage.inputTokens ?? 0} tokens`);
+    }
+    return { rawText: text, ...(usage ? { usage } : {}) };
   }
 }
