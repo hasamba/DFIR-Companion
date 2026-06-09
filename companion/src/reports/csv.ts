@@ -10,9 +10,10 @@ function row(values: string[]): string {
 }
 
 export function findingsCsv(state: InvestigationState): string {
-  const header = "id,severity,title,description,relatedIocs,mitreTechniques,sourceScreenshots,firstSeen,lastUpdated,status";
+  const header = "id,severity,confidence,title,description,relatedIocs,mitreTechniques,sourceScreenshots,firstSeen,lastUpdated,status";
   const rows = state.findings.map((f) => row([
-    f.id, f.severity, f.title, f.description,
+    f.id, f.severity, f.confidence !== undefined ? String(f.confidence) : "",
+    f.title, f.description,
     f.relatedIocs.join("|"), f.mitreTechniques.join("|"), f.sourceScreenshots.join("|"),
     f.firstSeen, f.lastUpdated, f.status,
   ]));

@@ -42,6 +42,7 @@ import type { PlasoImportOptions } from "./analysis/plasoImport.js";
 import { parseSandboxReport } from "./analysis/sandboxImport.js";
 import type { SandboxImportOptions } from "./analysis/sandboxImport.js";
 import { detectImportKind } from "./analysis/importDetect.js";
+import { getEnvForSettings, updateEnv as updateEnvFile } from "./settings/envManager.js";
 import { parseMinSeverity } from "./analysis/severityFloor.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
@@ -65,6 +66,8 @@ import { ReportMetaStore } from "./reports/reportMeta.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore } from "./analysis/tags.js";
+import { AssetOverridesStore } from "./analysis/assetOverrides.js";
+import type { AssetType } from "./analysis/assetGraph.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
@@ -84,6 +87,8 @@ import { VelociraptorClient, buildVelociraptorClient } from "./integrations/velo
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
 import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
 import { pushCaseToTimesketch, type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
+import { MispPushClient } from "./integrations/misp/mispPushClient.js";
+import { pushCaseToMisp, type MispPushOptions } from "./integrations/misp/mispPush.js";
 import {
   DeHashedExposureProvider,
   HaveIBeenPwnedExposureProvider,
@@ -140,6 +145,11 @@ export interface AppOptions {
   // re-fetch when a tag is added/removed.
   tagsStore?: TagsStore;
   onTags?: (caseId: string) => void;
+  // Manual edits to the asset ↔ IoC graph (renames, additions, suppressions, link overrides).
+  // Persisted per case in state/asset-overrides.json; survives synthesis. onAssetOverrides
+  // pings dashboard clients over the WS to re-fetch the graph when overrides change.
+  assetOverridesStore?: AssetOverridesStore;
+  onAssetOverrides?: (caseId: string) => void;
   // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
   // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
   synthMetaStore?: SynthMetaStore;
@@ -187,6 +197,10 @@ export interface AppOptions {
   // options (base URL for the sketch link, managed timeline name).
   timesketchClient?: TimesketchClient;
   timesketchOptions?: TimesketchPushOptions;
+  // MISP export: a configured client (when DFIR_MISP_URL/KEY are set) + push options
+  // (distribution, analysis state, base URL for the event link).
+  mispPushClient?: MispPushClient;
+  mispPushOptions?: MispPushOptions;
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -552,6 +566,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Temporal attack phases — the forensic timeline grouped into bursts of activity by time gap
+  // (no AI). Derived on demand with the same scope/legitimate filtering as the report.
+  app.get("/cases/:id/phases", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.phases(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export just the incident (forensic) timeline as CSV, generated on demand from the
   // current state (same scope/legitimate filtering as the report) — no full report needed.
   app.get("/cases/:id/incident-timeline.csv", async (req: Request, res: Response) => {
@@ -720,6 +745,31 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[timesketch] ${caseId} push ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Whether a MISP push target is configured (so the dashboard can show/hide the button).
+  app.get("/misp/status", (_req: Request, res: Response) => {
+    res.status(200).json({ configured: !!options.mispPushClient, baseUrl: options.mispPushOptions?.baseUrl });
+  });
+
+  // Push a case to MISP: find-or-create the event by the idempotency tag, then push
+  // IOCs as attributes and MITRE techniques as tags. Idempotent: re-push adds only
+  // what's missing (attributes deduplicated by value).
+  app.post("/cases/:id/push/misp", async (req: Request, res: Response) => {
+    if (!options.mispPushClient) return res.status(501).json({ error: "MISP not configured (set DFIR_MISP_URL and DFIR_MISP_KEY)" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const state = await options.stateStore.load(caseId);
+      logLine(`[misp] ${caseId} push START`);
+      const result = await pushCaseToMisp(options.mispPushClient, { caseId, state }, options.mispPushOptions);
+      logLine(`[misp] ${caseId} push DONE -> event ${result.eventId} (${result.created ? "created" : "updated"}); ` +
+        `attributes +${result.attributes.added}/${result.attributes.existing}, tags +${result.tags}, warnings ${result.warnings.length}`);
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[misp] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
     }
   });
@@ -2367,6 +2417,122 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Manual asset-graph edits (renames, additions, suppressions, link overrides). Each write
+  // pings live dashboard clients so the graph refreshes without a page reload.
+  app.get("/cases/:id/asset-overrides", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    try {
+      return res.status(200).json(await options.assetOverridesStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Settings: read/write the .env file so the dashboard can configure the companion.
+  app.get("/settings/env", async (_req: Request, res: Response) => {
+    try {
+      const env = await getEnvForSettings();
+      return res.json({ env });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Rename (or un-rename) an asset by its graph id. Pass an empty name to clear the rename.
+  app.put("/cases/:id/asset-overrides/assets/:assetId", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    const name = typeof req.body?.name === "string" ? req.body.name : "";
+    try {
+      const ov = await options.assetOverridesStore.rename(req.params.id, req.params.assetId, name);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(200).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Create a manual asset (one not auto-derived from the forensic timeline).
+  app.post("/cases/:id/asset-overrides/assets", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const type = typeof req.body?.type === "string" ? req.body.type.trim() : "host";
+    if (!name) return res.status(400).json({ error: "name is required" });
+    try {
+      const result = await options.assetOverridesStore.addAsset(req.params.id, { name, type: type as AssetType });
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(201).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Suppress an auto-derived asset or delete a manual one.
+  app.delete("/cases/:id/asset-overrides/assets/:assetId", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    try {
+      const ov = await options.assetOverridesStore.removeAsset(req.params.id, req.params.assetId);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(200).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Restore a suppressed auto-derived asset (remove it from the removed list).
+  app.post("/cases/:id/asset-overrides/assets/:assetId/restore", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    try {
+      const ov = await options.assetOverridesStore.restoreAsset(req.params.id, req.params.assetId);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(200).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Add a manual link between an asset and an IoC. Body: { asset, ioc }.
+  app.post("/cases/:id/asset-overrides/links", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    const asset = typeof req.body?.asset === "string" ? req.body.asset.trim() : "";
+    const ioc = typeof req.body?.ioc === "string" ? req.body.ioc.trim() : "";
+    if (!asset || !ioc) return res.status(400).json({ error: "asset and ioc are required" });
+    try {
+      const ov = await options.assetOverridesStore.addLink(req.params.id, asset, ioc);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(201).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Suppress (or delete) a link. Query params: ?asset=...&ioc=...
+  app.delete("/cases/:id/asset-overrides/links", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    const asset = typeof req.query?.asset === "string" ? req.query.asset : "";
+    const ioc = typeof req.query?.ioc === "string" ? req.query.ioc : "";
+    if (!asset || !ioc) return res.status(400).json({ error: "asset and ioc query params are required" });
+    try {
+      const ov = await options.assetOverridesStore.removeLink(req.params.id, asset, ioc);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(200).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/settings/env", async (req: Request, res: Response) => {
+    try {
+      const updates = req.body?.updates;
+      if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
+        return res.status(400).json({ error: "updates must be an object" });
+      }
+      await updateEnvFile(updates as Record<string, string>);
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   return app;
 }
 
@@ -2504,6 +2670,24 @@ export function timesketchPushOptions(): TimesketchPushOptions {
   };
 }
 
+// Build the MISP push client from env (DFIR_MISP_URL + DFIR_MISP_KEY). Returns undefined
+// when not configured, which hides the dashboard's "Push to MISP" button. TLS trust for a
+// self-hosted MISP honors DFIR_MISP_CA / DFIR_MISP_INSECURE (same env vars as enrichment).
+export function buildMispPushClient(): MispPushClient | undefined {
+  const baseUrl = process.env.DFIR_MISP_URL;
+  const apiKey = process.env.DFIR_MISP_KEY;
+  if (!baseUrl || !apiKey) return undefined;
+  return new MispPushClient({ baseUrl, apiKey, fetchFn: tlsFetchFor("MISP") });
+}
+
+export function mispPushOptions(): MispPushOptions {
+  return {
+    baseUrl: process.env.DFIR_MISP_URL,
+    distribution: process.env.DFIR_MISP_DISTRIBUTION || undefined,
+    analysis: process.env.DFIR_MISP_ANALYSIS || undefined,
+  };
+}
+
 export function buildEnrichmentProviders(): EnrichmentProvider[] {
   const providers: EnrichmentProvider[] = [];
   if (process.env.DFIR_VT_KEY) providers.push(new VirusTotalProvider({ apiKey: process.env.DFIR_VT_KEY }));
@@ -2585,9 +2769,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const reportMetaStore = new ReportMetaStore(store);
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
+  const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
   const importMetaStore = new ImportMetaStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store));
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), assetOverridesStore);
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
@@ -2615,6 +2800,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     tagsStore,
     onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
+    assetOverridesStore,
+    onAssetOverrides: (caseId) => hub.broadcastTo(caseId, { type: "asset_overrides_changed" }),
     synthMetaStore,
     importMetaStore,
     onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
@@ -2639,6 +2826,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     irisOptions: irisPushOptions(),
     timesketchClient: buildTimesketchClient(),
     timesketchOptions: timesketchPushOptions(),
+    mispPushClient: buildMispPushClient(),
+    mispPushOptions: mispPushOptions(),
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
