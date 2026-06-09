@@ -61,6 +61,7 @@ export function mergeDelta(
     const existing = findings.find((f) => f.id === incoming.id);
     if (existing) {
       existing.severity = incoming.severity;
+      if (incoming.confidence !== undefined) existing.confidence = Math.round(incoming.confidence);
       existing.title = incoming.title;
       existing.description = incoming.description;
       existing.status = incoming.status;
@@ -72,6 +73,7 @@ export function mergeDelta(
       findings.push({
         id: incoming.id,
         severity: incoming.severity,
+        ...(incoming.confidence !== undefined ? { confidence: Math.round(incoming.confidence) } : {}),
         title: incoming.title,
         description: incoming.description,
         relatedIocs: remapIocRefs(incoming.relatedIocs),
@@ -152,6 +154,10 @@ export function mergeDelta(
       if (incoming.sources?.length) existing.sources = uniq([...(existing.sources ?? []), ...incoming.sources]);
       if (incoming.processName) existing.processName = incoming.processName;
       if (incoming.parentName) existing.parentName = incoming.parentName;
+      if (incoming.action) existing.action = incoming.action;
+      if (incoming.srcIp) existing.srcIp = incoming.srcIp;
+      if (incoming.dstIp) existing.dstIp = incoming.dstIp;
+      if (incoming.port !== undefined) existing.port = incoming.port;
     } else {
       forensicTimeline.push({
         id: incoming.id,
@@ -170,6 +176,10 @@ export function mergeDelta(
         ...(incoming.sources?.length ? { sources: uniq(incoming.sources) } : {}),
         ...(incoming.processName ? { processName: incoming.processName } : {}),
         ...(incoming.parentName ? { parentName: incoming.parentName } : {}),
+        ...(incoming.action ? { action: incoming.action } : {}),
+        ...(incoming.srcIp ? { srcIp: incoming.srcIp } : {}),
+        ...(incoming.dstIp ? { dstIp: incoming.dstIp } : {}),
+        ...(incoming.port !== undefined ? { port: incoming.port } : {}),
       });
     }
   }

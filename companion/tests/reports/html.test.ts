@@ -66,6 +66,31 @@ describe("renderHtmlReport", () => {
     expect(html).not.toContain("window.print()");
     expect(html).not.toContain("print-hint");
   });
+
+  it("embeds the asset–IoC graph SVG when the state has host assets", () => {
+    const state = emptyState("c1");
+    state.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "" });
+    state.findings.push({
+      id: "f1", severity: "High", title: "Beacon",
+      description: "beacon", relatedIocs: ["i1"],
+      mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open",
+    });
+    state.forensicTimeline.push({
+      id: "e1", timestamp: "2026-05-01T00:00:00Z", description: "bad.exe on WIN-01",
+      severity: "High", mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [],
+      asset: "WIN-01",
+    });
+    const html = renderHtmlReport(state);
+    expect(html).toContain('class="asset-graph"');
+    expect(html).toContain("<svg ");
+    expect(html).toContain("Assets (1)");
+  });
+
+  it("omits the graph section when the state has no host or account assets", () => {
+    const html = renderHtmlReport(emptyState("c1"));
+    expect(html).not.toContain('class="asset-graph"');
+    expect(html).not.toContain("<svg ");
+  });
 });
 
 describe("injectPrintTrigger", () => {

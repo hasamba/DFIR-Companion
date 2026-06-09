@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DFIR Capture",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Periodic + event-driven screenshot capture for forensic investigations.",
   "permissions": ["tabs", "activeTab", "webNavigation", "storage", "alarms", "scripting"],
   "host_permissions": ["<all_urls>"],
@@ -12,6 +12,9 @@
     "toggle-capture": {
       "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
       "description": "Toggle DFIR screenshot capture on/off"
+    },
+    "_execute_action": {
+      "description": "Open the DFIR Companion popup"
     }
   },
   "content_scripts": [

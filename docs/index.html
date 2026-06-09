@@ -496,7 +496,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.10.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.13.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -521,7 +521,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.10.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.13.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -572,51 +572,81 @@
         </div>
         <div class="feature-card animate animate-d1">
           <div class="feature-icon red">⚠️</div>
-          <h3>Findings &amp; MITRE ATT&amp;CK</h3>
-          <p>Per-technique analytic conclusions with severity and MITRE mapping. Safety net auto-creates findings for any high-severity events synthesis missed.</p>
-          <span class="tag">severity-aware</span>
+          <h3>Findings &amp; Confidence</h3>
+          <p>Per-technique analytic conclusions with severity, MITRE mapping, and AI confidence score (0–100). Color-coded badges: green ≥80, yellow 50–79, red &lt;50. Filter by min confidence.</p>
+          <span class="tag">confidence-scored</span>
         </div>
         <div class="feature-card animate animate-d2">
           <div class="feature-icon amber">🎯</div>
-          <h3>IOCs &amp; Attacker Path</h3>
-          <p>Indicators with enrichment verdicts (VirusTotal, MISP, YETI, AbuseIPDB). Full kill-chain narrative from initial access to exfiltration.</p>
-          <span class="tag">enriched + cached</span>
+          <h3>IOCs &amp; Attack Path</h3>
+          <p>Indicators with enrichment verdicts (VirusTotal, MISP, YETI, AbuseIPDB, CrowdStrike, Hunting.ch). Push IOCs + MITRE to MISP. Full kill-chain narrative.</p>
+          <span class="tag">enriched + MISP export</span>
         </div>
         <div class="feature-card animate animate-d3">
           <div class="feature-icon green">🔗</div>
           <h3>Asset ↔ IoC Graph</h3>
-          <p>Interactive graph showing which indicators touched each compromised host, account, or service. Zoom, fullscreen, multiple layouts.</p>
-          <span class="tag">interactive</span>
+          <p>Interactive graph showing which indicators touched each compromised host, account, or service. Drag nodes to reposition. Zoom, fullscreen, multiple layouts.</p>
+          <span class="tag">interactive + drag</span>
         </div>
         <div class="feature-card animate animate-d4">
-          <div class="feature-icon purple">💬</div>
+          <div class="feature-icon purple">🔗</div>
+          <h3>Evidence Chain Graph</h3>
+          <p>Causal attack graph: process trees + lateral movement + file lineage + network flows. Trace the full path end to end — spawned, lateral-move, ran-on, wrote-file, executed-file, network edges with confidence levels.</p>
+          <span class="tag">deterministic — no AI</span>
+        </div>
+        <div class="feature-card animate animate-d5">
+          <div class="feature-icon cyan">💬</div>
           <h3>Ask the Case</h3>
           <p>Free-form Q&A grounded in the evidence: "was data exfiltrated?", "was a USB connected?". If unknown, tells you what to collect next.</p>
           <span class="tag">evidence-grounded</span>
         </div>
-        <div class="feature-card animate animate-d5">
+        <div class="feature-card animate">
           <div class="feature-icon cyan">📄</div>
           <h3>Reports — MD / HTML / PDF / DOCX</h3>
-          <p>Full incident report following the AnttiKurittu template. Executive summary, BIA, timelines, conclusions. One-click PDF. Push to DFIR-IRIS &amp; Timesketch.</p>
+          <p>Full incident report following the AnttiKurittu template. Executive summary, BIA, timelines, conclusions. One-click PDF. Push to DFIR-IRIS, Timesketch, and MISP.</p>
           <span class="tag">exportable</span>
         </div>
-        <div class="feature-card animate">
-          <div class="feature-icon amber">🔎</div>
+        <div class="feature-card animate animate-d1">
+          <div class="feature-icon green">🔎</div>
           <h3>Hunt-Pivot Generator</h3>
           <p>From any event or IOC, generate ready-to-run queries: Velociraptor VQL, KQL, SPL, Sigma, YARA, Suricata, Elastic ES|QL. Zero AI cost — deterministic templates.</p>
           <span class="tag">7 platforms</span>
         </div>
-        <div class="feature-card animate animate-d1">
-          <div class="feature-icon green">📸</div>
+        <div class="feature-card animate animate-d2">
+          <div class="feature-icon amber">🛡️</div>
+          <h3>Customer Exposure</h3>
+          <p>Check victim org domains &amp; emails against LeakCheck, HIBP, DeHashed, and Shodan. Strict customer boundary — adversary IOCs never queried. No raw passwords stored.</p>
+          <span class="tag">v0.11 — credential leak check</span>
+        </div>
+        <div class="feature-card animate animate-d3">
+          <div class="feature-icon red">⭐</div>
+          <h3>Triage Tags &amp; Star</h3>
+          <p>Hand-label any entity with triage tags (confirmed-malicious, false-positive, key-evidence…). Star important events. Multi-select bulk actions. Tags survive re-synthesis.</p>
+          <span class="tag">v0.11 — analyst-driven</span>
+        </div>
+        <div class="feature-card animate animate-d4">
+          <div class="feature-icon purple">📸</div>
           <h3>Browser Extension Capture</h3>
           <p>MV3 extension: timer + event-driven (navigation, tab switch, click). Ctrl+Shift+S hotkey. Offline queue. Per-case attach. Evidence-first persistence.</p>
           <span class="tag">lossless PNG</span>
         </div>
-        <div class="feature-card animate animate-d2">
-          <div class="feature-icon purple">🔒</div>
+        <div class="feature-card animate animate-d5">
+          <div class="feature-icon cyan">🔒</div>
           <h3>AI Input Anonymization</h3>
           <p>Reversibly tokenizes internal IPs, usernames, hostnames before the LLM sees them. Adversary IOCs preserved. Per-case toggle. Default on.</p>
           <span class="tag">OPSEC-first</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon amber">⚡</div>
+          <h3>Attack Phases</h3>
+          <p>Groups timeline events into bursts by time gaps — initial access, persistence, lateral movement, exfil. Each phase labeled with dominant ATT&amp;CK tactic. No AI, purely algorithmic.</p>
+          <span class="tag">v0.13 — temporal clustering</span>
+        </div>
+        <div class="feature-card animate animate-d1">
+          <div class="feature-icon green">⚙️</div>
+          <h3>Settings Modal</h3>
+          <p>All configuration in one place: investigator name, AI provider/model/keys, enrichment &amp; exposure provider keys, integrations (IRIS, Timesketch, Velociraptor, MISP), and section visibility — drag-reorderable.</p>
+          <span class="tag">v0.13</span>
         </div>
       </div>
     </div>
@@ -649,6 +679,8 @@
         <div class="source-pill"><span class="icon">📊</span><span class="label">SIEM / EDR JSON</span></div>
         <div class="source-pill"><span class="icon">📝</span><span class="label">CSV / Generic Log</span></div>
         <div class="source-pill"><span class="icon">📸</span><span class="label">Screenshots (any)</span></div>
+        <div class="source-pill"><span class="icon">🎯</span><span class="label">CrowdStrike Falcon</span></div>
+        <div class="source-pill"><span class="icon">🦡</span><span class="label">Hunting.ch (abuse.ch)</span></div>
       </div>
     </div>
   </section>
