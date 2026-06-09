@@ -305,8 +305,8 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
 }
 
 // 4.8 Chain of evidence — the causal view derived from the forensic timeline: which process
-// spawned which (process execution chains) and which binary/account moved between hosts
-// (lateral movement). Each row carries the confidence of the derived link.
+// spawned which (process execution chains), which binary/account moved between hosts
+// (lateral movement), file write→execute lineage, and network flows (src→dst).
 function chainOfEvidence(state: InvestigationState, lines: string[]): void {
   lines.push("### 4.8 Chain of evidence", "");
   const graph = buildEvidenceGraph(state);
@@ -333,6 +333,26 @@ function chainOfEvidence(state: InvestigationState, lines: string[]): void {
     lines.push("**Lateral movement**", "");
     lines.push("| From | To | Basis | Confidence |", "| --- | --- | --- | --- |");
     for (const e of lateral) {
+      lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`);
+    }
+    lines.push("");
+  }
+
+  const fileLineage = graph.edges.filter((e) => e.type === "file_lineage");
+  if (fileLineage.length > 0) {
+    lines.push("**File lineage (wrote → executed)**", "");
+    lines.push("| From | To | Basis | Confidence |", "| --- | --- | --- | --- |");
+    for (const e of fileLineage) {
+      lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`);
+    }
+    lines.push("");
+  }
+
+  const netFlows = graph.edges.filter((e) => e.type === "network_flow");
+  if (netFlows.length > 0) {
+    lines.push("**Network flows (src → dst)**", "");
+    lines.push("| Source | Destination | Basis | Confidence |", "| --- | --- | --- | --- |");
+    for (const e of netFlows) {
       lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`);
     }
     lines.push("");

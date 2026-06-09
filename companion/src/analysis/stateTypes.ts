@@ -78,6 +78,13 @@ export interface ForensicEvent {
   processName?: string;
   parentName?: string;
   chainCheck?: ProcessChainCheck;
+  // File-lineage / network-flow fields (Phase 2 evidence-chain edges).
+  // action distinguishes a file write from an execute (same hash → lineage edge) and
+  // network sends/receives (srcIp/dstIp/port → network-flow edge).
+  action?: "write" | "execute" | "network_send" | "network_receive";
+  srcIp?: string;    // source IP for network connections
+  dstIp?: string;    // destination IP for network connections
+  port?: number;     // destination port
 }
 
 // Result of validating a parent→child process relationship against behavioral intel

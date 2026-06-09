@@ -84,6 +84,8 @@
     .ev-leg-high { border-top: 2px solid #ff8a5c; }
     .ev-leg-med { border-top: 2px dashed #7f8aa0; }
     .ev-leg-ran { border-top: 2px solid #52617a; }
+    .ev-leg-file { border-top: 2px solid #4ade80; }
+    .ev-leg-net { border-top: 2px solid #38bdf8; }
     .legend-ico { vertical-align: middle; margin-right: 2px; }
     /* Fullscreen: the wrapper fills the screen and the graph grows to fit. */
     .asset-graph-wrap:fullscreen { background: #11161d; padding: 12px; display: flex; flex-direction: column; }
@@ -489,17 +491,21 @@
       </div>
     </section>
     <section style="grid-column: 1 / -1">
-      <h2>Evidence Chain<span class="ev-sub">causal links — process trees &amp; lateral movement (derived, no AI)</span></h2>
+      <h2>Evidence Chain<span class="ev-sub">causal links — process trees, lateral movement, file lineage &amp; network flows (derived, no AI)</span></h2>
       <div id="evPanel">
         <div id="evGraphWrap" class="asset-graph-wrap">
           <div class="asset-controls">
             <span>Show:</span>
-            <label><input type="checkbox" class="ev-type-toggle" value="spawned" checked> Process trees</label>
-            <label><input type="checkbox" class="ev-type-toggle" value="lateral_move" checked> Lateral movement</label>
+            <label title="Parent → child process spawn chains (processName / parentName fields). Shows how an initial process (e.g. Word) spawned a shell, which spawned further tools."><input type="checkbox" class="ev-type-toggle" value="spawned" checked> Process trees</label>
+            <label title="Same binary hash or account seen on ≥ 2 hosts — indicates the attacker moved laterally between machines."><input type="checkbox" class="ev-type-toggle" value="lateral_move"> Lateral movement</label>
+            <label title="A file written (action=write) then executed (action=execute) with the same hash — shows dropper → payload chains."><input type="checkbox" class="ev-type-toggle" value="file_lineage"> File lineage</label>
+            <label title="Directed network connections from Suricata alerts / Zeek notices (srcIp → dstIp:port). Shows C2 call-outs and lateral network movement."><input type="checkbox" class="ev-type-toggle" value="network_flow"> Network flows</label>
             <span class="asset-ctrl-sep"></span>
             <span class="ev-legend"><span class="ev-leg-line ev-leg-high"></span>high
               <span class="ev-leg-line ev-leg-med"></span>medium
-              <span class="ev-leg-line ev-leg-ran"></span>ran on</span>
+              <span class="ev-leg-line ev-leg-ran"></span>ran on
+              <span class="ev-leg-line ev-leg-file"></span>file lineage
+              <span class="ev-leg-line ev-leg-net"></span>network flow</span>
             <span class="asset-ctrl-sep"></span>
             <button id="evZoomOut" type="button" title="Zoom out">−</button>
             <span id="evZoomLevel" title="Zoom level (scroll the mouse wheel over the graph to zoom)">100%</span>
@@ -1039,7 +1045,9 @@
     let evGraphTimer = null;
     let evZoom = 1;
     let evDims = { W: 0, H: 0 };
-    const evTypesEnabled = new Set(["spawned", "lateral_move"]);
+    const evTypesEnabled = new Set(
+      [...document.querySelectorAll(".ev-type-toggle")].filter(cb => cb.checked).map(cb => cb.value)
+    );
     // Drag-to-reposition state. evPos = effective id→{x,y} for the current draw (auto layout
     // with any manual overrides applied); evPosOverride = the persisted manual positions.
     let evPos = new Map(), evNodes = [], evEdges = [];
@@ -1129,6 +1137,16 @@
     function evNodeGlyph(n, x, y) {
       const c = evSevColor(n.maxSeverity), f = (v) => v.toFixed(1);
       if (n.kind === "host" || n.kind === "account") return assetIcon(n.kind, x, y, c);
+      if (n.kind === "file") {
+        // Diamond shape representing a file artifact.
+        return `<circle cx="${f(x)}" cy="${f(y)}" r="11" fill="transparent"/>`
+          + `<polygon points="${f(x)},${f(y - 10)} ${f(x + 10)},${f(y)} ${f(x)},${f(y + 10)} ${f(x - 10)},${f(y)}" fill="${c}" stroke="#0f1115" stroke-width="1"/>`;
+      }
+      if (n.kind === "network") {
+        // Filled circle representing an IP endpoint.
+        return `<circle cx="${f(x)}" cy="${f(y)}" r="10" fill="${c}" stroke="#0f1115" stroke-width="1"/>`;
+      }
+      // process: rounded rectangle
       return `<circle cx="${f(x)}" cy="${f(y)}" r="11" fill="transparent"/>`
         + `<rect x="${f(x - 9)}" y="${f(y - 6)}" width="18" height="12" rx="2.5" fill="${c}" stroke="#0f1115" stroke-width="1"/>`;
     }
@@ -1176,17 +1194,19 @@
         + `<marker id="evArrowHigh" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#ff8a5c"/></marker>`
         + `<marker id="evArrowMed" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#7f8aa0"/></marker>`
         + `<marker id="evArrowRan" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#52617a"/></marker>`
+        + `<marker id="evArrowFile" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#4ade80"/></marker>`
+        + `<marker id="evArrowNet" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#38bdf8"/></marker>`
         + `</defs>`;
       for (const e of evEdges) {
         const p = evPos.get(e.source), q = evPos.get(e.target);
         if (!p || !q) continue;
         const vis = related(e.source) && related(e.target);
-        // ran_on = the muted host→tree anchor (thin, subordinate). The causal edges pop:
-        // solid orange = high, dashed gray = medium.
-        const isRan = e.type === "ran_on", high = e.confidence === "high";
-        const stroke = isRan ? "#52617a" : high ? "#ff8a5c" : "#7f8aa0";
-        const dash = (isRan || high) ? "" : ` stroke-dasharray="5 4"`;
-        const marker = isRan ? "url(#evArrowRan)" : high ? "url(#evArrowHigh)" : "url(#evArrowMed)";
+        // ran_on = muted anchor; file_lineage = green; network_flow = cyan; causal = orange/gray.
+        const isRan = e.type === "ran_on", isFile = e.type === "file_lineage", isNet = e.type === "network_flow";
+        const high = e.confidence === "high";
+        const stroke = isRan ? "#52617a" : isFile ? "#4ade80" : isNet ? "#38bdf8" : high ? "#ff8a5c" : "#7f8aa0";
+        const dash = (isRan || isFile || isNet || high) ? "" : ` stroke-dasharray="5 4"`;
+        const marker = isRan ? "url(#evArrowRan)" : isFile ? "url(#evArrowFile)" : isNet ? "url(#evArrowNet)" : high ? "url(#evArrowHigh)" : "url(#evArrowMed)";
         const sw = isRan ? "1.1" : "1.6";
         // Trim the segment to the node radius so the arrowhead lands at the glyph edge, not its center.
         const ang = Math.atan2(q.y - p.y, q.x - p.x), r = 13;
@@ -1198,10 +1218,11 @@
       for (const n of evNodes) {
         const p = evPos.get(n.id);
         const moved = evPosOverride.has(n.id) ? " moved" : "";
+        const titleSuffix = n.asset ? " on " + n.asset : n.ip ? " (" + n.ip + ")" : "";
         svg += `<g class="ev-node${moved}" data-id="${escAttr(n.id)}" opacity="${related(n.id) ? 1 : 0.12}">`
           + `<text x="${p.x.toFixed(1)}" y="${(p.y + 22).toFixed(1)}" text-anchor="middle">${esc(truncate(n.label, 22))}</text>`
           + evNodeGlyph(n, p.x, p.y)
-          + `<title>${esc(n.label + (n.asset ? " on " + n.asset : "") + " — " + n.maxSeverity + " · drag to reposition")}</title></g>`;
+          + `<title>${esc(n.label + titleSuffix + " — " + n.maxSeverity + " · drag to reposition")}</title></g>`;
       }
       svg += `</svg>`;
       el.innerHTML = svg;

@@ -52,6 +52,11 @@ export const deltaSchema = z.object({
     sources: z.array(z.string()).optional(),
     processName: z.string().optional(),
     parentName: z.string().optional(),
+    // Phase 2 evidence-chain fields.
+    action: z.enum(["write", "execute", "network_send", "network_receive"]).optional(),
+    srcIp: z.string().optional(),
+    dstIp: z.string().optional(),
+    port: z.number().int().positive().optional(),
   })).optional(),
   // Narrative reconstruction of the attacker's path (kill-chain story).
   attackerPath: z.string().optional(),

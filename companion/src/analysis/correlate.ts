@@ -99,6 +99,10 @@ function mergeGroup(events: ForensicEvent[]): ForensicEvent {
     processName: primary.processName ?? events.find((e) => e.processName)?.processName,
     parentName: primary.parentName ?? events.find((e) => e.parentName)?.parentName,
     chainCheck: primary.chainCheck ?? events.find((e) => e.chainCheck)?.chainCheck,
+    action: primary.action ?? events.find((e) => e.action)?.action,
+    srcIp: primary.srcIp ?? events.find((e) => e.srcIp)?.srcIp,
+    dstIp: primary.dstIp ?? events.find((e) => e.dstIp)?.dstIp,
+    port: primary.port ?? events.find((e) => e.port !== undefined)?.port,
   };
   const lastEnd = ends[ends.length - 1];
   if (lastEnd && lastEnd !== merged.timestamp) merged.endTimestamp = lastEnd;
@@ -128,13 +132,18 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
     else byExact.set(k, i);
   });
 
-  // 1) Same hash → union.
-  const byHash = new Map<string, number>();
+  // 1) Same hash → union. Events with different `action` values (e.g. a write and an
+  //    execute of the same binary) are keyed separately so they remain distinct events —
+  //    they are two causal steps, not duplicates — and file_lineage edges can be derived.
+  //    Events without an action (the common case) all share the "" bucket and correlate
+  //    as before, so this is fully backward-compatible.
+  const byHash = new Map<string, number>(); // "hash:action" → first index with that pair
   events.forEach((e, i) => {
     for (const h of eventHashes(e)) {
-      const prev = byHash.get(h);
+      const key = `${h}:${e.action ?? ""}`;
+      const prev = byHash.get(key);
       if (prev !== undefined) dsu.union(prev, i);
-      else byHash.set(h, i);
+      else byHash.set(key, i);
     }
   });
 
