@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Evidence Chain graph — Phase 2: file-lineage and network-flow edges.** Two new edge types in the Evidence Chain graph and report §4.8: **`file_lineage`** (a file written then executed with the same hash — a `file` node sits in the middle so the artifact is visible, with `wrote-file` and `executed-file` edges connecting the write-context and execute-context); and **`network_flow`** (src→dst: events with `srcIp`/`dstIp`/`port` produce `network` nodes and a directed flow edge; when `srcIp` is absent the event's asset is the source as a `host` node). Backed by two new optional fields on `ForensicEvent` (`action?: "write"|"execute"|"network_send"|"network_receive"` and `srcIp?`/`dstIp?`/`port?`) — propagated through `responseSchema.ts`, `stateMerge.ts` (both branches), and `correlate.ts` `mergeGroup`. Dashboard toggles and legend updated (green = file lineage, cyan = network flow); file nodes render as diamonds, network nodes as filled circles. Report §4.8 adds **File lineage** and **Network flows** tables.
+
 ## [0.12.0] - 2026-06-08
 
 ### Added
