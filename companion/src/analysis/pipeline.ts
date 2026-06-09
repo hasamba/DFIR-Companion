@@ -129,6 +129,10 @@ export const SYSTEM_PROMPT = [
   "(initial access → execution → persistence → priv-esc → lateral movement → C2 → exfil/impact),",
   "citing finding ids and event times. Refine it as new evidence arrives.",
   "",
+  "FINDINGS CONFIDENCE: every finding MUST include a 'confidence' field (integer 0–100) — your",
+  "certainty that this is real attacker activity, not a false positive. 95+ = confirmed hit; 70–90 =",
+  "strongly suspicious; 40–69 = plausible; <40 = speculative. Do NOT omit this field.",
+  "",
   "Return ONLY raw JSON (no markdown code fences, no prose) with EXACTLY this shape — every",
   "finding/ioc/technique/thread/event MUST be an OBJECT with these keys, never a bare string:",
   "",
@@ -138,6 +142,7 @@ export const SYSTEM_PROMPT = [
         {
           id: "f1",
           severity: "Critical|High|Medium|Low|Info",
+          confidence: 85,
           title: "short title",
           description: "what was observed and why it matters",
           relatedIocs: ["i1"],
@@ -167,6 +172,7 @@ export const SYSTEM_PROMPT = [
     2,
   ),
   "",
+  "confidence is 0–100 (your certainty that the finding represents real attacker activity, not a false positive).",
   "If a section has nothing new, return it as an empty array (or empty string for text fields).",
 ].join("\n");
 
@@ -200,12 +206,15 @@ export const CSV_SYSTEM_PROMPT = [
   "AFFECTED ASSET: set each event's 'asset' to the host/computer/FQDN from the row's Computer/Hostname/",
   "Fqdn/Endpoint/Device column (or the export's host); leave \"\" if none — it ties each indicator to its host.",
   "",
+  "FINDINGS CONFIDENCE: every finding MUST include a 'confidence' field (integer 0–100) — your",
+  "certainty that this is real attacker activity, not a false positive. Do NOT omit this field.",
+  "",
   "Return ONLY raw JSON (no markdown fences). Every event/ioc MUST be an OBJECT. Shape:",
   "",
   JSON.stringify(
     {
       findings: [
-        { id: "f1", severity: "Critical|High|Medium|Low|Info", title: "short title (raise for any Critical/High row)", description: "what was detected and why it matters", relatedIocs: ["i1"], mitreTechniques: ["T1059"], status: "open" },
+        { id: "f1", severity: "Critical|High|Medium|Low|Info", confidence: 90, title: "short title (raise for any Critical/High row)", description: "what was detected and why it matters", relatedIocs: ["i1"], mitreTechniques: ["T1059"], status: "open" },
       ],
       iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
       mitreTechniques: [{ id: "T1059", name: "Command and Scripting Interpreter" }],
@@ -319,6 +328,10 @@ export const SYNTHESIS_PROMPT = [
   "  finding (its event id appears in some finding's relatedEventIds). A high-severity artifact row —",
   "  e.g. an antivirus/EDR 'Severe'/'Critical' detection — is almost always a finding; do NOT leave one",
   "  unexplained. Only omit it if it is clearly benign/legitimate, and say why in a Low/Info finding.",
+  "  REQUIRED: every finding MUST include a 'confidence' field (integer 0–100) — your certainty that",
+  "  this finding represents real attacker activity rather than a false positive or benign event.",
+  "  Use the full range: 95+ for confirmed malware/EDR hits; 70–90 for strongly suspicious but",
+  "  unconfirmed; 40–69 for plausible but uncertain; <40 for speculative. Do NOT omit this field.",
   "- iocs: concrete indicators (ips, domains, hashes, malicious files/processes) seen in the timeline.",
   "- mitreTechniques: the ATT&CK techniques observed, aggregated.",
   "- attackerPath: a chronological narrative of the intrusion in kill-chain order (initial access →",
@@ -348,11 +361,13 @@ export const SYNTHESIS_PROMPT = [
   "  in the attacker path and the 'unknown'/'partial' keyQuestions. Return 3-7 steps.",
   "",
   "Return ONLY raw JSON (no markdown fences). Set forensicEvents to [] and timelineNote to \"\".",
-  "Every finding/ioc/technique/thread/question MUST be an object, never a bare string. Shape:",
+  "Every finding/ioc/technique/thread/question MUST be an object, never a bare string.",
+  "findings must include confidence (0–100): your certainty this finding is real attacker activity, not a false positive.",
+  "Shape:",
   "",
   JSON.stringify(
     {
-      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed", relatedEventIds: ["e3", "e7"] }],
+      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", confidence: 85, title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed", relatedEventIds: ["e3", "e7"] }],
       iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
       mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses: Disable or Modify Tools" }],
       attackerPath: "Initial access at <time> via …; then execution of …; persistence via …; impact at <time>.",

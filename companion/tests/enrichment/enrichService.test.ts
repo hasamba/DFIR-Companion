@@ -273,4 +273,67 @@ describe("enrichIocs", () => {
       { provider: "Failer", kind: "hash", value: "h1", outcome: "error", detail: "upstream 500", ms: 0 },
     ]);
   });
+
+  describe("perProviderDelayMs", () => {
+    it("sleeps the provider-specific delay between calls to the same provider", async () => {
+      const slept: number[] = [];
+      const calls: string[] = [];
+      const vt = fakeProvider("VirusTotal", ["hash"], { source: "VirusTotal", verdict: "harmless" }, calls);
+      // monotonic always returns 0 → elapsed = 0 → wait = provDelay on every call after the first
+      await enrichIocs(
+        [ioc({ value: "h1", type: "hash" }), ioc({ value: "h2", type: "hash" })],
+        { providers: [vt], now, monotonic: () => 0, sleep: async (ms) => { slept.push(ms); }, perProviderDelayMs: { VirusTotal: 500 }, delayMs: 1500 },
+      );
+      // First call: no sleep; second call: sleep 500 (the provider-specific delay, not 1500)
+      expect(slept).toEqual([500]);
+    });
+
+    it("throttles each provider independently — a slow provider does not block a fast one", async () => {
+      const slept: number[] = [];
+      const slow: EnrichmentProvider = {
+        name: "Slow", scope: "external", supports: (k) => k === "hash",
+        lookup: async () => ({ source: "Slow", verdict: "harmless" }),
+      };
+      const fast: EnrichmentProvider = {
+        name: "Fast", scope: "external", supports: (k) => k === "process",
+        lookup: async () => ({ source: "Fast", verdict: "harmless" }),
+      };
+      // hashes processed before processes (KIND_PRIORITY: hash=0, process=2)
+      await enrichIocs(
+        [ioc({ value: "h1", type: "hash" }), ioc({ value: "p1", type: "process" }),
+         ioc({ value: "h2", type: "hash" }), ioc({ value: "p2", type: "process" })],
+        { providers: [slow, fast], now, monotonic: () => 0, sleep: async (ms) => { slept.push(ms); }, perProviderDelayMs: { Slow: 3000, Fast: 100 }, delayMs: 1500 },
+      );
+      // Each provider sleeps exactly its own delay once (second call only); they don't affect each other
+      expect(slept).toHaveLength(2);
+      expect(slept).toContain(3000);   // Slow: 3000ms between its two calls
+      expect(slept).toContain(100);    // Fast: 100ms between its two calls
+    });
+
+    it("falls back to global delayMs for providers not in perProviderDelayMs", async () => {
+      const slept: number[] = [];
+      const calls: string[] = [];
+      const p = fakeProvider("Unknown", ["hash"], { source: "Unknown", verdict: "harmless" }, calls);
+      await enrichIocs(
+        [ioc({ value: "h1", type: "hash" }), ioc({ value: "h2", type: "hash" })],
+        { providers: [p], now, monotonic: () => 0, sleep: async (ms) => { slept.push(ms); }, perProviderDelayMs: { VirusTotal: 500 }, delayMs: 999 },
+      );
+      expect(slept).toEqual([999]);   // Unknown not in map → falls back to global 999
+    });
+
+    it("skips the sleep when elapsed time already exceeds the provider delay", async () => {
+      const slept: number[] = [];
+      let t = 0;
+      const vtFast: EnrichmentProvider = {
+        name: "VirusTotal", scope: "external", supports: (k) => k === "hash",
+        // each call advances the clock by 600ms (more than the 500ms provDelay)
+        lookup: async () => { t += 600; return { source: "VirusTotal", verdict: "harmless" }; },
+      };
+      await enrichIocs(
+        [ioc({ value: "h1", type: "hash" }), ioc({ value: "h2", type: "hash" })],
+        { providers: [vtFast], now, monotonic: () => t, sleep: async (ms) => { slept.push(ms); }, perProviderDelayMs: { VirusTotal: 500 } },
+      );
+      expect(slept).toHaveLength(0);   // 600ms elapsed > 500ms delay → no sleep needed
+    });
+  });
 });
