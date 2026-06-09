@@ -323,9 +323,16 @@
     .settings-group-head { font-size: 11px; color: #6aa9ff; font-weight: 600; margin: 10px 0 4px; }
     .settings-hr { border: none; border-top: 1px solid #2a2f3a; margin: 12px 0; }
     .srestart-note { font-size: 11px; color: #ffd93b; margin-bottom: 10px; }
-    .sec-checks { columns: 2; column-gap: 16px; margin-top: 4px; }
-    .sec-check { display: block; font-size: 12px; padding: 3px 0; break-inside: avoid; }
-    .sec-check input { width: auto; margin-right: 5px; }
+    .sec-checks { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; max-height: 300px; overflow-y: auto; }
+    .sec-check { display: flex; align-items: center; font-size: 12px; padding: 4px 6px; border-radius: 5px; user-select: none; }
+    .sec-check:hover { background: rgba(255,255,255,.05); }
+    .sec-check input[type=checkbox] { width: auto; margin: 0 6px 0 0; cursor: pointer; flex-shrink: 0; }
+    .drag-handle { color: #5a6170; cursor: grab; font-size: 14px; margin-right: 5px; flex-shrink: 0; line-height: 1; }
+    .drag-handle:active { cursor: grabbing; }
+    .sec-check.drag-over { box-shadow: 0 -2px 0 0 #6aa9ff; }
+    .sec-selall { display: flex; gap: 6px; margin: 3px 0 5px; }
+    .sec-selall button { font-size: 11px; padding: 2px 8px; background: #2a2f3a; border: none; border-radius: 4px; color: #9aa4b2; cursor: pointer; }
+    .sec-selall button:hover { background: #353b47; color: #cbd3df; }
     .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid #2a2f3a; padding-top: 12px; }
     .settings-msg { font-size: 11px; margin-left: 4px; }
   </style>
@@ -494,7 +501,8 @@
           <span class="sfield-hint">Used as author when posting comments. Saved in this browser.</span>
         </div>
         <div class="sfield">
-          <label>Dashboard sections <span class="sfield-hint" style="display:inline">— uncheck to hide</span></label>
+          <label>Dashboard sections <span class="sfield-hint" style="display:inline">— drag to reorder · check to show</span></label>
+          <div class="sec-selall"><button type="button" id="secSelectAll">Select all</button><button type="button" id="secDeselectAll">Deselect all</button></div>
           <div class="sec-checks" id="secChecks"></div>
         </div>
         <hr class="settings-hr" />
@@ -608,10 +616,17 @@
           <div class="sfield"><label>Distribution (0-3)<span class="sfield-hint">DFIR_MISP_DISTRIBUTION</span></label><input id="env-DFIR_MISP_DISTRIBUTION" placeholder="0" /></div>
           <div class="sfield"><label>Analysis state (0-2)<span class="sfield-hint">DFIR_MISP_ANALYSIS</span></label><input id="env-DFIR_MISP_ANALYSIS" placeholder="1" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_MISP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_MISP_INSECURE" placeholder="false" /></div>
+        </div>
         <div class="settings-group-head">YETI</div>
         <div class="sfield-row">
           <div class="sfield"><label>YETI URL<span class="sfield-hint">DFIR_YETI_URL</span></label><input id="env-DFIR_YETI_URL" placeholder="https://yeti.example.org" /></div>
           <div class="sfield"><label>YETI key<span class="sfield-hint">DFIR_YETI_KEY</span></label><input id="env-DFIR_YETI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_YETI_CA</span></label><input id="env-DFIR_YETI_CA" placeholder="path/to/ca.pem" /></div>
+          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_YETI_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_YETI_INSECURE" placeholder="false" /></div>
         </div>
         <div class="settings-group-head">Throttling</div>
         <div class="sfield-row3">
@@ -655,6 +670,9 @@
           <div class="sfield"><label>Customer ID<span class="sfield-hint">DFIR_IRIS_CUSTOMER_ID</span></label><input id="env-DFIR_IRIS_CUSTOMER_ID" placeholder="1" /></div>
           <div class="sfield"><label>Classification ID<span class="sfield-hint">DFIR_IRIS_CLASSIFICATION_ID</span></label><input id="env-DFIR_IRIS_CLASSIFICATION_ID" placeholder="1" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_IRIS_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_IRIS_INSECURE" placeholder="false" /></div>
+        </div>
         <div class="settings-group-head">Timesketch</div>
         <div class="sfield-row">
           <div class="sfield"><label>Timesketch URL<span class="sfield-hint">DFIR_TIMESKETCH_URL</span></label><input id="env-DFIR_TIMESKETCH_URL" placeholder="https://timesketch.example.org" /></div>
@@ -663,6 +681,10 @@
         <div class="sfield-row">
           <div class="sfield"><label>Password<span class="sfield-hint">DFIR_TIMESKETCH_PASSWORD</span></label><input id="env-DFIR_TIMESKETCH_PASSWORD" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Timeline name<span class="sfield-hint">DFIR_TIMESKETCH_TIMELINE</span></label><input id="env-DFIR_TIMESKETCH_TIMELINE" placeholder="DFIR Companion timeline" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_TIMESKETCH_CA</span></label><input id="env-DFIR_TIMESKETCH_CA" placeholder="path/to/ca.pem" /></div>
+          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_TIMESKETCH_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_TIMESKETCH_INSECURE" placeholder="false" /></div>
         </div>
         <div class="settings-group-head">Velociraptor</div>
         <div class="sfield-row">
@@ -3974,6 +3996,7 @@
 
     // ── Settings modal ────────────────────────────────────────────────────────
     const SECTIONS_VIS_KEY = "dfir.sectionsVis";
+    const SECTIONS_ORDER_KEY = "dfir.sectionsOrder";
     const SECTION_DEFS = [
       { id: "sec-ask",          label: "Ask the LLM" },
       { id: "sec-exec",         label: "Executive Summary" },
@@ -3998,8 +4021,32 @@
     function loadSectionsVis() {
       try { return JSON.parse(localStorage.getItem(SECTIONS_VIS_KEY) || "{}"); } catch { return {}; }
     }
+    function loadSectionsOrder() {
+      try { return JSON.parse(localStorage.getItem(SECTIONS_ORDER_KEY) || "[]"); } catch { return []; }
+    }
+    function saveSectionsOrder(ids) {
+      localStorage.setItem(SECTIONS_ORDER_KEY, JSON.stringify(ids));
+    }
+    function getEffectiveOrder() {
+      const saved = loadSectionsOrder();
+      if (!saved.length) return [...SECTION_DEFS];
+      const byId = Object.fromEntries(SECTION_DEFS.map(d => [d.id, d]));
+      const result = saved.filter(id => byId[id]).map(id => byId[id]);
+      const savedSet = new Set(saved);
+      SECTION_DEFS.filter(d => !savedSet.has(d.id)).forEach(d => result.push(d));
+      return result;
+    }
+    function applySecOrder() {
+      const main = document.querySelector("main");
+      if (!main) return;
+      getEffectiveOrder().forEach(({ id }) => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement === main) main.appendChild(el);
+      });
+    }
 
     function applySectionsVis() {
+      applySecOrder();
       const vis = loadSectionsVis();
       SECTION_DEFS.forEach(({ id }) => {
         const el = document.getElementById(id);
@@ -4011,9 +4058,34 @@
       const container = document.getElementById("secChecks");
       if (!container) return;
       const vis = loadSectionsVis();
-      container.innerHTML = SECTION_DEFS.map(({ id, label }) =>
-        `<label class="sec-check"><input type="checkbox" id="scb-${esc(id)}" ${vis[id] !== false ? "checked" : ""}> ${esc(label)}</label>`
+      const ordered = getEffectiveOrder();
+      container.innerHTML = ordered.map(({ id, label }) =>
+        `<label class="sec-check" draggable="true" data-id="${esc(id)}"><span class="drag-handle" title="Drag to reorder">⠿</span><input type="checkbox" id="scb-${esc(id)}" ${vis[id] !== false ? "checked" : ""}> ${esc(label)}</label>`
       ).join("");
+      let dragSrc = null;
+      container.querySelectorAll(".sec-check").forEach(row => {
+        row.addEventListener("dragstart", e => { dragSrc = row; e.dataTransfer.effectAllowed = "move"; });
+        row.addEventListener("dragover", e => {
+          e.preventDefault(); e.dataTransfer.dropEffect = "move";
+          if (row !== dragSrc) {
+            container.querySelectorAll(".sec-check").forEach(r => r.classList.remove("drag-over"));
+            row.classList.add("drag-over");
+          }
+        });
+        row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+        row.addEventListener("drop", e => {
+          e.preventDefault(); row.classList.remove("drag-over");
+          if (dragSrc && dragSrc !== row) {
+            container.insertBefore(dragSrc, row);
+            saveSectionsOrder([...container.querySelectorAll(".sec-check")].map(r => r.dataset.id));
+            applySecOrder();
+          }
+        });
+        row.addEventListener("dragend", () => {
+          dragSrc = null;
+          container.querySelectorAll(".sec-check").forEach(r => r.classList.remove("drag-over"));
+        });
+      });
     }
 
     async function fetchEnvSettings() {
@@ -4108,6 +4180,12 @@
     document.getElementById("settingsSaveBtn").onclick = saveSettings;
     document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
     document.getElementById("settingsOverlay").addEventListener("click", (e) => { if (e.target.id === "settingsOverlay") closeSettingsModal(); });
+    document.getElementById("secSelectAll").addEventListener("click", () => {
+      document.querySelectorAll("#secChecks .sec-check input[type=checkbox]").forEach(cb => { cb.checked = true; });
+    });
+    document.getElementById("secDeselectAll").addEventListener("click", () => {
+      document.querySelectorAll("#secChecks .sec-check input[type=checkbox]").forEach(cb => { cb.checked = false; });
+    });
     document.querySelectorAll(".stab").forEach(btn => {
       btn.addEventListener("click", () => {
         const tab = btn.dataset.stab;

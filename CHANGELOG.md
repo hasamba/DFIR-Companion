@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Settings → General: drag-to-reorder dashboard sections.** Section rows are now draggable (HTML5 drag-and-drop, braille-dot handle). The new order is persisted in `localStorage` (`dfir.sectionsOrder`) and applied to the live dashboard immediately on drop. New sections introduced in future releases are appended after the saved order. **Select all / Deselect all** buttons above the list make it easy to show or hide everything at once.
+- **Settings → Enrichment/Integrations: missing TLS skip-verify fields.** `DFIR_MISP_INSECURE`, `DFIR_YETI_CA`, `DFIR_YETI_INSECURE`, `DFIR_IRIS_INSECURE`, `DFIR_TIMESKETCH_CA`, and `DFIR_TIMESKETCH_INSECURE` were already supported in the server (`tlsFetchFor`) and documented in `.env.example` but had no corresponding UI fields. All six are now surfaced in their respective settings tabs.
+
 ## [0.13.0] - 2026-06-09
 
 ### Added
