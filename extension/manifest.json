@@ -4,7 +4,8 @@
   "version": "0.13.0",
   "description": "Periodic + event-driven screenshot capture for forensic investigations.",
   "permissions": ["tabs", "activeTab", "webNavigation", "storage", "alarms", "scripting"],
-  "host_permissions": ["http://127.0.0.1:4773/*", "<all_urls>"],
+  "host_permissions": ["<all_urls>"],
+  "options_ui": { "page": "options.html", "open_in_tab": true },
   "background": { "service_worker": "serviceWorker.js", "type": "module" },
   "action": { "default_popup": "popup.html" },
   "commands": {

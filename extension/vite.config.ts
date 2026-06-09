@@ -10,6 +10,7 @@ export default defineConfig({
         serviceWorker: resolve(__dirname, "src/serviceWorker.ts"),
         content: resolve(__dirname, "src/content.ts"),
         popup: resolve(__dirname, "src/popup.ts"),
+        options: resolve(__dirname, "src/options.ts"),
       },
       output: { entryFileNames: "[name].js" },
     },
@@ -19,6 +20,7 @@ export default defineConfig({
     closeBundle() {
       mkdirSync(resolve(__dirname, "dist"), { recursive: true });
       copyFileSync(resolve(__dirname, "src/popup.html"), resolve(__dirname, "dist/popup.html"));
+      copyFileSync(resolve(__dirname, "src/options.html"), resolve(__dirname, "dist/options.html"));
       copyFileSync(resolve(__dirname, "manifest.json"), resolve(__dirname, "dist/manifest.json"));
     },
   }],

@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, type Settings } from "./types.js";
+import { DEFAULT_SETTINGS, normalizeCompanionUrl, type Settings } from "./types.js";
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 const caseSelect = () => document.getElementById("caseId") as HTMLSelectElement;
@@ -17,7 +17,7 @@ async function save(settings: Settings): Promise<void> {
 function readForm(running: boolean): Settings {
   return {
     caseId: caseSelect().value.trim(),
-    companionUrl: $("companionUrl").value.trim() || DEFAULT_SETTINGS.companionUrl,
+    companionUrl: normalizeCompanionUrl($("companionUrl").value),
     intervalSeconds: Math.max(5, Number($("intervalSeconds").value) || 10),
     dedupThreshold: Math.max(0, Number($("dedupThreshold").value) || 5),
     running,
@@ -115,14 +115,14 @@ async function init() {
   // Re-fetch the case list — e.g. after creating a case in the dashboard, or after
   // pointing Companion URL at a different instance.
   document.getElementById("refreshCases")!.onclick = async () => {
-    const url = $("companionUrl").value.trim() || DEFAULT_SETTINGS.companionUrl;
+    const url = normalizeCompanionUrl($("companionUrl").value);
     await loadCases(url, caseSelect().value);
     statusEl().textContent = "case list refreshed";
   };
   // Cases are created in the dashboard — open it in a new tab.
   document.getElementById("openDashboard")!.onclick = (e) => {
     e.preventDefault();
-    const url = $("companionUrl").value.trim() || DEFAULT_SETTINGS.companionUrl;
+    const url = normalizeCompanionUrl($("companionUrl").value);
     void chrome.tabs.create({ url: `${url}/dashboard` });
   };
   document.getElementById("start")!.onclick = async () => {
