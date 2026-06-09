@@ -137,6 +137,30 @@
     .tag-current-pill { display: inline-flex; align-items: center; gap: 4px; border: 1px solid; border-radius: 10px;
       padding: 2px 4px 2px 9px; font-size: 11px; margin: 0 5px 5px 0; background: #0f1115; }
     .tag-current-pill .tag-del { background: transparent; border: 0; color: inherit; cursor: pointer; font-size: 12px; padding: 0 2px; opacity: .7; }
+    /* Analyst notebook */
+    .nb-entry { border: 1px solid #2a2f3a; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: #0f1115; }
+    .nb-entry.hypothesis { border-left: 3px solid #6aa9ff; }
+    .nb-entry.note { border-left: 3px solid #7ec8a4; }
+    .nb-entry.question { border-left: 3px solid #ffd93b; }
+    .nb-entry-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; color: #9aa4b2; }
+    .nb-type-badge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+      border-radius: 4px; padding: 1px 6px; }
+    .nb-type-badge.hypothesis { background: #11202e; color: #6aa9ff; }
+    .nb-type-badge.note { background: #0d1f18; color: #7ec8a4; }
+    .nb-type-badge.question { background: #221f0d; color: #ffd93b; }
+    .nb-entry-text { font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+    .nb-entry-actions { margin-top: 8px; display: flex; gap: 6px; }
+    .nb-action-btn { background: transparent; border: 1px solid #2a2f3a; border-radius: 4px; color: #9aa4b2;
+      cursor: pointer; font-size: 11px; padding: 2px 8px; }
+    .nb-action-btn:hover { border-color: #6aa9ff; color: #6aa9ff; }
+    .nb-action-btn.del:hover { border-color: #ff7a7a; color: #ff7a7a; }
+    .nb-add-form { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+    .nb-add-row { display: flex; gap: 8px; align-items: flex-start; }
+    #nbText { flex: 1; background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 6px;
+      padding: 6px 8px; font-family: inherit; font-size: 13px; resize: vertical; min-height: 56px; }
+    #nbType { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+    .nb-ai-row { font-size: 12px; color: #9aa4b2; display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+    .nb-ai-row label { cursor: pointer; user-select: none; }
     .tag-current-pill .tag-del:hover { opacity: 1; }
     #tagInput { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 6px; padding: 6px; font-family: inherit; }
     /* Hunt-pivot query generator (Velociraptor / KQL / ES|QL / Splunk / Sigma / YARA / Suricata templates from an entity) */
@@ -884,6 +908,30 @@
     <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
     <section id="sec-legitimate" style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
     <section id="sec-inv-log" style="grid-column: 1 / -1"><h2>Investigation Log</h2><div id="timeline">—</div></section>
+    <section id="sec-notebook" style="grid-column: 1 / -1" class="collapsed">
+      <h2>Analyst Notebook</h2>
+      <p style="font-size:12px;color:#9aa4b2;margin:0 0 10px">Free-form hypotheses, notes, and open questions. Entries survive synthesis and are never wiped. Optionally included in AI synthesis context (opt-in below).</p>
+      <div class="nb-ai-row">
+        <input type="checkbox" id="nbAiToggle" />
+        <label for="nbAiToggle">Include notebook in AI synthesis context</label>
+        <span style="color:#52617a;font-size:11px" id="nbAiHint">(gives the AI your current hypotheses and questions)</span>
+      </div>
+      <div id="nbList" style="margin-top:12px">—</div>
+      <div class="nb-add-form">
+        <div class="nb-add-row">
+          <select id="nbType">
+            <option value="note">Note</option>
+            <option value="hypothesis">Hypothesis</option>
+            <option value="question">Question</option>
+          </select>
+          <textarea id="nbText" placeholder="Write a note, hypothesis, or open question…" rows="3"></textarea>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="nbAddBtn">Add entry</button>
+          <span id="nbMsg" class="manual-msg"></span>
+        </div>
+      </div>
+    </section>
     <section id="sec-case-details" style="grid-column: 1 / -1" class="collapsed">
       <h2>Case Details (for the generated report)</h2>
       <div id="reportMeta">
@@ -1775,6 +1823,96 @@
       if (!caseId) return;
       fetch(`/cases/${caseId}/tags/${id}`, { method: "DELETE" }).then(() => loadTags(caseId)).catch(() => {});
     }
+
+    // --- Analyst notebook ---------------------------------------------------------
+    let notebookEntries = [];
+    let nbEditingId = null;
+
+    function loadNotebook(caseId) {
+      fetch(`/cases/${caseId}/notebook`).then(r => r.json()).then(list => {
+        notebookEntries = Array.isArray(list) ? list : [];
+        renderNotebook();
+      }).catch(() => {});
+    }
+
+    function loadNbAiToggle(caseId) {
+      fetch(`/cases/${caseId}/ai-control`).then(r => r.json()).then(c => {
+        const el = document.getElementById("nbAiToggle");
+        if (el) el.checked = !!c.includeNotebook;
+      }).catch(() => {});
+    }
+
+    function renderNotebook() {
+      const el = document.getElementById("nbList");
+      if (!el) return;
+      if (!notebookEntries.length) { el.innerHTML = "<div style='color:#9aa4b2;font-size:12px'>No entries yet.</div>"; return; }
+      el.innerHTML = notebookEntries.map(e => {
+        const ts = e.timestamp ? `<span style="margin-left:auto;font-size:10px;color:#52617a">${esc(e.timestamp.slice(0,16).replace('T',' '))} UTC</span>` : "";
+        return `<div class="nb-entry ${escAttr(e.type)}" data-id="${escAttr(e.id)}">` +
+          `<div class="nb-entry-header"><span class="nb-type-badge ${escAttr(e.type)}">${esc(e.type)}</span>${ts}</div>` +
+          `<div class="nb-entry-text">${esc(e.text)}</div>` +
+          `<div class="nb-entry-actions">` +
+          `<button class="nb-action-btn" onclick="nbStartEdit('${escAttr(e.id)}')">Edit</button>` +
+          `<button class="nb-action-btn del" onclick="nbDelete('${escAttr(e.id)}')">Delete</button>` +
+          `</div></div>`;
+      }).join("");
+    }
+
+    function nbStartEdit(id) {
+      const entry = notebookEntries.find(e => e.id === id);
+      if (!entry) return;
+      nbEditingId = id;
+      document.getElementById("nbText").value = entry.text;
+      document.getElementById("nbType").value = entry.type;
+      document.getElementById("nbAddBtn").textContent = "Save edit";
+      document.getElementById("nbMsg").textContent = "";
+      document.getElementById("nbText").focus();
+    }
+
+    function nbCancelEdit() {
+      nbEditingId = null;
+      document.getElementById("nbText").value = "";
+      document.getElementById("nbType").value = "note";
+      document.getElementById("nbAddBtn").textContent = "Add entry";
+      document.getElementById("nbMsg").textContent = "";
+    }
+
+    function nbDelete(id) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      fetch(`/cases/${caseId}/notebook/${id}`, { method: "DELETE" }).then(() => loadNotebook(caseId)).catch(() => {});
+    }
+
+    document.getElementById("nbAddBtn").onclick = function() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const text = document.getElementById("nbText").value.trim();
+      const type = document.getElementById("nbType").value;
+      const msg = document.getElementById("nbMsg");
+      if (!caseId || !text) { msg.textContent = "text required"; return; }
+      msg.textContent = nbEditingId ? "saving…" : "adding…";
+      if (nbEditingId) {
+        fetch(`/cases/${caseId}/notebook/${nbEditingId}`, { method: "PATCH",
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ text, type }) })
+          .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+          .then(() => { nbCancelEdit(); loadNotebook(caseId); })
+          .catch(e => { msg.textContent = "failed: " + e.message; });
+      } else {
+        fetch(`/cases/${caseId}/notebook`, { method: "POST",
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ text, type }) })
+          .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+          .then(() => { document.getElementById("nbText").value = ""; msg.textContent = ""; loadNotebook(caseId); })
+          .catch(e => { msg.textContent = "failed: " + e.message; });
+      }
+    };
+
+    document.getElementById("nbAiToggle").addEventListener("change", function() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { this.checked = !this.checked; return; }
+      fetch(`/cases/${caseId}/ai-control`, { method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled: aiEnabled, includeNotebook: this.checked }) })
+        .catch(() => { this.checked = !this.checked; });
+    });
 
     // --- Hunt-pivot query generator -----------------------------------------------
     // From a forensic event or IOC, generate ready-to-adapt hunt/pivot queries for the tools
@@ -3385,6 +3523,8 @@
       loadPhases(caseId);
       loadComments(caseId);
       loadTags(caseId);
+      loadNotebook(caseId);
+      loadNbAiToggle(caseId);
       loadStarred(caseId);
       selectedEvents.clear();
       showStarredOnly = false;
@@ -3411,6 +3551,7 @@
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
+        else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
       };

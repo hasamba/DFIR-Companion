@@ -38,6 +38,8 @@ import { parsePlasoCsv, type PlasoImportOptions } from "./plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "./sandboxImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
+import type { AiControlStore } from "./aiControl.js";
+import type { NotebookStore } from "./notebookStore.js";
 
 export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation. The",
@@ -524,6 +526,10 @@ export interface PipelineOptions {
   // Optional: record when synthesis actually ran + what changed in the findings, so the
   // dashboard can show "last synthesized N ago" and a what-changed diff. Absent → not recorded.
   synthMetaStore?: SynthMetaStore;
+  // When both notebookStore and aiControlStore are set, synthesis checks aiControl.includeNotebook
+  // and — when true — appends the analyst's notebook entries to the synthesis prompt.
+  notebookStore?: NotebookStore;
+  aiControlStore?: AiControlStore;
 }
 
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
@@ -1571,15 +1577,35 @@ export class AnalysisPipeline {
     // time-spread sample, chronologically — better kill-chain coverage than severity-only.
     let promptEvents = selectSynthesisEvents(scopedEvents, SYNTH_MAX_EVENTS);
 
+    // Analyst notebook context: when both notebookStore and aiControlStore are wired and the
+    // analyst has opted in (includeNotebook: true in ai-control.json), append the notebook
+    // entries to the synthesis prompt so the AI incorporates investigator hypotheses.
+    // Loaded here (before the hash) so notebook changes also trigger a fresh synthesis.
+    let notebookBlock = "";
+    if (this.opts.notebookStore && this.opts.aiControlStore) {
+      const aiCtrl = await this.opts.aiControlStore.load(caseId);
+      if (aiCtrl.includeNotebook) {
+        const notebookEntries = await this.opts.notebookStore.load(caseId);
+        if (notebookEntries.length) {
+          notebookBlock =
+            "ANALYST NOTEBOOK (investigator hypotheses, notes, and open questions — take these into account when synthesizing findings and the attacker path):\n" +
+            notebookEntries.map((e) => `[${e.type.toUpperCase()}] ${e.text}`).join("\n") +
+            "\n\n";
+        }
+      }
+    }
+
     // Skip-if-unchanged: hash only the STABLE INPUTS to synthesis — the in-scope timeline,
-    // the IOCs (value + intel verdicts), the scope, and the legitimate markers. NOT the
-    // findings / MITRE / threads / summary, which synthesis itself rewrites (including those
-    // would make two consecutive runs hash differently and never skip). If the inputs are
-    // identical to the last successful run for this case, return the saved state — no AI call.
+    // the IOCs (value + intel verdicts), the scope, the legitimate markers, and (when opted
+    // in) the notebook entries. NOT the findings / MITRE / threads / summary, which synthesis
+    // itself rewrites (including those would make two consecutive runs hash differently and
+    // never skip). If the inputs are identical to the last successful run, return the saved
+    // state — no AI call.
     const synthHash = createHash("sha1").update(JSON.stringify({
       ev: scopedEvents.map((e) => [e.id, e.severity, e.timestamp, e.description]),
       io: state.iocs.map((i) => [i.id, i.value, (i.enrichments ?? []).map((e) => e.verdict).join(",")]),
       sc: scope, lg: markers.map((m) => m.id),
+      nb: notebookBlock,
     })).digest("hex");
     if (!opts.force && this.lastSynthHash.get(caseId) === synthHash) return loaded;
 
@@ -1614,7 +1640,7 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + pinnedBlock + existingFindings + openThreads + legitimateBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + notebookBlock + pinnedBlock + existingFindings + openThreads + legitimateBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -1625,6 +1651,7 @@ export class AnalysisPipeline {
     const userPrompt =
       scopeNote +
       contextBlock +
+      notebookBlock +
       pinnedBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +

@@ -13,6 +13,9 @@ import type { CaseStore } from "../storage/caseStore.js";
 export interface AiControl {
   enabled: boolean;
   lastAnalyzedSeq: number;
+  // When true, the analyst notebook entries are appended to the synthesis prompt so the
+  // AI can incorporate investigator hypotheses and open questions. Off by default (opt-in).
+  includeNotebook?: boolean;
 }
 
 const DEFAULT: AiControl = { enabled: false, lastAnalyzedSeq: 0 };
