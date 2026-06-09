@@ -33,6 +33,7 @@ export function backfillHighSeverityFindings(
     newFindings.push({
       id,
       severity: e.severity,
+      confidence: 100,
       title: shortTitle(e.description),
       description: `${e.description} (auto-flagged from a ${e.severity}-severity artifact row that had no finding).`,
       relatedIocs: [],

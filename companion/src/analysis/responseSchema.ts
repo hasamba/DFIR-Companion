@@ -9,6 +9,7 @@ export const deltaSchema = z.object({
   findings: z.array(z.object({
     id: z.string().min(1),
     severity: severity.catch("Medium"),
+    confidence: z.number().min(0).max(100).optional().catch(undefined),
     title: z.string().min(1),
     description: z.string(),
     relatedIocs: z.array(z.string()),
@@ -52,9 +53,16 @@ export const deltaSchema = z.object({
     sources: z.array(z.string()).optional(),
     processName: z.string().optional(),
     parentName: z.string().optional(),
+    // Phase 2 evidence-chain fields.
+    action: z.enum(["write", "execute", "network_send", "network_receive"]).optional(),
+    srcIp: z.string().optional(),
+    dstIp: z.string().optional(),
+    port: z.number().int().positive().optional(),
   })).optional(),
   // Narrative reconstruction of the attacker's path (kill-chain story).
   attackerPath: z.string().optional(),
+  // Prose narrative of the incident for management/stakeholders.
+  narrativeTimeline: z.string().optional(),
   // Standard DFIR questions with current answers + where to find them.
   keyQuestions: z.array(z.object({
     id: z.string().min(1),

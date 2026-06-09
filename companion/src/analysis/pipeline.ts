@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import type { AIProvider, AnalyzeImage, AnalyzeRequest } from "../providers/provider.js";
 import { createAnonymizer, deriveKnownEntities } from "./anonymize.js";
 import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
@@ -130,6 +131,10 @@ export const SYSTEM_PROMPT = [
   "(initial access → execution → persistence → priv-esc → lateral movement → C2 → exfil/impact),",
   "citing finding ids and event times. Refine it as new evidence arrives.",
   "",
+  "FINDINGS CONFIDENCE: every finding MUST include a 'confidence' field (integer 0–100) — your",
+  "certainty that this is real attacker activity, not a false positive. 95+ = confirmed hit; 70–90 =",
+  "strongly suspicious; 40–69 = plausible; <40 = speculative. Do NOT omit this field.",
+  "",
   "Return ONLY raw JSON (no markdown code fences, no prose) with EXACTLY this shape — every",
   "finding/ioc/technique/thread/event MUST be an OBJECT with these keys, never a bare string:",
   "",
@@ -139,6 +144,7 @@ export const SYSTEM_PROMPT = [
         {
           id: "f1",
           severity: "Critical|High|Medium|Low|Info",
+          confidence: 85,
           title: "short title",
           description: "what was observed and why it matters",
           relatedIocs: ["i1"],
@@ -168,6 +174,7 @@ export const SYSTEM_PROMPT = [
     2,
   ),
   "",
+  "confidence is 0–100 (your certainty that the finding represents real attacker activity, not a false positive).",
   "If a section has nothing new, return it as an empty array (or empty string for text fields).",
 ].join("\n");
 
@@ -201,12 +208,15 @@ export const CSV_SYSTEM_PROMPT = [
   "AFFECTED ASSET: set each event's 'asset' to the host/computer/FQDN from the row's Computer/Hostname/",
   "Fqdn/Endpoint/Device column (or the export's host); leave \"\" if none — it ties each indicator to its host.",
   "",
+  "FINDINGS CONFIDENCE: every finding MUST include a 'confidence' field (integer 0–100) — your",
+  "certainty that this is real attacker activity, not a false positive. Do NOT omit this field.",
+  "",
   "Return ONLY raw JSON (no markdown fences). Every event/ioc MUST be an OBJECT. Shape:",
   "",
   JSON.stringify(
     {
       findings: [
-        { id: "f1", severity: "Critical|High|Medium|Low|Info", title: "short title (raise for any Critical/High row)", description: "what was detected and why it matters", relatedIocs: ["i1"], mitreTechniques: ["T1059"], status: "open" },
+        { id: "f1", severity: "Critical|High|Medium|Low|Info", confidence: 90, title: "short title (raise for any Critical/High row)", description: "what was detected and why it matters", relatedIocs: ["i1"], mitreTechniques: ["T1059"], status: "open" },
       ],
       iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
       mitreTechniques: [{ id: "T1059", name: "Command and Scripting Interpreter" }],
@@ -320,10 +330,17 @@ export const SYNTHESIS_PROMPT = [
   "  finding (its event id appears in some finding's relatedEventIds). A high-severity artifact row —",
   "  e.g. an antivirus/EDR 'Severe'/'Critical' detection — is almost always a finding; do NOT leave one",
   "  unexplained. Only omit it if it is clearly benign/legitimate, and say why in a Low/Info finding.",
+  "  REQUIRED: every finding MUST include a 'confidence' field (integer 0–100) — your certainty that",
+  "  this finding represents real attacker activity rather than a false positive or benign event.",
+  "  Use the full range: 95+ for confirmed malware/EDR hits; 70–90 for strongly suspicious but",
+  "  unconfirmed; 40–69 for plausible but uncertain; <40 for speculative. Do NOT omit this field.",
   "- iocs: concrete indicators (ips, domains, hashes, malicious files/processes) seen in the timeline.",
   "- mitreTechniques: the ATT&CK techniques observed, aggregated.",
   "- attackerPath: a chronological narrative of the intrusion in kill-chain order (initial access →",
   "  execution → persistence → priv-esc → lateral movement → C2 → exfil/impact), citing event times.",
+  "- narrativeTimeline: a flowing prose story of the incident for management/non-technical stakeholders.",
+  "  Write chronologically in third person: 'At [time], the attacker [action]. This was followed by…'",
+  "  3-5 paragraphs. Plain language — no ATT&CK T-codes, no hashes. Cite timestamps for key events.",
   "- summary: a 2-3 sentence executive overview.",
   "- threadsOpened: open an investigative thread (id + description) for each UNRESOLVED question the",
   "  evidence raises and that still needs follow-up (e.g. 'determine how the attacker obtained the",
@@ -346,14 +363,17 @@ export const SYNTHESIS_PROMPT = [
   "  in the attacker path and the 'unknown'/'partial' keyQuestions. Return 3-7 steps.",
   "",
   "Return ONLY raw JSON (no markdown fences). Set forensicEvents to [] and timelineNote to \"\".",
-  "Every finding/ioc/technique/thread/question MUST be an object, never a bare string. Shape:",
+  "Every finding/ioc/technique/thread/question MUST be an object, never a bare string.",
+  "findings must include confidence (0–100): your certainty this finding is real attacker activity, not a false positive.",
+  "Shape:",
   "",
   JSON.stringify(
     {
-      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed", relatedEventIds: ["e3", "e7"] }],
+      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", confidence: 85, title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed", relatedEventIds: ["e3", "e7"] }],
       iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
       mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses: Disable or Modify Tools" }],
       attackerPath: "Initial access at <time> via …; then execution of …; persistence via …; impact at <time>.",
+      narrativeTimeline: "At <time>, the attacker gained initial access by… This was followed by… The attacker then…",
       summary: "executive summary",
       threadsOpened: [{ id: "t1", description: "unresolved question to chase next" }],
       threadsClosed: ["t0"],
@@ -384,7 +404,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -453,12 +473,35 @@ export const EXEC_SUMMARY_PROMPT = [
   JSON.stringify({ summary: "the executive summary as a few plain-language paragraphs (use \\n\\n between them)" }, null, 2),
 ].join("\n");
 
+// Standalone narrative-timeline generator: produces a stakeholder-friendly prose story of the
+// incident. Used by `generateNarrative()` when the analyst clicks "Generate" without re-running
+// full synthesis. The same narrative is also generated as part of synthesis via SYNTHESIS_PROMPT.
+export const NARRATIVE_PROMPT = [
+  "You are a senior incident-response analyst writing a narrative timeline for ONE security incident.",
+  "Using ONLY the case evidence provided (attacker path, findings, forensic timeline), write a flowing",
+  "chronological prose story of the incident for management and non-technical stakeholders.",
+  "",
+  "Audience: decision-makers who need to understand WHAT HAPPENED and WHEN, not technical details.",
+  "Format:",
+  "- Flowing prose paragraphs — NOT bullet points.",
+  "- Chronological order, citing specific timestamps for key events.",
+  "- Third person: 'the attacker', 'the threat actor', 'the adversary'.",
+  "- Template: 'At [time], the attacker [action]. This was followed by [next step] at [time]...'",
+  "- Plain language: no ATT&CK T-codes, no hashes, no jargon. Explain tools in plain terms.",
+  "- Be honest about uncertainty: if timing or method is unclear, say 'approximately' or 'at some point'.",
+  "- 3-6 paragraphs. Each paragraph covers one phase of the intrusion.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({ narrativeTimeline: "the flowing story as prose paragraphs (use \\n\\n between paragraphs)" }, null, 2),
+].join("\n");
+
 export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROMPT);
 export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
 export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS_PROMPT);
 export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
 export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUMMARY_PROMPT);
+export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRATIVE_PROMPT);
 
 export interface PipelineOptions {
   provider?: AIProvider;
@@ -1413,6 +1456,49 @@ export class AnalysisPipeline {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getAskPrompt(), userPrompt, images: [] });
       return askSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // Generate a chronological prose narrative of the incident for management/stakeholders
+  // (single AI call). The result is saved to state.narrativeTimeline so it persists and
+  // appears in the report and dashboard immediately without a manual copy step.
+  async generateNarrative(caseId: string): Promise<{ narrativeTimeline: string }> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("narrative generation");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+
+    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    let events = selectSynthesisEvents(scopedEvents, max);
+    const renderEvent = (e: ForensicEvent) =>
+      `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
+    const findingsText = loaded.findings.slice(0, 150).map((f) => `[${f.severity}] ${f.title}`).join("\n") || "(none)";
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents);
+
+    const narrativePrompt = getNarrativePrompt();
+    const overhead = estimateTokens(narrativePrompt)
+      + estimateTokens(contextBlock + (loaded.attackerPath || "") + findingsText) + 300;
+    const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
+    if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
+    const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
+
+    const userPrompt =
+      contextBlock +
+      `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
+      `FINDINGS:\n${findingsText}\n\n` +
+      `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
+      `Write the narrative timeline as JSON.`;
+
+    const narrativeSchema = z.object({ narrativeTimeline: z.string().catch("") });
+    const result = await withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: narrativePrompt, userPrompt, images: [] });
+      return narrativeSchema.parse(parsed);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+
+    // Re-read state before saving so imports/edits that arrived during the AI call aren't clobbered.
+    const fresh = await this.opts.stateStore.load(caseId);
+    await this.opts.stateStore.save({ ...fresh, narrativeTimeline: result.narrativeTimeline });
+    return result;
   }
 
   // Generate a management-facing executive summary of the case (single-shot, no state change).
