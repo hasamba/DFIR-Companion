@@ -2313,6 +2313,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         mitreTechniques: state.mitreTechniques.length,
         forensicEvents: state.forensicTimeline.length,
         attackerPath: Boolean(state.attackerPath),
+        narrativeTimeline: Boolean(state.narrativeTimeline),
       });
     } catch (err) {
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
@@ -2342,6 +2343,33 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const result = await options.pipeline.executiveSummary(req.params.id);
       return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Generate (or regenerate) a prose narrative timeline for the case (one text-only AI call).
+  // Saves the result to state.narrativeTimeline so it persists and appears in the report/dashboard.
+  app.post("/cases/:id/narrative", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for narrative generation" });
+    try {
+      const result = await options.pipeline.generateNarrative(req.params.id);
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Save an analyst-edited narrative timeline. The analyst may edit the AI-generated narrative
+  // before export; this persists the edit to state.narrativeTimeline until the next synthesis.
+  app.put("/cases/:id/narrative", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const narrative = typeof req.body?.narrativeTimeline === "string" ? req.body.narrativeTimeline : "";
+    try {
+      const state = await options.stateStore.load(req.params.id);
+      const updated = { ...state, narrativeTimeline: narrative };
+      await options.stateStore.save(updated);
+      return res.status(200).json({ narrativeTimeline: narrative });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import type { AIProvider, AnalyzeImage, AnalyzeRequest } from "../providers/provider.js";
 import { createAnonymizer, deriveKnownEntities } from "./anonymize.js";
 import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
@@ -335,6 +336,9 @@ export const SYNTHESIS_PROMPT = [
   "- mitreTechniques: the ATT&CK techniques observed, aggregated.",
   "- attackerPath: a chronological narrative of the intrusion in kill-chain order (initial access →",
   "  execution → persistence → priv-esc → lateral movement → C2 → exfil/impact), citing event times.",
+  "- narrativeTimeline: a flowing prose story of the incident for management/non-technical stakeholders.",
+  "  Write chronologically in third person: 'At [time], the attacker [action]. This was followed by…'",
+  "  3-5 paragraphs. Plain language — no ATT&CK T-codes, no hashes. Cite timestamps for key events.",
   "- summary: a 2-3 sentence executive overview.",
   "- threadsOpened: open an investigative thread (id + description) for each UNRESOLVED question the",
   "  evidence raises and that still needs follow-up (e.g. 'determine how the attacker obtained the",
@@ -367,6 +371,7 @@ export const SYNTHESIS_PROMPT = [
       iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
       mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses: Disable or Modify Tools" }],
       attackerPath: "Initial access at <time> via …; then execution of …; persistence via …; impact at <time>.",
+      narrativeTimeline: "At <time>, the attacker gained initial access by… This was followed by… The attacker then…",
       summary: "executive summary",
       threadsOpened: [{ id: "t1", description: "unresolved question to chase next" }],
       threadsClosed: ["t0"],
@@ -397,7 +402,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -466,12 +471,35 @@ export const EXEC_SUMMARY_PROMPT = [
   JSON.stringify({ summary: "the executive summary as a few plain-language paragraphs (use \\n\\n between them)" }, null, 2),
 ].join("\n");
 
+// Standalone narrative-timeline generator: produces a stakeholder-friendly prose story of the
+// incident. Used by `generateNarrative()` when the analyst clicks "Generate" without re-running
+// full synthesis. The same narrative is also generated as part of synthesis via SYNTHESIS_PROMPT.
+export const NARRATIVE_PROMPT = [
+  "You are a senior incident-response analyst writing a narrative timeline for ONE security incident.",
+  "Using ONLY the case evidence provided (attacker path, findings, forensic timeline), write a flowing",
+  "chronological prose story of the incident for management and non-technical stakeholders.",
+  "",
+  "Audience: decision-makers who need to understand WHAT HAPPENED and WHEN, not technical details.",
+  "Format:",
+  "- Flowing prose paragraphs — NOT bullet points.",
+  "- Chronological order, citing specific timestamps for key events.",
+  "- Third person: 'the attacker', 'the threat actor', 'the adversary'.",
+  "- Template: 'At [time], the attacker [action]. This was followed by [next step] at [time]...'",
+  "- Plain language: no ATT&CK T-codes, no hashes, no jargon. Explain tools in plain terms.",
+  "- Be honest about uncertainty: if timing or method is unclear, say 'approximately' or 'at some point'.",
+  "- 3-6 paragraphs. Each paragraph covers one phase of the intrusion.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({ narrativeTimeline: "the flowing story as prose paragraphs (use \\n\\n between paragraphs)" }, null, 2),
+].join("\n");
+
 export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROMPT);
 export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
 export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS_PROMPT);
 export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
 export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUMMARY_PROMPT);
+export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRATIVE_PROMPT);
 
 export interface PipelineOptions {
   provider?: AIProvider;
@@ -1422,6 +1450,49 @@ export class AnalysisPipeline {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getAskPrompt(), userPrompt, images: [] });
       return askSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // Generate a chronological prose narrative of the incident for management/stakeholders
+  // (single AI call). The result is saved to state.narrativeTimeline so it persists and
+  // appears in the report and dashboard immediately without a manual copy step.
+  async generateNarrative(caseId: string): Promise<{ narrativeTimeline: string }> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("narrative generation");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+
+    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    let events = selectSynthesisEvents(scopedEvents, max);
+    const renderEvent = (e: ForensicEvent) =>
+      `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
+    const findingsText = loaded.findings.slice(0, 150).map((f) => `[${f.severity}] ${f.title}`).join("\n") || "(none)";
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents);
+
+    const narrativePrompt = getNarrativePrompt();
+    const overhead = estimateTokens(narrativePrompt)
+      + estimateTokens(contextBlock + (loaded.attackerPath || "") + findingsText) + 300;
+    const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
+    if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
+    const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
+
+    const userPrompt =
+      contextBlock +
+      `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
+      `FINDINGS:\n${findingsText}\n\n` +
+      `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
+      `Write the narrative timeline as JSON.`;
+
+    const narrativeSchema = z.object({ narrativeTimeline: z.string().catch("") });
+    const result = await withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: narrativePrompt, userPrompt, images: [] });
+      return narrativeSchema.parse(parsed);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+
+    // Re-read state before saving so imports/edits that arrived during the AI call aren't clobbered.
+    const fresh = await this.opts.stateStore.load(caseId);
+    await this.opts.stateStore.save({ ...fresh, narrativeTimeline: result.narrativeTimeline });
+    return result;
   }
 
   // Generate a management-facing executive summary of the case (single-shot, no state change).
