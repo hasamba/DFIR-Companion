@@ -256,7 +256,8 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
   } else {
     const sorted = [...state.findings].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
     for (const f of sorted) {
-      lines.push(`#### [${f.severity}] ${f.title} (${f.id})`);
+      const confLabel = f.confidence !== undefined ? ` [${f.confidence}% confidence]` : "";
+      lines.push(`#### [${f.severity}]${confLabel} ${f.title} (${f.id})`);
       lines.push(f.description || "_no description_");
       if (f.relatedIocs.length) lines.push(`- IOCs: ${f.relatedIocs.join(", ")}`);
       if (f.mitreTechniques.length) lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);
