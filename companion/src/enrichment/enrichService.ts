@@ -21,6 +21,7 @@ export interface EnrichLookupEvent {
 export interface EnrichOptions {
   providers: EnrichmentProvider[];
   delayMs?: number;                       // throttle between external lookups (default 1500)
+  perProviderDelayMs?: Record<string, number>;  // per-provider throttle; overrides delayMs for named providers
   maxIocs?: number;                       // cap IOCs queried per run (default 100)
   force?: boolean;                        // re-query IOCs already enriched
   now?: () => string;                     // injected timestamp
@@ -89,8 +90,8 @@ export async function enrichIocs(
 
   // Map of IOC index → { enrichments, enrichedBy }, so we can rebuild the list immutably.
   const updates = new Map<number, { enrichments: IocEnrichment[]; enrichedBy: string[] }>();
-  let externalCalls = 0;
-  const downReported = new Set<string>();   // providers we've already logged as unreachable this run
+  const lastCallAt = new Map<string, number>();   // provider name → monotonic timestamp of last call start
+  const downReported = new Set<string>();          // providers we've already logged as unreachable this run
 
   for (const { ioc, idx, kind, todo } of toQuery) {
     const succeeded = new Set<string>();   // providers whose call returned (hit OR miss) — NOT errors
@@ -111,10 +112,15 @@ export async function enrichIocs(
           continue;
         }
       }
-      if (externalCalls > 0) await sleep(delayMs);            // throttle between live calls
-      externalCalls += 1;
       queriedThisIoc = true;
+      const provDelay = opts.perProviderDelayMs?.[provider.name] ?? delayMs;
+      const lastAt = lastCallAt.get(provider.name);
+      if (lastAt !== undefined) {
+        const wait = provDelay - (monotonic() - lastAt);
+        if (wait > 0) await sleep(wait);
+      }
       const startedAt = monotonic();
+      lastCallAt.set(provider.name, startedAt);
       try {
         const r = await provider.lookup(kind, ioc.value);
         // A provider may return a single result, several (a fan-out source like Hunting.ch),
