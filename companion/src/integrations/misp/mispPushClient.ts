@@ -78,7 +78,8 @@ export class MispPushClient implements MispPushClientLike {
     } catch (err) {
       throw new MispApiError(`MISP request failed: ${(err as Error).message}`, 0);
     }
-    if (res.status === 401 || res.status === 403) throw new MispApiError("MISP auth failed (check DFIR_MISP_KEY)", res.status);
+    if (res.status === 401) throw new MispApiError("MISP auth failed — check DFIR_MISP_KEY", res.status);
+    if (res.status === 403) throw new MispApiError(`MISP permission denied on ${method} ${path} — the API key needs write access (Site Admin or Org Admin role; read-only keys work for enrichment but cannot create events or attributes)`, res.status);
     if (!res.ok) throw new MispApiError(`MISP HTTP ${res.status} on ${path}`, res.status);
     return (await res.json()) as T;
   }
@@ -88,10 +89,14 @@ export class MispPushClient implements MispPushClientLike {
   }
 
   // Search events by tag to find a prior push's event. Returns the event id or null.
+  // Auth errors (401/403) propagate — only network/parse failures fall back to empty.
   async findEventByTag(tag: string): Promise<string | null> {
     const events = await this.req<Array<{ Event?: { id?: string } }>>(
       "GET", `/events/index?searchTag=${encodeURIComponent(tag)}&limit=1`,
-    ).catch(() => [] as Array<{ Event?: { id?: string } }>);
+    ).catch((err: unknown) => {
+      if (err instanceof MispApiError && (err.status === 401 || err.status === 403)) throw err;
+      return [] as Array<{ Event?: { id?: string } }>;
+    });
     const id = events[0]?.Event?.id;
     return id ? String(id) : null;
   }
@@ -108,10 +113,14 @@ export class MispPushClient implements MispPushClientLike {
   }
 
   // List existing attributes from the event (for dedupe on re-push).
+  // Auth errors propagate; other failures fall back to empty (dedupe fails gracefully).
   async listAttributes(eventId: string): Promise<MispAttrRef[]> {
     const data = await this.req<{ Event?: { Attribute?: Array<{ type?: string; value?: string }> } }>(
       "GET", `/events/view/${encodeURIComponent(eventId)}`,
-    ).catch(() => ({ Event: { Attribute: [] as Array<{ type?: string; value?: string }> } }));
+    ).catch((err: unknown) => {
+      if (err instanceof MispApiError && (err.status === 401 || err.status === 403)) throw err;
+      return { Event: { Attribute: [] as Array<{ type?: string; value?: string }> } };
+    });
     return (data.Event?.Attribute ?? []).map((a) => ({ type: a.type ?? "", value: a.value ?? "" }));
   }
 
