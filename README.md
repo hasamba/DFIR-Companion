@@ -28,6 +28,89 @@ stays on disk, and the AI provider is yours to choose.
 > not re-deriving alerts. New ingest connectors should consume a tool's output; they should not
 > reimplement its detection.
 
+## Screenshots
+
+> **Demo case: GlobalTech Industries — BEC & Ransomware Precursor.**
+> Seed it locally with `npm run seed-demo` then open `http://127.0.0.1:4773/dashboard`.
+
+---
+
+### Executive Summary & Recommended Next Steps
+
+AI-generated case summary and AI-prioritized remediation actions (Critical → Medium), each with
+rationale and a pointer to the finding or artifact it came from.
+
+<img src="docs/screenshots/companion-demo-01.png" alt="DFIR Companion — AI executive summary and prioritized remediation next steps" width="900" />
+
+---
+
+### Forensic Timeline
+
+31 corroborated events from Chainsaw · THOR · Suricata · CrowdStrike Falcon — severity filters, per-row
+triage tags (`initial-access`, `c2-comms`, `key-evidence`, …), import change tracking
+(+19 new events banner with expandable diff), and analyst star / bulk-action controls.
+
+<img src="docs/screenshots/companion-demo-02.png" alt="DFIR Companion — forensic timeline with 31 events, severity filters, triage tags, and import tracking" width="900" />
+
+---
+
+### Attack Path Narrative · MITRE ATT&CK Kill Chain · Findings
+
+Full attacker-path write-up from initial access to ransomware attempt, an interactive kill chain
+(click a tactic to expand its events), and the top findings with confidence scores.
+
+<img src="docs/screenshots/companion-demo-03.png" alt="DFIR Companion — attack path narrative, MITRE ATT&CK kill chain, and findings" width="900" />
+
+---
+
+### Findings
+
+8 AI-generated findings (2 Critical · 2 High · 2 Medium · 1 Low) — each with a confidence %,
+analyst triage tags, MITRE technique links, and a synthesis freshness diff (+8 new since last run).
+
+<img src="docs/screenshots/companion-demo-04.png" alt="DFIR Companion — findings with confidence scores, analyst triage tags, and MITRE ATT&CK links" width="900" />
+
+---
+
+### Evidence Chain Graph
+
+Process trees + lateral movement across DC01, FS01, and WKSTN-JSMITH stitched into one causal
+attack graph. Derived deterministically from importer-populated fields — no AI, no cost, runs offline.
+
+<img src="docs/screenshots/companion-demo-05.png" alt="DFIR Companion — evidence chain graph with process trees and lateral movement across hosts" width="900" />
+
+---
+
+### IOCs with Threat-Intel Enrichments
+
+15 indicators (IPs · domains · hashes · files · processes · URL) enriched against VirusTotal,
+AbuseIPDB, ThreatFox, URLhaus, and MalwareBazaar — verdict badges, detection scores, `NEW` import
+highlights, and analyst `confirmed-malicious` / `pivot-point` triage labels.
+
+<img src="docs/screenshots/companion-demo-06.png" alt="DFIR Companion — IOCs with VirusTotal, AbuseIPDB, ThreatFox, URLhaus, and MalwareBazaar enrichments" width="900" />
+
+---
+
+### Customer Exposure & Compromised Assets · IoC Graph
+
+**Customer Exposure** (top): credential-leak check for the victim org's own domains and emails
+against HIBP / DeHashed / Shodan — breach names, exposed services, no raw passwords stored.
+**Compromised Assets & IoC graph** (bottom): interactive graph linking victim hosts and accounts
+to the indicators that touched each — Host / Account toggles, fullscreen, drag-to-pin nodes.
+
+<img src="docs/screenshots/companion-demo-07.png" alt="DFIR Companion — customer exposure panel and compromised assets IoC graph" width="900" />
+
+---
+
+### Key Investigative Questions
+
+8 standard DFIR questions auto-answered from the synthesized case
+(answered ✅ / partial 🟡 / unknown ❓), each with an evidence pointer or a "collect this next" directive.
+
+<img src="docs/screenshots/companion-demo-08.png" alt="DFIR Companion — key investigative questions with answers and evidence pointers" width="900" />
+
+---
+
 ## What it produces
 
 For each case the AI builds and keeps up to date:
