@@ -142,6 +142,29 @@ For each case the AI builds and keeps up to date:
 - **Minimum-severity floor** — filter import noise at the gate; severity-less formats always pass through unchanged
 - **Evidence-first** — files written to disk + append-only audit log before any analysis; perceptual-hash dedup
 
+### Capture & evidence
+- **MV3 browser extension** — timer + event-driven capture (navigation, tab switch, click);
+  lossless full-resolution PNG; offline queue + auto-sync; per-case Start/Stop; **`Ctrl+Shift+S`
+  hotkey** to toggle capture; captured tab title baked into the screenshot filename. It
+  **attaches to an existing case** picked from a server-provided dropdown — case creation is a
+  deliberate dashboard action, never an extension side effect.
+- **Case management in the dashboard** — a **+ New case** form is the one place cases are born
+  (id, name, investigator); the companion rejects captures to an unknown case so evidence never
+  lands in a half-made one.
+- **Case templates** — the New case modal offers five built-in templates (Ransomware, BEC/Email
+  Compromise, Insider Threat, Web App Intrusion, General Malware) that pre-populate the Key
+  Questions list with incident-type–specific investigation questions (pinned so synthesis can
+  answer them). Each template also lists recommended import types and hunt platforms as hints.
+  Custom templates can be saved from the Export menu (**Save as Template…**) and reused across
+  cases; they're stored in a `templates/` directory alongside `cases/`.
+- **Evidence-first ingest** — screenshot written to disk + append-only `captures.jsonl` audit
+  line **before** any analysis; perceptual-hash duplicate detection.
+- **Import external screenshots** — dashboard **Import Screenshots** button (multi-select PNG/JPEG/WebP)
+  feeds images from any other tool through the same ingest path as the extension, so they're stored
+  and analyzed identically.
+- **Localhost only** — server binds `127.0.0.1`; CORS + Private-Network-Access so the
+  `chrome-extension://` origin can reach it.
+
 ### Evidence importers
 
 All importers are **deterministic (no AI call)**, read the artifact's own timestamps, and tag events with the real tool name for cross-source correlation. The same file can be re-imported without duplicating the timeline.
