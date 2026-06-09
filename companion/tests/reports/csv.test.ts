@@ -10,7 +10,7 @@ describe("CSV renderers", () => {
       firstSeen: "t0", lastUpdated: "t1", status: "open" });
     const csv = findingsCsv(state);
     const rows = csv.trim().split("\n");
-    expect(rows[0]).toContain("id,severity,title");
+    expect(rows[0]).toContain("id,severity,confidence,title");
     expect(rows[1]).toContain('"PS, ""encoded"""'); // escaped
   });
 
