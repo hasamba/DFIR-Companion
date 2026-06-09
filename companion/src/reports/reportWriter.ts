@@ -13,6 +13,7 @@ import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGraph.js";
+import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
@@ -99,6 +100,15 @@ export class ReportWriter {
   // derived on demand with the same scope/legitimate filtering as the report.
   async evidenceGraph(caseId: string): Promise<EvidenceGraph> {
     return buildEvidenceGraph(await this.loadFilteredState(caseId));
+  }
+
+  // Temporal attack phases (bursts of activity grouped by time gap) for the case, derived on
+  // demand with the same scope/legitimate filtering as the report. The burst gap threshold is
+  // configurable via DFIR_PHASE_GAP_S (seconds; default 5 min).
+  async phases(caseId: string): Promise<AttackPhase[]> {
+    const state = await this.loadFilteredState(caseId);
+    const gapSeconds = Number(process.env.DFIR_PHASE_GAP_S) || DEFAULT_GAP_SECONDS;
+    return buildAttackPhases(state.forensicTimeline, { gapSeconds });
   }
 
   async writeAll(caseId: string): Promise<ReportPaths> {
