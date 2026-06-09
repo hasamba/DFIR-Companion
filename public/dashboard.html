@@ -737,7 +737,29 @@
     <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
     <section id="sec-phases" style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
     <section id="sec-assets" style="grid-column: 1 / -1">
-      <h2>Compromised Assets &amp; IoC Graph</h2>
+      <h2>Compromised Assets &amp; IoC Graph<button class="add-toggle" type="button" title="Add / edit assets and links manually" aria-label="Add asset">+</button></h2>
+      <div class="manual-add" hidden>
+        <form class="manual-form" onsubmit="return false">
+          <span style="color:#9aa4b2">Add asset:</span>
+          <input id="assetAddName" placeholder="hostname or account" style="min-width:180px" />
+          <select id="assetAddType" title="Asset type">
+            <option value="host">host</option>
+            <option value="account">account</option>
+            <option value="service">service</option>
+            <option value="other">other</option>
+          </select>
+          <button id="addAssetBtn" type="button">Add</button>
+          <span id="addAssetMsg" class="manual-msg"></span>
+        </form>
+        <form class="manual-form" onsubmit="return false">
+          <span style="color:#9aa4b2">Link asset↔IoC:</span>
+          <input id="assetLinkAsset" placeholder="asset id (e.g. host:win-01)" style="min-width:210px" />
+          <input id="assetLinkIoc" placeholder="IoC id" style="min-width:160px" />
+          <button id="addLinkBtn" type="button">Link</button>
+          <button id="delLinkBtn" type="button">Unlink</button>
+          <span id="addLinkMsg" class="manual-msg"></span>
+        </form>
+      </div>
       <div id="assetPanel">
         <div id="assetGraphWrap" class="asset-graph-wrap">
           <div class="asset-controls">
@@ -1042,6 +1064,7 @@
 
     // --- Compromised assets + asset↔IoC graph -------------------------------------
     let assetGraphData = null;                              // { assets, iocs, edges }
+    let assetOverridesData = null;                          // { renames, added, removed, addedLinks, removedLinks }
     let assetFocus = null;                                  // focused node id, or null
     let assetGraphTimer = null;
     let assetLayout = "horizontal";                         // "horizontal" | "vertical" | "radial"
@@ -1095,6 +1118,11 @@
         assetGraphData = g; assetFocus = null; renderAssetGraph();
       }).catch(() => {});
     }
+    function loadAssetOverrides(caseId) {
+      fetch(`/cases/${caseId}/asset-overrides`).then(r => r.ok ? r.json() : null).then(ov => {
+        assetOverridesData = ov; renderAssetList();
+      }).catch(() => {});
+    }
     // State changes (imports / synthesis) re-derive the graph — debounced.
     function scheduleAssetGraphReload() {
       const caseId = document.getElementById("caseId").value.trim();
@@ -1103,18 +1131,33 @@
       assetGraphTimer = setTimeout(() => loadAssetGraph(caseId), 800);
     }
 
-    // "Known compromised assets" — names only, just hosts and users (no details).
+    // "Known compromised assets" — with rename/remove controls when overrides are available.
     function renderAssetList() {
       const el = document.getElementById("assetList");
       if (!assetGraphData) { el.textContent = "—"; return; }
       const comp = assetGraphData.assets.filter(a =>
         a.compromised && (a.type === "host" || a.type === "account") && assetTypesEnabled.has(a.type));
-      if (!comp.length) { el.innerHTML = "<em style='color:#9aa4b2'>No compromised hosts or users identified.</em>"; return; }
-      const chips = (names) => names.map(n => `<span class="asset-chip">${esc(n)}</span>`).join(" ");
-      const group = (label, names) => names.length
-        ? `<div style="margin-bottom:8px"><div class="asset-subhead" style="margin:0 0 4px">${label}</div>${chips(names)}</div>` : "";
-      el.innerHTML = group("Hosts", comp.filter(a => a.type === "host").map(a => a.name))
-        + group("Users", comp.filter(a => a.type === "account").map(a => a.name));
+      const editBtns = (a) =>
+        `<button class="asset-rename-btn" data-assetid="${escAttr(a.id)}" data-name="${escAttr(a.name)}" title="Rename asset" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:#6b7585;font-size:10px">✏</button>`
+        + `<button class="asset-del-btn" data-assetid="${escAttr(a.id)}" title="Suppress asset from graph" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:#6b7585;font-size:10px">×</button>`;
+      const chip = (a) => `<span class="asset-chip" style="padding-right:2px">${esc(a.name)}${editBtns(a)}</span>`;
+      const group = (label, assets) => assets.length
+        ? `<div style="margin-bottom:8px"><div class="asset-subhead" style="margin:0 0 4px">${label}</div>${assets.map(chip).join(" ")}</div>` : "";
+      let html = "";
+      if (!comp.length) html = "<em style='color:#9aa4b2'>No compromised hosts or users identified.</em>";
+      else html = group("Hosts", comp.filter(a => a.type === "host")) + group("Users", comp.filter(a => a.type === "account"));
+      // Manual additions (not necessarily compromised — show them so analysts can confirm/remove).
+      const manual = (assetGraphData.assets || []).filter(a => a.id.startsWith("manual:"));
+      if (manual.length) html += group("Manual additions", manual);
+      // Suppressed assets (from overrides) — shown for easy restoration.
+      if (assetOverridesData && (assetOverridesData.removed || []).length) {
+        html += `<div style="margin-top:8px"><div class="asset-subhead" style="margin:0 0 4px">Suppressed (click ↺ to restore)</div>`
+          + assetOverridesData.removed.map(id =>
+            `<span class="asset-chip" style="opacity:0.5">${esc(id)}`
+            + ` <button class="asset-restore-btn" data-assetid="${escAttr(id)}" title="Restore asset" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:#6b7585;font-size:10px">↺</button></span>`
+          ).join(" ") + `</div>`;
+      }
+      el.innerHTML = html;
     }
 
     function isAssetFullscreen() { return document.fullscreenElement === document.getElementById("assetGraphWrap"); }
@@ -3259,6 +3302,7 @@
       loadScope(caseId);
       loadReportMeta(caseId);
       loadAssetGraph(caseId);
+      loadAssetOverrides(caseId);
       loadEvidenceGraph(caseId);
       loadPhases(caseId);
       loadComments(caseId);
@@ -3289,6 +3333,7 @@
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
+        else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
       };
     }
@@ -3813,6 +3858,74 @@
     document.getElementById("ceDomainChips").addEventListener("click", e => { const x = e.target.closest(".x"); if (x) ceRemoveTarget(x.dataset.kind, x.dataset.val); });
     document.getElementById("ceEmailChips").addEventListener("click", e => { const x = e.target.closest(".x"); if (x) ceRemoveTarget(x.dataset.kind, x.dataset.val); });
     document.getElementById("ceProviders").addEventListener("change", e => { if (e.target.classList && e.target.classList.contains("ce-prov")) ceAutosaveTargets(); });
+    // ── Asset overrides (rename / add / suppress / link) ───────────────────────────
+    document.getElementById("addAssetBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const name = document.getElementById("assetAddName").value.trim();
+      const type = document.getElementById("assetAddType").value;
+      const msg = document.getElementById("addAssetMsg");
+      if (!name) { msg.textContent = "name required"; return; }
+      msg.textContent = "…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, type }),
+      }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error)))
+        .then(() => { msg.textContent = "added ✓"; document.getElementById("assetAddName").value = ""; setTimeout(() => msg.textContent = "", 2500); loadAssetGraph(caseId); loadAssetOverrides(caseId); })
+        .catch(e => { msg.textContent = "failed: " + e + " — restart the companion server if this 404s"; });
+    };
+    document.getElementById("addLinkBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const asset = document.getElementById("assetLinkAsset").value.trim();
+      const ioc = document.getElementById("assetLinkIoc").value.trim();
+      const msg = document.getElementById("addLinkMsg");
+      if (!asset || !ioc) { msg.textContent = "asset id and IoC id are required"; return; }
+      msg.textContent = "…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/links`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asset, ioc }),
+      }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error)))
+        .then(() => { msg.textContent = "linked ✓"; setTimeout(() => msg.textContent = "", 2500); loadAssetGraph(caseId); loadAssetOverrides(caseId); })
+        .catch(e => { msg.textContent = "failed: " + e + " — restart the companion server if this 404s"; });
+    };
+    document.getElementById("delLinkBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const asset = document.getElementById("assetLinkAsset").value.trim();
+      const ioc = document.getElementById("assetLinkIoc").value.trim();
+      const msg = document.getElementById("addLinkMsg");
+      if (!asset || !ioc) { msg.textContent = "asset id and IoC id are required"; return; }
+      msg.textContent = "…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/links?asset=${encodeURIComponent(asset)}&ioc=${encodeURIComponent(ioc)}`, { method: "DELETE" })
+        .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error)))
+        .then(() => { msg.textContent = "unlinked ✓"; setTimeout(() => msg.textContent = "", 2500); loadAssetGraph(caseId); loadAssetOverrides(caseId); })
+        .catch(e => { msg.textContent = "failed: " + e + " — restart the companion server if this 404s"; });
+    };
+    // Rename / suppress / restore buttons inside the asset list (event delegation).
+    document.getElementById("assetList").addEventListener("click", (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const renameBtn = e.target.closest(".asset-rename-btn");
+      const delBtn = e.target.closest(".asset-del-btn");
+      const restoreBtn = e.target.closest(".asset-restore-btn");
+      if (renameBtn) {
+        const id = renameBtn.dataset.assetid;
+        const cur = renameBtn.dataset.name;
+        const newName = prompt(`Rename "${cur}" to (leave empty to clear rename):`, cur);
+        if (newName === null) return;
+        fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}`, {
+          method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: newName }),
+        }).then(() => { loadAssetGraph(caseId); loadAssetOverrides(caseId); }).catch(() => {});
+      } else if (delBtn) {
+        const id = delBtn.dataset.assetid;
+        fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}`, { method: "DELETE" })
+          .then(() => { loadAssetGraph(caseId); loadAssetOverrides(caseId); }).catch(() => {});
+      } else if (restoreBtn) {
+        const id = restoreBtn.dataset.assetid;
+        fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}/restore`, { method: "POST" })
+          .then(() => { loadAssetGraph(caseId); loadAssetOverrides(caseId); }).catch(() => {});
+      }
+    });
+
     // The (+) next to a section heading toggles that section's manual add-entry form. We stop the
     // click from bubbling to the h2 (which would collapse the section), and expand the section if
     // it was collapsed so the form is visible.

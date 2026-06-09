@@ -2,7 +2,7 @@ import type { InvestigationState, Severity, ForensicEvent } from "../analysis/st
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
-import { buildAssetGraph } from "../analysis/assetGraph.js";
+import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
@@ -254,15 +254,16 @@ function customerExposure(exposure: CustomerExposureSummary | undefined, lines: 
   }
 }
 
-function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary): void {
+function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary, prebuiltGraph?: AssetGraph): void {
   lines.push("## 4 Investigation", "");
 
   lines.push("### 4.1 Attack path", "");
   lines.push(state.attackerPath.trim().length > 0 ? state.attackerPath : "_Attack path not yet reconstructed._", "");
 
   // 4.2 Compromised assets — the victim hosts/accounts and the IoCs that touched each.
+  // A prebuiltGraph (with analyst overrides applied) is used when available.
   lines.push("### 4.2 Compromised assets", "");
-  const graph = buildAssetGraph(state);
+  const graph = prebuiltGraph ?? buildAssetGraph(state);
   const compromised = graph.assets.filter((a) => a.compromised);
   if (compromised.length === 0) {
     lines.push("_No compromised assets identified yet._", "");
@@ -417,7 +418,7 @@ function conclusions(state: InvestigationState, meta: ReportMeta, lines: string[
   }
 }
 
-export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary): string {
+export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary, assetGraph?: AssetGraph): string {
   const lines: string[] = [];
 
   titlePage(state, meta, lines);
@@ -440,7 +441,7 @@ export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta
   incidentTimeline(state, lines);
   attackPhases(state, lines);
 
-  investigation(state, lines, exposure);
+  investigation(state, lines, exposure, assetGraph);
   conclusions(state, meta, lines);
 
   return lines.join("\n");
