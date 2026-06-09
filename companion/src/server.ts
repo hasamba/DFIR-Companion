@@ -67,7 +67,7 @@ import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore } from "./analysis/tags.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
-import { TemplateStore, buildInitialQuestions } from "./analysis/templateStore.js";
+import { TemplateStore, buildInitialQuestions, buildInitialNextSteps } from "./analysis/templateStore.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
@@ -424,9 +424,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       });
       if (templateId && options.templateStore && options.stateStore) {
         const template = await options.templateStore.get(String(templateId));
-        if (template?.initialKeyQuestions.length) {
+        if (template && (template.initialKeyQuestions.length || template.initialNextSteps?.length)) {
           const state = await options.stateStore.load(caseId);
-          state.keyQuestions = buildInitialQuestions(template);
+          if (template.initialKeyQuestions.length) state.keyQuestions = buildInitialQuestions(template);
+          if (template.initialNextSteps?.length) state.nextSteps = buildInitialNextSteps(template);
           state.updatedAt = new Date().toISOString();
           await options.stateStore.save(state);
         }
@@ -463,9 +464,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   app.post("/templates", async (req: Request, res: Response) => {
     if (!options.templateStore) return res.status(501).json({ error: "template store not configured" });
     try {
-      const { name, description, recommendedImports, initialKeyQuestions, severityFloor, huntPlatforms, id } = req.body ?? {};
+      const { name, description, recommendedImports, initialKeyQuestions, initialNextSteps, severityFloor, huntPlatforms, id } = req.body ?? {};
       if (!name) return res.status(400).json({ error: "name is required" });
-      const saved = await options.templateStore.save({ id, name, description, recommendedImports, initialKeyQuestions, severityFloor: severityFloor ?? null, huntPlatforms });
+      const saved = await options.templateStore.save({ id, name, description, recommendedImports, initialKeyQuestions, initialNextSteps, severityFloor: severityFloor ?? null, huntPlatforms });
       return res.status(201).json(saved);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
