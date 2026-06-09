@@ -4,6 +4,7 @@ import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportM
 import { deriveGlossary } from "./glossary.js";
 import { buildAssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph } from "../analysis/evidenceGraph.js";
+import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 
@@ -197,6 +198,31 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
       `${e.mitreTechniques.map(attackTechniqueMd).join(", ")} | ${cellMd(e.relatedFindingIds.join(", "))} |`,
     );
   }
+  lines.push("");
+}
+
+// 3.2 — temporal attack phases: the timeline grouped into bursts of activity by time gap, each
+// labelled with its dominant ATT&CK tactic (deterministic, no AI). Gives the reader the
+// kill-chain at a glance — when each stage happened and how dense it was.
+function attackPhases(state: InvestigationState, lines: string[]): void {
+  lines.push("### 3.2 Attack phases", "");
+  lines.push("_Timeline grouped into temporal bursts; each phase labelled by its dominant ATT&CK tactic._", "");
+  const gapSeconds = Number(process.env.DFIR_PHASE_GAP_S) || DEFAULT_GAP_SECONDS;
+  const phases = buildAttackPhases(state.forensicTimeline, { gapSeconds });
+  if (phases.length === 0) {
+    lines.push("_No dated forensic events to group into phases yet._", "");
+    return;
+  }
+  lines.push("| Phase | When | Severity | Events | MITRE |", "| --- | --- | --- | --- | --- |");
+  phases.forEach((p, i) => {
+    const when = p.endTimestamp && p.endTimestamp !== p.startTimestamp
+      ? `${p.startTimestamp} → ${p.endTimestamp}`
+      : (p.startTimestamp || "(undated)");
+    lines.push(
+      `| ${i + 1}. ${cellMd(p.label)} | ${cellMd(when)} | ${p.maxSeverity} | ${p.eventCount} | ` +
+      `${p.inferredTechniques.map(attackTechniqueMd).join(", ")} |`,
+    );
+  });
   lines.push("");
 }
 
@@ -412,6 +438,7 @@ export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta
 
   lines.push("## 3 Timeline of events", "");
   incidentTimeline(state, lines);
+  attackPhases(state, lines);
 
   investigation(state, lines, exposure);
   conclusions(state, meta, lines);

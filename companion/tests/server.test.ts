@@ -1174,6 +1174,34 @@ describe("state and report routes", () => {
     expect(res.body.iocs.some((i: { value: string }) => i.value === "10.0.0.5")).toBe(true);
   });
 
+  it("derives temporal attack phases on demand", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-phases-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore);
+    const app = createApp(store, { stateStore, reportWriter });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-20T14:01:00Z", description: "phishing email opened", severity: "High",
+        mitreTechniques: ["T1566"], relatedFindingIds: [], sourceScreenshots: [] },
+      { id: "e2", timestamp: "2026-05-20T14:02:00Z", description: "powershell spawned", severity: "Medium",
+        mitreTechniques: ["T1059"], relatedFindingIds: [], sourceScreenshots: [] },
+      // > 5 min gap → a second phase
+      { id: "e3", timestamp: "2026-05-20T16:30:00Z", description: "ransomware encryptor", severity: "Critical",
+        mitreTechniques: ["T1486"], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    await stateStore.save(seeded);
+
+    const res = await request(app).get("/cases/c1/phases");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+    expect(res.body[0].label).toBe("Initial Access");
+    expect(res.body[0].eventIds).toEqual(["e1", "e2"]);
+    expect(res.body[1].label).toBe("Impact");
+    expect(res.body[1].maxSeverity).toBe("Critical");
+  });
+
   it("exports just the incident timeline as CSV on demand (no full report needed)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-timeline-csv-"));
     const store = new CaseStore(root);

@@ -38,6 +38,9 @@ For each case the AI builds and keeps up to date:
 - **Findings** — granular, per-technique analytic conclusions, each with severity and
   MITRE ATT&CK mapping.
 - **IOCs**, **MITRE ATT&CK** coverage, and an **attacker-path** narrative (kill chain).
+- **Attack phases** — the timeline grouped into temporal **bursts** (activity clustered
+  by time gap), each labelled with its dominant ATT&CK tactic — the *when did each stage
+  happen* view, complementary to the categorical kill chain. Deterministic, no AI call.
 - **Compromised assets** — the victim hosts and user accounts, with an interactive
   **asset ↔ IoC graph** showing which indicators touched each.
 - **Key investigative questions** — initial access, lateral movement, compromised
@@ -348,6 +351,13 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   lateral toggles, confidence legend, layered SVG with arrowheads, zoom, fullscreen, click-to-focus, and
   **drag-to-reposition nodes** — positions persist per case, ↺ Reset layout restores the auto layout) and a
   report **§4.8 Chain of evidence** section. Derived on read (`GET /cases/:id/evidence-graph`).
+- **Attack phases (temporal burst detection)** — the *when did each stage happen* view to complement the
+  categorical Kill Chain. Groups the forensic timeline into **phases** by the time gap *between* consecutive
+  events (events closer than `DFIR_PHASE_GAP_S`, default 5 min, are one phase; a larger gap starts a new one),
+  each labelled with its **dominant ATT&CK tactic** and showing its time window, worst severity, event count,
+  and MITRE techniques — click a phase to expand its events. Fully deterministic (a time-gap algorithm, **no
+  AI**). Dashboard **Attack Phases** panel + report **§3.2 Attack phases**. Derived on read
+  (`GET /cases/:id/phases`).
 - **Reports** — Markdown **and HTML** report (standalone, print-friendly), plus a one-click **PDF**
   export that opens the print-styled HTML and triggers the browser's *Save as PDF* dialog (zero
   dependencies, fully offline) + CSVs (findings, IOCs incl. enrichment, capture timeline, forensic

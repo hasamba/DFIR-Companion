@@ -283,6 +283,23 @@
     .kc-ev-time { flex-shrink: 0; font-size: 11px; }
     .kc-ev-desc { flex: 1; min-width: 0; word-break: break-word; }
     .kc-ev-mitre { flex-shrink: 0; color: #9aa4b2; }
+    /* Attack Phases — temporal bursts, vertical expandable list. */
+    .ph-list { display: flex; flex-direction: column; gap: 6px; }
+    .ph-row { border: 1px solid #2a2f3a; border-radius: 6px; background: #11151c; overflow: hidden; }
+    .ph-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer;
+      border-left: 4px solid #2a2f3a; }
+    .ph-head:hover { background: #161c27; }
+    .ph-caret { color: #9aa4b2; font-size: 11px; width: 10px; flex-shrink: 0; transition: transform 0.12s; }
+    .ph-row.ph-open .ph-caret { transform: rotate(90deg); }
+    .ph-num { font-weight: 700; color: #cbd3df; flex-shrink: 0; }
+    .ph-label { font-weight: 600; }
+    .ph-when { color: #9aa4b2; font-size: 12px; }
+    .ph-meta { margin-left: auto; color: #9aa4b2; font-size: 12px; white-space: nowrap; }
+    .ph-events { padding: 4px 12px 8px 26px; border-top: 1px solid #1a1f28; }
+    .ph-ev-row { padding: 5px 0; border-bottom: 1px solid #1a1f28; display: flex; gap: 10px; flex-wrap: wrap; }
+    .ph-ev-row:last-child { border-bottom: none; }
+    .ph-ev-time { flex-shrink: 0; font-size: 11px; }
+    .ph-ev-desc { flex: 1; min-width: 0; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -459,6 +476,7 @@
       <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="forensicTimeline">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
     <section style="grid-column: 1 / -1">
       <h2>Compromised Assets &amp; IoC Graph</h2>
       <div id="assetPanel">
@@ -2483,6 +2501,70 @@
       box.hidden = false;
     }
 
+    // --- Attack Phases (temporal bursts; grouped by time gap, derived server-side, no AI) -----
+    let phasesData = [];
+    const phOpen = new Set();   // ids of expanded phases — persist across re-renders
+    let phasesTimer = null;
+
+    function loadPhases(caseId) {
+      fetch(`/cases/${caseId}/phases`).then(r => r.json()).then(p => {
+        phasesData = Array.isArray(p) ? p : [];
+        renderPhases();
+      }).catch(() => {});
+    }
+    // State changes (imports / synthesis) re-derive the phases — debounced, like the graphs.
+    function schedulePhasesReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(phasesTimer);
+      phasesTimer = setTimeout(() => loadPhases(caseId), 800);
+    }
+
+    function renderPhases() {
+      const el = document.getElementById("phases");
+      if (!el) return;
+      if (!phasesData.length) { el.innerHTML = "<span style='color:#9aa4b2'>No dated events to group into phases yet.</span>"; return; }
+      // Event details for expansion come from the in-scope timeline already on the page.
+      const evById = {};
+      for (const e of (lastFt || [])) evById[String(e.id)] = e;
+      el.innerHTML = `<div class="ph-list">` + phasesData.map((p, i) => {
+        const color = KC_SEV_COLOR[p.maxSeverity] || "#2a2f3a";
+        const when = (p.endTimestamp && p.endTimestamp !== p.startTimestamp)
+          ? `${esc(p.startTimestamp)} → ${esc(p.endTimestamp)}` : esc(p.startTimestamp || "(undated)");
+        const isOpen = phOpen.has(p.id);
+        const ttps = (p.inferredTechniques || []).length;
+        const evRows = (p.eventIds || []).map(id => {
+          const e = evById[String(id)];
+          if (!e) return `<div class="ph-ev-row"><span class="ph-ev-desc" style="color:#9aa4b2">${esc(String(id))}</span></div>`;
+          const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
+          return `<div class="ph-ev-row">` +
+            `<span class="ph-ev-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
+            `<span class="ph-ev-desc">${esc(desc)}</span>` +
+            `${e.mitreTechniques && e.mitreTechniques.length ? `<small class="kc-ev-mitre">${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
+            `</div>`;
+        }).join("");
+        return `<div class="ph-row${isOpen ? " ph-open" : ""}">` +
+          `<div class="ph-head" style="border-left-color:${color}" data-phid="${escAttr(p.id)}">` +
+          `<span class="ph-caret">▶</span>` +
+          `<span class="ph-num">${i + 1}.</span>` +
+          `<span class="ph-label" style="color:${color}">${esc(p.label)}</span>` +
+          `<span class="ph-when">${when}</span>` +
+          `<span class="ph-meta">${esc(p.eventCount)} event${p.eventCount === 1 ? "" : "s"}${ttps ? ` · ${esc(ttps)} TTP${ttps === 1 ? "" : "s"}` : ""}</span>` +
+          `</div>` +
+          `<div class="ph-events"${isOpen ? "" : " hidden"}>${evRows || "<span style='color:#9aa4b2'>No events.</span>"}</div>` +
+          `</div>`;
+      }).join("") + `</div>`;
+    }
+
+    // Expand/collapse a phase to reveal its events (event-delegated; survives re-renders).
+    document.getElementById("phases").addEventListener("click", function(e) {
+      const head = e.target.closest(".ph-head");
+      if (!head) return;
+      const id = head.dataset.phid;
+      if (phOpen.has(id)) phOpen.delete(id); else phOpen.add(id);
+      renderPhases();
+    });
+
     function renderKillChain(ft) {
       const byTactic = {};
       for (const tac of KC_CHAIN_ORDER) byTactic[tac] = [];
@@ -2862,6 +2944,7 @@
       lastFt = ft;
       renderTimelineEvents(ft);
       renderKillChain(ft);
+      if (phasesData.length) renderPhases();   // refresh expansion details against the new timeline
 
       const openThreads = state.openThreads.filter(t => t.status === "open");
       const closedThreads = state.openThreads.filter(t => t.status === "closed");
@@ -2918,6 +3001,7 @@
       loadReportMeta(caseId);
       loadAssetGraph(caseId);
       loadEvidenceGraph(caseId);
+      loadPhases(caseId);
       loadComments(caseId);
       loadTags(caseId);
       loadStarred(caseId);
@@ -2942,7 +3026,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); loadSynthMeta(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); loadSynthMeta(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
