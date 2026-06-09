@@ -153,6 +153,9 @@ function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>): M
     aggKey: `suricata|${sigId || sig.toLowerCase()}|${src}|${dst}|${dp}`.slice(0, 400),
     sources: ["Suricata"],
     ...(host ? { asset: host } : {}),
+    ...(src ? { srcIp: src } : {}),
+    ...(dst ? { dstIp: dst } : {}),
+    ...(dp && Number.isFinite(Number(dp)) ? { port: Number(dp) } : {}),
   };
 }
 
@@ -197,6 +200,8 @@ function mapZeekNotice(row: Row, host: string, sink: Map<string, SiemIoc>): Mapp
     aggKey: `zeek|${note.toLowerCase()}|${src}|${dst}`.slice(0, 400),
     sources: ["Zeek"],
     ...(host ? { asset: host } : {}),
+    ...(src ? { srcIp: src } : {}),
+    ...(dst ? { dstIp: dst } : {}),
   };
 }
 
