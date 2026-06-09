@@ -2,8 +2,9 @@ import type { InvestigationState, Severity, ForensicEvent } from "../analysis/st
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
-import { buildAssetGraph } from "../analysis/assetGraph.js";
+import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph } from "../analysis/evidenceGraph.js";
+import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 
@@ -210,6 +211,31 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
   lines.push("");
 }
 
+// 3.2 — temporal attack phases: the timeline grouped into bursts of activity by time gap, each
+// labelled with its dominant ATT&CK tactic (deterministic, no AI). Gives the reader the
+// kill-chain at a glance — when each stage happened and how dense it was.
+function attackPhases(state: InvestigationState, lines: string[]): void {
+  lines.push("### 3.2 Attack phases", "");
+  lines.push("_Timeline grouped into temporal bursts; each phase labelled by its dominant ATT&CK tactic._", "");
+  const gapSeconds = Number(process.env.DFIR_PHASE_GAP_S) || DEFAULT_GAP_SECONDS;
+  const phases = buildAttackPhases(state.forensicTimeline, { gapSeconds });
+  if (phases.length === 0) {
+    lines.push("_No dated forensic events to group into phases yet._", "");
+    return;
+  }
+  lines.push("| Phase | When | Severity | Events | MITRE |", "| --- | --- | --- | --- | --- |");
+  phases.forEach((p, i) => {
+    const when = p.endTimestamp && p.endTimestamp !== p.startTimestamp
+      ? `${p.startTimestamp} → ${p.endTimestamp}`
+      : (p.startTimestamp || "(undated)");
+    lines.push(
+      `| ${i + 1}. ${cellMd(p.label)} | ${cellMd(when)} | ${p.maxSeverity} | ${p.eventCount} | ` +
+      `${p.inferredTechniques.map(attackTechniqueMd).join(", ")} |`,
+    );
+  });
+  lines.push("");
+}
+
 function customerExposure(exposure: CustomerExposureSummary | undefined, lines: string[]): void {
   // Always present (like 4.7 Key questions) so the section numbering stays consistent whether or
   // not a leak/breach check was run; a placeholder makes "not assessed" explicit to the reader.
@@ -238,15 +264,16 @@ function customerExposure(exposure: CustomerExposureSummary | undefined, lines: 
   }
 }
 
-function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary): void {
+function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary, prebuiltGraph?: AssetGraph): void {
   lines.push("## 4 Investigation", "");
 
   lines.push("### 4.1 Attack path", "");
   lines.push(state.attackerPath.trim().length > 0 ? state.attackerPath : "_Attack path not yet reconstructed._", "");
 
   // 4.2 Compromised assets — the victim hosts/accounts and the IoCs that touched each.
+  // A prebuiltGraph (with analyst overrides applied) is used when available.
   lines.push("### 4.2 Compromised assets", "");
-  const graph = buildAssetGraph(state);
+  const graph = prebuiltGraph ?? buildAssetGraph(state);
   const compromised = graph.assets.filter((a) => a.compromised);
   if (compromised.length === 0) {
     lines.push("_No compromised assets identified yet._", "");
@@ -266,7 +293,8 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
   } else {
     const sorted = [...state.findings].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
     for (const f of sorted) {
-      lines.push(`#### [${f.severity}] ${f.title} (${f.id})`);
+      const confLabel = f.confidence !== undefined ? ` [${f.confidence}% confidence]` : "";
+      lines.push(`#### [${f.severity}]${confLabel} ${f.title} (${f.id})`);
       lines.push(f.description || "_no description_");
       if (f.relatedIocs.length) lines.push(`- IOCs: ${f.relatedIocs.join(", ")}`);
       if (f.mitreTechniques.length) lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);
@@ -315,8 +343,8 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
 }
 
 // 4.8 Chain of evidence — the causal view derived from the forensic timeline: which process
-// spawned which (process execution chains) and which binary/account moved between hosts
-// (lateral movement). Each row carries the confidence of the derived link.
+// spawned which (process execution chains), which binary/account moved between hosts
+// (lateral movement), file write→execute lineage, and network flows (src→dst).
 function chainOfEvidence(state: InvestigationState, lines: string[]): void {
   lines.push("### 4.8 Chain of evidence", "");
   const graph = buildEvidenceGraph(state);
@@ -343,6 +371,26 @@ function chainOfEvidence(state: InvestigationState, lines: string[]): void {
     lines.push("**Lateral movement**", "");
     lines.push("| From | To | Basis | Confidence |", "| --- | --- | --- | --- |");
     for (const e of lateral) {
+      lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`);
+    }
+    lines.push("");
+  }
+
+  const fileLineage = graph.edges.filter((e) => e.type === "file_lineage");
+  if (fileLineage.length > 0) {
+    lines.push("**File lineage (wrote → executed)**", "");
+    lines.push("| From | To | Basis | Confidence |", "| --- | --- | --- | --- |");
+    for (const e of fileLineage) {
+      lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`);
+    }
+    lines.push("");
+  }
+
+  const netFlows = graph.edges.filter((e) => e.type === "network_flow");
+  if (netFlows.length > 0) {
+    lines.push("**Network flows (src → dst)**", "");
+    lines.push("| Source | Destination | Basis | Confidence |", "| --- | --- | --- | --- |");
+    for (const e of netFlows) {
       lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`);
     }
     lines.push("");
@@ -380,7 +428,7 @@ function conclusions(state: InvestigationState, meta: ReportMeta, lines: string[
   }
 }
 
-export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary): string {
+export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary, assetGraph?: AssetGraph): string {
   const lines: string[] = [];
 
   titlePage(state, meta, lines);
@@ -402,8 +450,9 @@ export function renderMarkdownReport(state: InvestigationState, meta: ReportMeta
   lines.push("## 3 Timeline of events", "");
   incidentTimeline(state, lines);
   narrativeTimeline(state, lines);
+  attackPhases(state, lines);
 
-  investigation(state, lines, exposure);
+  investigation(state, lines, exposure, assetGraph);
   conclusions(state, meta, lines);
 
   return lines.join("\n");

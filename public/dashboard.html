@@ -57,6 +57,10 @@
     .sev-legend .sev-item:has(.sev-filter:not(:checked)) { opacity: 0.35; text-decoration: line-through; }
     #timelineCount { font-size: 12px; font-weight: normal; color: #9aa4b2; margin: 0 6px; letter-spacing: 0; text-transform: none; }
     .finding { border-left: 3px solid #2a2f3a; padding: 6px 10px; margin-bottom: 8px; }
+    .conf-badge { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-left: 4px; vertical-align: middle; }
+    .conf-high { background: #1a3a1a; color: #6bcb77; border: 1px solid #2a5a2a; }
+    .conf-mid  { background: #3a2e00; color: #e0b84a; border: 1px solid #5a4800; }
+    .conf-low  { background: #3a1a1a; color: #e06060; border: 1px solid #5a2a2a; }
     button { background: #2d6cdf; color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
     input { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; padding: 6px; border-radius: 6px; }
     #status { font-size: 12px; color: #9aa4b2; }
@@ -84,6 +88,8 @@
     .ev-leg-high { border-top: 2px solid #ff8a5c; }
     .ev-leg-med { border-top: 2px dashed #7f8aa0; }
     .ev-leg-ran { border-top: 2px solid #52617a; }
+    .ev-leg-file { border-top: 2px solid #4ade80; }
+    .ev-leg-net { border-top: 2px solid #38bdf8; }
     .legend-ico { vertical-align: middle; margin-right: 2px; }
     /* Fullscreen: the wrapper fills the screen and the graph grows to fit. */
     .asset-graph-wrap:fullscreen { background: #11161d; padding: 12px; display: flex; flex-direction: column; }
@@ -277,6 +283,58 @@
     .kc-ev-time { flex-shrink: 0; font-size: 11px; }
     .kc-ev-desc { flex: 1; min-width: 0; word-break: break-word; }
     .kc-ev-mitre { flex-shrink: 0; color: #9aa4b2; }
+    /* Attack Phases — temporal bursts, vertical expandable list. */
+    .ph-list { display: flex; flex-direction: column; gap: 6px; }
+    .ph-row { border: 1px solid #2a2f3a; border-radius: 6px; background: #11151c; overflow: hidden; }
+    .ph-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer;
+      border-left: 4px solid #2a2f3a; }
+    .ph-head:hover { background: #161c27; }
+    .ph-caret { color: #9aa4b2; font-size: 11px; width: 10px; flex-shrink: 0; transition: transform 0.12s; }
+    .ph-row.ph-open .ph-caret { transform: rotate(90deg); }
+    .ph-num { font-weight: 700; color: #cbd3df; flex-shrink: 0; }
+    .ph-label { font-weight: 600; }
+    .ph-when { color: #9aa4b2; font-size: 12px; }
+    .ph-meta { margin-left: auto; color: #9aa4b2; font-size: 12px; white-space: nowrap; }
+    .ph-events { padding: 4px 12px 8px 26px; border-top: 1px solid #1a1f28; }
+    .ph-ev-row { padding: 5px 0; border-bottom: 1px solid #1a1f28; display: flex; gap: 10px; flex-wrap: wrap; }
+    .ph-ev-row:last-child { border-bottom: none; }
+    .ph-ev-time { flex-shrink: 0; font-size: 11px; }
+    .ph-ev-desc { flex: 1; min-width: 0; word-break: break-word; }
+    /* Settings icon (inline header, right side) */
+    #settingsBtn { background: none; border: none; color: #9aa4b2; cursor: pointer; padding: 4px;
+      display: flex; align-items: center; border-radius: 7px; line-height: 0;
+      transition: color .15s, background .15s; flex-shrink: 0; }
+    #settingsBtn:hover { color: #cbd3df; background: rgba(255,255,255,.07); }
+    /* Settings modal */
+    .settings-modal { width: min(820px, 96vw); max-height: 90vh; }
+    .stab-bar { display: flex; gap: 0; border-bottom: 1px solid #2a2f3a; margin: 8px 0 14px; }
+    .stab { background: none; border: none; border-bottom: 2px solid transparent; color: #9aa4b2;
+      padding: 6px 16px; cursor: pointer; font-size: 12px; font-family: inherit; transition: color .12s; }
+    .stab:hover { color: #cbd3df; }
+    .stab.active { color: #6aa9ff; border-bottom-color: #6aa9ff; }
+    .stab-pane { display: none; overflow-y: auto; max-height: calc(90vh - 130px); padding-right: 4px; }
+    .stab-pane.active { display: block; }
+    .sfield { margin-bottom: 10px; }
+    .sfield > label { display: block; font-size: 11px; color: #9aa4b2; margin-bottom: 3px; }
+    .sfield input, .sfield select { width: 100%; box-sizing: border-box; }
+    .sfield-hint { display: block; font-size: 10px; color: #5a6475; margin-top: 2px; }
+    .sfield-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+    .sfield-row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+    .settings-group-head { font-size: 11px; color: #6aa9ff; font-weight: 600; margin: 10px 0 4px; }
+    .settings-hr { border: none; border-top: 1px solid #2a2f3a; margin: 12px 0; }
+    .srestart-note { font-size: 11px; color: #ffd93b; margin-bottom: 10px; }
+    .sec-checks { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; max-height: 300px; overflow-y: auto; }
+    .sec-check { display: flex; align-items: center; font-size: 12px; padding: 4px 6px; border-radius: 5px; user-select: none; }
+    .sec-check:hover { background: rgba(255,255,255,.05); }
+    .sec-check input[type=checkbox] { width: auto; margin: 0 6px 0 0; cursor: pointer; flex-shrink: 0; }
+    .drag-handle { color: #5a6170; cursor: grab; font-size: 14px; margin-right: 5px; flex-shrink: 0; line-height: 1; }
+    .drag-handle:active { cursor: grabbing; }
+    .sec-check.drag-over { box-shadow: 0 -2px 0 0 #6aa9ff; }
+    .sec-selall { display: flex; gap: 6px; margin: 3px 0 5px; }
+    .sec-selall button { font-size: 11px; padding: 2px 8px; background: #2a2f3a; border: none; border-radius: 4px; color: #9aa4b2; cursor: pointer; }
+    .sec-selall button:hover { background: #353b47; color: #cbd3df; }
+    .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid #2a2f3a; padding-top: 12px; }
+    .settings-msg { font-size: 11px; margin-left: 4px; }
   </style>
 </head>
 <body>
@@ -284,7 +342,6 @@
     <strong>DFIR Companion</strong>
     <input id="caseId" placeholder="caseId" list="caseList" autocomplete="off" />
     <datalist id="caseList"></datalist>
-    <input id="investigatorName" placeholder="your name" data-tip="Your name — used as the author when you comment. Saved in this browser." style="max-width:130px" />
     <button id="connect">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
@@ -301,6 +358,7 @@
       <option value="timeline-csv">Forensic timeline (CSV)</option>
       <option value="timesketch-jsonl">Timesketch JSONL</option>
       <option value="state-json">Full case state (JSON)</option>
+      <option value="save-template">Save as Template…</option>
     </select>
     <select id="pushSelect" class="toolbar-select" data-tip="Push this case to an external platform" style="display:none">
       <option value="">Push to…</option>
@@ -310,6 +368,7 @@
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
     <span id="captureCount" style="font-weight:bold;">Screenshots: 0</span>
+    <button id="settingsBtn" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.07 7.07 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 3h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 9.47a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41H14c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.09-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
     <div class="scope-group">
       <span style="color:#cbd3df;">Scope:</span>
       <button class="scope-preset" data-hours="1" title="Last hour of activity">1h</button>
@@ -416,6 +475,11 @@
         <input id="ncName" placeholder="short description" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
       <label style="display:block; font-size:12px; margin-bottom:8px;">Investigator
         <input id="ncInvestigator" placeholder="your name" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
+      <label style="display:block; font-size:12px; margin-bottom:8px;">Template (optional)
+        <select id="ncTemplate" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:#1e2330; color:#c9d1d9; border:1px solid #444;">
+          <option value="">No template — blank case</option>
+        </select></label>
+      <div id="ncTemplateDesc" style="color:#9aa4b2; font-size:11px; margin:-4px 0 8px; padding:6px 8px; background:#1a1f2e; border-radius:4px; display:none;"></div>
       <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="ncCreate">Create case</button>
         <button id="ncCancel" style="background:#2a2f3a;">Cancel</button>
@@ -423,8 +487,249 @@
       </div>
     </div>
   </div>
+  <div id="saveTemplateOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Save as Template</h3>
+      <p style="color:#9aa4b2; font-size:12px; margin:0 0 10px">
+        Saves the current case's key questions as a reusable template for future cases.</p>
+      <label style="display:block; font-size:12px; margin-bottom:8px;">Template name
+        <input id="stName" placeholder="e.g. Ransomware — SMB Lateral Movement" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
+      <label style="display:block; font-size:12px; margin-bottom:8px;">Description
+        <input id="stDesc" placeholder="one-line summary of when to use this template" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="stSave">Save template</button>
+        <button id="stCancel" style="background:#2a2f3a;">Cancel</button>
+        <span id="stMsg" style="color:#9aa4b2; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Settings modal ───────────────────────────────────────────────────── -->
+  <div id="settingsOverlay" class="comment-overlay">
+    <div class="comment-modal settings-modal">
+      <h3>Settings</h3>
+      <div class="stab-bar">
+        <button class="stab active" data-stab="general">General</button>
+        <button class="stab" data-stab="ai">AI</button>
+        <button class="stab" data-stab="enrichment">Enrichment</button>
+        <button class="stab" data-stab="exposure">Exposure</button>
+        <button class="stab" data-stab="integrations">Integrations</button>
+      </div>
+
+      <!-- General -->
+      <div class="stab-pane active" id="stab-general">
+        <div class="sfield">
+          <label>Investigator name</label>
+          <input id="settingsInvestigator" placeholder="your name" />
+          <span class="sfield-hint">Used as author when posting comments. Saved in this browser.</span>
+        </div>
+        <div class="sfield">
+          <label>Dashboard sections <span class="sfield-hint" style="display:inline">— drag to reorder · check to show</span></label>
+          <div class="sec-selall"><button type="button" id="secSelectAll">Select all</button><button type="button" id="secDeselectAll">Deselect all</button></div>
+          <div class="sec-checks" id="secChecks"></div>
+        </div>
+        <hr class="settings-hr" />
+        <div class="srestart-note">⚠ Fields below require a server restart to take effect</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Correlation window (s)<span class="sfield-hint">DFIR_CORRELATE_WINDOW_S</span></label><input id="env-DFIR_CORRELATE_WINDOW_S" placeholder="2" /></div>
+          <div class="sfield"><label>Phase gap (s)<span class="sfield-hint">DFIR_PHASE_GAP_S</span></label><input id="env-DFIR_PHASE_GAP_S" placeholder="300" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Auto-synthesize<span class="sfield-hint">DFIR_AI_AUTO_SYNTHESIZE (on/off)</span></label><input id="env-DFIR_AI_AUTO_SYNTHESIZE" placeholder="on" /></div>
+          <div class="sfield"><label>Auto-synthesize debounce (ms)<span class="sfield-hint">DFIR_AI_AUTO_SYNTHESIZE_MS</span></label><input id="env-DFIR_AI_AUTO_SYNTHESIZE_MS" placeholder="8000" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Anonymize default<span class="sfield-hint">DFIR_ANONYMIZE (on/off)</span></label><input id="env-DFIR_ANONYMIZE" placeholder="on" /></div>
+          <div class="sfield"><label>Screenshot flush interval (ms)<span class="sfield-hint">DFIR_FLUSH_INTERVAL_MS</span></label><input id="env-DFIR_FLUSH_INTERVAL_MS" placeholder="300000" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>
+          <div class="sfield"><label>Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
+        </div>
+      </div>
+
+      <!-- AI -->
+      <div class="stab-pane" id="stab-ai">
+        <div class="srestart-note">⚠ All AI settings require a server restart to take effect</div>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label>Provider<span class="sfield-hint">DFIR_AI_PROVIDER</span></label>
+            <select id="env-DFIR_AI_PROVIDER">
+              <option value="">— not set —</option>
+              <option value="openai">openai</option>
+              <option value="openrouter">openrouter</option>
+              <option value="ollama">ollama</option>
+              <option value="litellm">litellm</option>
+              <option value="gemini">gemini</option>
+              <option value="anthropic">anthropic</option>
+            </select>
+          </div>
+          <div class="sfield"><label>Model (extraction, must support vision)<span class="sfield-hint">DFIR_AI_MODEL</span></label><input id="env-DFIR_AI_MODEL" placeholder="gpt-4o-mini" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>API key<span class="sfield-hint">DFIR_AI_KEY</span></label><input id="env-DFIR_AI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Base URL override<span class="sfield-hint">DFIR_AI_BASE_URL — leave blank for provider default</span></label><input id="env-DFIR_AI_BASE_URL" placeholder="e.g. http://localhost:11434/v1" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_AI_TIMEOUT_MS</span></label><input id="env-DFIR_AI_TIMEOUT_MS" placeholder="180000" /></div>
+          <div class="sfield"><label>Max tokens<span class="sfield-hint">DFIR_AI_MAX_TOKENS</span></label><input id="env-DFIR_AI_MAX_TOKENS" placeholder="16000" /></div>
+          <div class="sfield"><label>Context tokens<span class="sfield-hint">DFIR_AI_CONTEXT_TOKENS</span></label><input id="env-DFIR_AI_CONTEXT_TOKENS" placeholder="128000" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Synth max events<span class="sfield-hint">DFIR_AI_SYNTH_MAX_EVENTS</span></label><input id="env-DFIR_AI_SYNTH_MAX_EVENTS" placeholder="300" /></div>
+          <div class="sfield">
+            <label>Image detail<span class="sfield-hint">DFIR_AI_IMAGE_DETAIL</span></label>
+            <select id="env-DFIR_AI_IMAGE_DETAIL">
+              <option value="">— default (high) —</option>
+              <option value="high">high</option>
+              <option value="low">low</option>
+              <option value="auto">auto</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-group-head">Synthesis model (optional — stronger model for one-shot synthesis)</div>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label>Synth provider<span class="sfield-hint">DFIR_AI_SYNTH_PROVIDER</span></label>
+            <select id="env-DFIR_AI_SYNTH_PROVIDER">
+              <option value="">— same as extraction —</option>
+              <option value="openai">openai</option>
+              <option value="openrouter">openrouter</option>
+              <option value="ollama">ollama</option>
+              <option value="litellm">litellm</option>
+              <option value="gemini">gemini</option>
+              <option value="anthropic">anthropic</option>
+            </select>
+          </div>
+          <div class="sfield"><label>Synth model<span class="sfield-hint">DFIR_AI_SYNTH_MODEL</span></label><input id="env-DFIR_AI_SYNTH_MODEL" placeholder="e.g. gpt-4o" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Synth base URL<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
+        </div>
+      </div>
+
+      <!-- Enrichment -->
+      <div class="stab-pane" id="stab-enrichment">
+        <div class="srestart-note">⚠ All enrichment settings require a server restart to take effect</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>VirusTotal key<span class="sfield-hint">DFIR_VT_KEY</span></label><input id="env-DFIR_VT_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>AbuseIPDB key<span class="sfield-hint">DFIR_ABUSEIPDB_KEY</span></label><input id="env-DFIR_ABUSEIPDB_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Hunting.ch key (abuse.ch)<span class="sfield-hint">DFIR_HUNTINGCH_KEY</span></label><input id="env-DFIR_HUNTINGCH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>RockyRaccoon key<span class="sfield-hint">DFIR_ROCKYRACCOON_KEY</span></label><input id="env-DFIR_ROCKYRACCOON_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="settings-group-head">CrowdStrike Falcon Intelligence</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Client ID<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_ID</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_ID" placeholder="(not set)" /></div>
+          <div class="sfield"><label>Client secret<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_SECRET</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_SECRET" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield">
+            <label>Cloud<span class="sfield-hint">DFIR_CROWDSTRIKE_CLOUD</span></label>
+            <select id="env-DFIR_CROWDSTRIKE_CLOUD"><option value="">— default (us-1) —</option><option value="us-1">us-1</option><option value="us-2">us-2</option><option value="eu-1">eu-1</option><option value="gov-us-1">gov-us-1</option><option value="gov-us-2">gov-us-2</option></select>
+          </div>
+        </div>
+        <div class="settings-group-head">MISP</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>MISP URL<span class="sfield-hint">DFIR_MISP_URL</span></label><input id="env-DFIR_MISP_URL" placeholder="https://misp.example.org" /></div>
+          <div class="sfield"><label>MISP key<span class="sfield-hint">DFIR_MISP_KEY</span></label><input id="env-DFIR_MISP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_MISP_CA</span></label><input id="env-DFIR_MISP_CA" placeholder="path/to/ca.pem" /></div>
+          <div class="sfield"><label>Distribution (0-3)<span class="sfield-hint">DFIR_MISP_DISTRIBUTION</span></label><input id="env-DFIR_MISP_DISTRIBUTION" placeholder="0" /></div>
+          <div class="sfield"><label>Analysis state (0-2)<span class="sfield-hint">DFIR_MISP_ANALYSIS</span></label><input id="env-DFIR_MISP_ANALYSIS" placeholder="1" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_MISP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_MISP_INSECURE" placeholder="false" /></div>
+        </div>
+        <div class="settings-group-head">YETI</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>YETI URL<span class="sfield-hint">DFIR_YETI_URL</span></label><input id="env-DFIR_YETI_URL" placeholder="https://yeti.example.org" /></div>
+          <div class="sfield"><label>YETI key<span class="sfield-hint">DFIR_YETI_KEY</span></label><input id="env-DFIR_YETI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_YETI_CA</span></label><input id="env-DFIR_YETI_CA" placeholder="path/to/ca.pem" /></div>
+          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_YETI_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_YETI_INSECURE" placeholder="false" /></div>
+        </div>
+        <div class="settings-group-head">Throttling</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Enrich delay (ms)<span class="sfield-hint">DFIR_ENRICH_DELAY_MS</span></label><input id="env-DFIR_ENRICH_DELAY_MS" placeholder="1500" /></div>
+          <div class="sfield"><label>Max IOCs / run<span class="sfield-hint">DFIR_ENRICH_MAX</span></label><input id="env-DFIR_ENRICH_MAX" placeholder="100" /></div>
+          <div class="sfield"><label>Health TTL (ms)<span class="sfield-hint">DFIR_ENRICH_HEALTH_TTL_MS</span></label><input id="env-DFIR_ENRICH_HEALTH_TTL_MS" placeholder="60000" /></div>
+        </div>
+      </div>
+
+      <!-- Exposure -->
+      <div class="stab-pane" id="stab-exposure">
+        <div class="srestart-note">⚠ All exposure settings require a server restart to take effect</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>LeakCheck key<span class="sfield-hint">DFIR_LEAKCHECK_KEY</span></label><input id="env-DFIR_LEAKCHECK_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>LeakCheck domain limit<span class="sfield-hint">DFIR_LEAKCHECK_DOMAIN_LIMIT</span></label><input id="env-DFIR_LEAKCHECK_DOMAIN_LIMIT" placeholder="1000" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>HIBP key<span class="sfield-hint">DFIR_HIBP_KEY</span></label><input id="env-DFIR_HIBP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>HIBP User-Agent<span class="sfield-hint">DFIR_HIBP_USER_AGENT</span></label><input id="env-DFIR_HIBP_USER_AGENT" placeholder="DFIR Companion" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>DeHashed key<span class="sfield-hint">DFIR_DEHASHED_KEY</span></label><input id="env-DFIR_DEHASHED_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>DeHashed base URL<span class="sfield-hint">DFIR_DEHASHED_BASE_URL</span></label><input id="env-DFIR_DEHASHED_BASE_URL" placeholder="https://api.dehashed.com/v2" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Shodan key<span class="sfield-hint">DFIR_SHODAN_KEY — attack surface (domain → exposed hosts/ports/CVEs)</span></label><input id="env-DFIR_SHODAN_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Exposure delay (ms)<span class="sfield-hint">DFIR_EXPOSURE_DELAY_MS</span></label><input id="env-DFIR_EXPOSURE_DELAY_MS" placeholder="1500" /></div>
+        </div>
+      </div>
+
+      <!-- Integrations -->
+      <div class="stab-pane" id="stab-integrations">
+        <div class="srestart-note">⚠ All integration settings require a server restart to take effect</div>
+        <div class="settings-group-head">DFIR-IRIS</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>IRIS URL<span class="sfield-hint">DFIR_IRIS_URL</span></label><input id="env-DFIR_IRIS_URL" placeholder="https://iris.example.org" /></div>
+          <div class="sfield"><label>IRIS key<span class="sfield-hint">DFIR_IRIS_KEY</span></label><input id="env-DFIR_IRIS_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_IRIS_CA</span></label><input id="env-DFIR_IRIS_CA" placeholder="path/to/ca.pem" /></div>
+          <div class="sfield"><label>Customer ID<span class="sfield-hint">DFIR_IRIS_CUSTOMER_ID</span></label><input id="env-DFIR_IRIS_CUSTOMER_ID" placeholder="1" /></div>
+          <div class="sfield"><label>Classification ID<span class="sfield-hint">DFIR_IRIS_CLASSIFICATION_ID</span></label><input id="env-DFIR_IRIS_CLASSIFICATION_ID" placeholder="1" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_IRIS_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_IRIS_INSECURE" placeholder="false" /></div>
+        </div>
+        <div class="settings-group-head">Timesketch</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Timesketch URL<span class="sfield-hint">DFIR_TIMESKETCH_URL</span></label><input id="env-DFIR_TIMESKETCH_URL" placeholder="https://timesketch.example.org" /></div>
+          <div class="sfield"><label>Username<span class="sfield-hint">DFIR_TIMESKETCH_USER</span></label><input id="env-DFIR_TIMESKETCH_USER" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Password<span class="sfield-hint">DFIR_TIMESKETCH_PASSWORD</span></label><input id="env-DFIR_TIMESKETCH_PASSWORD" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Timeline name<span class="sfield-hint">DFIR_TIMESKETCH_TIMELINE</span></label><input id="env-DFIR_TIMESKETCH_TIMELINE" placeholder="DFIR Companion timeline" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_TIMESKETCH_CA</span></label><input id="env-DFIR_TIMESKETCH_CA" placeholder="path/to/ca.pem" /></div>
+          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_TIMESKETCH_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_TIMESKETCH_INSECURE" placeholder="false" /></div>
+        </div>
+        <div class="settings-group-head">Velociraptor</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>API config path<span class="sfield-hint">DFIR_VELOCIRAPTOR_API_CONFIG</span></label><input id="env-DFIR_VELOCIRAPTOR_API_CONFIG" placeholder="path/to/api.config.yaml" /></div>
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_VELOCIRAPTOR_BINARY</span></label><input id="env-DFIR_VELOCIRAPTOR_BINARY" placeholder="velociraptor" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>GUI URL<span class="sfield-hint">DFIR_VELOCIRAPTOR_GUI_URL</span></label><input id="env-DFIR_VELOCIRAPTOR_GUI_URL" placeholder="https://velo:8889" /></div>
+          <div class="sfield"><label>Hunt platforms<span class="sfield-hint">DFIR_HUNT_PLATFORMS — comma-separated; blank = all</span></label><input id="env-DFIR_HUNT_PLATFORMS" placeholder="velociraptor,sigma,yara,…" /></div>
+        </div>
+      </div>
+
+      <div class="settings-footer">
+        <button id="settingsSaveBtn">Save</button>
+        <button id="settingsCloseBtn" style="background:#2a2f3a;">Close</button>
+        <span id="settingsSaveMsg" class="settings-msg"></span>
+      </div>
+    </div>
+  </div>
+
   <main>
-    <section style="grid-column: 1 / -1">
+    <section id="sec-ask" style="grid-column: 1 / -1">
       <h2>Ask the LLM about this case</h2>
       <div class="ask-row">
         <input id="askInput" placeholder="e.g. Was data exfiltrated? Was a USB connected? Any signs of persistence?" />
@@ -432,12 +737,12 @@
       </div>
       <div id="askAnswer"></div>
     </section>
-    <section style="grid-column: 1 / -1"><h2>Executive Summary<button id="genExecBtn" type="button" title="Generate a management-facing executive summary with AI (review before saving it to the report)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genExecMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#9aa4b2"></span></h2><div id="summary">—</div><div id="execGenResult"></div></section>
-    <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Narrative Timeline<button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#9aa4b2"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:#0d1117;color:#cdd9e5;border:1px solid #2f3741;border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:#1c2330;border-color:#2f3741;color:#9aa4b2">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:#9aa4b2"></span></div></div></section>
-    <section style="grid-column: 1 / -1"><h2>Findings</h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="findings">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope (sorted by event time); updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
+    <section id="sec-exec" style="grid-column: 1 / -1"><h2>Executive Summary<button id="genExecBtn" type="button" title="Generate a management-facing executive summary with AI (review before saving it to the report)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genExecMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#9aa4b2"></span></h2><div id="summary">—</div><div id="execGenResult"></div></section>
+    <section id="sec-next-steps" style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
+    <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
+    <section id="sec-narrative" style="grid-column: 1 / -1"><h2>Narrative Timeline<button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#9aa4b2"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:#0d1117;color:#cdd9e5;border:1px solid #2f3741;border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:#1c2330;border-color:#2f3741;color:#9aa4b2">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:#9aa4b2"></span></div></div></section>
+    <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings</h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:#9aa4b2"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:#9aa4b2">% (0 = all)</span></div><div id="findings">—</div></section>
+    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope (sorted by event time); updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:#6aa9ff"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkLegitBtn" title="Mark all selected events as legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:#9aa4b2">✕ Clear</button></div>
       <div style="font-size:11px; color:#9aa4b2; margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
@@ -453,9 +758,32 @@
       </div>
       <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="forensicTimeline">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
-    <section style="grid-column: 1 / -1">
-      <h2>Compromised Assets &amp; IoC Graph</h2>
+    <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
+    <section id="sec-phases" style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
+    <section id="sec-assets" style="grid-column: 1 / -1">
+      <h2>Compromised Assets &amp; IoC Graph<button class="add-toggle" type="button" title="Add / edit assets and links manually" aria-label="Add asset">+</button></h2>
+      <div class="manual-add" hidden>
+        <form class="manual-form" onsubmit="return false">
+          <span style="color:#9aa4b2">Add asset:</span>
+          <input id="assetAddName" placeholder="hostname or account" style="min-width:180px" />
+          <select id="assetAddType" title="Asset type">
+            <option value="host">host</option>
+            <option value="account">account</option>
+            <option value="service">service</option>
+            <option value="other">other</option>
+          </select>
+          <button id="addAssetBtn" type="button">Add</button>
+          <span id="addAssetMsg" class="manual-msg"></span>
+        </form>
+        <form class="manual-form" onsubmit="return false">
+          <span style="color:#9aa4b2">Link asset↔IoC:</span>
+          <input id="assetLinkAsset" placeholder="asset id (e.g. host:win-01)" style="min-width:210px" />
+          <input id="assetLinkIoc" placeholder="IoC id" style="min-width:160px" />
+          <button id="addLinkBtn" type="button">Link</button>
+          <button id="delLinkBtn" type="button">Unlink</button>
+          <span id="addLinkMsg" class="manual-msg"></span>
+        </form>
+      </div>
       <div id="assetPanel">
         <div id="assetGraphWrap" class="asset-graph-wrap">
           <div class="asset-controls">
@@ -489,18 +817,22 @@
         <div id="assetList">—</div>
       </div>
     </section>
-    <section style="grid-column: 1 / -1">
-      <h2>Evidence Chain<span class="ev-sub">causal links — process trees &amp; lateral movement (derived, no AI)</span></h2>
+    <section id="sec-evidence" style="grid-column: 1 / -1">
+      <h2>Evidence Chain<span class="ev-sub">causal links — process trees, lateral movement, file lineage &amp; network flows (derived, no AI)</span></h2>
       <div id="evPanel">
         <div id="evGraphWrap" class="asset-graph-wrap">
           <div class="asset-controls">
             <span>Show:</span>
-            <label><input type="checkbox" class="ev-type-toggle" value="spawned" checked> Process trees</label>
-            <label><input type="checkbox" class="ev-type-toggle" value="lateral_move" checked> Lateral movement</label>
+            <label title="Parent → child process spawn chains (processName / parentName fields). Shows how an initial process (e.g. Word) spawned a shell, which spawned further tools."><input type="checkbox" class="ev-type-toggle" value="spawned" checked> Process trees</label>
+            <label title="Same binary hash or account seen on ≥ 2 hosts — indicates the attacker moved laterally between machines."><input type="checkbox" class="ev-type-toggle" value="lateral_move"> Lateral movement</label>
+            <label title="A file written (action=write) then executed (action=execute) with the same hash — shows dropper → payload chains."><input type="checkbox" class="ev-type-toggle" value="file_lineage"> File lineage</label>
+            <label title="Directed network connections from Suricata alerts / Zeek notices (srcIp → dstIp:port). Shows C2 call-outs and lateral network movement."><input type="checkbox" class="ev-type-toggle" value="network_flow"> Network flows</label>
             <span class="asset-ctrl-sep"></span>
             <span class="ev-legend"><span class="ev-leg-line ev-leg-high"></span>high
               <span class="ev-leg-line ev-leg-med"></span>medium
-              <span class="ev-leg-line ev-leg-ran"></span>ran on</span>
+              <span class="ev-leg-line ev-leg-ran"></span>ran on
+              <span class="ev-leg-line ev-leg-file"></span>file lineage
+              <span class="ev-leg-line ev-leg-net"></span>network flow</span>
             <span class="asset-ctrl-sep"></span>
             <button id="evZoomOut" type="button" title="Zoom out">−</button>
             <span id="evZoomLevel" title="Zoom level (scroll the mouse wheel over the graph to zoom)">100%</span>
@@ -516,7 +848,7 @@
         </div>
       </div>
     </section>
-    <section style="grid-column: 1 / -1"><h2>IOCs<button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
@@ -527,7 +859,7 @@
       </div>
       <div id="iocImportMeta" class="synth-meta" style="display:none"></div>
       <div id="iocs">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
+    <section id="sec-exposure" style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
       <div class="ce-body">
         <div style="color:#9aa4b2;font-size:12px;margin:0 0 8px">Breach/leak check of the <strong>customer's own</strong> domains &amp; emails (not IOCs). Domain searches use only the customer domains below; case emails are checked only under those domains. ⚠ sends the customer's domains/emails to third-party services.</div>
         <div class="manual-form" style="gap:12px; align-items:flex-start; margin-bottom:8px">
@@ -547,12 +879,12 @@
         </div>
         <div id="customerExposure">—</div>
       </div></section>
-    <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
-    <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
-    <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Investigation Log</h2><div id="timeline">—</div></section>
-    <section style="grid-column: 1 / -1" class="collapsed">
+    <section id="sec-questions" style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
+    <section id="sec-threads"><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
+    <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
+    <section id="sec-legitimate" style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
+    <section id="sec-inv-log" style="grid-column: 1 / -1"><h2>Investigation Log</h2><div id="timeline">—</div></section>
+    <section id="sec-case-details" style="grid-column: 1 / -1" class="collapsed">
       <h2>Case Details (for the generated report)</h2>
       <div id="reportMeta">
         <p class="rm-hint">Human-authored sections of the incident report (AnttiKurittu template). Saved per case and merged into <code>report.md</code> when you click <em>Generate Report</em>. Leave a field blank to use the auto-derived value or a "to be completed" placeholder.</p>
@@ -756,6 +1088,7 @@
 
     // --- Compromised assets + asset↔IoC graph -------------------------------------
     let assetGraphData = null;                              // { assets, iocs, edges }
+    let assetOverridesData = null;                          // { renames, added, removed, addedLinks, removedLinks }
     let assetFocus = null;                                  // focused node id, or null
     let assetGraphTimer = null;
     let assetLayout = "horizontal";                         // "horizontal" | "vertical" | "radial"
@@ -809,6 +1142,11 @@
         assetGraphData = g; assetFocus = null; renderAssetGraph();
       }).catch(() => {});
     }
+    function loadAssetOverrides(caseId) {
+      fetch(`/cases/${caseId}/asset-overrides`).then(r => r.ok ? r.json() : null).then(ov => {
+        assetOverridesData = ov; renderAssetList();
+      }).catch(() => {});
+    }
     // State changes (imports / synthesis) re-derive the graph — debounced.
     function scheduleAssetGraphReload() {
       const caseId = document.getElementById("caseId").value.trim();
@@ -817,18 +1155,33 @@
       assetGraphTimer = setTimeout(() => loadAssetGraph(caseId), 800);
     }
 
-    // "Known compromised assets" — names only, just hosts and users (no details).
+    // "Known compromised assets" — with rename/remove controls when overrides are available.
     function renderAssetList() {
       const el = document.getElementById("assetList");
       if (!assetGraphData) { el.textContent = "—"; return; }
       const comp = assetGraphData.assets.filter(a =>
         a.compromised && (a.type === "host" || a.type === "account") && assetTypesEnabled.has(a.type));
-      if (!comp.length) { el.innerHTML = "<em style='color:#9aa4b2'>No compromised hosts or users identified.</em>"; return; }
-      const chips = (names) => names.map(n => `<span class="asset-chip">${esc(n)}</span>`).join(" ");
-      const group = (label, names) => names.length
-        ? `<div style="margin-bottom:8px"><div class="asset-subhead" style="margin:0 0 4px">${label}</div>${chips(names)}</div>` : "";
-      el.innerHTML = group("Hosts", comp.filter(a => a.type === "host").map(a => a.name))
-        + group("Users", comp.filter(a => a.type === "account").map(a => a.name));
+      const editBtns = (a) =>
+        `<button class="asset-rename-btn" data-assetid="${escAttr(a.id)}" data-name="${escAttr(a.name)}" title="Rename asset" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:#6b7585;font-size:10px">✏</button>`
+        + `<button class="asset-del-btn" data-assetid="${escAttr(a.id)}" title="Suppress asset from graph" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:#6b7585;font-size:10px">×</button>`;
+      const chip = (a) => `<span class="asset-chip" style="padding-right:2px">${esc(a.name)}${editBtns(a)}</span>`;
+      const group = (label, assets) => assets.length
+        ? `<div style="margin-bottom:8px"><div class="asset-subhead" style="margin:0 0 4px">${label}</div>${assets.map(chip).join(" ")}</div>` : "";
+      let html = "";
+      if (!comp.length) html = "<em style='color:#9aa4b2'>No compromised hosts or users identified.</em>";
+      else html = group("Hosts", comp.filter(a => a.type === "host")) + group("Users", comp.filter(a => a.type === "account"));
+      // Manual additions (not necessarily compromised — show them so analysts can confirm/remove).
+      const manual = (assetGraphData.assets || []).filter(a => a.id.startsWith("manual:"));
+      if (manual.length) html += group("Manual additions", manual);
+      // Suppressed assets (from overrides) — shown for easy restoration.
+      if (assetOverridesData && (assetOverridesData.removed || []).length) {
+        html += `<div style="margin-top:8px"><div class="asset-subhead" style="margin:0 0 4px">Suppressed (click ↺ to restore)</div>`
+          + assetOverridesData.removed.map(id =>
+            `<span class="asset-chip" style="opacity:0.5">${esc(id)}`
+            + ` <button class="asset-restore-btn" data-assetid="${escAttr(id)}" title="Restore asset" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:#6b7585;font-size:10px">↺</button></span>`
+          ).join(" ") + `</div>`;
+      }
+      el.innerHTML = html;
     }
 
     function isAssetFullscreen() { return document.fullscreenElement === document.getElementById("assetGraphWrap"); }
@@ -1040,7 +1393,9 @@
     let evGraphTimer = null;
     let evZoom = 1;
     let evDims = { W: 0, H: 0 };
-    const evTypesEnabled = new Set(["spawned", "lateral_move"]);
+    const evTypesEnabled = new Set(
+      [...document.querySelectorAll(".ev-type-toggle")].filter(cb => cb.checked).map(cb => cb.value)
+    );
     // Drag-to-reposition state. evPos = effective id→{x,y} for the current draw (auto layout
     // with any manual overrides applied); evPosOverride = the persisted manual positions.
     let evPos = new Map(), evNodes = [], evEdges = [];
@@ -1130,6 +1485,16 @@
     function evNodeGlyph(n, x, y) {
       const c = evSevColor(n.maxSeverity), f = (v) => v.toFixed(1);
       if (n.kind === "host" || n.kind === "account") return assetIcon(n.kind, x, y, c);
+      if (n.kind === "file") {
+        // Diamond shape representing a file artifact.
+        return `<circle cx="${f(x)}" cy="${f(y)}" r="11" fill="transparent"/>`
+          + `<polygon points="${f(x)},${f(y - 10)} ${f(x + 10)},${f(y)} ${f(x)},${f(y + 10)} ${f(x - 10)},${f(y)}" fill="${c}" stroke="#0f1115" stroke-width="1"/>`;
+      }
+      if (n.kind === "network") {
+        // Filled circle representing an IP endpoint.
+        return `<circle cx="${f(x)}" cy="${f(y)}" r="10" fill="${c}" stroke="#0f1115" stroke-width="1"/>`;
+      }
+      // process: rounded rectangle
       return `<circle cx="${f(x)}" cy="${f(y)}" r="11" fill="transparent"/>`
         + `<rect x="${f(x - 9)}" y="${f(y - 6)}" width="18" height="12" rx="2.5" fill="${c}" stroke="#0f1115" stroke-width="1"/>`;
     }
@@ -1177,17 +1542,19 @@
         + `<marker id="evArrowHigh" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#ff8a5c"/></marker>`
         + `<marker id="evArrowMed" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#7f8aa0"/></marker>`
         + `<marker id="evArrowRan" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#52617a"/></marker>`
+        + `<marker id="evArrowFile" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#4ade80"/></marker>`
+        + `<marker id="evArrowNet" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#38bdf8"/></marker>`
         + `</defs>`;
       for (const e of evEdges) {
         const p = evPos.get(e.source), q = evPos.get(e.target);
         if (!p || !q) continue;
         const vis = related(e.source) && related(e.target);
-        // ran_on = the muted host→tree anchor (thin, subordinate). The causal edges pop:
-        // solid orange = high, dashed gray = medium.
-        const isRan = e.type === "ran_on", high = e.confidence === "high";
-        const stroke = isRan ? "#52617a" : high ? "#ff8a5c" : "#7f8aa0";
-        const dash = (isRan || high) ? "" : ` stroke-dasharray="5 4"`;
-        const marker = isRan ? "url(#evArrowRan)" : high ? "url(#evArrowHigh)" : "url(#evArrowMed)";
+        // ran_on = muted anchor; file_lineage = green; network_flow = cyan; causal = orange/gray.
+        const isRan = e.type === "ran_on", isFile = e.type === "file_lineage", isNet = e.type === "network_flow";
+        const high = e.confidence === "high";
+        const stroke = isRan ? "#52617a" : isFile ? "#4ade80" : isNet ? "#38bdf8" : high ? "#ff8a5c" : "#7f8aa0";
+        const dash = (isRan || isFile || isNet || high) ? "" : ` stroke-dasharray="5 4"`;
+        const marker = isRan ? "url(#evArrowRan)" : isFile ? "url(#evArrowFile)" : isNet ? "url(#evArrowNet)" : high ? "url(#evArrowHigh)" : "url(#evArrowMed)";
         const sw = isRan ? "1.1" : "1.6";
         // Trim the segment to the node radius so the arrowhead lands at the glyph edge, not its center.
         const ang = Math.atan2(q.y - p.y, q.x - p.x), r = 13;
@@ -1199,10 +1566,11 @@
       for (const n of evNodes) {
         const p = evPos.get(n.id);
         const moved = evPosOverride.has(n.id) ? " moved" : "";
+        const titleSuffix = n.asset ? " on " + n.asset : n.ip ? " (" + n.ip + ")" : "";
         svg += `<g class="ev-node${moved}" data-id="${escAttr(n.id)}" opacity="${related(n.id) ? 1 : 0.12}">`
           + `<text x="${p.x.toFixed(1)}" y="${(p.y + 22).toFixed(1)}" text-anchor="middle">${esc(truncate(n.label, 22))}</text>`
           + evNodeGlyph(n, p.x, p.y)
-          + `<title>${esc(n.label + (n.asset ? " on " + n.asset : "") + " — " + n.maxSeverity + " · drag to reposition")}</title></g>`;
+          + `<title>${esc(n.label + titleSuffix + " — " + n.maxSeverity + " · drag to reposition")}</title></g>`;
       }
       svg += `</svg>`;
       el.innerHTML = svg;
@@ -1230,7 +1598,7 @@
       return `<button class="comment-chip${list.length ? " has" : ""}" data-ct="${escAttr(type)}" data-ci="${escAttr(String(id))}" `
         + `title="Comments — collaborate with other investigators">💬${list.length ? " " + list.length : ""}</button>`;
     }
-    const investigatorName = () => (document.getElementById("investigatorName").value || "").trim();
+    const investigatorName = () => (localStorage.getItem("dfir.investigator") || "").trim();
 
     function loadComments(caseId) {
       fetch(`/cases/${caseId}/comments`).then(r => r.json()).then(list => {
@@ -2330,7 +2698,11 @@
     function applyAiStatus(evt) {
       if (evt.status === "analyzing") {
         if (evt.phase === "synthesizing") setAi("analyzing", "synthesizing findings… " + (evt.detail || ""));
-        else setAi("analyzing", "processing evidence… " + (evt.detail || ""));
+        else if (evt.detail && /^enriching IOC/.test(evt.detail)) {
+          const el = document.getElementById("aiStatus");
+          el.className = "ai-analyzing";
+          el.textContent = evt.detail;
+        } else setAi("analyzing", "processing evidence… " + (evt.detail || ""));
       } else if (evt.status === "idle") {
         setAi("idle", "idle — up to date (" + fmtTime(evt.at) + ")");
         clearTransientStatus();  // re-synthesis finished → drop the "…re-synthesizing" line
@@ -2507,6 +2879,70 @@
         `<div class="kc-detail-rows">${rows}</div>`;
       box.hidden = false;
     }
+
+    // --- Attack Phases (temporal bursts; grouped by time gap, derived server-side, no AI) -----
+    let phasesData = [];
+    const phOpen = new Set();   // ids of expanded phases — persist across re-renders
+    let phasesTimer = null;
+
+    function loadPhases(caseId) {
+      fetch(`/cases/${caseId}/phases`).then(r => r.json()).then(p => {
+        phasesData = Array.isArray(p) ? p : [];
+        renderPhases();
+      }).catch(() => {});
+    }
+    // State changes (imports / synthesis) re-derive the phases — debounced, like the graphs.
+    function schedulePhasesReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(phasesTimer);
+      phasesTimer = setTimeout(() => loadPhases(caseId), 800);
+    }
+
+    function renderPhases() {
+      const el = document.getElementById("phases");
+      if (!el) return;
+      if (!phasesData.length) { el.innerHTML = "<span style='color:#9aa4b2'>No dated events to group into phases yet.</span>"; return; }
+      // Event details for expansion come from the in-scope timeline already on the page.
+      const evById = {};
+      for (const e of (lastFt || [])) evById[String(e.id)] = e;
+      el.innerHTML = `<div class="ph-list">` + phasesData.map((p, i) => {
+        const color = KC_SEV_COLOR[p.maxSeverity] || "#2a2f3a";
+        const when = (p.endTimestamp && p.endTimestamp !== p.startTimestamp)
+          ? `${esc(p.startTimestamp)} → ${esc(p.endTimestamp)}` : esc(p.startTimestamp || "(undated)");
+        const isOpen = phOpen.has(p.id);
+        const ttps = (p.inferredTechniques || []).length;
+        const evRows = (p.eventIds || []).map(id => {
+          const e = evById[String(id)];
+          if (!e) return `<div class="ph-ev-row"><span class="ph-ev-desc" style="color:#9aa4b2">${esc(String(id))}</span></div>`;
+          const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
+          return `<div class="ph-ev-row">` +
+            `<span class="ph-ev-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
+            `<span class="ph-ev-desc">${esc(desc)}</span>` +
+            `${e.mitreTechniques && e.mitreTechniques.length ? `<small class="kc-ev-mitre">${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
+            `</div>`;
+        }).join("");
+        return `<div class="ph-row${isOpen ? " ph-open" : ""}">` +
+          `<div class="ph-head" style="border-left-color:${color}" data-phid="${escAttr(p.id)}">` +
+          `<span class="ph-caret">▶</span>` +
+          `<span class="ph-num">${i + 1}.</span>` +
+          `<span class="ph-label" style="color:${color}">${esc(p.label)}</span>` +
+          `<span class="ph-when">${when}</span>` +
+          `<span class="ph-meta">${esc(p.eventCount)} event${p.eventCount === 1 ? "" : "s"}${ttps ? ` · ${esc(ttps)} TTP${ttps === 1 ? "" : "s"}` : ""}</span>` +
+          `</div>` +
+          `<div class="ph-events"${isOpen ? "" : " hidden"}>${evRows || "<span style='color:#9aa4b2'>No events.</span>"}</div>` +
+          `</div>`;
+      }).join("") + `</div>`;
+    }
+
+    // Expand/collapse a phase to reveal its events (event-delegated; survives re-renders).
+    document.getElementById("phases").addEventListener("click", function(e) {
+      const head = e.target.closest(".ph-head");
+      if (!head) return;
+      const id = head.dataset.phid;
+      if (phOpen.has(id)) phOpen.delete(id); else phOpen.add(id);
+      renderPhases();
+    });
 
     function renderKillChain(ft) {
       const byTactic = {};
@@ -2835,6 +3271,11 @@
       if (e.target.classList.contains('sev-filter')) renderTimelineEvents(lastFt);
     });
 
+    // Re-render findings when the confidence filter changes (no server round-trip).
+    document.getElementById("confFilter").addEventListener("input", function() {
+      if (lastState) render(lastState);
+    });
+
     function render(rawState) {
       // Keep the raw state so scope-preset clicks can re-project without a refetch.
       lastState = rawState;
@@ -2883,6 +3324,7 @@
       lastFt = ft;
       renderTimelineEvents(ft);
       renderKillChain(ft);
+      if (phasesData.length) renderPhases();   // refresh expansion details against the new timeline
 
       const openThreads = state.openThreads.filter(t => t.status === "open");
       const closedThreads = state.openThreads.filter(t => t.status === "closed");
@@ -2893,21 +3335,29 @@
           closedThreads.map(t => `<div style='color:#9aa4b2;text-decoration:line-through'>✓ <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("")
         : "";
       const sorted = [...state.findings].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
+      const minConf = parseInt(document.getElementById("confFilter").value, 10) || 0;
+      const filtered = sorted.filter(f => f.confidence === undefined || f.confidence >= minConf);
       document.getElementById("findings").innerHTML =
-        sorted.map(f => {
+        filtered.map(f => {
           const evidence = [...(f.sourceScreenshots || []), ...(evByFinding[f.id] || [])];
           // Auto-flagged findings (from a Critical/High artifact row synthesis didn't cover)
           // carry the f-auto- id prefix — badge them so the analyst knows to review/refine.
           const auto = String(f.id).startsWith("f-auto-")
             ? ` <span title="Auto-flagged from a ${esc(f.severity)}-severity artifact row — review and refine" style="background:#2a2233;color:#c79bff;border:1px solid #4a3a5a;border-radius:4px;padding:0 6px;font-size:10px">AUTO</span>` : "";
+          // Confidence badge: color-coded by tier.
+          let confBadge = "";
+          if (f.confidence !== undefined) {
+            const cls = f.confidence >= 80 ? "conf-high" : f.confidence >= 50 ? "conf-mid" : "conf-low";
+            confBadge = ` <span class="conf-badge ${cls}" title="AI confidence: ${f.confidence}%">${f.confidence}%</span>`;
+          }
           // Chips lead the row (comment · tag), matching IOCs / Key Questions / Threads, then the
           // severity badge and the finding id/title.
-          return `<div class="finding">${commentChip("finding", f.id)} ${tagChip("finding", f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> ` +
+          return `<div class="finding">${commentChip("finding", f.id)} ${tagChip("finding", f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ` +
             `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${evidenceLinks(state.caseId, evidence)}</div>`;
-        }).join("") || "—";
+        }).join("") || (minConf > 0 && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings above ${minConf}% confidence.</span>` : "—");
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
@@ -2930,7 +3380,9 @@
       loadScope(caseId);
       loadReportMeta(caseId);
       loadAssetGraph(caseId);
+      loadAssetOverrides(caseId);
       loadEvidenceGraph(caseId);
+      loadPhases(caseId);
       loadComments(caseId);
       loadTags(caseId);
       loadStarred(caseId);
@@ -2955,12 +3407,89 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); loadSynthMeta(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); loadSynthMeta(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
+        else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
       };
+    }
+
+    // ── Case templates ────────────────────────────────────────────────────────────────────
+    let _cachedTemplates = null;
+    async function loadTemplates() {
+      if (_cachedTemplates) return _cachedTemplates;
+      try {
+        const r = await fetch("/templates");
+        _cachedTemplates = r.ok ? await r.json() : [];
+      } catch { _cachedTemplates = []; }
+      return _cachedTemplates;
+    }
+    async function populateTemplateSelect() {
+      const sel = document.getElementById("ncTemplate");
+      const templates = await loadTemplates();
+      // Remove all options except the first ("No template")
+      while (sel.options.length > 1) sel.remove(1);
+      for (const t of templates) {
+        const opt = document.createElement("option");
+        opt.value = t.id;
+        opt.textContent = (t.builtIn ? "" : "★ ") + t.name;
+        sel.appendChild(opt);
+      }
+    }
+    function onTemplateSelectChange() {
+      const sel = document.getElementById("ncTemplate");
+      const descEl = document.getElementById("ncTemplateDesc");
+      const templates = _cachedTemplates || [];
+      const t = templates.find(t => t.id === sel.value);
+      if (t && t.description) {
+        const hints = [];
+        if (t.recommendedImports?.length) hints.push("Imports: " + esc(t.recommendedImports.join(", ")));
+        if (t.huntPlatforms?.length) hints.push("Platforms: " + esc(t.huntPlatforms.join(", ")));
+        const hintText = hints.length ? " · " + hints.join(" · ") : "";
+        descEl.innerHTML = esc(t.description) + hintText;
+        descEl.style.display = "block";
+      } else {
+        descEl.style.display = "none";
+      }
+    }
+    // ── Save as Template ──────────────────────────────────────────────────────────────────
+    function openSaveTemplate() {
+      document.getElementById("stName").value = "";
+      document.getElementById("stDesc").value = "";
+      document.getElementById("stMsg").textContent = "";
+      document.getElementById("saveTemplateOverlay").classList.add("open");
+      document.getElementById("stName").focus();
+    }
+    function closeSaveTemplate() { document.getElementById("saveTemplateOverlay").classList.remove("open"); }
+    async function saveAsTemplate() {
+      const name = document.getElementById("stName").value.trim();
+      const description = document.getElementById("stDesc").value.trim();
+      const msg = document.getElementById("stMsg");
+      if (!name) { msg.textContent = "template name is required"; return; }
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { msg.textContent = "no case loaded"; return; }
+      msg.textContent = "saving…";
+      try {
+        // Collect the current case's key questions to pre-populate the template
+        const state = await fetch(`/cases/${encodeURIComponent(caseId)}/state`).then(r => r.ok ? r.json() : null);
+        const initialKeyQuestions = (state?.keyQuestions ?? []).map(q => q.question).filter(Boolean);
+        const res = await fetch("/templates", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name, description, initialKeyQuestions, recommendedImports: [], huntPlatforms: [], severityFloor: null }),
+        });
+        if (res.status === 201) {
+          _cachedTemplates = null; // invalidate cache
+          closeSaveTemplate();
+          document.getElementById("status").textContent = "template saved";
+        } else {
+          const body = await res.json().catch(() => ({}));
+          msg.textContent = "save failed: HTTP " + res.status + (body.error ? " — " + body.error : "");
+        }
+      } catch (err) {
+        msg.textContent = "save failed: " + err.message;
+      }
     }
 
     // ── New case ── creation lives here (the extension only attaches to existing cases) ──
@@ -2969,8 +3498,10 @@
       idInput.value = "";
       document.getElementById("ncName").value = "";
       document.getElementById("ncInvestigator").value =
-        (document.getElementById("investigatorName").value || "").trim();
+        (localStorage.getItem("dfir.investigator") || "").trim();
       document.getElementById("ncMsg").textContent = "";
+      document.getElementById("ncTemplateDesc").style.display = "none";
+      populateTemplateSelect();  // async, fills while user edits fields
       document.getElementById("newCaseOverlay").classList.add("open");
       // Auto-suggest the next incident id — still fully editable (focus + select so a
       // manually-typed id overtypes it in one keystroke).
@@ -3002,13 +3533,14 @@
       const caseId = document.getElementById("ncCaseId").value.trim();
       const name = document.getElementById("ncName").value.trim();
       const investigator = document.getElementById("ncInvestigator").value.trim();
+      const templateId = document.getElementById("ncTemplate").value || undefined;
       const msg = document.getElementById("ncMsg");
       if (!caseId || !name) { msg.textContent = "case id and name are required"; return; }
       msg.textContent = "creating…";
       try {
         const res = await fetch("/cases", {
           method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ caseId, name, investigator: investigator || "unknown", aiProvider: null }),
+          body: JSON.stringify({ caseId, name, investigator: investigator || "unknown", aiProvider: null, templateId }),
         });
         if (res.status === 201) {
           closeNewCase();
@@ -3146,9 +3678,6 @@
       reader.readAsDataURL(file);
     });
     document.getElementById("rm-removeLogo").onclick = () => { rmLogo = ""; renderLogoPreview(); };
-    // Investigator name (comment author) — persisted per browser.
-    document.getElementById("investigatorName").value = localStorage.getItem("dfir.investigator") || "";
-    document.getElementById("investigatorName").addEventListener("input", (e) => localStorage.setItem("dfir.investigator", e.target.value));
     // Comment modal + delegated chip clicks.
     document.getElementById("commentPost").onclick = postComment;
     document.getElementById("commentClose").onclick = closeCommentModal;
@@ -3237,9 +3766,14 @@
     document.getElementById("newCaseBtn").onclick = openNewCase;
     document.getElementById("ncCreate").onclick = createNewCase;
     document.getElementById("ncCancel").onclick = closeNewCase;
+    document.getElementById("ncTemplate").onchange = onTemplateSelectChange;
     document.getElementById("newCaseOverlay").addEventListener("click", (e) => { if (e.target.id === "newCaseOverlay") closeNewCase(); });
     ["ncCaseId", "ncName", "ncInvestigator"].forEach((id) =>
       document.getElementById(id).addEventListener("keydown", (e) => { if (e.key === "Enter") createNewCase(); }));
+    document.getElementById("stSave").onclick = saveAsTemplate;
+    document.getElementById("stCancel").onclick = closeSaveTemplate;
+    document.getElementById("saveTemplateOverlay").addEventListener("click", (e) => { if (e.target.id === "saveTemplateOverlay") closeSaveTemplate(); });
+    document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
     document.getElementById("aiToggle").onclick = toggleAi;
     document.getElementById("applyScope").onclick = applyScope;
     document.getElementById("clearScope").onclick = () => {
@@ -3436,6 +3970,8 @@
         window.location.href = `/cases/${c}/timeline.jsonl`;
       } else if (action === "state-json") {
         window.open(`/cases/${c}/state`, "_blank", "noopener");
+      } else if (action === "save-template") {
+        openSaveTemplate();
       }
     };
 
@@ -3486,6 +4022,74 @@
     document.getElementById("ceDomainChips").addEventListener("click", e => { const x = e.target.closest(".x"); if (x) ceRemoveTarget(x.dataset.kind, x.dataset.val); });
     document.getElementById("ceEmailChips").addEventListener("click", e => { const x = e.target.closest(".x"); if (x) ceRemoveTarget(x.dataset.kind, x.dataset.val); });
     document.getElementById("ceProviders").addEventListener("change", e => { if (e.target.classList && e.target.classList.contains("ce-prov")) ceAutosaveTargets(); });
+    // ── Asset overrides (rename / add / suppress / link) ───────────────────────────
+    document.getElementById("addAssetBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const name = document.getElementById("assetAddName").value.trim();
+      const type = document.getElementById("assetAddType").value;
+      const msg = document.getElementById("addAssetMsg");
+      if (!name) { msg.textContent = "name required"; return; }
+      msg.textContent = "…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, type }),
+      }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error)))
+        .then(() => { msg.textContent = "added ✓"; document.getElementById("assetAddName").value = ""; setTimeout(() => msg.textContent = "", 2500); loadAssetGraph(caseId); loadAssetOverrides(caseId); })
+        .catch(e => { msg.textContent = "failed: " + e + " — restart the companion server if this 404s"; });
+    };
+    document.getElementById("addLinkBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const asset = document.getElementById("assetLinkAsset").value.trim();
+      const ioc = document.getElementById("assetLinkIoc").value.trim();
+      const msg = document.getElementById("addLinkMsg");
+      if (!asset || !ioc) { msg.textContent = "asset id and IoC id are required"; return; }
+      msg.textContent = "…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/links`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asset, ioc }),
+      }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error)))
+        .then(() => { msg.textContent = "linked ✓"; setTimeout(() => msg.textContent = "", 2500); loadAssetGraph(caseId); loadAssetOverrides(caseId); })
+        .catch(e => { msg.textContent = "failed: " + e + " — restart the companion server if this 404s"; });
+    };
+    document.getElementById("delLinkBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const asset = document.getElementById("assetLinkAsset").value.trim();
+      const ioc = document.getElementById("assetLinkIoc").value.trim();
+      const msg = document.getElementById("addLinkMsg");
+      if (!asset || !ioc) { msg.textContent = "asset id and IoC id are required"; return; }
+      msg.textContent = "…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/links?asset=${encodeURIComponent(asset)}&ioc=${encodeURIComponent(ioc)}`, { method: "DELETE" })
+        .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error)))
+        .then(() => { msg.textContent = "unlinked ✓"; setTimeout(() => msg.textContent = "", 2500); loadAssetGraph(caseId); loadAssetOverrides(caseId); })
+        .catch(e => { msg.textContent = "failed: " + e + " — restart the companion server if this 404s"; });
+    };
+    // Rename / suppress / restore buttons inside the asset list (event delegation).
+    document.getElementById("assetList").addEventListener("click", (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const renameBtn = e.target.closest(".asset-rename-btn");
+      const delBtn = e.target.closest(".asset-del-btn");
+      const restoreBtn = e.target.closest(".asset-restore-btn");
+      if (renameBtn) {
+        const id = renameBtn.dataset.assetid;
+        const cur = renameBtn.dataset.name;
+        const newName = prompt(`Rename "${cur}" to (leave empty to clear rename):`, cur);
+        if (newName === null) return;
+        fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}`, {
+          method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: newName }),
+        }).then(() => { loadAssetGraph(caseId); loadAssetOverrides(caseId); }).catch(() => {});
+      } else if (delBtn) {
+        const id = delBtn.dataset.assetid;
+        fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}`, { method: "DELETE" })
+          .then(() => { loadAssetGraph(caseId); loadAssetOverrides(caseId); }).catch(() => {});
+      } else if (restoreBtn) {
+        const id = restoreBtn.dataset.assetid;
+        fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}/restore`, { method: "POST" })
+          .then(() => { loadAssetGraph(caseId); loadAssetOverrides(caseId); }).catch(() => {});
+      }
+    });
+
     // The (+) next to a section heading toggles that section's manual add-entry form. We stop the
     // click from bubbling to the h2 (which would collapse the section), and expand the section if
     // it was collapsed so the form is visible.
@@ -3508,9 +4112,9 @@
       });
     });
 
-    // ── Push to an external platform (DFIR-IRIS / Timesketch) ─────────────────
+    // ── Push to an external platform (DFIR-IRIS / Timesketch / MISP) ──────────
     // Each option appears in the Push menu only when the server has that target configured
-    // (GET /iris/status, /timesketch/status); the menu stays hidden until at least one does.
+    // (GET /iris/status, /timesketch/status, /misp/status); the menu stays hidden until at least one does.
     const pushSelect = document.getElementById("pushSelect");
     function addPushOption(value, label) {
       if ([...pushSelect.options].some((o) => o.value === value)) return;
@@ -3521,6 +4125,7 @@
     }
     fetch("/iris/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("iris", "Push to DFIR-IRIS"); }).catch(() => {});
     fetch("/timesketch/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("timesketch", "Push to Timesketch"); }).catch(() => {});
+    fetch("/misp/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("misp", "Push to MISP"); }).catch(() => {});
     pushSelect.onchange = (e) => {
       const sel = e.target;
       const target = sel.value;
@@ -3529,7 +4134,8 @@
       if (!target || !caseId) return;
       const c = encodeURIComponent(caseId);
       sel.disabled = true;
-      document.getElementById("status").textContent = `pushing to ${target === "iris" ? "IRIS" : "Timesketch"}…`;
+      const targetLabel = target === "iris" ? "IRIS" : target === "timesketch" ? "Timesketch" : "MISP";
+      document.getElementById("status").textContent = `pushing to ${targetLabel}…`;
       document.getElementById("reportLinks").innerHTML = "";
       fetch(`/cases/${c}/push/${target}`, { method: "POST" })
         .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
@@ -3542,13 +4148,21 @@
               `tasks +${res.tasks.added}, notes ${res.notes}` +
               (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
             if (res.caseUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.caseUrl)}" target="_blank" rel="noopener">Open in IRIS</a>`;
-          } else {
+          } else if (target === "timesketch") {
             const verb = res.created ? "created" : "updated";
             document.getElementById("status").textContent =
               `Timesketch sketch #${res.sketchId} ${verb}: ${res.events} event(s) → "${res.timelineName}"` +
               (res.replacedTimeline ? " (replaced)" : "") +
               (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
             if (res.sketchUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.sketchUrl)}" target="_blank" rel="noopener">Open in Timesketch</a>`;
+          } else {
+            const verb = res.created ? "created" : "updated";
+            document.getElementById("status").textContent =
+              `MISP event #${res.eventId} ${verb}: ${res.attributes.added} attribute(s) added` +
+              (res.attributes.existing ? ` (${res.attributes.existing} existing)` : "") +
+              (res.tags ? `, ${res.tags} tag(s)` : "") +
+              (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
+            if (res.eventUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.eventUrl)}" target="_blank" rel="noopener">Open in MISP</a>`;
           }
           if (res.warnings && res.warnings.length) console.warn("push warnings:", res.warnings);
         })
@@ -3656,6 +4270,208 @@
 
     setupCollapsible();
     setupReorder();
+
+    // ── Settings modal ────────────────────────────────────────────────────────
+    const SECTIONS_VIS_KEY = "dfir.sectionsVis";
+    const SECTIONS_ORDER_KEY = "dfir.sectionsOrder";
+    const SECTION_DEFS = [
+      { id: "sec-ask",          label: "Ask the LLM" },
+      { id: "sec-exec",         label: "Executive Summary" },
+      { id: "sec-next-steps",   label: "Recommended Next Steps" },
+      { id: "sec-attack-path",  label: "Attack Path" },
+      { id: "sec-findings",     label: "Findings" },
+      { id: "sec-timeline",     label: "Forensic Timeline" },
+      { id: "sec-kill-chain",   label: "Kill Chain" },
+      { id: "sec-phases",       label: "Attack Phases" },
+      { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
+      { id: "sec-evidence",     label: "Evidence Chain" },
+      { id: "sec-iocs",         label: "IOCs" },
+      { id: "sec-exposure",     label: "Customer Exposure" },
+      { id: "sec-questions",    label: "Key Investigative Questions" },
+      { id: "sec-threads",      label: "Investigation Threads" },
+      { id: "sec-mitre",        label: "MITRE ATT&CK" },
+      { id: "sec-legitimate",   label: "Confirmed Legitimate" },
+      { id: "sec-inv-log",      label: "Investigation Log" },
+      { id: "sec-case-details", label: "Case Details" },
+    ];
+
+    function loadSectionsVis() {
+      try { return JSON.parse(localStorage.getItem(SECTIONS_VIS_KEY) || "{}"); } catch { return {}; }
+    }
+    function loadSectionsOrder() {
+      try { return JSON.parse(localStorage.getItem(SECTIONS_ORDER_KEY) || "[]"); } catch { return []; }
+    }
+    function saveSectionsOrder(ids) {
+      localStorage.setItem(SECTIONS_ORDER_KEY, JSON.stringify(ids));
+    }
+    function getEffectiveOrder() {
+      const saved = loadSectionsOrder();
+      if (!saved.length) return [...SECTION_DEFS];
+      const byId = Object.fromEntries(SECTION_DEFS.map(d => [d.id, d]));
+      const result = saved.filter(id => byId[id]).map(id => byId[id]);
+      const savedSet = new Set(saved);
+      SECTION_DEFS.filter(d => !savedSet.has(d.id)).forEach(d => result.push(d));
+      return result;
+    }
+    function applySecOrder() {
+      const main = document.querySelector("main");
+      if (!main) return;
+      getEffectiveOrder().forEach(({ id }) => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement === main) main.appendChild(el);
+      });
+    }
+
+    function applySectionsVis() {
+      applySecOrder();
+      const vis = loadSectionsVis();
+      SECTION_DEFS.forEach(({ id }) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = (vis[id] === false) ? "none" : "";
+      });
+    }
+
+    function renderSecChecks() {
+      const container = document.getElementById("secChecks");
+      if (!container) return;
+      const vis = loadSectionsVis();
+      const ordered = getEffectiveOrder();
+      container.innerHTML = ordered.map(({ id, label }) =>
+        `<label class="sec-check" draggable="true" data-id="${esc(id)}"><span class="drag-handle" title="Drag to reorder">⠿</span><input type="checkbox" id="scb-${esc(id)}" ${vis[id] !== false ? "checked" : ""}> ${esc(label)}</label>`
+      ).join("");
+      let dragSrc = null;
+      container.querySelectorAll(".sec-check").forEach(row => {
+        row.addEventListener("dragstart", e => { dragSrc = row; e.dataTransfer.effectAllowed = "move"; });
+        row.addEventListener("dragover", e => {
+          e.preventDefault(); e.dataTransfer.dropEffect = "move";
+          if (row !== dragSrc) {
+            container.querySelectorAll(".sec-check").forEach(r => r.classList.remove("drag-over"));
+            row.classList.add("drag-over");
+          }
+        });
+        row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+        row.addEventListener("drop", e => {
+          e.preventDefault(); row.classList.remove("drag-over");
+          if (dragSrc && dragSrc !== row) {
+            container.insertBefore(dragSrc, row);
+            saveSectionsOrder([...container.querySelectorAll(".sec-check")].map(r => r.dataset.id));
+            applySecOrder();
+          }
+        });
+        row.addEventListener("dragend", () => {
+          dragSrc = null;
+          container.querySelectorAll(".sec-check").forEach(r => r.classList.remove("drag-over"));
+        });
+      });
+    }
+
+    async function fetchEnvSettings() {
+      try {
+        const r = await fetch("/settings/env");
+        if (!r.ok) return;
+        const { env } = await r.json();
+        for (const [key, val] of Object.entries(env)) {
+          const el = document.getElementById("env-" + key);
+          if (!el) continue;
+          if (el.tagName === "SELECT") {
+            el.value = val || "";
+          } else if (el.type === "password") {
+            el.value = "";
+            el.placeholder = val === "••••••••" ? "(already set)" : "(not set)";
+          } else {
+            el.value = val || "";
+          }
+        }
+      } catch {}
+    }
+
+    async function saveSettings() {
+      // 1. Investigator name → localStorage
+      localStorage.setItem("dfir.investigator", (document.getElementById("settingsInvestigator").value || "").trim());
+
+      // 2. Section visibility → localStorage + apply
+      const vis = {};
+      SECTION_DEFS.forEach(({ id }) => {
+        const cb = document.getElementById("scb-" + id);
+        if (cb) vis[id] = cb.checked;
+      });
+      localStorage.setItem(SECTIONS_VIS_KEY, JSON.stringify(vis));
+      applySectionsVis();
+
+      // 3. Env vars → POST /settings/env
+      const updates = {};
+      document.querySelectorAll("[id^='env-']").forEach(el => {
+        const key = el.id.replace(/^env-/, "");
+        if (el.type === "password") {
+          if (el.value.trim()) updates[key] = el.value.trim();
+        } else if (el.tagName === "SELECT") {
+          if (el.value) updates[key] = el.value;
+        } else {
+          updates[key] = el.value.trim();
+        }
+      });
+      const msg = document.getElementById("settingsSaveMsg");
+      msg.textContent = "";
+      if (Object.keys(updates).length > 0) {
+        try {
+          const r = await fetch("/settings/env", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ updates })
+          });
+          if (r.ok) {
+            msg.textContent = "✓ Saved — restart the server to apply server-side changes";
+            msg.style.color = "#ffd93b";
+          } else {
+            const j = await r.json().catch(() => ({}));
+            msg.textContent = "Error: " + (j.error || r.status);
+            msg.style.color = "#ff7a7a";
+          }
+        } catch {
+          msg.textContent = "Could not reach server";
+          msg.style.color = "#ff7a7a";
+        }
+      } else {
+        msg.textContent = "✓ Saved";
+        msg.style.color = "#5fd470";
+      }
+      setTimeout(() => { if (msg) msg.textContent = ""; }, 5000);
+    }
+
+    function openSettingsModal() {
+      document.getElementById("settingsInvestigator").value = localStorage.getItem("dfir.investigator") || "";
+      renderSecChecks();
+      fetchEnvSettings();
+      // Reset to first tab
+      document.querySelectorAll(".stab").forEach((b, i) => b.classList.toggle("active", i === 0));
+      document.querySelectorAll(".stab-pane").forEach((p, i) => p.classList.toggle("active", i === 0));
+      document.getElementById("settingsSaveMsg").textContent = "";
+      document.getElementById("settingsOverlay").classList.add("open");
+    }
+
+    function closeSettingsModal() {
+      document.getElementById("settingsOverlay").classList.remove("open");
+    }
+
+    document.getElementById("settingsBtn").onclick = openSettingsModal;
+    document.getElementById("settingsSaveBtn").onclick = saveSettings;
+    document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
+    document.getElementById("settingsOverlay").addEventListener("click", (e) => { if (e.target.id === "settingsOverlay") closeSettingsModal(); });
+    document.getElementById("secSelectAll").addEventListener("click", () => {
+      document.querySelectorAll("#secChecks .sec-check input[type=checkbox]").forEach(cb => { cb.checked = true; });
+    });
+    document.getElementById("secDeselectAll").addEventListener("click", () => {
+      document.querySelectorAll("#secChecks .sec-check input[type=checkbox]").forEach(cb => { cb.checked = false; });
+    });
+    document.querySelectorAll(".stab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const tab = btn.dataset.stab;
+        document.querySelectorAll(".stab").forEach(b => b.classList.toggle("active", b === btn));
+        document.querySelectorAll(".stab-pane").forEach(p => p.classList.toggle("active", p.id === "stab-" + tab));
+      });
+    });
+
+    applySectionsVis();
 
     // Populate the case-ID combo box (datalist) with existing cases from the server, so the field
     // shows a dropdown of available cases while still accepting free text. Safe on older servers /

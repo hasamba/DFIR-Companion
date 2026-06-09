@@ -28,6 +28,89 @@ stays on disk, and the AI provider is yours to choose.
 > not re-deriving alerts. New ingest connectors should consume a tool's output; they should not
 > reimplement its detection.
 
+## Screenshots
+
+> **Demo case: GlobalTech Industries — BEC & Ransomware Precursor.**
+> Seed it locally with `npm run seed-demo` then open `http://127.0.0.1:4773/dashboard`.
+
+---
+
+### Executive Summary & Recommended Next Steps
+
+AI-generated case summary and AI-prioritized remediation actions (Critical → Medium), each with
+rationale and a pointer to the finding or artifact it came from.
+
+<img src="docs/screenshots/companion-demo-01.png" alt="DFIR Companion — AI executive summary and prioritized remediation next steps" width="900" />
+
+---
+
+### Forensic Timeline
+
+31 corroborated events from Chainsaw · THOR · Suricata · CrowdStrike Falcon — severity filters, per-row
+triage tags (`initial-access`, `c2-comms`, `key-evidence`, …), import change tracking
+(+19 new events banner with expandable diff), and analyst star / bulk-action controls.
+
+<img src="docs/screenshots/companion-demo-02.png" alt="DFIR Companion — forensic timeline with 31 events, severity filters, triage tags, and import tracking" width="900" />
+
+---
+
+### Attack Path Narrative · MITRE ATT&CK Kill Chain · Findings
+
+Full attacker-path write-up from initial access to ransomware attempt, an interactive kill chain
+(click a tactic to expand its events), and the top findings with confidence scores.
+
+<img src="docs/screenshots/companion-demo-03.png" alt="DFIR Companion — attack path narrative, MITRE ATT&CK kill chain, and findings" width="900" />
+
+---
+
+### Findings
+
+8 AI-generated findings (2 Critical · 2 High · 2 Medium · 1 Low) — each with a confidence %,
+analyst triage tags, MITRE technique links, and a synthesis freshness diff (+8 new since last run).
+
+<img src="docs/screenshots/companion-demo-04.png" alt="DFIR Companion — findings with confidence scores, analyst triage tags, and MITRE ATT&CK links" width="900" />
+
+---
+
+### Evidence Chain Graph
+
+Process trees + lateral movement across DC01, FS01, and WKSTN-JSMITH stitched into one causal
+attack graph. Derived deterministically from importer-populated fields — no AI, no cost, runs offline.
+
+<img src="docs/screenshots/companion-demo-05.png" alt="DFIR Companion — evidence chain graph with process trees and lateral movement across hosts" width="900" />
+
+---
+
+### IOCs with Threat-Intel Enrichments
+
+15 indicators (IPs · domains · hashes · files · processes · URL) enriched against VirusTotal,
+AbuseIPDB, ThreatFox, URLhaus, and MalwareBazaar — verdict badges, detection scores, `NEW` import
+highlights, and analyst `confirmed-malicious` / `pivot-point` triage labels.
+
+<img src="docs/screenshots/companion-demo-06.png" alt="DFIR Companion — IOCs with VirusTotal, AbuseIPDB, ThreatFox, URLhaus, and MalwareBazaar enrichments" width="900" />
+
+---
+
+### Customer Exposure & Compromised Assets · IoC Graph
+
+**Customer Exposure** (top): credential-leak check for the victim org's own domains and emails
+against HIBP / DeHashed / Shodan — breach names, exposed services, no raw passwords stored.
+**Compromised Assets & IoC graph** (bottom): interactive graph linking victim hosts and accounts
+to the indicators that touched each — Host / Account toggles, fullscreen, drag-to-pin nodes.
+
+<img src="docs/screenshots/companion-demo-07.png" alt="DFIR Companion — customer exposure panel and compromised assets IoC graph" width="900" />
+
+---
+
+### Key Investigative Questions
+
+8 standard DFIR questions auto-answered from the synthesized case
+(answered ✅ / partial 🟡 / unknown ❓), each with an evidence pointer or a "collect this next" directive.
+
+<img src="docs/screenshots/companion-demo-08.png" alt="DFIR Companion — key investigative questions with answers and evidence pointers" width="900" />
+
+---
+
 ## What it produces
 
 For each case the AI builds and keeps up to date:
@@ -38,6 +121,9 @@ For each case the AI builds and keeps up to date:
 - **Findings** — granular, per-technique analytic conclusions, each with severity and
   MITRE ATT&CK mapping.
 - **IOCs**, **MITRE ATT&CK** coverage, and an **attacker-path** narrative (kill chain).
+- **Attack phases** — the timeline grouped into temporal **bursts** (activity clustered
+  by time gap), each labelled with its dominant ATT&CK tactic — the *when did each stage
+  happen* view, complementary to the categorical kill chain. Deterministic, no AI call.
 - **Compromised assets** — the victim hosts and user accounts, with an interactive
   **asset ↔ IoC graph** showing which indicators touched each.
 - **Key investigative questions** — initial access, lateral movement, compromised
@@ -49,7 +135,12 @@ For each case the AI builds and keeps up to date:
 
 ## Features
 
-A living catalogue of what the tool does today. (Keep this updated as features land.)
+### Capture & ingest
+- **MV3 browser extension** — timer + event-driven capture, `Ctrl+Shift+S` hotkey, offline queue, per-case start/stop
+- **Import screenshots** — multi-select PNG/JPEG/WebP from any tool; same ingest path as the extension
+- **One Import button** — drop any artifact file; server **auto-detects the format** and routes it automatically
+- **Minimum-severity floor** — filter import noise at the gate; severity-less formats always pass through unchanged
+- **Evidence-first** — files written to disk + append-only audit log before any analysis; perceptual-hash dedup
 
 ### Capture & evidence
 - **MV3 browser extension** — timer + event-driven capture (navigation, tab switch, click);
@@ -60,6 +151,12 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Case management in the dashboard** — a **+ New case** form is the one place cases are born
   (id, name, investigator); the companion rejects captures to an unknown case so evidence never
   lands in a half-made one.
+- **Case templates** — the New case modal offers five built-in templates (Ransomware, BEC/Email
+  Compromise, Insider Threat, Web App Intrusion, General Malware) that pre-populate the Key
+  Questions list with incident-type–specific investigation questions (pinned so synthesis can
+  answer them). Each template also lists recommended import types and hunt platforms as hints.
+  Custom templates can be saved from the Export menu (**Save as Template…**) and reused across
+  cases; they're stored in a `templates/` directory alongside `cases/`.
 - **Evidence-first ingest** — screenshot written to disk + append-only `captures.jsonl` audit
   line **before** any analysis; perceptual-hash duplicate detection.
 - **Import external screenshots** — dashboard **Import Screenshots** button (multi-select PNG/JPEG/WebP)
@@ -68,122 +165,26 @@ A living catalogue of what the tool does today. (Keep this updated as features l
 - **Localhost only** — server binds `127.0.0.1`; CORS + Private-Network-Access so the
   `chrome-extension://` origin can reach it.
 
-### Evidence import (beyond screenshots)
-- **One Import button — the server auto-detects the type.** Drop in any file (JSON / NDJSON / CSV / log,
-  multi-select; images too) and the companion **sniffs it** (structure + per-format signatures) and routes it
-  to the right importer below — no need to pick the format. The detected kind is shown back so a mis-route is
-  visible. Images are stored as screenshots. (Each importer also has a dedicated `POST /cases/:id/import-*`
-  endpoint for programmatic use.)
-- **Minimum-severity import floor** — the Import button asks once per batch which minimum severity to keep
-  (`critical` / `high` / `medium` / `low` / `info`, default = everything), applied across **all** import kinds.
-  It is **gate-aware**: imports that grade severity keep only events at/above the floor (cutting timeline noise),
-  while imports with **no** severity (all-Info host triage like KAPE/Plaso, plain telemetry) are kept in full —
-  *if there are no severities, import everything*.
-- **CSV import** — Velociraptor / EDR result exports → forensic events + IOCs.
-- **Generic log import** — firewall / syslog / sshd / IIS·Apache·nginx / VPN. Repetitive lines
-  are **deduplicated into counted patterns**, then the AI **triages only the suspicious ones**
-  (aggregated "20× …" with a time span) so the timeline stays signal-rich.
-- **THOR (Nextron) import** — JSON-Lines, **deterministic** (no AI call). Drops scan info/
-  lifecycle noise, optional **severity floor** (`minLevel`), maps level → severity, reads each
-  finding's own artifact time.
-- **SIEM / EDR JSON import** — any JSON export, **deterministic** (no AI call). **Unwraps** the
-  common containers (Elastic/Kibana `data[]._source`, an Elasticsearch `hits.hits` response, a
-  plain array, NDJSON, `events`/`records`/`results`), maps **Windows Event Log + Sysmon** events
-  per-EID (label, **derived severity**, MITRE, IOC + asset/account extraction — `::ffff:` IPs
-  unwrapped, Sysmon hashes parsed), and **auto-detects** timestamp/host/message/severity for any
-  other SIEM/EDR record. Repetitive events are **aggregated** into counted rows and capped;
-  optional `minSeverity` floor.
-- **Chainsaw / EVTX import** — Windows event logs the way IR teams actually carry them, **deterministic**
-  (no AI call). Ingests **[Chainsaw](https://github.com/WithSecureLabs/chainsaw) hunt output**
-  (`chainsaw hunt --json`/`--jsonl`) — the **matched Sigma rule** leads the description, its **level
-  drives severity** (a real maliciousness verdict, unlike a bare Windows log) and its `attack.tXXXX`
-  **tags become MITRE techniques** — *on top of* the same per-EID mapping + IOC/asset/hash/process-chain
-  extraction as the SIEM path on the **embedded EVTX event**. Also ingests a **raw `evtx_dump` JSON/NDJSON**
-  dump (`{ Event: { System, EventData } }`, named or `Data[]` form) with the per-EID severity fallback.
-  Events are tagged **Chainsaw / EVTX** for cross-source correlation; repetitive events aggregate and cap;
-  optional `minSeverity` floor.
-- **Hayabusa import** — [Hayabusa](https://github.com/Yamato-Security/hayabusa) (Yamato Security) Sigma-over-EVTX
-  detection timelines, **deterministic** (no AI call). Ingests both a **`json-timeline`** (`.json`/`.jsonl`) and
-  the default **`csv-timeline`** (`.csv`, with its `Key: value ¦ …` detail cells). Verdict-first like Chainsaw:
-  the matched **rule title** leads the event, its **level drives severity**, and its **tactics/tags** (`Txxxx`)
-  become MITRE techniques; **IOCs, the affected host, and the process→parent chain** are pulled from the rendered
-  detail fields. Tagged **Hayabusa** for cross-source correlation; aggregates + caps; optional `minSeverity` floor.
-- **Velociraptor native JSON import** — [Velociraptor](https://docs.velociraptor.app/) collection results / hunt
-  exports, **deterministic** (no AI call). Reads a JSON array, **JSONL** (the native collection-results form), or a
-  multi-artifact map (`{ "Artifact.Name": [rows] }`). Because VQL artifacts emit wildly different columns, each row is
-  **classified**: **Sigma** detections map verdict-first (rule level→severity, title→description, tags→MITRE) over the
-  parsed event; **YARA** hits become High detections with the rule + scanned file/process + hash; parsed **EVTX** rows
-  reuse the per-EID Windows mapping; any other artifact (pslist / netstat / file listing…) **auto-detects the
-  artifact's own time** (not the `_ts` collection time), host, and IOCs. Tagged **Velociraptor** for cross-source
-  correlation; aggregates + caps; optional `minSeverity` floor (drops the Info-level raw-collection rows).
-- **Suricata / Zeek import** — network-monitor logs (Security Onion's network side), **deterministic** (no AI
-  call). Reads **Suricata `eve.json`** and **Zeek JSON** logs (NDJSON or array). The timeline is built only from
-  the **detections** — Suricata `alert` records (signature, category, priority→severity, ATT&CK metadata→MITRE)
-  and Zeek **`notice`** records — so it stays signal-rich; the surrounding **telemetry** (`dns`/`http`/`tls`/
-  `files`/`conn`…) is **not** dumped into the timeline but **contributes IOCs** (domains, URLs, file hashes, and
-  the alert/notice IPs). Tagged **Suricata** / **Zeek** for cross-source correlation; aggregates + caps; optional
-  `minSeverity` floor on the alert events (telemetry IOCs are kept regardless).
-- **KAPE / Eric Zimmerman Tools CSV import** — host-forensics triage, **deterministic** (no AI call). Upload a
-  single EZ-tool CSV and the producing tool is **auto-detected from the header**, then each row becomes a
-  super-timeline event reading the **artifact's own time** + file/hash/process IOCs. Supports **Prefetch**
-  (PECmd), **Amcache** (AmcacheParser — incl. SHA1), **ShimCache/AppCompatCache** (AppCompatCacheParser),
-  **LNK** (LECmd), **JumpLists** (JLECmd), **UsnJrnl $J** & **$MFT** (MFTECmd), **SRUM** (SrumECmd),
-  **Recycle Bin** (RBCmd), and **Shellbags** (SBECmd). Tagged by artifact name for cross-source correlation;
-  aggregates + caps; optional `minSeverity` floor.
-- **Cyber Triage import** — [Cyber Triage](https://www.sleuthkit.org/) (Sleuth Kit Labs) host-triage timeline,
-  **deterministic** (no AI call), **verdict-first**. Reads the **JSONL** (richest), **JSON array**, or **CSV**
-  timeline export. Cyber Triage already scores items, so **scored rows** (`Notable_Normal`=Bad /
-  `LikelyNotable_Normal`=Suspicious) map to events with severity **derived from the verdict** + a keyword bump on
-  the reason (lsass-dump/mimikatz/ransomware → Critical; RAS/AnyDesk/PsExec/YARA → High), the **`scoreDescription`**
-  leading the description and MITRE from the reason (lsass→T1003.001, RAS→T1219, scheduled-task→T1053.005,
-  UAC-bypass→T1548.002), with the process chain / path / host / args carried through. Because the export is mostly
-  raw filesystem telemetry, the importer **keeps the timeline signal-rich**: unscored **Process + Scheduled-Task**
-  rows become **Info** evidence (a bounded execution/persistence timeline), the unscored **File** MFT
-  super-timeline is **dropped by default** (`fileTelemetry` opts it in), and **network** rows contribute the
-  **remote IP as an IOC** only. Tagged **Cyber Triage**; aggregates + caps; optional `minSeverity` floor. *(The CSV
-  form is lossy — no host, no process chain; prefer the JSONL export. The Excel incident report is a formatted
-  human deliverable and is not ingested.)*
-- **Microsoft 365 / Entra ID import** — cloud & identity IR (incl. business-email-compromise), **deterministic**
-  (no AI call). Ingests the **M365 Unified Audit Log** (`Search-UnifiedAuditLog` CSV/JSON or the Management
-  Activity API — the `AuditData` blob is parsed and merged), **Entra sign-in logs**, and **Entra directory
-  audit logs**. Like Windows logs these carry no verdict, so severity is **derived from the operation** — BEC
-  tradecraft (inbox/transport rules, mailbox delegation, OAuth/service-principal grants, role additions,
-  password resets, failed sign-ins) maps to High/Medium with MITRE — while **Entra's own `riskLevel`**
-  (Identity Protection) drives severity directly. Source IPs become IOCs; the UPN is surfaced so the asset↔IoC
-  graph captures the account. Tagged **Microsoft 365** / **Entra ID**; aggregates + caps; optional `minSeverity`
-  floor (drops routine Info activity).
-- **AWS CloudTrail import** — cloud IR, **deterministic** (no AI call). Reads the native `{ "Records": [ … ] }`
-  envelope, NDJSON (CloudTrail Lake / Athena), or a plain array. Severity is **derived from the API action** —
-  IAM persistence/priv-esc (`CreateAccessKey`, `AttachUserPolicy`, `CreateLoginProfile`), logging/detection
-  tampering (`StopLogging`, `DeleteTrail`, `DeleteFlowLogs`, GuardDuty `DeleteDetector`), S3 exposure
-  (`PutBucketPolicy`/`PutBucketAcl`), AMI/snapshot sharing, secrets access (`GetSecretValue`) — each mapped to
-  High/Medium + MITRE; a present **`errorCode`** (AccessDenied/UnauthorizedOperation = a probe) bumps severity,
-  **root** usage is flagged, and a **failed ConsoleLogin** is a brute-force signal. The caller
-  `sourceIPAddress` becomes an IOC (AWS-service callers are ignored); the principal (IAM user / assumed-role
-  issuer) is in the description. Tagged **AWS CloudTrail**; aggregates + caps; optional `minSeverity` floor
-  (drops routine Describe/List/Get reads).
-- **GCP / Azure activity-log import** — the other two clouds, **deterministic** (no AI call), auto-detected
-  per record. **GCP Cloud Audit Logs** (`gcloud logging read` JSON / log-sink NDJSON — the `protoPayload`
-  AuditLog) and the **Azure Activity Log** (`az monitor activity-log list` JSON or the flat Log-Analytics
-  `AzureActivity` shape). Severity is **derived from the action** — service-account keys & IAM/role grants
-  (`CreateServiceAccountKey`, `SetIamPolicy`, `roleAssignments/write`), logging tampering (GCP sink delete,
-  Azure `diagnosticSettings/delete`), firewall opens, storage exposure, key-vault/secret & storage-key access,
-  snapshot/image sharing — each mapped to High/Medium + MITRE, with a bump when the call was **denied**
-  (`status.code != 0` / `Failed`). The caller IP becomes an IOC; the principal email is surfaced for the
-  asset↔IoC graph. Tagged **GCP Audit** / **Azure Activity**; aggregates + caps; optional `minSeverity` floor.
-- **Plaso / log2timeline import** — a `psort` super-timeline CSV, **deterministic** (no AI call). Reads both
-  the **dynamic** (psort default: `datetime,timestamp_desc,source,message,parser,display_name,…`) and legacy
-  **l2tcsv** (`date,time,timezone,…,desc,…`) flavours, auto-detected from the header. Each row becomes an
-  evidence event (Info) at its **own time** (l2tcsv `MM/DD/YYYY`+time+tz → UTC); **IOCs** (hashes, URLs, IPs)
-  and the source file path are scraped from the message, and the l2tcsv `host` attributes the event. Tagged
-  **Plaso**; repetitive rows aggregate; capped — *filter your psort output first* (date range / parsers).
-- **Malware-sandbox report import** — detonation reports, **deterministic** (no AI call). Ingests **CAPEv2**
-  (`report.json`) and **CrowdStrike Falcon Sandbox** (Hybrid Analysis summary JSON), auto-detected. The cleanest
-  "ingest a verdict" case: the **sample verdict** (CAPE `malscore`/family, Falcon `verdict`/`threat_score`/
-  `vx_family`) and **each behavioural signature** become timeline events carrying their **own severity** and
-  **MITRE** (CAPE signature `ttp`, Falcon `mitre_attcks`/`attck_id`); every **dropped/extracted-file hash** and
-  **network host/domain/URL** is harvested as an IOC. Tagged **CAPEv2** / **Falcon Sandbox**; aggregates + caps;
-  optional `minSeverity` floor.
+### Evidence importers
+
+All importers are **deterministic (no AI call)**, read the artifact's own timestamps, and tag events with the real tool name for cross-source correlation. The same file can be re-imported without duplicating the timeline.
+
+| Format | Key sources | Severity derived from |
+|---|---|---|
+| **SIEM / EDR JSON** | Elastic, Kibana, Splunk, QRadar, any JSON/NDJSON export | Windows/Sysmon per-EID table |
+| **Chainsaw** | EVTX hunt JSON/JSONL (`chainsaw hunt --json`) | Matched Sigma rule level |
+| **Hayabusa** | `json-timeline` or `csv-timeline` | Matched Sigma rule level |
+| **Velociraptor** | JSON array, JSONL, or artifact map | Sigma/YARA verdict or per-EID |
+| **THOR (Nextron)** | JSON-Lines scan output | THOR alert level |
+| **Suricata / Zeek** | `eve.json`, Zeek JSON logs; telemetry → IOCs only | Alert priority / notice severity |
+| **Cyber Triage** | JSONL / JSON / CSV timeline | Cyber Triage item score |
+| **M365 / Entra ID** | UAL, Entra sign-in + audit logs | BEC tradecraft table / Entra riskLevel |
+| **AWS CloudTrail** | Records JSON, NDJSON, Athena | API action table (IAM/logging/S3/secrets) |
+| **GCP / Azure** | Cloud Audit Logs, Azure Activity Log | Action table (IAM/logging/secrets) |
+| **Plaso** | `psort` CSV (dynamic + l2tcsv) | — (Info events) |
+| **Sandbox reports** | CAPEv2 `report.json`, Falcon Sandbox summary | Sample verdict + behavioural signatures |
+| **CSV** | Velociraptor / EDR exports | — |
+| **Generic logs** | Firewall, syslog, VPN; repetitive lines → counted patterns | AI-triaged |
 
 ### AI analysis
 - **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only
@@ -217,107 +218,23 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   importing the same report twice never doubles the timeline.
 
 ### Investigation workflow
-- **Case creation** — the dashboard's **+ New case** dialog auto-suggests the next
-  `INC-YYYY-NNN` id (highest for the year + 1), pre-filled and editable, so cases stay
-  consistently numbered without manual bookkeeping.
-- **Scope** — set a from/to time window; everything re-projects to it deterministically.
-- **Mark legitimate** — flag a finding / IOC / **forensic event** as benign (reversible); excluded
-  from analysis and reports.
-- **Per-case AI on/off** — **off by default** (capture-only); the dashboard's **AI: ON/OFF** button
-  starts live analysis and backfills everything captured while it was off. With AI off, deterministic
-  imports still populate the timeline + IOCs, but CSV/log imports (which need the LLM to interpret
-  them) are saved as evidence and only analyzed once AI is on — nothing is sent to the model while off.
-- **Threads, key questions, next steps** — open/closed leads and standard DFIR questions with pointers.
-- **Ask the LLM about the case** — free-form Q&A ("was data exfiltrated?", "was a USB connected?")
-  grounded in everything known; when the answer is unknown it tells you **which artifact to collect
-  and where**. One click pins the question to the case's open questions, and synthesis auto-answers
-  it once the evidence arrives.
-- **Investigator comments** — attach comments to any entity (event, finding, IOC, question, thread)
-  via a 💬 chip; authored by name, stored per case, and synced live over the WS so investigators
-  collaborate in real time.
-- **Analyst triage tags** — hand-label any entity (event, finding, IOC, question, thread) with
-  short labels — `confirmed-malicious`, `false-positive`, `needs-review`, `key-evidence`,
-  `pivot-point`, … — independently of the AI-assigned severity/MITRE. Tags show inline as
-  color-coded pills (threat=red, benign=green, review=yellow, evidence=blue) via a 🏷 chip with a
-  one-click suggested-label palette plus free-form input; normalized + deduped per entity, stored
-  per case (`state/tags.json`), survive synthesis, and sync live over the WS.
-- **Timeline star, multi-select & bulk actions** — the Forensic Timeline is a compact table with the
-  per-row controls (select · ★ star · 💬 · 🏷 · 🔍) at the **start** of the line, before the timestamp.
-  **★ Star** events to flag them (persisted per case) and toggle a **☆ Starred** filter to show only
-  those. **Select multiple** events (row checkboxes + select-all), then act on all of them at once from
-  the bulk bar: **Toggle Star**, **Modify Tags** (one label → every selected event), or **Mark
-  Legitimate** (excludes them from analysis via a single batched write + one re-synthesis).
-- **Hunt-pivot query generator** — from any forensic event or IOC, a 🔍 chip generates ready-to-adapt
-  hunt/pivot queries for the tools you already run — **Velociraptor notebook VQL**
-  (paste-into-a-cell pivots), **Microsoft Defender / Sentinel KQL**, **Elastic ES|QL** (ECS fields,
-  for Kibana Discover / Security), **Splunk SPL**, a **Sigma** rule skeleton, a **YARA** retro-hunt
-  rule (hash-gated — keys on the sample's hash via the `hash` module for fleet-wide retro-hunting),
-  and **Suricata** network rules (IP/domain/URL-gated — DNS / TLS-SNI / HTTP-host/URI alerts) —
-  filled from the entity's structured fields (hash / IP / domain / URL / path / process / parent /
-  host) — and for events, also from indicators **harvested out of the description text** (refanged) and
-  **matched case IOCs**, so a network/IDS alert's domain + IPs are pivotable too — each with one-click
-  copy. Cards only appear when the entity carries a relevant indicator.
-  Paths are normalized (device-prefix stripped, Velociraptor globs use forward slashes) so the queries
-  actually run. Deterministic templating: no AI, no cost, runs offline. (Pivots off a confirmed
-  indicator — it doesn't author detections.) **Trim the modal to your stack** with the
-  `DFIR_HUNT_PLATFORMS` allowlist (e.g. `velociraptor` to show only Velociraptor, or
-  `velociraptor,sigma,yara`) — unset shows all.
-- **Run hunts across all endpoints (Velociraptor)** — when a Velociraptor API client is configured
-  (`DFIR_VELOCIRAPTOR_*`), the hunt modal's Velociraptor card becomes editable with a **▶ Run hunt
-  (all clients)** button that packages the pivot VQL as a client artifact and launches a **hunt on
-  every enrolled endpoint** (not a server-side query) — so "find this file" searches all your clients.
-  Results stream back into a table inline (with the source endpoint's hostname per row) as clients
-  check in; an optional `DFIR_VELOCIRAPTOR_GUI_URL` deep-links to the hunt in the Velociraptor GUI.
-  Off by default; opt in by pointing at an `api_client` config.
-- **Synthesis freshness & what-changed diff** — the Findings section shows when synthesis last
-  actually ran ("🧠 Last synthesized N ago") and how the findings changed since the prior run (**+N
-  new / −M dropped / ↕ K severity**, with an expandable list), so a re-synthesis shows its effect
-  instead of findings silently reshuffling.
-- **Import change tracking (timeline + IOCs)** — the Forensic Timeline shows a **📥 Last import N ago —
-  +N new events** banner (source file + detected kind, with an expandable list of exactly what was
-  added) and the IOCs section shows a matching **+N new IOCs** banner; both highlight the entities the
-  last import brought in (green accent + a `NEW` badge), so after dropping in a new artifact you
-  immediately see what it contributed. Events diff by normalized time + description, IOCs by exact
-  value, so re-importing the same file shows *nothing* new; the highlights clear on the next import.
+- **Ask the case** — free-form Q&A grounded in the full timeline; unknown answers direct you to what artifact to collect and where
+- **Triage tags** — label any entity `confirmed-malicious`, `false-positive`, `key-evidence`, `pivot-point`, etc.; color-coded pills, survive synthesis
+- **Analyst comments** — attach notes to any entity; synced live over WebSocket for multi-investigator collaboration
+- **Timeline bulk actions** — star, multi-select, bulk-tag, or mark-legitimate in one batched write + re-synthesis
+- **Hunt-pivot generator** — one click from any event or IOC generates ready-to-run queries: Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, and Suricata rules; no AI, runs offline; configurable platform allowlist
+- **Velociraptor live hunts** — run a pivot VQL as a fleet hunt across all enrolled endpoints from the dashboard (opt-in, requires API config)
+- **Scope + legitimacy** — set a date/time window; mark findings/IOCs/events as legitimate (reversible); all views re-project deterministically
+- **Synthesis & import freshness** — "last synthesized N ago" + what-changed diff; "last import N ago" + new-event/IOC highlights with `NEW` badges
 
-### Threat-intel enrichment (OPSEC — **per-source, default local-only**)
-- **Sources** — VirusTotal (hash/IP/domain/URL), **Hunting.ch** (abuse.ch unified hunt — one
-  indicator looked up across MalwareBazaar + ThreatFox + URLhaus + YARAify, each platform's hit
-  shown as its own clickable result, like `hunting.abuse.ch/hunt/<ioc>/`), **CrowdStrike Falcon**
-  (Threat Intelligence only — Falcon Intelligence Indicators for hash/IP/domain/URL with
-  malicious-confidence + malware family + adversary, plus MalQuery sample metadata for hashes;
-  no endpoint/SIEM data), AbuseIPDB (IP), **MISP** and **YETI** (your own instances),
-  **RockyRaccoon** (Windows **process** intel — prevalence / LOLBIN / risk / expected parent / ATT&CK).
-- **Per-source selection** — each source is **local** (your own MISP/YETI — queries stay on-box,
-  OPSEC-safe) or **external** (third-party — sends indicators off-box). Pick which to use; the
-  **default is local-only**, external is opt-in with a confirm. **Enabling a source re-checks every
-  IOC on it** (per-source cache), so adding a site later backfills the whole case on it.
-- **Process-chain validation** — RockyRaccoon parent→child check flags an anomalous chain
-  (e.g. `excel.exe → powershell.exe`) on the timeline.
-- **Reachability gate** — a self-hosted **MISP/YETI that's down** is **health-probed before any IOC is
-  sent** (cached ~60s), so a dead instance isn't hit once per IOC. Down sources are **skipped and
-  retried** (not marked "checked"), shown as **●up/down dots** in the Enrich picker, and a background
-  poller **auto-resumes** enrichment when the server comes back (`DFIR_ENRICH_HEALTH_POLL_MS`).
-- **Per-case toggle**, cached on the IOC, throttled, capped; verdict/score/tags/link badges; IOC CSV column.
-- **Self-hosted TLS** — MISP / YETI on an internal-CA or self-signed cert: trust a PEM CA bundle
-  (`DFIR_MISP_CA` / `DFIR_YETI_CA`, verification stays on) or skip verification for a lab
-  (`DFIR_MISP_INSECURE` / `DFIR_YETI_INSECURE`). Scoped per provider — never relaxes the other lookups.
+### Threat-intel enrichment (off by default — opt-in per case)
+- **Sources** — VirusTotal, Hunting.ch (MalwareBazaar · ThreatFox · URLhaus · YARAify), CrowdStrike Falcon TI, AbuseIPDB, MISP, YETI, RockyRaccoon (Windows process prevalence + anomalous parent/child detection)
+- **Local vs external** — MISP/YETI queries stay on-box; third-party sources require an explicit per-case opt-in; enabling a source re-checks every existing IOC against it
+- **Reachability gate** — self-hosted instances are health-probed before sending indicators; auto-resumes when back online
 
-### Customer exposure / credential-leak check (separate from IOC enrichment)
-- **Checks the victim org's OWN assets, not IOCs.** A dedicated **Customer Exposure** panel checks the
-  customer's domains and emails against breach/leak/exposure databases — **LeakCheck**, **Have I Been
-  Pwned**, **DeHashed**, and **Shodan** (each enabled by its own `DFIR_*` key). Domain searches return
-  leaked accounts (and, via Shodan, the org's internet-exposed hosts / ports / services / CVEs); email
-  searches return each address's breaches.
-- **Pick which providers to run** — like the enrichment per-source picker, a checkbox per configured
-  source lets you run only the ones you want (the selection persists per case), so you don't have to
-  query all of them every time.
-- **Strict customer boundary (OPSEC).** Domain lookups use **only the customer domains you enter** — adversary
-  domains collected as IOCs are **never** sent. Emails seen in the case are auto-discovered and checked **only
-  when their domain is one of those customer domains** (and never an email that is itself an IOC).
-- **No secrets at rest.** Results are persisted **without raw leaked passwords** — only a *"credential material
-  present"* flag and the exposed field names. Opt-in: providers are configured by key and the analyst runs the
-  check explicitly; results surface in the dashboard panel **and** report section **4.5 Customer exposure**.
+### Customer exposure (separate from IOC enrichment)
+- **Checks the victim org's own assets** — HIBP, LeakCheck, DeHashed (email breaches), Shodan (exposed hosts/ports/CVEs); per-provider opt-in
+- **OPSEC boundary** — only analyst-entered customer domains are queried; adversary/IOC domains are never sent; raw passwords never persisted
 
 ### Dashboard & reports
 - **Live dashboard** over WebSocket — **collapsible, drag-to-reorder sections** (order + collapse state
@@ -397,21 +314,11 @@ A living catalogue of what the tool does today. (Keep this updated as features l
   and company name render at the top of the report title page.
 
 ### Ops
-- **Portable Windows EXE (no install)** — every `vX.Y.Z` tag attaches a `dfir-companion-vX.Y.Z-win-x64.zip`
-  to the GitHub Release. Unzip, drop your `.env` next to `dfir-companion.exe`, double-click,
-  open `http://127.0.0.1:4773/dashboard`. The same zip ships the dashboard assets and the native
-  `sharp` runtime — no Node install required. The browser add-on is a sibling
-  `dfir-capture-extension-vX.Y.Z.zip` on the same release. Built with **Node SEA** + esbuild +
-  `postject` (`companion/scripts/build-sea.mjs`, `npm run package:sea`).
-- **Docker / Docker Compose** — one-command install of the whole stack (server + dashboard +
-  browser add-on) with `docker compose up`; build-from-source or pull the multi-arch image from
-  GHCR. Localhost-only is preserved, evidence persists on a volume, and **no Ollama/LiteLLM are
-  bundled** (point `DFIR_AI_*` at any endpoint). See [Docker / Docker Compose](#docker--docker-compose).
-- **Configurable** — port (`DFIR_PORT`), bind host (`DFIR_HOST`), cases root, all behavior via `DFIR_*` env vars.
-- **Customizable AI prompts** — override any of the five prompts (extraction / CSV / log / synthesis /
-  ask) via env (`DFIR_AI_*_PROMPT` or `*_PROMPT_FILE`); file edits apply with no restart.
-  `npm run prompts:eject` dumps the defaults to start from.
-- **CLI scripts** — `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline` (see below).
+- **Portable Windows EXE** — zip attached to every GitHub Release; unzip + double-click, no Node install required
+- **Docker / Docker Compose** — `docker compose up`; evidence on a host volume, no bundled AI backend
+- **Customizable AI prompts** — override any of the 6 prompts via env var or file; edits apply without restart (`npm run prompts:eject` to dump defaults)
+- **Demo case** — `npm run seed-demo` seeds a fully-populated GlobalTech Industries scenario for local exploration
+- **CLI scripts** — `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline` (see below)
 
 ## Repository layout
 
@@ -525,39 +432,162 @@ port to `127.0.0.1` on your host — so the dashboard is never exposed on your n
 
 ## Environment variables (`companion/.env`)
 
-All companion behavior is configured via env vars. Shell vars override `.env`.
+All companion behavior is configured via env vars (`companion/.env` or shell). Copy `companion/.env.example` to start — it has inline comments for every variable.
 
-| Variable | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `DFIR_CASES_ROOT` | no | `./cases` | Where case folders are written. Relative paths resolve against `companion/`. |
-| `DFIR_PORT` | no | `4773` | Port the localhost server binds to (1–65535). Change to avoid `EADDRINUSE` or run multiple companions in parallel. The extension and dashboard must use the same port. |
-| `DFIR_HOST` | no | `127.0.0.1` | Interface the server binds to. Localhost-only by default. The Docker image sets `0.0.0.0` (Compose maps the port back to `127.0.0.1` on the host). Only set `0.0.0.0` natively if you intentionally want LAN access — then put it behind your own auth/firewall. |
-| `DFIR_AI_PROVIDER` | no (capture-only if unset) | — | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini`. |
-| `DFIR_AI_MODEL` | when provider set | — | Model id understood by the provider (e.g. `gpt-4o`, `openai/gpt-4o-mini`, `ollama/llama3.1`, `google/gemini-2.0-flash-001`). |
-| `DFIR_AI_KEY` | when provider set | — | Provider API key. Leave blank for an auth-less local LiteLLM proxy. |
-| `DFIR_AI_BASE_URL` | no | provider default | Override the provider's API base URL — for a self-hosted **LiteLLM** proxy or any OpenAI-compatible local endpoint. `litellm` defaults to `http://localhost:4000/v1`. |
-| `DFIR_AI_TIMEOUT_MS` | no | `180000` | Per-request timeout in ms. Raise for strong models on large timelines. |
-| `DFIR_AI_IMAGE_DETAIL` | no | `high` | `high` \| `low` \| `auto`. OpenAI/OpenRouter only — tiles screenshots at full res for small-text OCR. |
-| `DFIR_AI_SYNTH_PROVIDER` | no | = `DFIR_AI_PROVIDER` | Optional stronger model for the synthesis pass (findings / MITRE / attacker path). |
-| `DFIR_AI_SYNTH_MODEL` | no | = `DFIR_AI_MODEL` | Synthesis model id. |
-| `DFIR_AI_SYNTH_KEY` | no | = `DFIR_AI_KEY` | Synthesis provider API key. |
-| `DFIR_AI_SYNTH_BASE_URL` | no | = `DFIR_AI_BASE_URL` | Synthesis base URL override (e.g. a separate local LiteLLM proxy for the synthesis model). |
-| `DFIR_AI_AUTO_SYNTHESIZE` | no | `on` | Live synthesis during capture. `on` \| `off`. |
-| `DFIR_AI_AUTO_SYNTHESIZE_MS` | no | `8000` | Debounce window in ms after the last screenshot before auto-synthesis fires. |
-| `DFIR_FLUSH_INTERVAL_MS` | no | `300000` | Safety-net flush: drains a leftover capture buffer on this interval so a lone `timer`/`click` screenshot is analyzed even if it never fills a window. `0` disables. |
+### Core
 
-Example `.env` (two-tier):
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_CASES_ROOT` | `./cases` | Case folder location; relative paths resolve against `companion/` |
+| `DFIR_PORT` | `4773` | Server port (must match the extension and dashboard) |
+| `DFIR_HOST` | `127.0.0.1` | Bind interface; Docker image sets `0.0.0.0`, Compose re-maps to localhost on the host |
+| `DFIR_MAX_BODY_MB` | `256` | Max upload size in MB; raise if large SIEM/EDR exports fail with HTTP 413 |
+
+### AI — extraction (required to enable analysis)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_AI_PROVIDER` | — | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini` \| `anthropic`; unset = capture-only |
+| `DFIR_AI_MODEL` | — | Model id (e.g. `gpt-4o-mini`, `gemini-2.5-flash`); **must support vision** for screenshot extraction |
+| `DFIR_AI_KEY` | — | Provider API key; leave blank for an auth-less local proxy |
+| `DFIR_AI_BASE_URL` | provider default | Override base URL — for a local LiteLLM proxy or any OpenAI-compatible endpoint |
+| `DFIR_AI_TIMEOUT_MS` | `180000` | Per-request timeout (ms); raise for strong models on large timelines |
+| `DFIR_AI_MAX_TOKENS` | `16000` | Max completion tokens; too low truncates synthesis, prevents OpenRouter 402 on low balance |
+| `DFIR_AI_SYNTH_MAX_EVENTS` | `300` | Cap on forensic events sent to synthesis; Critical/High always get a finding regardless |
+| `DFIR_AI_CONTEXT_TOKENS` | `128000` | Model context window; raise for Claude/Gemini (200k/1M) to send more per call |
+| `DFIR_AI_IMAGE_DETAIL` | `high` | `high` \| `low` \| `auto` (OpenAI/OpenRouter); `high` tiles at full res for small-text OCR |
+| `DFIR_AI_AUTO_SYNTHESIZE` | `on` | Re-synthesize during capture: `on` \| `off` |
+| `DFIR_AI_AUTO_SYNTHESIZE_MS` | `8000` | Debounce window before auto-synthesis fires (ms) |
+| `DFIR_FLUSH_INTERVAL_MS` | `300000` | Safety-net flush of leftover capture buffers (ms); `0` disables |
+| `DFIR_ANONYMIZE` | `on` | Tokenize victim IPs/hosts/users/paths before AI calls: `on` \| `off` |
+
+### AI — synthesis (two-tier, optional)
+
+If unset, synthesis reuses the extraction model. Recommended: cheap vision model for extraction, strong text model for synthesis.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_AI_SYNTH_PROVIDER` | = `DFIR_AI_PROVIDER` | Provider for the one-call synthesis pass |
+| `DFIR_AI_SYNTH_MODEL` | = `DFIR_AI_MODEL` | Synthesis model id (e.g. `gpt-4o`, `gemini-2.5-pro`, `claude-sonnet-4-6`) |
+| `DFIR_AI_SYNTH_KEY` | = `DFIR_AI_KEY` | Synthesis API key |
+| `DFIR_AI_SYNTH_BASE_URL` | = `DFIR_AI_BASE_URL` | Synthesis base URL |
+
+### AI — custom prompts (optional)
+
+Each prompt has two override forms (priority order): `DFIR_AI_<NAME>_PROMPT` (inline text, read at startup) and `DFIR_AI_<NAME>_PROMPT_FILE` (path to file, re-read each call — edit and it applies immediately). `npm run prompts:eject` writes the built-in defaults as a starting point.
+
+| Prompt name | `<NAME>` token |
+|---|---|
+| Per-screenshot extraction | `SYSTEM` |
+| CSV import triage | `CSV` |
+| Log import triage | `LOG` |
+| Holistic synthesis | `SYNTH` |
+| Case Q&A | `ASK` |
+| Executive summary | `EXEC` |
+
+### Threat-intel enrichment (optional — off by default)
+
+Add a key to enable that provider. All external providers are opt-in per case from the dashboard.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_VT_KEY` | — | VirusTotal API key (hash / IP / domain / URL) |
+| `DFIR_HUNTINGCH_KEY` | — | abuse.ch Auth-Key for Hunting.ch (MalwareBazaar · ThreatFox · URLhaus · YARAify); falls back to `DFIR_MB_KEY` |
+| `DFIR_MB_KEY` | — | Legacy abuse.ch key — powers Hunting.ch; prefer `DFIR_HUNTINGCH_KEY` |
+| `DFIR_ABUSEIPDB_KEY` | — | AbuseIPDB API key (IP reputation) |
+| `DFIR_CROWDSTRIKE_CLIENT_ID` | — | CrowdStrike Falcon TI OAuth2 client ID |
+| `DFIR_CROWDSTRIKE_CLIENT_SECRET` | — | CrowdStrike OAuth2 secret (needs *Indicators: Read* + *MalQuery: Read*) |
+| `DFIR_CROWDSTRIKE_CLOUD` | `us-1` | Tenant cloud: `us-1` \| `us-2` \| `eu-1` \| `gov-us-1` \| `gov-us-2` |
+| `DFIR_CROWDSTRIKE_BASE_URL` | from cloud | Explicit API base URL (overrides `DFIR_CROWDSTRIKE_CLOUD`) |
+| `DFIR_ROCKYRACCOON_KEY` | — | RockyRaccoon key for Windows process prevalence / LOLBIN / ATT&CK |
+| `DFIR_MISP_URL` | — | MISP instance URL — both URL + key required for enrichment and push |
+| `DFIR_MISP_KEY` | — | MISP API auth key |
+| `DFIR_MISP_CA` | — | PEM CA bundle for internal-CA MISP (verification stays on) |
+| `DFIR_MISP_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+| `DFIR_MISP_DISTRIBUTION` | `0` | New event distribution: `0`=org, `1`=community, `2`=connected, `3`=all |
+| `DFIR_MISP_ANALYSIS` | `1` | New event analysis state: `0`=initial, `1`=ongoing, `2`=complete |
+| `DFIR_YETI_URL` | — | YETI instance URL — both URL + key required |
+| `DFIR_YETI_KEY` | — | YETI API key |
+| `DFIR_YETI_CA` | — | PEM CA bundle for internal-CA YETI |
+| `DFIR_YETI_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+| `DFIR_ENRICH_DELAY_MS` | `1500` | Throttle between lookups (ms) |
+| `DFIR_ENRICH_MAX` | `100` | Max IOCs per enrich run |
+| `DFIR_ENRICH_HEALTH_TTL_MS` | `60000` | Cache up/down verdict for self-hosted providers (ms) |
+| `DFIR_ENRICH_HEALTH_POLL_MS` | `60000` | Re-probe interval for down providers; `0` disables background poller |
+
+### Customer exposure (optional)
+
+Checks the **victim org's own** domains/emails against breach databases — never adversary/IOC domains.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_HIBP_KEY` | — | Have I Been Pwned API key |
+| `DFIR_HIBP_USER_AGENT` | `DFIR Companion` | HIBP User-Agent header |
+| `DFIR_LEAKCHECK_KEY` | — | LeakCheck Pro API key |
+| `DFIR_LEAKCHECK_DOMAIN_LIMIT` | `1000` | Max records per domain search |
+| `DFIR_DEHASHED_KEY` | — | DeHashed v2 API key |
+| `DFIR_DEHASHED_BASE_URL` | DeHashed default | Override DeHashed API base URL |
+| `DFIR_SHODAN_KEY` | — | Shodan key (domain → exposed hosts / ports / CVEs; no email lookup) |
+| `DFIR_EXPOSURE_DELAY_MS` | `1500` | Throttle between provider lookups (ms) |
+
+### DFIR-IRIS push (optional)
+
+Both URL and key are required to enable.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_IRIS_URL` | — | IRIS instance URL |
+| `DFIR_IRIS_KEY` | — | IRIS API key |
+| `DFIR_IRIS_CA` | — | PEM CA bundle for internal-CA IRIS |
+| `DFIR_IRIS_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+| `DFIR_IRIS_CUSTOMER_ID` | `1` | Customer id for new IRIS cases |
+| `DFIR_IRIS_CLASSIFICATION_ID` | `1` | Classification id for new IRIS cases |
+
+### Timesketch push (optional)
+
+URL + user + password all required to enable push. Export to JSONL works without any config.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_TIMESKETCH_URL` | — | Timesketch instance URL |
+| `DFIR_TIMESKETCH_USER` | — | Local-auth username |
+| `DFIR_TIMESKETCH_PASSWORD` | — | Local-auth password |
+| `DFIR_TIMESKETCH_TIMELINE` | `DFIR Companion timeline` | Managed timeline name |
+| `DFIR_TIMESKETCH_CA` | — | PEM CA bundle for internal-CA Timesketch |
+| `DFIR_TIMESKETCH_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+
+### Velociraptor live hunts (optional)
+
+Set `DFIR_VELOCIRAPTOR_API_CONFIG` to enable. Generate the config once with:
+```
+velociraptor --config server.config.yaml config api_client --name dfir --role administrator,api api.config.yaml
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_VELOCIRAPTOR_API_CONFIG` | — | Path to `api_client` config file |
+| `DFIR_VELOCIRAPTOR_BINARY` | `velociraptor` | Executable path (full `.exe` path on Windows) |
+| `DFIR_VELOCIRAPTOR_GUI_URL` | — | GUI base URL for deep-linking to launched hunts |
+| `DFIR_VELOCIRAPTOR_TIMEOUT_MS` | `60000` | Per-query timeout (ms) |
+| `DFIR_VELOCIRAPTOR_MAX_ROWS` | `1000` | Max rows returned to the dashboard |
+| `DFIR_VELOCIRAPTOR_MAX_OUTPUT` | `52428800` | Hard cap on query output bytes (50 MB) |
+
+### Analysis tuning
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_HUNT_PLATFORMS` | all | Comma-separated platform allowlist for hunt-pivot cards: `velociraptor`, `defender`, `elastic`, `splunk`, `sigma`, `yara`, `suricata` |
+| `DFIR_CORRELATE_WINDOW_S` | `2` | Time window (s) for same-path cross-source event merge |
+| `DFIR_PHASE_GAP_S` | `300` | Gap between events (s) that starts a new attack phase |
+
+Example `.env` (two-tier OpenRouter setup):
 
 ```
-DFIR_CASES_ROOT=./cases
-DFIR_PORT=4773
 DFIR_AI_PROVIDER=openrouter
 DFIR_AI_MODEL=openai/gpt-4o-mini          # cheap extraction (per screenshot)
 DFIR_AI_KEY=sk-or-...
 DFIR_AI_SYNTH_MODEL=google/gemini-2.5-pro # strong synthesis (one call)
 DFIR_AI_IMAGE_DETAIL=high
-DFIR_AI_AUTO_SYNTHESIZE=on
-DFIR_AI_AUTO_SYNTHESIZE_MS=8000
 ```
 
 ## npm scripts — full CLI reference
