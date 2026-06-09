@@ -103,7 +103,7 @@ describe("dashboard.html", () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain("commentChip");
     expect(html).toContain('id="commentOverlay"');
-    expect(html).toContain('id="investigatorName"');
+    expect(html).toContain('id="settingsInvestigator"'); // moved to Settings modal
     expect(html).toContain("/comments");
     expect(html).toContain("comments_changed"); // live-sync over the WS
   });

@@ -42,6 +42,7 @@ import type { PlasoImportOptions } from "./analysis/plasoImport.js";
 import { parseSandboxReport } from "./analysis/sandboxImport.js";
 import type { SandboxImportOptions } from "./analysis/sandboxImport.js";
 import { detectImportKind } from "./analysis/importDetect.js";
+import { getEnvForSettings, updateEnv as updateEnvFile } from "./settings/envManager.js";
 import { parseMinSeverity } from "./analysis/severityFloor.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
@@ -2404,6 +2405,29 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (!removed) return res.status(404).json({ error: "tag not found" });
       options.onTags?.(req.params.id);
       return res.status(204).end();
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Settings: read/write the .env file so the dashboard can configure the companion.
+  app.get("/settings/env", async (_req: Request, res: Response) => {
+    try {
+      const env = await getEnvForSettings();
+      return res.json({ env });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/settings/env", async (req: Request, res: Response) => {
+    try {
+      const updates = req.body?.updates;
+      if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
+        return res.status(400).json({ error: "updates must be an object" });
+      }
+      await updateEnvFile(updates as Record<string, string>);
+      return res.json({ ok: true });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

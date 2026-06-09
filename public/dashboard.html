@@ -300,6 +300,34 @@
     .ph-ev-row:last-child { border-bottom: none; }
     .ph-ev-time { flex-shrink: 0; font-size: 11px; }
     .ph-ev-desc { flex: 1; min-width: 0; word-break: break-word; }
+    /* Settings icon (inline header, right side) */
+    #settingsBtn { background: none; border: none; color: #9aa4b2; cursor: pointer; padding: 4px;
+      display: flex; align-items: center; border-radius: 7px; line-height: 0;
+      transition: color .15s, background .15s; flex-shrink: 0; }
+    #settingsBtn:hover { color: #cbd3df; background: rgba(255,255,255,.07); }
+    /* Settings modal */
+    .settings-modal { width: min(820px, 96vw); max-height: 90vh; }
+    .stab-bar { display: flex; gap: 0; border-bottom: 1px solid #2a2f3a; margin: 8px 0 14px; }
+    .stab { background: none; border: none; border-bottom: 2px solid transparent; color: #9aa4b2;
+      padding: 6px 16px; cursor: pointer; font-size: 12px; font-family: inherit; transition: color .12s; }
+    .stab:hover { color: #cbd3df; }
+    .stab.active { color: #6aa9ff; border-bottom-color: #6aa9ff; }
+    .stab-pane { display: none; overflow-y: auto; max-height: calc(90vh - 130px); padding-right: 4px; }
+    .stab-pane.active { display: block; }
+    .sfield { margin-bottom: 10px; }
+    .sfield > label { display: block; font-size: 11px; color: #9aa4b2; margin-bottom: 3px; }
+    .sfield input, .sfield select { width: 100%; box-sizing: border-box; }
+    .sfield-hint { display: block; font-size: 10px; color: #5a6475; margin-top: 2px; }
+    .sfield-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+    .sfield-row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+    .settings-group-head { font-size: 11px; color: #6aa9ff; font-weight: 600; margin: 10px 0 4px; }
+    .settings-hr { border: none; border-top: 1px solid #2a2f3a; margin: 12px 0; }
+    .srestart-note { font-size: 11px; color: #ffd93b; margin-bottom: 10px; }
+    .sec-checks { columns: 2; column-gap: 16px; margin-top: 4px; }
+    .sec-check { display: block; font-size: 12px; padding: 3px 0; break-inside: avoid; }
+    .sec-check input { width: auto; margin-right: 5px; }
+    .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid #2a2f3a; padding-top: 12px; }
+    .settings-msg { font-size: 11px; margin-left: 4px; }
   </style>
 </head>
 <body>
@@ -307,7 +335,6 @@
     <strong>DFIR Companion</strong>
     <input id="caseId" placeholder="caseId" list="caseList" autocomplete="off" />
     <datalist id="caseList"></datalist>
-    <input id="investigatorName" placeholder="your name" data-tip="Your name — used as the author when you comment. Saved in this browser." style="max-width:130px" />
     <button id="connect">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
@@ -333,6 +360,7 @@
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
     <span id="captureCount" style="font-weight:bold;">Screenshots: 0</span>
+    <button id="settingsBtn" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.07 7.07 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 3h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 9.47a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41H14c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.09-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
     <div class="scope-group">
       <span style="color:#cbd3df;">Scope:</span>
       <button class="scope-preset" data-hours="1" title="Last hour of activity">1h</button>
@@ -446,8 +474,217 @@
       </div>
     </div>
   </div>
+  <!-- ── Settings modal ───────────────────────────────────────────────────── -->
+  <div id="settingsOverlay" class="comment-overlay">
+    <div class="comment-modal settings-modal">
+      <h3>Settings</h3>
+      <div class="stab-bar">
+        <button class="stab active" data-stab="general">General</button>
+        <button class="stab" data-stab="ai">AI</button>
+        <button class="stab" data-stab="enrichment">Enrichment</button>
+        <button class="stab" data-stab="exposure">Exposure</button>
+        <button class="stab" data-stab="integrations">Integrations</button>
+      </div>
+
+      <!-- General -->
+      <div class="stab-pane active" id="stab-general">
+        <div class="sfield">
+          <label>Investigator name</label>
+          <input id="settingsInvestigator" placeholder="your name" />
+          <span class="sfield-hint">Used as author when posting comments. Saved in this browser.</span>
+        </div>
+        <div class="sfield">
+          <label>Dashboard sections <span class="sfield-hint" style="display:inline">— uncheck to hide</span></label>
+          <div class="sec-checks" id="secChecks"></div>
+        </div>
+        <hr class="settings-hr" />
+        <div class="srestart-note">⚠ Fields below require a server restart to take effect</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Correlation window (s)<span class="sfield-hint">DFIR_CORRELATE_WINDOW_S</span></label><input id="env-DFIR_CORRELATE_WINDOW_S" placeholder="2" /></div>
+          <div class="sfield"><label>Phase gap (s)<span class="sfield-hint">DFIR_PHASE_GAP_S</span></label><input id="env-DFIR_PHASE_GAP_S" placeholder="300" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Auto-synthesize<span class="sfield-hint">DFIR_AI_AUTO_SYNTHESIZE (on/off)</span></label><input id="env-DFIR_AI_AUTO_SYNTHESIZE" placeholder="on" /></div>
+          <div class="sfield"><label>Auto-synthesize debounce (ms)<span class="sfield-hint">DFIR_AI_AUTO_SYNTHESIZE_MS</span></label><input id="env-DFIR_AI_AUTO_SYNTHESIZE_MS" placeholder="8000" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Anonymize default<span class="sfield-hint">DFIR_ANONYMIZE (on/off)</span></label><input id="env-DFIR_ANONYMIZE" placeholder="on" /></div>
+          <div class="sfield"><label>Screenshot flush interval (ms)<span class="sfield-hint">DFIR_FLUSH_INTERVAL_MS</span></label><input id="env-DFIR_FLUSH_INTERVAL_MS" placeholder="300000" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>
+          <div class="sfield"><label>Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
+        </div>
+      </div>
+
+      <!-- AI -->
+      <div class="stab-pane" id="stab-ai">
+        <div class="srestart-note">⚠ All AI settings require a server restart to take effect</div>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label>Provider<span class="sfield-hint">DFIR_AI_PROVIDER</span></label>
+            <select id="env-DFIR_AI_PROVIDER">
+              <option value="">— not set —</option>
+              <option value="openai">openai</option>
+              <option value="openrouter">openrouter</option>
+              <option value="ollama">ollama</option>
+              <option value="litellm">litellm</option>
+              <option value="gemini">gemini</option>
+              <option value="anthropic">anthropic</option>
+            </select>
+          </div>
+          <div class="sfield"><label>Model (extraction, must support vision)<span class="sfield-hint">DFIR_AI_MODEL</span></label><input id="env-DFIR_AI_MODEL" placeholder="gpt-4o-mini" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>API key<span class="sfield-hint">DFIR_AI_KEY</span></label><input id="env-DFIR_AI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Base URL override<span class="sfield-hint">DFIR_AI_BASE_URL — leave blank for provider default</span></label><input id="env-DFIR_AI_BASE_URL" placeholder="e.g. http://localhost:11434/v1" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_AI_TIMEOUT_MS</span></label><input id="env-DFIR_AI_TIMEOUT_MS" placeholder="180000" /></div>
+          <div class="sfield"><label>Max tokens<span class="sfield-hint">DFIR_AI_MAX_TOKENS</span></label><input id="env-DFIR_AI_MAX_TOKENS" placeholder="16000" /></div>
+          <div class="sfield"><label>Context tokens<span class="sfield-hint">DFIR_AI_CONTEXT_TOKENS</span></label><input id="env-DFIR_AI_CONTEXT_TOKENS" placeholder="128000" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Synth max events<span class="sfield-hint">DFIR_AI_SYNTH_MAX_EVENTS</span></label><input id="env-DFIR_AI_SYNTH_MAX_EVENTS" placeholder="300" /></div>
+          <div class="sfield">
+            <label>Image detail<span class="sfield-hint">DFIR_AI_IMAGE_DETAIL</span></label>
+            <select id="env-DFIR_AI_IMAGE_DETAIL">
+              <option value="">— default (high) —</option>
+              <option value="high">high</option>
+              <option value="low">low</option>
+              <option value="auto">auto</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-group-head">Synthesis model (optional — stronger model for one-shot synthesis)</div>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label>Synth provider<span class="sfield-hint">DFIR_AI_SYNTH_PROVIDER</span></label>
+            <select id="env-DFIR_AI_SYNTH_PROVIDER">
+              <option value="">— same as extraction —</option>
+              <option value="openai">openai</option>
+              <option value="openrouter">openrouter</option>
+              <option value="ollama">ollama</option>
+              <option value="litellm">litellm</option>
+              <option value="gemini">gemini</option>
+              <option value="anthropic">anthropic</option>
+            </select>
+          </div>
+          <div class="sfield"><label>Synth model<span class="sfield-hint">DFIR_AI_SYNTH_MODEL</span></label><input id="env-DFIR_AI_SYNTH_MODEL" placeholder="e.g. gpt-4o" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Synth base URL<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
+        </div>
+      </div>
+
+      <!-- Enrichment -->
+      <div class="stab-pane" id="stab-enrichment">
+        <div class="srestart-note">⚠ All enrichment settings require a server restart to take effect</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>VirusTotal key<span class="sfield-hint">DFIR_VT_KEY</span></label><input id="env-DFIR_VT_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>AbuseIPDB key<span class="sfield-hint">DFIR_ABUSEIPDB_KEY</span></label><input id="env-DFIR_ABUSEIPDB_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Hunting.ch key (abuse.ch)<span class="sfield-hint">DFIR_HUNTINGCH_KEY</span></label><input id="env-DFIR_HUNTINGCH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>RockyRaccoon key<span class="sfield-hint">DFIR_ROCKYRACCOON_KEY</span></label><input id="env-DFIR_ROCKYRACCOON_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="settings-group-head">CrowdStrike Falcon Intelligence</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Client ID<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_ID</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_ID" placeholder="(not set)" /></div>
+          <div class="sfield"><label>Client secret<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_SECRET</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_SECRET" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield">
+            <label>Cloud<span class="sfield-hint">DFIR_CROWDSTRIKE_CLOUD</span></label>
+            <select id="env-DFIR_CROWDSTRIKE_CLOUD"><option value="">— default (us-1) —</option><option value="us-1">us-1</option><option value="us-2">us-2</option><option value="eu-1">eu-1</option><option value="gov-us-1">gov-us-1</option><option value="gov-us-2">gov-us-2</option></select>
+          </div>
+        </div>
+        <div class="settings-group-head">MISP</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>MISP URL<span class="sfield-hint">DFIR_MISP_URL</span></label><input id="env-DFIR_MISP_URL" placeholder="https://misp.example.org" /></div>
+          <div class="sfield"><label>MISP key<span class="sfield-hint">DFIR_MISP_KEY</span></label><input id="env-DFIR_MISP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_MISP_CA</span></label><input id="env-DFIR_MISP_CA" placeholder="path/to/ca.pem" /></div>
+          <div class="sfield"><label>Distribution (0-3)<span class="sfield-hint">DFIR_MISP_DISTRIBUTION</span></label><input id="env-DFIR_MISP_DISTRIBUTION" placeholder="0" /></div>
+          <div class="sfield"><label>Analysis state (0-2)<span class="sfield-hint">DFIR_MISP_ANALYSIS</span></label><input id="env-DFIR_MISP_ANALYSIS" placeholder="1" /></div>
+        </div>
+        <div class="settings-group-head">YETI</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>YETI URL<span class="sfield-hint">DFIR_YETI_URL</span></label><input id="env-DFIR_YETI_URL" placeholder="https://yeti.example.org" /></div>
+          <div class="sfield"><label>YETI key<span class="sfield-hint">DFIR_YETI_KEY</span></label><input id="env-DFIR_YETI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="settings-group-head">Throttling</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Enrich delay (ms)<span class="sfield-hint">DFIR_ENRICH_DELAY_MS</span></label><input id="env-DFIR_ENRICH_DELAY_MS" placeholder="1500" /></div>
+          <div class="sfield"><label>Max IOCs / run<span class="sfield-hint">DFIR_ENRICH_MAX</span></label><input id="env-DFIR_ENRICH_MAX" placeholder="100" /></div>
+          <div class="sfield"><label>Health TTL (ms)<span class="sfield-hint">DFIR_ENRICH_HEALTH_TTL_MS</span></label><input id="env-DFIR_ENRICH_HEALTH_TTL_MS" placeholder="60000" /></div>
+        </div>
+      </div>
+
+      <!-- Exposure -->
+      <div class="stab-pane" id="stab-exposure">
+        <div class="srestart-note">⚠ All exposure settings require a server restart to take effect</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>LeakCheck key<span class="sfield-hint">DFIR_LEAKCHECK_KEY</span></label><input id="env-DFIR_LEAKCHECK_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>LeakCheck domain limit<span class="sfield-hint">DFIR_LEAKCHECK_DOMAIN_LIMIT</span></label><input id="env-DFIR_LEAKCHECK_DOMAIN_LIMIT" placeholder="1000" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>HIBP key<span class="sfield-hint">DFIR_HIBP_KEY</span></label><input id="env-DFIR_HIBP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>HIBP User-Agent<span class="sfield-hint">DFIR_HIBP_USER_AGENT</span></label><input id="env-DFIR_HIBP_USER_AGENT" placeholder="DFIR Companion" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>DeHashed key<span class="sfield-hint">DFIR_DEHASHED_KEY</span></label><input id="env-DFIR_DEHASHED_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>DeHashed base URL<span class="sfield-hint">DFIR_DEHASHED_BASE_URL</span></label><input id="env-DFIR_DEHASHED_BASE_URL" placeholder="https://api.dehashed.com/v2" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Shodan key<span class="sfield-hint">DFIR_SHODAN_KEY — attack surface (domain → exposed hosts/ports/CVEs)</span></label><input id="env-DFIR_SHODAN_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Exposure delay (ms)<span class="sfield-hint">DFIR_EXPOSURE_DELAY_MS</span></label><input id="env-DFIR_EXPOSURE_DELAY_MS" placeholder="1500" /></div>
+        </div>
+      </div>
+
+      <!-- Integrations -->
+      <div class="stab-pane" id="stab-integrations">
+        <div class="srestart-note">⚠ All integration settings require a server restart to take effect</div>
+        <div class="settings-group-head">DFIR-IRIS</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>IRIS URL<span class="sfield-hint">DFIR_IRIS_URL</span></label><input id="env-DFIR_IRIS_URL" placeholder="https://iris.example.org" /></div>
+          <div class="sfield"><label>IRIS key<span class="sfield-hint">DFIR_IRIS_KEY</span></label><input id="env-DFIR_IRIS_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_IRIS_CA</span></label><input id="env-DFIR_IRIS_CA" placeholder="path/to/ca.pem" /></div>
+          <div class="sfield"><label>Customer ID<span class="sfield-hint">DFIR_IRIS_CUSTOMER_ID</span></label><input id="env-DFIR_IRIS_CUSTOMER_ID" placeholder="1" /></div>
+          <div class="sfield"><label>Classification ID<span class="sfield-hint">DFIR_IRIS_CLASSIFICATION_ID</span></label><input id="env-DFIR_IRIS_CLASSIFICATION_ID" placeholder="1" /></div>
+        </div>
+        <div class="settings-group-head">Timesketch</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Timesketch URL<span class="sfield-hint">DFIR_TIMESKETCH_URL</span></label><input id="env-DFIR_TIMESKETCH_URL" placeholder="https://timesketch.example.org" /></div>
+          <div class="sfield"><label>Username<span class="sfield-hint">DFIR_TIMESKETCH_USER</span></label><input id="env-DFIR_TIMESKETCH_USER" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Password<span class="sfield-hint">DFIR_TIMESKETCH_PASSWORD</span></label><input id="env-DFIR_TIMESKETCH_PASSWORD" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Timeline name<span class="sfield-hint">DFIR_TIMESKETCH_TIMELINE</span></label><input id="env-DFIR_TIMESKETCH_TIMELINE" placeholder="DFIR Companion timeline" /></div>
+        </div>
+        <div class="settings-group-head">Velociraptor</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>API config path<span class="sfield-hint">DFIR_VELOCIRAPTOR_API_CONFIG</span></label><input id="env-DFIR_VELOCIRAPTOR_API_CONFIG" placeholder="path/to/api.config.yaml" /></div>
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_VELOCIRAPTOR_BINARY</span></label><input id="env-DFIR_VELOCIRAPTOR_BINARY" placeholder="velociraptor" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>GUI URL<span class="sfield-hint">DFIR_VELOCIRAPTOR_GUI_URL</span></label><input id="env-DFIR_VELOCIRAPTOR_GUI_URL" placeholder="https://velo:8889" /></div>
+          <div class="sfield"><label>Hunt platforms<span class="sfield-hint">DFIR_HUNT_PLATFORMS — comma-separated; blank = all</span></label><input id="env-DFIR_HUNT_PLATFORMS" placeholder="velociraptor,sigma,yara,…" /></div>
+        </div>
+      </div>
+
+      <div class="settings-footer">
+        <button id="settingsSaveBtn">Save</button>
+        <button id="settingsCloseBtn" style="background:#2a2f3a;">Close</button>
+        <span id="settingsSaveMsg" class="settings-msg"></span>
+      </div>
+    </div>
+  </div>
+
   <main>
-    <section style="grid-column: 1 / -1">
+    <section id="sec-ask" style="grid-column: 1 / -1">
       <h2>Ask the LLM about this case</h2>
       <div class="ask-row">
         <input id="askInput" placeholder="e.g. Was data exfiltrated? Was a USB connected? Any signs of persistence?" />
@@ -455,11 +692,11 @@
       </div>
       <div id="askAnswer"></div>
     </section>
-    <section style="grid-column: 1 / -1"><h2>Executive Summary<button id="genExecBtn" type="button" title="Generate a management-facing executive summary with AI (review before saving it to the report)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genExecMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#9aa4b2"></span></h2><div id="summary">—</div><div id="execGenResult"></div></section>
-    <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Findings</h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:#9aa4b2"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:#9aa4b2">% (0 = all)</span></div><div id="findings">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope (sorted by event time); updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
+    <section id="sec-exec" style="grid-column: 1 / -1"><h2>Executive Summary<button id="genExecBtn" type="button" title="Generate a management-facing executive summary with AI (review before saving it to the report)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genExecMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#9aa4b2"></span></h2><div id="summary">—</div><div id="execGenResult"></div></section>
+    <section id="sec-next-steps" style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
+    <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
+    <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings</h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:#9aa4b2"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:#9aa4b2">% (0 = all)</span></div><div id="findings">—</div></section>
+    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope (sorted by event time); updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:#6aa9ff"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkLegitBtn" title="Mark all selected events as legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:#9aa4b2">✕ Clear</button></div>
       <div style="font-size:11px; color:#9aa4b2; margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
@@ -475,9 +712,9 @@
       </div>
       <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="forensicTimeline">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
-    <section style="grid-column: 1 / -1">
+    <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
+    <section id="sec-phases" style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
+    <section id="sec-assets" style="grid-column: 1 / -1">
       <h2>Compromised Assets &amp; IoC Graph</h2>
       <div id="assetPanel">
         <div id="assetGraphWrap" class="asset-graph-wrap">
@@ -512,7 +749,7 @@
         <div id="assetList">—</div>
       </div>
     </section>
-    <section style="grid-column: 1 / -1">
+    <section id="sec-evidence" style="grid-column: 1 / -1">
       <h2>Evidence Chain<span class="ev-sub">causal links — process trees, lateral movement, file lineage &amp; network flows (derived, no AI)</span></h2>
       <div id="evPanel">
         <div id="evGraphWrap" class="asset-graph-wrap">
@@ -543,7 +780,7 @@
         </div>
       </div>
     </section>
-    <section style="grid-column: 1 / -1"><h2>IOCs<button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
@@ -554,7 +791,7 @@
       </div>
       <div id="iocImportMeta" class="synth-meta" style="display:none"></div>
       <div id="iocs">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
+    <section id="sec-exposure" style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
       <div class="ce-body">
         <div style="color:#9aa4b2;font-size:12px;margin:0 0 8px">Breach/leak check of the <strong>customer's own</strong> domains &amp; emails (not IOCs). Domain searches use only the customer domains below; case emails are checked only under those domains. ⚠ sends the customer's domains/emails to third-party services.</div>
         <div class="manual-form" style="gap:12px; align-items:flex-start; margin-bottom:8px">
@@ -574,12 +811,12 @@
         </div>
         <div id="customerExposure">—</div>
       </div></section>
-    <section style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
-    <section><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
-    <section><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Investigation Log</h2><div id="timeline">—</div></section>
-    <section style="grid-column: 1 / -1" class="collapsed">
+    <section id="sec-questions" style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
+    <section id="sec-threads"><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
+    <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
+    <section id="sec-legitimate" style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
+    <section id="sec-inv-log" style="grid-column: 1 / -1"><h2>Investigation Log</h2><div id="timeline">—</div></section>
+    <section id="sec-case-details" style="grid-column: 1 / -1" class="collapsed">
       <h2>Case Details (for the generated report)</h2>
       <div id="reportMeta">
         <p class="rm-hint">Human-authored sections of the incident report (AnttiKurittu template). Saved per case and merged into <code>report.md</code> when you click <em>Generate Report</em>. Leave a field blank to use the auto-derived value or a "to be completed" placeholder.</p>
@@ -1272,7 +1509,7 @@
       return `<button class="comment-chip${list.length ? " has" : ""}" data-ct="${escAttr(type)}" data-ci="${escAttr(String(id))}" `
         + `title="Comments — collaborate with other investigators">💬${list.length ? " " + list.length : ""}</button>`;
     }
-    const investigatorName = () => (document.getElementById("investigatorName").value || "").trim();
+    const investigatorName = () => (localStorage.getItem("dfir.investigator") || "").trim();
 
     function loadComments(caseId) {
       fetch(`/cases/${caseId}/comments`).then(r => r.json()).then(list => {
@@ -3040,7 +3277,7 @@
       idInput.value = "";
       document.getElementById("ncName").value = "";
       document.getElementById("ncInvestigator").value =
-        (document.getElementById("investigatorName").value || "").trim();
+        (localStorage.getItem("dfir.investigator") || "").trim();
       document.getElementById("ncMsg").textContent = "";
       document.getElementById("newCaseOverlay").classList.add("open");
       // Auto-suggest the next incident id — still fully editable (focus + select so a
@@ -3217,9 +3454,6 @@
       reader.readAsDataURL(file);
     });
     document.getElementById("rm-removeLogo").onclick = () => { rmLogo = ""; renderLogoPreview(); };
-    // Investigator name (comment author) — persisted per browser.
-    document.getElementById("investigatorName").value = localStorage.getItem("dfir.investigator") || "";
-    document.getElementById("investigatorName").addEventListener("input", (e) => localStorage.setItem("dfir.investigator", e.target.value));
     // Comment modal + delegated chip clicks.
     document.getElementById("commentPost").onclick = postComment;
     document.getElementById("commentClose").onclick = closeCommentModal;
@@ -3737,6 +3971,152 @@
 
     setupCollapsible();
     setupReorder();
+
+    // ── Settings modal ────────────────────────────────────────────────────────
+    const SECTIONS_VIS_KEY = "dfir.sectionsVis";
+    const SECTION_DEFS = [
+      { id: "sec-ask",          label: "Ask the LLM" },
+      { id: "sec-exec",         label: "Executive Summary" },
+      { id: "sec-next-steps",   label: "Recommended Next Steps" },
+      { id: "sec-attack-path",  label: "Attack Path" },
+      { id: "sec-findings",     label: "Findings" },
+      { id: "sec-timeline",     label: "Forensic Timeline" },
+      { id: "sec-kill-chain",   label: "Kill Chain" },
+      { id: "sec-phases",       label: "Attack Phases" },
+      { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
+      { id: "sec-evidence",     label: "Evidence Chain" },
+      { id: "sec-iocs",         label: "IOCs" },
+      { id: "sec-exposure",     label: "Customer Exposure" },
+      { id: "sec-questions",    label: "Key Investigative Questions" },
+      { id: "sec-threads",      label: "Investigation Threads" },
+      { id: "sec-mitre",        label: "MITRE ATT&CK" },
+      { id: "sec-legitimate",   label: "Confirmed Legitimate" },
+      { id: "sec-inv-log",      label: "Investigation Log" },
+      { id: "sec-case-details", label: "Case Details" },
+    ];
+
+    function loadSectionsVis() {
+      try { return JSON.parse(localStorage.getItem(SECTIONS_VIS_KEY) || "{}"); } catch { return {}; }
+    }
+
+    function applySectionsVis() {
+      const vis = loadSectionsVis();
+      SECTION_DEFS.forEach(({ id }) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = (vis[id] === false) ? "none" : "";
+      });
+    }
+
+    function renderSecChecks() {
+      const container = document.getElementById("secChecks");
+      if (!container) return;
+      const vis = loadSectionsVis();
+      container.innerHTML = SECTION_DEFS.map(({ id, label }) =>
+        `<label class="sec-check"><input type="checkbox" id="scb-${esc(id)}" ${vis[id] !== false ? "checked" : ""}> ${esc(label)}</label>`
+      ).join("");
+    }
+
+    async function fetchEnvSettings() {
+      try {
+        const r = await fetch("/settings/env");
+        if (!r.ok) return;
+        const { env } = await r.json();
+        for (const [key, val] of Object.entries(env)) {
+          const el = document.getElementById("env-" + key);
+          if (!el) continue;
+          if (el.tagName === "SELECT") {
+            el.value = val || "";
+          } else if (el.type === "password") {
+            el.value = "";
+            el.placeholder = val === "••••••••" ? "(already set)" : "(not set)";
+          } else {
+            el.value = val || "";
+          }
+        }
+      } catch {}
+    }
+
+    async function saveSettings() {
+      // 1. Investigator name → localStorage
+      localStorage.setItem("dfir.investigator", (document.getElementById("settingsInvestigator").value || "").trim());
+
+      // 2. Section visibility → localStorage + apply
+      const vis = {};
+      SECTION_DEFS.forEach(({ id }) => {
+        const cb = document.getElementById("scb-" + id);
+        if (cb) vis[id] = cb.checked;
+      });
+      localStorage.setItem(SECTIONS_VIS_KEY, JSON.stringify(vis));
+      applySectionsVis();
+
+      // 3. Env vars → POST /settings/env
+      const updates = {};
+      document.querySelectorAll("[id^='env-']").forEach(el => {
+        const key = el.id.replace(/^env-/, "");
+        if (el.type === "password") {
+          if (el.value.trim()) updates[key] = el.value.trim();
+        } else if (el.tagName === "SELECT") {
+          if (el.value) updates[key] = el.value;
+        } else {
+          updates[key] = el.value.trim();
+        }
+      });
+      const msg = document.getElementById("settingsSaveMsg");
+      msg.textContent = "";
+      if (Object.keys(updates).length > 0) {
+        try {
+          const r = await fetch("/settings/env", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ updates })
+          });
+          if (r.ok) {
+            msg.textContent = "✓ Saved — restart the server to apply server-side changes";
+            msg.style.color = "#ffd93b";
+          } else {
+            const j = await r.json().catch(() => ({}));
+            msg.textContent = "Error: " + (j.error || r.status);
+            msg.style.color = "#ff7a7a";
+          }
+        } catch {
+          msg.textContent = "Could not reach server";
+          msg.style.color = "#ff7a7a";
+        }
+      } else {
+        msg.textContent = "✓ Saved";
+        msg.style.color = "#5fd470";
+      }
+      setTimeout(() => { if (msg) msg.textContent = ""; }, 5000);
+    }
+
+    function openSettingsModal() {
+      document.getElementById("settingsInvestigator").value = localStorage.getItem("dfir.investigator") || "";
+      renderSecChecks();
+      fetchEnvSettings();
+      // Reset to first tab
+      document.querySelectorAll(".stab").forEach((b, i) => b.classList.toggle("active", i === 0));
+      document.querySelectorAll(".stab-pane").forEach((p, i) => p.classList.toggle("active", i === 0));
+      document.getElementById("settingsSaveMsg").textContent = "";
+      document.getElementById("settingsOverlay").classList.add("open");
+    }
+
+    function closeSettingsModal() {
+      document.getElementById("settingsOverlay").classList.remove("open");
+    }
+
+    document.getElementById("settingsBtn").onclick = openSettingsModal;
+    document.getElementById("settingsSaveBtn").onclick = saveSettings;
+    document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
+    document.getElementById("settingsOverlay").addEventListener("click", (e) => { if (e.target.id === "settingsOverlay") closeSettingsModal(); });
+    document.querySelectorAll(".stab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const tab = btn.dataset.stab;
+        document.querySelectorAll(".stab").forEach(b => b.classList.toggle("active", b === btn));
+        document.querySelectorAll(".stab-pane").forEach(p => p.classList.toggle("active", p.id === "stab-" + tab));
+      });
+    });
+
+    applySectionsVis();
 
     // Populate the case-ID combo box (datalist) with existing cases from the server, so the field
     // shows a dropdown of available cases while still accepting free text. Safe on older servers /
