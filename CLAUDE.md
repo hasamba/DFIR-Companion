@@ -146,7 +146,12 @@ double), shared hash, or same path within a time window. The merged event unions
 (`count`, `endTimestamp`, `sha256`/`md5`/`path`, `asset` (the affected host), `sources`,
 `processName`/`parentName`, `chainCheck`); `IOC` carries optional `enrichments[]`. The
 **asset ↔ IoC graph** (`analysis/assetGraph.ts`, pure) derives compromised assets (hosts from
-`event.asset`; accounts from `DOMAIN\user`/UPN in event text) and the IoCs that touched each. Side files in `state/`:
+`event.asset`; accounts from `DOMAIN\user`/UPN in event text) and the IoCs that touched each. The
+**temporal attack phases** (`analysis/burstDetect.ts`, pure) group the forensic timeline into bursts by
+the time gap between consecutive events (`DFIR_PHASE_GAP_S`, default 5 min), each labelled with its
+dominant ATT&CK tactic (reuses `tacticForTechniques`) — the *when* axis, complementary to the categorical
+kill chain. Like the graphs, it's **derived on read** (not persisted to state): `ReportWriter.phases` →
+`GET /cases/:id/phases`, dashboard *Attack Phases* panel + report §3.2. Side files in `state/`:
 `ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (per-source enrichment
 selection — the enabled provider names; **default = local-only** (MISP/YETI), external opt-in),
 `pending_analysis.json`, `report-meta.json` (human-authored report

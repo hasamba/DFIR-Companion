@@ -7,7 +7,7 @@ import { extractAccounts } from "./assetGraph.js";
 // process spawned which, and which artifact/account moved between hosts. Pure + deterministic,
 // derived on read from fields the importers already populate — NO AI call, NO persisted store.
 //
-// Three edge types, all grounded in existing structured fields:
+// Five edge types, all grounded in existing structured fields:
 //   • spawned       — parent→child from an event's own processName/parentName pair (same asset).
 //                     Process nodes are keyed by (asset, name) so excel→powershell + powershell→cmd
 //                     chain into one tree through the shared powershell node — no PID guessing.
@@ -18,21 +18,26 @@ import { extractAccounts } from "./assetGraph.js";
 //                     hung off its host node, the lateral_move host↔host edges stitch per-host trees
 //                     into ONE cross-host attack graph (binary runs on A → moves to B → spawns there)
 //                     instead of disconnected islands. Certain from the process's own asset → high.
+//   • file_lineage  — wrote→executed: a file written (action="write") then executed (action="execute")
+//                     with the same hash. A `file` node sits in the middle, with write-context→file
+//                     and file→execute-context edges so the artifact itself is visible in the graph.
+//   • network_flow  — src→dst: a connection from srcIp (or host asset) to dstIp:port. `network`
+//                     nodes represent IP endpoints; port is folded into the destination node label.
 //
 // Every edge carries `confidence` + the `rule` that produced it + `basis` (human one-liner) +
 // the backing `eventIds`, so a causal claim is auditable: a wrong causal edge misleads in a way
-// a wrong association edge does not. File-lineage (wrote→executed) and network-flow (src→dst)
-// are deferred — they need structured action/direction + src/dst fields that don't exist yet.
+// a wrong association edge does not.
 
-export type EvidenceEdgeType = "spawned" | "lateral_move" | "ran_on";
+export type EvidenceEdgeType = "spawned" | "lateral_move" | "ran_on" | "file_lineage" | "network_flow";
 export type Confidence = "high" | "medium" | "low";
-export type EvidenceNodeKind = "process" | "host" | "account";
+export type EvidenceNodeKind = "process" | "host" | "account" | "file" | "network";
 
 export interface EvidenceNode {
-  id: string;                 // "proc:<asset>:<name>" | "host:<name>" | "account:<name>"
+  id: string;                 // "proc:<asset>:<name>" | "host:<name>" | "account:<name>" | "file:<hash>" | "net:<ip>[:<port>]"
   kind: EvidenceNodeKind;
   label: string;              // display name
   asset?: string;             // owning host, for process nodes
+  ip?: string;                // IP address, for network nodes
   maxSeverity: Severity;      // worst severity among the events backing this node
   eventIds: string[];         // forensic events that produced this node (provenance)
 }
@@ -59,6 +64,8 @@ function worse(a: Severity, b: Severity): Severity { return SEV_RANK[b] < SEV_RA
 const procNodeId = (asset: string, name: string) => `proc:${asset.toLowerCase()}:${name.toLowerCase()}`;
 const hostNodeId = (name: string) => `host:${name.toLowerCase()}`;
 const accountNodeId = (name: string) => `account:${name.toLowerCase()}`;
+const fileNodeId = (hash: string) => `file:${hash.toLowerCase()}`;
+const netNodeId = (ip: string, port?: number) => `net:${ip.toLowerCase()}${port ? `:${port}` : ""}`;
 
 function shortHash(h: string): string {
   return h.length > 14 ? `${h.slice(0, 12)}…` : h;
@@ -171,6 +178,90 @@ export function buildEvidenceGraph(state: InvestigationState): EvidenceGraph {
         basis: `${acct} active on ${e.asset!.trim()}`, eventId: e.id,
       });
     }
+  }
+
+  // ── file_lineage: wrote→executed (same hash, action="write" + action="execute") ─────────
+  // The file node sits in the middle: write-context→file and file→execute-context. This keeps
+  // the artifact visible in the graph and lets multiple writers/executors all connect through it.
+  const writesByHash = new Map<string, ForensicEvent[]>();
+  const execsByHash = new Map<string, ForensicEvent[]>();
+  for (const e of state.forensicTimeline) {
+    if (!e.action) continue;
+    const h = (e.sha256 ?? e.md5 ?? "").trim().toLowerCase();
+    if (!h) continue;
+    if (e.action === "write") {
+      const arr = writesByHash.get(h) ?? []; arr.push(e); writesByHash.set(h, arr);
+    } else if (e.action === "execute") {
+      const arr = execsByHash.get(h) ?? []; arr.push(e); execsByHash.set(h, arr);
+    }
+  }
+  for (const [h, writes] of writesByHash) {
+    const execs = execsByHash.get(h);
+    if (!execs?.length) continue;
+    const samplePath = writes.find((e) => e.path)?.path ?? execs.find((e) => e.path)?.path;
+    const fileName = samplePath?.split(/[/\\]/).pop() ?? shortHash(h);
+    const fId = fileNodeId(h);
+    // mergeNode is only called when an edge is about to be created so the file node never
+    // ends up in the graph without at least one edge referencing it.
+    for (const we of writes) {
+      const wAsset = (we.asset ?? "").trim();
+      if (!wAsset) continue;
+      mergeNode(fId, "file", fileName, undefined, [we.id], we.severity);
+      const wHId = hostNodeId(wAsset);
+      ensureNode(wHId, "host", wAsset, undefined, we);
+      addEdge({
+        id: `file_lineage|wrote|${wHId}|${fId}`, type: "file_lineage",
+        source: wHId, target: fId, confidence: "high", rule: "wrote-file",
+        basis: `${wAsset} wrote ${fileName} (${shortHash(h)})`, eventId: we.id,
+      });
+    }
+    for (const xe of execs) {
+      const xAsset = (xe.asset ?? "").trim();
+      if (!xAsset) continue;
+      mergeNode(fId, "file", fileName, undefined, [xe.id], xe.severity);
+      let xNodeId: string;
+      if (xe.processName) {
+        xNodeId = procNodeId(xAsset, xe.processName.trim());
+        ensureNode(xNodeId, "process", xe.processName.trim(), xAsset, xe);
+      } else {
+        xNodeId = hostNodeId(xAsset);
+        ensureNode(xNodeId, "host", xAsset, undefined, xe);
+      }
+      addEdge({
+        id: `file_lineage|exec|${fId}|${xNodeId}`, type: "file_lineage",
+        source: fId, target: xNodeId, confidence: "high", rule: "executed-file",
+        basis: `${fileName} (${shortHash(h)}) executed on ${xAsset}`, eventId: xe.id,
+      });
+    }
+  }
+
+  // ── network_flow: srcIp → dstIp:port ──────────────────────────────────────────────────
+  // Requires dstIp. Source is srcIp (network node) when present, otherwise the event's asset
+  // (host node — the host that made the connection). Skips if source cannot be determined.
+  for (const e of state.forensicTimeline) {
+    const dst = (e.dstIp ?? "").trim();
+    if (!dst) continue;
+    const srcIp = (e.srcIp ?? "").trim();
+    const srcAsset = (e.asset ?? "").trim();
+    const src = srcIp || srcAsset;
+    if (!src || src === dst) continue;
+    // Source: use a network node for an explicit srcIp, host node for the event's asset.
+    const srcId = srcIp ? netNodeId(srcIp) : hostNodeId(srcAsset);
+    if (srcIp) {
+      mergeNode(srcId, "network", srcIp, undefined, [e.id], e.severity);
+      nodeMap.get(srcId)!.ip = srcIp;
+    } else {
+      ensureNode(srcId, "host", srcAsset, undefined, e);
+    }
+    const dstId = netNodeId(dst, e.port);
+    const dstLabel = dst + (e.port ? `:${e.port}` : "");
+    mergeNode(dstId, "network", dstLabel, undefined, [e.id], e.severity);
+    nodeMap.get(dstId)!.ip = dst;
+    addEdge({
+      id: `network_flow|${srcId}|${dstId}`, type: "network_flow",
+      source: srcId, target: dstId, confidence: "high", rule: "network-connection",
+      basis: `${src} → ${dstLabel}`, eventId: e.id,
+    });
   }
 
   // ── ran_on: anchor each process tree to its host (host → root process) ────────────────

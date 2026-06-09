@@ -52,6 +52,9 @@ export interface SiemEvent {
   sources?: string[];
   processName?: string;
   parentName?: string;
+  srcIp?: string;
+  dstIp?: string;
+  port?: number;
 }
 
 export interface SiemIoc {
@@ -479,6 +482,9 @@ export interface MappedEvent {
   // Per-event tool source(s). siem mapping leaves this unset (the pipeline tags the whole
   // import); reused by chainsawImport, which tags each event Chainsaw/EVTX individually.
   sources?: string[];
+  srcIp?: string;
+  dstIp?: string;
+  port?: number;
 }
 
 // Map a Windows Event Log / Sysmon record. Returns null if it is not a Windows record.
@@ -732,6 +738,9 @@ export function aggregateEvents(
         ...(m.processName ? { processName: m.processName } : {}),
         ...(m.parentName ? { parentName: m.parentName } : {}),
         ...(m.sources?.length ? { sources: [...m.sources] } : {}),
+        ...(m.srcIp ? { srcIp: m.srcIp } : {}),
+        ...(m.dstIp ? { dstIp: m.dstIp } : {}),
+        ...(m.port ? { port: m.port } : {}),
       });
       order.push(key);
     }
