@@ -137,6 +137,7 @@ export const SYSTEM_PROMPT = [
         {
           id: "f1",
           severity: "Critical|High|Medium|Low|Info",
+          confidence: 85,
           title: "short title",
           description: "what was observed and why it matters",
           relatedIocs: ["i1"],
@@ -166,6 +167,7 @@ export const SYSTEM_PROMPT = [
     2,
   ),
   "",
+  "confidence is 0–100 (your certainty that the finding represents real attacker activity, not a false positive).",
   "If a section has nothing new, return it as an empty array (or empty string for text fields).",
 ].join("\n");
 
@@ -204,7 +206,7 @@ export const CSV_SYSTEM_PROMPT = [
   JSON.stringify(
     {
       findings: [
-        { id: "f1", severity: "Critical|High|Medium|Low|Info", title: "short title (raise for any Critical/High row)", description: "what was detected and why it matters", relatedIocs: ["i1"], mitreTechniques: ["T1059"], status: "open" },
+        { id: "f1", severity: "Critical|High|Medium|Low|Info", confidence: 90, title: "short title (raise for any Critical/High row)", description: "what was detected and why it matters", relatedIocs: ["i1"], mitreTechniques: ["T1059"], status: "open" },
       ],
       iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
       mitreTechniques: [{ id: "T1059", name: "Command and Scripting Interpreter" }],
@@ -344,11 +346,13 @@ export const SYNTHESIS_PROMPT = [
   "  in the attacker path and the 'unknown'/'partial' keyQuestions. Return 3-7 steps.",
   "",
   "Return ONLY raw JSON (no markdown fences). Set forensicEvents to [] and timelineNote to \"\".",
-  "Every finding/ioc/technique/thread/question MUST be an object, never a bare string. Shape:",
+  "Every finding/ioc/technique/thread/question MUST be an object, never a bare string.",
+  "findings must include confidence (0–100): your certainty this finding is real attacker activity, not a false positive.",
+  "Shape:",
   "",
   JSON.stringify(
     {
-      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed", relatedEventIds: ["e3", "e7"] }],
+      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", confidence: 85, title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed", relatedEventIds: ["e3", "e7"] }],
       iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
       mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses: Disable or Modify Tools" }],
       attackerPath: "Initial access at <time> via …; then execution of …; persistence via …; impact at <time>.",

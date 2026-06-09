@@ -57,6 +57,10 @@
     .sev-legend .sev-item:has(.sev-filter:not(:checked)) { opacity: 0.35; text-decoration: line-through; }
     #timelineCount { font-size: 12px; font-weight: normal; color: #9aa4b2; margin: 0 6px; letter-spacing: 0; text-transform: none; }
     .finding { border-left: 3px solid #2a2f3a; padding: 6px 10px; margin-bottom: 8px; }
+    .conf-badge { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-left: 4px; vertical-align: middle; }
+    .conf-high { background: #1a3a1a; color: #6bcb77; border: 1px solid #2a5a2a; }
+    .conf-mid  { background: #3a2e00; color: #e0b84a; border: 1px solid #5a4800; }
+    .conf-low  { background: #3a1a1a; color: #e06060; border: 1px solid #5a2a2a; }
     button { background: #2d6cdf; color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
     input { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; padding: 6px; border-radius: 6px; }
     #status { font-size: 12px; color: #9aa4b2; }
@@ -437,7 +441,7 @@
     <section style="grid-column: 1 / -1"><h2>Executive Summary<button id="genExecBtn" type="button" title="Generate a management-facing executive summary with AI (review before saving it to the report)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genExecMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#9aa4b2"></span></h2><div id="summary">—</div><div id="execGenResult"></div></section>
     <section style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
-    <section style="grid-column: 1 / -1"><h2>Findings</h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="findings">—</div></section>
+    <section style="grid-column: 1 / -1"><h2>Findings</h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:#9aa4b2"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:#9aa4b2">% (0 = all)</span></div><div id="findings">—</div></section>
     <section style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope (sorted by event time); updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:#6aa9ff"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkLegitBtn" title="Mark all selected events as legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:#9aa4b2">✕ Clear</button></div>
       <div style="font-size:11px; color:#9aa4b2; margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
@@ -2806,6 +2810,11 @@
       if (e.target.classList.contains('sev-filter')) renderTimelineEvents(lastFt);
     });
 
+    // Re-render findings when the confidence filter changes (no server round-trip).
+    document.getElementById("confFilter").addEventListener("input", function() {
+      if (lastState) render(lastState);
+    });
+
     function render(rawState) {
       // Keep the raw state so scope-preset clicks can re-project without a refetch.
       lastState = rawState;
@@ -2863,21 +2872,29 @@
           closedThreads.map(t => `<div style='color:#9aa4b2;text-decoration:line-through'>✓ <span style="color:#6aa9ff">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("")
         : "";
       const sorted = [...state.findings].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
+      const minConf = parseInt(document.getElementById("confFilter").value, 10) || 0;
+      const filtered = sorted.filter(f => f.confidence === undefined || f.confidence >= minConf);
       document.getElementById("findings").innerHTML =
-        sorted.map(f => {
+        filtered.map(f => {
           const evidence = [...(f.sourceScreenshots || []), ...(evByFinding[f.id] || [])];
           // Auto-flagged findings (from a Critical/High artifact row synthesis didn't cover)
           // carry the f-auto- id prefix — badge them so the analyst knows to review/refine.
           const auto = String(f.id).startsWith("f-auto-")
             ? ` <span title="Auto-flagged from a ${esc(f.severity)}-severity artifact row — review and refine" style="background:#2a2233;color:#c79bff;border:1px solid #4a3a5a;border-radius:4px;padding:0 6px;font-size:10px">AUTO</span>` : "";
+          // Confidence badge: color-coded by tier.
+          let confBadge = "";
+          if (f.confidence !== undefined) {
+            const cls = f.confidence >= 80 ? "conf-high" : f.confidence >= 50 ? "conf-mid" : "conf-low";
+            confBadge = ` <span class="conf-badge ${cls}" title="AI confidence: ${f.confidence}%">${f.confidence}%</span>`;
+          }
           // Chips lead the row (comment · tag), matching IOCs / Key Questions / Threads, then the
           // severity badge and the finding id/title.
-          return `<div class="finding">${commentChip("finding", f.id)} ${tagChip("finding", f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span> ` +
+          return `<div class="finding">${commentChip("finding", f.id)} ${tagChip("finding", f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ` +
             `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${evidenceLinks(state.caseId, evidence)}</div>`;
-        }).join("") || "—";
+        }).join("") || (minConf > 0 && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings above ${minConf}% confidence.</span>` : "—");
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =

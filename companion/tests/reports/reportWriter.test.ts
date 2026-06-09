@@ -36,7 +36,7 @@ describe("ReportWriter", () => {
     expect(html).toContain("summary text");
 
     const findings = await readFile(paths.findingsCsv, "utf8");
-    expect(findings).toContain("id,severity,title");
+    expect(findings).toContain("id,severity,confidence,title");
 
     const exported = JSON.parse(await readFile(paths.stateJson, "utf8"));
     expect(exported.caseId).toBe("c1");

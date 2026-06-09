@@ -27,6 +27,7 @@ export interface IOC {
 export interface Finding {
   id: string;
   severity: Severity;
+  confidence?: number;          // 0–100: AI certainty this finding is real (absent = unknown)
   title: string;
   description: string;
   relatedIocs: string[];        // IOC ids

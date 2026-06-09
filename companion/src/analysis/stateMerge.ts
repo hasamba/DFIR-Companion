@@ -61,6 +61,7 @@ export function mergeDelta(
     const existing = findings.find((f) => f.id === incoming.id);
     if (existing) {
       existing.severity = incoming.severity;
+      if (incoming.confidence !== undefined) existing.confidence = incoming.confidence;
       existing.title = incoming.title;
       existing.description = incoming.description;
       existing.status = incoming.status;
@@ -72,6 +73,7 @@ export function mergeDelta(
       findings.push({
         id: incoming.id,
         severity: incoming.severity,
+        ...(incoming.confidence !== undefined ? { confidence: incoming.confidence } : {}),
         title: incoming.title,
         description: incoming.description,
         relatedIocs: remapIocRefs(incoming.relatedIocs),
