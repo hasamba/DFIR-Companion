@@ -27,6 +27,7 @@ export interface IOC {
 export interface Finding {
   id: string;
   severity: Severity;
+  confidence?: number;          // 0–100: AI certainty this finding is real (absent = unknown)
   title: string;
   description: string;
   relatedIocs: string[];        // IOC ids
@@ -78,6 +79,13 @@ export interface ForensicEvent {
   processName?: string;
   parentName?: string;
   chainCheck?: ProcessChainCheck;
+  // File-lineage / network-flow fields (Phase 2 evidence-chain edges).
+  // action distinguishes a file write from an execute (same hash → lineage edge) and
+  // network sends/receives (srcIp/dstIp/port → network-flow edge).
+  action?: "write" | "execute" | "network_send" | "network_receive";
+  srcIp?: string;    // source IP for network connections
+  dstIp?: string;    // destination IP for network connections
+  port?: number;     // destination port
 }
 
 // Result of validating a parent→child process relationship against behavioral intel
@@ -132,6 +140,7 @@ export interface InvestigationState {
   nextSteps: NextStep[];               // AI-recommended next investigative actions, most important first
   lastSummary: string;
   attackerPath: string;                // narrative reconstruction of the attacker's path
+  narrativeTimeline: string;           // prose story of the incident for stakeholders (re-generated on synthesis)
   updatedAt: string;
 }
 
@@ -148,6 +157,7 @@ export function emptyState(caseId: string): InvestigationState {
     nextSteps: [],
     lastSummary: "",
     attackerPath: "",
+    narrativeTimeline: "",
     updatedAt: new Date(0).toISOString(),
   };
 }
