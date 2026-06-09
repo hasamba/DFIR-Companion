@@ -9,8 +9,19 @@ export interface AnalyzeRequest {
   images: AnalyzeImage[];
 }
 
+// Token accounting a provider reports back, when it does. All optional — most providers
+// don't surface it and callers must not depend on it. `cache*` fields confirm whether
+// prompt caching actually fired (a cache marker on a sub-threshold prefix silently no-ops).
+export interface ProviderUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationTokens?: number; // input tokens written to the cache on this call
+  cacheReadTokens?: number;     // input tokens served from the cache on this call
+}
+
 export interface AnalyzeResult {
   rawText: string; // expected to be JSON matching deltaSchema
+  usage?: ProviderUsage; // present only when the provider reports token usage
 }
 
 export type ProviderErrorKind = "auth" | "billing" | "rate_limit" | "timeout" | "transport" | "context" | "other";
