@@ -236,9 +236,9 @@ describe("VelociraptorClient.launchArtifactHunt", () => {
     const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.SP1", state: "RUNNING" } }], raw: "" }; };
     await new VelociraptorClient(cfg, runner).launchArtifactHunt(
       ["Windows.Hayabusa.Rules", "Windows.System.Pslist"], "x", {},
-      { params: { "Windows.Hayabusa.Rules": { MinLevel: "high" }, "Not.In.Hunt": { X: "y" } } },
+      { params: { "Windows.Hayabusa.Rules": { RuleLevel: "Critical, High, and Medium" }, "Not.In.Hunt": { X: "y" } } },
     );
-    expect(program).toContain("spec=dict(`Windows.Hayabusa.Rules`=dict(MinLevel='high'))");
+    expect(program).toContain("spec=dict(`Windows.Hayabusa.Rules`=dict(RuleLevel='Critical, High, and Medium'))");
     expect(program).not.toContain("Not.In.Hunt");   // params for an artifact not in the hunt are dropped
   });
 

@@ -227,7 +227,7 @@ function sanitizeWhere(where?: string): string {
 const PARAM_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;   // valid Velociraptor parameter name
 
 // Build the hunt's `spec` clause from per-artifact parameter overrides so a heavy artifact runs with
-// fewer/narrower outputs at the source (e.g. `Windows.Hayabusa.Rules`=dict(MinLevel='high')). Only
+// fewer/narrower outputs at the source (e.g. `Windows.Hayabusa.Rules`=dict(RuleLevel='Critical, High, and Medium')). Only
 // artifacts actually in this hunt are included; param names are validated and values are sanitized into
 // single-quoted strings (Velociraptor coerces). Returns undefined when there's nothing to set.
 function buildHuntSpec(names: string[], params?: Record<string, Record<string, string>>): string | undefined {
@@ -387,7 +387,7 @@ export class VelociraptorClient {
     if (os) clauses.push(`os='${os}'`);
     const timeout = Number(opts.timeoutSeconds);
     if (Number.isFinite(timeout) && timeout > 0) clauses.push(`timeout=${Math.floor(timeout)}`);   // collection timeout (s)
-    const spec = buildHuntSpec(names, opts.params);   // per-artifact parameters (e.g. Hayabusa MinLevel='high')
+    const spec = buildHuntSpec(names, opts.params);   // per-artifact parameters (e.g. Hayabusa RuleLevel/RuleStatus)
     if (spec) clauses.push(spec);
     const program = `SELECT hunt(${clauses.join(", ")}) AS Hunt FROM scope()`;
     const rows = await this.runRaw(program);
