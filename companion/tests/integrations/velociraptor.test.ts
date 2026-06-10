@@ -144,6 +144,13 @@ describe("VelociraptorClient.huntResults", () => {
     expect(res.rows).toHaveLength(1);
   });
 
+  it("injects an analyst WHERE filter BEFORE the LIMIT (so it drops noise at the source)", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).huntResults("H.ABC123", "DetectRaptor.X", [], "NOT OSPath =~ 'pagefile'");
+    expect(program).toBe("SELECT * FROM hunt_results(hunt_id='H.ABC123', artifact='DetectRaptor.X') WHERE (NOT OSPath =~ 'pagefile') LIMIT 4");
+  });
+
   it("chains hunt_results across multiple sources (artifact/source refs)", async () => {
     let program = "";
     const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [], raw: "" }; };
@@ -277,6 +284,13 @@ describe("VelociraptorClient.huntResultsByArtifact", () => {
     const { results, skipped } = await new VelociraptorClient(cfg, runner).huntResultsByArtifact("H.ABC123", ["Windows.Hayabusa.Rules", "Windows.System.Pslist"]);
     expect(skipped).toEqual(["Windows.Hayabusa.Rules"]);
     expect(Object.keys(results)).toEqual(["Windows.System.Pslist"]);
+  });
+
+  it("applies the per-artifact WHERE filter from the filters map", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ a: 1 }], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).huntResultsByArtifact("H.OK1", ["DetectRaptor.X"], { "DetectRaptor.X": "NOT OSPath =~ 'pagefile'" });
+    expect(program).toContain("WHERE (NOT OSPath =~ 'pagefile')");
   });
 
   it("rejects a malformed hunt id and skips invalid artifact names", async () => {

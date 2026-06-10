@@ -930,7 +930,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // 1) Result ROWS → the Velociraptor importer (detections + telemetry). Resilient: an artifact
       // whose output is too large to fetch is skipped (logged), not fatal — the rest still import, and
       // its uploaded JSON (if any) is still picked up in step 2.
-      const { results: map, skipped } = await client.huntResultsByArtifact(job.huntId, job.artifacts);
+      const { results: map, skipped } = await client.huntResultsByArtifact(job.huntId, job.artifacts, job.filters);
       if (skipped.length) logLine(`[velociraptor] hunt ${job.huntId}: skipped ${skipped.length} oversized/failed artifact(s): ${skipped.join(", ")} — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT / DFIR_VELOCIRAPTOR_MAX_ROWS to include them`);
       const totalRows = Object.values(map).reduce((n, rows) => n + rows.length, 0);
       if (totalRows > 0) {
@@ -1027,7 +1027,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         bundleId: bundle.id, bundleName: bundle.name, artifacts: launch.artifacts,
         huntId: launch.huntId, guiUrl: launch.guiUrl,
         launchedAt: new Date().toISOString(), waitMinutes, collectAt,
-        status: "running", target, minSeverity, timeoutSeconds,
+        status: "running", target, minSeverity, timeoutSeconds, filters: bundle.filters,
       };
       // Append this hunt (concurrent hunts are kept side by side, keyed by huntId) + its own timer.
       await options.veloHuntStore.upsert(caseId, job);

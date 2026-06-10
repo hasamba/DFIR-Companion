@@ -206,6 +206,8 @@
     .ev-bulk-btn:hover { background: #2a3050; color: #fff; border-color: #6aa9ff; }
     #evStarFilterBtn { background: transparent; border: 1px solid #3a4050; color: #6b7280; border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
     #evStarFilterBtn.active { color: #ffd93b; border-color: #ffd93b; background: #1c1500; }
+    #iocFlaggedBtn { background: transparent; border: 1px solid #3a4050; color: #6b7280; border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+    #iocFlaggedBtn.active { color: #ff9f43; border-color: #ff9f43; background: #211405; }
     .vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid #2a2f3a; border-radius: 5px; }
     .vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
     .vql-result th, .vql-result td { border: 1px solid #2a2f3a; padding: 3px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
@@ -822,10 +824,16 @@
             <div style="font-size:12px;color:#9aa4b2">Selected: <strong id="veloSelectedCount">0</strong></div>
             <div id="veloSelectedList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
             <details style="border:1px solid #2a3146;border-radius:6px;padding:6px 8px;background:#11151f">
-              <summary style="cursor:pointer;font-size:12px;color:#9aa4b2">Advanced: per-artifact parameters (optional)</summary>
-              <div style="margin-top:6px">
-                <textarea id="veloBundleParams" rows="4" spellcheck="false" placeholder='{ "Windows.Hayabusa.Rules": { "MinLevel": "high" } }' style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
-                <div style="font-size:11px;color:#7e8aa0;margin-top:4px">JSON map of <code>artifact → { param: value }</code>, passed to the hunt's <code>spec</code> so a heavy artifact emits less at the source (e.g. Hayabusa at high+critical). Only the params you set are sent; everything else uses the artifact's defaults. Leave blank for none.</div>
+              <summary style="cursor:pointer;font-size:12px;color:#9aa4b2">Advanced: per-artifact tuning (optional)</summary>
+              <div style="margin-top:8px">
+                <div style="font-size:12px;color:#cdd6e4;margin-bottom:3px">Parameters <span style="color:#7e8aa0">(passed to the artifact via the hunt <code>spec</code>)</span></div>
+                <textarea id="veloBundleParams" rows="3" spellcheck="false" placeholder='{ "Windows.Hayabusa.Rules": { "MinLevel": "high" } }' style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
+                <div style="font-size:11px;color:#7e8aa0;margin-top:3px">JSON map of <code>artifact → { param: value }</code> so a heavy artifact emits less at the source (e.g. Hayabusa at high+critical). Only what you set is sent.</div>
+              </div>
+              <div style="margin-top:10px">
+                <div style="font-size:12px;color:#cdd6e4;margin-bottom:3px">Exclude filters <span style="color:#7e8aa0">(VQL <code>WHERE</code> applied to results before the row cap)</span></div>
+                <textarea id="veloBundleFilters" rows="3" spellcheck="false" placeholder='{ "DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ &#39;pagefile&#39;" }' style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
+                <div style="font-size:11px;color:#7e8aa0;margin-top:3px">JSON map of <code>artifact → VQL WHERE expression</code> (no <code>WHERE</code> keyword) to drop noisy rows at the source — e.g. exclude pagefile YARA hits, or a specific detection name. Leave blank for none.</div>
               </div>
             </details>
             <div style="display:flex;gap:8px;align-items:center">
@@ -965,7 +973,7 @@
         </div>
       </div>
     </section>
-    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:#9aa4b2;font-size:12px;font-weight:normal"></span><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
@@ -2017,6 +2025,7 @@
     // --- Starred events (per case, localStorage) ---------------------------------
     let starredEvents = new Set();
     let showStarredOnly = false;
+    let showFlaggedIocsOnly = false;   // IOCs section: show only malicious/suspicious (any enrichment engine)
     const starredKey = caseId => `dfir_starred_${caseId}`;
     function loadStarred(caseId) {
       try { starredEvents = new Set(JSON.parse(localStorage.getItem(starredKey(caseId)) || "[]")); }
@@ -2497,7 +2506,7 @@
           ? (b.customized ? `<button class="velo-reset-btn" data-id="${escAttr(b.id)}" title="Discard your edits and restore the shipped default" style="background:#33291a;color:#ffd07a">Reset to default</button>` : "")
           : `<button class="velo-del-btn" data-id="${escAttr(b.id)}" style="background:#3a2330;color:#ff9aa4">Delete</button>`;
         const badge = b.builtIn ? ` <span style='color:#6aa9ff;font-size:11px'>built-in${b.customized ? " · edited" : ""}</span>` : "";
-        const tuned = b.params ? Object.keys(b.params).length : 0;
+        const tuned = (b.params ? Object.keys(b.params).length : 0) + (b.filters ? Object.keys(b.filters).length : 0);
         const meta = (b.defaultWaitMinutes ? ` · wait ${esc(b.defaultWaitMinutes)}m` : "") + (b.timeoutSeconds ? ` · timeout ${esc(b.timeoutSeconds)}s` : "") + (tuned ? ` · ${tuned} tuned` : "");
         return `<div class="velo-bundle" style="border:1px solid #2a3146;border-radius:6px;padding:8px 10px;margin-bottom:8px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
@@ -2691,9 +2700,15 @@
         try { params = JSON.parse(paramsRaw); }
         catch { msg.textContent = "Advanced parameters must be valid JSON"; return; }
       }
+      const filtersRaw = (document.getElementById("veloBundleFilters").value || "").trim();
+      let filters;
+      if (filtersRaw) {
+        try { filters = JSON.parse(filtersRaw); }
+        catch { msg.textContent = "Advanced exclude filters must be valid JSON"; return; }
+      }
       const btn = document.getElementById("veloSaveBundleBtn");
       const wasEditing = !!veloEditingId;
-      const body = { name, description, artifacts: [...veloSelected], defaultWaitMinutes, timeoutSeconds, params };
+      const body = { name, description, artifacts: [...veloSelected], defaultWaitMinutes, timeoutSeconds, params, filters };
       if (veloEditingId) body.id = veloEditingId;   // editing a built-in or custom bundle overrides it in place
       btn.disabled = true; msg.textContent = wasEditing ? "updating…" : "saving…";
       fetch("/bundles", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
@@ -2715,6 +2730,7 @@
       document.getElementById("veloBundleDefaultWait").value = b.defaultWaitMinutes || "";
       document.getElementById("veloBundleTimeout").value = b.timeoutSeconds || "";
       document.getElementById("veloBundleParams").value = (b.params && Object.keys(b.params).length) ? JSON.stringify(b.params, null, 2) : "";
+      document.getElementById("veloBundleFilters").value = (b.filters && Object.keys(b.filters).length) ? JSON.stringify(b.filters, null, 2) : "";
       veloSelected = new Set(b.artifacts || []);
       renderVeloSelected(); renderVeloPicker();
       const builder = document.getElementById("veloBuilder");
@@ -2737,6 +2753,7 @@
       document.getElementById("veloBundleDefaultWait").value = "";
       document.getElementById("veloBundleTimeout").value = "";
       document.getElementById("veloBundleParams").value = "";
+      document.getElementById("veloBundleFilters").value = "";
       veloSelected = new Set(); renderVeloSelected(); renderVeloPicker();
       veloSetEditing(null);
     }
@@ -3734,16 +3751,26 @@
 
     // Render the IOC list. Extracted from render() so paintIocImportMeta() can re-render it to paint
     // the "new since last import" highlight (green accent + NEW badge) without a full state re-render.
+    // An IOC is "flagged" when any enrichment engine returned a malicious or suspicious verdict.
+    function iocFlagged(i) {
+      return (i.enrichments || []).some(e => e.verdict === "malicious" || e.verdict === "suspicious");
+    }
     function renderIocs(iocs) {
       const el = document.getElementById("iocs");
       if (!el) return;
-      el.innerHTML = iocs.length
-        ? iocs.map(i => {
+      const flaggedTotal = iocs.filter(iocFlagged).length;
+      const cnt = document.getElementById("iocFlaggedCount");
+      if (cnt) cnt.textContent = flaggedTotal ? ` (${flaggedTotal} flagged)` : "";
+      const visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
+      el.innerHTML = visible.length
+        ? visible.map(i => {
             const isNew = newIocKeys.has(i.value);
             const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
             return `<div class="${isNew ? "ioc-new" : ""}">${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} <span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}</div>`;
           }).join("")
-        : "<div style='color:#9aa4b2'>No IOCs yet</div>";
+        : (showFlaggedIocsOnly
+            ? "<div style='color:#9aa4b2'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
+            : "<div style='color:#9aa4b2'>No IOCs yet</div>");
     }
 
     // Render the forensic timeline from a pre-scoped+legit-filtered list.
@@ -3953,6 +3980,9 @@
       showStarredOnly = false;
       const sfBtn = document.getElementById("evStarFilterBtn");
       if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
+      showFlaggedIocsOnly = false;
+      const ifBtn = document.getElementById("iocFlaggedBtn");
+      if (ifBtn) ifBtn.classList.remove("active");
       loadSynthMeta(caseId);
       loadImportMeta(caseId);
       loadCustomerExposure(caseId);
@@ -4268,6 +4298,13 @@
         e.target.textContent = showStarredOnly ? "★ Starred" : "☆ Starred";
         e.target.classList.toggle("active", showStarredOnly);
         renderTimelineEvents(lastFt);
+        return;
+      }
+      // IOC verdict filter — only malicious/suspicious (from any enrichment engine)
+      if (e.target.id === "iocFlaggedBtn") {
+        showFlaggedIocsOnly = !showFlaggedIocsOnly;
+        e.target.classList.toggle("active", showFlaggedIocsOnly);
+        if (lastState) renderIocs(lastState.iocs || []);
         return;
       }
       const chip = e.target.closest && e.target.closest(".comment-chip");

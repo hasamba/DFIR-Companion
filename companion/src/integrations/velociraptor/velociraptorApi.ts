@@ -216,6 +216,14 @@ function normalizeOs(os?: string): "windows" | "linux" | "darwin" | undefined {
   return v === "windows" || v === "linux" || v === "darwin" ? v : undefined;
 }
 
+// Normalize an analyst-authored VQL WHERE expression for inlining into a hunt_results query: one line,
+// no trailing ';', length-capped. Localhost/trusted analyst (same as the pivot-hunt VQL); it's wrapped
+// in parentheses at the call site so it stays a contained boolean expression.
+function sanitizeWhere(where?: string): string {
+  if (!where) return "";
+  return String(where).replace(/[\r\n]+/g, " ").replace(/;+\s*$/, "").trim().slice(0, 1000);
+}
+
 const PARAM_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;   // valid Velociraptor parameter name
 
 // Build the hunt's `spec` clause from per-artifact parameter overrides so a heavy artifact runs with
@@ -317,18 +325,21 @@ export class VelociraptorClient {
 
   // Read a hunt's collected results across its sources (combining all endpoints' rows). Validates the
   // ids to keep them safe inside the VQL string literals.
-  async huntResults(huntId: string, artifact: string, sources: string[] = []): Promise<VelociraptorRunResult> {
+  async huntResults(huntId: string, artifact: string, sources: string[] = [], where?: string): Promise<VelociraptorRunResult> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     if (!ARTIFACT_RE.test(artifact)) throw new Error("invalid artifact name");
     // Named sources are addressed as `artifact/source` (the `source=` param does NOT match them).
     const safe = sources.filter((s) => ARTIFACT_RE.test(s));
     const refs = safe.length ? safe.map((s) => `${artifact}/${s}`) : [artifact];
-    // LIMIT at the source so a huge result set (e.g. Hayabusa across a fleet) can't blow the stdout cap
-    // before we'd cap() it anyway. maxRows+1 so cap() can still flag truncation.
+    // Optional analyst WHERE filter applied BEFORE the LIMIT, so noisy rows are dropped at the source
+    // and the kept rows are the relevant ones (not the first N pre-filter). LIMIT at the source so a huge
+    // result set (e.g. Hayabusa across a fleet) can't blow the stdout cap; maxRows+1 so cap() flags truncation.
+    const w = sanitizeWhere(where);
+    const whereClause = w ? ` WHERE (${w})` : "";
     const limit = this.config.maxRows + 1;
     const program = refs.length > 1
-      ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${ref}') LIMIT ${limit} }`).join(", ")})`
-      : `SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${refs[0]}') LIMIT ${limit}`;
+      ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
+      : `SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
     return this.cap(await this.runRaw(program, this.collectCap()));
   }
 
@@ -397,7 +408,7 @@ export class VelociraptorClient {
   // aborting the whole collection — so a bundle with a heavy artifact (Hayabusa) still imports the rest.
   // Only artifacts that returned rows are in `results` (empty ones are dropped; clients may not have
   // checked in yet, and the artifact-map needs non-empty arrays).
-  async huntResultsByArtifact(huntId: string, artifacts: string[]): Promise<{ results: Record<string, unknown[]>; skipped: string[] }> {
+  async huntResultsByArtifact(huntId: string, artifacts: string[], filters?: Record<string, string>): Promise<{ results: Record<string, unknown[]>; skipped: string[] }> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     const results: Record<string, unknown[]> = {};
     const skipped: string[] = [];
@@ -405,7 +416,7 @@ export class VelociraptorClient {
       const name = String(artifact ?? "").trim();
       if (!ARTIFACT_RE.test(name)) continue;   // skip invalid names rather than fail the whole collect
       try {
-        const res = await this.huntResults(huntId, name);
+        const res = await this.huntResults(huntId, name, [], filters?.[name]);   // per-artifact WHERE filter
         if (res.rows.length) results[name] = res.rows;
       } catch {
         skipped.push(name);   // oversized / slow / failed — keep going (the caller logs the skips)

@@ -20,7 +20,23 @@ export interface ArtifactBundle {
   // source (e.g. {"Windows.Hayabusa.Rules": {"MinLevel": "high"}} runs Hayabusa at high+critical only).
   // Only the params you set are sent; everything else uses the artifact's own defaults.
   params?: Record<string, Record<string, string>>;
+  // Per-artifact VQL WHERE filter applied to that artifact's hunt_results BEFORE the row cap, so noisy
+  // rows are dropped at the source (e.g. {"DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ 'pagefile'"}).
+  // Analyst-authored VQL boolean expression (no "WHERE" keyword).
+  filters?: Record<string, string>;
   customized?: boolean;         // a built-in that has a saved override on disk (so the UI can offer "reset to default"); derived, not persisted
+}
+
+// Per-artifact VQL WHERE filters: keep string values, strip newlines/trailing ';', cap length.
+function sanitizeBundleFilters(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, string> = {};
+  for (const [artifact, where] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof where !== "string") continue;
+    const w = where.replace(/[\r\n]+/g, " ").replace(/;+\s*$/, "").trim().slice(0, 1000);
+    if (w) out[artifact] = w;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 // Keep only object-of-string-ish params; drop nested objects/null. Returns undefined when empty.
@@ -99,6 +115,12 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
     // Hayabusa emits 10k+ rows at its default (medium+); constrain it to high+critical at the source so
     // the import stays signal-rich. Tune via the bundle editor's Advanced → parameters.
     params: { "Windows.Hayabusa.Rules": { MinLevel: "high" } },
+    // Drop known-noisy rows at the source: YaraFile pagefile hits, and an in-development Evtx rule.
+    // (The Evtx column name is inferred — adjust in the editor if your results use a different one.)
+    filters: {
+      "DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ 'pagefile'",
+      "DetectRaptor.Windows.Detection.Evtx": "NOT Detection =~ 'Powershell large Base64 blob'",
+    },
   },
 ];
 
@@ -187,6 +209,7 @@ export class ArtifactBundleStore {
       defaultWaitMinutes: typeof input.defaultWaitMinutes === "number" ? input.defaultWaitMinutes : undefined,
       timeoutSeconds: typeof input.timeoutSeconds === "number" ? input.timeoutSeconds : undefined,
       params: sanitizeBundleParams(input.params),
+      filters: sanitizeBundleFilters(input.filters),
     };
     await mkdir(this.root, { recursive: true });
     await atomicWrite(this.path(id), JSON.stringify(bundle, null, 2));
