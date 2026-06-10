@@ -2184,11 +2184,11 @@
         out.push(`-- running process (live)\nSELECT Pid, Ppid, Name, CommandLine, Exe\nFROM pslist()\nWHERE lowcase(string=Name) IN (${names})${c.parent ? `\n-- expected parent: ${baseName(c.parent)}` : ""}`);
       }
       if (c.paths.length) {
-        out.push(`-- file presence (exact path) + its hashes\nSELECT FullPath, Size, Mtime, hash(path=FullPath) AS Hashes\nFROM glob(globs=${hq(vqlGlob(c.paths[0]))})`);
-        out.push(`-- or locate it anywhere on C: by name\nSELECT FullPath, Size, Mtime FROM glob(globs=${hq("C:/**/" + baseName(c.paths[0]))})`);
+        out.push(`-- file presence (exact path) + its hashes\nSELECT OSPath, Size, Mtime, hash(path=OSPath) AS Hashes\nFROM glob(globs=${hq(vqlGlob(c.paths[0]))})`);
+        out.push(`-- or locate it anywhere on C: by name\nSELECT OSPath, Size, Mtime FROM glob(globs=${hq("C:/**/" + baseName(c.paths[0]))})`);
       }
       if (c.hashes.length) {
-        out.push(`-- on-disk hash sweep (narrow the glob root — hashing every file is expensive)\nSELECT FullPath, Size, Mtime, hash(path=FullPath) AS Hashes\nFROM glob(globs="C:/Users/**")\nWHERE hash(path=FullPath).SHA256 =~ ${hq("(?i)" + c.hashes[0])}`);
+        out.push(`-- on-disk hash sweep (narrow the glob root — hashing every file is expensive)\nSELECT OSPath, Size, Mtime, hash(path=OSPath) AS Hashes\nFROM glob(globs="C:/Users/**")\nWHERE hash(path=OSPath).SHA256 =~ ${hq("(?i)" + c.hashes[0])}`);
       }
       if (c.ips.length) {
         out.push(`-- active network connections\nSELECT Pid, Name, Status, Laddr.IP AS Local, Raddr.IP AS Remote, Raddr.Port AS RemotePort\nFROM netstat()\nWHERE Raddr.IP IN (${c.ips.map(hq).join(", ")})`);

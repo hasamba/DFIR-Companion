@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Hunt-generator pivot VQL no longer uses the deprecated `glob()` `FullPath` column.** The dashboard's "Run hunt"/pivot VQL generator (`huntVql`) selected `FullPath` (and used it in `hash(path=FullPath)`), which Velociraptor now logs as deprecated (`The FullPath column of the Glob plugin is deprecated and will be removed soon - Use OSPath instead`). All three file/hash-sweep pivots now select **`OSPath`** instead, so the generated queries are future-proof and warning-free. Import-side field readers still accept `FullPath` as a fallback (some artifacts/tools still emit it).
+
 ## [0.15.0] - 2026-06-10
 
 ### Changed
