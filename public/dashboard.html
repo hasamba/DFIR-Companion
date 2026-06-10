@@ -1008,6 +1008,64 @@
     <section id="sec-threads"><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
     <section id="sec-legitimate" style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
+    <style>
+      #sec-playbook .pb-badge{font-size:12px;color:#9aa4b2;font-weight:normal;margin-left:8px}
+      .pb-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px}
+      .pb-toolbar .pb-sync{background:#1f6feb;border:none;color:#fff;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px}
+      .pb-toolbar .pb-sync:hover{background:#2a7bff}
+      .pb-toolbar .pb-filter{font-size:12px;color:#9aa4b2;display:flex;align-items:center;gap:6px}
+      .pb-progress{flex:1;min-width:120px;height:8px;background:#1c2333;border-radius:5px;overflow:hidden}
+      #pbProgressBar{height:100%;width:0;background:#2ea043;transition:width .3s}
+      .pb-task{border:1px solid #222b3d;border-left:3px solid #3a4658;border-radius:8px;padding:9px 11px;margin-bottom:8px;background:#0f1521}
+      .pb-task.pb-done{opacity:.6}
+      .pb-task.pb-done .pb-title{text-decoration:line-through}
+      .pb-task.pb-skipped{opacity:.5}
+      .pb-task.pb-skipped .pb-title{text-decoration:line-through;color:#7d8696}
+      .pb-row1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+      .pb-row2{display:flex;align-items:center;gap:8px;margin-top:6px}
+      .pb-status{background:#161d2b;color:#cdd6e3;border:1px solid #2a3346;border-radius:5px;font-size:11px;padding:2px 4px}
+      .pb-title{flex:1;min-width:160px;font-size:13px;color:#e6edf3}
+      .pb-desc{font-size:11px;color:#8a94a6;margin:5px 0 0;white-space:pre-wrap}
+      .pb-pri{font-size:10px;text-transform:uppercase;font-weight:600;padding:1px 6px;border-radius:9px}
+      .pb-pri-critical{background:#5a1722;color:#ff7b8a}
+      .pb-pri-high{background:#5a3a14;color:#ffb454}
+      .pb-pri-medium{background:#1f3a52;color:#6fb3e0}
+      .pb-pri-low{background:#23304a;color:#8aa0c0}
+      .pb-src{font-size:10px;color:#52617a}
+      .pb-finding-link{font-size:10px;color:#6fb3e0;text-decoration:none}
+      .pb-finding-link:hover{text-decoration:underline}
+      .pb-move{display:flex;gap:3px;margin-left:auto}
+      .pb-move button{background:#161d2b;color:#9aa4b2;border:1px solid #2a3346;border-radius:4px;cursor:pointer;font-size:10px;padding:1px 6px;line-height:1.4}
+      .pb-move button:hover{color:#fff;border-color:#3a4658}
+      .pb-move .pb-del:hover{color:#ff7b8a;border-color:#5a1722}
+      .pb-assignee,.pb-due{background:#161d2b;color:#cdd6e3;border:1px solid #2a3346;border-radius:5px;font-size:11px;padding:3px 6px}
+      .pb-assignee{width:130px}
+      .pb-add-form{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+      .pb-add-form #pbTitle{flex:1;min-width:200px;background:#161d2b;color:#cdd6e3;border:1px solid #2a3346;border-radius:6px;padding:6px 9px}
+      .pb-add-form select{background:#161d2b;color:#cdd6e3;border:1px solid #2a3346;border-radius:6px;padding:6px}
+      .pb-add-form #pbAddBtn{background:#21262d;color:#cdd6e3;border:1px solid #2a3346;border-radius:6px;padding:6px 12px;cursor:pointer}
+    </style>
+    <section id="sec-playbook" style="grid-column: 1 / -1" class="collapsed">
+      <h2>Playbook <span id="pbBadge" class="pb-badge"></span></h2>
+      <p style="font-size:12px;color:#9aa4b2;margin:0 0 10px">Actionable checklist auto-derived from the recommended next steps and Critical/High findings, re-synced on each synthesis — your status, assignee, due date, and custom tasks are always preserved. Survives synthesis; included in the report.</p>
+      <div class="pb-toolbar">
+        <button id="pbSyncBtn" class="pb-sync" title="Re-derive tasks from the latest next steps & findings">↻ Sync from analysis</button>
+        <label class="pb-filter"><input type="checkbox" id="pbOpenOnly"> Open only</label>
+        <div class="pb-progress" title="Completion"><div id="pbProgressBar"></div></div>
+      </div>
+      <div id="pbList" style="margin-top:12px">—</div>
+      <div class="pb-add-form">
+        <input id="pbTitle" placeholder="Add a custom task…" />
+        <select id="pbPriority" title="Priority">
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium" selected>Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <button id="pbAddBtn">Add task</button>
+        <span id="pbMsg" class="manual-msg"></span>
+      </div>
+    </section>
     <section id="sec-notebook" style="grid-column: 1 / -1" class="collapsed">
       <h2>Analyst Notebook</h2>
       <p style="font-size:12px;color:#9aa4b2;margin:0 0 10px">Free-form hypotheses, notes, and open questions. Entries survive synthesis and are never wiped. Optionally included in AI synthesis context (opt-in below).</p>
@@ -2014,6 +2072,118 @@
         body: JSON.stringify({ enabled: aiEnabled, includeNotebook: this.checked }) })
         .catch(() => { this.checked = !this.checked; });
     });
+
+    // --- Playbook (issue #36) -----------------------------------------------------
+    // Trackable checklist auto-derived (server-side) from the case's next steps + Critical/High
+    // findings, plus analyst-added custom tasks. GET re-syncs idempotently (analyst status/edits
+    // preserved), so loading the panel always reflects the latest synthesis.
+    let playbookTasks = [];
+    let pbOpenOnly = false;
+    const PB_STATUS = [["todo", "To do"], ["in_progress", "In progress"], ["done", "Done"], ["skipped", "Skipped"]];
+    const pbCaseId = () => document.getElementById("caseId").value.trim();
+
+    function loadPlaybook(caseId) {
+      fetch(`/cases/${caseId}/playbook`).then(r => r.ok ? r.json() : { tasks: [], stats: null }).then(d => {
+        playbookTasks = Array.isArray(d.tasks) ? d.tasks : [];
+        renderPlaybook(d.stats);
+      }).catch(() => {});
+    }
+
+    function pbLocalStats(tasks) {
+      const total = tasks.length, done = tasks.filter(t => t.status === "done").length;
+      return { total, done, completionPct: total ? Math.round(done / total * 100) : 0 };
+    }
+
+    function renderPlaybook(stats) {
+      const el = document.getElementById("pbList");
+      if (!el) return;
+      stats = stats || pbLocalStats(playbookTasks);
+      const badge = document.getElementById("pbBadge");
+      if (badge) badge.textContent = playbookTasks.length ? `${stats.done}/${stats.total} done · ${stats.completionPct}%` : "";
+      const bar = document.getElementById("pbProgressBar");
+      if (bar) bar.style.width = (stats.completionPct || 0) + "%";
+      let tasks = playbookTasks;
+      if (pbOpenOnly) tasks = tasks.filter(t => t.status !== "done" && t.status !== "skipped");
+      if (!tasks.length) {
+        el.innerHTML = `<div style='color:#9aa4b2;font-size:12px'>${playbookTasks.length ? "No open tasks — all done or skipped." : "No tasks yet — run synthesis (or add a custom task below)."}</div>`;
+        return;
+      }
+      el.innerHTML = tasks.map(t => {
+        const opts = PB_STATUS.map(([v, l]) => `<option value="${v}" ${t.status === v ? "selected" : ""}>${l}</option>`).join("");
+        const src = t.source === "custom" ? "custom" : (t.source === "finding" ? "from finding" : "from next step");
+        const findingLink = t.relatedFindingId ? `<a href="#" class="pb-finding-link" title="Go to findings" onclick="pbJumpFinding();return false">↳ finding</a>` : "";
+        const desc = t.description ? `<div class="pb-desc">${esc(t.description)}</div>` : "";
+        return `<div class="pb-task pb-${escAttr(t.status)}" data-id="${escAttr(t.id)}">` +
+          `<div class="pb-row1">` +
+            `<select class="pb-status" onchange="pbPatch('${escAttr(t.id)}',{status:this.value})">${opts}</select>` +
+            `<span class="pb-pri pb-pri-${escAttr(t.priority)}">${esc(t.priority)}</span>` +
+            `<span class="pb-title">${esc(t.title)}</span>` +
+            `<span class="pb-src">${src}</span>${findingLink}` +
+            `<span class="pb-move">` +
+              `<button onclick="pbMove('${escAttr(t.id)}',-1)" title="Move up">▲</button>` +
+              `<button onclick="pbMove('${escAttr(t.id)}',1)" title="Move down">▼</button>` +
+              `<button class="pb-del" onclick="pbDelete('${escAttr(t.id)}')" title="Delete">✕</button>` +
+            `</span>` +
+          `</div>` + desc +
+          `<div class="pb-row2">` +
+            `<input class="pb-assignee" placeholder="assignee" value="${escAttr(t.assignee || "")}" onchange="pbPatch('${escAttr(t.id)}',{assignee:this.value})" />` +
+            `<input class="pb-due" type="date" value="${escAttr(t.dueDate || "")}" onchange="pbPatch('${escAttr(t.id)}',{dueDate:this.value})" title="Due date" />` +
+          `</div>` +
+        `</div>`;
+      }).join("");
+    }
+
+    function pbPatch(id, patch) {
+      const caseId = pbCaseId(); if (!caseId) return;
+      fetch(`/cases/${caseId}/playbook/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => loadPlaybook(caseId))
+        .catch(e => { const m = document.getElementById("pbMsg"); if (m) m.textContent = "failed (restart the companion server?): " + e.message; });
+    }
+
+    function pbDelete(id) {
+      const caseId = pbCaseId(); if (!caseId) return;
+      fetch(`/cases/${caseId}/playbook/${id}`, { method: "DELETE" }).then(() => loadPlaybook(caseId)).catch(() => {});
+    }
+
+    function pbMove(id, dir) {
+      const ids = playbookTasks.map(t => t.id);
+      const i = ids.indexOf(id); if (i < 0) return;
+      const j = i + dir; if (j < 0 || j >= ids.length) return;
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+      const caseId = pbCaseId(); if (!caseId) return;
+      fetch(`/cases/${caseId}/playbook/order`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) })
+        .then(() => loadPlaybook(caseId)).catch(() => {});
+    }
+
+    function pbJumpFinding() {
+      const sec = document.getElementById("sec-findings");
+      if (sec) { sec.classList.remove("collapsed"); sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
+    }
+
+    document.getElementById("pbAddBtn").onclick = function() {
+      const caseId = pbCaseId();
+      const title = document.getElementById("pbTitle").value.trim();
+      const priority = document.getElementById("pbPriority").value;
+      const msg = document.getElementById("pbMsg");
+      if (!caseId || !title) { if (msg) msg.textContent = "title required"; return; }
+      if (msg) msg.textContent = "adding…";
+      fetch(`/cases/${caseId}/playbook`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title, priority }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => { document.getElementById("pbTitle").value = ""; if (msg) msg.textContent = ""; loadPlaybook(caseId); })
+        .catch(e => { if (msg) msg.textContent = "failed: " + e.message; });
+    };
+
+    document.getElementById("pbSyncBtn").onclick = function() {
+      const caseId = pbCaseId(); if (!caseId) return;
+      const msg = document.getElementById("pbMsg"); if (msg) msg.textContent = "syncing…";
+      fetch(`/cases/${caseId}/playbook/sync`, { method: "POST" })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => { if (msg) msg.textContent = ""; loadPlaybook(caseId); })
+        .catch(e => { if (msg) msg.textContent = "sync failed (restart the companion server?): " + e.message; });
+    };
+
+    document.getElementById("pbOpenOnly").addEventListener("change", function() { pbOpenOnly = this.checked; renderPlaybook(); });
 
     // --- Hunt-pivot query generator -----------------------------------------------
     // From a forensic event or IOC, generate ready-to-adapt hunt/pivot queries for the tools
@@ -3975,6 +4145,7 @@
       loadTags(caseId);
       loadNotebook(caseId);
       loadNbAiToggle(caseId);
+      loadPlaybook(caseId);
       loadStarred(caseId);
       selectedEvents.clear();
       showStarredOnly = false;
@@ -4002,11 +4173,12 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); loadSynthMeta(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
+        else if (msg.type === "playbook_changed") loadPlaybook(caseId);
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
         else if (msg.type === "velo_hunt_changed") loadVeloHuntJobs(caseId);
@@ -4944,6 +5116,7 @@
       { id: "sec-next-steps",   label: "Recommended Next Steps" },
       { id: "sec-attack-path",  label: "Attack Path" },
       { id: "sec-findings",     label: "Findings" },
+      { id: "sec-playbook",     label: "Playbook" },
       { id: "sec-timeline",     label: "Forensic Timeline" },
       { id: "sec-kill-chain",   label: "Kill Chain" },
       { id: "sec-phases",       label: "Attack Phases" },

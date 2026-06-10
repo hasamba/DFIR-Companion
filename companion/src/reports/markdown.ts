@@ -8,6 +8,7 @@ import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.
 import { attackTechniqueMd } from "../analysis/attack.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
+import { playbookStats, type PlaybookStatus, type PlaybookTask } from "../analysis/playbook.js";
 
 // Renders report.md following the AnttiKurittu incident-report-template structure
 // (https://github.com/AnttiKurittu/incident-report-template). Technical sections are
@@ -429,6 +430,30 @@ function conclusions(state: InvestigationState, meta: ReportMeta, lines: string[
   }
 }
 
+const PLAYBOOK_STATUS_LABEL: Record<PlaybookStatus, string> = {
+  todo: "To do",
+  in_progress: "In progress",
+  done: "Done",
+  skipped: "Skipped",
+};
+
+function playbookSection(tasks: PlaybookTask[], lines: string[]): void {
+  lines.push("## Response Playbook", "");
+  const stats = playbookStats(tasks);
+  lines.push(
+    `_Actionable remediation/investigation checklist derived from the recommended next steps and high-severity findings, tracked by the analyst. **${stats.done}/${stats.total} complete (${stats.completionPct}%)**._`,
+    "",
+  );
+  lines.push("| # | Status | Priority | Task | Assignee | Due | Notes |", "| --- | --- | --- | --- | --- | --- | --- |");
+  tasks.forEach((t, i) => {
+    const status = PLAYBOOK_STATUS_LABEL[t.status] ?? t.status;
+    lines.push(
+      `| ${i + 1} | ${status} | ${t.priority.toUpperCase()} | ${cellMd(t.title)} | ${cellMd(t.assignee || "—")} | ${cellMd(t.dueDate || "—")} | ${cellMd(t.notes || "—")} |`,
+    );
+  });
+  lines.push("");
+}
+
 function analystNotebook(entries: NotebookEntry[], lines: string[]): void {
   lines.push("## Analyst Notebook", "");
   lines.push("_Investigator working notes — hypotheses, open questions, and observations recorded during the investigation._", "");
@@ -455,6 +480,7 @@ export function renderMarkdownReport(
   exposure?: CustomerExposureSummary,
   assetGraph?: AssetGraph,
   notebookEntries?: NotebookEntry[],
+  playbookTasks?: PlaybookTask[],
 ): string {
   const lines: string[] = [];
 
@@ -481,6 +507,10 @@ export function renderMarkdownReport(
 
   investigation(state, lines, exposure, assetGraph);
   conclusions(state, meta, lines);
+
+  if (playbookTasks && playbookTasks.length > 0) {
+    playbookSection(playbookTasks, lines);
+  }
 
   if (notebookEntries && notebookEntries.length > 0) {
     analystNotebook(notebookEntries, lines);

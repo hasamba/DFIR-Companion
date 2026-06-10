@@ -13,7 +13,8 @@ import { MockProvider } from "../src/providers/provider.js";
 import { ReportWriter } from "../src/reports/reportWriter.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
 import { CommentsStore } from "../src/analysis/comments.js";
-import { emptyState } from "../src/analysis/stateTypes.js";
+import { PlaybookStore } from "../src/analysis/playbookStore.js";
+import { emptyState, type InvestigationState } from "../src/analysis/stateTypes.js";
 import type { CustomerExposureProvider } from "../src/analysis/customerExposure.js";
 
 let app: ReturnType<typeof createApp>;
@@ -1436,5 +1437,80 @@ describe("manual entry (events / IOCs the AI didn't catch)", () => {
     expect(r2.status).toBe(409);
     const state = await stateStore.load("c1");
     expect(state.iocs.filter((i) => i.value === "8.8.8.8")).toHaveLength(1);
+  });
+});
+
+describe("playbook routes (issue #36)", () => {
+  async function freshPlaybookApp(seed?: Partial<InvestigationState>) {
+    const root = await mkdtemp(join(tmpdir(), "dfir-playbook-route-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const playbookStore = new PlaybookStore(store);
+    const events: string[] = [];
+    const app = createApp(store, { stateStore, playbookStore, onPlaybook: () => events.push("changed") });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    if (seed) await stateStore.save({ ...emptyState("c1"), ...seed });
+    return { app, stateStore, playbookStore, events };
+  }
+
+  const NEXT_STEP = { id: "ns1", priority: "high" as const, action: "Pull 4624/4672", rationale: "confirm logon", pointer: "ALClient07" };
+  const CRIT_FINDING = {
+    id: "f1", severity: "Critical" as const, title: "Ransomware staged", description: "lockbit.exe",
+    relatedIocs: [], sourceScreenshots: [], mitreTechniques: [], firstSeen: "2026-06-10T00:00:00Z", lastUpdated: "2026-06-10T00:00:00Z", status: "open" as const,
+  };
+
+  it("GET auto-derives tasks from next steps + Critical/High findings and returns completion stats", async () => {
+    const { app } = await freshPlaybookApp({ nextSteps: [NEXT_STEP], findings: [CRIT_FINDING] });
+    const res = await request(app).get("/cases/c1/playbook");
+    expect(res.status).toBe(200);
+    expect(res.body.tasks.map((t: { id: string }) => t.id)).toEqual(["next_step:ns1", "finding:f1"]);
+    expect(res.body.stats).toMatchObject({ total: 2, done: 0, completionPct: 0 });
+  });
+
+  it("PATCH updates status and the GET stats reflect completion (preserved across re-sync)", async () => {
+    const { app } = await freshPlaybookApp({ nextSteps: [NEXT_STEP] });
+    await request(app).get("/cases/c1/playbook");                       // materialize
+    const patch = await request(app).patch("/cases/c1/playbook/next_step:ns1").send({ status: "done", assignee: "ana" });
+    expect(patch.status).toBe(200);
+    const res = await request(app).get("/cases/c1/playbook");           // re-syncs, must preserve status
+    expect(res.body.tasks[0]).toMatchObject({ status: "done", assignee: "ana" });
+    expect(res.body.stats).toMatchObject({ total: 1, done: 1, completionPct: 100 });
+  });
+
+  it("POST adds a custom task; POST /sync re-derives; PATCH /order reorders; DELETE removes", async () => {
+    const { app, events } = await freshPlaybookApp({ nextSteps: [NEXT_STEP] });
+    const add = await request(app).post("/cases/c1/playbook").send({ title: "Call client", priority: "high" });
+    expect(add.status).toBe(201);
+    const customId = add.body.id;
+    expect(customId).toMatch(/^custom:/);
+
+    const sync = await request(app).post("/cases/c1/playbook/sync");
+    expect(sync.status).toBe(200);
+    expect(sync.body.tasks).toHaveLength(2);                            // derived next step + custom
+
+    const order = await request(app).patch("/cases/c1/playbook/order").send({ ids: [customId, "next_step:ns1"] });
+    expect(order.status).toBe(200);
+    expect(order.body.tasks.map((t: { id: string }) => t.id)).toEqual([customId, "next_step:ns1"]);
+
+    const del = await request(app).delete(`/cases/c1/playbook/${customId}`);
+    expect(del.status).toBe(204);
+    const after = await request(app).get("/cases/c1/playbook");
+    expect(after.body.tasks.map((t: { id: string }) => t.id)).toEqual(["next_step:ns1"]);
+    expect(events.length).toBeGreaterThan(0);                          // WS broadcast fired
+  });
+
+  it("rejects an empty title (400) and a missing task (404)", async () => {
+    const { app } = await freshPlaybookApp({});
+    expect((await request(app).post("/cases/c1/playbook").send({ title: "  " })).status).toBe(400);
+    expect((await request(app).patch("/cases/c1/playbook/nope").send({ status: "done" })).status).toBe(404);
+    expect((await request(app).delete("/cases/c1/playbook/nope")).status).toBe(404);
+  });
+
+  it("returns 501 when no playbook store is configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-playbook-off-"));
+    const store = new CaseStore(root);
+    const off = createApp(store, { stateStore: new StateStore(store) });
+    await request(off).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    expect((await request(off).get("/cases/c1/playbook")).status).toBe(501);
   });
 });
