@@ -161,6 +161,86 @@ describe("VelociraptorClient.huntResults", () => {
   });
 });
 
+describe("VelociraptorClient.listClientArtifacts", () => {
+  it("queries client artifact_definitions and returns name+description without the row cap", async () => {
+    let program = "";
+    const rows = Array.from({ length: 10 }, (_, i) => ({ name: `Windows.Test.A${i}`, description: `d${i}`, type: "CLIENT" }));
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows, raw: "" }; };
+    const out = await new VelociraptorClient(cfg, runner).listClientArtifacts();   // cfg.maxRows = 3
+    expect(program).toContain("artifact_definitions()");
+    expect(program.toLowerCase()).toContain("client");
+    expect(out).toHaveLength(10);   // metadata, NOT capped at maxRows
+    expect(out[0]).toEqual({ name: "Windows.Test.A0", description: "d0" });
+  });
+});
+
+describe("VelociraptorClient.launchArtifactHunt", () => {
+  it("launches a hunt over the chosen artifacts and returns the hunt id + gui link", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.B1", state: "RUNNING" } }], raw: "" }; };
+    const res = await new VelociraptorClient({ ...cfg, guiUrl: "https://velo.example/" }, runner)
+      .launchArtifactHunt(["Windows.System.Pslist", "Windows.Network.Netstat"], "Fast Triage");
+    expect(res.huntId).toBe("H.B1");
+    expect(res.artifacts).toEqual(["Windows.System.Pslist", "Windows.Network.Netstat"]);
+    expect(res.guiUrl).toBe("https://velo.example/app/index.html#/hunts/H.B1");
+    expect(program).toContain("hunt(");
+    expect(program).toContain("artifacts=['Windows.System.Pslist', 'Windows.Network.Netstat']");
+  });
+
+  it("adds include/exclude label + OS clauses and sanitizes label values", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.B2", state: "RUNNING" } }], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).launchArtifactHunt(["Windows.System.Pslist"], "x", {
+      includeLabels: ["workstations"], excludeLabels: ["servers", "bad'; DROP"], os: "windows",
+    });
+    expect(program).toContain("include_labels=['workstations']");
+    expect(program).toContain("exclude_labels=['servers', 'bad DROP']");   // quote + semicolon stripped
+    expect(program).toContain("os='windows'");
+  });
+
+  it("ignores an unknown os and omits empty label clauses", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.B4", state: "RUNNING" } }], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).launchArtifactHunt(["Windows.System.Pslist"], "x", { os: "solaris" as never });
+    expect(program).not.toContain("os=");
+    expect(program).not.toContain("include_labels=");
+    expect(program).not.toContain("exclude_labels=");
+  });
+
+  it("rejects an injection-y artifact name and an empty list", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ Hunt: { HuntId: "H.B3" } }], raw: "" });
+    const c = new VelociraptorClient(cfg, runner);
+    await expect(c.launchArtifactHunt(["Windows.System.Pslist", "bad name'"], "x")).rejects.toThrow(/invalid artifact/);
+    await expect(c.launchArtifactHunt([], "x")).rejects.toThrow(/no artifacts/);
+  });
+
+  it("throws when no hunt id comes back", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ Hunt: {} }], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).launchArtifactHunt(["Windows.System.Pslist"], "x")).rejects.toThrow(/hunt id/);
+  });
+});
+
+describe("VelociraptorClient.huntResultsByArtifact", () => {
+  it("builds an artifact-map keyed by artifact, dropping artifacts with no rows yet", async () => {
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("Pslist")) return { rows: [{ Name: "evil.exe" }], raw: "" };
+      return { rows: [], raw: "" };   // Netstat returns nothing yet
+    };
+    const map = await new VelociraptorClient(cfg, runner).huntResultsByArtifact("H.ABC123", ["Windows.System.Pslist", "Windows.Network.Netstat"]);
+    expect(Object.keys(map)).toEqual(["Windows.System.Pslist"]);
+    expect(map["Windows.System.Pslist"]).toHaveLength(1);
+  });
+
+  it("rejects a malformed hunt id and skips invalid artifact names", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ a: 1 }], raw: "" });
+    const c = new VelociraptorClient(cfg, runner);
+    await expect(c.huntResultsByArtifact("bad id", ["Windows.System.Pslist"])).rejects.toThrow(/invalid hunt id/);
+    const map = await c.huntResultsByArtifact("H.OK1", ["bad name", "Windows.System.Pslist"]);
+    expect(Object.keys(map)).toEqual(["Windows.System.Pslist"]);
+  });
+});
+
 describe("loadVelociraptorConfig / buildVelociraptorClient", () => {
   it("returns null/undefined when DFIR_VELOCIRAPTOR_API_CONFIG is unset", () => {
     expect(loadVelociraptorConfig({})).toBeNull();

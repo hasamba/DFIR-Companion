@@ -85,7 +85,9 @@ import {
 } from "./analysis/customerExposure.js";
 import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
-import { VelociraptorClient, buildVelociraptorClient } from "./integrations/velociraptor/velociraptorApi.js";
+import { VelociraptorClient, buildVelociraptorClient, type HuntTarget } from "./integrations/velociraptor/velociraptorApi.js";
+import { ArtifactBundleStore } from "./analysis/artifactBundleStore.js";
+import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
 import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
 import { pushCaseToTimesketch, type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
@@ -200,6 +202,12 @@ export interface AppOptions {
   // Velociraptor API: a configured client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) lets the
   // dashboard run the generated hunt VQL against the server and show the rows inline.
   velociraptorClient?: VelociraptorClient;
+  // Triage bundles (global, shared across cases): named selections of Velociraptor CLIENT artifacts
+  // the analyst runs as a hunt. Per-case veloHuntStore tracks the in-flight/last bundle hunt so the
+  // dashboard can show its status + countdown; onVeloHunt broadcasts a change to the case's clients.
+  artifactBundleStore?: ArtifactBundleStore;
+  veloHuntStore?: VeloHuntStore;
+  onVeloHunt?: (caseId: string) => void;
   // Which hunt-query platforms the dashboard's 🔍 generator offers (DFIR_HUNT_PLATFORMS allowlist).
   // Exposed on /health so the dashboard renders only these cards. Undefined → all platforms.
   huntPlatforms?: HuntPlatform[];
@@ -237,6 +245,13 @@ function evidenceContentType(file: string): string {
     case ".json": return "application/json; charset=utf-8";
     default: return "application/octet-stream";
   }
+}
+
+// Normalize a label/tag input that may arrive as a comma-separated string or an array of strings.
+function toStringArray(v: unknown): string[] {
+  if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
+  if (Array.isArray(v)) return v.map((s) => String(s).trim()).filter(Boolean);
+  return [];
 }
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
@@ -776,6 +791,208 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
     }
+  });
+
+  // ── Velociraptor triage bundles ───────────────────────────────────────────────────────────
+  // On-demand: list collectable CLIENT artifacts → build/save named bundles → run a bundle as a hunt
+  // → after a delay, collect results, auto-import (deterministic Velociraptor importer) + synthesize.
+
+  // List the server's collectable CLIENT artifacts (the bundle builder's picker source).
+  app.get("/velociraptor/artifacts", async (_req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    try {
+      const artifacts = await options.velociraptorClient.listClientArtifacts();
+      return res.status(200).json({ artifacts });
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Bundle CRUD (global / shared across cases). GET works even without a Velociraptor client so an
+  // analyst can assemble bundles before connecting a server.
+  app.get("/bundles", async (_req: Request, res: Response) => {
+    if (!options.artifactBundleStore) return res.status(200).json([]);
+    try {
+      return res.status(200).json(await options.artifactBundleStore.list());
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/bundles", async (req: Request, res: Response) => {
+    if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
+    try {
+      const { id, name, description, artifacts, defaultWaitMinutes } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: "name is required" });
+      if (!Array.isArray(artifacts) || artifacts.length === 0) return res.status(400).json({ error: "at least one artifact is required" });
+      const saved = await options.artifactBundleStore.save({ id, name, description, artifacts, defaultWaitMinutes });
+      return res.status(201).json(saved);
+    } catch (err) {
+      if ((err as Error).message.includes("built-in")) return res.status(400).json({ error: (err as Error).message });
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/bundles/:id", async (req: Request, res: Response) => {
+    if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
+    try {
+      const found = await options.artifactBundleStore.delete(req.params.id);
+      if (!found) return res.status(404).json({ error: `bundle "${req.params.id}" not found` });
+      return res.status(204).send();
+    } catch (err) {
+      if ((err as Error).message.includes("built-in")) return res.status(400).json({ error: (err as Error).message });
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // In-memory timers for the pending auto-collect (one per case). Lost on a server restart BY DESIGN —
+  // the job is persisted (veloHuntStore), so after a restart the dashboard still shows it and the
+  // analyst triggers collection with "Collect now". .unref() so a pending timer never blocks exit.
+  const veloHuntTimers = new Map<string, NodeJS.Timeout>();
+
+  // Collect a bundle hunt's results, import them through the SAME deterministic Velociraptor path a
+  // manual import uses (evidence-first persist → importVelociraptor → import-meta diff → synthesis),
+  // and update the persisted job. Never throws (it runs from a timer). Re-runnable: a later collect
+  // pulls stragglers (correlation dedups re-imported rows).
+  async function importVeloHuntResults(caseId: string): Promise<void> {
+    const client = options.velociraptorClient;
+    const huntStore = options.veloHuntStore;
+    const pipeline = options.pipeline;
+    if (!client || !huntStore || !pipeline) return;
+    const pending = veloHuntTimers.get(caseId);
+    if (pending) { clearTimeout(pending); veloHuntTimers.delete(caseId); }
+
+    let job = await huntStore.load(caseId);
+    if (!job) return;
+    if (job.status === "collecting") return;   // a collection is already in flight for this case
+    try {
+      job = { ...job, status: "collecting" };
+      await huntStore.save(caseId, job);
+      options.onVeloHunt?.(caseId);
+
+      const map = await client.huntResultsByArtifact(job.huntId, job.artifacts);
+      const totalRows = Object.values(map).reduce((n, rows) => n + rows.length, 0);
+
+      let addedEvents = 0;
+      let addedIocs = 0;
+      let importFile: string | undefined;
+      if (totalRows > 0) {
+        const json = JSON.stringify(map);
+        const seq = await store.nextImportSeq(caseId);
+        const storedName = `${String(seq).padStart(4, "0")}_velo-hunt_${job.huntId}.json`;
+        const importedAt = new Date().toISOString();
+        await store.saveImport(caseId, storedName, json);
+        await store.appendImport(caseId, {
+          caseId, sequenceNumber: seq, importedAt, filename: storedName,
+          originalName: storedName, rows: 0, bytes: Buffer.byteLength(json, "utf8"),
+        });
+        importFile = storedName;
+
+        let timelineBefore: ForensicEvent[] = [];
+        let iocsBefore: IOC[] = [];
+        if (options.stateStore) {
+          try { const s = await options.stateStore.load(caseId); timelineBefore = s.forensicTimeline; iocsBefore = s.iocs; } catch { /* keep [] */ }
+        }
+        options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing Velociraptor hunt ${job.huntId} (${Object.keys(map).length} artifact(s), ${totalRows} row(s))` });
+        await pipeline.importVelociraptor(caseId, json, { label: storedName, idPrefix: `${seq}`, importedAt });
+        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+
+        if (options.importMetaStore && options.stateStore) {
+          try {
+            const s = await options.stateStore.load(caseId);
+            const diff = diffTimeline(timelineBefore, s.forensicTimeline);
+            const iocsDiff = diffIocs(iocsBefore, s.iocs);
+            addedEvents = diff.added.length;
+            addedIocs = iocsDiff.added.length;
+            await options.importMetaStore.record(caseId, { kind: "velociraptor", file: storedName, diff, iocsDiff });
+            options.onImportMeta?.(caseId);
+          } catch { /* non-fatal */ }
+        }
+      }
+
+      job = { ...job, status: "imported", importedAt: new Date().toISOString(), importFile, addedEvents, addedIocs, error: undefined };
+      await huntStore.save(caseId, job);
+      options.onVeloHunt?.(caseId);
+      if (totalRows > 0) resynthesizeInBackground(caseId);
+    } catch (err) {
+      try {
+        const cur = await huntStore.load(caseId);
+        if (cur) await huntStore.save(caseId, { ...cur, status: "error", error: (err as Error).message });
+      } catch { /* ignore */ }
+      options.onVeloHunt?.(caseId);
+      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: `Velociraptor hunt collect failed: ${(err as Error).message}` });
+    }
+  }
+
+  // Run a saved bundle as a hunt (optionally scoped by label/OS), schedule auto-collect after
+  // waitMinutes (default DFIR_VELO_HUNT_WAIT_MIN / bundle default / 10; clamped 1..1440), and respond
+  // immediately. The hunt stays open on the server until its expiry — we just snapshot results later.
+  app.post("/cases/:id/velociraptor/run-bundle", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.artifactBundleStore || !options.veloHuntStore) return res.status(501).json({ error: "bundle store not configured" });
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const bundleId = String(req.body?.bundleId ?? "").trim();
+    if (!bundleId) return res.status(400).json({ error: "bundleId is required" });
+    try {
+      const bundle = await options.artifactBundleStore.get(bundleId);
+      if (!bundle) return res.status(404).json({ error: `bundle "${bundleId}" not found` });
+      if (!bundle.artifacts.length) return res.status(400).json({ error: "bundle has no artifacts" });
+
+      const fallback = Number(process.env.DFIR_VELO_HUNT_WAIT_MIN) || bundle.defaultWaitMinutes || 10;
+      const reqWait = Number(req.body?.waitMinutes);
+      const waitMinutes = Math.min(1440, Math.max(1, Number.isFinite(reqWait) && reqWait > 0 ? reqWait : fallback));
+      const os = ["windows", "linux", "darwin"].includes(String(req.body?.os)) ? (req.body.os as HuntTarget["os"]) : undefined;
+      const target: HuntTarget = {
+        includeLabels: toStringArray(req.body?.includeLabels),
+        excludeLabels: toStringArray(req.body?.excludeLabels),
+        os,
+      };
+
+      logLine(`[velociraptor] run bundle "${bundle.name}" (${bundle.artifacts.length} artifact(s)), collect in ${waitMinutes}m`);
+      const launch = await options.velociraptorClient.launchArtifactHunt(bundle.artifacts, bundle.name, target);
+      const collectAt = new Date(Date.now() + waitMinutes * 60_000).toISOString();
+      const job: VeloHuntJob = {
+        bundleId: bundle.id, bundleName: bundle.name, artifacts: launch.artifacts,
+        huntId: launch.huntId, guiUrl: launch.guiUrl,
+        launchedAt: new Date().toISOString(), waitMinutes, collectAt,
+        status: "running", target,
+      };
+      await options.veloHuntStore.save(caseId, job);
+      options.onVeloHunt?.(caseId);
+
+      const prev = veloHuntTimers.get(caseId);
+      if (prev) clearTimeout(prev);
+      const timer = setTimeout(() => { void importVeloHuntResults(caseId); }, waitMinutes * 60_000);
+      timer.unref?.();
+      veloHuntTimers.set(caseId, timer);
+
+      return res.status(202).json({ huntId: launch.huntId, guiUrl: launch.guiUrl, collectAt, waitMinutes, artifacts: launch.artifacts });
+    } catch (err) {
+      logLine(`[velociraptor] run bundle ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // The current / last bundle hunt for a case (status + countdown + outcome). null when none.
+  app.get("/cases/:id/velociraptor/hunt-job", async (req: Request, res: Response) => {
+    if (!options.veloHuntStore) return res.status(200).json(null);
+    try {
+      return res.status(200).json(await options.veloHuntStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Collect the pending hunt NOW (don't wait for the timer). Runs in the background; poll hunt-job.
+  app.post("/cases/:id/velociraptor/collect", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.veloHuntStore) return res.status(501).json({ error: "hunt store not configured" });
+    const caseId = req.params.id;
+    const job = await options.veloHuntStore.load(caseId);
+    if (!job) return res.status(404).json({ error: "no Velociraptor hunt to collect for this case" });
+    res.status(202).json({ accepted: true, huntId: job.huntId });
+    void importVeloHuntResults(caseId);
   });
 
   // Push a case to DFIR-IRIS: find-or-create the case by name, then push assets→assets,
@@ -3033,6 +3250,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStoreImpl(store);
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
+  const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
+  const veloHuntStore = new VeloHuntStore(store);
   const hub = new LiveHub();
   const reportMetaStore = new ReportMetaStore(store);
   const commentsStore = new CommentsStore(store);
@@ -3094,6 +3313,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     enrichHealthPollMs: process.env.DFIR_ENRICH_HEALTH_POLL_MS === "0" ? 0 : (Number(process.env.DFIR_ENRICH_HEALTH_POLL_MS) || 60_000),
     irisClient: buildIrisClient(),
     velociraptorClient: buildVelociraptorClient(),
+    artifactBundleStore,
+    veloHuntStore,
+    onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),
     // Trim the dashboard's hunt-query modal to the tools this team runs (default: all).
     huntPlatforms: resolveHuntPlatforms(process.env.DFIR_HUNT_PLATFORMS),
     irisOptions: irisPushOptions(),

@@ -315,6 +315,20 @@ button does NOT run server-side: `launchHunt()` packages the pivot VQL as a **CL
 back addressed as `artifact/source`. Routes `POST /velociraptor/hunt` + `/velociraptor/hunt-results`
 (+ server-side `/velociraptor/run`); `/health.velociraptorEnabled` gates the button. VQL statements
 are passed as separate positional args with comments stripped (a leading `--` is parsed as a CLI flag).
+**Triage bundles** build on the same client+runner: `listClientArtifacts()` (browse `artifact_definitions()`
+type CLIENT), `launchArtifactHunt(artifacts, desc, {includeLabels,excludeLabels,os})` (hunt over a chosen
+SET of existing artifacts with Velociraptor's own include/exclude/OS conditions), and `huntResultsByArtifact()`
+(collect per-artifact into the `{ "Artifact.Name": [rows] }` artifact-map `importVelociraptor` already eats).
+A **bundle** is a named artifact list — global, shared across cases (mirrors `TemplateStore`): `ArtifactBundleStore`
+(`BUILT_IN_BUNDLES` Fast/Full Triage + custom JSON in a `bundles/` dir next to `cases/`). Running one launches
+a hunt, persists a per-case `VeloHuntStore` job (`state/velo-hunt.json`, so it survives the #1-gotcha restart),
+and schedules an **in-memory timer** (`DFIR_VELO_HUNT_WAIT_MIN`, default 10 min, clamped 1..1440) that — best-effort,
+recoverable via **Collect now** — runs `importVeloHuntResults` in `createApp`'s closure: it routes results through the
+SAME path as the `/import` route (evidence-first persist → `importVelociraptor` → `diffTimeline`/`diffIocs` import-meta
+→ `resynthesizeInBackground`). Routes: `GET /velociraptor/artifacts`, `GET/POST/DELETE /bundles`,
+`POST /cases/:id/velociraptor/run-bundle` + `…/hunt-job` + `…/collect`; `onVeloHunt` WS-broadcasts `velo_hunt_changed`.
+Server-only (no `scripts/*` pipeline wiring). When you add hunt-condition options, keep the label/name sanitization
+in `velociraptorApi.ts` (no VQL-string injection — names match `ARTIFACT_RE`, labels stripped to a safe charset).
 **Notion** (`integrations/notion/` — `notionClient` + pure `notionBlocks` renderer + `pushCaseToNotion`
 orchestrator + `NotionExportStore`) exports a case into a Notion page (`DFIR_NOTION_TOKEN`; route
 `POST /cases/:id/push/notion`, `/notion/status`, `/health.notionEnabled`). The crux: the Companion
