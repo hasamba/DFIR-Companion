@@ -333,12 +333,14 @@ A **bundle** is a named artifact list — global, shared across cases (mirrors `
 (flagged `customized`); `delete()` removes the file — deleting a custom bundle, or **resetting** an edited built-in to
 its default. The whole triage UI lives in its own **Settings → Velociraptor** tab (it's config/action, not a
 results view); the imported events surface on the normal dashboard timeline/IOCs. Running one launches
-a hunt, persists a per-case `VeloHuntStore` job (`state/velo-hunt.json`, so it survives the #1-gotcha restart),
-and schedules an **in-memory timer** (`DFIR_VELO_HUNT_WAIT_MIN`, default 10 min, clamped 1..1440) that — best-effort,
+a hunt and appends a `VeloHuntStore` job to the per-case **list** (`state/velo-hunt.json` is an array keyed by
+hunt id — **multiple hunts run concurrently**, a second run doesn't drop the first; old single-object files load
+as a one-element list). It survives the #1-gotcha restart, and schedules an **in-memory timer keyed by hunt id**
+(`DFIR_VELO_HUNT_WAIT_MIN`, default 10 min, clamped 1..1440) that — best-effort,
 recoverable via **Collect now** — runs `importVeloHuntResults` in `createApp`'s closure: it routes results through the
 SAME path as the `/import` route (evidence-first persist → `importVelociraptor` → `diffTimeline`/`diffIocs` import-meta
 → `resynthesizeInBackground`). Routes: `GET /velociraptor/artifacts`, `GET/POST/DELETE /bundles`,
-`POST /cases/:id/velociraptor/run-bundle` + `…/hunt-job` + `…/collect`; `onVeloHunt` WS-broadcasts `velo_hunt_changed`.
+`POST /cases/:id/velociraptor/run-bundle` + `…/hunt-jobs` (list) + `…/collect` (`{huntId}`); `onVeloHunt` WS-broadcasts `velo_hunt_changed`.
 Server-only (no `scripts/*` pipeline wiring). When you add hunt-condition options, keep the label/name sanitization
 in `velociraptorApi.ts` (no VQL-string injection — names match `ARTIFACT_RE`, labels stripped to a safe charset).
 **Notion** (`integrations/notion/` — `notionClient` + pure `notionBlocks` renderer + `pushCaseToNotion`
