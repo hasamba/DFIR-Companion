@@ -1089,8 +1089,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const state = await options.stateStore.load(caseId);
       const meta = options.reportMetaStore ? await options.reportMetaStore.load(caseId) : undefined;
+      // Push the analyst-curated playbook (status-aware) when available, else the raw next steps.
+      const playbookTasks = options.playbookStore ? await syncPlaybook(caseId) : undefined;
       logLine(`[iris] ${caseId} push START`);
-      const result = await pushCaseToIris(options.irisClient, { caseName: caseId, state, meta }, options.irisOptions);
+      const result = await pushCaseToIris(
+        options.irisClient,
+        { caseName: caseId, state, meta, playbookTasks: playbookTasks?.length ? playbookTasks : undefined },
+        options.irisOptions,
+      );
       logLine(`[iris] ${caseId} push DONE -> case ${result.caseId} (${result.created ? "created" : "updated"}); ` +
         `assets +${result.assets.added}/${result.assets.existing}, iocs +${result.iocs.added}/${result.iocs.existing}, ` +
         `timeline +${result.timeline.added}/${result.timeline.existing}, tasks +${result.tasks.added}/${result.tasks.existing}, ` +

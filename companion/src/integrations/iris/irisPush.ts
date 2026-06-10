@@ -12,8 +12,10 @@ import { buildAssetGraph, type AssetGraph } from "../../analysis/assetGraph.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
 import { emptyReportMeta } from "../../reports/reportMeta.js";
 import {
-  mapAsset, mapIoc, mapEvent, mapNextStepTask, buildNotes, executiveSummaryMarkdown,
+  mapAsset, mapIoc, mapEvent, mapNextStepTask, mapPlaybookTask, playbookStatusCandidates,
+  buildNotes, executiveSummaryMarkdown,
 } from "./irisMap.js";
+import type { PlaybookTask } from "../../analysis/playbook.js";
 import type {
   IrisCaseCreate, IrisCaseRef, IrisAssetRef, IrisIocRef, IrisEventRef, IrisDirRef, IrisTaskRef,
   IrisAssetBody, IrisIocBody, IrisEventBody, IrisTaskBody,
@@ -48,6 +50,9 @@ export interface IrisPushInput {
   state: InvestigationState;
   meta?: ReportMeta;
   assetGraph?: AssetGraph;             // defaults to buildAssetGraph(state)
+  // Response Playbook tasks (issue #36). When present, these are pushed as IRIS tasks (status-aware)
+  // INSTEAD of the raw recommended next steps — the playbook is the analyst-curated superset.
+  playbookTasks?: PlaybookTask[];
 }
 
 export interface IrisPushOptions {
@@ -191,18 +196,29 @@ export async function pushCaseToIris(
     }
   }
 
-  // 8. Recommended Next Steps → IRIS tasks (dedupe by title; status "To do").
-  if (input.state.nextSteps.length) {
-    let statusId = 1;
-    try {
-      const statuses = await client.taskStatusMap();
-      statusId = statuses.get("to do") ?? statuses.get("open") ?? [...statuses.values()][0] ?? 1;
-    } catch (err) { warnings.push(`task status: ${(err as Error).message}`); }
+  // 8. Tasks → IRIS tasks. Prefer the analyst-curated PLAYBOOK (status-aware) when present,
+  //    else fall back to the raw recommended next steps. Dedupe by title — IRIS tasks are
+  //    create-only here (matching the asset/IOC/event idempotency model), so a re-push won't
+  //    duplicate but also won't update an existing task's status.
+  const usePlaybook = (input.playbookTasks?.length ?? 0) > 0;
+  if (usePlaybook || input.state.nextSteps.length) {
+    let statuses = new Map<string, number>();
+    try { statuses = await client.taskStatusMap(); }
+    catch (err) { warnings.push(`task status: ${(err as Error).message}`); }
+    const fallbackStatus = statuses.get("to do") ?? statuses.get("open") ?? [...statuses.values()][0] ?? 1;
+    const resolveStatus = (candidates: string[]): number => {
+      for (const name of candidates) { const id = statuses.get(name); if (id != null) return id; }
+      return fallbackStatus;
+    };
     const seenTasks = new Set<string>();
     try { for (const t of await client.listTasks(cid)) seenTasks.add(t.title); }
     catch { warnings.push("tasks: could not list existing tasks — re-push may duplicate"); }
-    for (const step of input.state.nextSteps) {
-      const body = mapNextStepTask(step);
+
+    const items: { body: IrisTaskBody; statusId: number }[] = usePlaybook
+      ? input.playbookTasks!.map((t) => ({ body: mapPlaybookTask(t), statusId: resolveStatus(playbookStatusCandidates(t.status)) }))
+      : input.state.nextSteps.map((s) => ({ body: mapNextStepTask(s), statusId: fallbackStatus }));
+
+    for (const { body, statusId } of items) {
       const title = String(body.task_title);
       if (seenTasks.has(title)) { tasks.existing += 1; continue; }
       try {
