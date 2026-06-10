@@ -6,6 +6,7 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import type { InvestigationState, StepPriority } from "./stateTypes.js";
 import {
   PLAYBOOK_STATUSES,
+  type DeriveOptions,
   type PlaybookStatus,
   type PlaybookTask,
   playbookSchema,
@@ -150,10 +151,11 @@ export class PlaybookStore {
   }
 
   // Re-derive auto-tasks from the current case state and merge them into the stored list
-  // (idempotent — preserves analyst status/edits). Writes only when something changed.
-  async sync(caseId: string, state: InvestigationState): Promise<PlaybookTask[]> {
+  // (idempotent — preserves analyst status/edits). `opts.useTemplates` expands Critical/High
+  // findings into IR-phase templates. Writes only when something changed.
+  async sync(caseId: string, state: InvestigationState, opts: DeriveOptions = {}): Promise<PlaybookTask[]> {
     const existing = await this.load(caseId);
-    const { tasks, changed } = mergePlaybook(existing, derivePlaybookTasks(state), new Date().toISOString());
+    const { tasks, changed } = mergePlaybook(existing, derivePlaybookTasks(state, opts), new Date().toISOString());
     if (changed) await this.save(caseId, tasks);
     return sortPlaybookTasks(tasks);
   }

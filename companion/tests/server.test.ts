@@ -14,6 +14,7 @@ import { ReportWriter } from "../src/reports/reportWriter.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
 import { CommentsStore } from "../src/analysis/comments.js";
 import { PlaybookStore } from "../src/analysis/playbookStore.js";
+import { PlaybookControlStore } from "../src/analysis/playbookControl.js";
 import { emptyState, type InvestigationState } from "../src/analysis/stateTypes.js";
 import type { CustomerExposureProvider } from "../src/analysis/customerExposure.js";
 
@@ -1446,11 +1447,12 @@ describe("playbook routes (issue #36)", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     const playbookStore = new PlaybookStore(store);
+    const playbookControlStore = new PlaybookControlStore(store);
     const events: string[] = [];
-    const app = createApp(store, { stateStore, playbookStore, onPlaybook: () => events.push("changed") });
+    const app = createApp(store, { stateStore, playbookStore, playbookControlStore, onPlaybook: () => events.push("changed") });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     if (seed) await stateStore.save({ ...emptyState("c1"), ...seed });
-    return { app, stateStore, playbookStore, events };
+    return { app, stateStore, playbookStore, playbookControlStore, events };
   }
 
   const NEXT_STEP = { id: "ns1", priority: "high" as const, action: "Pull 4624/4672", rationale: "confirm logon", pointer: "ALClient07" };
@@ -1512,5 +1514,29 @@ describe("playbook routes (issue #36)", () => {
     const off = createApp(store, { stateStore: new StateStore(store) });
     await request(off).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     expect((await request(off).get("/cases/c1/playbook")).status).toBe(501);
+  });
+
+  it("PUT /playbook/control toggles IR templates, expanding a Critical finding into phase tasks", async () => {
+    const { app } = await freshPlaybookApp({ findings: [CRIT_FINDING] });
+    const before = await request(app).get("/cases/c1/playbook");
+    expect(before.body.control).toEqual({ useTemplates: false });
+    expect(before.body.tasks.map((t: { id: string }) => t.id)).toEqual(["finding:f1"]);   // single task by default
+
+    const put = await request(app).put("/cases/c1/playbook/control").send({ useTemplates: true });
+    expect(put.status).toBe(200);
+    expect(put.body.control).toEqual({ useTemplates: true });
+    expect(put.body.tasks.map((t: { id: string }) => t.id)).toEqual([
+      "finding:f1:contain", "finding:f1:investigate", "finding:f1:eradicate", "finding:f1:recover",
+    ]);
+
+    // GET reflects the persisted setting and keeps the expanded tasks.
+    const after = await request(app).get("/cases/c1/playbook");
+    expect(after.body.control).toEqual({ useTemplates: true });
+    expect(after.body.tasks).toHaveLength(4);
+  });
+
+  it("PUT /playbook/control rejects a non-boolean body (400)", async () => {
+    const { app } = await freshPlaybookApp({});
+    expect((await request(app).put("/cases/c1/playbook/control").send({ useTemplates: "yes" })).status).toBe(400);
   });
 });
