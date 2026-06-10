@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import { CaseStore } from "../src/storage/caseStore.js";
 import { StateStore } from "../src/analysis/stateStore.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
+import { PlaybookStore } from "../src/analysis/playbookStore.js";
+import { PlaybookControlStore } from "../src/analysis/playbookControl.js";
 import { pushCaseToIris } from "../src/integrations/iris/irisPush.js";
 import { buildIrisClient, irisPushOptions } from "../src/server.js";
 
@@ -36,9 +38,16 @@ async function main(): Promise<void> {
 
   const state = await stateStore.load(caseId);
   const meta = await reportMetaStore.load(caseId);
+  // Sync the playbook against current state (honoring the per-case IR-templates setting) and push it.
+  const { useTemplates } = await new PlaybookControlStore(store).load(caseId);
+  const playbookTasks = await new PlaybookStore(store).sync(caseId, state, { useTemplates });
 
   console.log(`Pushing "${caseId}" to ${process.env.DFIR_IRIS_URL} …`);
-  const res = await pushCaseToIris(client, { caseName: caseId, state, meta }, irisPushOptions());
+  const res = await pushCaseToIris(
+    client,
+    { caseName: caseId, state, meta, playbookTasks: playbookTasks.length ? playbookTasks : undefined },
+    irisPushOptions(),
+  );
 
   console.log(`\nIRIS case #${res.caseId} ${res.created ? "CREATED" : "UPDATED"} ("${res.caseName}")`);
   console.log(`  assets:   +${res.assets.added}  (${res.assets.existing} existing, ${res.assets.skipped} skipped)`);
