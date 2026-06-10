@@ -310,10 +310,16 @@ export class VelociraptorClient {
   }
 
   // Launch a HUNT that collects a CHOSEN SET of existing artifacts (a saved bundle) across the fleet,
-  // optionally scoped by include/exclude labels + OS. Artifact names are validated (no VQL injection);
-  // labels are sanitized to a safe charset. Results arrive asynchronously — collect with
-  // huntResultsByArtifact() after a delay (the hunt stays open until its expiry).
-  async launchArtifactHunt(artifacts: string[], description: string, target: HuntTarget = {}): Promise<ArtifactHuntLaunchResult> {
+  // optionally scoped by include/exclude labels + OS. `opts.timeoutSeconds` overrides Velociraptor's
+  // default per-collection timeout (600s) — some artifacts (e.g. THOR via Generic.Scanner.ThorZIP) run
+  // longer. Artifact names are validated (no VQL injection); labels are sanitized to a safe charset.
+  // Results arrive asynchronously — collect with huntResultsByArtifact() after a delay.
+  async launchArtifactHunt(
+    artifacts: string[],
+    description: string,
+    target: HuntTarget = {},
+    opts: { timeoutSeconds?: number } = {},
+  ): Promise<ArtifactHuntLaunchResult> {
     const names = (artifacts ?? []).map((a) => String(a ?? "").trim()).filter(Boolean);
     if (names.length === 0) throw new Error("no artifacts to hunt");
     for (const n of names) {
@@ -329,6 +335,8 @@ export class VelociraptorClient {
     if (exc.length) clauses.push(`exclude_labels=[${exc.map((l) => `'${l}'`).join(", ")}]`);
     const os = normalizeOs(target.os);
     if (os) clauses.push(`os='${os}'`);
+    const timeout = Number(opts.timeoutSeconds);
+    if (Number.isFinite(timeout) && timeout > 0) clauses.push(`timeout=${Math.floor(timeout)}`);   // collection timeout (s)
     const program = `SELECT hunt(${clauses.join(", ")}) AS Hunt FROM scope()`;
     const rows = await this.runRaw(program);
     const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};

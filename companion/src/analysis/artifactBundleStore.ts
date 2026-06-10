@@ -15,6 +15,7 @@ export interface ArtifactBundle {
   builtIn: boolean;
   artifacts: string[];          // Velociraptor CLIENT artifact names
   defaultWaitMinutes?: number;  // optional per-bundle default collect delay
+  timeoutSeconds?: number;      // optional per-collection timeout override (Velociraptor default 600s) — some artifacts run longer
   customized?: boolean;         // a built-in that has a saved override on disk (so the UI can offer "reset to default"); derived, not persisted
 }
 
@@ -161,6 +162,7 @@ export class ArtifactBundleStore {
       builtIn,
       artifacts: Array.isArray(input.artifacts) ? input.artifacts.map(String).map((a) => a.trim()).filter(Boolean) : [],
       defaultWaitMinutes: typeof input.defaultWaitMinutes === "number" ? input.defaultWaitMinutes : undefined,
+      timeoutSeconds: typeof input.timeoutSeconds === "number" ? input.timeoutSeconds : undefined,
     };
     await mkdir(this.root, { recursive: true });
     await atomicWrite(this.path(id), JSON.stringify(bundle, null, 2));
