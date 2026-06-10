@@ -881,6 +881,40 @@
         <div id="assetList">—</div>
       </div>
     </section>
+    <section id="sec-velo-triage" style="grid-column: 1 / -1" class="collapsed">
+      <h2>Velociraptor Triage<span class="ev-sub">build artifact bundles → run as a hunt → auto-import + synthesize</span></h2>
+      <div id="veloDisabledNote" style="display:none;font-size:12px;color:#9aa4b2;margin:0 0 10px;background:#1b2030;border:1px solid #2a3146;border-radius:6px;padding:8px 10px">
+        Velociraptor API not configured — you can still build and save bundles, but <strong>running a hunt</strong> needs <code>DFIR_VELOCIRAPTOR_API_CONFIG</code> set on the server (then restart it).
+      </div>
+      <div id="veloJobCard" class="synth-meta" style="display:none;margin-bottom:12px"></div>
+
+      <h3 style="font-size:13px;margin:4px 0 8px;color:#cdd6e4">Triage bundles</h3>
+      <div id="veloBundleList" style="margin-bottom:14px">—</div>
+
+      <details id="veloBuilder" style="border:1px solid #2a3146;border-radius:6px;padding:10px;background:#161b28">
+        <summary style="cursor:pointer;font-size:13px;color:#cdd6e4;font-weight:600">Build a new bundle</summary>
+        <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input id="veloBundleName" placeholder="Bundle name (e.g. Fast Triage)" style="flex:1;min-width:180px;padding:5px" />
+            <input id="veloBundleDefaultWait" type="number" min="1" max="1440" placeholder="default wait (min)" title="Default minutes to wait before collecting (optional)" style="width:150px;padding:5px" />
+          </div>
+          <input id="veloBundleDesc" placeholder="Description (optional)" style="padding:5px" />
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button id="veloBrowseBtn" title="Query the configured Velociraptor server for its collectable CLIENT artifacts">Browse server artifacts…</button>
+            <input id="veloArtifactSearch" placeholder="filter artifacts…" style="flex:1;min-width:140px;padding:5px" />
+            <input id="veloArtifactManual" placeholder="add by name (e.g. Windows.Forensics.Prefetch)" style="flex:1;min-width:200px;padding:5px" />
+            <button id="veloAddManualBtn">+ add</button>
+          </div>
+          <div id="veloArtifactPicker" style="max-height:240px;overflow:auto;border:1px solid #2a3146;border-radius:6px;padding:6px;font-size:12px;color:#9aa4b2">Click <em>Browse server artifacts</em> to load the list, or add artifact names manually above.</div>
+          <div style="font-size:12px;color:#9aa4b2">Selected: <strong id="veloSelectedCount">0</strong></div>
+          <div id="veloSelectedList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button id="veloSaveBundleBtn">Save bundle</button>
+            <span id="veloBuilderMsg" class="manual-msg"></span>
+          </div>
+        </div>
+      </details>
+    </section>
     <section id="sec-evidence" style="grid-column: 1 / -1">
       <h2>Evidence Chain<span class="ev-sub">causal links — process trees, lateral movement, file lineage &amp; network flows (derived, no AI)</span></h2>
       <div id="evPanel">
@@ -2397,6 +2431,268 @@
         + `<div style="color:#9aa4b2;font-size:11px;margin-top:4px">${esc(j.total)} row(s)${j.truncated ? " (capped)" : ""}${cols.length === 12 ? " · first 12 columns" : ""}</div>`;
     }
 
+    // ── Velociraptor triage bundles ──────────────────────────────────────────────
+    // Build named bundles of CLIENT artifacts, run one as a hunt, then auto-collect → import →
+    // synthesize after a delay. Bundles are global (shared across cases); the job is per-case.
+    let veloSelected = new Set();      // artifact names selected in the builder
+    let veloArtifactCache = [];        // last-browsed server artifact list
+    let veloCountdownTimer = null;     // interval updating the running-job countdown
+    let _veloBundles = null;           // last-loaded bundle list
+
+    function veloCaseId() { const el = document.getElementById("caseId"); return el ? el.value.trim() : ""; }
+
+    function applyVeloEnabled() {
+      const note = document.getElementById("veloDisabledNote");
+      if (note) note.style.display = veloEnabled ? "none" : "block";
+      if (_veloBundles) renderVeloBundles(_veloBundles);   // re-render so Run buttons reflect state
+    }
+
+    function loadVeloBundles() {
+      return fetch("/bundles").then(r => r.ok ? r.json() : []).then((b) => {
+        _veloBundles = Array.isArray(b) ? b : [];
+        renderVeloBundles(_veloBundles);
+      }).catch(() => { _veloBundles = []; renderVeloBundles([]); });
+    }
+
+    function loadVeloTriage(caseId) {
+      veloSelected = new Set();
+      renderVeloSelected();
+      loadVeloBundles();
+      loadVeloHuntJob(caseId);
+    }
+
+    function renderVeloBundles(bundles) {
+      const el = document.getElementById("veloBundleList");
+      if (!el) return;
+      if (!bundles.length) { el.innerHTML = "<div style='color:#9aa4b2;font-size:12px'>No bundles yet — build one below.</div>"; return; }
+      el.innerHTML = bundles.map((b) => {
+        const runBtn = veloEnabled
+          ? `<button class="velo-run-btn" data-id="${escAttr(b.id)}" title="Run this bundle as a hunt on the configured Velociraptor server">▶ Run</button>`
+          : `<button disabled title="Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)">▶ Run</button>`;
+        const delBtn = b.builtIn ? "" : `<button class="velo-del-btn" data-id="${escAttr(b.id)}" style="background:#3a2330;color:#ff9aa4">Delete</button>`;
+        const wait = b.defaultWaitMinutes ? ` · default wait ${esc(b.defaultWaitMinutes)}m` : "";
+        return `<div class="velo-bundle" style="border:1px solid #2a3146;border-radius:6px;padding:8px 10px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <div><strong>${esc(b.name)}</strong>${b.builtIn ? " <span style='color:#6aa9ff;font-size:11px'>built-in</span>" : ""} <span style="color:#9aa4b2;font-size:11px">${esc(b.artifacts.length)} artifact(s)${wait}</span></div>
+            <div style="display:flex;gap:6px">${runBtn}<button class="velo-dup-btn" data-id="${escAttr(b.id)}" title="Copy into the builder to edit">Duplicate</button>${delBtn}</div>
+          </div>
+          ${b.description ? `<div style="color:#9aa4b2;font-size:12px;margin-top:4px">${esc(b.description)}</div>` : ""}
+          <div style="color:#7e8aa0;font-size:11px;margin-top:4px">${b.artifacts.map(a => esc(a)).join(", ")}</div>
+          <div class="velo-run-form" data-id="${escAttr(b.id)}" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #2a3146"></div>
+        </div>`;
+      }).join("");
+      el.querySelectorAll(".velo-run-btn").forEach(btn => btn.onclick = () => toggleVeloRunForm(btn.dataset.id));
+      el.querySelectorAll(".velo-dup-btn").forEach(btn => btn.onclick = () => veloDuplicate(btn.dataset.id));
+      el.querySelectorAll(".velo-del-btn").forEach(btn => btn.onclick = () => veloDeleteBundle(btn.dataset.id));
+    }
+
+    function veloRunForm(id) {
+      const forms = document.querySelectorAll(".velo-run-form");
+      for (const f of forms) if (f.dataset.id === id) return f;
+      return null;
+    }
+    function toggleVeloRunForm(id) {
+      const bundle = (_veloBundles || []).find(b => b.id === id);
+      const form = veloRunForm(id);
+      if (!form || !bundle) return;
+      if (form.style.display === "block") { form.style.display = "none"; return; }
+      document.querySelectorAll(".velo-run-form").forEach(f => f.style.display = "none");
+      const defWait = bundle.defaultWaitMinutes || 10;
+      form.innerHTML = `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <label style="font-size:12px;color:#9aa4b2">Wait <input type="number" class="velo-wait" min="1" max="1440" value="${esc(defWait)}" style="width:64px;padding:4px" /> min</label>
+          <select class="velo-os" title="Restrict to a client OS"><option value="">any OS</option><option value="windows">windows</option><option value="linux">linux</option><option value="darwin">darwin</option></select>
+          <input class="velo-inc" placeholder="include labels (comma-sep)" style="flex:1;min-width:140px;padding:4px" />
+          <input class="velo-exc" placeholder="exclude labels (comma-sep)" style="flex:1;min-width:140px;padding:4px" />
+          <button class="velo-run-go">Run hunt</button>
+          <span class="velo-run-msg" style="font-size:12px;color:#9aa4b2"></span>
+        </div>
+        <div style="font-size:11px;color:#7e8aa0;margin-top:4px">Runs across all enrolled clients unless you set a label/OS filter. Results are auto-collected after the wait, then imported + synthesized — or click <em>Collect now</em> on the job card.</div>`;
+      form.style.display = "block";
+      form.querySelector(".velo-run-go").onclick = () => veloRunBundle(id, form);
+    }
+
+    function veloRunBundle(bundleId, form) {
+      const caseId = veloCaseId();
+      const msg = form.querySelector(".velo-run-msg");
+      if (!caseId) { msg.textContent = "connect to a case first"; return; }
+      const waitMinutes = Number(form.querySelector(".velo-wait").value) || 10;
+      const os = form.querySelector(".velo-os").value;
+      const includeLabels = form.querySelector(".velo-inc").value;
+      const excludeLabels = form.querySelector(".velo-exc").value;
+      const go = form.querySelector(".velo-run-go");
+      go.disabled = true; msg.textContent = "launching hunt…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/run-bundle`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ bundleId, waitMinutes, os, includeLabels, excludeLabels })
+      }).then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }
+          msg.textContent = ""; form.style.display = "none";
+          loadVeloHuntJob(caseId);
+        })
+        .catch(e => msg.textContent = "error: " + e.message + " — restart the companion server if this 404s")
+        .finally(() => { go.disabled = false; });
+    }
+
+    function loadVeloHuntJob(caseId) {
+      if (!caseId) { renderVeloJob(null); return; }
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/hunt-job`).then(r => r.ok ? r.json() : null).then(renderVeloJob).catch(() => {});
+    }
+    function renderVeloJob(job) {
+      const el = document.getElementById("veloJobCard");
+      if (!el) return;
+      if (veloCountdownTimer) { clearInterval(veloCountdownTimer); veloCountdownTimer = null; }
+      if (!job) { el.style.display = "none"; el.innerHTML = ""; return; }
+      el.style.display = "block";
+      const link = job.guiUrl ? ` · <a href="${escAttr(job.guiUrl)}" target="_blank" rel="noopener" style="color:#6aa9ff">open in Velociraptor ↗</a>` : "";
+      const statusColors = { running: "#6aa9ff", collecting: "#ffd93b", imported: "#4cd964", error: "#ff9f43" };
+      const badge = `<span style="color:${statusColors[job.status] || "#9aa4b2"};font-weight:600">${esc(job.status)}</span>`;
+      let detail = "";
+      if (job.status === "imported") {
+        const ev = job.addedEvents || 0, io = job.addedIocs || 0;
+        detail = (ev || io) ? `+${ev} event(s), +${io} IOC(s) imported` : "no new results collected yet — clients may not have checked in; collect again later";
+      } else if (job.status === "error") {
+        detail = "error: " + (job.error || "");
+      }
+      const collectBtn = (job.status === "running" || job.status === "imported" || job.status === "error")
+        ? `<button id="veloCollectBtn">Collect now</button>` : "";
+      el.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <div>🎯 Bundle hunt <strong>${esc(job.bundleName)}</strong> · ${badge} · <code>${esc(job.huntId)}</code>${link}</div>
+          <div>${collectBtn}</div>
+        </div>
+        <div style="font-size:12px;color:#9aa4b2;margin-top:4px"><span id="veloCountdown"></span> ${esc(detail)}</div>`;
+      const cbtn = document.getElementById("veloCollectBtn");
+      if (cbtn) cbtn.onclick = () => veloCollectNow();
+      if (job.status === "running" && job.collectAt) {
+        const tick = () => {
+          const cd = document.getElementById("veloCountdown");
+          if (!cd) { if (veloCountdownTimer) clearInterval(veloCountdownTimer); return; }
+          const ms = new Date(job.collectAt).getTime() - Date.now();
+          if (ms <= 0) { cd.textContent = "collecting results…"; }
+          else { const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000); cd.textContent = `auto-collect in ${m}m ${String(s).padStart(2, "0")}s ·`; }
+        };
+        tick();
+        veloCountdownTimer = setInterval(tick, 1000);
+      }
+    }
+    function veloCollectNow() {
+      const caseId = veloCaseId();
+      if (!caseId) return;
+      const btn = document.getElementById("veloCollectBtn");
+      if (btn) { btn.disabled = true; btn.textContent = "collecting…"; }
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/collect`, { method: "POST" })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => { if (!ok) console.warn("collect failed", j); loadVeloHuntJob(caseId); })
+        .catch(e => console.warn("collect error", e));
+    }
+
+    function veloBrowseArtifacts() {
+      const picker = document.getElementById("veloArtifactPicker");
+      const btn = document.getElementById("veloBrowseBtn");
+      picker.textContent = "loading artifacts…";
+      if (btn) btn.disabled = true;
+      fetch("/velociraptor/artifacts").then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { picker.innerHTML = `<span style="color:#ff9f43">error: ${esc(j.error || "failed")}</span>`; return; }
+          veloArtifactCache = j.artifacts || [];
+          renderVeloPicker();
+        })
+        .catch(e => picker.innerHTML = `<span style="color:#ff9f43">error: ${esc(e.message)} — restart the companion server if this 404s</span>`)
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    function renderVeloPicker() {
+      const picker = document.getElementById("veloArtifactPicker");
+      if (!picker) return;
+      if (!veloArtifactCache.length) { picker.innerHTML = "<span>no artifacts loaded — click Browse server artifacts</span>"; return; }
+      const filter = (document.getElementById("veloArtifactSearch").value || "").toLowerCase();
+      const list = veloArtifactCache.filter(a => !filter || a.name.toLowerCase().includes(filter) || (a.description || "").toLowerCase().includes(filter));
+      const groups = {};
+      for (const a of list) { const g = a.name.split(".")[0] || "Other"; (groups[g] = groups[g] || []).push(a); }
+      const keys = Object.keys(groups).sort();
+      picker.innerHTML = keys.map(g => {
+        const items = groups[g].map(a => {
+          const checked = veloSelected.has(a.name) ? "checked" : "";
+          return `<label style="display:block;color:#cdd6e4;margin:2px 0" title="${escAttr(a.description || "")}"><input type="checkbox" class="velo-art-cb" value="${escAttr(a.name)}" ${checked}> ${esc(a.name)}</label>`;
+        }).join("");
+        return `<div style="margin-bottom:6px"><div style="color:#6aa9ff;font-weight:600;margin:4px 0">${esc(g)} <span style="color:#7e8aa0;font-weight:400">(${groups[g].length})</span></div>${items}</div>`;
+      }).join("") || "<span>no matches</span>";
+      picker.querySelectorAll(".velo-art-cb").forEach(cb => cb.onchange = () => { if (cb.checked) veloSelected.add(cb.value); else veloSelected.delete(cb.value); renderVeloSelected(); });
+    }
+    function renderVeloSelected() {
+      const cnt = document.getElementById("veloSelectedCount");
+      const list = document.getElementById("veloSelectedList");
+      if (cnt) cnt.textContent = veloSelected.size;
+      if (!list) return;
+      list.innerHTML = [...veloSelected].map(n => `<span style="background:#1f2942;border:1px solid #2a3146;border-radius:4px;padding:2px 6px;font-size:11px;color:#cdd6e4">${esc(n)} <a href="#" class="velo-sel-rm" data-n="${escAttr(n)}" style="color:#ff9aa4;text-decoration:none">✕</a></span>`).join("");
+      list.querySelectorAll(".velo-sel-rm").forEach(a => a.onclick = (e) => {
+        e.preventDefault();
+        veloSelected.delete(a.dataset.n); renderVeloSelected();
+        const cbs = document.querySelectorAll(".velo-art-cb");
+        for (const cb of cbs) if (cb.value === a.dataset.n) cb.checked = false;
+      });
+    }
+    function veloAddManual() {
+      const inp = document.getElementById("veloArtifactManual");
+      const name = (inp.value || "").trim();
+      if (!name) return;
+      veloSelected.add(name); inp.value = ""; renderVeloSelected();
+    }
+    function veloSaveBundle() {
+      const name = (document.getElementById("veloBundleName").value || "").trim();
+      const description = (document.getElementById("veloBundleDesc").value || "").trim();
+      const defaultWaitMinutes = Number(document.getElementById("veloBundleDefaultWait").value) || undefined;
+      const msg = document.getElementById("veloBuilderMsg");
+      if (!name) { msg.textContent = "name is required"; return; }
+      if (!veloSelected.size) { msg.textContent = "select at least one artifact"; return; }
+      const btn = document.getElementById("veloSaveBundleBtn");
+      btn.disabled = true; msg.textContent = "saving…";
+      fetch("/bundles", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, description, artifacts: [...veloSelected], defaultWaitMinutes }) })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }
+          msg.textContent = "saved ✓";
+          document.getElementById("veloBundleName").value = "";
+          document.getElementById("veloBundleDesc").value = "";
+          document.getElementById("veloBundleDefaultWait").value = "";
+          veloSelected = new Set(); renderVeloSelected(); renderVeloPicker();
+          loadVeloBundles();
+          setTimeout(() => { msg.textContent = ""; }, 1500);
+        })
+        .catch(e => msg.textContent = "error: " + e.message + " — restart the companion server if this 404s")
+        .finally(() => { btn.disabled = false; });
+    }
+    function veloDuplicate(id) {
+      const b = (_veloBundles || []).find(x => x.id === id);
+      if (!b) return;
+      document.getElementById("veloBundleName").value = b.name + " (copy)";
+      document.getElementById("veloBundleDesc").value = b.description || "";
+      document.getElementById("veloBundleDefaultWait").value = b.defaultWaitMinutes || "";
+      veloSelected = new Set(b.artifacts);
+      renderVeloSelected(); renderVeloPicker();
+      const builder = document.getElementById("veloBuilder");
+      if (builder) builder.open = true;
+      document.getElementById("veloBundleName").scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    function veloDeleteBundle(id) {
+      if (!confirm("Delete this bundle? (built-in bundles can't be deleted)")) return;
+      fetch("/bundles/" + encodeURIComponent(id), { method: "DELETE" })
+        .then(r => { if (r.ok || r.status === 204) return; return r.json().then(j => { throw new Error(j.error || ("HTTP " + r.status)); }); })
+        .then(() => loadVeloBundles())
+        .catch(e => { const msg = document.getElementById("veloBuilderMsg"); if (msg) msg.textContent = "delete failed: " + e.message; });
+    }
+
+    // One-time wiring for the static builder controls (the script runs after the DOM is parsed).
+    (function wireVeloTriage() {
+      const browse = document.getElementById("veloBrowseBtn"); if (browse) browse.onclick = veloBrowseArtifacts;
+      const addM = document.getElementById("veloAddManualBtn"); if (addM) addM.onclick = veloAddManual;
+      const save = document.getElementById("veloSaveBundleBtn"); if (save) save.onclick = veloSaveBundle;
+      const search = document.getElementById("veloArtifactSearch"); if (search) search.oninput = renderVeloPicker;
+      const manual = document.getElementById("veloArtifactManual"); if (manual) manual.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); veloAddManual(); } };
+      loadVeloBundles();   // populate the bundle list even before a case is connected
+    })();
+
     // --- Executive summary generator ----------------------------------------------
     // One AI call over the synthesized case → a management-facing prose summary. Shown for review;
     // "Save" copies it into the report-meta Executive Summary field (which overrides the auto
@@ -3573,12 +3869,14 @@
       loadSynthMeta(caseId);
       loadImportMeta(caseId);
       loadCustomerExposure(caseId);
+      loadVeloTriage(caseId);
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
         if (h.aiEnabled) setAi("idle", "ready (waiting for activity)");
         else setAi("off", "off (no provider configured)");
         veloEnabled = !!h.velociraptorEnabled;   // gates the "Run in Velociraptor" button in the hunt modal
+        applyVeloEnabled();                        // gates the triage panel's Run buttons + disabled note
         if (Array.isArray(h.huntPlatforms)) enabledHuntPlatforms = new Set(h.huntPlatforms);   // hunt-modal allowlist
       }).catch(() => setAi("unknown", "unknown"));
 
@@ -3594,6 +3892,7 @@
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
+        else if (msg.type === "velo_hunt_changed") loadVeloHuntJob(caseId);
       };
     }
 

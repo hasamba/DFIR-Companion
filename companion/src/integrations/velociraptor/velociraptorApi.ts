@@ -136,6 +136,30 @@ export interface HuntLaunchResult {
   guiUrl?: string;      // deep link to the hunt in the Velociraptor GUI (when DFIR_VELOCIRAPTOR_GUI_URL set)
 }
 
+// One collectable CLIENT artifact definition on the server (for the bundle builder's picker).
+export interface VeloArtifactInfo {
+  name: string;         // e.g. "Windows.System.Pslist"
+  description: string;  // one-line summary
+}
+
+// Optional scoping for a bundle hunt — mirrors Velociraptor's hunt include/exclude conditions.
+// Default (all empty) = every enrolled client. Labels are AND-of-include / NOT-exclude; os pins
+// the client OS. Restricting keeps heavy triage off the whole fleet.
+export interface HuntTarget {
+  includeLabels?: string[];
+  excludeLabels?: string[];
+  os?: "windows" | "linux" | "darwin";
+}
+
+// Result of launching a hunt over a chosen SET of existing artifacts (the bundle flow). Distinct
+// from HuntLaunchResult (the pivot flow, which builds one Custom.* artifact with named sources).
+export interface ArtifactHuntLaunchResult {
+  huntId: string;
+  artifacts: string[];  // the artifacts the hunt collects (echoed back, validated)
+  state: string;        // RUNNING / PAUSED / …
+  guiUrl?: string;
+}
+
 const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;     // valid Velociraptor artifact / source name
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/;        // valid hunt id
 
@@ -152,6 +176,22 @@ function oneLine(s: string): string {
     .replace(/[^\x20-\x7E]/g, "")
     .replace(/[\\'"]/g, "")
     .slice(0, 200);
+}
+
+// Sanitize Velociraptor client labels for embedding in a single-quoted VQL string list: keep only a
+// safe charset (so no quote/backslash can break out of the literal), drop empties, cap the count.
+function sanitizeLabels(labels?: string[]): string[] {
+  if (!Array.isArray(labels)) return [];
+  return labels
+    .map((l) => String(l ?? "").replace(/[^A-Za-z0-9._\- ]/g, "").trim())
+    .filter(Boolean)
+    .slice(0, 50);
+}
+
+// Constrain a free-text OS to the three Velociraptor client OS values, else undefined (no filter).
+function normalizeOs(os?: string): "windows" | "linux" | "darwin" | undefined {
+  const v = String(os ?? "").trim().toLowerCase();
+  return v === "windows" || v === "linux" || v === "darwin" ? v : undefined;
 }
 
 // A CLIENT artifact (YAML) with one source per pivot statement — collected by the hunt on every endpoint.
@@ -231,6 +271,70 @@ export class VelociraptorClient {
       ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${ref}') }`).join(", ")})`
       : `SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${refs[0]}')`;
     return this.cap(await this.runRaw(program));
+  }
+
+  // List the server's COLLECTABLE client artifacts (type CLIENT, not CLIENT_EVENT monitoring) so the
+  // dashboard can build triage bundles from real artifact names. Returns metadata only (no evidence),
+  // so the per-query row cap is NOT applied — a server can define hundreds.
+  async listClientArtifacts(): Promise<VeloArtifactInfo[]> {
+    const program = "SELECT name, description, type FROM artifact_definitions() WHERE type =~ '^client$' ORDER BY name";
+    const rows = await this.runRaw(program);
+    const out: VeloArtifactInfo[] = [];
+    for (const row of rows) {
+      const r = row as { name?: unknown; description?: unknown };
+      const name = String(r.name ?? "").trim();
+      if (!name) continue;
+      out.push({ name, description: String(r.description ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 300) });
+    }
+    return out;
+  }
+
+  // Launch a HUNT that collects a CHOSEN SET of existing artifacts (a saved bundle) across the fleet,
+  // optionally scoped by include/exclude labels + OS. Artifact names are validated (no VQL injection);
+  // labels are sanitized to a safe charset. Results arrive asynchronously — collect with
+  // huntResultsByArtifact() after a delay (the hunt stays open until its expiry).
+  async launchArtifactHunt(artifacts: string[], description: string, target: HuntTarget = {}): Promise<ArtifactHuntLaunchResult> {
+    const names = (artifacts ?? []).map((a) => String(a ?? "").trim()).filter(Boolean);
+    if (names.length === 0) throw new Error("no artifacts to hunt");
+    for (const n of names) {
+      if (!ARTIFACT_RE.test(n)) throw new Error(`invalid artifact name: ${n}`);
+    }
+    const clauses = [
+      `description='${oneLine("DFIR Companion: " + description)}'`,
+      `artifacts=[${names.map((n) => `'${n}'`).join(", ")}]`,
+    ];
+    const inc = sanitizeLabels(target.includeLabels);
+    const exc = sanitizeLabels(target.excludeLabels);
+    if (inc.length) clauses.push(`include_labels=[${inc.map((l) => `'${l}'`).join(", ")}]`);
+    if (exc.length) clauses.push(`exclude_labels=[${exc.map((l) => `'${l}'`).join(", ")}]`);
+    const os = normalizeOs(target.os);
+    if (os) clauses.push(`os='${os}'`);
+    const program = `SELECT hunt(${clauses.join(", ")}) AS Hunt FROM scope()`;
+    const rows = await this.runRaw(program);
+    const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};
+    const huntId = String(hunt.HuntId ?? hunt.hunt_id ?? "");
+    if (!HUNT_RE.test(huntId)) throw new Error("Velociraptor did not return a hunt id — check the api_client role has COLLECT_CLIENT/ARTIFACT_WRITER");
+    return {
+      huntId,
+      artifacts: names,
+      state: String(hunt.state ?? hunt.State ?? "RUNNING"),
+      guiUrl: this.config.guiUrl ? `${this.config.guiUrl.replace(/\/+$/, "")}/app/index.html#/hunts/${huntId}` : undefined,
+    };
+  }
+
+  // Read a bundle hunt's results, keyed by artifact name — the exact artifact-map shape importVelociraptor
+  // consumes ({ "Windows.System.Pslist": [...rows], ... }). Only artifacts that returned rows are included
+  // (empty ones are dropped so the map stays a valid artifact-map; clients may not have checked in yet).
+  async huntResultsByArtifact(huntId: string, artifacts: string[]): Promise<Record<string, unknown[]>> {
+    if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
+    const out: Record<string, unknown[]> = {};
+    for (const artifact of artifacts ?? []) {
+      const name = String(artifact ?? "").trim();
+      if (!ARTIFACT_RE.test(name)) continue;   // skip invalid names rather than fail the whole collect
+      const res = await this.huntResults(huntId, name);
+      if (res.rows.length) out[name] = res.rows;
+    }
+    return out;
   }
 }
 
