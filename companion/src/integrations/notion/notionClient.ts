@@ -210,16 +210,37 @@ export class NotionClient {
   }
 }
 
-// Extract a Notion page id (dashed UUID) from a raw id, a dashed UUID, or a notion.so URL
-// (the id is the trailing 32-hex run, optionally after the page title slug). Returns the
-// dashed form Notion expects, or null when no id is present. Pure — unit-tested.
+// Extract a Notion page id (dashed UUID) from a raw id, a dashed UUID, or any Notion URL —
+// `www.notion.so`, `notion.so`, or `app.notion.com`. The page id is the trailing 32-hex of the
+// URL PATH; the query string is dropped first so a database-view id (`?v=…`) or tracking params
+// (`?source=copy_link`, `?pvs=…`) are NEVER mistaken for the page id (a "Copy link" on a database
+// row looks like `…/Title-<pageId>?v=<viewId>&source=copy_link`). A `#block` fragment is dropped
+// too; a `?p=<id>` peek param is the fallback. Returns the dashed form Notion expects, or null.
+// Pure — unit-tested.
 export function parseNotionPageId(input: string): string | null {
   if (!input) return null;
-  const s = input.trim();
+  const noFragment = input.trim().split("#")[0];
+  const qIdx = noFragment.indexOf("?");
+  const path = qIdx >= 0 ? noFragment.slice(0, qIdx) : noFragment;
+  const query = qIdx >= 0 ? noFragment.slice(qIdx + 1) : "";
+
+  // 1. The normal shape: the id trails the PATH (…/Title-<id>, or a bare id / dashed UUID).
+  const fromPath = extractNotionId(path);
+  if (fromPath) return fromPath;
+
+  // 2. Fall back to a `?p=<id>` peek-panel param (only `p` — never the `v` view id).
+  const peek = /(?:^|&)p=([0-9a-fA-F-]{32,36})(?=&|$)/.exec(query);
+  if (peek) return extractNotionId(peek[1]);
+
+  return null;
+}
+
+// Find the last 32-hex (or dashed-UUID) run in a string and return it as a dashed UUID.
+function extractNotionId(s: string): string | null {
   const dashed = s.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
   if (dashed) return toDashedUuid(dashed[0].replace(/-/g, ""));
   const hex = s.match(/[0-9a-fA-F]{32}/g);
-  if (hex && hex.length) return toDashedUuid(hex[hex.length - 1]); // the id trails the URL
+  if (hex && hex.length) return toDashedUuid(hex[hex.length - 1]); // the id trails the path
   return null;
 }
 

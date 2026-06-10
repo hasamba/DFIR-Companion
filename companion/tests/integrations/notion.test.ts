@@ -35,6 +35,15 @@ describe("parseNotionPageId", () => {
     expect(parseNotionPageId("not a page")).toBeNull();
     expect(parseNotionPageId("")).toBeNull();
   });
+
+  it("takes the PAGE id from the path, not the ?v= view id, on an app.notion.com copy link", () => {
+    const url = "https://app.notion.com/p/tenroot/Epsilor-Monthly-Threat-Hunting-May26-3659b1133cf48031b4d7d116e012c940?v=998c9d77c5d342c58889e932f408b944&source=copy_link";
+    expect(parseNotionPageId(url)).toBe("3659b113-3cf4-8031-b4d7-d116e012c940"); // NOT the 998c9d77… view id
+  });
+
+  it("drops a #block fragment and trailing query params", () => {
+    expect(parseNotionPageId(`https://www.notion.so/Title-${ID32}?pvs=4#abc123def456abc123def456abc12345`)).toBe(DASHED);
+  });
 });
 
 // ---- block rendering -------------------------------------------------------
