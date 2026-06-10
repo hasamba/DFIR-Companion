@@ -821,6 +821,13 @@
             <div id="veloArtifactPicker" style="max-height:240px;overflow:auto;border:1px solid #2a3146;border-radius:6px;padding:6px;font-size:12px;color:#9aa4b2">Click <em>Browse server artifacts</em> to load the list, or add artifact names manually above.</div>
             <div style="font-size:12px;color:#9aa4b2">Selected: <strong id="veloSelectedCount">0</strong></div>
             <div id="veloSelectedList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+            <details style="border:1px solid #2a3146;border-radius:6px;padding:6px 8px;background:#11151f">
+              <summary style="cursor:pointer;font-size:12px;color:#9aa4b2">Advanced: per-artifact parameters (optional)</summary>
+              <div style="margin-top:6px">
+                <textarea id="veloBundleParams" rows="4" spellcheck="false" placeholder='{ "Windows.Hayabusa.Rules": { "MinLevel": "high" } }' style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
+                <div style="font-size:11px;color:#7e8aa0;margin-top:4px">JSON map of <code>artifact → { param: value }</code>, passed to the hunt's <code>spec</code> so a heavy artifact emits less at the source (e.g. Hayabusa at high+critical). Only the params you set are sent; everything else uses the artifact's defaults. Leave blank for none.</div>
+              </div>
+            </details>
             <div style="display:flex;gap:8px;align-items:center">
               <button id="veloSaveBundleBtn" type="button">Save bundle</button>
               <button id="veloNewBundleBtn" type="button" style="background:#2a2f3a;display:none">＋ New bundle</button>
@@ -2490,7 +2497,8 @@
           ? (b.customized ? `<button class="velo-reset-btn" data-id="${escAttr(b.id)}" title="Discard your edits and restore the shipped default" style="background:#33291a;color:#ffd07a">Reset to default</button>` : "")
           : `<button class="velo-del-btn" data-id="${escAttr(b.id)}" style="background:#3a2330;color:#ff9aa4">Delete</button>`;
         const badge = b.builtIn ? ` <span style='color:#6aa9ff;font-size:11px'>built-in${b.customized ? " · edited" : ""}</span>` : "";
-        const meta = (b.defaultWaitMinutes ? ` · wait ${esc(b.defaultWaitMinutes)}m` : "") + (b.timeoutSeconds ? ` · timeout ${esc(b.timeoutSeconds)}s` : "");
+        const tuned = b.params ? Object.keys(b.params).length : 0;
+        const meta = (b.defaultWaitMinutes ? ` · wait ${esc(b.defaultWaitMinutes)}m` : "") + (b.timeoutSeconds ? ` · timeout ${esc(b.timeoutSeconds)}s` : "") + (tuned ? ` · ${tuned} tuned` : "");
         return `<div class="velo-bundle" style="border:1px solid #2a3146;border-radius:6px;padding:8px 10px;margin-bottom:8px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
             <div><strong>${esc(b.name)}</strong>${badge} <span style="color:#9aa4b2;font-size:11px">${esc(b.artifacts.length)} artifact(s)${meta}</span></div>
@@ -2677,9 +2685,15 @@
       const msg = document.getElementById("veloBuilderMsg");
       if (!name) { msg.textContent = "name is required"; return; }
       if (!veloSelected.size) { msg.textContent = "select at least one artifact"; return; }
+      const paramsRaw = (document.getElementById("veloBundleParams").value || "").trim();
+      let params;
+      if (paramsRaw) {
+        try { params = JSON.parse(paramsRaw); }
+        catch { msg.textContent = "Advanced parameters must be valid JSON"; return; }
+      }
       const btn = document.getElementById("veloSaveBundleBtn");
       const wasEditing = !!veloEditingId;
-      const body = { name, description, artifacts: [...veloSelected], defaultWaitMinutes, timeoutSeconds };
+      const body = { name, description, artifacts: [...veloSelected], defaultWaitMinutes, timeoutSeconds, params };
       if (veloEditingId) body.id = veloEditingId;   // editing a built-in or custom bundle overrides it in place
       btn.disabled = true; msg.textContent = wasEditing ? "updating…" : "saving…";
       fetch("/bundles", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
@@ -2700,6 +2714,7 @@
       document.getElementById("veloBundleDesc").value = b.description || "";
       document.getElementById("veloBundleDefaultWait").value = b.defaultWaitMinutes || "";
       document.getElementById("veloBundleTimeout").value = b.timeoutSeconds || "";
+      document.getElementById("veloBundleParams").value = (b.params && Object.keys(b.params).length) ? JSON.stringify(b.params, null, 2) : "";
       veloSelected = new Set(b.artifacts || []);
       renderVeloSelected(); renderVeloPicker();
       const builder = document.getElementById("veloBuilder");
@@ -2721,6 +2736,7 @@
       document.getElementById("veloBundleDesc").value = "";
       document.getElementById("veloBundleDefaultWait").value = "";
       document.getElementById("veloBundleTimeout").value = "";
+      document.getElementById("veloBundleParams").value = "";
       veloSelected = new Set(); renderVeloSelected(); renderVeloPicker();
       veloSetEditing(null);
     }

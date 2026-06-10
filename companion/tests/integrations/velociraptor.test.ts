@@ -224,6 +224,24 @@ describe("VelociraptorClient.launchArtifactHunt", () => {
     expect(program).not.toContain("timeout=");
   });
 
+  it("passes per-artifact parameters as a hunt spec (only for artifacts in the hunt)", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.SP1", state: "RUNNING" } }], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).launchArtifactHunt(
+      ["Windows.Hayabusa.Rules", "Windows.System.Pslist"], "x", {},
+      { params: { "Windows.Hayabusa.Rules": { MinLevel: "high" }, "Not.In.Hunt": { X: "y" } } },
+    );
+    expect(program).toContain("spec=dict(`Windows.Hayabusa.Rules`=dict(MinLevel='high'))");
+    expect(program).not.toContain("Not.In.Hunt");   // params for an artifact not in the hunt are dropped
+  });
+
+  it("omits the spec clause when there are no params", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.SP2", state: "RUNNING" } }], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).launchArtifactHunt(["Windows.System.Pslist"], "x");
+    expect(program).not.toContain("spec=");
+  });
+
   it("rejects an injection-y artifact name and an empty list", async () => {
     const runner: VqlRunner = async () => ({ rows: [{ Hunt: { HuntId: "H.B3" } }], raw: "" });
     const c = new VelociraptorClient(cfg, runner);
