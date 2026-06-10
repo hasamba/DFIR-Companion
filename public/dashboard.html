@@ -623,6 +623,10 @@
           <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>
           <div class="sfield"><label>Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Bind host<span class="sfield-hint">DFIR_HOST — keep 127.0.0.1 (localhost only) unless you know what you're doing</span></label><input id="env-DFIR_HOST" placeholder="127.0.0.1" /></div>
+          <div class="sfield"><label>Port<span class="sfield-hint">DFIR_PORT — the dashboard moves with it; reopen on the new port</span></label><input id="env-DFIR_PORT" placeholder="4773" /></div>
+        </div>
       </div>
 
       <!-- AI -->
@@ -684,6 +688,24 @@
           <div class="sfield"><label>Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Synth base URL<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
         </div>
+        <div class="settings-group-head">Debugging & custom prompts</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Log token usage<span class="sfield-hint">DFIR_AI_DEBUG_USAGE — on to log prompt-cache token usage to the console</span></label><input id="env-DFIR_AI_DEBUG_USAGE" placeholder="off" /></div>
+        </div>
+        <p class="rm-hint" style="font-size:11px;color:#9aa4b2;margin:2px 0 8px">Point any of the AI prompts at a <strong>file</strong> to override the built-in default (re-read each call — no restart needed). The inline <code>DFIR_AI_*_PROMPT</code> overrides aren't editable here (they're multi-line); use a file path below or <code>npm run prompts:eject</code>.</p>
+        <div class="sfield-row">
+          <div class="sfield"><label>System prompt file<span class="sfield-hint">DFIR_AI_SYSTEM_PROMPT_FILE</span></label><input id="env-DFIR_AI_SYSTEM_PROMPT_FILE" placeholder="path/to/system.txt" /></div>
+          <div class="sfield"><label>Synthesis prompt file<span class="sfield-hint">DFIR_AI_SYNTH_PROMPT_FILE</span></label><input id="env-DFIR_AI_SYNTH_PROMPT_FILE" placeholder="path/to/synth.txt" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>CSV prompt file<span class="sfield-hint">DFIR_AI_CSV_PROMPT_FILE</span></label><input id="env-DFIR_AI_CSV_PROMPT_FILE" placeholder="path/to/csv.txt" /></div>
+          <div class="sfield"><label>Log prompt file<span class="sfield-hint">DFIR_AI_LOG_PROMPT_FILE</span></label><input id="env-DFIR_AI_LOG_PROMPT_FILE" placeholder="path/to/log.txt" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Ask prompt file<span class="sfield-hint">DFIR_AI_ASK_PROMPT_FILE</span></label><input id="env-DFIR_AI_ASK_PROMPT_FILE" placeholder="path/to/ask.txt" /></div>
+          <div class="sfield"><label>Exec-summary prompt file<span class="sfield-hint">DFIR_AI_EXEC_PROMPT_FILE</span></label><input id="env-DFIR_AI_EXEC_PROMPT_FILE" placeholder="path/to/exec.txt" /></div>
+          <div class="sfield"><label>Narrative prompt file<span class="sfield-hint">DFIR_AI_NARRATIVE_PROMPT_FILE</span></label><input id="env-DFIR_AI_NARRATIVE_PROMPT_FILE" placeholder="path/to/narrative.txt" /></div>
+        </div>
       </div>
 
       <!-- Enrichment -->
@@ -694,7 +716,7 @@
           <div class="sfield"><label>AbuseIPDB key<span class="sfield-hint">DFIR_ABUSEIPDB_KEY</span></label><input id="env-DFIR_ABUSEIPDB_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>Hunting.ch key (abuse.ch)<span class="sfield-hint">DFIR_HUNTINGCH_KEY</span></label><input id="env-DFIR_HUNTINGCH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Hunting.ch key (abuse.ch)<span class="sfield-hint">DFIR_HUNTINGCH_KEY — legacy alias DFIR_MB_KEY also works</span></label><input id="env-DFIR_HUNTINGCH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>RockyRaccoon key<span class="sfield-hint">DFIR_ROCKYRACCOON_KEY</span></label><input id="env-DFIR_ROCKYRACCOON_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="settings-group-head">CrowdStrike Falcon Intelligence</div>
@@ -705,6 +727,9 @@
             <label>Cloud<span class="sfield-hint">DFIR_CROWDSTRIKE_CLOUD</span></label>
             <select id="env-DFIR_CROWDSTRIKE_CLOUD"><option value="">— default (us-1) —</option><option value="us-1">us-1</option><option value="us-2">us-2</option><option value="eu-1">eu-1</option><option value="gov-us-1">gov-us-1</option><option value="gov-us-2">gov-us-2</option></select>
           </div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Base URL override<span class="sfield-hint">DFIR_CROWDSTRIKE_BASE_URL — leave blank to derive from Cloud</span></label><input id="env-DFIR_CROWDSTRIKE_BASE_URL" placeholder="(optional)" /></div>
         </div>
         <div class="settings-group-head">MISP</div>
         <div class="sfield-row">
@@ -733,6 +758,23 @@
           <div class="sfield"><label>Enrich delay (ms)<span class="sfield-hint">DFIR_ENRICH_DELAY_MS</span></label><input id="env-DFIR_ENRICH_DELAY_MS" placeholder="1500" /></div>
           <div class="sfield"><label>Max IOCs / run<span class="sfield-hint">DFIR_ENRICH_MAX</span></label><input id="env-DFIR_ENRICH_MAX" placeholder="100" /></div>
           <div class="sfield"><label>Health TTL (ms)<span class="sfield-hint">DFIR_ENRICH_HEALTH_TTL_MS</span></label><input id="env-DFIR_ENRICH_HEALTH_TTL_MS" placeholder="60000" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Health poll (ms)<span class="sfield-hint">DFIR_ENRICH_HEALTH_POLL_MS — re-probe down providers &amp; auto-resume; 0 disables</span></label><input id="env-DFIR_ENRICH_HEALTH_POLL_MS" placeholder="60000" /></div>
+        </div>
+        <div class="settings-group-head">Per-provider throttle overrides (ms) — blank uses the global delay</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>VirusTotal<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_VIRUSTOTAL</span></label><input id="env-DFIR_ENRICH_DELAY_MS_VIRUSTOTAL" placeholder="(optional)" /></div>
+          <div class="sfield"><label>AbuseIPDB<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_ABUSEIPDB</span></label><input id="env-DFIR_ENRICH_DELAY_MS_ABUSEIPDB" placeholder="(optional)" /></div>
+          <div class="sfield"><label>Hunting.ch<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_HUNTINGCH</span></label><input id="env-DFIR_ENRICH_DELAY_MS_HUNTINGCH" placeholder="(optional)" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>CrowdStrike<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_CROWDSTRIKE</span></label><input id="env-DFIR_ENRICH_DELAY_MS_CROWDSTRIKE" placeholder="(optional)" /></div>
+          <div class="sfield"><label>MISP<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_MISP</span></label><input id="env-DFIR_ENRICH_DELAY_MS_MISP" placeholder="(optional)" /></div>
+          <div class="sfield"><label>YETI<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_YETI</span></label><input id="env-DFIR_ENRICH_DELAY_MS_YETI" placeholder="(optional)" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>RockyRaccoon<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_ROCKYRACCOON</span></label><input id="env-DFIR_ENRICH_DELAY_MS_ROCKYRACCOON" placeholder="(optional)" /></div>
         </div>
       </div>
 
@@ -818,6 +860,16 @@
           <div class="sfield"><label>GUI URL<span class="sfield-hint">DFIR_VELOCIRAPTOR_GUI_URL</span></label><input id="env-DFIR_VELOCIRAPTOR_GUI_URL" placeholder="https://velo:8889" /></div>
           <div class="sfield"><label>GUI org<span class="sfield-hint">DFIR_VELOCIRAPTOR_ORG — for deep links (default root)</span></label><input id="env-DFIR_VELOCIRAPTOR_ORG" placeholder="root" /></div>
           <div class="sfield"><label>Hunt platforms<span class="sfield-hint">DFIR_HUNT_PLATFORMS — comma-separated; blank = all</span></label><input id="env-DFIR_HUNT_PLATFORMS" placeholder="velociraptor,sigma,yara,…" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Hunt auto-collect wait (min)<span class="sfield-hint">DFIR_VELO_HUNT_WAIT_MIN — default 10 (clamped 1–1440)</span></label><input id="env-DFIR_VELO_HUNT_WAIT_MIN" placeholder="10" /></div>
+          <div class="sfield"><label>Collection timeout (ms)<span class="sfield-hint">DFIR_VELOCIRAPTOR_TIMEOUT_MS</span></label><input id="env-DFIR_VELOCIRAPTOR_TIMEOUT_MS" placeholder="(optional)" /></div>
+          <div class="sfield"><label>Max rows<span class="sfield-hint">DFIR_VELOCIRAPTOR_MAX_ROWS</span></label><input id="env-DFIR_VELOCIRAPTOR_MAX_ROWS" placeholder="(optional)" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Max output — interactive (bytes)<span class="sfield-hint">DFIR_VELOCIRAPTOR_MAX_OUTPUT</span></label><input id="env-DFIR_VELOCIRAPTOR_MAX_OUTPUT" placeholder="52428800" /></div>
+          <div class="sfield"><label>Max output — collect (bytes)<span class="sfield-hint">DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT</span></label><input id="env-DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT" placeholder="268435456" /></div>
+          <div class="sfield"><label>Upload VQL override<span class="sfield-hint">DFIR_VELOCIRAPTOR_UPLOAD_VQL — version-specific; blank = default</span></label><input id="env-DFIR_VELOCIRAPTOR_UPLOAD_VQL" placeholder="(optional)" /></div>
         </div>
 
       </div>

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Settings → every `DFIR_*` env var is now configurable from the dashboard.** Audited the full env surface and added the ~25 that were missing from **Settings**: server bind (`DFIR_HOST`/`DFIR_PORT`), AI debug + the 7 custom-prompt **file** overrides (`DFIR_AI_*_PROMPT_FILE`) and `DFIR_AI_DEBUG_USAGE`, `DFIR_CROWDSTRIKE_BASE_URL`, enrichment `DFIR_ENRICH_HEALTH_POLL_MS` + the 7 per-provider throttle overrides (`DFIR_ENRICH_DELAY_MS_<PROVIDER>`), and the Velociraptor tuning knobs (`DFIR_VELO_HUNT_WAIT_MIN`, `DFIR_VELOCIRAPTOR_TIMEOUT_MS` / `_MAX_ROWS` / `_MAX_OUTPUT` / `_COLLECT_MAX_OUTPUT` / `_UPLOAD_VQL`). The legacy `DFIR_MB_KEY` alias is documented on the Hunting.ch field; inline multi-line `DFIR_AI_*_PROMPT` overrides remain file/eject-only (a single-line settings field can't hold them).
 - **The Playbook now occupies the prominent dashboard slot the _Recommended Next Steps_ section used to hold, and _Recommended Next Steps_ is hidden by default** (re-enable it anytime from Settings → section visibility). The Playbook supersedes it for action-tracking; the next-steps data still feeds the Playbook, the report, and the IRIS/ClickUp/Notion exports — only the redundant on-dashboard panel is hidden. Section-visibility now supports a per-section `defaultHidden`, and a section newly added to a build (e.g. the Playbook) lands at its **canonical position** in an existing saved layout instead of being appended at the bottom.
 
 ### Added
