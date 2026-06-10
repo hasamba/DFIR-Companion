@@ -361,6 +361,16 @@ the block). New page = a row in `DFIR_NOTION_DATABASE_ID` (the investigation tem
 `DFIR_NOTION_PARENT_PAGE_ID`; the analyst picks new-vs-existing in a dashboard modal. Screenshots are
 referenced by filename (not uploaded). Appends are batched to Notion's 100-block/2-level-nesting limits.
 
+**ClickUp** (`integrations/clickup/` — `clickupClient` + pure `clickupMap` + `pushPlaybookToClickUp`
+orchestrator + `ClickUpExportStore`) pushes the **Response Playbook** (issue #36) to a ClickUp list as
+tasks (`DFIR_CLICKUP_TOKEN`; route `POST /cases/:id/push/clickup` `{ listId? }`, `/clickup/status`,
+`/health.clickupEnabled`). Status is mapped onto the list's REAL custom statuses (`resolveClickUpStatus`
+against `listStatuses()`), priority → ClickUp's int (critical→1…low→4). The crux mirrors Notion's
+remember-the-target idea but per TASK: each playbook task's ClickUp id is saved in
+`state/clickup-export.json` (`ClickUpExportStore`), so a re-push **updates** the task it created
+(`updateTask`) instead of duplicating (`createTask`). Like IRIS/Notion the client takes an injectable
+`fetchFn` (no network in tests). The playbook is **synced** (honoring the IR-templates flag) before the push.
+
 **Customizable prompts.** The six prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
 consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`,
 which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC>_PROMPT` inline, or `…_PROMPT_FILE` —

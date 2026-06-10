@@ -316,6 +316,13 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
   (your own notes, pasted finding screenshots) is never touched**. The target page + managed block are
   remembered per case (`state/notion-export.json`); delete the block and the next export recreates it.
   Configure with `DFIR_NOTION_TOKEN` (share the target page/database with the integration).
+- **Push to ClickUp** — export the **Response Playbook** into a [ClickUp](https://clickup.com/) list as
+  tasks (dashboard **Push** menu → **Push to ClickUp**). Each task carries its **status** (mapped onto the
+  list's own statuses — To do / In progress / Complete; Skipped → Closed), **priority** (critical→Urgent …
+  low→Low), **due date**, and assignee/notes. **Re-pushing the same case updates the tasks it created**
+  (each playbook task's ClickUp id is remembered in `state/clickup-export.json`) rather than duplicating.
+  The list id is asked for in a modal (pre-filled from the last push or `DFIR_CLICKUP_LIST_ID`). Configure
+  with `DFIR_CLICKUP_TOKEN`.
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template)
   (title page → executive summary → BIA, limitations, goals, glossary → incident/investigation
   timelines → investigation → conclusions/recommendations → attachments). Technical sections

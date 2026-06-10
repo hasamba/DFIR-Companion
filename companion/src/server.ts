@@ -99,6 +99,9 @@ import { pushCaseToMisp, type MispPushOptions } from "./integrations/misp/mispPu
 import { NotionClient, parseNotionPageId } from "./integrations/notion/notionClient.js";
 import { pushCaseToNotion, type NotionPushOptions, type NotionPushTarget } from "./integrations/notion/notionPush.js";
 import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
+import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
+import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
+import { pushPlaybookToClickUp } from "./integrations/clickup/clickupPush.js";
 import {
   DeHashedExposureProvider,
   HaveIBeenPwnedExposureProvider,
@@ -239,6 +242,13 @@ export interface AppOptions {
   notionClient?: NotionClient;
   notionOptions?: NotionPushOptions;
   notionExportStore?: NotionExportStore;
+  // ClickUp export (issue #36 Phase 3): a configured client (when DFIR_CLICKUP_TOKEN is set) pushes
+  // the Response Playbook as ClickUp tasks. The per-task ClickUp ids are remembered per case in
+  // clickupExportStore so a re-export updates instead of duplicating. Default target list id +
+  // base URL come from clickupOptions.
+  clickupClient?: ClickUpClient;
+  clickupExportStore?: ClickUpExportStore;
+  clickupOptions?: { defaultListId?: string };
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -318,7 +328,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS] });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS] });
   });
 
   // How many captures have been recorded for a case (counts the audit-log lines).
@@ -1207,6 +1217,55 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[notion] ${caseId} export ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Whether a ClickUp push target is configured (so the dashboard can show/hide the option).
+  app.get("/clickup/status", (_req: Request, res: Response) => {
+    res.status(200).json({
+      configured: !!options.clickupClient,
+      hasDefaultList: !!options.clickupOptions?.defaultListId,
+      defaultListId: options.clickupOptions?.defaultListId ?? "",
+    });
+  });
+
+  // The last ClickUp export pointer (saved list id) so the modal can prefill it.
+  app.get("/cases/:id/clickup-export", async (req: Request, res: Response) => {
+    if (!options.clickupExportStore) return res.status(501).json({ error: "ClickUp not configured" });
+    try {
+      return res.status(200).json(await options.clickupExportStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Push the Response Playbook to a ClickUp list as tasks. Body { listId? } — falls back to the
+  // saved list, then the configured default. Re-export UPDATES the tasks it created (by remembered
+  // id) instead of duplicating.
+  app.post("/cases/:id/push/clickup", async (req: Request, res: Response) => {
+    if (!options.clickupClient) return res.status(501).json({ error: "ClickUp not configured (set DFIR_CLICKUP_TOKEN)" });
+    if (!options.clickupExportStore) return res.status(501).json({ error: "clickup export store not configured" });
+    if (!options.playbookStore || !options.stateStore) return res.status(501).json({ error: "playbook not configured" });
+    const caseId = req.params.id;
+    try {
+      const saved = await options.clickupExportStore.load(caseId);
+      const requested = typeof req.body?.listId === "string" ? req.body.listId.trim() : "";
+      const listId = requested || saved.listId || options.clickupOptions?.defaultListId || "";
+      if (!listId) return res.status(400).json({ error: "a ClickUp list id is required" });
+      const tasks = await syncPlaybook(caseId);
+      if (!tasks.length) return res.status(400).json({ error: "the playbook is empty — run synthesis or add tasks first" });
+      logLine(`[clickup] ${caseId} push START -> list ${listId} (${tasks.length} tasks)`);
+      const result = await pushPlaybookToClickUp(
+        options.clickupClient,
+        { caseId, listId, tasks },
+        options.clickupExportStore,
+        new Date().toISOString(),
+      );
+      logLine(`[clickup] ${caseId} push DONE: +${result.created} created, ${result.updated} updated, ${result.skipped} skipped, warnings ${result.warnings.length}`);
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[clickup] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
     }
   });
@@ -3280,7 +3339,7 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
 // self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
 // DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
-function tlsFetchFor(name: "MISP" | "YETI" | "IRIS" | "TIMESKETCH" | "NOTION") {
+function tlsFetchFor(name: "MISP" | "YETI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP") {
   return buildTlsFetch({
     caCertPath: process.env[`DFIR_${name}_CA`],
     insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
@@ -3363,6 +3422,19 @@ export function notionPushOptions(): NotionPushOptions {
     containerTitle: process.env.DFIR_NOTION_CONTAINER_TITLE || undefined,
     maxTimelineRows: Number(process.env.DFIR_NOTION_MAX_TIMELINE) || undefined,
   };
+}
+
+// Build the ClickUp client from env (DFIR_CLICKUP_TOKEN). Returns undefined when not configured,
+// which hides the dashboard's "Push to ClickUp" option. An optional DFIR_CLICKUP_LIST_ID is the
+// default target list (the analyst can still override it per push).
+export function buildClickUpClient(): ClickUpClient | undefined {
+  const token = process.env.DFIR_CLICKUP_TOKEN;
+  if (!token) return undefined;
+  return new ClickUpClient({ token, fetchFn: tlsFetchFor("CLICKUP") });
+}
+
+export function clickupOptions(): { defaultListId?: string } {
+  return { defaultListId: process.env.DFIR_CLICKUP_LIST_ID || undefined };
 }
 
 export function buildEnrichmentProviders(): EnrichmentProvider[] {
@@ -3478,6 +3550,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const synthMetaStore = new SynthMetaStore(store);
   const importMetaStore = new ImportMetaStore(store);
   const notionExportStore = new NotionExportStore(store);
+  const clickupExportStore = new ClickUpExportStore(store);
   const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore);
 
   const provider = buildProvider();
@@ -3547,6 +3620,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     notionClient: buildNotionClient(),
     notionOptions: notionPushOptions(),
     notionExportStore,
+    clickupClient: buildClickUpClient(),
+    clickupExportStore,
+    clickupOptions: clickupOptions(),
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
