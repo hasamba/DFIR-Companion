@@ -807,6 +807,7 @@
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <input id="veloBundleName" placeholder="Bundle name (e.g. Best Practice)" style="flex:1;min-width:180px;padding:5px" />
               <input id="veloBundleDefaultWait" type="number" min="1" max="1440" placeholder="default wait (min)" title="Default minutes to wait before collecting (optional)" style="width:150px;padding:5px" />
+              <input id="veloBundleTimeout" type="number" min="60" max="86400" placeholder="timeout (sec)" title="Per-collection timeout on each endpoint (Velociraptor default 600s). Bump it for slow artifacts like THOR." style="width:130px;padding:5px" />
             </div>
             <input id="veloBundleDesc" placeholder="Description (optional)" style="padding:5px" />
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -2487,10 +2488,10 @@
           ? (b.customized ? `<button class="velo-reset-btn" data-id="${escAttr(b.id)}" title="Discard your edits and restore the shipped default" style="background:#33291a;color:#ffd07a">Reset to default</button>` : "")
           : `<button class="velo-del-btn" data-id="${escAttr(b.id)}" style="background:#3a2330;color:#ff9aa4">Delete</button>`;
         const badge = b.builtIn ? ` <span style='color:#6aa9ff;font-size:11px'>built-in${b.customized ? " · edited" : ""}</span>` : "";
-        const wait = b.defaultWaitMinutes ? ` · default wait ${esc(b.defaultWaitMinutes)}m` : "";
+        const meta = (b.defaultWaitMinutes ? ` · wait ${esc(b.defaultWaitMinutes)}m` : "") + (b.timeoutSeconds ? ` · timeout ${esc(b.timeoutSeconds)}s` : "");
         return `<div class="velo-bundle" style="border:1px solid #2a3146;border-radius:6px;padding:8px 10px;margin-bottom:8px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-            <div><strong>${esc(b.name)}</strong>${badge} <span style="color:#9aa4b2;font-size:11px">${esc(b.artifacts.length)} artifact(s)${wait}</span></div>
+            <div><strong>${esc(b.name)}</strong>${badge} <span style="color:#9aa4b2;font-size:11px">${esc(b.artifacts.length)} artifact(s)${meta}</span></div>
             <div style="display:flex;gap:6px;flex-wrap:wrap">${runBtn}${editBtn}${dupBtn}${tailBtn}</div>
           </div>
           ${b.description ? `<div style="color:#9aa4b2;font-size:12px;margin-top:4px">${esc(b.description)}</div>` : ""}
@@ -2520,6 +2521,7 @@
       form.innerHTML = `
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <label style="font-size:12px;color:#9aa4b2">Wait <input type="number" class="velo-wait" min="1" max="1440" value="${esc(defWait)}" style="width:64px;padding:4px" /> min</label>
+          <label style="font-size:12px;color:#9aa4b2" title="Per-collection timeout on each endpoint (Velociraptor default 600s). Bump it for slow artifacts like THOR.">Timeout <input type="number" class="velo-timeout" min="60" max="86400" value="${bundle.timeoutSeconds ? esc(bundle.timeoutSeconds) : ""}" placeholder="600" style="width:72px;padding:4px" /> s</label>
           <select class="velo-os" title="Restrict to a client OS"><option value="">any OS</option><option value="windows">windows</option><option value="linux">linux</option><option value="darwin">darwin</option></select>
           <select class="velo-minsev" title="Only import events at or above this severity (keeps volume down). Telemetry with no severity is always kept."><option value="">all severities</option><option value="info">info+</option><option value="low">low+</option><option value="medium">medium+</option><option value="high">high+</option><option value="critical">critical only</option></select>
           <input class="velo-inc" placeholder="include labels (comma-sep)" style="flex:1;min-width:140px;padding:4px" />
@@ -2537,6 +2539,7 @@
       const msg = form.querySelector(".velo-run-msg");
       if (!caseId) { msg.textContent = "connect to a case first"; return; }
       const waitMinutes = Number(form.querySelector(".velo-wait").value) || 10;
+      const timeoutSeconds = Number(form.querySelector(".velo-timeout").value) || undefined;
       const os = form.querySelector(".velo-os").value;
       const minSeverity = form.querySelector(".velo-minsev").value;
       const includeLabels = form.querySelector(".velo-inc").value;
@@ -2545,7 +2548,7 @@
       go.disabled = true; msg.textContent = "launching hunt…";
       fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/run-bundle`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bundleId, waitMinutes, os, minSeverity, includeLabels, excludeLabels })
+        body: JSON.stringify({ bundleId, waitMinutes, timeoutSeconds, os, minSeverity, includeLabels, excludeLabels })
       }).then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }
@@ -2664,12 +2667,13 @@
       const name = (document.getElementById("veloBundleName").value || "").trim();
       const description = (document.getElementById("veloBundleDesc").value || "").trim();
       const defaultWaitMinutes = Number(document.getElementById("veloBundleDefaultWait").value) || undefined;
+      const timeoutSeconds = Number(document.getElementById("veloBundleTimeout").value) || undefined;
       const msg = document.getElementById("veloBuilderMsg");
       if (!name) { msg.textContent = "name is required"; return; }
       if (!veloSelected.size) { msg.textContent = "select at least one artifact"; return; }
       const btn = document.getElementById("veloSaveBundleBtn");
       const wasEditing = !!veloEditingId;
-      const body = { name, description, artifacts: [...veloSelected], defaultWaitMinutes };
+      const body = { name, description, artifacts: [...veloSelected], defaultWaitMinutes, timeoutSeconds };
       if (veloEditingId) body.id = veloEditingId;   // editing a built-in or custom bundle overrides it in place
       btn.disabled = true; msg.textContent = wasEditing ? "updating…" : "saving…";
       fetch("/bundles", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
@@ -2689,6 +2693,7 @@
       document.getElementById("veloBundleName").value = b.name || "";
       document.getElementById("veloBundleDesc").value = b.description || "";
       document.getElementById("veloBundleDefaultWait").value = b.defaultWaitMinutes || "";
+      document.getElementById("veloBundleTimeout").value = b.timeoutSeconds || "";
       veloSelected = new Set(b.artifacts || []);
       renderVeloSelected(); renderVeloPicker();
       const builder = document.getElementById("veloBuilder");
@@ -2709,6 +2714,7 @@
       document.getElementById("veloBundleName").value = "";
       document.getElementById("veloBundleDesc").value = "";
       document.getElementById("veloBundleDefaultWait").value = "";
+      document.getElementById("veloBundleTimeout").value = "";
       veloSelected = new Set(); renderVeloSelected(); renderVeloPicker();
       veloSetEditing(null);
     }

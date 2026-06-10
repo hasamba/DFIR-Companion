@@ -207,6 +207,16 @@ describe("VelociraptorClient.launchArtifactHunt", () => {
     expect(program).not.toContain("exclude_labels=");
   });
 
+  it("adds a collection timeout clause when timeoutSeconds is set, omits it otherwise", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.B5", state: "RUNNING" } }], raw: "" }; };
+    const c = new VelociraptorClient(cfg, runner);
+    await c.launchArtifactHunt(["Windows.System.Pslist"], "x", {}, { timeoutSeconds: 3600 });
+    expect(program).toContain("timeout=3600");
+    await c.launchArtifactHunt(["Windows.System.Pslist"], "x", {}, { timeoutSeconds: 0 });
+    expect(program).not.toContain("timeout=");
+  });
+
   it("rejects an injection-y artifact name and an empty list", async () => {
     const runner: VqlRunner = async () => ({ rows: [{ Hunt: { HuntId: "H.B3" } }], raw: "" });
     const c = new VelociraptorClient(cfg, runner);

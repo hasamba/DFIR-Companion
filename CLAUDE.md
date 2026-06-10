@@ -316,8 +316,9 @@ back addressed as `artifact/source`. Routes `POST /velociraptor/hunt` + `/veloci
 (+ server-side `/velociraptor/run`); `/health.velociraptorEnabled` gates the button. VQL statements
 are passed as separate positional args with comments stripped (a leading `--` is parsed as a CLI flag).
 **Triage bundles** build on the same client+runner: `listClientArtifacts()` (browse `artifact_definitions()`
-type CLIENT), `launchArtifactHunt(artifacts, desc, {includeLabels,excludeLabels,os})` (hunt over a chosen
-SET of existing artifacts with Velociraptor's own include/exclude/OS conditions), `huntResultsByArtifact()`
+type CLIENT), `launchArtifactHunt(artifacts, desc, {includeLabels,excludeLabels,os}, {timeoutSeconds})` (hunt over a chosen
+SET of existing artifacts with Velociraptor's own include/exclude/OS conditions + an optional per-collection
+`timeout` override, since some artifacts e.g. THOR run past the 600s default), `huntResultsByArtifact()`
 (collect per-artifact into the `{ "Artifact.Name": [rows] }` artifact-map `importVelociraptor` already eats),
 and `huntUploads()` (read a hunt's uploaded `.json` reports server-side — some artifacts, e.g.
 `Generic.Scanner.ThorZIP` / `Windows.Hayabusa.Rules`, put their real data in an UPLOADED JSON, not rows; the

@@ -1011,15 +1011,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         os,
       };
       const minSeverity = parseMinSeverity(req.body?.minSeverity);   // applied to the import at collect time
+      // Per-collection timeout (seconds): run override > bundle default > Velociraptor's own default (600s).
+      const reqTimeout = Number(req.body?.timeoutSeconds);
+      const rawTimeout = Number.isFinite(reqTimeout) && reqTimeout > 0 ? reqTimeout : bundle.timeoutSeconds;
+      const timeoutSeconds = typeof rawTimeout === "number" && rawTimeout > 0 ? Math.min(86_400, Math.max(60, Math.floor(rawTimeout))) : undefined;
 
-      logLine(`[velociraptor] run bundle "${bundle.name}" (${bundle.artifacts.length} artifact(s)), collect in ${waitMinutes}m${minSeverity ? `, min severity ${minSeverity}` : ""}`);
-      const launch = await options.velociraptorClient.launchArtifactHunt(bundle.artifacts, bundle.name, target);
+      logLine(`[velociraptor] run bundle "${bundle.name}" (${bundle.artifacts.length} artifact(s)), collect in ${waitMinutes}m${minSeverity ? `, min severity ${minSeverity}` : ""}${timeoutSeconds ? `, timeout ${timeoutSeconds}s` : ""}`);
+      const launch = await options.velociraptorClient.launchArtifactHunt(bundle.artifacts, bundle.name, target, { timeoutSeconds });
       const collectAt = new Date(Date.now() + waitMinutes * 60_000).toISOString();
       const job: VeloHuntJob = {
         bundleId: bundle.id, bundleName: bundle.name, artifacts: launch.artifacts,
         huntId: launch.huntId, guiUrl: launch.guiUrl,
         launchedAt: new Date().toISOString(), waitMinutes, collectAt,
-        status: "running", target, minSeverity,
+        status: "running", target, minSeverity, timeoutSeconds,
       };
       await options.veloHuntStore.save(caseId, job);
       options.onVeloHunt?.(caseId);
