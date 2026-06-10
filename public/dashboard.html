@@ -341,6 +341,12 @@
     .sfield { margin-bottom: 10px; }
     .sfield > label { display: block; font-size: 11px; color: #9aa4b2; margin-bottom: 3px; }
     .sfield input, .sfield select { width: 100%; box-sizing: border-box; }
+    /* Dark-mode combo boxes throughout Settings (every <select>, matching the export/push .toolbar-select look).
+       Without this, selects fall back to the light browser default while the inputs around them are dark. */
+    .settings-modal select { background: #242a35; color: #cbd3df; border: 1px solid #353c49; border-radius: 6px; padding: 5px; font-size: 13px; }
+    .settings-modal select:hover { border-color: #4a5466; }
+    .settings-modal select:focus { outline: none; border-color: #2d6cdf; }
+    .settings-modal select option { background: #161a22; color: #e6e6e6; }
     .sfield-hint { display: block; font-size: 10px; color: #5a6475; margin-top: 2px; }
     .sfield-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
     .sfield-row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 4px; }
