@@ -302,6 +302,17 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
   The pushed/exported timeline matches the report (same scope/legitimate filtering). Configure with
   `DFIR_TIMESKETCH_URL` + `DFIR_TIMESKETCH_USER` + `DFIR_TIMESKETCH_PASSWORD` (self-signed/internal-CA
   supported via `DFIR_TIMESKETCH_CA`/`_INSECURE`).
+- **Export to Notion** — push a case into a [Notion](https://notion.so/) page so investigators can
+  collaborate around it (dashboard **Push** menu → **Export to Notion**, or
+  `npm run notion:push -- <caseId> --page <urlOrId>`). It asks **new page or existing page**: *new*
+  creates the page as a row in a Notion **database** (`DFIR_NOTION_DATABASE_ID` — the ongoing
+  investigation template) or under a parent page (`DFIR_NOTION_PARENT_PAGE_ID`); *existing* updates a
+  page you paste. The Companion writes **all** its content — summary, findings, timeline, IOCs, MITRE,
+  attacker path, key questions, next steps — **inside ONE managed toggle block it owns** on the page.
+  A re-export refreshes only that block with the latest case data, so **anything you wrote outside it
+  (your own notes, pasted finding screenshots) is never touched**. The target page + managed block are
+  remembered per case (`state/notion-export.json`); delete the block and the next export recreates it.
+  Configure with `DFIR_NOTION_TOKEN` (share the target page/database with the integration).
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template)
   (title page → executive summary → BIA, limitations, goals, glossary → incident/investigation
   timelines → investigation → conclusions/recommendations → attachments). Technical sections
@@ -555,6 +566,21 @@ URL + user + password all required to enable push. Export to JSONL works without
 | `DFIR_TIMESKETCH_TIMELINE` | `DFIR Companion timeline` | Managed timeline name |
 | `DFIR_TIMESKETCH_CA` | — | PEM CA bundle for internal-CA Timesketch |
 | `DFIR_TIMESKETCH_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+
+### Notion export (optional)
+
+Token alone enables it. Share the target page/database with the integration. "New page" needs a
+database or parent page (env default or entered per export); "existing page" updates a page you paste.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_NOTION_TOKEN` | — | Internal-integration secret (Notion: Settings → Connections → develop your own) |
+| `DFIR_NOTION_DATABASE_ID` | — | Default database for "new page" exports (the investigation template) |
+| `DFIR_NOTION_PARENT_PAGE_ID` | — | Alternative default: create the new page under this parent page |
+| `DFIR_NOTION_CONTAINER_TITLE` | `🔍 DFIR Companion — Auto-generated` | Title of the managed block the Companion owns |
+| `DFIR_NOTION_MAX_TIMELINE` | `500` | Max timeline rows written to Notion |
+| `DFIR_NOTION_CA` | — | PEM CA bundle if a proxy uses an internal CA |
+| `DFIR_NOTION_INSECURE` | — | `=1` to skip TLS verification (lab only) |
 
 ### Velociraptor live hunts (optional)
 

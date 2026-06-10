@@ -476,6 +476,32 @@
       </div>
     </div>
   </div>
+  <div id="notionOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Export to Notion</h3>
+      <p style="color:#9aa4b2; font-size:12px; margin:0 0 10px">
+        The Companion writes ALL its content inside ONE managed block it creates on the page.
+        Re-exporting refreshes that block with the latest case data — your own notes and pasted
+        screenshots (anything outside that block) are never touched.</p>
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; margin:6px 0">
+        <input type="radio" name="notionMode" value="new" checked> <strong>New page</strong> — create a fresh page
+      </label>
+      <div id="notionNewRow" style="margin:0 0 8px 22px;">
+        <input id="notionNewTarget" placeholder="Database or parent page ID (optional if a default is set)" style="width:100%; box-sizing:border-box; padding:5px;" />
+      </div>
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; margin:6px 0">
+        <input type="radio" name="notionMode" value="existing"> <strong>Existing page</strong> — update a page you already use
+      </label>
+      <div id="notionExistingRow" style="display:none; margin:0 0 8px 22px;">
+        <input id="notionPageUrl" placeholder="Paste the Notion page URL or ID" style="width:100%; box-sizing:border-box; padding:5px;" />
+      </div>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="notionExportBtn">Export</button>
+        <button id="notionCancel" style="background:#2a2f3a;">Cancel</button>
+        <span id="notionMsg" style="color:#9aa4b2; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
   <div id="huntOverlay" class="comment-overlay">
     <div class="comment-modal hunt-modal">
       <h3 id="huntTitle">Hunt queries</h3>
@@ -4267,12 +4293,20 @@
     fetch("/iris/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("iris", "Push to DFIR-IRIS"); }).catch(() => {});
     fetch("/timesketch/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("timesketch", "Push to Timesketch"); }).catch(() => {});
     fetch("/misp/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("misp", "Push to MISP"); }).catch(() => {});
+    // Notion export: a configured token shows the option; a default DB/parent hides the modal's
+    // target input (it's only needed for a "new page" when no default is set).
+    let notionHasDefault = false;
+    fetch("/notion/status").then((r) => r.json()).then((s) => {
+      if (s && s.configured) { addPushOption("notion", "Export to Notion"); notionHasDefault = !!(s.hasDatabase || s.hasParent); }
+    }).catch(() => {});
     pushSelect.onchange = (e) => {
       const sel = e.target;
       const target = sel.value;
       sel.value = ""; // reset to the "Push to…" placeholder
       const caseId = document.getElementById("caseId").value.trim();
       if (!target || !caseId) return;
+      // Notion needs the new-vs-existing question first, so it opens a modal instead of an immediate POST.
+      if (target === "notion") { openNotionModal(); return; }
       const c = encodeURIComponent(caseId);
       sel.disabled = true;
       const targetLabel = target === "iris" ? "IRIS" : target === "timesketch" ? "Timesketch" : "MISP";
@@ -4309,6 +4343,58 @@
         })
         .catch((err) => document.getElementById("status").textContent = "push failed: " + err.message)
         .finally(() => { sel.disabled = false; });
+    };
+
+    // ── Export to Notion modal (new vs existing page) ─────────────────────────
+    const notionOverlay = document.getElementById("notionOverlay");
+    function notionMode() { const r = document.querySelector('input[name="notionMode"]:checked'); return r ? r.value : "new"; }
+    function syncNotionRows() {
+      const mode = notionMode();
+      // The "new page" target input is only needed when no server default DB/parent is configured.
+      document.getElementById("notionNewRow").style.display = (mode === "new" && !notionHasDefault) ? "" : "none";
+      document.getElementById("notionExistingRow").style.display = mode === "existing" ? "" : "none";
+    }
+    function openNotionModal() {
+      document.getElementById("notionMsg").textContent = "";
+      syncNotionRows();
+      notionOverlay.classList.add("open");
+    }
+    function closeNotionModal() { notionOverlay.classList.remove("open"); }
+    [...document.querySelectorAll('input[name="notionMode"]')].forEach((r) => { r.onchange = syncNotionRows; });
+    document.getElementById("notionCancel").onclick = closeNotionModal;
+    notionOverlay.addEventListener("click", (e) => { if (e.target === notionOverlay) closeNotionModal(); });
+    document.getElementById("notionExportBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { document.getElementById("notionMsg").textContent = "connect to a case first"; return; }
+      const c = encodeURIComponent(caseId);
+      const mode = notionMode();
+      const body = { mode };
+      if (mode === "existing") {
+        const page = document.getElementById("notionPageUrl").value.trim();
+        if (!page) { document.getElementById("notionMsg").textContent = "paste the Notion page URL or ID"; return; }
+        body.page = page;
+      } else {
+        const tgt = document.getElementById("notionNewTarget").value.trim();
+        if (tgt) { body.database = tgt; body.parent = tgt; } // server picks whichever id resolves
+        else if (!notionHasDefault) { document.getElementById("notionMsg").textContent = "enter a database or parent page ID (or set a default in .env)"; return; }
+      }
+      const btn = document.getElementById("notionExportBtn");
+      btn.disabled = true;
+      document.getElementById("notionMsg").textContent = "exporting…";
+      fetch(`/cases/${c}/push/notion`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((res) => {
+          const verb = res.created ? "created" : "updated";
+          document.getElementById("status").textContent =
+            `Notion page ${verb}: +${res.blocksAppended} block(s)` +
+            (res.containerRecreated ? " (managed block recreated)" : "") +
+            (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
+          if (res.pageUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.pageUrl)}" target="_blank" rel="noopener">Open in Notion</a>`;
+          if (res.warnings && res.warnings.length) console.warn("notion export warnings:", res.warnings);
+          closeNotionModal();
+        })
+        .catch((err) => document.getElementById("notionMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
+        .finally(() => { btn.disabled = false; });
     };
 
     // ── Collapsible sections ──────────────────────────────────────────────────
