@@ -72,7 +72,7 @@ describe("Velociraptor triage bundles — routes", () => {
     expect(res.body.artifacts.map((a: { name: string }) => a.name)).toContain("Windows.System.Pslist");
   });
 
-  it("bundle CRUD: create, list, and delete a custom bundle; built-ins are protected", async () => {
+  it("bundle CRUD: create, list, and delete a custom bundle", async () => {
     const create = await request(app).post("/bundles").send({ name: "My Triage", artifacts: ["Windows.System.Pslist"] });
     expect(create.status).toBe(201);
     expect(create.body.builtIn).toBe(false);
@@ -82,7 +82,23 @@ describe("Velociraptor triage bundles — routes", () => {
     expect(list.body.some((b: { id: string }) => b.id === "fast-triage")).toBe(true);
 
     expect((await request(app).delete(`/bundles/${create.body.id}`)).status).toBe(204);
-    expect((await request(app).delete("/bundles/fast-triage")).status).toBe(400);   // built-in
+    expect((await request(app).delete("/bundles/nope-xyz")).status).toBe(404);   // unknown custom id
+  });
+
+  it("built-in bundles are editable in place and resettable to the default", async () => {
+    const edit = await request(app).post("/bundles").send({ id: "fast-triage", name: "Fast Triage (mine)", artifacts: ["Windows.System.Pslist", "Windows.Network.Netstat"] });
+    expect(edit.status).toBe(201);
+    expect(edit.body.builtIn).toBe(true);
+    expect(edit.body.customized).toBe(true);
+
+    let ft = (await request(app).get("/bundles")).body.find((b: { id: string }) => b.id === "fast-triage");
+    expect(ft.name).toBe("Fast Triage (mine)");
+    expect(ft.customized).toBe(true);
+
+    expect((await request(app).delete("/bundles/fast-triage")).status).toBe(204);   // reset to default
+    ft = (await request(app).get("/bundles")).body.find((b: { id: string }) => b.id === "fast-triage");
+    expect(ft.name).toBe("Fast Triage");
+    expect(ft.customized).toBe(false);
   });
 
   it("POST /bundles rejects a bundle with no artifacts", async () => {

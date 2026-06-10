@@ -833,14 +833,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Delete a custom bundle, OR reset an edited built-in back to its shipped default (idempotent for a
+  // pristine built-in). 404 only for an unknown non-built-in id.
   app.delete("/bundles/:id", async (req: Request, res: Response) => {
     if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
     try {
-      const found = await options.artifactBundleStore.delete(req.params.id);
-      if (!found) return res.status(404).json({ error: `bundle "${req.params.id}" not found` });
+      const removed = await options.artifactBundleStore.delete(req.params.id);
+      if (!removed && !options.artifactBundleStore.isBuiltIn(req.params.id)) {
+        return res.status(404).json({ error: `bundle "${req.params.id}" not found` });
+      }
       return res.status(204).send();
     } catch (err) {
-      if ((err as Error).message.includes("built-in")) return res.status(400).json({ error: (err as Error).message });
       return res.status(500).json({ error: (err as Error).message });
     }
   });

@@ -224,7 +224,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Timeline bulk actions** — star, multi-select, bulk-tag, or mark-legitimate in one batched write + re-synthesis
 - **Hunt-pivot generator** — one click from any event or IOC generates ready-to-run queries: Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, and Suricata rules; no AI, runs offline; configurable platform allowlist
 - **Velociraptor live hunts** — run a pivot VQL as a fleet hunt across all enrolled endpoints from the dashboard (opt-in, requires API config)
-- **Velociraptor triage bundles** — browse the server's collectable artifacts, save named bundles (Fast/Full Triage ship by default), run one as a hunt scoped by label/OS, then auto-collect → import → synthesize after a configurable delay; persisted per-case job with a live countdown + "Collect now" (opt-in, requires API config)
+- **Velociraptor triage bundles** (Settings → Integrations) — browse the server's collectable artifacts, save named bundles (Fast/Full Triage ship by default, all editable), run one as a hunt scoped by label/OS, then auto-collect → import → synthesize after a configurable delay; persisted per-case job with a live countdown + "Collect now" (opt-in, requires API config)
 - **Scope + legitimacy** — set a date/time window; mark findings/IOCs/events as legitimate (reversible); all views re-project deterministically
 - **Synthesis & import freshness** — "last synthesized N ago" + what-changed diff; "last import N ago" + new-event/IOC highlights with `NEW` badges
 
@@ -600,13 +600,14 @@ velociraptor --config server.config.yaml config api_client --name dfir --role ad
 | `DFIR_VELOCIRAPTOR_MAX_OUTPUT` | `52428800` | Hard cap on query output bytes (50 MB) |
 | `DFIR_VELO_HUNT_WAIT_MIN` | `10` | Default minutes before a **triage bundle** hunt auto-collects (per-run + per-bundle override; clamped 1–1440) |
 
-**Triage bundles** (dashboard *Velociraptor Triage* panel): *Browse server artifacts* lists the server's
-collectable `CLIENT` artifacts; assemble + save named **bundles** (Fast/Full Triage ship by default,
-stored globally next to `cases/` in `bundles/`); **Run** one as a hunt (optionally scoped by include/
-exclude labels + OS). The hunt stays open until expiry, so the Companion **auto-collects** results after
-`DFIR_VELO_HUNT_WAIT_MIN`, imports them through the deterministic Velociraptor importer, and synthesizes —
-or click **Collect now** on the live job card to pull early. The in-flight job persists per case
-(`state/velo-hunt.json`) and survives a server restart.
+**Triage bundles** (**Settings → Integrations → Velociraptor Triage Bundles**): *Browse server artifacts*
+lists the server's collectable `CLIENT` artifacts; assemble + save named **bundles** (Fast/Full Triage ship
+by default, stored globally next to `cases/` in `bundles/`). **Every bundle, built-ins included, is editable
+in place** — an edit saves an override; **Reset to default** discards it. **Run** one as a hunt (optionally
+scoped by include/exclude labels + OS). The hunt stays open until expiry, so the Companion **auto-collects**
+results after `DFIR_VELO_HUNT_WAIT_MIN`, imports them through the deterministic Velociraptor importer, and
+synthesizes — or click **Collect now** on the live job card to pull early. The in-flight job persists per case
+(`state/velo-hunt.json`) and survives a server restart; results appear on the dashboard timeline/IOCs.
 
 ### Analysis tuning
 

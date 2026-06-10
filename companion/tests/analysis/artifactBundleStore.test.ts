@@ -64,14 +64,23 @@ describe("ArtifactBundleStore", () => {
       expect((await store2.get("persistent"))?.name).toBe("P");
     });
 
-    it("refuses to overwrite a built-in id", async () => {
-      await expect(store.save({ id: "fast-triage", name: "x", description: "", artifacts: [] })).rejects.toThrow(/built-in/);
+    it("saving with a built-in id stores an editable override (builtIn stays, customized flagged)", async () => {
+      const saved = await store.save({ id: "fast-triage", name: "Fast Triage (mine)", description: "edited", artifacts: ["Windows.System.Pslist"] });
+      expect(saved.builtIn).toBe(true);
+      expect(saved.customized).toBe(true);
+      const got = await store.get("fast-triage");
+      expect(got?.name).toBe("Fast Triage (mine)");
+      expect(got?.builtIn).toBe(true);
+      expect(got?.customized).toBe(true);
+      const inList = (await store.list()).find((b) => b.id === "fast-triage");
+      expect(inList?.name).toBe("Fast Triage (mine)");
+      expect(inList?.customized).toBe(true);
     });
   });
 
   describe("delete()", () => {
     it("deletes a custom bundle", async () => {
-      const b = await store.save({ name: "Del", description: "", artifacts: [] });
+      const b = await store.save({ name: "Del", description: "", artifacts: ["Windows.System.Pslist"] });
       expect(await store.delete(b.id)).toBe(true);
       expect(await store.get(b.id)).toBeNull();
     });
@@ -80,8 +89,20 @@ describe("ArtifactBundleStore", () => {
       expect(await store.delete("no-such")).toBe(false);
     });
 
-    it("throws when deleting a built-in bundle", async () => {
-      await expect(store.delete("full-triage")).rejects.toThrow(/built-in/);
+    it("editing a built-in then deleting resets it to the shipped default", async () => {
+      const def = BUILT_IN_BUNDLES.find((b) => b.id === "full-triage")!;
+      await store.save({ id: "full-triage", name: "My Full", description: "x", artifacts: ["Windows.System.Pslist"] });
+      expect((await store.get("full-triage"))?.name).toBe("My Full");
+      expect(await store.delete("full-triage")).toBe(true);   // removes the override
+      const reset = await store.get("full-triage");
+      expect(reset?.name).toBe(def.name);
+      expect(reset?.customized).toBe(false);
+    });
+
+    it("returns false for a pristine built-in (nothing to reset)", async () => {
+      expect(await store.delete("fast-triage")).toBe(false);
+      expect(store.isBuiltIn("fast-triage")).toBe(true);
+      expect(store.isBuiltIn("not-a-builtin")).toBe(false);
     });
   });
 

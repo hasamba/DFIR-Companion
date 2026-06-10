@@ -782,6 +782,39 @@
           <div class="sfield"><label>GUI URL<span class="sfield-hint">DFIR_VELOCIRAPTOR_GUI_URL</span></label><input id="env-DFIR_VELOCIRAPTOR_GUI_URL" placeholder="https://velo:8889" /></div>
           <div class="sfield"><label>Hunt platforms<span class="sfield-hint">DFIR_HUNT_PLATFORMS — comma-separated; blank = all</span></label><input id="env-DFIR_HUNT_PLATFORMS" placeholder="velociraptor,sigma,yara,…" /></div>
         </div>
+
+        <div class="settings-group-head">Velociraptor Triage Bundles</div>
+        <p style="font-size:12px;color:#9aa4b2;margin:0 0 10px">Build named bundles of Velociraptor CLIENT artifacts, then run one as a hunt — results are auto-collected after a delay, imported, and synthesized into the case. Bundles are shared across cases; running a bundle uses the case you're connected to. Results appear on the dashboard.</p>
+        <div id="veloDisabledNote" style="display:none;font-size:12px;color:#9aa4b2;margin:0 0 10px;background:#1b2030;border:1px solid #2a3146;border-radius:6px;padding:8px 10px">
+          Velociraptor API not configured — you can still build and edit bundles, but <strong>running a hunt</strong> needs the <strong>API config path</strong> above set (then restart the server).
+        </div>
+        <div id="veloJobCard" class="synth-meta" style="display:none;margin:0 0 12px"></div>
+        <div id="veloBundleList" style="margin-bottom:14px">—</div>
+
+        <details id="veloBuilder" style="border:1px solid #2a3146;border-radius:6px;padding:10px;background:#161b28">
+          <summary id="veloBuilderSummary" style="cursor:pointer;font-size:13px;color:#cdd6e4;font-weight:600">Build a new bundle</summary>
+          <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <input id="veloBundleName" placeholder="Bundle name (e.g. Fast Triage)" style="flex:1;min-width:180px;padding:5px" />
+              <input id="veloBundleDefaultWait" type="number" min="1" max="1440" placeholder="default wait (min)" title="Default minutes to wait before collecting (optional)" style="width:150px;padding:5px" />
+            </div>
+            <input id="veloBundleDesc" placeholder="Description (optional)" style="padding:5px" />
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button id="veloBrowseBtn" type="button" title="Query the configured Velociraptor server for its collectable CLIENT artifacts">Browse server artifacts…</button>
+              <input id="veloArtifactSearch" placeholder="filter artifacts…" style="flex:1;min-width:140px;padding:5px" />
+              <input id="veloArtifactManual" placeholder="add by name (e.g. Windows.Forensics.Prefetch)" style="flex:1;min-width:200px;padding:5px" />
+              <button id="veloAddManualBtn" type="button">+ add</button>
+            </div>
+            <div id="veloArtifactPicker" style="max-height:240px;overflow:auto;border:1px solid #2a3146;border-radius:6px;padding:6px;font-size:12px;color:#9aa4b2">Click <em>Browse server artifacts</em> to load the list, or add artifact names manually above.</div>
+            <div style="font-size:12px;color:#9aa4b2">Selected: <strong id="veloSelectedCount">0</strong></div>
+            <div id="veloSelectedList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <button id="veloSaveBundleBtn" type="button">Save bundle</button>
+              <button id="veloNewBundleBtn" type="button" style="background:#2a2f3a;display:none">＋ New bundle</button>
+              <span id="veloBuilderMsg" class="manual-msg"></span>
+            </div>
+          </div>
+        </details>
       </div>
 
       <div class="settings-footer">
@@ -880,40 +913,6 @@
         <h3 class="asset-subhead">Known compromised assets</h3>
         <div id="assetList">—</div>
       </div>
-    </section>
-    <section id="sec-velo-triage" style="grid-column: 1 / -1" class="collapsed">
-      <h2>Velociraptor Triage<span class="ev-sub">build artifact bundles → run as a hunt → auto-import + synthesize</span></h2>
-      <div id="veloDisabledNote" style="display:none;font-size:12px;color:#9aa4b2;margin:0 0 10px;background:#1b2030;border:1px solid #2a3146;border-radius:6px;padding:8px 10px">
-        Velociraptor API not configured — you can still build and save bundles, but <strong>running a hunt</strong> needs <code>DFIR_VELOCIRAPTOR_API_CONFIG</code> set on the server (then restart it).
-      </div>
-      <div id="veloJobCard" class="synth-meta" style="display:none;margin-bottom:12px"></div>
-
-      <h3 style="font-size:13px;margin:4px 0 8px;color:#cdd6e4">Triage bundles</h3>
-      <div id="veloBundleList" style="margin-bottom:14px">—</div>
-
-      <details id="veloBuilder" style="border:1px solid #2a3146;border-radius:6px;padding:10px;background:#161b28">
-        <summary style="cursor:pointer;font-size:13px;color:#cdd6e4;font-weight:600">Build a new bundle</summary>
-        <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <input id="veloBundleName" placeholder="Bundle name (e.g. Fast Triage)" style="flex:1;min-width:180px;padding:5px" />
-            <input id="veloBundleDefaultWait" type="number" min="1" max="1440" placeholder="default wait (min)" title="Default minutes to wait before collecting (optional)" style="width:150px;padding:5px" />
-          </div>
-          <input id="veloBundleDesc" placeholder="Description (optional)" style="padding:5px" />
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <button id="veloBrowseBtn" title="Query the configured Velociraptor server for its collectable CLIENT artifacts">Browse server artifacts…</button>
-            <input id="veloArtifactSearch" placeholder="filter artifacts…" style="flex:1;min-width:140px;padding:5px" />
-            <input id="veloArtifactManual" placeholder="add by name (e.g. Windows.Forensics.Prefetch)" style="flex:1;min-width:200px;padding:5px" />
-            <button id="veloAddManualBtn">+ add</button>
-          </div>
-          <div id="veloArtifactPicker" style="max-height:240px;overflow:auto;border:1px solid #2a3146;border-radius:6px;padding:6px;font-size:12px;color:#9aa4b2">Click <em>Browse server artifacts</em> to load the list, or add artifact names manually above.</div>
-          <div style="font-size:12px;color:#9aa4b2">Selected: <strong id="veloSelectedCount">0</strong></div>
-          <div id="veloSelectedList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <button id="veloSaveBundleBtn">Save bundle</button>
-            <span id="veloBuilderMsg" class="manual-msg"></span>
-          </div>
-        </div>
-      </details>
     </section>
     <section id="sec-evidence" style="grid-column: 1 / -1">
       <h2>Evidence Chain<span class="ev-sub">causal links — process trees, lateral movement, file lineage &amp; network flows (derived, no AI)</span></h2>
@@ -2438,6 +2437,7 @@
     let veloArtifactCache = [];        // last-browsed server artifact list
     let veloCountdownTimer = null;     // interval updating the running-job countdown
     let _veloBundles = null;           // last-loaded bundle list
+    let veloEditingId = null;          // id of the bundle being edited (null = building a new one)
 
     function veloCaseId() { const el = document.getElementById("caseId"); return el ? el.value.trim() : ""; }
 
@@ -2468,13 +2468,20 @@
       el.innerHTML = bundles.map((b) => {
         const runBtn = veloEnabled
           ? `<button class="velo-run-btn" data-id="${escAttr(b.id)}" title="Run this bundle as a hunt on the configured Velociraptor server">▶ Run</button>`
-          : `<button disabled title="Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)">▶ Run</button>`;
-        const delBtn = b.builtIn ? "" : `<button class="velo-del-btn" data-id="${escAttr(b.id)}" style="background:#3a2330;color:#ff9aa4">Delete</button>`;
+          : `<button disabled title="Velociraptor API not configured (set the API config path above)">▶ Run</button>`;
+        const editBtn = `<button class="velo-edit-btn" data-id="${escAttr(b.id)}" title="Edit this bundle">Edit</button>`;
+        const dupBtn = `<button class="velo-dup-btn" data-id="${escAttr(b.id)}" title="Copy into the builder as a new bundle">Duplicate</button>`;
+        // Built-ins can be edited in place; "Reset to default" appears once an override exists. Custom
+        // bundles get Delete.
+        const tailBtn = b.builtIn
+          ? (b.customized ? `<button class="velo-reset-btn" data-id="${escAttr(b.id)}" title="Discard your edits and restore the shipped default" style="background:#33291a;color:#ffd07a">Reset to default</button>` : "")
+          : `<button class="velo-del-btn" data-id="${escAttr(b.id)}" style="background:#3a2330;color:#ff9aa4">Delete</button>`;
+        const badge = b.builtIn ? ` <span style='color:#6aa9ff;font-size:11px'>built-in${b.customized ? " · edited" : ""}</span>` : "";
         const wait = b.defaultWaitMinutes ? ` · default wait ${esc(b.defaultWaitMinutes)}m` : "";
         return `<div class="velo-bundle" style="border:1px solid #2a3146;border-radius:6px;padding:8px 10px;margin-bottom:8px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-            <div><strong>${esc(b.name)}</strong>${b.builtIn ? " <span style='color:#6aa9ff;font-size:11px'>built-in</span>" : ""} <span style="color:#9aa4b2;font-size:11px">${esc(b.artifacts.length)} artifact(s)${wait}</span></div>
-            <div style="display:flex;gap:6px">${runBtn}<button class="velo-dup-btn" data-id="${escAttr(b.id)}" title="Copy into the builder to edit">Duplicate</button>${delBtn}</div>
+            <div><strong>${esc(b.name)}</strong>${badge} <span style="color:#9aa4b2;font-size:11px">${esc(b.artifacts.length)} artifact(s)${wait}</span></div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">${runBtn}${editBtn}${dupBtn}${tailBtn}</div>
           </div>
           ${b.description ? `<div style="color:#9aa4b2;font-size:12px;margin-top:4px">${esc(b.description)}</div>` : ""}
           <div style="color:#7e8aa0;font-size:11px;margin-top:4px">${b.artifacts.map(a => esc(a)).join(", ")}</div>
@@ -2482,8 +2489,10 @@
         </div>`;
       }).join("");
       el.querySelectorAll(".velo-run-btn").forEach(btn => btn.onclick = () => toggleVeloRunForm(btn.dataset.id));
+      el.querySelectorAll(".velo-edit-btn").forEach(btn => btn.onclick = () => veloEdit(btn.dataset.id));
       el.querySelectorAll(".velo-dup-btn").forEach(btn => btn.onclick = () => veloDuplicate(btn.dataset.id));
       el.querySelectorAll(".velo-del-btn").forEach(btn => btn.onclick = () => veloDeleteBundle(btn.dataset.id));
+      el.querySelectorAll(".velo-reset-btn").forEach(btn => btn.onclick = () => veloResetBuiltin(btn.dataset.id));
     }
 
     function veloRunForm(id) {
@@ -2647,40 +2656,77 @@
       if (!name) { msg.textContent = "name is required"; return; }
       if (!veloSelected.size) { msg.textContent = "select at least one artifact"; return; }
       const btn = document.getElementById("veloSaveBundleBtn");
-      btn.disabled = true; msg.textContent = "saving…";
-      fetch("/bundles", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, description, artifacts: [...veloSelected], defaultWaitMinutes }) })
+      const wasEditing = !!veloEditingId;
+      const body = { name, description, artifacts: [...veloSelected], defaultWaitMinutes };
+      if (veloEditingId) body.id = veloEditingId;   // editing a built-in or custom bundle overrides it in place
+      btn.disabled = true; msg.textContent = wasEditing ? "updating…" : "saving…";
+      fetch("/bundles", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
         .then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }
-          msg.textContent = "saved ✓";
-          document.getElementById("veloBundleName").value = "";
-          document.getElementById("veloBundleDesc").value = "";
-          document.getElementById("veloBundleDefaultWait").value = "";
-          veloSelected = new Set(); renderVeloSelected(); renderVeloPicker();
+          veloClearBuilder();                 // resets fields + editing state (leaves msg alone)
           loadVeloBundles();
+          msg.textContent = wasEditing ? "updated ✓" : "saved ✓";
           setTimeout(() => { msg.textContent = ""; }, 1500);
         })
         .catch(e => msg.textContent = "error: " + e.message + " — restart the companion server if this 404s")
         .finally(() => { btn.disabled = false; });
     }
-    function veloDuplicate(id) {
-      const b = (_veloBundles || []).find(x => x.id === id);
-      if (!b) return;
-      document.getElementById("veloBundleName").value = b.name + " (copy)";
+    // Load a bundle's fields into the builder (shared by Edit + Duplicate).
+    function veloApplyToBuilder(b) {
+      document.getElementById("veloBundleName").value = b.name || "";
       document.getElementById("veloBundleDesc").value = b.description || "";
       document.getElementById("veloBundleDefaultWait").value = b.defaultWaitMinutes || "";
-      veloSelected = new Set(b.artifacts);
+      veloSelected = new Set(b.artifacts || []);
       renderVeloSelected(); renderVeloPicker();
       const builder = document.getElementById("veloBuilder");
       if (builder) builder.open = true;
-      document.getElementById("veloBundleName").scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById("veloBundleName").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    // Reflect whether the builder is creating a new bundle or editing an existing one.
+    function veloSetEditing(id, name) {
+      veloEditingId = id || null;
+      const save = document.getElementById("veloSaveBundleBtn");
+      const sum = document.getElementById("veloBuilderSummary");
+      const neu = document.getElementById("veloNewBundleBtn");
+      if (save) save.textContent = veloEditingId ? "Update bundle" : "Save bundle";
+      if (sum) sum.textContent = veloEditingId ? `Editing: ${name || veloEditingId}` : "Build a new bundle";
+      if (neu) neu.style.display = veloEditingId ? "" : "none";
+    }
+    function veloClearBuilder() {
+      document.getElementById("veloBundleName").value = "";
+      document.getElementById("veloBundleDesc").value = "";
+      document.getElementById("veloBundleDefaultWait").value = "";
+      veloSelected = new Set(); renderVeloSelected(); renderVeloPicker();
+      veloSetEditing(null);
+    }
+    function veloEdit(id) {
+      const b = (_veloBundles || []).find(x => x.id === id);
+      if (!b) return;
+      veloApplyToBuilder(b);
+      veloSetEditing(b.id, b.name);
+      const msg = document.getElementById("veloBuilderMsg"); if (msg) msg.textContent = "";
+    }
+    function veloDuplicate(id) {
+      const b = (_veloBundles || []).find(x => x.id === id);
+      if (!b) return;
+      veloApplyToBuilder({ ...b, name: b.name + " (copy)" });
+      veloSetEditing(null);   // a duplicate is saved as a NEW bundle
+      const msg = document.getElementById("veloBuilderMsg"); if (msg) msg.textContent = "";
     }
     function veloDeleteBundle(id) {
-      if (!confirm("Delete this bundle? (built-in bundles can't be deleted)")) return;
+      if (!confirm("Delete this bundle?")) return;
       fetch("/bundles/" + encodeURIComponent(id), { method: "DELETE" })
         .then(r => { if (r.ok || r.status === 204) return; return r.json().then(j => { throw new Error(j.error || ("HTTP " + r.status)); }); })
         .then(() => loadVeloBundles())
         .catch(e => { const msg = document.getElementById("veloBuilderMsg"); if (msg) msg.textContent = "delete failed: " + e.message; });
+    }
+    function veloResetBuiltin(id) {
+      if (!confirm("Discard your edits to this built-in bundle and restore the shipped default?")) return;
+      fetch("/bundles/" + encodeURIComponent(id), { method: "DELETE" })
+        .then(r => { if (r.ok || r.status === 204) return; return r.json().then(j => { throw new Error(j.error || ("HTTP " + r.status)); }); })
+        .then(() => loadVeloBundles())
+        .catch(e => { const msg = document.getElementById("veloBuilderMsg"); if (msg) msg.textContent = "reset failed: " + e.message; });
     }
 
     // One-time wiring for the static builder controls (the script runs after the DOM is parsed).
@@ -2688,6 +2734,7 @@
       const browse = document.getElementById("veloBrowseBtn"); if (browse) browse.onclick = veloBrowseArtifacts;
       const addM = document.getElementById("veloAddManualBtn"); if (addM) addM.onclick = veloAddManual;
       const save = document.getElementById("veloSaveBundleBtn"); if (save) save.onclick = veloSaveBundle;
+      const neu = document.getElementById("veloNewBundleBtn"); if (neu) neu.onclick = () => { veloClearBuilder(); const m = document.getElementById("veloBuilderMsg"); if (m) m.textContent = ""; };
       const search = document.getElementById("veloArtifactSearch"); if (search) search.oninput = renderVeloPicker;
       const manual = document.getElementById("veloArtifactManual"); if (manual) manual.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); veloAddManual(); } };
       loadVeloBundles();   // populate the bundle list even before a case is connected
@@ -4986,6 +5033,10 @@
       document.querySelectorAll(".stab").forEach((b, i) => b.classList.toggle("active", i === 0));
       document.querySelectorAll(".stab-pane").forEach((p, i) => p.classList.toggle("active", i === 0));
       document.getElementById("settingsSaveMsg").textContent = "";
+      // Refresh the Velociraptor triage panel (bundles + current hunt job) so it's current when opened.
+      veloClearBuilder();
+      loadVeloBundles();
+      loadVeloHuntJob(veloCaseId());
       document.getElementById("settingsOverlay").classList.add("open");
     }
 
