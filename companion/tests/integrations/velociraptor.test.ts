@@ -241,6 +241,36 @@ describe("VelociraptorClient.huntResultsByArtifact", () => {
   });
 });
 
+describe("VelociraptorClient.huntUploads", () => {
+  it("reads .json upload content, drops empties, and substitutes the hunt id into the VQL", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];
+      return { rows: [
+        { ClientId: "C.1", Path: "C:/t/report.json", Name: "report.json", Content: '{"a":1}' },
+        { ClientId: "C.2", Path: "C:/t/empty.json", Name: "empty.json", Content: "" },
+      ], raw: "" };
+    };
+    const ups = await new VelociraptorClient(cfg, runner).huntUploads("H.UP1");
+    expect(program).toContain("hunt_flows(hunt_id='H.UP1')");
+    expect(program).not.toContain("__HUNT_ID__");
+    expect(ups).toHaveLength(1);   // the empty-content row is dropped
+    expect(ups[0]).toEqual({ name: "report.json", clientId: "C.1", content: '{"a":1}' });
+  });
+
+  it("uses the configured override VQL (DFIR_VELOCIRAPTOR_UPLOAD_VQL) when set", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [], raw: "" }; };
+    await new VelociraptorClient({ ...cfg, uploadVql: "SELECT * FROM custom(hunt='__HUNT_ID__')" }, runner).huntUploads("H.UP2");
+    expect(program).toBe("SELECT * FROM custom(hunt='H.UP2')");
+  });
+
+  it("rejects a malformed hunt id (no VQL-string injection)", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).huntUploads("bad id")).rejects.toThrow(/invalid hunt id/);
+  });
+});
+
 describe("loadVelociraptorConfig / buildVelociraptorClient", () => {
   it("returns null/undefined when DFIR_VELOCIRAPTOR_API_CONFIG is unset", () => {
     expect(loadVelociraptorConfig({})).toBeNull();

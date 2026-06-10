@@ -564,6 +564,7 @@
         <button class="stab" data-stab="enrichment">Enrichment</button>
         <button class="stab" data-stab="exposure">Exposure</button>
         <button class="stab" data-stab="integrations">Integrations</button>
+        <button class="stab" data-stab="velociraptor">Velociraptor</button>
       </div>
 
       <!-- General -->
@@ -783,10 +784,13 @@
           <div class="sfield"><label>Hunt platforms<span class="sfield-hint">DFIR_HUNT_PLATFORMS — comma-separated; blank = all</span></label><input id="env-DFIR_HUNT_PLATFORMS" placeholder="velociraptor,sigma,yara,…" /></div>
         </div>
 
-        <div class="settings-group-head">Velociraptor Triage Bundles</div>
-        <p style="font-size:12px;color:#9aa4b2;margin:0 0 10px">Build named bundles of Velociraptor CLIENT artifacts, then run one as a hunt — results are auto-collected after a delay, imported, and synthesized into the case. Bundles are shared across cases; running a bundle uses the case you're connected to. Results appear on the dashboard.</p>
+      </div>
+
+      <!-- Velociraptor Triage -->
+      <div class="stab-pane" id="stab-velociraptor">
+        <p style="font-size:12px;color:#9aa4b2;margin:0 0 10px">Build named bundles of Velociraptor CLIENT artifacts, then run one as a hunt — results (and any uploaded JSON report, e.g. THOR/Hayabusa) are auto-collected after a delay, imported, and synthesized into the case. Bundles are shared across cases; running a bundle uses the case you're connected to. Results appear on the dashboard.</p>
         <div id="veloDisabledNote" style="display:none;font-size:12px;color:#9aa4b2;margin:0 0 10px;background:#1b2030;border:1px solid #2a3146;border-radius:6px;padding:8px 10px">
-          Velociraptor API not configured — you can still build and edit bundles, but <strong>running a hunt</strong> needs the <strong>API config path</strong> above set (then restart the server).
+          Velociraptor API not configured — you can still build and edit bundles, but <strong>running a hunt</strong> needs the <strong>API config path</strong> set on the <strong>Integrations</strong> tab (then restart the server).
         </div>
         <div id="veloJobCard" class="synth-meta" style="display:none;margin:0 0 12px"></div>
         <div id="veloBundleList" style="margin-bottom:14px">—</div>
@@ -795,7 +799,7 @@
           <summary id="veloBuilderSummary" style="cursor:pointer;font-size:13px;color:#cdd6e4;font-weight:600">Build a new bundle</summary>
           <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
             <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <input id="veloBundleName" placeholder="Bundle name (e.g. Fast Triage)" style="flex:1;min-width:180px;padding:5px" />
+              <input id="veloBundleName" placeholder="Bundle name (e.g. Best Practice)" style="flex:1;min-width:180px;padding:5px" />
               <input id="veloBundleDefaultWait" type="number" min="1" max="1440" placeholder="default wait (min)" title="Default minutes to wait before collecting (optional)" style="width:150px;padding:5px" />
             </div>
             <input id="veloBundleDesc" placeholder="Description (optional)" style="padding:5px" />
@@ -2511,12 +2515,13 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <label style="font-size:12px;color:#9aa4b2">Wait <input type="number" class="velo-wait" min="1" max="1440" value="${esc(defWait)}" style="width:64px;padding:4px" /> min</label>
           <select class="velo-os" title="Restrict to a client OS"><option value="">any OS</option><option value="windows">windows</option><option value="linux">linux</option><option value="darwin">darwin</option></select>
+          <select class="velo-minsev" title="Only import events at or above this severity (keeps volume down). Telemetry with no severity is always kept."><option value="">all severities</option><option value="info">info+</option><option value="low">low+</option><option value="medium">medium+</option><option value="high">high+</option><option value="critical">critical only</option></select>
           <input class="velo-inc" placeholder="include labels (comma-sep)" style="flex:1;min-width:140px;padding:4px" />
           <input class="velo-exc" placeholder="exclude labels (comma-sep)" style="flex:1;min-width:140px;padding:4px" />
           <button class="velo-run-go">Run hunt</button>
           <span class="velo-run-msg" style="font-size:12px;color:#9aa4b2"></span>
         </div>
-        <div style="font-size:11px;color:#7e8aa0;margin-top:4px">Runs across all enrolled clients unless you set a label/OS filter. Results are auto-collected after the wait, then imported + synthesized — or click <em>Collect now</em> on the job card.</div>`;
+        <div style="font-size:11px;color:#7e8aa0;margin-top:4px">Runs across all enrolled clients unless you set a label/OS filter. Results (+ any uploaded JSON report) are auto-collected after the wait, then imported + synthesized — or click <em>Collect now</em> on the job card.</div>`;
       form.style.display = "block";
       form.querySelector(".velo-run-go").onclick = () => veloRunBundle(id, form);
     }
@@ -2527,13 +2532,14 @@
       if (!caseId) { msg.textContent = "connect to a case first"; return; }
       const waitMinutes = Number(form.querySelector(".velo-wait").value) || 10;
       const os = form.querySelector(".velo-os").value;
+      const minSeverity = form.querySelector(".velo-minsev").value;
       const includeLabels = form.querySelector(".velo-inc").value;
       const excludeLabels = form.querySelector(".velo-exc").value;
       const go = form.querySelector(".velo-run-go");
       go.disabled = true; msg.textContent = "launching hunt…";
       fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/run-bundle`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bundleId, waitMinutes, os, includeLabels, excludeLabels })
+        body: JSON.stringify({ bundleId, waitMinutes, os, minSeverity, includeLabels, excludeLabels })
       }).then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }

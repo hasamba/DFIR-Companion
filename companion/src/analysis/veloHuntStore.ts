@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import type { Severity } from "./stateTypes.js";
 import type { HuntTarget } from "../integrations/velociraptor/velociraptorApi.js";
 
 // The per-case record of the current / last Velociraptor BUNDLE hunt: which bundle was launched, the
@@ -23,6 +24,7 @@ export interface VeloHuntJob {
   collectAt: string;      // ISO — launchedAt + waitMinutes; when the auto-collect fires
   status: VeloHuntStatus;
   target?: HuntTarget;
+  minSeverity?: Severity;  // optional import floor chosen at run time (keeps low-value items out)
   error?: string;
   importedAt?: string;    // ISO — when results were collected + imported
   importFile?: string;    // stored evidence filename

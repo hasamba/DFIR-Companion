@@ -17,8 +17,7 @@ describe("ArtifactBundleStore", () => {
     it("returns the built-in bundles when no custom bundles exist", async () => {
       const bundles = await store.list();
       const ids = bundles.map((b) => b.id);
-      expect(ids).toContain("fast-triage");
-      expect(ids).toContain("full-triage");
+      expect(ids).toContain("best-practice");
       expect(bundles.length).toBe(BUILT_IN_BUNDLES.length);
     });
 
@@ -39,7 +38,7 @@ describe("ArtifactBundleStore", () => {
 
   describe("get()", () => {
     it("returns a built-in bundle by id", async () => {
-      const b = await store.get("fast-triage");
+      const b = await store.get("best-practice");
       expect(b).not.toBeNull();
       expect(b!.builtIn).toBe(true);
       expect(b!.artifacts.length).toBeGreaterThan(0);
@@ -65,15 +64,15 @@ describe("ArtifactBundleStore", () => {
     });
 
     it("saving with a built-in id stores an editable override (builtIn stays, customized flagged)", async () => {
-      const saved = await store.save({ id: "fast-triage", name: "Fast Triage (mine)", description: "edited", artifacts: ["Windows.System.Pslist"] });
+      const saved = await store.save({ id: "best-practice", name: "Best Practice (mine)", description: "edited", artifacts: ["Windows.System.Pslist"] });
       expect(saved.builtIn).toBe(true);
       expect(saved.customized).toBe(true);
-      const got = await store.get("fast-triage");
-      expect(got?.name).toBe("Fast Triage (mine)");
+      const got = await store.get("best-practice");
+      expect(got?.name).toBe("Best Practice (mine)");
       expect(got?.builtIn).toBe(true);
       expect(got?.customized).toBe(true);
-      const inList = (await store.list()).find((b) => b.id === "fast-triage");
-      expect(inList?.name).toBe("Fast Triage (mine)");
+      const inList = (await store.list()).find((b) => b.id === "best-practice");
+      expect(inList?.name).toBe("Best Practice (mine)");
       expect(inList?.customized).toBe(true);
     });
   });
@@ -90,18 +89,18 @@ describe("ArtifactBundleStore", () => {
     });
 
     it("editing a built-in then deleting resets it to the shipped default", async () => {
-      const def = BUILT_IN_BUNDLES.find((b) => b.id === "full-triage")!;
-      await store.save({ id: "full-triage", name: "My Full", description: "x", artifacts: ["Windows.System.Pslist"] });
-      expect((await store.get("full-triage"))?.name).toBe("My Full");
-      expect(await store.delete("full-triage")).toBe(true);   // removes the override
-      const reset = await store.get("full-triage");
+      const def = BUILT_IN_BUNDLES.find((b) => b.id === "best-practice")!;
+      await store.save({ id: "best-practice", name: "My Edit", description: "x", artifacts: ["Windows.System.Pslist"] });
+      expect((await store.get("best-practice"))?.name).toBe("My Edit");
+      expect(await store.delete("best-practice")).toBe(true);   // removes the override
+      const reset = await store.get("best-practice");
       expect(reset?.name).toBe(def.name);
       expect(reset?.customized).toBe(false);
     });
 
     it("returns false for a pristine built-in (nothing to reset)", async () => {
-      expect(await store.delete("fast-triage")).toBe(false);
-      expect(store.isBuiltIn("fast-triage")).toBe(true);
+      expect(await store.delete("best-practice")).toBe(false);
+      expect(store.isBuiltIn("best-practice")).toBe(true);
       expect(store.isBuiltIn("not-a-builtin")).toBe(false);
     });
   });

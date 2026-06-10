@@ -317,13 +317,20 @@ back addressed as `artifact/source`. Routes `POST /velociraptor/hunt` + `/veloci
 are passed as separate positional args with comments stripped (a leading `--` is parsed as a CLI flag).
 **Triage bundles** build on the same client+runner: `listClientArtifacts()` (browse `artifact_definitions()`
 type CLIENT), `launchArtifactHunt(artifacts, desc, {includeLabels,excludeLabels,os})` (hunt over a chosen
-SET of existing artifacts with Velociraptor's own include/exclude/OS conditions), and `huntResultsByArtifact()`
-(collect per-artifact into the `{ "Artifact.Name": [rows] }` artifact-map `importVelociraptor` already eats).
+SET of existing artifacts with Velociraptor's own include/exclude/OS conditions), `huntResultsByArtifact()`
+(collect per-artifact into the `{ "Artifact.Name": [rows] }` artifact-map `importVelociraptor` already eats),
+and `huntUploads()` (read a hunt's uploaded `.json` reports server-side — some artifacts, e.g.
+`Generic.Scanner.ThorZIP` / `Windows.Hayabusa.Rules`, put their real data in an UPLOADED JSON, not rows; the
+upload VQL is version-sensitive and overridable via `DFIR_VELOCIRAPTOR_UPLOAD_VQL`). The collect helper ingests
+BOTH rows (→ `importVelociraptor`) AND each uploaded JSON (→ `detectImportKind` + the shared closure-level
+`dispatchImport`, the same switch the `/import` route uses — factored out so both paths route identically;
+HTML uploads ignored), honoring the run's optional `minSeverity` floor, and records ONE combined import-meta
+diff. The Triage UI is its OWN **Settings → Velociraptor** tab (config/action, not a results view).
 A **bundle** is a named artifact list — global, shared across cases (mirrors `TemplateStore`): `ArtifactBundleStore`
 (`BUILT_IN_BUNDLES` Fast/Full Triage + custom JSON in a `bundles/` dir next to `cases/`). **Built-ins are editable**:
 `save()` with a built-in id writes an OVERRIDE file (same id) that `list()`/`get()` return instead of the constant
 (flagged `customized`); `delete()` removes the file — deleting a custom bundle, or **resetting** an edited built-in to
-its default. The whole triage UI lives in the dashboard's **Settings → Integrations** modal (it's config/action, not a
+its default. The whole triage UI lives in its own **Settings → Velociraptor** tab (it's config/action, not a
 results view); the imported events surface on the normal dashboard timeline/IOCs. Running one launches
 a hunt, persists a per-case `VeloHuntStore` job (`state/velo-hunt.json`, so it survives the #1-gotcha restart),
 and schedules an **in-memory timer** (`DFIR_VELO_HUNT_WAIT_MIN`, default 10 min, clamped 1..1440) that — best-effort,

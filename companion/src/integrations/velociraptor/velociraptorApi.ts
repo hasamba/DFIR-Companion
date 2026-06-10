@@ -20,6 +20,7 @@ export interface VelociraptorApiConfig {
   maxRows: number;         // cap rows returned to the caller
   maxOutputBytes: number;  // hard cap on captured stdout (kill the child if exceeded)
   guiUrl?: string;         // optional Velociraptor GUI base URL, for deep-linking to a launched hunt
+  uploadVql?: string;      // optional override for the hunt-uploads VQL (DFIR_VELOCIRAPTOR_UPLOAD_VQL); __HUNT_ID__ placeholder
 }
 
 export interface VqlRunResult {
@@ -159,6 +160,25 @@ export interface ArtifactHuntLaunchResult {
   state: string;        // RUNNING / PAUSED / …
   guiUrl?: string;
 }
+
+// A file UPLOADED by a hunt's collections (not a result row). Some artifacts (offline collectors,
+// THOR/Hayabusa wrappers like Generic.Scanner.ThorZIP) put their real triage data in an uploaded
+// JSON file rather than result rows — that JSON is what we ingest.
+export interface HuntUpload {
+  name: string;      // file name (basename of the upload path)
+  clientId: string;  // the endpoint it came from
+  content: string;   // the file's text content (read server-side)
+}
+
+// Default VQL to enumerate a hunt's uploaded JSON files and read their content server-side. Walks the
+// hunt's flows → each flow's uploads → reads `.json` ones from the filestore (`fs` accessor + the
+// upload's filestore components). __HUNT_ID__ is replaced with the validated hunt id. Override per
+// Velociraptor version with DFIR_VELOCIRAPTOR_UPLOAD_VQL (keep the __HUNT_ID__ placeholder + a
+// Name/ClientId/Content column shape).
+const DEFAULT_UPLOAD_VQL =
+  "LET flows = SELECT Flow.client_id AS ClientId, Flow.session_id AS FlowId FROM hunt_flows(hunt_id='__HUNT_ID__')\n" +
+  "LET ups = SELECT * FROM foreach(row=flows, query={ SELECT ClientId, vfs_path AS Path, _Components AS Components FROM uploads(client_id=ClientId, flow_id=FlowId) })\n" +
+  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '(?i)\\.json$' AND Content";
 
 const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;     // valid Velociraptor artifact / source name
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/;        // valid hunt id
@@ -336,6 +356,30 @@ export class VelociraptorClient {
     }
     return out;
   }
+
+  // Read a hunt's uploaded JSON files (content included), so an artifact whose meaningful output is an
+  // uploaded report (e.g. THOR/Hayabusa JSON) can be ingested. Best-effort and version-sensitive —
+  // the caller should tolerate a throw (a wrong VQL for the server version) and fall back to rows.
+  // Override the VQL with DFIR_VELOCIRAPTOR_UPLOAD_VQL. The hunt id is HUNT_RE-validated before
+  // substitution, so interpolating it into the program is injection-safe.
+  async huntUploads(huntId: string): Promise<HuntUpload[]> {
+    if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
+    const template = this.config.uploadVql && this.config.uploadVql.trim() ? this.config.uploadVql : DEFAULT_UPLOAD_VQL;
+    const program = template.split("__HUNT_ID__").join(huntId);
+    const rows = await this.runRaw(program);
+    const out: HuntUpload[] = [];
+    for (const row of rows) {
+      const r = row as { Name?: unknown; ClientId?: unknown; Content?: unknown; Path?: unknown };
+      const content = typeof r.Content === "string" ? r.Content : "";
+      if (!content.trim()) continue;
+      out.push({
+        name: String(r.Name ?? r.Path ?? "upload.json"),
+        clientId: String(r.ClientId ?? ""),
+        content,
+      });
+    }
+    return out;
+  }
 }
 
 // Build a config from env, or null when not configured (DFIR_VELOCIRAPTOR_API_CONFIG unset).
@@ -349,6 +393,7 @@ export function loadVelociraptorConfig(env: NodeJS.ProcessEnv = process.env): Ve
     maxRows: Number(env.DFIR_VELOCIRAPTOR_MAX_ROWS) || 1000,
     maxOutputBytes: Number(env.DFIR_VELOCIRAPTOR_MAX_OUTPUT) || 50 * 1024 * 1024,
     guiUrl: env.DFIR_VELOCIRAPTOR_GUI_URL?.trim() || undefined,
+    uploadVql: env.DFIR_VELOCIRAPTOR_UPLOAD_VQL?.trim() || undefined,
   };
 }
 
