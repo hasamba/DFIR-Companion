@@ -17,6 +17,8 @@ import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../ana
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
+import type { PlaybookStore } from "../analysis/playbookStore.js";
+import type { PlaybookTask } from "../analysis/playbook.js";
 import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
 
 export interface ReportPaths {
@@ -39,6 +41,7 @@ export class ReportWriter {
     private readonly customerExposure?: CustomerExposureStore,
     private readonly notebook?: NotebookStore,
     private readonly assetOverrides?: AssetOverridesStore,
+    private readonly playbook?: PlaybookStore,
   ) {}
 
   // Load the case state with the same deterministic report filters applied: drop
@@ -59,6 +62,12 @@ export class ReportWriter {
     if (!this.notebook) return undefined;
     const entries = await this.notebook.load(caseId);
     return entries.length ? entries : undefined;
+  }
+
+  private async loadPlaybook(caseId: string): Promise<PlaybookTask[] | undefined> {
+    if (!this.playbook) return undefined;
+    const tasks = await this.playbook.load(caseId);
+    return tasks.length ? tasks : undefined;
   }
 
   // Build the Word (.docx) export on demand. Uses the same scope/legitimate filtering as
@@ -134,10 +143,11 @@ export class ReportWriter {
     const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
     const exposure = await this.loadExposure(caseId);
     const notebookEntries = await this.loadNotebook(caseId);
+    const playbookTasks = await this.loadPlaybook(caseId);
     const overrides = this.assetOverrides ? await this.assetOverrides.load(caseId) : emptyOverrides();
     const graph = applyAssetOverrides(buildAssetGraph(state), overrides);
-    await writeFile(paths.markdown, renderMarkdownReport(state, meta, exposure, graph, notebookEntries), "utf8");
-    await writeFile(paths.html, renderHtmlReport(state, meta, exposure, graph, notebookEntries), "utf8");
+    await writeFile(paths.markdown, renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks), "utf8");
+    await writeFile(paths.html, renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks), "utf8");
     await writeFile(paths.findingsCsv, findingsCsv(state), "utf8");
     await writeFile(paths.iocsCsv, iocsCsv(state), "utf8");
     await writeFile(paths.timelineCsv, timelineCsv(state), "utf8");

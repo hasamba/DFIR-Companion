@@ -159,13 +159,14 @@ sections — title page, distribution, BIA, glossary, recommendations…), `comm
 (investigator comments on entities — never wiped by synthesis), `tags.json`
 (analyst triage labels on entities — confirmed-malicious/false-positive/key-evidence/… — also never wiped by synthesis),
 `synth-meta.json` (when synthesis last actually ran + the findings diff for the "last synthesized N ago" / what-changed view; written by `synthesize` only on a real run, not a skip),
-`import-meta.json` (when the last import ran + its kind/file + the forensic-timeline diff AND the IOC diff for the "📥 last import N ago / +N new events / +N new IOCs" banners + per-row `NEW` highlights; written by the unified `/import` route after the importer completes — the import analog of `synth-meta.json`).
+`import-meta.json` (when the last import ran + its kind/file + the forensic-timeline diff AND the IOC diff for the "📥 last import N ago / +N new events / +N new IOCs" banners + per-row `NEW` highlights; written by the unified `/import` route after the importer completes — the import analog of `synth-meta.json`),
+`playbook.json` (the **Response Playbook** — a trackable checklist auto-derived from the case's next steps + Critical/High findings (`analysis/playbook.ts` `derivePlaybookTasks`/`mergePlaybook`, pure + idempotent: an auto-task's id IS its source key, so a re-derive REFRESHES its text but PRESERVES the analyst's status/assignee/due/notes/order) plus custom tasks; the `GET` route re-syncs write-if-changed against current state, and `synthesize` re-syncs on each run — never wiped by synthesis).
 
 **Per-case stores** follow the same pattern (atomic temp-file rename via `storage/atomicWrite.ts` —
 which **retries the rename through a transient `EPERM`/`EBUSY`/`EACCES` lock**, since `cases/` may live
 in a synced folder where Dropbox/OneDrive/AV briefly locks the file mid-rename; route every new store's
 save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
-`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `ImportMetaStore`. Pure filters/transforms live next to
+`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `ImportMetaStore`, `PlaybookStore`. Pure filters/transforms live next to
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`, `diffFindings`, `diffTimeline`, `diffIocs`) and are unit-tested independently of I/O.
 

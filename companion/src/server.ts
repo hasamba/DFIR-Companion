@@ -67,6 +67,8 @@ import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore } from "./analysis/tags.js";
 import { NotebookStore, type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "./analysis/notebookStore.js";
+import { PlaybookStore, type NewPlaybookTask, type PlaybookTaskPatch } from "./analysis/playbookStore.js";
+import { PLAYBOOK_STATUSES, playbookStats, type PlaybookStatus, type PlaybookTask } from "./analysis/playbook.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
 import type { AssetType } from "./analysis/assetGraph.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
@@ -156,6 +158,12 @@ export interface AppOptions {
   // clients over the WS to re-fetch when an entry is added, updated, or removed.
   notebookStore?: NotebookStore;
   onNotebook?: (caseId: string) => void;
+  // Per-case playbook (issue #36): a trackable checklist auto-derived from the case's next
+  // steps + high-severity findings (idempotent re-derive preserves analyst progress), plus
+  // custom tasks. Persisted in state/playbook.json; survives synthesis. onPlaybook pings
+  // dashboard clients over the WS to re-fetch when a task changes or a sync runs.
+  playbookStore?: PlaybookStore;
+  onPlaybook?: (caseId: string) => void;
   // Manual edits to the asset ↔ IoC graph (renames, additions, suppressions, link overrides).
   // Persisted per case in state/asset-overrides.json; survives synthesis. onAssetOverrides
   // pings dashboard clients over the WS to re-fetch the graph when overrides change.
@@ -2649,6 +2657,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       // Explicit user action → force, so it always runs even if inputs are unchanged.
       const state = await options.pipeline.synthesize(caseId, { force: true });
+      // Keep the playbook checklist aligned with the fresh next steps/findings (idempotent —
+      // preserves analyst status/edits). Best-effort: never fail synthesis on a playbook hiccup.
+      if (options.playbookStore) {
+        try {
+          await options.playbookStore.sync(caseId, state);
+          options.onPlaybook?.(caseId);
+        } catch { /* non-fatal */ }
+      }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       return res.status(200).json({
         findings: state.findings.length,
@@ -2844,6 +2860,113 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const removed = await options.tagsStore.remove(req.params.id, req.params.tagId);
       if (!removed) return res.status(404).json({ error: "tag not found" });
       options.onTags?.(req.params.id);
+      return res.status(204).end();
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Per-case playbook (issue #36): a trackable checklist auto-derived from the case's next
+  // steps + Critical/High findings, plus analyst-added custom tasks. The list is re-derived
+  // idempotently on every GET (write-if-changed) so it tracks the latest synthesis without
+  // ever clobbering analyst status/edits. POST adds a custom task; POST /sync forces a
+  // re-derive; PATCH /order reorders; PATCH /:taskId edits; DELETE /:taskId removes.
+  // The response carries computed completion stats for the dashboard badge.
+  app.get("/cases/:id/playbook", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    try {
+      // Auto-sync against current state so the panel reflects the latest next steps/findings.
+      let tasks: PlaybookTask[];
+      if (options.stateStore) {
+        const state = await options.stateStore.load(req.params.id);
+        tasks = await options.playbookStore.sync(req.params.id, state);
+      } else {
+        tasks = await options.playbookStore.load(req.params.id);
+      }
+      return res.status(200).json({ tasks, stats: playbookStats(tasks) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Force a re-derive from the current case state (the "Sync from analysis" button).
+  app.post("/cases/:id/playbook/sync", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    try {
+      const state = await options.stateStore.load(req.params.id);
+      const tasks = await options.playbookStore.sync(req.params.id, state);
+      options.onPlaybook?.(req.params.id);
+      return res.status(200).json({ tasks, stats: playbookStats(tasks) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Reorder tasks by a supplied id sequence. Registered BEFORE /:taskId so "order" is not
+  // captured as a task id.
+  app.patch("/cases/:id/playbook/order", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : null;
+    if (!ids) return res.status(400).json({ error: "ids array is required" });
+    try {
+      const tasks = await options.playbookStore.reorder(req.params.id, ids);
+      options.onPlaybook?.(req.params.id);
+      return res.status(200).json({ tasks, stats: playbookStats(tasks) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/playbook", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+    if (!title) return res.status(400).json({ error: "title is required" });
+    const input: NewPlaybookTask = {
+      title,
+      description: typeof req.body?.description === "string" ? req.body.description : undefined,
+      status: PLAYBOOK_STATUSES.includes(req.body?.status as PlaybookStatus) ? (req.body.status as PlaybookStatus) : undefined,
+      priority: typeof req.body?.priority === "string" ? req.body.priority : undefined,
+      assignee: typeof req.body?.assignee === "string" ? req.body.assignee : undefined,
+      dueDate: typeof req.body?.dueDate === "string" ? req.body.dueDate : undefined,
+      notes: typeof req.body?.notes === "string" ? req.body.notes : undefined,
+      relatedFindingId: typeof req.body?.relatedFindingId === "string" ? req.body.relatedFindingId : undefined,
+    };
+    try {
+      const task = await options.playbookStore.add(req.params.id, input);
+      options.onPlaybook?.(req.params.id);
+      return res.status(201).json(task);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/cases/:id/playbook/:taskId", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    const patch: PlaybookTaskPatch = {};
+    if (typeof req.body?.title === "string") patch.title = req.body.title;
+    if (typeof req.body?.description === "string") patch.description = req.body.description;
+    if (typeof req.body?.status === "string") patch.status = req.body.status as PlaybookStatus;
+    if (typeof req.body?.priority === "string") patch.priority = req.body.priority;
+    if (typeof req.body?.assignee === "string") patch.assignee = req.body.assignee;
+    if (typeof req.body?.dueDate === "string") patch.dueDate = req.body.dueDate;
+    if (typeof req.body?.notes === "string") patch.notes = req.body.notes;
+    try {
+      const updated = await options.playbookStore.update(req.params.id, req.params.taskId, patch);
+      if (!updated) return res.status(404).json({ error: "playbook task not found" });
+      options.onPlaybook?.(req.params.id);
+      return res.status(200).json(updated);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/cases/:id/playbook/:taskId", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    try {
+      const removed = await options.playbookStore.remove(req.params.id, req.params.taskId);
+      if (!removed) return res.status(404).json({ error: "playbook task not found" });
+      options.onPlaybook?.(req.params.id);
       return res.status(204).end();
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -3311,11 +3434,12 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
   const notebookStore = new NotebookStore(store);
+  const playbookStore = new PlaybookStore(store);
   const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
   const importMetaStore = new ImportMetaStore(store);
   const notionExportStore = new NotionExportStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore);
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
@@ -3345,6 +3469,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
     notebookStore,
     onNotebook: (caseId) => hub.broadcastTo(caseId, { type: "notebook_changed" }),
+    playbookStore,
+    onPlaybook: (caseId) => hub.broadcastTo(caseId, { type: "playbook_changed" }),
     assetOverridesStore,
     onAssetOverrides: (caseId) => hub.broadcastTo(caseId, { type: "asset_overrides_changed" }),
     synthMetaStore,
