@@ -91,6 +91,9 @@ import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js"
 import { pushCaseToTimesketch, type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
 import { MispPushClient } from "./integrations/misp/mispPushClient.js";
 import { pushCaseToMisp, type MispPushOptions } from "./integrations/misp/mispPush.js";
+import { NotionClient, parseNotionPageId } from "./integrations/notion/notionClient.js";
+import { pushCaseToNotion, type NotionPushOptions, type NotionPushTarget } from "./integrations/notion/notionPush.js";
+import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import {
   DeHashedExposureProvider,
   HaveIBeenPwnedExposureProvider,
@@ -210,6 +213,12 @@ export interface AppOptions {
   // (distribution, analysis state, base URL for the event link).
   mispPushClient?: MispPushClient;
   mispPushOptions?: MispPushOptions;
+  // Notion export: a configured client (when DFIR_NOTION_TOKEN is set) + push options
+  // (default parent database/page, container title). The export's page/container pointer is
+  // remembered per case in notionExportStore so a re-export refreshes only Companion content.
+  notionClient?: NotionClient;
+  notionOptions?: NotionPushOptions;
+  notionExportStore?: NotionExportStore;
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -282,7 +291,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS] });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS] });
   });
 
   // How many captures have been recorded for a case (counts the audit-log lines).
@@ -837,6 +846,59 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[misp] ${caseId} push ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Whether a Notion export target is configured (so the dashboard can show/hide the option and
+  // decide whether to ask for a parent in the "new page" modal).
+  app.get("/notion/status", (_req: Request, res: Response) => {
+    res.status(200).json({
+      configured: !!options.notionClient,
+      hasDatabase: !!options.notionOptions?.databaseId,
+      hasParent: !!options.notionOptions?.parentPageId,
+    });
+  });
+
+  // Export a case into a Notion page. The Companion writes ALL its content inside ONE managed
+  // toggle block it owns; a re-export refreshes that block and never touches the investigators'
+  // own notes/screenshots. Body: { mode: "new"|"existing", page?, parent?, database? }.
+  app.post("/cases/:id/push/notion", async (req: Request, res: Response) => {
+    if (!options.notionClient) return res.status(501).json({ error: "Notion not configured (set DFIR_NOTION_TOKEN)" });
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    if (!options.notionExportStore) return res.status(501).json({ error: "notion export store not configured" });
+    const caseId = req.params.id;
+    const body = req.body ?? {};
+    const mode = body.mode === "existing" ? "existing" : "new";
+
+    const target: NotionPushTarget = { mode };
+    if (mode === "existing") {
+      const pageId = parseNotionPageId(typeof body.page === "string" ? body.page : "");
+      if (!pageId) return res.status(400).json({ error: "could not read a Notion page id from the supplied page URL/ID" });
+      target.pageId = pageId;
+    } else {
+      const parent = typeof body.parent === "string" ? parseNotionPageId(body.parent) : null;
+      const database = typeof body.database === "string" ? parseNotionPageId(body.database) : null;
+      if (parent) target.parentPageId = parent;
+      if (database) target.databaseId = database;
+    }
+
+    try {
+      const state = await options.reportWriter.filteredState(caseId);
+      const meta = options.reportMetaStore ? await options.reportMetaStore.load(caseId) : undefined;
+      logLine(`[notion] ${caseId} export START (${mode})`);
+      const result = await pushCaseToNotion(
+        options.notionClient,
+        { caseName: caseId, state, meta },
+        target,
+        options.notionOptions,
+        options.notionExportStore,
+      );
+      logLine(`[notion] ${caseId} export DONE -> page ${result.pageId} (${result.created ? "created" : "updated"}); ` +
+        `+${result.blocksAppended} block(s) in ${result.batches} batch(es), archived ${result.blocksArchived}, warnings ${result.warnings.length}`);
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[notion] ${caseId} export ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
     }
   });
@@ -2786,7 +2848,7 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
 // self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
 // DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
-function tlsFetchFor(name: "MISP" | "YETI" | "IRIS" | "TIMESKETCH") {
+function tlsFetchFor(name: "MISP" | "YETI" | "IRIS" | "TIMESKETCH" | "NOTION") {
   return buildTlsFetch({
     caCertPath: process.env[`DFIR_${name}_CA`],
     insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
@@ -2849,6 +2911,25 @@ export function mispPushOptions(): MispPushOptions {
     baseUrl: process.env.DFIR_MISP_URL,
     distribution: process.env.DFIR_MISP_DISTRIBUTION || undefined,
     analysis: process.env.DFIR_MISP_ANALYSIS || undefined,
+  };
+}
+
+// Build the Notion export client from env (DFIR_NOTION_TOKEN). Returns undefined when not
+// configured, which hides the dashboard's "Export to Notion" option. Notion is public SaaS, so
+// tlsFetchFor("NOTION") is a no-op unless DFIR_NOTION_CA / DFIR_NOTION_INSECURE are set.
+export function buildNotionClient(): NotionClient | undefined {
+  const token = process.env.DFIR_NOTION_TOKEN;
+  if (!token) return undefined;
+  return new NotionClient({ token, fetchFn: tlsFetchFor("NOTION") });
+}
+
+export function notionPushOptions(): NotionPushOptions {
+  return {
+    baseUrl: "https://www.notion.so",
+    parentPageId: process.env.DFIR_NOTION_PARENT_PAGE_ID || undefined,
+    databaseId: process.env.DFIR_NOTION_DATABASE_ID || undefined,
+    containerTitle: process.env.DFIR_NOTION_CONTAINER_TITLE || undefined,
+    maxTimelineRows: Number(process.env.DFIR_NOTION_MAX_TIMELINE) || undefined,
   };
 }
 
@@ -2960,6 +3041,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
   const importMetaStore = new ImportMetaStore(store);
+  const notionExportStore = new NotionExportStore(store);
   const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore);
 
   const provider = buildProvider();
@@ -3020,6 +3102,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     templateStore,
     mispPushClient: buildMispPushClient(),
     mispPushOptions: mispPushOptions(),
+    notionClient: buildNotionClient(),
+    notionOptions: notionPushOptions(),
+    notionExportStore,
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
