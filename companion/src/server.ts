@@ -927,8 +927,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       let importedAny = false;
       let lastFile: string | undefined;
 
-      // 1) Result ROWS → the Velociraptor importer (detections + telemetry).
-      const map = await client.huntResultsByArtifact(job.huntId, job.artifacts);
+      // 1) Result ROWS → the Velociraptor importer (detections + telemetry). Resilient: an artifact
+      // whose output is too large to fetch is skipped (logged), not fatal — the rest still import, and
+      // its uploaded JSON (if any) is still picked up in step 2.
+      const { results: map, skipped } = await client.huntResultsByArtifact(job.huntId, job.artifacts);
+      if (skipped.length) logLine(`[velociraptor] hunt ${job.huntId}: skipped ${skipped.length} oversized/failed artifact(s): ${skipped.join(", ")} — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT / DFIR_VELOCIRAPTOR_MAX_ROWS to include them`);
       const totalRows = Object.values(map).reduce((n, rows) => n + rows.length, 0);
       if (totalRows > 0) {
         const json = JSON.stringify(map);

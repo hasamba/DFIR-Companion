@@ -140,7 +140,7 @@ describe("VelociraptorClient.huntResults", () => {
     let program = "";
     const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Name: "evil.exe", ClientId: "C.1" }], raw: "" }; };
     const res = await new VelociraptorClient(cfg, runner).huntResults("H.ABC123", "Custom.Hunt.Companion.x", ["Pivot0"]);
-    expect(program).toBe("SELECT * FROM hunt_results(hunt_id='H.ABC123', artifact='Custom.Hunt.Companion.x/Pivot0')");
+    expect(program).toBe("SELECT * FROM hunt_results(hunt_id='H.ABC123', artifact='Custom.Hunt.Companion.x/Pivot0') LIMIT 4");
     expect(res.rows).toHaveLength(1);
   });
 
@@ -244,17 +244,29 @@ describe("VelociraptorClient.huntResultsByArtifact", () => {
       if (p.includes("Pslist")) return { rows: [{ Name: "evil.exe" }], raw: "" };
       return { rows: [], raw: "" };   // Netstat returns nothing yet
     };
-    const map = await new VelociraptorClient(cfg, runner).huntResultsByArtifact("H.ABC123", ["Windows.System.Pslist", "Windows.Network.Netstat"]);
-    expect(Object.keys(map)).toEqual(["Windows.System.Pslist"]);
-    expect(map["Windows.System.Pslist"]).toHaveLength(1);
+    const { results, skipped } = await new VelociraptorClient(cfg, runner).huntResultsByArtifact("H.ABC123", ["Windows.System.Pslist", "Windows.Network.Netstat"]);
+    expect(Object.keys(results)).toEqual(["Windows.System.Pslist"]);
+    expect(results["Windows.System.Pslist"]).toHaveLength(1);
+    expect(skipped).toEqual([]);
+  });
+
+  it("is resilient: an artifact whose fetch fails (oversized) is skipped, the rest still import", async () => {
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("Hayabusa")) throw new Error("output exceeded 52428800 bytes");
+      return { rows: [{ Name: "ok" }], raw: "" };
+    };
+    const { results, skipped } = await new VelociraptorClient(cfg, runner).huntResultsByArtifact("H.ABC123", ["Windows.Hayabusa.Rules", "Windows.System.Pslist"]);
+    expect(skipped).toEqual(["Windows.Hayabusa.Rules"]);
+    expect(Object.keys(results)).toEqual(["Windows.System.Pslist"]);
   });
 
   it("rejects a malformed hunt id and skips invalid artifact names", async () => {
     const runner: VqlRunner = async () => ({ rows: [{ a: 1 }], raw: "" });
     const c = new VelociraptorClient(cfg, runner);
     await expect(c.huntResultsByArtifact("bad id", ["Windows.System.Pslist"])).rejects.toThrow(/invalid hunt id/);
-    const map = await c.huntResultsByArtifact("H.OK1", ["bad name", "Windows.System.Pslist"]);
-    expect(Object.keys(map)).toEqual(["Windows.System.Pslist"]);
+    const { results } = await c.huntResultsByArtifact("H.OK1", ["bad name", "Windows.System.Pslist"]);
+    expect(Object.keys(results)).toEqual(["Windows.System.Pslist"]);
   });
 });
 

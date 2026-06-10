@@ -18,7 +18,8 @@ export interface VelociraptorApiConfig {
   binary: string;          // velociraptor executable (PATH name or absolute path)
   timeoutMs: number;       // per-query timeout
   maxRows: number;         // cap rows returned to the caller
-  maxOutputBytes: number;  // hard cap on captured stdout (kill the child if exceeded)
+  maxOutputBytes: number;  // hard cap on captured stdout for interactive queries (kill the child if exceeded)
+  collectMaxOutputBytes?: number;  // larger cap for bundle-hunt collection (rows + uploaded JSON); forensic data is big
   guiUrl?: string;         // optional Velociraptor GUI base URL, for deep-linking to a launched hunt
   guiOrg?: string;         // Velociraptor org for the deep link (?org_id=…); default "root" (the GUI requires it)
   uploadVql?: string;      // optional override for the hunt-uploads VQL (DFIR_VELOCIRAPTOR_UPLOAD_VQL); __HUNT_ID__ placeholder
@@ -104,7 +105,7 @@ export function spawnVqlRunner(config: VelociraptorApiConfig): VqlRunner {
           killed = true;
           child.kill();
           clearTimeout(timer);
-          reject(new Error(`Velociraptor query output exceeded ${opts.maxOutputBytes} bytes — narrow the query`));
+          reject(new Error(`Velociraptor query output exceeded ${opts.maxOutputBytes} bytes — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT (collection) / DFIR_VELOCIRAPTOR_MAX_OUTPUT, or narrow the query`));
         }
       });
       child.stderr.on("data", (d: Buffer) => { err += d.toString(); });
@@ -178,8 +179,8 @@ export interface HuntUpload {
 // Name/ClientId/Content column shape).
 const DEFAULT_UPLOAD_VQL =
   "LET flows = SELECT Flow.client_id AS ClientId, Flow.session_id AS FlowId FROM hunt_flows(hunt_id='__HUNT_ID__')\n" +
-  "LET ups = SELECT * FROM foreach(row=flows, query={ SELECT ClientId, vfs_path AS Path, _Components AS Components FROM uploads(client_id=ClientId, flow_id=FlowId) })\n" +
-  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '(?i)\\.json$' AND Content";
+  "LET ups = SELECT * FROM foreach(row=flows, query={ SELECT ClientId, vfs_path AS Path, file_size AS Size, _Components AS Components FROM uploads(client_id=ClientId, flow_id=FlowId) })\n" +
+  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '(?i)\\.json$' AND Size < __MAX_BYTES__ AND Content";
 
 const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;     // valid Velociraptor artifact / source name
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/;        // valid hunt id
@@ -244,12 +245,16 @@ export class VelociraptorClient {
   }
 
   // Run a single VQL program verbatim (no statement-splitting) — for internal orchestration VQL.
-  private async runRaw(program: string): Promise<unknown[]> {
-    const { rows } = await this.runner([program], {
-      timeoutMs: this.config.timeoutMs,
-      maxOutputBytes: this.config.maxOutputBytes,
-    });
+  // maxOutputBytes can be raised for bulk collection reads (forensic data is large).
+  private async runRaw(program: string, maxOutputBytes: number = this.config.maxOutputBytes): Promise<unknown[]> {
+    const { rows } = await this.runner([program], { timeoutMs: this.config.timeoutMs, maxOutputBytes });
     return rows;
+  }
+
+  // The larger stdout cap to use for bundle-hunt collection (rows + uploaded JSON), falling back to the
+  // interactive cap when unset.
+  private collectCap(): number {
+    return this.config.collectMaxOutputBytes || this.config.maxOutputBytes;
   }
 
   // Run analyst pivot VQL server-side (split into statements). Kept for ad-hoc/server-scoped queries;
@@ -298,10 +303,13 @@ export class VelociraptorClient {
     // Named sources are addressed as `artifact/source` (the `source=` param does NOT match them).
     const safe = sources.filter((s) => ARTIFACT_RE.test(s));
     const refs = safe.length ? safe.map((s) => `${artifact}/${s}`) : [artifact];
+    // LIMIT at the source so a huge result set (e.g. Hayabusa across a fleet) can't blow the stdout cap
+    // before we'd cap() it anyway. maxRows+1 so cap() can still flag truncation.
+    const limit = this.config.maxRows + 1;
     const program = refs.length > 1
-      ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${ref}') }`).join(", ")})`
-      : `SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${refs[0]}')`;
-    return this.cap(await this.runRaw(program));
+      ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${ref}') LIMIT ${limit} }`).join(", ")})`
+      : `SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${refs[0]}') LIMIT ${limit}`;
+    return this.cap(await this.runRaw(program, this.collectCap()));
   }
 
   // List the server's COLLECTABLE client artifacts (type CLIENT, not CLIENT_EVENT monitoring) so the
@@ -361,19 +369,27 @@ export class VelociraptorClient {
     };
   }
 
-  // Read a bundle hunt's results, keyed by artifact name — the exact artifact-map shape importVelociraptor
-  // consumes ({ "Windows.System.Pslist": [...rows], ... }). Only artifacts that returned rows are included
-  // (empty ones are dropped so the map stays a valid artifact-map; clients may not have checked in yet).
-  async huntResultsByArtifact(huntId: string, artifacts: string[]): Promise<Record<string, unknown[]>> {
+  // Read a bundle hunt's results, keyed by artifact name — the artifact-map shape importVelociraptor
+  // consumes ({ "Windows.System.Pslist": [...rows], ... }). RESILIENT: each artifact is fetched
+  // independently, and one that fails (e.g. output still over the cap) is added to `skipped` instead of
+  // aborting the whole collection — so a bundle with a heavy artifact (Hayabusa) still imports the rest.
+  // Only artifacts that returned rows are in `results` (empty ones are dropped; clients may not have
+  // checked in yet, and the artifact-map needs non-empty arrays).
+  async huntResultsByArtifact(huntId: string, artifacts: string[]): Promise<{ results: Record<string, unknown[]>; skipped: string[] }> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
-    const out: Record<string, unknown[]> = {};
+    const results: Record<string, unknown[]> = {};
+    const skipped: string[] = [];
     for (const artifact of artifacts ?? []) {
       const name = String(artifact ?? "").trim();
       if (!ARTIFACT_RE.test(name)) continue;   // skip invalid names rather than fail the whole collect
-      const res = await this.huntResults(huntId, name);
-      if (res.rows.length) out[name] = res.rows;
+      try {
+        const res = await this.huntResults(huntId, name);
+        if (res.rows.length) results[name] = res.rows;
+      } catch {
+        skipped.push(name);   // oversized / slow / failed — keep going (the caller logs the skips)
+      }
     }
-    return out;
+    return { results, skipped };
   }
 
   // Read a hunt's uploaded JSON files (content included), so an artifact whose meaningful output is an
@@ -383,9 +399,12 @@ export class VelociraptorClient {
   // substitution, so interpolating it into the program is injection-safe.
   async huntUploads(huntId: string): Promise<HuntUpload[]> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
+    const cap = this.collectCap();
     const template = this.config.uploadVql && this.config.uploadVql.trim() ? this.config.uploadVql : DEFAULT_UPLOAD_VQL;
-    const program = template.split("__HUNT_ID__").join(huntId);
-    const rows = await this.runRaw(program);
+    // __MAX_BYTES__ lets the VQL skip a single upload bigger than the cap at the source (so one huge
+    // file doesn't blow the read); __HUNT_ID__ is the validated hunt id.
+    const program = template.split("__HUNT_ID__").join(huntId).split("__MAX_BYTES__").join(String(cap));
+    const rows = await this.runRaw(program, cap);
     const out: HuntUpload[] = [];
     for (const row of rows) {
       const r = row as { Name?: unknown; ClientId?: unknown; Content?: unknown; Path?: unknown };
@@ -411,6 +430,7 @@ export function loadVelociraptorConfig(env: NodeJS.ProcessEnv = process.env): Ve
     timeoutMs: Number(env.DFIR_VELOCIRAPTOR_TIMEOUT_MS) || 60_000,
     maxRows: Number(env.DFIR_VELOCIRAPTOR_MAX_ROWS) || 1000,
     maxOutputBytes: Number(env.DFIR_VELOCIRAPTOR_MAX_OUTPUT) || 50 * 1024 * 1024,
+    collectMaxOutputBytes: Number(env.DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT) || 256 * 1024 * 1024,
     guiUrl: env.DFIR_VELOCIRAPTOR_GUI_URL?.trim() || undefined,
     guiOrg: env.DFIR_VELOCIRAPTOR_ORG?.trim() || "root",
     uploadVql: env.DFIR_VELOCIRAPTOR_UPLOAD_VQL?.trim() || undefined,

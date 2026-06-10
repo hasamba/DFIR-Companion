@@ -319,7 +319,9 @@ are passed as separate positional args with comments stripped (a leading `--` is
 type CLIENT), `launchArtifactHunt(artifacts, desc, {includeLabels,excludeLabels,os}, {timeoutSeconds})` (hunt over a chosen
 SET of existing artifacts with Velociraptor's own include/exclude/OS conditions + an optional per-collection
 `timeout` override, since some artifacts e.g. THOR run past the 600s default), `huntResultsByArtifact()`
-(collect per-artifact into the `{ "Artifact.Name": [rows] }` artifact-map `importVelociraptor` already eats),
+(collect per-artifact into the `{ "Artifact.Name": [rows] }` artifact-map `importVelociraptor` already eats — **resilient**:
+returns `{results, skipped}`, an artifact too large to fetch is skipped not fatal; `hunt_results` is `LIMIT`-bounded and reads
+use the larger `collectMaxOutputBytes` cap = `DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT`, default 256 MB, since THOR/Hayabusa are big),
 and `huntUploads()` (read a hunt's uploaded `.json` reports server-side — some artifacts, e.g.
 `Generic.Scanner.ThorZIP` / `Windows.Hayabusa.Rules`, put their real data in an UPLOADED JSON, not rows; the
 upload VQL is version-sensitive and overridable via `DFIR_VELOCIRAPTOR_UPLOAD_VQL`). The collect helper ingests
