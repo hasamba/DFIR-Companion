@@ -5220,10 +5220,13 @@
     const SECTION_DEFS = [
       { id: "sec-ask",          label: "Ask the LLM" },
       { id: "sec-exec",         label: "Executive Summary" },
-      { id: "sec-next-steps",   label: "Recommended Next Steps" },
+      { id: "sec-playbook",     label: "Playbook" },
       { id: "sec-attack-path",  label: "Attack Path" },
       { id: "sec-findings",     label: "Findings" },
-      { id: "sec-playbook",     label: "Playbook" },
+      // Recommended Next Steps is hidden by default — the Playbook (above) supersedes it for
+      // action-tracking. Its data still feeds the Playbook, report, and exports; re-enable it
+      // anytime from Settings → section visibility.
+      { id: "sec-next-steps",   label: "Recommended Next Steps", defaultHidden: true },
       { id: "sec-timeline",     label: "Forensic Timeline" },
       { id: "sec-kill-chain",   label: "Kill Chain" },
       { id: "sec-phases",       label: "Attack Phases" },
@@ -5243,6 +5246,12 @@
     function loadSectionsVis() {
       try { return JSON.parse(localStorage.getItem(SECTIONS_VIS_KEY) || "{}"); } catch { return {}; }
     }
+    // A section is visible unless the user hid it, OR — when the user hasn't chosen — unless it's
+    // flagged defaultHidden (e.g. Recommended Next Steps). An explicit user choice always wins.
+    function isSectionVisible(id, vis) {
+      if (vis[id] === undefined) { const d = SECTION_DEFS.find(s => s.id === id); return !(d && d.defaultHidden); }
+      return vis[id] !== false;
+    }
     function loadSectionsOrder() {
       try { return JSON.parse(localStorage.getItem(SECTIONS_ORDER_KEY) || "[]"); } catch { return []; }
     }
@@ -5255,7 +5264,18 @@
       const byId = Object.fromEntries(SECTION_DEFS.map(d => [d.id, d]));
       const result = saved.filter(id => byId[id]).map(id => byId[id]);
       const savedSet = new Set(saved);
-      SECTION_DEFS.filter(d => !savedSet.has(d.id)).forEach(d => result.push(d));
+      // Insert any section missing from the saved order at its CANONICAL position (right after its
+      // nearest preceding SECTION_DEFS sibling that's already placed) rather than dumping it at the
+      // end — so a newly-added section (e.g. Playbook) appears where it's defined, not at the bottom.
+      SECTION_DEFS.forEach((def, i) => {
+        if (savedSet.has(def.id)) return;
+        let insertAt = result.length;
+        for (let j = i - 1; j >= 0; j--) {
+          const idx = result.findIndex(d => d.id === SECTION_DEFS[j].id);
+          if (idx >= 0) { insertAt = idx + 1; break; }
+        }
+        result.splice(insertAt, 0, def);
+      });
       return result;
     }
     function applySecOrder() {
@@ -5272,7 +5292,7 @@
       const vis = loadSectionsVis();
       SECTION_DEFS.forEach(({ id }) => {
         const el = document.getElementById(id);
-        if (el) el.style.display = (vis[id] === false) ? "none" : "";
+        if (el) el.style.display = isSectionVisible(id, vis) ? "" : "none";
       });
     }
 
@@ -5282,7 +5302,7 @@
       const vis = loadSectionsVis();
       const ordered = getEffectiveOrder();
       container.innerHTML = ordered.map(({ id, label }) =>
-        `<label class="sec-check" draggable="true" data-id="${esc(id)}"><span class="drag-handle" title="Drag to reorder">⠿</span><input type="checkbox" id="scb-${esc(id)}" ${vis[id] !== false ? "checked" : ""}> ${esc(label)}</label>`
+        `<label class="sec-check" draggable="true" data-id="${esc(id)}"><span class="drag-handle" title="Drag to reorder">⠿</span><input type="checkbox" id="scb-${esc(id)}" ${isSectionVisible(id, vis) ? "checked" : ""}> ${esc(label)}</label>`
       ).join("");
       let dragSrc = null;
       container.querySelectorAll(".sec-check").forEach(row => {
