@@ -511,6 +511,23 @@
       </div>
     </div>
   </div>
+  <div id="clickupOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Push playbook to ClickUp</h3>
+      <p style="color:#9aa4b2; font-size:12px; margin:0 0 10px">
+        Exports the Response Playbook tasks into a ClickUp list (status, priority, assignee, due date).
+        Re-pushing the same case <strong>updates</strong> the tasks it created — it won't duplicate them.</p>
+      <label style="display:block; font-size:13px; margin:6px 0">ClickUp list ID
+        <input id="clickupListId" placeholder="e.g. 901234567" style="width:100%; box-sizing:border-box; padding:5px; margin-top:4px;" />
+      </label>
+      <p style="color:#52617a; font-size:11px; margin:4px 0 0">Find it in the list's URL: <code>app.clickup.com/…/li/<b>901234567</b></code></p>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="clickupPushBtn">Push</button>
+        <button id="clickupCancel" style="background:#2a2f3a;">Cancel</button>
+        <span id="clickupMsg" style="color:#9aa4b2; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
   <div id="huntOverlay" class="comment-overlay">
     <div class="comment-modal hunt-modal">
       <h3 id="huntTitle">Hunt queries</h3>
@@ -4956,14 +4973,20 @@
     fetch("/notion/status").then((r) => r.json()).then((s) => {
       if (s && s.configured) { addPushOption("notion", "Export to Notion"); notionHasDefault = !!(s.hasDatabase || s.hasParent); }
     }).catch(() => {});
+    // ClickUp: a configured token shows the option; the modal asks for the target list id.
+    let clickupDefaultList = "";
+    fetch("/clickup/status").then((r) => r.json()).then((s) => {
+      if (s && s.configured) { addPushOption("clickup", "Push to ClickUp"); clickupDefaultList = s.defaultListId || ""; }
+    }).catch(() => {});
     pushSelect.onchange = (e) => {
       const sel = e.target;
       const target = sel.value;
       sel.value = ""; // reset to the "Push to…" placeholder
       const caseId = document.getElementById("caseId").value.trim();
       if (!target || !caseId) return;
-      // Notion needs the new-vs-existing question first, so it opens a modal instead of an immediate POST.
+      // Notion/ClickUp need a target question first, so they open a modal instead of an immediate POST.
       if (target === "notion") { openNotionModal(); return; }
+      if (target === "clickup") { openClickupModal(caseId); return; }
       const c = encodeURIComponent(caseId);
       sel.disabled = true;
       const targetLabel = target === "iris" ? "IRIS" : target === "timesketch" ? "Timesketch" : "MISP";
@@ -5051,6 +5074,42 @@
           closeNotionModal();
         })
         .catch((err) => document.getElementById("notionMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
+        .finally(() => { btn.disabled = false; });
+    };
+
+    // ── Push playbook to ClickUp modal ────────────────────────────────────────
+    const clickupOverlay = document.getElementById("clickupOverlay");
+    function openClickupModal(caseId) {
+      document.getElementById("clickupMsg").textContent = "";
+      const input = document.getElementById("clickupListId");
+      input.value = clickupDefaultList;   // default; overwritten by the saved list if present
+      fetch(`/cases/${encodeURIComponent(caseId)}/clickup-export`).then((r) => r.ok ? r.json() : null)
+        .then((s) => { if (s && s.listId) input.value = s.listId; }).catch(() => {});
+      clickupOverlay.classList.add("open");
+    }
+    function closeClickupModal() { clickupOverlay.classList.remove("open"); }
+    document.getElementById("clickupCancel").onclick = closeClickupModal;
+    clickupOverlay.addEventListener("click", (e) => { if (e.target === clickupOverlay) closeClickupModal(); });
+    document.getElementById("clickupPushBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { document.getElementById("clickupMsg").textContent = "connect to a case first"; return; }
+      const listId = document.getElementById("clickupListId").value.trim();
+      if (!listId) { document.getElementById("clickupMsg").textContent = "enter a ClickUp list ID"; return; }
+      const btn = document.getElementById("clickupPushBtn");
+      btn.disabled = true;
+      document.getElementById("clickupMsg").textContent = "pushing…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/push/clickup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ listId }) })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((res) => {
+          document.getElementById("status").textContent =
+            `ClickUp: +${res.created} created, ${res.updated} updated` +
+            (res.skipped ? `, ${res.skipped} skipped` : "") +
+            (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
+          if (res.taskUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.taskUrl)}" target="_blank" rel="noopener">Open in ClickUp</a>`;
+          if (res.warnings && res.warnings.length) console.warn("clickup push warnings:", res.warnings);
+          closeClickupModal();
+        })
+        .catch((err) => document.getElementById("clickupMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
         .finally(() => { btn.disabled = false; });
     };
 
