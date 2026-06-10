@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-10
+
 ### Changed
 - **Dashboard: the Analyst Notebook section now sits directly after _Confirmed Legitimate_ by default**, and is registered in the section reorder/visibility list (`SECTION_DEFS`) so it can be hidden or dragged like every other section (it was previously fixed after _Investigation Log_ and not manageable from Settings → General).
 
@@ -969,7 +971,8 @@ Initial baseline.
   report exports.
 - Scripts: `dev`, `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.11.0...v0.12.0
