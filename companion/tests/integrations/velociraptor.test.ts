@@ -100,7 +100,7 @@ describe("VelociraptorClient.launchHunt", () => {
     expect(res.artifact).toBe("Custom.Hunt.Companion.find_x_exe");
     expect(res.sources).toEqual(["Pivot0"]);
     expect(res.state).toBe("RUNNING");
-    expect(res.guiUrl).toBe("https://velo.example/app/index.html#/hunts/H.ABC123");
+    expect(res.guiUrl).toBe("https://velo.example/app/index.html?org_id=root#/hunts/H.ABC123");
     // The orchestration program defines a CLIENT artifact and launches a hunt on it.
     expect(program).toContain("artifact_set(");
     expect(program).toContain("type: CLIENT");
@@ -182,7 +182,7 @@ describe("VelociraptorClient.launchArtifactHunt", () => {
       .launchArtifactHunt(["Windows.System.Pslist", "Windows.Network.Netstat"], "Fast Triage");
     expect(res.huntId).toBe("H.B1");
     expect(res.artifacts).toEqual(["Windows.System.Pslist", "Windows.Network.Netstat"]);
-    expect(res.guiUrl).toBe("https://velo.example/app/index.html#/hunts/H.B1");
+    expect(res.guiUrl).toBe("https://velo.example/app/index.html?org_id=root#/hunts/H.B1");
     expect(program).toContain("hunt(");
     expect(program).toContain("artifacts=['Windows.System.Pslist', 'Windows.Network.Netstat']");
   });
@@ -205,6 +205,13 @@ describe("VelociraptorClient.launchArtifactHunt", () => {
     expect(program).not.toContain("os=");
     expect(program).not.toContain("include_labels=");
     expect(program).not.toContain("exclude_labels=");
+  });
+
+  it("puts ?org_id before the # fragment and honors a custom org", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ Hunt: { HuntId: "H.ORG1", state: "RUNNING" } }], raw: "" });
+    const res = await new VelociraptorClient({ ...cfg, guiUrl: "https://velo:5888", guiOrg: "OACME" }, runner)
+      .launchArtifactHunt(["Windows.System.Pslist"], "x");
+    expect(res.guiUrl).toBe("https://velo:5888/app/index.html?org_id=OACME#/hunts/H.ORG1");
   });
 
   it("adds a collection timeout clause when timeoutSeconds is set, omits it otherwise", async () => {

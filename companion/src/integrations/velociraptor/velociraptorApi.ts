@@ -20,6 +20,7 @@ export interface VelociraptorApiConfig {
   maxRows: number;         // cap rows returned to the caller
   maxOutputBytes: number;  // hard cap on captured stdout (kill the child if exceeded)
   guiUrl?: string;         // optional Velociraptor GUI base URL, for deep-linking to a launched hunt
+  guiOrg?: string;         // Velociraptor org for the deep link (?org_id=…); default "root" (the GUI requires it)
   uploadVql?: string;      // optional override for the hunt-uploads VQL (DFIR_VELOCIRAPTOR_UPLOAD_VQL); __HUNT_ID__ placeholder
 }
 
@@ -232,6 +233,16 @@ export class VelociraptorClient {
     return { rows: rows.slice(0, this.config.maxRows), total: rows.length, truncated: rows.length > this.config.maxRows };
   }
 
+  // Deep link to a hunt in the Velociraptor GUI. The `?org_id=…` MUST come before the `#` fragment
+  // (the SPA router reads the org from the query, the hunt from the hash) — without it the GUI opens
+  // the wrong/empty org. Defaults to the `root` org; override with DFIR_VELOCIRAPTOR_ORG.
+  private huntGuiUrl(huntId: string): string | undefined {
+    if (!this.config.guiUrl) return undefined;
+    const base = this.config.guiUrl.replace(/\/+$/, "");
+    const org = encodeURIComponent(this.config.guiOrg?.trim() || "root");
+    return `${base}/app/index.html?org_id=${org}#/hunts/${huntId}`;
+  }
+
   // Run a single VQL program verbatim (no statement-splitting) — for internal orchestration VQL.
   private async runRaw(program: string): Promise<unknown[]> {
     const { rows } = await this.runner([program], {
@@ -275,7 +286,7 @@ export class VelociraptorClient {
       artifact: name,
       sources,
       state: String(hunt.state ?? hunt.State ?? "RUNNING"),
-      guiUrl: this.config.guiUrl ? `${this.config.guiUrl.replace(/\/+$/, "")}/app/index.html#/hunts/${huntId}` : undefined,
+      guiUrl: this.huntGuiUrl(huntId),
     };
   }
 
@@ -346,7 +357,7 @@ export class VelociraptorClient {
       huntId,
       artifacts: names,
       state: String(hunt.state ?? hunt.State ?? "RUNNING"),
-      guiUrl: this.config.guiUrl ? `${this.config.guiUrl.replace(/\/+$/, "")}/app/index.html#/hunts/${huntId}` : undefined,
+      guiUrl: this.huntGuiUrl(huntId),
     };
   }
 
@@ -401,6 +412,7 @@ export function loadVelociraptorConfig(env: NodeJS.ProcessEnv = process.env): Ve
     maxRows: Number(env.DFIR_VELOCIRAPTOR_MAX_ROWS) || 1000,
     maxOutputBytes: Number(env.DFIR_VELOCIRAPTOR_MAX_OUTPUT) || 50 * 1024 * 1024,
     guiUrl: env.DFIR_VELOCIRAPTOR_GUI_URL?.trim() || undefined,
+    guiOrg: env.DFIR_VELOCIRAPTOR_ORG?.trim() || "root",
     uploadVql: env.DFIR_VELOCIRAPTOR_UPLOAD_VQL?.trim() || undefined,
   };
 }
