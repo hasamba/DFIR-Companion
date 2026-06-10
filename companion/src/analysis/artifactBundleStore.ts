@@ -16,7 +16,27 @@ export interface ArtifactBundle {
   artifacts: string[];          // Velociraptor CLIENT artifact names
   defaultWaitMinutes?: number;  // optional per-bundle default collect delay
   timeoutSeconds?: number;      // optional per-collection timeout override (Velociraptor default 600s) — some artifacts run longer
+  // Per-artifact parameter overrides passed to the hunt's `spec`, so a heavy artifact emits less at the
+  // source (e.g. {"Windows.Hayabusa.Rules": {"MinLevel": "high"}} runs Hayabusa at high+critical only).
+  // Only the params you set are sent; everything else uses the artifact's own defaults.
+  params?: Record<string, Record<string, string>>;
   customized?: boolean;         // a built-in that has a saved override on disk (so the UI can offer "reset to default"); derived, not persisted
+}
+
+// Keep only object-of-string-ish params; drop nested objects/null. Returns undefined when empty.
+function sanitizeBundleParams(raw: unknown): Record<string, Record<string, string>> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, Record<string, string>> = {};
+  for (const [artifact, params] of Object.entries(raw as Record<string, unknown>)) {
+    if (!params || typeof params !== "object") continue;
+    const inner: Record<string, string> = {};
+    for (const [k, v] of Object.entries(params as Record<string, unknown>)) {
+      if (v == null || typeof v === "object") continue;
+      inner[String(k)] = String(v);
+    }
+    if (Object.keys(inner).length) out[artifact] = inner;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 // The single shipped default. A cross-platform "quick wins" detection sweep (DetectRaptor + Velociraptor
@@ -76,6 +96,9 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Custom.DFIR.RDPLateralMovementDetection",
     ],
     defaultWaitMinutes: 10,
+    // Hayabusa emits 10k+ rows at its default (medium+); constrain it to high+critical at the source so
+    // the import stays signal-rich. Tune via the bundle editor's Advanced → parameters.
+    params: { "Windows.Hayabusa.Rules": { MinLevel: "high" } },
   },
 ];
 
@@ -163,6 +186,7 @@ export class ArtifactBundleStore {
       artifacts: Array.isArray(input.artifacts) ? input.artifacts.map(String).map((a) => a.trim()).filter(Boolean) : [],
       defaultWaitMinutes: typeof input.defaultWaitMinutes === "number" ? input.defaultWaitMinutes : undefined,
       timeoutSeconds: typeof input.timeoutSeconds === "number" ? input.timeoutSeconds : undefined,
+      params: sanitizeBundleParams(input.params),
     };
     await mkdir(this.root, { recursive: true });
     await atomicWrite(this.path(id), JSON.stringify(bundle, null, 2));

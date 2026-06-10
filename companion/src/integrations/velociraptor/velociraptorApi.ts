@@ -216,6 +216,26 @@ function normalizeOs(os?: string): "windows" | "linux" | "darwin" | undefined {
   return v === "windows" || v === "linux" || v === "darwin" ? v : undefined;
 }
 
+const PARAM_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;   // valid Velociraptor parameter name
+
+// Build the hunt's `spec` clause from per-artifact parameter overrides so a heavy artifact runs with
+// fewer/narrower outputs at the source (e.g. `Windows.Hayabusa.Rules`=dict(MinLevel='high')). Only
+// artifacts actually in this hunt are included; param names are validated and values are sanitized into
+// single-quoted strings (Velociraptor coerces). Returns undefined when there's nothing to set.
+function buildHuntSpec(names: string[], params?: Record<string, Record<string, string>>): string | undefined {
+  if (!params || typeof params !== "object") return undefined;
+  const inHunt = new Set(names);
+  const entries: string[] = [];
+  for (const [artifact, kv] of Object.entries(params)) {
+    if (!ARTIFACT_RE.test(artifact) || !inHunt.has(artifact) || !kv || typeof kv !== "object") continue;
+    const pairs = Object.entries(kv)
+      .filter(([k]) => PARAM_RE.test(k))
+      .map(([k, v]) => `${k}='${oneLine(String(v))}'`);
+    if (pairs.length) entries.push(`\`${artifact}\`=dict(${pairs.join(", ")})`);
+  }
+  return entries.length ? `spec=dict(${entries.join(", ")})` : undefined;
+}
+
 // A CLIENT artifact (YAML) with one source per pivot statement — collected by the hunt on every endpoint.
 function buildHuntArtifact(name: string, statements: string[], sources: string[], description: string): string {
   const blocks = statements
@@ -337,7 +357,7 @@ export class VelociraptorClient {
     artifacts: string[],
     description: string,
     target: HuntTarget = {},
-    opts: { timeoutSeconds?: number } = {},
+    opts: { timeoutSeconds?: number; params?: Record<string, Record<string, string>> } = {},
   ): Promise<ArtifactHuntLaunchResult> {
     const names = (artifacts ?? []).map((a) => String(a ?? "").trim()).filter(Boolean);
     if (names.length === 0) throw new Error("no artifacts to hunt");
@@ -356,6 +376,8 @@ export class VelociraptorClient {
     if (os) clauses.push(`os='${os}'`);
     const timeout = Number(opts.timeoutSeconds);
     if (Number.isFinite(timeout) && timeout > 0) clauses.push(`timeout=${Math.floor(timeout)}`);   // collection timeout (s)
+    const spec = buildHuntSpec(names, opts.params);   // per-artifact parameters (e.g. Hayabusa MinLevel='high')
+    if (spec) clauses.push(spec);
     const program = `SELECT hunt(${clauses.join(", ")}) AS Hunt FROM scope()`;
     const rows = await this.runRaw(program);
     const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};

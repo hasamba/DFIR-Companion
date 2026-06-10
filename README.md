@@ -609,7 +609,9 @@ default, stored globally next to `cases/` in `bundles/`). **Every bundle, built-
 place** — an edit saves an override; **Reset to default** discards it. **Run** one as a hunt (optionally scoped
 by include/exclude labels + OS, and a **minimum-severity** import floor). The **collection timeout** is a bundle
 setting (configured in the editor — bump it for slow artifacts like THOR; Velociraptor's default is 600 s) and is
-applied automatically on every run. The hunt stays open until expiry, so
+applied automatically on every run. Bundles can also carry **per-artifact parameters** (passed to the hunt's
+`spec`) so a heavy artifact emits less at the source — Best Practice ships **Hayabusa pinned to `MinLevel=high`**
+so it doesn't flood the import; tune any artifact via the builder's optional *Advanced → parameters* JSON. The hunt stays open until expiry, so
 the Companion **auto-collects** after `DFIR_VELO_HUNT_WAIT_MIN` and ingests **both** the result rows **and any
 uploaded JSON report** (e.g. THOR/Hayabusa via `Generic.Scanner.ThorZIP` — for those the rows don't matter, the
 uploaded JSON does; it's auto-detected and routed to the right importer), then synthesizes — or click **Collect

@@ -1021,7 +1021,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const timeoutSeconds = typeof rawTimeout === "number" && rawTimeout > 0 ? Math.min(86_400, Math.max(60, Math.floor(rawTimeout))) : undefined;
 
       logLine(`[velociraptor] run bundle "${bundle.name}" (${bundle.artifacts.length} artifact(s)), collect in ${waitMinutes}m${minSeverity ? `, min severity ${minSeverity}` : ""}${timeoutSeconds ? `, timeout ${timeoutSeconds}s` : ""}`);
-      const launch = await options.velociraptorClient.launchArtifactHunt(bundle.artifacts, bundle.name, target, { timeoutSeconds });
+      const launch = await options.velociraptorClient.launchArtifactHunt(bundle.artifacts, bundle.name, target, { timeoutSeconds, params: bundle.params });
       const collectAt = new Date(Date.now() + waitMinutes * 60_000).toISOString();
       const job: VeloHuntJob = {
         bundleId: bundle.id, bundleName: bundle.name, artifacts: launch.artifacts,

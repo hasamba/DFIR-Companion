@@ -105,6 +105,20 @@ describe("ArtifactBundleStore", () => {
     });
   });
 
+  it("persists per-artifact params and ships them on the Best Practice built-in (Hayabusa MinLevel)", async () => {
+    const saved = await store.save({ name: "P", description: "", artifacts: ["Windows.Hayabusa.Rules"], params: { "Windows.Hayabusa.Rules": { MinLevel: "high" } } });
+    expect(saved.params).toEqual({ "Windows.Hayabusa.Rules": { MinLevel: "high" } });
+    const bp = await store.get("best-practice");
+    expect(bp?.params?.["Windows.Hayabusa.Rules"]?.MinLevel).toBe("high");
+  });
+
+  it("sanitizes params — drops nested objects and coerces values to strings", async () => {
+    // untrusted shape (as it arrives from the route body) — numbers coerced, nested objects dropped
+    const params = { "A.B": { Keep: 5, Drop: { nested: 1 } } } as unknown as Record<string, Record<string, string>>;
+    const saved = await store.save({ name: "P", description: "", artifacts: ["A.B"], params });
+    expect(saved.params).toEqual({ "A.B": { Keep: "5" } });
+  });
+
   it("every built-in bundle has a name, description, and at least one artifact", () => {
     for (const b of BUILT_IN_BUNDLES) {
       expect(b.name).toBeTruthy();
