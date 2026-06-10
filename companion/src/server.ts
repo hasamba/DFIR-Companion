@@ -41,7 +41,7 @@ import { parsePlasoCsv } from "./analysis/plasoImport.js";
 import type { PlasoImportOptions } from "./analysis/plasoImport.js";
 import { parseSandboxReport } from "./analysis/sandboxImport.js";
 import type { SandboxImportOptions } from "./analysis/sandboxImport.js";
-import { detectImportKind } from "./analysis/importDetect.js";
+import { detectImportKind, type ImportKind } from "./analysis/importDetect.js";
 import { getEnvForSettings, updateEnv as updateEnvFile } from "./settings/envManager.js";
 import { parseMinSeverity } from "./analysis/severityFloor.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
@@ -85,7 +85,7 @@ import {
 } from "./analysis/customerExposure.js";
 import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
-import { VelociraptorClient, buildVelociraptorClient, type HuntTarget } from "./integrations/velociraptor/velociraptorApi.js";
+import { VelociraptorClient, buildVelociraptorClient, type HuntTarget, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
 import { ArtifactBundleStore } from "./analysis/artifactBundleStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
@@ -853,10 +853,52 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // analyst triggers collection with "Collect now". .unref() so a pending timer never blocks exit.
   const veloHuntTimers = new Map<string, NodeJS.Timeout>();
 
-  // Collect a bundle hunt's results, import them through the SAME deterministic Velociraptor path a
-  // manual import uses (evidence-first persist → importVelociraptor → import-meta diff → synthesis),
-  // and update the persisted job. Never throws (it runs from a timer). Re-runnable: a later collect
-  // pulls stragglers (correlation dedups re-imported rows).
+  type ImportBase = { label: string; idPrefix: string; importedAt: string; onProgress?: (done: number, total: number) => void; minSeverity?: Severity };
+
+  // Dispatch a detected import kind to the matching pipeline importer. Shared by the unified /import
+  // route and the Velociraptor bundle collector (which ingests uploaded JSON reports the same way).
+  function dispatchImport(kind: ImportKind, caseId: string, text: string, base: ImportBase): Promise<unknown> {
+    const pipeline = options.pipeline;
+    if (!pipeline) return Promise.reject(new Error("AI pipeline not configured"));
+    switch (kind) {
+      case "thor": return pipeline.importThor(caseId, text, base);
+      case "siem": return pipeline.importSiem(caseId, text, base);
+      case "chainsaw": return pipeline.importChainsaw(caseId, text, base);
+      case "hayabusa": return pipeline.importHayabusa(caseId, text, base);
+      case "velociraptor": return pipeline.importVelociraptor(caseId, text, base);
+      case "network": return pipeline.importNetwork(caseId, text, base);
+      case "kape": return pipeline.importKape(caseId, text, base);
+      case "cybertriage": return pipeline.importCybertriage(caseId, text, base);
+      case "m365": return pipeline.importM365(caseId, text, base);
+      case "aws": return pipeline.importAws(caseId, text, base);
+      case "cloud": return pipeline.importCloudActivity(caseId, text, base);
+      case "plaso": return pipeline.importPlaso(caseId, text, base);
+      case "sandbox": return pipeline.importSandbox(caseId, text, base);
+      case "csv": return pipeline.analyzeCsv(caseId, text, base);
+      case "log": return pipeline.analyzeLog(caseId, text, base);
+      default: return Promise.reject(new Error(`unhandled import kind: ${kind as string}`));
+    }
+  }
+
+  // Evidence-first persist of an imported blob: next sequence, save the raw file, append the audit line.
+  async function persistEvidence(caseId: string, originalName: string, text: string): Promise<{ storedName: string; importedAt: string; seq: number }> {
+    const seq = await store.nextImportSeq(caseId);
+    const safe = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.dat";
+    const storedName = `${String(seq).padStart(4, "0")}_${safe}`;
+    const importedAt = new Date().toISOString();
+    await store.saveImport(caseId, storedName, text);
+    await store.appendImport(caseId, {
+      caseId, sequenceNumber: seq, importedAt, filename: storedName,
+      originalName, rows: 0, bytes: Buffer.byteLength(text, "utf8"),
+    });
+    return { storedName, importedAt, seq };
+  }
+
+  // Collect a bundle hunt and import it the SAME way a manual import works. Ingests BOTH the result
+  // ROWS (the {"Artifact.Name":[rows]} artifact-map the Velociraptor importer consumes) AND any
+  // uploaded JSON reports (e.g. THOR/Hayabusa via Generic.Scanner.ThorZIP) — for those the rows don't
+  // matter, the uploaded JSON does; it's detected + dispatched to the right importer. Honors the run's
+  // minSeverity floor, records ONE combined import-meta diff, then synthesizes. Never throws (timer).
   async function importVeloHuntResults(caseId: string): Promise<void> {
     const client = options.velociraptorClient;
     const huntStore = options.veloHuntStore;
@@ -872,51 +914,68 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       job = { ...job, status: "collecting" };
       await huntStore.save(caseId, job);
       options.onVeloHunt?.(caseId);
+      const minSeverity = job.minSeverity;
 
-      const map = await client.huntResultsByArtifact(job.huntId, job.artifacts);
-      const totalRows = Object.values(map).reduce((n, rows) => n + rows.length, 0);
-
-      let addedEvents = 0;
-      let addedIocs = 0;
-      let importFile: string | undefined;
-      if (totalRows > 0) {
-        const json = JSON.stringify(map);
-        const seq = await store.nextImportSeq(caseId);
-        const storedName = `${String(seq).padStart(4, "0")}_velo-hunt_${job.huntId}.json`;
-        const importedAt = new Date().toISOString();
-        await store.saveImport(caseId, storedName, json);
-        await store.appendImport(caseId, {
-          caseId, sequenceNumber: seq, importedAt, filename: storedName,
-          originalName: storedName, rows: 0, bytes: Buffer.byteLength(json, "utf8"),
-        });
-        importFile = storedName;
-
-        let timelineBefore: ForensicEvent[] = [];
-        let iocsBefore: IOC[] = [];
-        if (options.stateStore) {
-          try { const s = await options.stateStore.load(caseId); timelineBefore = s.forensicTimeline; iocsBefore = s.iocs; } catch { /* keep [] */ }
-        }
-        options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing Velociraptor hunt ${job.huntId} (${Object.keys(map).length} artifact(s), ${totalRows} row(s))` });
-        await pipeline.importVelociraptor(caseId, json, { label: storedName, idPrefix: `${seq}`, importedAt });
-        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-
-        if (options.importMetaStore && options.stateStore) {
-          try {
-            const s = await options.stateStore.load(caseId);
-            const diff = diffTimeline(timelineBefore, s.forensicTimeline);
-            const iocsDiff = diffIocs(iocsBefore, s.iocs);
-            addedEvents = diff.added.length;
-            addedIocs = iocsDiff.added.length;
-            await options.importMetaStore.record(caseId, { kind: "velociraptor", file: storedName, diff, iocsDiff });
-            options.onImportMeta?.(caseId);
-          } catch { /* non-fatal */ }
-        }
+      // Snapshot BEFORE any import so we record one combined import-meta diff for the whole collection.
+      let timelineBefore: ForensicEvent[] = [];
+      let iocsBefore: IOC[] = [];
+      if (options.stateStore) {
+        try { const s = await options.stateStore.load(caseId); timelineBefore = s.forensicTimeline; iocsBefore = s.iocs; } catch { /* keep [] */ }
       }
 
-      job = { ...job, status: "imported", importedAt: new Date().toISOString(), importFile, addedEvents, addedIocs, error: undefined };
+      let importedAny = false;
+      let lastFile: string | undefined;
+
+      // 1) Result ROWS → the Velociraptor importer (detections + telemetry).
+      const map = await client.huntResultsByArtifact(job.huntId, job.artifacts);
+      const totalRows = Object.values(map).reduce((n, rows) => n + rows.length, 0);
+      if (totalRows > 0) {
+        const json = JSON.stringify(map);
+        const { storedName, importedAt, seq } = await persistEvidence(caseId, `velo-hunt_${job.huntId}.json`, json);
+        lastFile = storedName;
+        options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing Velociraptor hunt ${job.huntId} rows (${Object.keys(map).length} artifact(s), ${totalRows} row(s))` });
+        await pipeline.importVelociraptor(caseId, json, { label: storedName, idPrefix: `${seq}`, importedAt, minSeverity });
+        importedAny = true;
+      }
+
+      // 2) Uploaded JSON reports (e.g. THOR/Hayabusa) → detect + dispatch. Best-effort: a wrong upload
+      // VQL for the server version must not break the rows import (set DFIR_VELOCIRAPTOR_UPLOAD_VQL).
+      let uploads: HuntUpload[] = [];
+      try { uploads = await client.huntUploads(job.huntId); }
+      catch (e) { logLine(`[velociraptor] hunt uploads read failed (override DFIR_VELOCIRAPTOR_UPLOAD_VQL?): ${(e as Error).message}`); }
+      for (const up of uploads) {
+        const upKind = detectImportKind(up.name, up.content);
+        if (upKind === "unknown") continue;
+        if ((upKind === "csv" || upKind === "log") && !(await getControl(caseId)).enabled) continue;   // AI-dependent, AI off
+        try {
+          const { storedName, importedAt, seq } = await persistEvidence(caseId, up.name, up.content);
+          lastFile = storedName;
+          options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing uploaded ${upKind} report ${up.name}` });
+          await dispatchImport(upKind, caseId, up.content, { label: storedName, idPrefix: `${seq}`, importedAt, minSeverity });
+          importedAny = true;
+        } catch (e) { logLine(`[velociraptor] upload import failed (${up.name}): ${(e as Error).message}`); }
+      }
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+
+      // 3) One combined import-meta diff (so the dashboard's "📥 last import / +N" banner lights up).
+      let addedEvents = 0;
+      let addedIocs = 0;
+      if (importedAny && options.importMetaStore && options.stateStore) {
+        try {
+          const s = await options.stateStore.load(caseId);
+          const diff = diffTimeline(timelineBefore, s.forensicTimeline);
+          const iocsDiff = diffIocs(iocsBefore, s.iocs);
+          addedEvents = diff.added.length;
+          addedIocs = iocsDiff.added.length;
+          await options.importMetaStore.record(caseId, { kind: "velociraptor", file: lastFile ?? `velo-hunt_${job.huntId}.json`, diff, iocsDiff });
+          options.onImportMeta?.(caseId);
+        } catch { /* non-fatal */ }
+      }
+
+      job = { ...job, status: "imported", importedAt: new Date().toISOString(), importFile: lastFile, addedEvents, addedIocs, error: undefined };
       await huntStore.save(caseId, job);
       options.onVeloHunt?.(caseId);
-      if (totalRows > 0) resynthesizeInBackground(caseId);
+      if (importedAny) resynthesizeInBackground(caseId);
     } catch (err) {
       try {
         const cur = await huntStore.load(caseId);
@@ -951,15 +1010,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         excludeLabels: toStringArray(req.body?.excludeLabels),
         os,
       };
+      const minSeverity = parseMinSeverity(req.body?.minSeverity);   // applied to the import at collect time
 
-      logLine(`[velociraptor] run bundle "${bundle.name}" (${bundle.artifacts.length} artifact(s)), collect in ${waitMinutes}m`);
+      logLine(`[velociraptor] run bundle "${bundle.name}" (${bundle.artifacts.length} artifact(s)), collect in ${waitMinutes}m${minSeverity ? `, min severity ${minSeverity}` : ""}`);
       const launch = await options.velociraptorClient.launchArtifactHunt(bundle.artifacts, bundle.name, target);
       const collectAt = new Date(Date.now() + waitMinutes * 60_000).toISOString();
       const job: VeloHuntJob = {
         bundleId: bundle.id, bundleName: bundle.name, artifacts: launch.artifacts,
         huntId: launch.huntId, guiUrl: launch.guiUrl,
         launchedAt: new Date().toISOString(), waitMinutes, collectAt,
-        status: "running", target,
+        status: "running", target, minSeverity,
       };
       await options.veloHuntStore.save(caseId, job);
       options.onVeloHunt?.(caseId);
@@ -1647,26 +1707,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress, minSeverity };
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}` });
 
-      const run = (): Promise<unknown> => {
-        switch (kind) {
-          case "thor": return pipeline.importThor(caseId, text, base);
-          case "siem": return pipeline.importSiem(caseId, text, base);
-          case "chainsaw": return pipeline.importChainsaw(caseId, text, base);
-          case "hayabusa": return pipeline.importHayabusa(caseId, text, base);
-          case "velociraptor": return pipeline.importVelociraptor(caseId, text, base);
-          case "network": return pipeline.importNetwork(caseId, text, base);
-          case "kape": return pipeline.importKape(caseId, text, base);
-          case "cybertriage": return pipeline.importCybertriage(caseId, text, base);
-          case "m365": return pipeline.importM365(caseId, text, base);
-          case "aws": return pipeline.importAws(caseId, text, base);
-          case "cloud": return pipeline.importCloudActivity(caseId, text, base);
-          case "plaso": return pipeline.importPlaso(caseId, text, base);
-          case "sandbox": return pipeline.importSandbox(caseId, text, base);
-          case "csv": return pipeline.analyzeCsv(caseId, text, base);
-          case "log": return pipeline.analyzeLog(caseId, text, base);
-          default: return Promise.reject(new Error(`unhandled import kind: ${kind as string}`));
-        }
-      };
+      const run = (): Promise<unknown> => dispatchImport(kind, caseId, text, base);
 
       // Snapshot the forensic timeline + IOCs BEFORE the import so the .then() below can record what
       // this import added (the "last import" diff the dashboard shows above the timeline and IOCs).
