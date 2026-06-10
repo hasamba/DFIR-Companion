@@ -606,8 +606,9 @@ velociraptor --config server.config.yaml config api_client --name dfir --role ad
 `CLIENT` artifacts; assemble + save named **bundles** (a single **Best Practice** quick-wins sweep ships by
 default, stored globally next to `cases/` in `bundles/`). **Every bundle, built-ins included, is editable in
 place** — an edit saves an override; **Reset to default** discards it. **Run** one as a hunt (optionally scoped
-by include/exclude labels + OS, a **minimum-severity** import floor, and a **per-collection timeout** override for
-slow artifacts like THOR — Velociraptor's default is 600 s; per-bundle default + per-run). The hunt stays open until expiry, so
+by include/exclude labels + OS, and a **minimum-severity** import floor). The **collection timeout** is a bundle
+setting (configured in the editor — bump it for slow artifacts like THOR; Velociraptor's default is 600 s) and is
+applied automatically on every run. The hunt stays open until expiry, so
 the Companion **auto-collects** after `DFIR_VELO_HUNT_WAIT_MIN` and ingests **both** the result rows **and any
 uploaded JSON report** (e.g. THOR/Hayabusa via `Generic.Scanner.ThorZIP` — for those the rows don't matter, the
 uploaded JSON does; it's auto-detected and routed to the right importer), then synthesizes — or click **Collect

@@ -2520,10 +2520,11 @@
       if (form.style.display === "block") { form.style.display = "none"; return; }
       document.querySelectorAll(".velo-run-form").forEach(f => f.style.display = "none");
       const defWait = bundle.defaultWaitMinutes || 10;
+      // The collection timeout is a BUNDLE property (set in the editor) — the run uses it, not a re-prompt.
+      const timeoutNote = bundle.timeoutSeconds ? `${esc(bundle.timeoutSeconds)}s` : "600s (Velociraptor default)";
       form.innerHTML = `
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <label style="font-size:12px;color:#9aa4b2">Wait <input type="number" class="velo-wait" min="1" max="1440" value="${esc(defWait)}" style="width:64px;padding:4px" /> min</label>
-          <label style="font-size:12px;color:#9aa4b2" title="Per-collection timeout on each endpoint (Velociraptor default 600s). Bump it for slow artifacts like THOR.">Timeout <input type="number" class="velo-timeout" min="60" max="86400" value="${bundle.timeoutSeconds ? esc(bundle.timeoutSeconds) : ""}" placeholder="600" style="width:72px;padding:4px" /> s</label>
           <select class="velo-os" title="Restrict to a client OS"><option value="">any OS</option><option value="windows">windows</option><option value="linux">linux</option><option value="darwin">darwin</option></select>
           <select class="velo-minsev" title="Only import events at or above this severity (keeps volume down). Telemetry with no severity is always kept."><option value="">all severities</option><option value="info">info+</option><option value="low">low+</option><option value="medium">medium+</option><option value="high">high+</option><option value="critical">critical only</option></select>
           <input class="velo-inc" placeholder="include labels (comma-sep)" style="flex:1;min-width:140px;padding:4px" />
@@ -2531,7 +2532,7 @@
           <button class="velo-run-go">Run hunt</button>
           <span class="velo-run-msg" style="font-size:12px;color:#9aa4b2"></span>
         </div>
-        <div style="font-size:11px;color:#7e8aa0;margin-top:4px">Runs across all enrolled clients unless you set a label/OS filter. Results (+ any uploaded JSON report) are auto-collected after the wait, then imported + synthesized — or click <em>Collect now</em> on the job card.</div>`;
+        <div style="font-size:11px;color:#7e8aa0;margin-top:4px">Runs across all enrolled clients unless you set a label/OS filter. Collection timeout: <strong>${timeoutNote}</strong> — set it on the bundle (<em>Edit</em>) for slow artifacts like THOR. Results (+ any uploaded JSON report) are auto-collected after the wait, then imported + synthesized — or click <em>Collect now</em> on the job card.</div>`;
       form.style.display = "block";
       form.querySelector(".velo-run-go").onclick = () => veloRunBundle(id, form);
     }
@@ -2541,16 +2542,16 @@
       const msg = form.querySelector(".velo-run-msg");
       if (!caseId) { msg.textContent = "connect to a case first"; return; }
       const waitMinutes = Number(form.querySelector(".velo-wait").value) || 10;
-      const timeoutSeconds = Number(form.querySelector(".velo-timeout").value) || undefined;
       const os = form.querySelector(".velo-os").value;
       const minSeverity = form.querySelector(".velo-minsev").value;
       const includeLabels = form.querySelector(".velo-inc").value;
       const excludeLabels = form.querySelector(".velo-exc").value;
       const go = form.querySelector(".velo-run-go");
       go.disabled = true; msg.textContent = "launching hunt…";
+      // No timeoutSeconds here on purpose — the server uses the bundle's saved timeout (read fresh from disk).
       fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/run-bundle`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bundleId, waitMinutes, timeoutSeconds, os, minSeverity, includeLabels, excludeLabels })
+        body: JSON.stringify({ bundleId, waitMinutes, os, minSeverity, includeLabels, excludeLabels })
       }).then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }
