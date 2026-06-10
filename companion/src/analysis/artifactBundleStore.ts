@@ -15,6 +15,7 @@ export interface ArtifactBundle {
   builtIn: boolean;
   artifacts: string[];          // Velociraptor CLIENT artifact names
   defaultWaitMinutes?: number;  // optional per-bundle default collect delay
+  customized?: boolean;         // a built-in that has a saved override on disk (so the UI can offer "reset to default"); derived, not persisted
 }
 
 // Two editable starters. Artifact lists are standard built-in Velociraptor artifacts; the analyst
@@ -63,35 +64,14 @@ export class ArtifactBundleStore {
     return join(this.root, `${id}.json`);
   }
 
-  // Built-ins first, then user-saved custom bundles.
-  async list(): Promise<ArtifactBundle[]> {
-    return [...BUILT_IN_BUNDLES, ...(await this.listCustom())];
+  // True when an id belongs to a shipped built-in (vs. a purely custom bundle). Built-ins are
+  // editable: an edit saves an override file under the same id; deleting it resets to the default.
+  isBuiltIn(id: string): boolean {
+    return BUILT_IN_BUNDLES.some((b) => b.id === id);
   }
 
-  private async listCustom(): Promise<ArtifactBundle[]> {
-    let entries: string[];
-    try {
-      entries = await readdir(this.root);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw err;
-    }
-    const bundles: ArtifactBundle[] = [];
-    for (const entry of entries) {
-      if (!entry.endsWith(".json")) continue;
-      try {
-        const raw = JSON.parse(await readFile(join(this.root, entry), "utf8")) as ArtifactBundle;
-        if (!raw.builtIn) bundles.push(raw);
-      } catch {
-        // skip malformed files
-      }
-    }
-    return bundles;
-  }
-
-  async get(id: string): Promise<ArtifactBundle | null> {
-    const builtin = BUILT_IN_BUNDLES.find((b) => b.id === id);
-    if (builtin) return builtin;
+  // Read one saved bundle file (an override for a built-in, or a custom bundle), or null.
+  private async readSaved(id: string): Promise<ArtifactBundle | null> {
     try {
       return JSON.parse(await readFile(this.path(id), "utf8")) as ArtifactBundle;
     } catch (err) {
@@ -100,28 +80,75 @@ export class ArtifactBundleStore {
     }
   }
 
-  async save(input: Omit<ArtifactBundle, "id" | "builtIn"> & { id?: string }): Promise<ArtifactBundle> {
+  // All saved bundle files keyed by id (overrides + custom). Malformed files are skipped.
+  private async loadSavedMap(): Promise<Map<string, ArtifactBundle>> {
+    const map = new Map<string, ArtifactBundle>();
+    let entries: string[];
+    try {
+      entries = await readdir(this.root);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return map;
+      throw err;
+    }
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue;
+      try {
+        const raw = JSON.parse(await readFile(join(this.root, entry), "utf8")) as ArtifactBundle;
+        if (raw && typeof raw.id === "string" && raw.id) map.set(raw.id, raw);
+      } catch {
+        // skip malformed files
+      }
+    }
+    return map;
+  }
+
+  // Built-ins first (a saved override replaces the shipped default, flagged `customized`), then
+  // purely custom bundles.
+  async list(): Promise<ArtifactBundle[]> {
+    const saved = await this.loadSavedMap();
+    const out: ArtifactBundle[] = [];
+    for (const b of BUILT_IN_BUNDLES) {
+      const override = saved.get(b.id);
+      out.push(override ? { ...override, id: b.id, builtIn: true, customized: true } : { ...b, customized: false });
+    }
+    for (const [id, b] of saved) {
+      if (this.isBuiltIn(id)) continue;   // already merged above as an override
+      out.push({ ...b, builtIn: false, customized: false });
+    }
+    return out;
+  }
+
+  async get(id: string): Promise<ArtifactBundle | null> {
+    const saved = await this.readSaved(id);
+    if (this.isBuiltIn(id)) {
+      const builtin = BUILT_IN_BUNDLES.find((b) => b.id === id)!;
+      return saved ? { ...saved, id, builtIn: true, customized: true } : { ...builtin, customized: false };
+    }
+    return saved ? { ...saved, builtIn: false, customized: false } : null;
+  }
+
+  // Save a bundle. A built-in id writes an OVERRIDE (the built-in becomes editable in place);
+  // any other id creates/updates a custom bundle. `customized`/`builtIn` are derived from the id,
+  // not trusted from input.
+  async save(input: Omit<ArtifactBundle, "id" | "builtIn" | "customized"> & { id?: string }): Promise<ArtifactBundle> {
+    const id = input.id && String(input.id).trim() ? String(input.id).trim() : randomUUID();
+    const builtIn = this.isBuiltIn(id);
     const bundle: ArtifactBundle = {
-      id: input.id && String(input.id).trim() ? String(input.id).trim() : randomUUID(),
+      id,
       name: String(input.name ?? "").trim(),
       description: String(input.description ?? "").trim(),
-      builtIn: false,
+      builtIn,
       artifacts: Array.isArray(input.artifacts) ? input.artifacts.map(String).map((a) => a.trim()).filter(Boolean) : [],
       defaultWaitMinutes: typeof input.defaultWaitMinutes === "number" ? input.defaultWaitMinutes : undefined,
     };
-    // Don't let a saved file shadow a built-in id (the built-in always wins in get()/list()).
-    if (BUILT_IN_BUNDLES.some((b) => b.id === bundle.id)) {
-      throw new Error(`cannot overwrite built-in bundle "${bundle.id}" — duplicate it under a new name instead`);
-    }
     await mkdir(this.root, { recursive: true });
-    await atomicWrite(this.path(bundle.id), JSON.stringify(bundle, null, 2));
-    return bundle;
+    await atomicWrite(this.path(id), JSON.stringify(bundle, null, 2));
+    return { ...bundle, customized: builtIn };
   }
 
+  // Remove the saved file: a custom bundle is deleted; a built-in's override is reset to the shipped
+  // default. Returns true when a file was removed, false when there was nothing on disk (ENOENT).
   async delete(id: string): Promise<boolean> {
-    if (BUILT_IN_BUNDLES.some((b) => b.id === id)) {
-      throw new Error(`cannot delete built-in bundle "${id}"`);
-    }
     try {
       await unlink(this.path(id));
       return true;

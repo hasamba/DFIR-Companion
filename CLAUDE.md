@@ -320,7 +320,11 @@ type CLIENT), `launchArtifactHunt(artifacts, desc, {includeLabels,excludeLabels,
 SET of existing artifacts with Velociraptor's own include/exclude/OS conditions), and `huntResultsByArtifact()`
 (collect per-artifact into the `{ "Artifact.Name": [rows] }` artifact-map `importVelociraptor` already eats).
 A **bundle** is a named artifact list — global, shared across cases (mirrors `TemplateStore`): `ArtifactBundleStore`
-(`BUILT_IN_BUNDLES` Fast/Full Triage + custom JSON in a `bundles/` dir next to `cases/`). Running one launches
+(`BUILT_IN_BUNDLES` Fast/Full Triage + custom JSON in a `bundles/` dir next to `cases/`). **Built-ins are editable**:
+`save()` with a built-in id writes an OVERRIDE file (same id) that `list()`/`get()` return instead of the constant
+(flagged `customized`); `delete()` removes the file — deleting a custom bundle, or **resetting** an edited built-in to
+its default. The whole triage UI lives in the dashboard's **Settings → Integrations** modal (it's config/action, not a
+results view); the imported events surface on the normal dashboard timeline/IOCs. Running one launches
 a hunt, persists a per-case `VeloHuntStore` job (`state/velo-hunt.json`, so it survives the #1-gotcha restart),
 and schedules an **in-memory timer** (`DFIR_VELO_HUNT_WAIT_MIN`, default 10 min, clamped 1..1440) that — best-effort,
 recoverable via **Collect now** — runs `importVeloHuntResults` in `createApp`'s closure: it routes results through the
