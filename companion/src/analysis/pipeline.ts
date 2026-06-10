@@ -40,6 +40,7 @@ import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
+import { ocrRedactImage, type OcrRunner } from "./ocrRedact.js";
 
 export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation. The",
@@ -530,6 +531,10 @@ export interface PipelineOptions {
   // and — when true — appends the analyst's notebook entries to the synthesis prompt.
   notebookStore?: NotebookStore;
   aiControlStore?: AiControlStore;
+  // When set (external AI provider only), each screenshot is OCR-redacted before the vision
+  // call: words the anonymizer would tokenize are covered with opaque rectangles. The original
+  // evidence file is never touched — only the in-memory buffer sent to the model is redacted.
+  ocrRunner?: OcrRunner;
 }
 
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
@@ -569,11 +574,11 @@ export class AnalysisPipeline {
     return this.opts.provider;
   }
 
-  // Run one AI call with optional per-case anonymization. Tokenizes the userPrompt (images are
-  // passed through — pixels can't be tokenized; that's the documented best-effort limitation),
-  // then restores the parsed JSON response BEFORE schema validation, so real values containing
-  // JSON metacharacters (e.g. a path's backslashes) never corrupt the parse. Returns the
-  // loose-parsed, restored object for the caller to schema-validate.
+  // Run one AI call with optional per-case anonymization. Tokenizes the userPrompt and —
+  // when an ocrRunner is configured (external provider only) — OCR-redacts image buffers
+  // before sending. The original image files on disk are never touched; only the in-memory
+  // copies forwarded to the model are redacted. Restores the parsed JSON response BEFORE
+  // schema validation so real values with JSON metacharacters never corrupt parsing.
   private async analyzeRestored(
     caseId: string,
     state: InvestigationState,
@@ -589,7 +594,27 @@ export class AnalysisPipeline {
     const known = deriveKnownEntities(state);
     if (this.opts.customEntitiesStore) known.custom = await this.opts.customEntitiesStore.load(caseId);
     const anon = createAnonymizer(policy, known);
-    const result = await provider.analyze({ ...req, userPrompt: anon.apply(req.userPrompt) });
+
+    // OCR-redact image buffers when an external-provider runner is configured.
+    let images = req.images;
+    if (this.opts.ocrRunner && images.length > 0) {
+      const runner = this.opts.ocrRunner;
+      images = await Promise.all(
+        images.map(async (img) => {
+          try {
+            const buf = Buffer.from(img.base64, "base64");
+            const redacted = await ocrRedactImage(buf, policy, known, runner);
+            return redacted === buf ? img : { ...img, base64: redacted.toString("base64") };
+          } catch (err) {
+            // OCR failure is non-fatal — log and forward the original image.
+            console.warn(`[OCR redact] ${(err as Error).message}`);
+            return img;
+          }
+        }),
+      );
+    }
+
+    const result = await provider.analyze({ ...req, userPrompt: anon.apply(req.userPrompt), images });
     return anon.restoreDeep(parseJsonLoose(result.rawText));
   }
 

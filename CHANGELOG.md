@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Local OCR screenshot anonymization (closes #19).** When anonymization is enabled and the AI vision provider is external (cloud), each screenshot is now OCR-redacted **in-memory** before it is sent to the model: Tesseract.js (WASM, runs fully on-box — no cloud OCR API) reads the image, matches recognised words against the same per-case entity set the text path uses (`createAnonymizer`), and composites opaque black rectangles over matching regions using `sharp`. Only the copy forwarded to the model is redacted; the original screenshot file on disk is never touched (evidence-first invariant). The OCR runner is injectable (`OcrRunner` interface) so tests never spawn Tesseract. The existing "screenshots may contain un-redacted text" warning is preserved — OCR is still best-effort.
+
 ## [0.15.0] - 2026-06-10
 
 ### Changed
