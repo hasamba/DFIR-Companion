@@ -668,6 +668,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Swimlane data for the visual timeline chart — forensic events grouped into lanes by the
+  // chosen groupBy axis (asset | severity | tactic). Derived on demand, no AI, same filtering.
+  app.get("/cases/:id/swimlane", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    const groupBy = (req.query.groupBy as string) === "severity" ? "severity"
+      : (req.query.groupBy as string) === "tactic" ? "tactic" : "asset";
+    try {
+      return res.status(200).json(await options.reportWriter.swimlane(req.params.id, groupBy));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export just the incident (forensic) timeline as CSV, generated on demand from the
   // current state (same scope/legitimate filtering as the report) — no full report needed.
   app.get("/cases/:id/incident-timeline.csv", async (req: Request, res: Response) => {
