@@ -368,6 +368,23 @@
     .sec-selall button:hover { background: #353b47; color: #cbd3df; }
     .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid #2a2f3a; padding-top: 12px; }
     .settings-msg { font-size: 11px; margin-left: 4px; }
+    /* Global search + time-range filter bar */
+    #searchFilterBar { padding: 5px 16px; background: #0e1116; border-bottom: 1px solid #1a1f28;
+      display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: #9aa4b2; }
+    .sf-search-wrap { position: relative; display: flex; align-items: center; }
+    #globalSearch { font-size: 12px; padding: 4px 26px 4px 8px; width: 240px;
+      background: #161a22; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 5px; }
+    #globalSearch:focus { outline: none; border-color: #2d6cdf; }
+    #clearSearch { position: absolute; right: 3px; background: transparent; border: none;
+      color: #6b7280; cursor: pointer; padding: 0 3px; font-size: 13px; line-height: 1; }
+    #clearSearch:hover { color: #ff7a7a; }
+    .sf-sep { width: 1px; align-self: stretch; background: #2a2f3a; margin: 0 2px; }
+    #filterFrom, #filterTo { font-size: 12px; padding: 3px 5px; background: #161a22;
+      color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 5px; }
+    #clearFiltersBtn { background: transparent; border: 1px solid #2a2f3a; border-radius: 4px;
+      color: #9aa4b2; cursor: pointer; padding: 2px 7px; font-size: 11px; }
+    #clearFiltersBtn:hover { color: #ff7a7a; border-color: #ff7a7a; }
+    #searchMatchCount { color: #6aa9ff; font-size: 11px; }
   </style>
 </head>
 <body>
@@ -853,6 +870,21 @@
     </div>
   </div>
 
+  <!-- Global search + time-range filter bar (always visible) -->
+  <div id="searchFilterBar">
+    <span>Search:</span>
+    <div class="sf-search-wrap">
+      <input id="globalSearch" type="search" placeholder="events, findings, IOCs… (press / to focus)" autocomplete="off" />
+      <button id="clearSearch" type="button" title="Clear search (Esc)" hidden>✕</button>
+    </div>
+    <div class="sf-sep"></div>
+    <span>Time range:</span>
+    <label>from <input id="filterFrom" type="datetime-local" title="Filter timeline from (UTC)" /></label>
+    <label>to <input id="filterTo" type="datetime-local" title="Filter timeline to (UTC)" /></label>
+    <button id="clearFiltersBtn" type="button" hidden>Clear</button>
+    <span id="searchMatchCount"></span>
+  </div>
+
   <main>
     <section id="sec-ask" style="grid-column: 1 / -1">
       <h2>Ask the LLM about this case</h2>
@@ -1078,6 +1110,40 @@
     let lastState = null;                    // last raw state from server, for re-render on scope change
     let legitMarkers = [];                    // confirmed-legitimate markers; events here are hidden from the timeline
     let lastFt = [];                          // last scoped+legit-filtered forensic timeline, for severity re-filter without re-fetching
+    let searchTerm = "";                      // active text search (lower-cased; empty = no filter)
+    let filterFrom = null;                    // timeline view lower bound (ISO UTC string or null)
+    let filterTo = null;                      // timeline view upper bound (ISO UTC string or null)
+    let _searchDebounce = null;
+
+    // --- Search/filter helpers (mirror companion/src/analysis/searchFilter.ts) ---------
+    function _evMatchesSearch(e, q) {
+      return (e.description || "").toLowerCase().includes(q) ||
+        (e.asset || "").toLowerCase().includes(q) ||
+        (e.mitreTechniques || []).some(t => t.toLowerCase().includes(q)) ||
+        (e.sources || []).some(s => (s || "").toLowerCase().includes(q));
+    }
+    function _iocMatchesSearch(i, q) {
+      return (i.value || "").toLowerCase().includes(q) || (i.type || "").toLowerCase().includes(q);
+    }
+    function _findingMatchesSearch(f, q) {
+      return (f.title || "").toLowerCase().includes(q) ||
+        (f.description || "").toLowerCase().includes(q) ||
+        (f.mitreTechniques || []).some(t => t.toLowerCase().includes(q));
+    }
+    function _evMatchesTimeRange(e, from, to) {
+      const ts = e.timestamp; if (!ts) return true;
+      const t = Date.parse(ts); if (isNaN(t)) return true;
+      if (from) { const f = Date.parse(from); if (!isNaN(f) && t < f) return false; }
+      if (to)   { const u = Date.parse(to);   if (!isNaN(u) && t > u) return false; }
+      return true;
+    }
+    function _hasActiveFilter() { return !!(searchTerm || filterFrom || filterTo); }
+    function _updateSearchCount(shown, total) {
+      const el = document.getElementById("searchMatchCount");
+      if (!el) return;
+      if (!_hasActiveFilter()) { el.textContent = ""; return; }
+      el.textContent = shown < total ? `${shown} of ${total} event${total !== 1 ? "s" : ""} shown` : `${total} event${total !== 1 ? "s" : ""} shown`;
+    }
 
     // The case timeline is UTC, so the <input type="datetime-local"> pickers (scope, manual event)
     // are treated as UTC wall-clock, NOT the browser's local zone: show the UTC components, and parse
@@ -3761,7 +3827,8 @@
       const flaggedTotal = iocs.filter(iocFlagged).length;
       const cnt = document.getElementById("iocFlaggedCount");
       if (cnt) cnt.textContent = flaggedTotal ? ` (${flaggedTotal} flagged)` : "";
-      const visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
+      let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
+      if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
       el.innerHTML = visible.length
         ? visible.map(i => {
             const isNew = newIocKeys.has(i.value);
@@ -3770,6 +3837,7 @@
           }).join("")
         : (showFlaggedIocsOnly
             ? "<div style='color:#9aa4b2'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
+            : searchTerm && iocs.length > 0 ? "<div style='color:#9aa4b2'>No IOCs match the search.</div>"
             : "<div style='color:#9aa4b2'>No IOCs yet</div>");
     }
 
@@ -3782,19 +3850,23 @@
       const filtering = activeSevs.size < allSevs.length;
       let visible = filtering ? ft.filter(e => activeSevs.has(e.severity)) : ft;
       if (showStarredOnly) visible = visible.filter(e => starredEvents.has(String(e.id)));
+      if (searchTerm) visible = visible.filter(e => _evMatchesSearch(e, searchTerm));
+      if (filterFrom || filterTo) visible = visible.filter(e => _evMatchesTimeRange(e, filterFrom, filterTo));
 
       const countEl = document.getElementById('timelineCount');
       if (countEl) {
         const total = ft.length;
-        countEl.textContent = (filtering || showStarredOnly)
+        countEl.textContent = (filtering || showStarredOnly || _hasActiveFilter())
           ? `(${visible.length} of ${total} events)`
           : `(${total} event${total !== 1 ? 's' : ''})`;
       }
+      _updateSearchCount(visible.length, ft.length);
 
       const caseId = lastState && lastState.caseId;
 
       if (!visible.length) {
-        document.getElementById("forensicTimeline").innerHTML = "—";
+        document.getElementById("forensicTimeline").innerHTML =
+          (_hasActiveFilter() && ft.length > 0) ? "<div style='color:#9aa4b2'>No events match the current filters.</div>" : "—";
         return;
       }
 
@@ -3924,7 +3996,9 @@
         : "";
       const sorted = [...state.findings].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
       const minConf = parseInt(document.getElementById("confFilter").value, 10) || 0;
-      const filtered = sorted.filter(f => f.confidence === undefined || f.confidence >= minConf);
+      const filtered = sorted.filter(f =>
+        (f.confidence === undefined || f.confidence >= minConf) &&
+        (!searchTerm || _findingMatchesSearch(f, searchTerm)));
       document.getElementById("findings").innerHTML =
         filtered.map(f => {
           const evidence = [...(f.sourceScreenshots || []), ...(evByFinding[f.id] || [])];
@@ -3945,7 +4019,7 @@
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${evidenceLinks(state.caseId, evidence)}</div>`;
-        }).join("") || (minConf > 0 && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings above ${minConf}% confidence.</span>` : "—");
+        }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings match the search.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings above ${minConf}% confidence.</span>` : "—");
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
@@ -3983,6 +4057,13 @@
       showFlaggedIocsOnly = false;
       const ifBtn = document.getElementById("iocFlaggedBtn");
       if (ifBtn) ifBtn.classList.remove("active");
+      searchTerm = ""; filterFrom = null; filterTo = null;
+      const gsEl = document.getElementById("globalSearch"); if (gsEl) gsEl.value = "";
+      const ffEl = document.getElementById("filterFrom"); if (ffEl) ffEl.value = "";
+      const ftEl = document.getElementById("filterTo"); if (ftEl) ftEl.value = "";
+      const csBtn = document.getElementById("clearSearch"); if (csBtn) csBtn.hidden = true;
+      const cfBtn = document.getElementById("clearFiltersBtn"); if (cfBtn) cfBtn.hidden = true;
+      const smcEl = document.getElementById("searchMatchCount"); if (smcEl) smcEl.textContent = "";
       loadSynthMeta(caseId);
       loadImportMeta(caseId);
       loadCustomerExposure(caseId);
@@ -4378,6 +4459,50 @@
     document.getElementById("stCancel").onclick = closeSaveTemplate;
     document.getElementById("saveTemplateOverlay").addEventListener("click", (e) => { if (e.target.id === "saveTemplateOverlay") closeSaveTemplate(); });
     document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
+    // --- Search bar + time-range filter listeners --------------------------------
+    (function () {
+      const gs = document.getElementById("globalSearch");
+      const cs = document.getElementById("clearSearch");
+      const ff = document.getElementById("filterFrom");
+      const ft = document.getElementById("filterTo");
+      const cfBtn = document.getElementById("clearFiltersBtn");
+
+      function applySearch() {
+        searchTerm = gs.value.trim().toLowerCase();
+        cs.hidden = !searchTerm;
+        if (lastState) render(lastState);
+      }
+      function applyTimeRange() {
+        filterFrom = utcInputToIso(ff.value);
+        filterTo = utcInputToIso(ft.value);
+        cfBtn.hidden = !filterFrom && !filterTo;
+        renderTimelineEvents(lastFt);
+      }
+
+      gs.addEventListener("input", () => {
+        clearTimeout(_searchDebounce);
+        _searchDebounce = setTimeout(applySearch, 300);
+      });
+      gs.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { gs.value = ""; applySearch(); }
+      });
+      cs.addEventListener("click", () => { gs.value = ""; applySearch(); gs.focus(); });
+
+      ff.addEventListener("change", applyTimeRange);
+      ft.addEventListener("change", applyTimeRange);
+      cfBtn.addEventListener("click", () => {
+        ff.value = ""; ft.value = "";
+        applyTimeRange();
+      });
+
+      // Press "/" to focus the search bar (when not already in a text field).
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "/" && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+          e.preventDefault(); gs.focus(); gs.select();
+        }
+      });
+    })();
+
     document.getElementById("aiToggle").onclick = toggleAi;
     document.getElementById("applyScope").onclick = applyScope;
     document.getElementById("clearScope").onclick = () => {
