@@ -17,7 +17,7 @@ export interface ArtifactBundle {
   defaultWaitMinutes?: number;  // optional per-bundle default collect delay
   timeoutSeconds?: number;      // optional per-collection timeout override (Velociraptor default 600s) — some artifacts run longer
   // Per-artifact parameter overrides passed to the hunt's `spec`, so a heavy artifact emits less at the
-  // source (e.g. {"Windows.Hayabusa.Rules": {"MinLevel": "high"}} runs Hayabusa at high+critical only).
+  // source (e.g. {"Windows.Hayabusa.Rules": {"RuleLevel": "Critical, High, and Medium"}} narrows Hayabusa).
   // Only the params you set are sent; everything else uses the artifact's own defaults.
   params?: Record<string, Record<string, string>>;
   // Per-artifact VQL WHERE filter applied to that artifact's hunt_results BEFORE the row cap, so noisy
@@ -112,9 +112,9 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Custom.DFIR.RDPLateralMovementDetection",
     ],
     defaultWaitMinutes: 10,
-    // Hayabusa emits 10k+ rows at its default (medium+); constrain it to high+critical at the source so
-    // the import stays signal-rich. Tune via the bundle editor's Advanced → parameters.
-    params: { "Windows.Hayabusa.Rules": { MinLevel: "high" } },
+    // Hayabusa emits 10k+ rows at its defaults; constrain it at the source (Critical/High/Medium rules,
+    // Stable+Experimental status) so the import stays signal-rich. Tune via Advanced → parameters.
+    params: { "Windows.Hayabusa.Rules": { RuleLevel: "Critical, High, and Medium", RuleStatus: "Stable and Experimental" } },
     // Drop known-noisy rows at the source: YaraFile pagefile hits, and an in-development Evtx rule.
     // (The Evtx column name is inferred — adjust in the editor if your results use a different one.)
     filters: {

@@ -224,7 +224,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Timeline bulk actions** — star, multi-select, bulk-tag, or mark-legitimate in one batched write + re-synthesis
 - **Hunt-pivot generator** — one click from any event or IOC generates ready-to-run queries: Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, and Suricata rules; no AI, runs offline; configurable platform allowlist
 - **Velociraptor live hunts** — run a pivot VQL as a fleet hunt across all enrolled endpoints from the dashboard (opt-in, requires API config)
-- **Velociraptor triage bundles** (Settings → Velociraptor) — browse the server's collectable artifacts, save named bundles (a "Best Practice" quick-wins sweep ships by default, all editable), run one as a hunt scoped by label/OS + min-severity, then auto-collect (result rows **and** uploaded JSON reports like THOR/Hayabusa) → import → synthesize after a configurable delay; persisted per-case job with a live countdown + "Collect now". Per-artifact tuning: **parameters** (e.g. Hayabusa `MinLevel=high`) and **exclude filters** (VQL `WHERE` to drop noise at the source) (opt-in, requires API config)
+- **Velociraptor triage bundles** (Settings → Velociraptor) — browse the server's collectable artifacts, save named bundles (a "Best Practice" quick-wins sweep ships by default, all editable), run one as a hunt scoped by label/OS + min-severity, then auto-collect (result rows **and** uploaded JSON reports like THOR/Hayabusa) → import → synthesize after a configurable delay; persisted per-case job with a live countdown + "Collect now". Per-artifact tuning: **parameters** (e.g. Hayabusa `RuleLevel`/`RuleStatus`) and **exclude filters** (VQL `WHERE` to drop noise at the source) (opt-in, requires API config)
 - **IOC "flagged only" filter** — one click in the IOCs panel hides everything except indicators a threat-intel engine rated **malicious or suspicious**
 - **Scope + legitimacy** — set a date/time window; mark findings/IOCs/events as legitimate (reversible); all views re-project deterministically
 - **Synthesis & import freshness** — "last synthesized N ago" + what-changed diff; "last import N ago" + new-event/IOC highlights with `NEW` badges
@@ -611,8 +611,9 @@ place** — an edit saves an override; **Reset to default** discards it. **Run**
 by include/exclude labels + OS, and a **minimum-severity** import floor). The **collection timeout** is a bundle
 setting (configured in the editor — bump it for slow artifacts like THOR; Velociraptor's default is 600 s) and is
 applied automatically on every run. Bundles can also carry **per-artifact parameters** (passed to the hunt's
-`spec`) so a heavy artifact emits less at the source — Best Practice ships **Hayabusa pinned to `MinLevel=high`**
-so it doesn't flood the import; tune any artifact via the builder's optional *Advanced → parameters* JSON. The hunt stays open until expiry, so
+`spec`) so a heavy artifact emits less at the source — Best Practice ships **Hayabusa pinned to `RuleLevel`=Critical/High/Medium
++ `RuleStatus`=Stable+Experimental** so it doesn't flood the import; tune any artifact via the builder's optional *Advanced → parameters* JSON,
+and drop noisy rows with per-artifact **exclude filters** (VQL `WHERE`, e.g. `NOT OSPath =~ 'pagefile'`). The hunt stays open until expiry, so
 the Companion **auto-collects** after `DFIR_VELO_HUNT_WAIT_MIN` and ingests **both** the result rows **and any
 uploaded JSON report** (e.g. THOR/Hayabusa via `Generic.Scanner.ThorZIP` — for those the rows don't matter, the
 uploaded JSON does; it's auto-detected and routed to the right importer), then synthesizes — or click **Collect

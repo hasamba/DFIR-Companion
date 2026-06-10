@@ -105,11 +105,12 @@ describe("ArtifactBundleStore", () => {
     });
   });
 
-  it("persists per-artifact params and ships them on the Best Practice built-in (Hayabusa MinLevel)", async () => {
-    const saved = await store.save({ name: "P", description: "", artifacts: ["Windows.Hayabusa.Rules"], params: { "Windows.Hayabusa.Rules": { MinLevel: "high" } } });
-    expect(saved.params).toEqual({ "Windows.Hayabusa.Rules": { MinLevel: "high" } });
+  it("persists per-artifact params and ships them on the Best Practice built-in (Hayabusa RuleLevel/RuleStatus)", async () => {
+    const saved = await store.save({ name: "P", description: "", artifacts: ["Windows.Hayabusa.Rules"], params: { "Windows.Hayabusa.Rules": { RuleLevel: "Critical, High, and Medium" } } });
+    expect(saved.params).toEqual({ "Windows.Hayabusa.Rules": { RuleLevel: "Critical, High, and Medium" } });
     const bp = await store.get("best-practice");
-    expect(bp?.params?.["Windows.Hayabusa.Rules"]?.MinLevel).toBe("high");
+    expect(bp?.params?.["Windows.Hayabusa.Rules"]?.RuleLevel).toBe("Critical, High, and Medium");
+    expect(bp?.params?.["Windows.Hayabusa.Rules"]?.RuleStatus).toBe("Stable and Experimental");
   });
 
   it("persists per-artifact WHERE filters and ships them on the Best Practice built-in", async () => {
