@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Timeline Swimlane view (closes #33).** A new **Timeline Swimlane** dashboard section renders the forensic timeline as an interactive canvas chart — assets/accounts on the Y-axis, time on the X-axis, events as severity-colored dots. Supports mouse-wheel zoom (pinned to the cursor), drag-to-pan, click-to-detail (shows severity, timestamp, description, MITRE, sources, and related findings), and hover tooltips. Group-by selector switches between **Asset** (default), **Severity**, and **Tactic** axes. The Fit/+/− buttons and zoom-level indicator replicate the asset-graph UX. A new pure `buildSwimlaneData` transform in `analysis/swimlane.ts` groups a filtered forensic timeline into lanes (with unit tests); the new `GET /cases/:id/swimlane?groupBy=asset|severity|tactic` endpoint applies the same scope/legitimate filtering as the report and returns the lane JSON. The section is registered in `SECTION_DEFS` and visible/orderable alongside all other sections.
+
 ## [0.15.0] - 2026-06-10
 
 ### Changed

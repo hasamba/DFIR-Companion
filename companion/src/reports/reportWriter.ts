@@ -14,6 +14,7 @@ import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
+import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../analysis/swimlane.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
@@ -117,6 +118,13 @@ export class ReportWriter {
     const state = await this.loadFilteredState(caseId);
     const gapSeconds = Number(process.env.DFIR_PHASE_GAP_S) || DEFAULT_GAP_SECONDS;
     return buildAttackPhases(state.forensicTimeline, { gapSeconds });
+  }
+
+  // Swimlane data for the visual timeline chart — events grouped into lanes by the chosen
+  // groupBy axis (asset | severity | tactic). Same scope/legitimate filtering as the report.
+  async swimlane(caseId: string, groupBy: SwimlaneGroupBy = "asset"): Promise<SwimlaneData> {
+    const state = await this.loadFilteredState(caseId);
+    return buildSwimlaneData(state.forensicTimeline, groupBy);
   }
 
   async writeAll(caseId: string): Promise<ReportPaths> {
