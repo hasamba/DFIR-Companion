@@ -112,6 +112,7 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Custom.DFIR.RDPLateralMovementDetection",
     ],
     defaultWaitMinutes: 10,
+    timeoutSeconds: 6000,   // the sweep includes slow artifacts (THOR/Hayabusa) — well past the 600s default
     // Hayabusa emits 10k+ rows at its defaults; constrain it at the source (Critical/High/Medium rules,
     // Stable+Experimental status) so the import stays signal-rich. Tune via Advanced → parameters.
     params: { "Windows.Hayabusa.Rules": { RuleLevel: "Critical, High, and Medium", RuleStatus: "Stable and Experimental" } },
