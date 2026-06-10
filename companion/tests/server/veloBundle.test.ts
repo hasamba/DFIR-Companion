@@ -114,10 +114,31 @@ describe("Velociraptor triage bundles — routes", () => {
     expect(run.body.guiUrl).toContain("H.TEST1");
     expect(typeof run.body.collectAt).toBe("string");
 
-    const job = (await request(app).get("/cases/c1/velociraptor/hunt-job")).body;
+    const jobs = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body;
+    expect(jobs).toHaveLength(1);
+    const job = jobs[0];
     expect(job.status).toBe("running");
     expect(job.huntId).toBe("H.TEST1");
     expect(job.artifacts).toContain("Generic.System.Pstree");
+  });
+
+  it("supports MULTIPLE concurrent hunts — a second run keeps the first", async () => {
+    // two runs whose mock returns distinct hunt ids
+    let n = 0;
+    const multiRunner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("hunt(") && p.includes("artifacts=[")) { n += 1; return { rows: [{ Hunt: { HuntId: `H.MULTI${n}`, state: "RUNNING" } }], raw: "" }; }
+      if (p.includes("hunt_results(")) return { rows: [], raw: "" };
+      return { rows: [], raw: "" };
+    };
+    const made = await makeApp(multiRunner);
+    await request(made.app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
+    await request(made.app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
+    const jobs = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body;
+    const ids = jobs.map((j: { huntId: string }) => j.huntId);
+    expect(ids).toContain("H.MULTI1");
+    expect(ids).toContain("H.MULTI2");
+    expect(jobs.every((j: { status: string }) => j.status === "running")).toBe(true);
   });
 
   it("collect imports the hunt results into the timeline and marks the job imported", async () => {
@@ -127,7 +148,7 @@ describe("Velociraptor triage bundles — routes", () => {
 
     let job: { status: string } | null = null;
     for (let i = 0; i < 100; i++) {
-      job = (await request(app).get("/cases/c1/velociraptor/hunt-job")).body;
+      job = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
       if (job && (job.status === "imported" || job.status === "error")) break;
       await new Promise((r) => setTimeout(r, 20));
     }
@@ -157,7 +178,7 @@ describe("Velociraptor triage bundles — routes", () => {
 
     let job: { status: string } | null = null;
     for (let i = 0; i < 100; i++) {
-      job = (await request(made.app).get("/cases/c1/velociraptor/hunt-job")).body;
+      job = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
       if (job && (job.status === "imported" || job.status === "error")) break;
       await new Promise((r) => setTimeout(r, 20));
     }

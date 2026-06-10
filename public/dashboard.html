@@ -799,7 +799,7 @@
         <div id="veloDisabledNote" style="display:none;font-size:12px;color:#9aa4b2;margin:0 0 10px;background:#1b2030;border:1px solid #2a3146;border-radius:6px;padding:8px 10px">
           Velociraptor API not configured — you can still build and edit bundles, but <strong>running a hunt</strong> needs the <strong>API config path</strong> set on the <strong>Integrations</strong> tab (then restart the server).
         </div>
-        <div id="veloJobCard" class="synth-meta" style="display:none;margin:0 0 12px"></div>
+        <div id="veloJobCard" style="display:none;margin:0 0 12px"></div>
         <div id="veloBundleList" style="margin-bottom:14px">—</div>
 
         <details id="veloBuilder" style="border:1px solid #2a3146;border-radius:6px;padding:10px;background:#161b28">
@@ -2470,7 +2470,7 @@
       veloSelected = new Set();
       renderVeloSelected();
       loadVeloBundles();
-      loadVeloHuntJob(caseId);
+      loadVeloHuntJobs(caseId);
     }
 
     function renderVeloBundles(bundles) {
@@ -2554,62 +2554,65 @@
         .then(({ ok, j }) => {
           if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }
           msg.textContent = ""; form.style.display = "none";
-          loadVeloHuntJob(caseId);
+          loadVeloHuntJobs(caseId);
         })
         .catch(e => msg.textContent = "error: " + e.message + " — restart the companion server if this 404s")
         .finally(() => { go.disabled = false; });
     }
 
-    function loadVeloHuntJob(caseId) {
-      if (!caseId) { renderVeloJob(null); return; }
-      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/hunt-job`).then(r => r.ok ? r.json() : null).then(renderVeloJob).catch(() => {});
+    function loadVeloHuntJobs(caseId) {
+      if (!caseId) { renderVeloJobs([]); return; }
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/hunt-jobs`).then(r => r.ok ? r.json() : []).then(j => renderVeloJobs(Array.isArray(j) ? j : [])).catch(() => {});
     }
-    function renderVeloJob(job) {
+    // Render every tracked hunt (newest first) as its own card — concurrent hunts each show their
+    // status, countdown, and a Collect-now button. One shared ticker updates all running countdowns.
+    function renderVeloJobs(jobs) {
       const el = document.getElementById("veloJobCard");
       if (!el) return;
       if (veloCountdownTimer) { clearInterval(veloCountdownTimer); veloCountdownTimer = null; }
-      if (!job) { el.style.display = "none"; el.innerHTML = ""; return; }
+      if (!jobs.length) { el.style.display = "none"; el.innerHTML = ""; return; }
       el.style.display = "block";
-      const link = job.guiUrl ? ` · <a href="${escAttr(job.guiUrl)}" target="_blank" rel="noopener" style="color:#6aa9ff">open in Velociraptor ↗</a>` : "";
       const statusColors = { running: "#6aa9ff", collecting: "#ffd93b", imported: "#4cd964", error: "#ff9f43" };
-      const badge = `<span style="color:${statusColors[job.status] || "#9aa4b2"};font-weight:600">${esc(job.status)}</span>`;
-      let detail = "";
-      if (job.status === "imported") {
-        const ev = job.addedEvents || 0, io = job.addedIocs || 0;
-        detail = (ev || io) ? `+${ev} event(s), +${io} IOC(s) imported` : "no new results collected yet — clients may not have checked in; collect again later";
-      } else if (job.status === "error") {
-        detail = "error: " + (job.error || "");
-      }
-      const collectBtn = (job.status === "running" || job.status === "imported" || job.status === "error")
-        ? `<button id="veloCollectBtn">Collect now</button>` : "";
-      el.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <div>🎯 Bundle hunt <strong>${esc(job.bundleName)}</strong> · ${badge} · <code>${esc(job.huntId)}</code>${link}</div>
-          <div>${collectBtn}</div>
-        </div>
-        <div style="font-size:12px;color:#9aa4b2;margin-top:4px"><span id="veloCountdown"></span> ${esc(detail)}</div>`;
-      const cbtn = document.getElementById("veloCollectBtn");
-      if (cbtn) cbtn.onclick = () => veloCollectNow();
-      if (job.status === "running" && job.collectAt) {
-        const tick = () => {
-          const cd = document.getElementById("veloCountdown");
-          if (!cd) { if (veloCountdownTimer) clearInterval(veloCountdownTimer); return; }
-          const ms = new Date(job.collectAt).getTime() - Date.now();
-          if (ms <= 0) { cd.textContent = "collecting results…"; }
+      el.innerHTML = jobs.map(job => {
+        const link = job.guiUrl ? ` · <a href="${escAttr(job.guiUrl)}" target="_blank" rel="noopener" style="color:#6aa9ff">open in Velociraptor ↗</a>` : "";
+        const badge = `<span style="color:${statusColors[job.status] || "#9aa4b2"};font-weight:600">${esc(job.status)}</span>`;
+        let detail = "";
+        if (job.status === "imported") {
+          const ev = job.addedEvents || 0, io = job.addedIocs || 0;
+          detail = (ev || io) ? `+${ev} event(s), +${io} IOC(s) imported` : "no new results collected yet — clients may not have checked in; collect again later";
+        } else if (job.status === "error") {
+          detail = "error: " + (job.error || "");
+        }
+        const canCollect = job.status === "running" || job.status === "imported" || job.status === "error";
+        const collectBtn = canCollect ? `<button class="velo-collect-btn" data-hid="${escAttr(job.huntId)}">Collect now</button>` : "";
+        const cd = (job.status === "running" && job.collectAt) ? `<span class="velo-countdown" data-collect-at="${escAttr(job.collectAt)}"></span> ` : "";
+        return `<div class="synth-meta" style="margin:0 0 8px;padding:8px 10px;border:1px solid #2a3146;border-radius:6px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <div>🎯 <strong>${esc(job.bundleName)}</strong> · ${badge} · <code>${esc(job.huntId)}</code>${link}</div>
+            <div>${collectBtn}</div>
+          </div>
+          <div style="font-size:12px;color:#9aa4b2;margin-top:4px">${cd}${esc(detail)}</div>
+        </div>`;
+      }).join("");
+      el.querySelectorAll(".velo-collect-btn").forEach(btn => btn.onclick = () => veloCollectNow(btn.dataset.hid, btn));
+      const tick = () => {
+        const spans = el.querySelectorAll(".velo-countdown[data-collect-at]");
+        if (!spans.length) { if (veloCountdownTimer) { clearInterval(veloCountdownTimer); veloCountdownTimer = null; } return; }
+        spans.forEach(cd => {
+          const ms = new Date(cd.dataset.collectAt).getTime() - Date.now();
+          if (ms <= 0) { cd.textContent = "collecting results… ·"; }
           else { const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000); cd.textContent = `auto-collect in ${m}m ${String(s).padStart(2, "0")}s ·`; }
-        };
-        tick();
-        veloCountdownTimer = setInterval(tick, 1000);
-      }
+        });
+      };
+      if (el.querySelector(".velo-countdown[data-collect-at]")) { tick(); veloCountdownTimer = setInterval(tick, 1000); }
     }
-    function veloCollectNow() {
+    function veloCollectNow(huntId, btn) {
       const caseId = veloCaseId();
       if (!caseId) return;
-      const btn = document.getElementById("veloCollectBtn");
       if (btn) { btn.disabled = true; btn.textContent = "collecting…"; }
-      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/collect`, { method: "POST" })
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/collect`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId }) })
         .then(r => r.json().then(j => ({ ok: r.ok, j })))
-        .then(({ ok, j }) => { if (!ok) console.warn("collect failed", j); loadVeloHuntJob(caseId); })
+        .then(({ ok, j }) => { if (!ok) console.warn("collect failed", j); loadVeloHuntJobs(caseId); })
         .catch(e => console.warn("collect error", e));
     }
 
@@ -3958,7 +3961,7 @@
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
-        else if (msg.type === "velo_hunt_changed") loadVeloHuntJob(caseId);
+        else if (msg.type === "velo_hunt_changed") loadVeloHuntJobs(caseId);
       };
     }
 
@@ -5056,7 +5059,7 @@
       // Refresh the Velociraptor triage panel (bundles + current hunt job) so it's current when opened.
       veloClearBuilder();
       loadVeloBundles();
-      loadVeloHuntJob(veloCaseId());
+      loadVeloHuntJobs(veloCaseId());
       document.getElementById("settingsOverlay").classList.add("open");
     }
 

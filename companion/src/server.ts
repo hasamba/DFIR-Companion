@@ -848,9 +848,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // In-memory timers for the pending auto-collect (one per case). Lost on a server restart BY DESIGN —
-  // the job is persisted (veloHuntStore), so after a restart the dashboard still shows it and the
-  // analyst triggers collection with "Collect now". .unref() so a pending timer never blocks exit.
+  // In-memory auto-collect timers, keyed by HUNT id (globally unique) so concurrent hunts each get
+  // their own. Lost on a server restart BY DESIGN — the jobs are persisted (veloHuntStore), so after a
+  // restart the dashboard still shows them and the analyst triggers "Collect now". .unref() so a
+  // pending timer never blocks exit.
   const veloHuntTimers = new Map<string, NodeJS.Timeout>();
 
   type ImportBase = { label: string; idPrefix: string; importedAt: string; onProgress?: (done: number, total: number) => void; minSeverity?: Severity };
@@ -899,20 +900,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // uploaded JSON reports (e.g. THOR/Hayabusa via Generic.Scanner.ThorZIP) — for those the rows don't
   // matter, the uploaded JSON does; it's detected + dispatched to the right importer. Honors the run's
   // minSeverity floor, records ONE combined import-meta diff, then synthesizes. Never throws (timer).
-  async function importVeloHuntResults(caseId: string): Promise<void> {
+  async function importVeloHuntResults(caseId: string, huntId: string): Promise<void> {
     const client = options.velociraptorClient;
     const huntStore = options.veloHuntStore;
     const pipeline = options.pipeline;
     if (!client || !huntStore || !pipeline) return;
-    const pending = veloHuntTimers.get(caseId);
-    if (pending) { clearTimeout(pending); veloHuntTimers.delete(caseId); }
+    const pending = veloHuntTimers.get(huntId);
+    if (pending) { clearTimeout(pending); veloHuntTimers.delete(huntId); }
 
-    let job = await huntStore.load(caseId);
+    let job = await huntStore.get(caseId, huntId);
     if (!job) return;
-    if (job.status === "collecting") return;   // a collection is already in flight for this case
+    if (job.status === "collecting") return;   // a collection of this hunt is already in flight
     try {
       job = { ...job, status: "collecting" };
-      await huntStore.save(caseId, job);
+      await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
       const minSeverity = job.minSeverity;
 
@@ -973,13 +974,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
 
       job = { ...job, status: "imported", importedAt: new Date().toISOString(), importFile: lastFile, addedEvents, addedIocs, error: undefined };
-      await huntStore.save(caseId, job);
+      await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
       if (importedAny) resynthesizeInBackground(caseId);
     } catch (err) {
       try {
-        const cur = await huntStore.load(caseId);
-        if (cur) await huntStore.save(caseId, { ...cur, status: "error", error: (err as Error).message });
+        const cur = await huntStore.get(caseId, huntId);
+        if (cur) await huntStore.upsert(caseId, { ...cur, status: "error", error: (err as Error).message });
       } catch { /* ignore */ }
       options.onVeloHunt?.(caseId);
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: `Velociraptor hunt collect failed: ${(err as Error).message}` });
@@ -1025,14 +1026,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         launchedAt: new Date().toISOString(), waitMinutes, collectAt,
         status: "running", target, minSeverity, timeoutSeconds,
       };
-      await options.veloHuntStore.save(caseId, job);
+      // Append this hunt (concurrent hunts are kept side by side, keyed by huntId) + its own timer.
+      await options.veloHuntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
 
-      const prev = veloHuntTimers.get(caseId);
-      if (prev) clearTimeout(prev);
-      const timer = setTimeout(() => { void importVeloHuntResults(caseId); }, waitMinutes * 60_000);
+      const timer = setTimeout(() => { void importVeloHuntResults(caseId, launch.huntId); }, waitMinutes * 60_000);
       timer.unref?.();
-      veloHuntTimers.set(caseId, timer);
+      veloHuntTimers.set(launch.huntId, timer);
 
       return res.status(202).json({ huntId: launch.huntId, guiUrl: launch.guiUrl, collectAt, waitMinutes, artifacts: launch.artifacts });
     } catch (err) {
@@ -1041,25 +1041,28 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // The current / last bundle hunt for a case (status + countdown + outcome). null when none.
-  app.get("/cases/:id/velociraptor/hunt-job", async (req: Request, res: Response) => {
-    if (!options.veloHuntStore) return res.status(200).json(null);
+  // All bundle hunts for a case (newest first) — status + countdown + outcome per hunt. [] when none.
+  app.get("/cases/:id/velociraptor/hunt-jobs", async (req: Request, res: Response) => {
+    if (!options.veloHuntStore) return res.status(200).json([]);
     try {
-      return res.status(200).json(await options.veloHuntStore.load(req.params.id));
+      return res.status(200).json(await options.veloHuntStore.list(req.params.id));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
 
-  // Collect the pending hunt NOW (don't wait for the timer). Runs in the background; poll hunt-job.
+  // Collect a specific hunt NOW (don't wait for its timer). Body `{ huntId }`; defaults to the most
+  // recent hunt when omitted. Runs in the background; poll hunt-jobs. 404 when there's nothing to collect.
   app.post("/cases/:id/velociraptor/collect", async (req: Request, res: Response) => {
     if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     if (!options.veloHuntStore) return res.status(501).json({ error: "hunt store not configured" });
     const caseId = req.params.id;
-    const job = await options.veloHuntStore.load(caseId);
-    if (!job) return res.status(404).json({ error: "no Velociraptor hunt to collect for this case" });
+    const wantedHuntId = String(req.body?.huntId ?? "").trim();
+    const jobs = await options.veloHuntStore.list(caseId);
+    const job = wantedHuntId ? jobs.find((j) => j.huntId === wantedHuntId) : jobs[0];
+    if (!job) return res.status(404).json({ error: wantedHuntId ? `no Velociraptor hunt ${wantedHuntId} for this case` : "no Velociraptor hunt to collect for this case" });
     res.status(202).json({ accepted: true, huntId: job.huntId });
-    void importVeloHuntResults(caseId);
+    void importVeloHuntResults(caseId, job.huntId);
   });
 
   // Push a case to DFIR-IRIS: find-or-create the case by name, then push assets→assets,
