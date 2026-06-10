@@ -1122,6 +1122,53 @@ describe("state and report routes", () => {
     expect((await request(app).delete("/cases/c1/comments/nope")).status).toBe(404);
   });
 
+  it("legitimate: onLegitimate callback fires on add, batch add, and remove", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-cb-"));
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    let pinged = 0;
+    const app = createApp(store, { onLegitimate: () => { pinged++; } });
+
+    // Single add fires the callback.
+    const add = await request(app).post("/cases/c1/legitimate")
+      .send({ kind: "ioc", ref: "1.2.3.4", note: "internal scanner" });
+    expect(add.status).toBe(200);
+    expect(pinged).toBe(1);
+
+    // Batch add fires once (not per item).
+    const batch = await request(app).post("/cases/c1/legitimate/batch")
+      .send({ items: [{ kind: "finding", ref: "f1", note: "fp" }, { kind: "finding", ref: "f2" }] });
+    expect(batch.status).toBe(200);
+    expect(pinged).toBe(2);
+
+    // Remove fires the callback.
+    const markerId = add.body.find((m: { kind: string }) => m.kind === "ioc")?.id;
+    const remove = await request(app).post("/cases/c1/legitimate/remove")
+      .send({ id: markerId });
+    expect(remove.status).toBe(200);
+    expect(pinged).toBe(3);
+  });
+
+  it("scope: onScope callback fires with the new window when scope is saved", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-scope-cb-"));
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const received: Array<{ start: string | null; end: string | null }> = [];
+    const app = createApp(store, { onScope: (_caseId, s) => { received.push(s); } });
+
+    const res = await request(app).post("/cases/c1/scope")
+      .send({ start: "2026-01-01T00:00:00Z", end: "2026-06-01T00:00:00Z" });
+    expect(res.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ start: "2026-01-01T00:00:00.000Z", end: "2026-06-01T00:00:00.000Z" });
+
+    // Clearing scope (empty body) also fires.
+    const clear = await request(app).post("/cases/c1/scope").send({});
+    expect(clear.status).toBe(200);
+    expect(received).toHaveLength(2);
+    expect(received[1]).toMatchObject({ start: null, end: null });
+  });
+
   it("POST /cases/:id/ask answers a question, and /questions pins it to the case", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-ask-"));
     const store = new CaseStore(root);
