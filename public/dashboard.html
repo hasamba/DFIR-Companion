@@ -4010,6 +4010,14 @@
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
         else if (msg.type === "velo_hunt_changed") loadVeloHuntJobs(caseId);
+        else if (msg.type === "legitimate_changed") loadLegitimate(caseId);
+        else if (msg.type === "scope_changed") {
+          scope = { start: msg.start ?? null, end: msg.end ?? null };
+          document.getElementById("scopeStart").value = isoToUtcInput(scope.start);
+          document.getElementById("scopeEnd").value = isoToUtcInput(scope.end);
+          renderScopeInfo();
+          if (lastState) render(projectScope(lastState));
+        }
       };
     }
 

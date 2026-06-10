@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Multi-investigator real-time sync (closes #29).** All state-mutating actions now broadcast to every browser connected to the same case over WebSocket, giving teams instant visibility without a page reload. Previously, marking evidence as legitimate or updating the investigation scope only notified other investigators after a full AI re-synthesis cycle (potentially minutes away). Two new internal callbacks — `onLegitimate` and `onScope` — now fire *immediately* after the store write, before synthesis kicks off: the dashboard handles `legitimate_changed` by reloading the Confirmed Legitimate panel, and `scope_changed` by updating both scope pickers and re-projecting the timeline without waiting for the server. Comments, tags, imports, AI analysis, and Velociraptor hunts already broadcast in real time (unchanged). **To deploy for a team:** set `DFIR_HOST=0.0.0.0` so the server listens on the LAN, then each analyst opens `http://<server-ip>:<port>/dashboard` and sets their display name in Settings → "Investigator name" — that name is recorded on every comment and tag they add. There is no built-in authentication; secure the endpoint with a reverse proxy or restrict by firewall as appropriate for your environment.
+
 ## [0.15.0] - 2026-06-10
 
 ### Changed
