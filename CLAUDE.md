@@ -302,7 +302,8 @@ only when their domain is a customer domain AND the email isn't itself an IOC. T
 `npm run prompts:eject -- [dir]` (write the 6 default prompts to files for customizing) ·
 `npm run yeti -- <indicator>` (CLI YETI lookup) ·
 `npm run iris:push -- <case>` (push the case to a configured DFIR-IRIS instance) ·
-`npm run timesketch:push -- <case>` (push the case's forensic timeline to a configured Timesketch instance).
+`npm run timesketch:push -- <case>` (push the case's forensic timeline to a configured Timesketch instance) ·
+`npm run notion:push -- <case> --page <urlOrId> | --new [--database <id>]` (export the case into a Notion page).
 
 **External integrations** (`integrations/`) follow the IRIS pattern — a client built from env at
 startup (`undefined` when unconfigured), passed into `createApp`, gated routes return 501 when absent:
@@ -314,6 +315,16 @@ button does NOT run server-side: `launchHunt()` packages the pivot VQL as a **CL
 back addressed as `artifact/source`. Routes `POST /velociraptor/hunt` + `/velociraptor/hunt-results`
 (+ server-side `/velociraptor/run`); `/health.velociraptorEnabled` gates the button. VQL statements
 are passed as separate positional args with comments stripped (a leading `--` is parsed as a CLI flag).
+**Notion** (`integrations/notion/` — `notionClient` + pure `notionBlocks` renderer + `pushCaseToNotion`
+orchestrator + `NotionExportStore`) exports a case into a Notion page (`DFIR_NOTION_TOKEN`; route
+`POST /cases/:id/push/notion`, `/notion/status`, `/health.notionEnabled`). The crux: the Companion
+owns ONE **managed toggle block** on the target page and writes ALL its content inside it; a re-export
+archives that block's children and re-appends — so investigator notes/screenshots OUTSIDE it are never
+touched. Unlike IRIS/Timesketch (find-by-name on the remote), Notion has no such lookup, so the target
+page + container id are remembered per case in `state/notion-export.json` (recreated if the user deletes
+the block). New page = a row in `DFIR_NOTION_DATABASE_ID` (the investigation template) or a child of
+`DFIR_NOTION_PARENT_PAGE_ID`; the analyst picks new-vs-existing in a dashboard modal. Screenshots are
+referenced by filename (not uploaded). Appends are batched to Notion's 100-block/2-level-nesting limits.
 
 **Customizable prompts.** The six prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
 consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`,

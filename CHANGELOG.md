@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Export to Notion (closes #31).** A new **Export to Notion** option in the dashboard's *Push to…* menu (and `npm run notion:push -- <caseId>`) pushes a case's structured content — executive summary, findings, forensic timeline, IOCs (with verdicts), MITRE ATT&CK, attacker path, key questions, next steps, and the human-authored report sections — into a Notion page so multiple investigators can collaborate around it. The option asks whether the target is a **new page** or an **existing page**: *new* creates the page as a row in a Notion database (`DFIR_NOTION_DATABASE_ID`, the "ongoing investigation template") or under a parent page (`DFIR_NOTION_PARENT_PAGE_ID`); *existing* updates a page you paste (URL or ID). **The Companion writes ALL its content inside ONE managed toggle block it owns on the page**; a re-export archives that block's children and re-appends the latest case data, so anything you wrote *outside* the block (your own notes, pasted finding screenshots) is **never read or touched**. Notion has no find-by-name, so the target page + managed-container id are remembered per case in `state/notion-export.json`; if you delete the managed block, the next export recreates it. Enabled by `DFIR_NOTION_TOKEN` alone (share the target page/database with the integration). Hand-rolled `NotionClient` over an injectable `fetchFn` (no network in tests), a pure `notionBlocks.ts` state→blocks renderer, and a pure `pushCaseToNotion` orchestrator behind a structural `NotionClientLike` interface — all unit-tested. Content is scope/legitimate-filtered to match the report; screenshots are referenced by filename (you keep pasting the images yourself); large timelines/IOCs are batched to respect Notion's 100-block/append limit.
+
 ## [0.14.0] - 2026-06-09
 
 ### Added
