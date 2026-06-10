@@ -112,6 +112,13 @@ describe("ArtifactBundleStore", () => {
     expect(bp?.params?.["Windows.Hayabusa.Rules"]?.MinLevel).toBe("high");
   });
 
+  it("persists per-artifact WHERE filters and ships them on the Best Practice built-in", async () => {
+    const saved = await store.save({ name: "F", description: "", artifacts: ["A.B"], filters: { "A.B": "NOT X =~ 'y'" } });
+    expect(saved.filters).toEqual({ "A.B": "NOT X =~ 'y'" });
+    const bp = await store.get("best-practice");
+    expect(bp?.filters?.["DetectRaptor.Generic.Detection.YaraFile"]).toContain("pagefile");
+  });
+
   it("sanitizes params — drops nested objects and coerces values to strings", async () => {
     // untrusted shape (as it arrives from the route body) — numbers coerced, nested objects dropped
     const params = { "A.B": { Keep: 5, Drop: { nested: 1 } } } as unknown as Record<string, Record<string, string>>;

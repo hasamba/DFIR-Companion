@@ -323,7 +323,9 @@ chosen SET of existing artifacts with Velociraptor's own include/exclude/OS cond
 Hayabusa runs constrained — Best Practice ships `MinLevel='high'`), `huntResultsByArtifact()`
 (collect per-artifact into the `{ "Artifact.Name": [rows] }` artifact-map `importVelociraptor` already eats — **resilient**:
 returns `{results, skipped}`, an artifact too large to fetch is skipped not fatal; `hunt_results` is `LIMIT`-bounded and reads
-use the larger `collectMaxOutputBytes` cap = `DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT`, default 256 MB, since THOR/Hayabusa are big),
+use the larger `collectMaxOutputBytes` cap = `DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT`, default 256 MB, since THOR/Hayabusa are big;
+a per-artifact `filters` map injects a VQL `WHERE (…)` into `hunt_results` BEFORE the LIMIT so noise is dropped at the source —
+Best Practice ships a pagefile filter for YaraFile),
 and `huntUploads()` (read a hunt's uploaded `.json` reports server-side — some artifacts, e.g.
 `Generic.Scanner.ThorZIP` / `Windows.Hayabusa.Rules`, put their real data in an UPLOADED JSON, not rows; the
 upload VQL is version-sensitive and overridable via `DFIR_VELOCIRAPTOR_UPLOAD_VQL`). The collect helper ingests
