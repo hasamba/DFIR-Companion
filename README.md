@@ -219,7 +219,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Investigation workflow
 - **Ask the case** — free-form Q&A grounded in the full timeline; unknown answers direct you to what artifact to collect and where
-- **Response Playbook** — the AI's recommended next steps + Critical/High findings become a trackable checklist (status, priority, assignee, due date, reorder, custom tasks) with a completion badge; auto-tasks re-derive on each synthesis but always preserve your progress; survives synthesis and renders into the report
+- **Response Playbook** — the AI's recommended next steps + Critical/High findings become a trackable checklist (status, priority, assignee, due date, drag-and-drop reorder, custom tasks) with a completion badge; an opt-in **IR templates** toggle expands each Critical/High finding into severity-based response phases (Contain → Investigate → Eradicate → Recover, tailored to the ATT&CK tactic); auto-tasks re-derive on each synthesis but always preserve your progress; survives synthesis and renders into the report
 - **Triage tags** — label any entity `confirmed-malicious`, `false-positive`, `key-evidence`, `pivot-point`, etc.; color-coded pills, survive synthesis
 - **Analyst comments** — attach notes to any entity; synced live over WebSocket for multi-investigator collaboration
 - **Timeline bulk actions** — star, multi-select, bulk-tag, or mark-legitimate in one batched write + re-synthesis

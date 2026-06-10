@@ -69,6 +69,7 @@ import { TagsStore } from "./analysis/tags.js";
 import { NotebookStore, type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "./analysis/notebookStore.js";
 import { PlaybookStore, type NewPlaybookTask, type PlaybookTaskPatch } from "./analysis/playbookStore.js";
 import { PLAYBOOK_STATUSES, playbookStats, type PlaybookStatus, type PlaybookTask } from "./analysis/playbook.js";
+import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
 import type { AssetType } from "./analysis/assetGraph.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
@@ -164,6 +165,9 @@ export interface AppOptions {
   // dashboard clients over the WS to re-fetch when a task changes or a sync runs.
   playbookStore?: PlaybookStore;
   onPlaybook?: (caseId: string) => void;
+  // Per-case playbook settings (Phase 2): whether Critical/High findings expand into severity-based
+  // IR templates. Read when deriving auto-tasks; default off (opt-in per case).
+  playbookControlStore?: PlaybookControlStore;
   // Manual edits to the asset ↔ IoC graph (renames, additions, suppressions, link overrides).
   // Persisted per case in state/asset-overrides.json; survives synthesis. onAssetOverrides
   // pings dashboard clients over the WS to re-fetch the graph when overrides change.
@@ -2661,7 +2665,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // preserves analyst status/edits). Best-effort: never fail synthesis on a playbook hiccup.
       if (options.playbookStore) {
         try {
-          await options.playbookStore.sync(caseId, state);
+          const { useTemplates } = await loadPlaybookControl(caseId);
+          await options.playbookStore.sync(caseId, state, { useTemplates });
           options.onPlaybook?.(caseId);
         } catch { /* non-fatal */ }
       }
@@ -2871,19 +2876,47 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // idempotently on every GET (write-if-changed) so it tracks the latest synthesis without
   // ever clobbering analyst status/edits. POST adds a custom task; POST /sync forces a
   // re-derive; PATCH /order reorders; PATCH /:taskId edits; DELETE /:taskId removes.
-  // The response carries computed completion stats for the dashboard badge.
+  // GET/PUT …/control toggles severity-based IR templates (Phase 2). The response carries
+  // computed completion stats for the dashboard badge.
+  const loadPlaybookControl = async (caseId: string): Promise<PlaybookControl> =>
+    options.playbookControlStore ? options.playbookControlStore.load(caseId) : { ...DEFAULT_PLAYBOOK_CONTROL };
+
+  // Re-derive against current state honoring the case's template setting (no-op-safe write).
+  const syncPlaybook = async (caseId: string): Promise<PlaybookTask[]> => {
+    if (!options.playbookStore || !options.stateStore) return options.playbookStore ? options.playbookStore.load(caseId) : [];
+    const state = await options.stateStore.load(caseId);
+    const { useTemplates } = await loadPlaybookControl(caseId);
+    return options.playbookStore.sync(caseId, state, { useTemplates });
+  };
+
+  app.get("/cases/:id/playbook/control", async (req: Request, res: Response) => {
+    if (!options.playbookControlStore) return res.status(200).json({ ...DEFAULT_PLAYBOOK_CONTROL });
+    try {
+      return res.status(200).json(await options.playbookControlStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.put("/cases/:id/playbook/control", async (req: Request, res: Response) => {
+    if (!options.playbookControlStore) return res.status(501).json({ error: "playbook control not configured" });
+    if (typeof req.body?.useTemplates !== "boolean") return res.status(400).json({ error: "useTemplates (boolean) is required" });
+    try {
+      const control = await options.playbookControlStore.set(req.params.id, { useTemplates: req.body.useTemplates });
+      const tasks = await syncPlaybook(req.params.id);   // re-derive immediately under the new mode
+      options.onPlaybook?.(req.params.id);
+      return res.status(200).json({ control, tasks, stats: playbookStats(tasks) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.get("/cases/:id/playbook", async (req: Request, res: Response) => {
     if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
     try {
       // Auto-sync against current state so the panel reflects the latest next steps/findings.
-      let tasks: PlaybookTask[];
-      if (options.stateStore) {
-        const state = await options.stateStore.load(req.params.id);
-        tasks = await options.playbookStore.sync(req.params.id, state);
-      } else {
-        tasks = await options.playbookStore.load(req.params.id);
-      }
-      return res.status(200).json({ tasks, stats: playbookStats(tasks) });
+      const tasks = options.stateStore ? await syncPlaybook(req.params.id) : await options.playbookStore.load(req.params.id);
+      return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -2894,10 +2927,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
-      const state = await options.stateStore.load(req.params.id);
-      const tasks = await options.playbookStore.sync(req.params.id, state);
+      const tasks = await syncPlaybook(req.params.id);
       options.onPlaybook?.(req.params.id);
-      return res.status(200).json({ tasks, stats: playbookStats(tasks) });
+      return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -3435,6 +3467,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const tagsStore = new TagsStore(store);
   const notebookStore = new NotebookStore(store);
   const playbookStore = new PlaybookStore(store);
+  const playbookControlStore = new PlaybookControlStore(store);
   const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
   const importMetaStore = new ImportMetaStore(store);
@@ -3470,6 +3503,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     notebookStore,
     onNotebook: (caseId) => hub.broadcastTo(caseId, { type: "notebook_changed" }),
     playbookStore,
+    playbookControlStore,
     onPlaybook: (caseId) => hub.broadcastTo(caseId, { type: "playbook_changed" }),
     assetOverridesStore,
     onAssetOverrides: (caseId) => hub.broadcastTo(caseId, { type: "asset_overrides_changed" }),

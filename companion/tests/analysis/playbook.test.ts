@@ -91,12 +91,20 @@ describe("mergePlaybook", () => {
     expect(tasks[0]).toMatchObject({ title: "Pull 4624/4672/4688", priority: "critical", status: "in_progress", assignee: "ana", order: 7 });
   });
 
-  it("keeps an existing task whose seed disappeared (never silently dropped)", () => {
+  it("prunes a PRISTINE auto-task whose seed disappeared", () => {
     const seeds0 = derivePlaybookTasks({ ...emptyState("c1"), nextSteps: [nextStep()] });
-    const base = mergePlaybook([], seeds0, NOW).tasks;
+    const base = mergePlaybook([], seeds0, NOW).tasks;          // pristine (status todo, no edits)
     const { tasks, changed } = mergePlaybook(base, [], NOW);
-    expect(changed).toBe(false);
+    expect(changed).toBe(true);
+    expect(tasks).toHaveLength(0);
+  });
+
+  it("KEEPS a touched auto-task whose seed disappeared (never loses analyst work)", () => {
+    const seeds0 = derivePlaybookTasks({ ...emptyState("c1"), nextSteps: [nextStep()] });
+    const base = mergePlaybook([], seeds0, NOW).tasks.map((t) => ({ ...t, status: "in_progress" as const }));
+    const { tasks } = mergePlaybook(base, [], NOW);
     expect(tasks).toHaveLength(1);
+    expect(tasks[0].status).toBe("in_progress");
   });
 
   it("leaves custom tasks untouched", () => {
@@ -108,6 +116,46 @@ describe("mergePlaybook", () => {
     const { tasks } = mergePlaybook([custom], seeds, NOW);
     expect(tasks.find((t) => t.id === "custom:1")).toEqual(custom);
     expect(tasks).toHaveLength(2);
+  });
+});
+
+describe("derivePlaybookTasks with severity templates (Phase 2)", () => {
+  it("expands a Critical finding into the full IR cycle (contain/investigate/eradicate/recover)", () => {
+    const state = { ...emptyState("c1"), findings: [finding({ id: "fa", severity: "Critical", mitreTechniques: ["T1486"] })] };
+    const seeds = derivePlaybookTasks(state, { useTemplates: true });
+    expect(seeds.map((s) => s.sourceKey)).toEqual([
+      "finding:fa:contain", "finding:fa:investigate", "finding:fa:eradicate", "finding:fa:recover",
+    ]);
+    expect(seeds.map((s) => s.title)).toEqual([
+      "Contain: Ransomware staged", "Investigate: Ransomware staged", "Eradicate: Ransomware staged", "Recover: Ransomware staged",
+    ]);
+    expect(seeds.every((s) => s.relatedFindingId === "fa")).toBe(true);
+  });
+
+  it("expands a High finding into investigate + contain only", () => {
+    const state = { ...emptyState("c1"), findings: [finding({ id: "fb", severity: "High", title: "Persistence" })] };
+    const seeds = derivePlaybookTasks(state, { useTemplates: true });
+    expect(seeds.map((s) => s.sourceKey)).toEqual(["finding:fb:investigate", "finding:fb:contain"]);
+  });
+
+  it("tailors the investigate step to the finding's ATT&CK tactic and lists its techniques", () => {
+    const state = { ...emptyState("c1"), findings: [finding({ id: "fa", severity: "Critical", mitreTechniques: ["T1486"] })] };
+    const investigate = derivePlaybookTasks(state, { useTemplates: true }).find((s) => s.sourceKey === "finding:fa:investigate");
+    expect(investigate!.description).toContain("Impact");      // T1486 → Impact tactic
+    expect(investigate!.description).toContain("T1486");
+  });
+
+  it("templates off (default) still yields one task per finding", () => {
+    const state = { ...emptyState("c1"), findings: [finding({ id: "fa", severity: "Critical" })] };
+    expect(derivePlaybookTasks(state).map((s) => s.sourceKey)).toEqual(["finding:fa"]);
+  });
+
+  it("switching templates on prunes the pristine single finding task and adds the phases", () => {
+    const state = { ...emptyState("c1"), findings: [finding({ id: "fa", severity: "Critical" })] };
+    const off = mergePlaybook([], derivePlaybookTasks(state), NOW).tasks;
+    expect(off.map((t) => t.id)).toEqual(["finding:fa"]);
+    const on = mergePlaybook(off, derivePlaybookTasks(state, { useTemplates: true }), NOW).tasks;
+    expect(on.map((t) => t.id)).toEqual(["finding:fa:contain", "finding:fa:investigate", "finding:fa:eradicate", "finding:fa:recover"]);
   });
 });
 
