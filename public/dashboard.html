@@ -353,7 +353,8 @@
     .settings-group-head { font-size: 11px; color: #6aa9ff; font-weight: 600; margin: 10px 0 4px; }
     .settings-hr { border: none; border-top: 1px solid #2a2f3a; margin: 12px 0; }
     .srestart-note { font-size: 11px; color: #ffd93b; margin-bottom: 10px; }
-    .sec-checks { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; max-height: 300px; overflow-y: auto; }
+    /* No inner scroll — the whole list expands and the single .stab-pane scrollbar handles overflow. */
+    .sec-checks { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
     .sec-check { display: flex; align-items: center; font-size: 12px; padding: 4px 6px; border-radius: 5px; user-select: none; }
     .sec-check:hover { background: rgba(255,255,255,.05); }
     .sec-check input[type=checkbox] { width: auto; margin: 0 6px 0 0; cursor: pointer; flex-shrink: 0; }
