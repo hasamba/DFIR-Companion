@@ -65,7 +65,11 @@ export async function ocrRedactImage(
  */
 export class TesseractOcrRunner implements OcrRunner {
   async recognize(imageBuffer: Buffer): Promise<OcrWord[]> {
-    const { recognize } = await import("tesseract.js");
+    // tesseract.js is CommonJS: under ESM dynamic import `recognize` is on the default
+    // export, not a top-level named binding (`mod.recognize` is undefined). Fall back to
+    // the namespace in case a future ESM build hoists it.
+    const mod = await import("tesseract.js");
+    const recognize = mod.default?.recognize ?? mod.recognize;
     const { data } = await recognize(imageBuffer, "eng", { logger: () => {} });
     return (data.words ?? []).map((w) => ({
       text: w.text.trim(),
