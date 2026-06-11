@@ -3328,6 +3328,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const entry = await options.notebookStore.add(req.params.id, {
         text,
         type,
+        author: typeof req.body?.author === "string" ? req.body.author : undefined,
         linkedEntityIds: Array.isArray(req.body?.linkedEntityIds) ? req.body.linkedEntityIds.map(String) : undefined,
       });
       options.onNotebook?.(req.params.id);

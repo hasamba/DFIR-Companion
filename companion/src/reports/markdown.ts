@@ -473,8 +473,9 @@ function analystNotebook(entries: NotebookEntry[], lines: string[]): void {
   };
   for (const e of entries) {
     const label = TYPE_LABEL[e.type] ?? e.type;
+    const who = e.author ? ` — ${e.author}` : "";
     const ts = e.timestamp ? ` _(${e.timestamp.slice(0, 16).replace("T", " ")} UTC)_` : "";
-    lines.push(`**[${label}]**${ts}`, "");
+    lines.push(`**[${label}]**${who}${ts}`, "");
     lines.push(e.text, "");
   }
 }

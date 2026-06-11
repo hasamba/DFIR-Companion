@@ -43,6 +43,25 @@ describe("NotebookStore", () => {
     expect(e.text).toBe("trimmed");
   });
 
+  it("records the author (trimmed) when provided", async () => {
+    const e = await store.add("c1", { type: "note", text: "x", author: "  Jane Doe  " });
+    expect(e.author).toBe("Jane Doe");
+    expect((await store.load("c1"))[0].author).toBe("Jane Doe");
+  });
+
+  it("falls back to 'anonymous' when author is missing or blank", async () => {
+    const noAuthor = await store.add("c1", { type: "note", text: "a" });
+    const blankAuthor = await store.add("c1", { type: "note", text: "b", author: "   " });
+    expect(noAuthor.author).toBe("anonymous");
+    expect(blankAuthor.author).toBe("anonymous");
+  });
+
+  it("preserves the original author when an entry is edited", async () => {
+    const e = await store.add("c1", { type: "note", text: "original", author: "Jane" });
+    const updated = await store.update("c1", e.id, { text: "revised" });
+    expect(updated!.author).toBe("Jane");
+  });
+
   it("falls back to 'note' for unrecognized type", async () => {
     const e = await store.add("c1", { type: "bogus" as never, text: "x" });
     expect(e.type).toBe("note");
