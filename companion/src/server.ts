@@ -702,6 +702,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Swimlane data for the visual timeline chart — forensic events grouped into lanes by the
+  // chosen groupBy axis (asset | severity | tactic). Derived on demand, no AI, same filtering.
+  app.get("/cases/:id/swimlane", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    const groupBy = (req.query.groupBy as string) === "severity" ? "severity"
+      : (req.query.groupBy as string) === "tactic" ? "tactic" : "asset";
+    try {
+      return res.status(200).json(await options.reportWriter.swimlane(req.params.id, groupBy));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Per-IOC corroboration: { iocId: [tools that observed it] }, derived on demand by matching each
   // IOC value against the forensic events' sources (same scope/legitimate filtering as the report).
   // Powers the dashboard's "⊕ N sources" badge on IOCs (#35 Phase 3).
