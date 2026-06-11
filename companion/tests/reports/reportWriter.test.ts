@@ -122,4 +122,33 @@ describe("ReportWriter", () => {
     expect(xml).toContain("attacker beacon callout");                  // kept
     expect(xml).not.toContain("client admin maintenance window");      // legit event excluded
   }, 30_000);   // docx generation is CPU-heavy; give it headroom under full-suite parallel load
+
+  it("builds an ATT&CK Navigator layer, excluding techniques only from legitimate events", async () => {
+    const state = emptyState("c1");
+    state.findings.push({ id: "f1", severity: "Critical", title: "Ransomware deployed", description: "d",
+      relatedIocs: [], sourceScreenshots: [], mitreTechniques: ["T1486"],
+      firstSeen: "t0", lastUpdated: "t1", status: "open" });
+    state.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "attacker beacon callout", severity: "High",
+        mitreTechniques: ["T1071"], relatedFindingIds: [], sourceScreenshots: [] },
+      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "client admin maintenance window", severity: "Low",
+        mitreTechniques: ["T1018"], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    await stateStore.save(state);
+
+    const legitimate = new LegitimateStore(caseStore);
+    await legitimate.save("c1", [
+      { id: markerId("event", "e2"), kind: "event", ref: "e2", note: "client's maintenance",
+        markedAt: "2026-05-28T10:00:00Z", label: "client admin maintenance window" },
+    ]);
+
+    const writer = new ReportWriter(caseStore, stateStore, undefined, legitimate);
+    const layer = await writer.attackLayer("c1");
+
+    const ids = layer.techniques.map((t) => t.techniqueID);
+    expect(ids).toContain("T1486"); // finding technique
+    expect(ids).toContain("T1071"); // attacker-event technique kept
+    expect(ids).not.toContain("T1018"); // legit-event-only technique excluded
+    expect(layer.domain).toBe("enterprise-attack");
+  });
 });
