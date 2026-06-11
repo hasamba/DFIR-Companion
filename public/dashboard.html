@@ -320,23 +320,24 @@
     #synthesize::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/></svg>"); }
     #importBtn::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v11'/><path d='M8 10l4 4 4-4'/><path d='M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2'/></svg>"); }
     #toggleAll::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M7 9l5-5 5 5'/><path d='M7 15l5 5 5-5'/></svg>"); }
-    /* The two dropdowns can't take a ::before (replaced elements), so the icon rides as a
-       second background layer alongside the existing chevron. */
-    #exportSelect, #pushSelect { padding-left: 32px; background-repeat: no-repeat, no-repeat;
-      background-position: left 10px center, right 10px center; background-size: 15px 15px, 11px 11px;
-      /* Chromium sizes an appearance:none <select> to its widest OPTION; cap it so the closed box
-         stays compact (the full option text still shows in the opened popup) and labels fit one line. */
-      width: 138px; }
+    /* Export, Push and Collapse-all are ALWAYS icon-only — their labels never show, so the wider
+       labelled actions get the room; hover tooltips keep them discoverable. The dropdowns can't take
+       a ::before (replaced elements), so the icon rides as a background layer beside the chevron, and
+       the selected-value text is hidden via a transparent colour (the popup options stay readable). */
+    #exportSelect, #pushSelect { background-repeat: no-repeat, no-repeat;
+      background-position: left 9px center, right 8px center; background-size: 15px 15px, 11px 11px;
+      color: transparent; width: 50px; padding: 7px 21px 7px 25px; }
+    #toggleAll { font-size: 0; padding-left: 9px; padding-right: 9px; }
+    #toggleAll::before { margin-right: 0; }
     #exportSelect { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 21V10'/><path d='M8 6l4-4 4 4'/><path d='M4 14v6a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-6'/></svg>"),
       url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%239aa4b2' stroke-width='1.6'/></svg>"); }
     #pushSelect { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 2L11 13'/><path d='M22 2l-7 20-4-9-9-4z'/></svg>"),
       url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%239aa4b2' stroke-width='1.6'/></svg>"); }
-    /* Icons-only collapse — labels go to zero width, icons stay (their px size is immune to
-       font-size:0); selects hide the selected text via transparent colour + a fixed width. */
+    /* Tight-mode collapse — when even the labelled actions won't fit, fitToolbar() adds .icons-only
+       and the remaining labels go to zero width (icon px size is immune to font-size:0). Export/Push/
+       Collapse are already icon-only above, so this only affects the seven labelled buttons. */
     .toolbar-main.icons-only button { font-size: 0; padding-left: 9px; padding-right: 9px; }
     .toolbar-main.icons-only button::before { margin-right: 0; }
-    .toolbar-main.icons-only #exportSelect, .toolbar-main.icons-only #pushSelect {
-      color: transparent; width: 52px; padding-left: 26px; padding-right: 22px; }
     /* The capture count carries a camera icon (always shown). When space is tight the word
        "Screenshots:" drops and only the camera + number remain, and the AI-status message is
        hidden entirely — the two longest status strings, freeing the row to stay on one line. */
