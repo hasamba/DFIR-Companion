@@ -5,6 +5,7 @@ import { deriveGlossary } from "./glossary.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
+import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
@@ -309,9 +310,13 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
   if (state.iocs.length === 0) {
     lines.push("_No IOCs extracted yet._", "");
   } else {
-    lines.push("| ID | Type | Value | First seen |", "| --- | --- | --- | --- |");
+    // Corroboration: tools that observed each indicator (derived from the events' sources).
+    const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline);
+    lines.push("| ID | Type | Value | First seen | Sources |", "| --- | --- | --- | --- | --- |");
     for (const i of state.iocs) {
-      lines.push(`| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(i.value)} | ${cellMd(i.firstSeen)} |`);
+      const src = iocSrc[i.id];
+      const srcCell = src && src.length ? `${src.join(", ")}${src.length > 1 ? ` (⊕ ${src.length})` : ""}` : "—";
+      lines.push(`| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(i.value)} | ${cellMd(i.firstSeen)} | ${cellMd(srcCell)} |`);
     }
     lines.push("");
   }

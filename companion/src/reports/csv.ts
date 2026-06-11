@@ -1,5 +1,6 @@
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { byEventTime } from "../analysis/forensicSort.js";
+import { deriveIocSources } from "../analysis/iocCorroboration.js";
 
 function cell(value: string): string {
   const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
@@ -21,12 +22,14 @@ export function findingsCsv(state: InvestigationState): string {
 }
 
 export function iocsCsv(state: InvestigationState): string {
-  const header = "id,type,value,firstSeen,enrichment";
+  const header = "id,type,value,firstSeen,sources,sourceCount,enrichment";
+  const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline);
   const rows = state.iocs.map((i) => {
     const intel = (i.enrichments ?? [])
       .map((e) => `${e.source}:${e.verdict}${e.score ? ` (${e.score})` : ""}`)
       .join(" | ");
-    return row([i.id, i.type, i.value, i.firstSeen, intel]);
+    const src = iocSrc[i.id] ?? [];
+    return row([i.id, i.type, i.value, i.firstSeen, src.join("|"), String(src.length), intel]);
   });
   return [header, ...rows].join("\n") + "\n";
 }
