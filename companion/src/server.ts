@@ -44,6 +44,8 @@ import { parsePlasoCsv } from "./analysis/plasoImport.js";
 import type { PlasoImportOptions } from "./analysis/plasoImport.js";
 import { parseSandboxReport } from "./analysis/sandboxImport.js";
 import type { SandboxImportOptions } from "./analysis/sandboxImport.js";
+import { parseEmail } from "./analysis/emailImport.js";
+import type { EmailImportOptions } from "./analysis/emailImport.js";
 import { detectImportKind, type ImportKind } from "./analysis/importDetect.js";
 import { getEnvForSettings, updateEnv as updateEnvFile } from "./settings/envManager.js";
 import { parseMinSeverity } from "./analysis/severityFloor.js";
@@ -820,6 +822,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Export a MITRE ATT&CK Navigator layer (JSON) for the case, generated on demand from the
+  // current state (same scope/legitimate filtering as the report). Drops straight into the
+  // Navigator's "Open Existing Layer → Upload from local"; techniques colored by severity.
+  app.get("/cases/:id/attack-layer.json", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const layer = await options.reportWriter.attackLayer(req.params.id);
+      res.type("application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="attack-navigator-${req.params.id}.json"`);
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(JSON.stringify(layer, null, 2));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export the incident report as a Word (.docx) attachment, generated on demand from the
   // current state (same scope/legitimate filtering as the report). Not persisted on disk —
   // the binary is built fresh per request so it doesn't churn the cases/ folder.
@@ -847,6 +865,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       res.setHeader("Content-Disposition", 'attachment; filename="timesketch-timeline.jsonl"');
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(jsonl);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Export a STIX 2.1 bundle (JSON) for the case, generated on demand from the current state
+  // (same scope/legitimate filtering as the report). Drops straight into any TIP that ingests
+  // STIX — OpenCTI, MISP, Anomali, ThreatConnect — making the case portable without lock-in.
+  app.get("/cases/:id/export/stix", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const bundle = await options.reportWriter.stixBundle(req.params.id);
+      res.type("application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="stix-bundle-${req.params.id}.json"`);
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(JSON.stringify(bundle, null, 2));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -1012,6 +1046,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "cloud": return pipeline.importCloudActivity(caseId, text, base);
       case "plaso": return pipeline.importPlaso(caseId, text, base);
       case "sandbox": return pipeline.importSandbox(caseId, text, base);
+      case "email": return pipeline.importEmail(caseId, text, base);
       case "csv": return pipeline.analyzeCsv(caseId, text, base);
       case "log": return pipeline.analyzeLog(caseId, text, base);
       default: return Promise.reject(new Error(`unhandled import kind: ${kind as string}`));
@@ -2104,7 +2139,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
     const kind = detectImportKind(originalName, text);
     if (kind === "unknown") {
-      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / CSV / log)" });
+      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Email-eml-msg / CSV / log)" });
     }
     if ((kind === "csv" || kind === "log") && !hasAiProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
@@ -2995,6 +3030,59 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `Sandbox import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import an email artifact (.eml RFC 2822, or best-effort .msg). Evidence-first; mapped
+  // DETERMINISTICALLY (no AI call): one event at the Date: header, severity from SPF/DKIM/DMARC +
+  // sender heuristics, URLs/domains/IP/attachment-names as IOCs. Covers ATT&CK T1566 (Phishing).
+  app.post("/cases/:id/import-email", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.eml === "string" ? req.body.eml : "";
+    const originalName = String(req.body?.filename ?? "message.eml");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const minSeverity: Severity | undefined =
+      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
+      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
+      : rawLevel === "info" ? "Info" : undefined;
+    const emailOpts: EmailImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      const preview = parseEmail(text, emailOpts);
+      if (preview.format === "empty" && preview.kept === 0) return res.status(400).json({ error: "no parseable email found (expected an .eml RFC 2822 message, or an Outlook .msg export)" });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "message.eml");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, subject: preview.subject, sender: preview.sender, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing email "${preview.subject.slice(0, 60)}"` });
+      void options.pipeline.importEmail(caseId, text, {
+        label: storedName,
+        idPrefix: `em${seq}`,
+        importedAt,
+        email: emailOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `Email import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
