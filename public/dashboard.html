@@ -584,7 +584,8 @@
         </label>
         <div id="anonWarning" style="display:none;margin-top:10px;padding:8px;border-radius:6px;background:#3a2a00;color:#ffcf66;font-size:12px"></div>
         <div class="asset-subhead" style="margin:12px 0 2px">Auto-detected entities (read-only — grows with the investigation)</div>
-        <div id="anonAuto" style="max-height:140px;overflow:auto;font-size:12px;background:#0e1116;border-radius:6px;padding:6px"></div>
+        <div style="font-size:11px;color:#9aa4b2;margin:0 0 4px">The categories above already redact IPs, paths, usernames, emails and secrets by <em>pattern</em> everywhere (including in screenshots), so redaction happens even when this list is empty. This list adds specific <strong>named</strong> hosts/accounts/domains found in the case for exact-match tokenizing — a bare hostname is only tokenized once it appears here. If auto-detection missed one, add it under <em>Custom entities</em> below.</div>
+        <div id="anonAuto" style="font-size:12px;background:#0e1116;border-radius:6px;padding:6px"></div>
         <div class="asset-subhead" style="margin:12px 0 2px">Custom entities (add anything the auto-detection missed)</div>
         <div id="anonCustom" style="max-height:120px;overflow:auto;font-size:12px;margin-bottom:6px"></div>
         <div style="display:flex;gap:6px;align-items:center">
