@@ -94,6 +94,8 @@
     /* Fullscreen: the wrapper fills the screen and the graph grows to fit. */
     .asset-graph-wrap:fullscreen { background: #11161d; padding: 12px; display: flex; flex-direction: column; }
     .asset-graph-wrap:fullscreen .asset-graph { flex: 1; max-height: none; }
+    /* Swimlane fullscreen: the section fills the screen; scroll if there are more lanes than fit. */
+    #sec-swimlane:fullscreen { background: #11161d; padding: 16px; overflow: auto; }
     .asset-subhead { font-size: 12px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 6px; }
     .asset-chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px;
       font-size: 12px; background: #0f1115; border: 1px solid #2a2f3a; color: #e6e6e6; }
@@ -907,7 +909,7 @@
     <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
     <section id="sec-phases" style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
     <section id="sec-swimlane" style="grid-column: 1 / -1">
-      <h2>Timeline Swimlane<span class="ev-sub">visual chart — Y-axis: assets · X-axis: time · color: severity (derived, no AI)</span></h2>
+      <h2>Timeline Swimlane<span class="ev-sub" id="swimlaneSub">visual chart — Y-axis: assets · X-axis: time · color: severity (derived, no AI)</span></h2>
       <div class="swimlane-controls">
         <span>Group by:</span>
         <select id="swimlaneGroupBy" title="Choose the Y-axis grouping for the swimlane">
@@ -920,6 +922,8 @@
         <span id="swimlaneZoomLevel" style="min-width:38px;text-align:center">100%</span>
         <button id="swimlaneZoomIn" type="button" title="Zoom in">+</button>
         <button id="swimlaneZoomFit" type="button" title="Fit all events into the view">Fit</button>
+        <span class="swimlane-ctrl-sep"></span>
+        <button id="swimlaneFullscreen" type="button" title="Show the swimlane full screen">⤢ Fullscreen</button>
       </div>
       <div class="swimlane-wrap" id="swimlaneWrap">
         <div class="swimlane-labels" id="swimlaneLabels"></div>
@@ -928,8 +932,10 @@
         </div>
       </div>
       <div id="swimlaneDetail" class="swimlane-detail" hidden></div>
+      <!-- Kept inside the section so the hover tooltip still renders in fullscreen (only the
+           fullscreen element's descendants paint). position:fixed keeps it viewport-anchored. -->
+      <div id="swimlaneTooltip"></div>
     </section>
-    <div id="swimlaneTooltip"></div>
     <section id="sec-assets" style="grid-column: 1 / -1">
       <h2>Compromised Assets &amp; IoC Graph<button class="add-toggle" type="button" title="Add / edit assets and links manually" aria-label="Add asset">+</button></h2>
       <div class="manual-add" hidden>
@@ -3586,6 +3592,15 @@
 
     function swFitView() { swViewStartMs = swDataMinMs; swViewEndMs = swDataMaxMs; }
 
+    // Keep the panel subtitle's "Y-axis: …" in sync with the Group by selection.
+    const SW_AXIS_LABEL = { asset: "assets", severity: "severity", tactic: "tactic" };
+    function swUpdateSubtitle() {
+      const sub = document.getElementById("swimlaneSub");
+      if (!sub) return;
+      const g = document.getElementById("swimlaneGroupBy").value || "asset";
+      sub.textContent = `visual chart — Y-axis: ${SW_AXIS_LABEL[g] || g} · X-axis: time · color: severity (derived, no AI)`;
+    }
+
     function swZoomRatio() {
       const d = swDataMaxMs - swDataMinMs, v = swViewEndMs - swViewStartMs;
       return (!d || !v) ? 1 : d / v;
@@ -3603,6 +3618,7 @@
 
     function loadSwimlane(caseId) {
       const groupBy = document.getElementById("swimlaneGroupBy").value || "asset";
+      swUpdateSubtitle();
       fetch(`/cases/${caseId}/swimlane?groupBy=${encodeURIComponent(groupBy)}`)
         .then(r => r.json()).then(d => {
           swLanes = Array.isArray(d.lanes) ? d.lanes : [];
@@ -3834,6 +3850,16 @@
       });
       document.getElementById("swimlaneZoomFit").addEventListener("click", function() {
         swFitView(); swUpdateZoomLabel(); swRenderCanvas();
+      });
+      document.getElementById("swimlaneFullscreen").addEventListener("click", function() {
+        const sec = document.getElementById("sec-swimlane");
+        if (document.fullscreenElement === sec) document.exitFullscreen();
+        else if (sec.requestFullscreen) sec.requestFullscreen();
+      });
+      // Re-render at the new viewport width when the swimlane enters/exits fullscreen.
+      document.addEventListener("fullscreenchange", function() {
+        if (document.fullscreenElement && document.fullscreenElement.id !== "sec-swimlane") return;
+        setTimeout(swRenderCanvas, 60);   // wait for the fullscreen relayout before measuring
       });
       if (typeof ResizeObserver !== "undefined") {
         new ResizeObserver(() => swRenderCanvas()).observe(document.getElementById("swimlaneWrap"));
