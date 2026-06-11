@@ -219,9 +219,13 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Investigation workflow
 - **Ask the case** — free-form Q&A grounded in the full timeline; unknown answers direct you to what artifact to collect and where
+- **Response Playbook** — the AI's recommended next steps + Critical/High findings become a trackable checklist (status, priority, assignee, due date, drag-and-drop reorder, custom tasks) with a completion badge; an opt-in **IR templates** toggle expands each Critical/High finding into severity-based response phases (Contain → Investigate → Eradicate → Recover, tailored to the ATT&CK tactic); auto-tasks re-derive on each synthesis but always preserve your progress; survives synthesis and renders into the report
 - **Triage tags** — label any entity `confirmed-malicious`, `false-positive`, `key-evidence`, `pivot-point`, etc.; color-coded pills, survive synthesis
 - **Analyst comments** — attach notes to any entity; synced live over WebSocket for multi-investigator collaboration
 - **Timeline bulk actions** — star, multi-select, bulk-tag, or mark-legitimate in one batched write + re-synthesis
+- **IOC bulk actions** — multi-select IOCs (checkbox column + select-all) and, from a bulk toolbar, **enrich** the selection against enabled threat-intel providers, **tag**, **mark legitimate**, or **copy** the values — each as one batched operation (enrichment touches only the selected indicators; mark-legitimate is one re-synthesis, not one per IOC)
+- **IOC whitelist** (Settings → IOC Whitelist) — persistent, environment-level known-good patterns (CIDR ranges, exact hashes/values, regex) that **auto-mark matching IOCs legitimate on import** (and on demand); global across cases, import/exportable as CSV or JSON; opt-in by design (whitelisting internal ranges can hide lateral movement)
+- **IOC corroboration badges** — each IOC shows a **⊕ N** badge for the number of distinct tools that observed it (the same hash/IP/domain seen by e.g. both THOR and Velociraptor); derived from the events' sources, surfaced in the IOC panel, the report's IOC table, and the IOC CSV export
 - **Hunt-pivot generator** — one click from any event or IOC generates ready-to-run queries: Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, and Suricata rules; no AI, runs offline; configurable platform allowlist
 - **Velociraptor live hunts** — run a pivot VQL as a fleet hunt across all enrolled endpoints from the dashboard (opt-in, requires API config)
 - **Velociraptor triage bundles** (Settings → Velociraptor) — browse the server's collectable artifacts, save named bundles (a "Best Practice" quick-wins sweep ships by default, all editable), run one as a hunt scoped by label/OS + min-severity, then auto-collect (result rows **and** uploaded JSON reports like THOR/Hayabusa) → import → synthesize after a configurable delay; persisted per-case job with a live countdown + "Collect now". Per-artifact tuning: **parameters** (e.g. Hayabusa `RuleLevel`/`RuleStatus`) and **exclude filters** (VQL `WHERE` to drop noise at the source) (opt-in, requires API config)
@@ -267,6 +271,18 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
   lateral toggles, confidence legend, layered SVG with arrowheads, zoom, fullscreen, click-to-focus, and
   **drag-to-reposition nodes** — positions persist per case, ↺ Reset layout restores the auto layout) and a
   report **§4.8 Chain of evidence** section. Derived on read (`GET /cases/:id/evidence-graph`).
+- **Timeline Swimlane (visual chart)** — the *what happened when, across which assets* view: an
+  interactive canvas chart with **assets / severity / tactic** on the Y-axis (Group-by selector; the
+  panel subtitle tracks the choice), **time** on the X-axis, and events as **severity-colored dots**.
+  Mouse-wheel **zoom** (pinned to the cursor) + **drag-to-pan** + Fit/zoom buttons, **click-a-dot** for a
+  detail panel (severity, time, description, MITRE, sources, related findings) that also **jumps to and
+  flashes the matching Forensic Timeline row**, and hover tooltips. **Select events** by **Shift-click** or
+  **Shift-drag** a box → the selection is **bidirectional with the timeline table** (the same rings ⇄ row
+  checkboxes ⇄ bulk-action bars) and feeds a one-click **⚑ Mark Legitimate** batch action; **⌖ Scope to
+  view** sets the investigation scope window to the visible time range. **⤢ Fullscreen** (with a CSS
+  fallback off secure-context) and **⤓ PNG** export (labels + chart composited) for ad-hoc screenshots; a
+  static **Timeline Swimlane** SVG is embedded in the HTML report. Derived on read with the same
+  scope/legitimate filtering as the report (`GET /cases/:id/swimlane?groupBy=asset|severity|tactic`).
 - **Reports** — Markdown **and HTML** report (standalone, print-friendly), plus a one-click **PDF**
   export that opens the print-styled HTML and triggers the browser's *Save as PDF* dialog (zero
   dependencies, fully offline) + CSVs (findings, IOCs incl. enrichment, capture timeline, forensic
@@ -315,6 +331,13 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
   (your own notes, pasted finding screenshots) is never touched**. The target page + managed block are
   remembered per case (`state/notion-export.json`); delete the block and the next export recreates it.
   Configure with `DFIR_NOTION_TOKEN` (share the target page/database with the integration).
+- **Push to ClickUp** — export the **Response Playbook** into a [ClickUp](https://clickup.com/) list as
+  tasks (dashboard **Push** menu → **Push to ClickUp**). Each task carries its **status** (mapped onto the
+  list's own statuses — To do / In progress / Complete; Skipped → Closed), **priority** (critical→Urgent …
+  low→Low), **due date**, and assignee/notes. **Re-pushing the same case updates the tasks it created**
+  (each playbook task's ClickUp id is remembered in `state/clickup-export.json`) rather than duplicating.
+  The list id is asked for in a modal (pre-filled from the last push or `DFIR_CLICKUP_LIST_ID`). Configure
+  with `DFIR_CLICKUP_TOKEN`.
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template)
   (title page → executive summary → BIA, limitations, goals, glossary → incident/investigation
   timelines → investigation → conclusions/recommendations → attachments). Technical sections

@@ -20,6 +20,9 @@ export const notebookEntrySchema = z.object({
   timestamp: z.string(),
   text: z.string(),
   type: z.enum(NOTEBOOK_ENTRY_TYPES).catch("note" as NotebookEntryType),
+  // Investigator who wrote the entry (display name from the browser). Optional so notebooks
+  // written before authorship existed still load; new entries default to "anonymous".
+  author: z.string().optional(),
   linkedEntityIds: z.array(z.string()).optional(),
 });
 
@@ -29,6 +32,7 @@ const notebookSchema = z.array(notebookEntrySchema).catch([]);
 export interface NewNotebookEntry {
   text: string;
   type: NotebookEntryType;
+  author?: string;
   linkedEntityIds?: string[];
 }
 
@@ -61,6 +65,7 @@ export class NotebookStore {
       timestamp: new Date().toISOString(),
       text: String(input.text).trim(),
       type,
+      author: (input.author || "").trim() || "anonymous",
       ...(input.linkedEntityIds?.length ? { linkedEntityIds: input.linkedEntityIds } : {}),
     };
     await this.save(caseId, [...(await this.load(caseId)), entry]);

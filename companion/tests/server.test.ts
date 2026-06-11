@@ -13,7 +13,9 @@ import { MockProvider } from "../src/providers/provider.js";
 import { ReportWriter } from "../src/reports/reportWriter.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
 import { CommentsStore } from "../src/analysis/comments.js";
-import { emptyState } from "../src/analysis/stateTypes.js";
+import { PlaybookStore } from "../src/analysis/playbookStore.js";
+import { PlaybookControlStore } from "../src/analysis/playbookControl.js";
+import { emptyState, type InvestigationState } from "../src/analysis/stateTypes.js";
 import type { CustomerExposureProvider } from "../src/analysis/customerExposure.js";
 
 let app: ReturnType<typeof createApp>;
@@ -954,11 +956,17 @@ describe("server analysis wiring", () => {
       triggerType: "navigation", imageBase64: await pngBase64(),
     });
 
-    for (let i = 0; i < 20 && !events.some((e) => e.status === "idle"); i++) {
+    // AI is toggled on for the still-empty case first, which now ALSO emits a terminal idle
+    // (backfill always reports a final status). So wait for the window flush's own analyzing→idle
+    // pair — not just "any idle", which the backfill would satisfy before the flush even runs.
+    const flushed = () => {
+      const ai = events.findIndex((e) => e.status === "analyzing" && e.phase === "extracting");
+      return ai >= 0 && events.slice(ai + 1).some((e) => e.status === "idle");
+    };
+    for (let i = 0; i < 40 && !flushed(); i++) {
       await new Promise((r) => setTimeout(r, 25));
     }
-    expect(events[0]).toEqual({ status: "analyzing", phase: "extracting" }); // processing screenshots
-    expect(events.some((e) => e.status === "idle")).toBe(true);
+    expect(flushed()).toBe(true); // the window flush reported analyzing(extracting) → idle
   });
 
   it("GET /health reports aiEnabled false without a pipeline, true with one", async () => {
@@ -1122,6 +1130,53 @@ describe("state and report routes", () => {
     expect((await request(app).delete("/cases/c1/comments/nope")).status).toBe(404);
   });
 
+  it("legitimate: onLegitimate callback fires on add, batch add, and remove", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-cb-"));
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    let pinged = 0;
+    const app = createApp(store, { onLegitimate: () => { pinged++; } });
+
+    // Single add fires the callback.
+    const add = await request(app).post("/cases/c1/legitimate")
+      .send({ kind: "ioc", ref: "1.2.3.4", note: "internal scanner" });
+    expect(add.status).toBe(200);
+    expect(pinged).toBe(1);
+
+    // Batch add fires once (not per item).
+    const batch = await request(app).post("/cases/c1/legitimate/batch")
+      .send({ items: [{ kind: "finding", ref: "f1", note: "fp" }, { kind: "finding", ref: "f2" }] });
+    expect(batch.status).toBe(200);
+    expect(pinged).toBe(2);
+
+    // Remove fires the callback.
+    const markerId = add.body.find((m: { kind: string }) => m.kind === "ioc")?.id;
+    const remove = await request(app).post("/cases/c1/legitimate/remove")
+      .send({ id: markerId });
+    expect(remove.status).toBe(200);
+    expect(pinged).toBe(3);
+  });
+
+  it("scope: onScope callback fires with the new window when scope is saved", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-scope-cb-"));
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const received: Array<{ start: string | null; end: string | null }> = [];
+    const app = createApp(store, { onScope: (_caseId, s) => { received.push(s); } });
+
+    const res = await request(app).post("/cases/c1/scope")
+      .send({ start: "2026-01-01T00:00:00Z", end: "2026-06-01T00:00:00Z" });
+    expect(res.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ start: "2026-01-01T00:00:00.000Z", end: "2026-06-01T00:00:00.000Z" });
+
+    // Clearing scope (empty body) also fires.
+    const clear = await request(app).post("/cases/c1/scope").send({});
+    expect(clear.status).toBe(200);
+    expect(received).toHaveLength(2);
+    expect(received[1]).toMatchObject({ start: null, end: null });
+  });
+
   it("POST /cases/:id/ask answers a question, and /questions pins it to the case", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-ask-"));
     const store = new CaseStore(root);
@@ -1200,6 +1255,34 @@ describe("state and report routes", () => {
     expect(res.body[0].eventIds).toEqual(["e1", "e2"]);
     expect(res.body[1].label).toBe("Impact");
     expect(res.body[1].maxSeverity).toBe("Critical");
+  });
+
+  it("derives per-IOC corroboration (tools that observed each indicator) on demand", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-iocsrc-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore);
+    const app = createApp(store, { stateStore, reportWriter });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.iocs.push(
+      { id: "i1", type: "hash", value: "ABCDEF123456", firstSeen: "2026-05-20T14:00:00Z" },
+      { id: "i2", type: "domain", value: "lonely.example", firstSeen: "2026-05-20T14:00:00Z" },
+    );
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-20T14:01:00Z", description: "malware", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sha256: "abcdef123456", sources: ["THOR"] },
+      { id: "e2", timestamp: "2026-05-20T14:02:00Z", description: "same file flagged", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sha256: "abcdef123456", sources: ["Velociraptor"] },
+      { id: "e3", timestamp: "2026-05-20T14:03:00Z", description: "dns for lonely.example", severity: "Low",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sources: ["Zeek"] },
+    );
+    await stateStore.save(seeded);
+
+    const res = await request(app).get("/cases/c1/ioc-sources");
+    expect(res.status).toBe(200);
+    expect(res.body.i1.sort()).toEqual(["THOR", "Velociraptor"]);   // corroborated by 2 tools
+    expect(res.body.i2).toEqual(["Zeek"]);                            // single tool
   });
 
   it("exports just the incident timeline as CSV on demand (no full report needed)", async () => {
@@ -1387,6 +1470,31 @@ describe("AI on/off control", () => {
     expect(state.findings).toHaveLength(1);
   });
 
+  it("emits a terminal idle status when AI is turned on with nothing to catch up on", async () => {
+    // Regression: the dashboard optimistically shows "AI on — catching up on un-analyzed
+    // screenshots…" the moment you toggle. backfill used to `return` silently when there was
+    // nothing pending, so no terminal event was ever sent and that message hung forever
+    // ("this message is stuck, I don't know if it finished"). It must always report idle.
+    const root = await mkdtemp(join(tmpdir(), "dfir-aibackfill-idle-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const events: { status: string; detail?: string }[] = [];
+    const app = createApp(store, {
+      pipeline: findingPipeline(stateStore), stateStore, windowSize: 1,
+      onAiStatus: (_c, e) => events.push({ status: e.status, detail: e.detail }),
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+
+    // Fresh case, zero captures → toggling AI on has nothing to analyze, but must still emit idle.
+    await request(app).post("/cases/c1/ai-control").send({ enabled: true });
+    for (let i = 0; i < 40 && !events.some((e) => e.status === "idle"); i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(events.some((e) => e.status === "idle")).toBe(true);
+    // …and it must not have falsely claimed it was analyzing when there was nothing to do.
+    expect(events.some((e) => e.status === "analyzing")).toBe(false);
+  });
+
   it("GET /cases/:id/ai-control reports the current state", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-aictl-route-"));
     const store = new CaseStore(root);
@@ -1436,5 +1544,105 @@ describe("manual entry (events / IOCs the AI didn't catch)", () => {
     expect(r2.status).toBe(409);
     const state = await stateStore.load("c1");
     expect(state.iocs.filter((i) => i.value === "8.8.8.8")).toHaveLength(1);
+  });
+});
+
+describe("playbook routes (issue #36)", () => {
+  async function freshPlaybookApp(seed?: Partial<InvestigationState>) {
+    const root = await mkdtemp(join(tmpdir(), "dfir-playbook-route-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const playbookStore = new PlaybookStore(store);
+    const playbookControlStore = new PlaybookControlStore(store);
+    const events: string[] = [];
+    const app = createApp(store, { stateStore, playbookStore, playbookControlStore, onPlaybook: () => events.push("changed") });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    if (seed) await stateStore.save({ ...emptyState("c1"), ...seed });
+    return { app, stateStore, playbookStore, playbookControlStore, events };
+  }
+
+  const NEXT_STEP = { id: "ns1", priority: "high" as const, action: "Pull 4624/4672", rationale: "confirm logon", pointer: "ALClient07" };
+  const CRIT_FINDING = {
+    id: "f1", severity: "Critical" as const, title: "Ransomware staged", description: "lockbit.exe",
+    relatedIocs: [], sourceScreenshots: [], mitreTechniques: [], firstSeen: "2026-06-10T00:00:00Z", lastUpdated: "2026-06-10T00:00:00Z", status: "open" as const,
+  };
+
+  it("GET auto-derives tasks from next steps + Critical/High findings and returns completion stats", async () => {
+    const { app } = await freshPlaybookApp({ nextSteps: [NEXT_STEP], findings: [CRIT_FINDING] });
+    const res = await request(app).get("/cases/c1/playbook");
+    expect(res.status).toBe(200);
+    expect(res.body.tasks.map((t: { id: string }) => t.id)).toEqual(["next_step:ns1", "finding:f1"]);
+    expect(res.body.stats).toMatchObject({ total: 2, done: 0, completionPct: 0 });
+  });
+
+  it("PATCH updates status and the GET stats reflect completion (preserved across re-sync)", async () => {
+    const { app } = await freshPlaybookApp({ nextSteps: [NEXT_STEP] });
+    await request(app).get("/cases/c1/playbook");                       // materialize
+    const patch = await request(app).patch("/cases/c1/playbook/next_step:ns1").send({ status: "done", assignee: "ana" });
+    expect(patch.status).toBe(200);
+    const res = await request(app).get("/cases/c1/playbook");           // re-syncs, must preserve status
+    expect(res.body.tasks[0]).toMatchObject({ status: "done", assignee: "ana" });
+    expect(res.body.stats).toMatchObject({ total: 1, done: 1, completionPct: 100 });
+  });
+
+  it("POST adds a custom task; POST /sync re-derives; PATCH /order reorders; DELETE removes", async () => {
+    const { app, events } = await freshPlaybookApp({ nextSteps: [NEXT_STEP] });
+    const add = await request(app).post("/cases/c1/playbook").send({ title: "Call client", priority: "high" });
+    expect(add.status).toBe(201);
+    const customId = add.body.id;
+    expect(customId).toMatch(/^custom:/);
+
+    const sync = await request(app).post("/cases/c1/playbook/sync");
+    expect(sync.status).toBe(200);
+    expect(sync.body.tasks).toHaveLength(2);                            // derived next step + custom
+
+    const order = await request(app).patch("/cases/c1/playbook/order").send({ ids: [customId, "next_step:ns1"] });
+    expect(order.status).toBe(200);
+    expect(order.body.tasks.map((t: { id: string }) => t.id)).toEqual([customId, "next_step:ns1"]);
+
+    const del = await request(app).delete(`/cases/c1/playbook/${customId}`);
+    expect(del.status).toBe(204);
+    const after = await request(app).get("/cases/c1/playbook");
+    expect(after.body.tasks.map((t: { id: string }) => t.id)).toEqual(["next_step:ns1"]);
+    expect(events.length).toBeGreaterThan(0);                          // WS broadcast fired
+  });
+
+  it("rejects an empty title (400) and a missing task (404)", async () => {
+    const { app } = await freshPlaybookApp({});
+    expect((await request(app).post("/cases/c1/playbook").send({ title: "  " })).status).toBe(400);
+    expect((await request(app).patch("/cases/c1/playbook/nope").send({ status: "done" })).status).toBe(404);
+    expect((await request(app).delete("/cases/c1/playbook/nope")).status).toBe(404);
+  });
+
+  it("returns 501 when no playbook store is configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-playbook-off-"));
+    const store = new CaseStore(root);
+    const off = createApp(store, { stateStore: new StateStore(store) });
+    await request(off).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    expect((await request(off).get("/cases/c1/playbook")).status).toBe(501);
+  });
+
+  it("PUT /playbook/control toggles IR templates, expanding a Critical finding into phase tasks", async () => {
+    const { app } = await freshPlaybookApp({ findings: [CRIT_FINDING] });
+    const before = await request(app).get("/cases/c1/playbook");
+    expect(before.body.control).toEqual({ useTemplates: false });
+    expect(before.body.tasks.map((t: { id: string }) => t.id)).toEqual(["finding:f1"]);   // single task by default
+
+    const put = await request(app).put("/cases/c1/playbook/control").send({ useTemplates: true });
+    expect(put.status).toBe(200);
+    expect(put.body.control).toEqual({ useTemplates: true });
+    expect(put.body.tasks.map((t: { id: string }) => t.id)).toEqual([
+      "finding:f1:contain", "finding:f1:investigate", "finding:f1:eradicate", "finding:f1:recover",
+    ]);
+
+    // GET reflects the persisted setting and keeps the expanded tasks.
+    const after = await request(app).get("/cases/c1/playbook");
+    expect(after.body.control).toEqual({ useTemplates: true });
+    expect(after.body.tasks).toHaveLength(4);
+  });
+
+  it("PUT /playbook/control rejects a non-boolean body (400)", async () => {
+    const { app } = await freshPlaybookApp({});
+    expect((await request(app).put("/cases/c1/playbook/control").send({ useTemplates: "yes" })).status).toBe(400);
   });
 });
