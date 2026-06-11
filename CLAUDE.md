@@ -321,6 +321,10 @@ only when their domain is a customer domain AND the email isn't itself an IOC. T
 
 - **Always keep `CHANGELOG.md` updated.** Add notable changes under `[Unreleased]`
   (Added / Changed / Fixed) as you make them — this is a standing instruction.
+- **Keep entries concise — ONE line each.** A CHANGELOG bullet is a scannable summary
+  (what it does + the issue ref), NOT the PR description. Put the mechanism/detail in the
+  PR and commit body, not here. Lead with the **bolded feature name**, then a short clause,
+  then `(closes #N)`. Condense any verbose bullets before tagging a release.
 - **On every version tag:** move `[Unreleased]` → `[X.Y.Z] - YYYY-MM-DD`, bump the
   version in **all three** of `companion/package.json`, `extension/package.json`, and
   `extension/manifest.json` (keep them in sync; also bump the root `version` in both
