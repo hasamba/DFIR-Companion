@@ -808,6 +808,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Export a MITRE ATT&CK Navigator layer (JSON) for the case, generated on demand from the
+  // current state (same scope/legitimate filtering as the report). Drops straight into the
+  // Navigator's "Open Existing Layer → Upload from local"; techniques colored by severity.
+  app.get("/cases/:id/attack-layer.json", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const layer = await options.reportWriter.attackLayer(req.params.id);
+      res.type("application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="attack-navigator-${req.params.id}.json"`);
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(JSON.stringify(layer, null, 2));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export the incident report as a Word (.docx) attachment, generated on demand from the
   // current state (same scope/legitimate filtering as the report). Not persisted on disk —
   // the binary is built fresh per request so it doesn't churn the cases/ folder.
