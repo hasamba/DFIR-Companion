@@ -2,10 +2,17 @@ import { z } from "zod";
 import type { CaptureMetadata } from "../types.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { isValidCaseId } from "../storage/caseStore.js";
-import { computeHash, isDuplicate } from "../dedup/perceptualHash.js";
+import { computeContentHash } from "../dedup/contentHash.js";
 import { slugifyTitle } from "./titleSlug.js";
 
-const DUP_THRESHOLD = 5;
+// Is deduplication enabled? Default on. `DFIR_DEDUP=off` (also false/no/0) turns it off so
+// EVERY capture is analyzed. Read per call so a restart picks up the change. When on, a capture
+// is a duplicate only if its content hash is byte-identical to the previous capture's (exact
+// match — see contentHash.ts); any on-screen change at all → analyzed.
+export function isDedupEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const sw = (env.DFIR_DEDUP ?? "").trim().toLowerCase();
+  return !(sw === "off" || sw === "false" || sw === "no" || sw === "0");
+}
 
 const payloadSchema = z.object({
   caseId: z.string().min(1).refine(isValidCaseId, "invalid caseId"),
@@ -26,13 +33,13 @@ export class CaseNotFoundError extends Error {
   }
 }
 
-// In-memory cache of the last hash per case, to decide duplicates without re-reading disk.
+// In-memory cache of the last content hash per case, to decide duplicates without re-reading disk.
 const lastHashByCase = new Map<string, string>();
 
 export async function ingestCapture(
   store: CaseStore,
   rawPayload: unknown,
-  threshold = DUP_THRESHOLD,
+  dedup: boolean = isDedupEnabled(),
 ): Promise<CaptureMetadata> {
   const payload = payloadSchema.parse(rawPayload);
 
@@ -43,10 +50,12 @@ export async function ingestCapture(
   }
 
   const bytes = Buffer.from(payload.imageBase64, "base64");
-  const hash = await computeHash(bytes);
+  const hash = computeContentHash(bytes);
 
   const previous = lastHashByCase.get(payload.caseId);
-  const duplicate = previous !== undefined && isDuplicate(previous, hash, threshold);
+  // Exact match only: a duplicate is a byte-identical re-capture of the previous frame (the
+  // screen didn't change). Any difference → not a duplicate → analyzed. dedup=false disables it.
+  const duplicate = dedup && previous !== undefined && previous === hash;
   lastHashByCase.set(payload.caseId, hash);
 
   const sequenceNumber = await store.nextSequenceNumber(payload.caseId);
@@ -70,7 +79,7 @@ export async function ingestCapture(
     url: payload.url,
     tabTitle: payload.tabTitle,
     triggerType: payload.triggerType,
-    perceptualHash: hash,
+    contentHash: hash,
     isDuplicate: duplicate,
     screenshotFile,
   };

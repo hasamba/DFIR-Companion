@@ -62,7 +62,7 @@ describe("CaseStore evidence writes", () => {
       url: "https://velociraptor.local/hunts",
       tabTitle: "Hunts",
       triggerType: "timer",
-      perceptualHash: "ffffffffffffffff",
+      contentHash: "ffffffffffffffff",
       isDuplicate: false,
       screenshotFile: "000001_t.webp",
     };
@@ -84,7 +84,7 @@ describe("CaseStore evidence writes", () => {
     expect(await store.nextSequenceNumber("c3")).toBe(1);
     await store.appendCapture("c3", {
       caseId: "c3", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
-      triggerType: "timer", perceptualHash: "0000000000000000", isDuplicate: false,
+      triggerType: "timer", contentHash: "0000000000000000", isDuplicate: false,
       screenshotFile: "000001_t.webp", sequenceNumber: 1,
     });
     expect(await store.nextSequenceNumber("c3")).toBe(2);

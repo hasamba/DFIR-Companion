@@ -199,7 +199,7 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
     lines.push("_No dated forensic events extracted yet._", "");
     return;
   }
-  lines.push("| Time | Count | Severity | Event | MITRE | Findings |", "| --- | --- | --- | --- | --- | --- |");
+  lines.push("| Time | Host | Count | Severity | Event | MITRE | Findings |", "| --- | --- | --- | --- | --- | --- | --- |");
   const ordered: ForensicEvent[] = [...state.forensicTimeline].sort(byEventTime);
   for (const e of ordered) {
     const time = e.endTimestamp && e.endTimestamp !== e.timestamp
@@ -207,7 +207,7 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
       : (e.timestamp || "(undated)");
     const count = e.count && e.count > 1 ? `×${e.count}` : "";
     lines.push(
-      `| ${cellMd(time)} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
+      `| ${cellMd(time)} | ${cellMd(e.asset || "")} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
       `${e.mitreTechniques.map(attackTechniqueMd).join(", ")} | ${cellMd(e.relatedFindingIds.join(", "))} |`,
     );
   }

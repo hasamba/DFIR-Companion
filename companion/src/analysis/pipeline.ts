@@ -3,10 +3,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { AIProvider, AnalyzeImage, AnalyzeRequest } from "../providers/provider.js";
-import { createAnonymizer, deriveKnownEntities } from "./anonymize.js";
+import type { AIProvider, AnalyzeImage, AnalyzeRequest, AnalyzeResult } from "../providers/provider.js";
+import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/logger.js";
+import { createAnonymizer, deriveKnownEntities, type CustomEntity } from "./anonymize.js";
 import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
 import type { CustomEntitiesStore } from "./anonEntities.js";
+import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity } from "./stateTypes.js";
@@ -544,6 +546,10 @@ export interface PipelineOptions {
   anonStore?: AnonControlStore;
   // Per-case analyst-added entities to anonymize (exact-match), merged with the auto-derived ones.
   customEntitiesStore?: CustomEntitiesStore;
+  // Per-case OCR-discovered entities + the analyst's suppression list. When set, the OCR pass feeds
+  // every entity it tokenizes out of a screenshot back here (so the auto-discovery list grows), and
+  // suppressed values are excluded from anonymization. Absent → no screenshot auto-discovery.
+  discoveredStore?: DiscoveredEntitiesStore;
   stateStore: StateStore;
   imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage>;
   retries?: number;
@@ -560,6 +566,9 @@ export interface PipelineOptions {
   // call: words the anonymizer would tokenize are covered with opaque rectangles. The original
   // evidence file is never touched — only the in-memory buffer sent to the model is redacted.
   ocrRunner?: OcrRunner;
+  // Shared leveled logger. Absent → a console-only logger at DFIR_LOG_LEVEL (used by CLI scripts
+  // and tests). The server passes its file-backed logger so AI/OCR/anon traces land in the case log.
+  logger?: Logger;
 }
 
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
@@ -588,7 +597,10 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number, backoffMs: nu
 }
 
 export class AnalysisPipeline {
-  constructor(private readonly opts: PipelineOptions) {}
+  private readonly log: Logger;
+  constructor(private readonly opts: PipelineOptions) {
+    this.log = opts.logger ?? createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
+  }
 
   hasAiProvider(): boolean {
     return Boolean(this.opts.provider);
@@ -609,22 +621,39 @@ export class AnalysisPipeline {
     state: InvestigationState,
     provider: AIProvider,
     req: AnalyzeRequest,
+    label = "ai",
   ): Promise<unknown> {
     const control = this.opts.anonStore ? await this.opts.anonStore.load(caseId) : null;
     const policy = toAnonPolicy(control);
+    this.log.debug(
+      `AI call [${label}] provider=${provider.name} images=${req.images.length} ` +
+        `promptChars=${req.userPrompt.length} anonymize=${policy.enabled ? "on" : "off"}`,
+      { caseId },
+    );
     if (!policy.enabled) {
       const result = await provider.analyze(req);
+      this.logAiUsage(caseId, label, provider, result);
       return parseJsonLoose(result.rawText);
     }
     const known = deriveKnownEntities(state);
-    if (this.opts.customEntitiesStore) known.custom = await this.opts.customEntitiesStore.load(caseId);
+    const custom = this.opts.customEntitiesStore ? await this.opts.customEntitiesStore.load(caseId) : [];
+    // Auto-discovered screenshot entities are tokenized too; suppressed ones are never tokenized.
+    const disc = this.opts.discoveredStore ? await this.opts.discoveredStore.load(caseId) : { discovered: [], suppressed: [] };
+    known.custom = [...custom, ...disc.discovered];
+    known.suppressed = disc.suppressed;
     const anon = createAnonymizer(policy, known);
+    this.log.debug(`anonymized prompt before [${label}] AI call`, { caseId });
+
+    // OCR-discovered entities to persist into the case's auto-discovery list after this pass.
+    const discoveredFromOcr: CustomEntity[] = [];
 
     // OCR-redact image buffers when an external-provider runner is configured.
     let images = req.images;
     if (this.opts.ocrRunner && images.length > 0) {
       const runner = this.opts.ocrRunner;
-      const debug = !!process.env.DFIR_OCR_DEBUG;          // per-image log incl. matched words
+      // DFIR_OCR_DEBUG forces the per-image detail to INFO (always shown); otherwise it is a
+      // DEBUG line, surfaced when DFIR_LOG_LEVEL=debug or the dashboard's Logging toggle is on.
+      const forceInfo = !!process.env.DFIR_OCR_DEBUG;
       const dumpDir = process.env.DFIR_OCR_DEBUG_DIR;      // write the redacted copy for inspection
       const count = images.length;
       let totalRedactions = 0;
@@ -634,36 +663,64 @@ export class AnalysisPipeline {
           try {
             const buf = Buffer.from(img.base64, "base64");
             const res = await ocrRedactImage(buf, policy, known, runner);
+            if (res.discovered.length) discoveredFromOcr.push(...res.discovered);
             if (res.changed) {
               redactedImages++;
               totalRedactions += res.redactions.length;
               if (dumpDir) await dumpRedactedImage(dumpDir, caseId, i, img.mimeType, res.buffer);
             }
-            if (debug) {
-              const matched = res.redactions.map((w) => w.text).join(", ");
-              console.warn(
-                `[OCR] case=${caseId} image ${i + 1}/${count}: read ${res.wordCount} word(s), ` +
-                  `redacted ${res.redactions.length}${matched ? ` [${matched}]` : ""}`,
-              );
-            }
+            const matched = res.redactions.map((w) => w.text).join(", ");
+            const line =
+              `[OCR] image ${i + 1}/${count}: read ${res.wordCount} word(s), ` +
+              `redacted ${res.redactions.length}${matched ? ` [${matched}]` : ""}`;
+            if (forceInfo) this.log.info(line, { caseId });
+            else this.log.debug(line, { caseId });
             return res.changed ? { ...img, base64: res.buffer.toString("base64") } : img;
           } catch (err) {
             // OCR failure is non-fatal — log and forward the original image.
-            console.warn(`[OCR redact] ${(err as Error).message}`);
+            this.log.warn(`[OCR redact] ${(err as Error).message}`, { caseId });
             return img;
           }
         }),
       );
       // Always-on confirmation that the OCR pre-pass ran (vs. images going to the model
       // unredacted because anon is off or the provider is local). One line per analyze call.
-      console.warn(
-        `[OCR] case=${caseId}: redaction ran on ${count} screenshot(s) — scrubbed ` +
+      this.log.info(
+        `[OCR] redaction ran on ${count} screenshot(s) — scrubbed ` +
           `${totalRedactions} word(s) across ${redactedImages} image(s) before sending to the model`,
+        { caseId },
       );
+      // Feed what OCR tokenized back into the case's auto-discovery list (dedupe/suppress handled
+      // by the store). Best-effort — a write failure must not fail the analysis.
+      if (this.opts.discoveredStore && discoveredFromOcr.length > 0) {
+        try {
+          const added = await this.opts.discoveredStore.addDiscovered(caseId, discoveredFromOcr);
+          this.log.debug(`[OCR] auto-discovery now holds ${added.discovered.length} entit(y/ies)`, { caseId });
+        } catch (err) {
+          this.log.warn(`[OCR] could not persist discovered entities: ${(err as Error).message}`, { caseId });
+        }
+      }
     }
 
     const result = await provider.analyze({ ...req, userPrompt: anon.apply(req.userPrompt), images });
+    this.logAiUsage(caseId, label, provider, result);
     return anon.restoreDeep(parseJsonLoose(result.rawText));
+  }
+
+  // Log token usage at DEBUG after a provider call (surfaced with DFIR_LOG_LEVEL=debug).
+  private logAiUsage(caseId: string, label: string, provider: AIProvider, result: AnalyzeResult): void {
+    const u = result.usage;
+    if (!u) {
+      this.log.debug(`AI call [${label}] done provider=${provider.name} (no usage reported)`, { caseId });
+      return;
+    }
+    const cache =
+      (u.cacheReadTokens ? ` cacheRead=${u.cacheReadTokens}` : "") +
+      (u.cacheCreationTokens ? ` cacheWrite=${u.cacheCreationTokens}` : "");
+    this.log.debug(
+      `AI call [${label}] done provider=${provider.name} in=${u.inputTokens ?? "?"} out=${u.outputTokens ?? "?"}${cache}`,
+      { caseId },
+    );
   }
 
   // Hash of the last successfully-synthesized inputs per case. The live, debounced
@@ -695,7 +752,7 @@ export class AnalysisPipeline {
     const backoffMs = this.opts.backoffMs ?? 500;
 
     const delta = await withRetry(async () => {
-      const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getSystemPrompt(), userPrompt, images });
+      const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getSystemPrompt(), userPrompt, images }, "extract");
       return deltaSchema.parse(parsed);
     }, retries, backoffMs);
 
@@ -756,7 +813,7 @@ export class AnalysisPipeline {
         `Return the JSON delta.`;
 
       const delta = await withRetry(async () => {
-        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [] });
+        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [] }, "csv");
         return deltaSchema.parse(parsed);
       }, retries, backoffMs);
 
@@ -835,7 +892,7 @@ export class AnalysisPipeline {
         `Return the JSON delta.`;
 
       const delta = await withRetry(async () => {
-        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [] });
+        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [] }, "log");
         return deltaSchema.parse(parsed);
       }, retries, backoffMs);
 
@@ -1526,7 +1583,7 @@ export class AnalysisPipeline {
       `ANALYST QUESTION: ${question.trim()}\n\nAnswer it as JSON.`;
 
     return withRetry(async () => {
-      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getAskPrompt(), userPrompt, images: [] });
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getAskPrompt(), userPrompt, images: [] }, "ask");
       return askSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
@@ -1564,7 +1621,7 @@ export class AnalysisPipeline {
 
     const narrativeSchema = z.object({ narrativeTimeline: z.string().catch("") });
     const result = await withRetry(async () => {
-      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: narrativePrompt, userPrompt, images: [] });
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: narrativePrompt, userPrompt, images: [] }, "narrative");
       return narrativeSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
 
@@ -1605,7 +1662,7 @@ export class AnalysisPipeline {
       `Write the executive summary as JSON.`;
 
     return withRetry(async () => {
-      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getExecSummaryPrompt(), userPrompt, images: [] });
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getExecSummaryPrompt(), userPrompt, images: [] }, "exec-summary");
       return execSummarySchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
@@ -1735,7 +1792,7 @@ export class AnalysisPipeline {
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
     const delta = await withRetry(async () => {
-      const parsed = await this.analyzeRestored(caseId, state, synthProvider, { systemPrompt: getSynthesisPrompt(), userPrompt, images: [] });
+      const parsed = await this.analyzeRestored(caseId, state, synthProvider, { systemPrompt: getSynthesisPrompt(), userPrompt, images: [] }, "synthesis");
       return deltaSchema.parse(parsed);
     }, retries, backoffMs);
 

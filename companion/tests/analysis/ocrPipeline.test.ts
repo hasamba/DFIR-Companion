@@ -43,7 +43,7 @@ function capture(seq: number): CaptureMetadata {
   return {
     caseId: "c1", sequenceNumber: seq, timestamp: `2026-05-28T10:0${seq}:00.000Z`,
     url: "https://velociraptor.local", tabTitle: "VR", triggerType: "timer",
-    perceptualHash: "0000000000000000", isDuplicate: false, screenshotFile: `00000${seq}_t.webp`,
+    contentHash: "0000000000000000", isDuplicate: false, screenshotFile: `00000${seq}_t.webp`,
   };
 }
 

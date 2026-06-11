@@ -209,7 +209,10 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **AI-input anonymization** — reversibly tokenizes internal IPs/usernames/hostnames/domains/emails/
   user-paths and one-way-redacts secrets before the LLM sees them, restoring real values on display;
   adversary IOCs (public IPs, hashes, attacker domains) are preserved. Per-case toggle + a
-  viewable/editable entity list (auto-derived + manual). Default on.
+  viewable entity list that **auto-discovers** entities from the timeline **and from screenshots**
+  (the OCR redaction pass feeds back what it scrubbed, grouped by type) plus manual additions; each
+  auto-discovered entry has a **✕ remove** that stops it being anonymized (reversible) so you can
+  prune false positives. Default on.
 
 ### Correlation & deduplication
 - **Cross-source correlation** — the same artifact reported by different tools (e.g. Velociraptor +
@@ -246,6 +249,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Live dashboard** over WebSocket — **collapsible, drag-to-reorder sections** (order + collapse state
   persist per browser), scope bar, clickable evidence links, and badges (`×N` aggregate, `⊕ N sources`,
   `AUTO`, enrichment verdicts, `⚠ unusual parent`).
+- **Forensic timeline rows** show the affected **🖥 host** (the event's asset) for fast per-host scanning,
+  and the row's **finding references are clickable** — they jump to and flash the finding in the Findings
+  section. The report's incident timeline (§3.1) carries a matching **Host** column.
 - **Manual add** — a **+ Add event / + Add IOC manually** form on the timeline and IOC sections lets the
   analyst record something the AI didn't catch. Manual events (time, description, severity, optional
   asset/MITRE) are tagged `manual`, re-synthesized into findings, and survive re-analysis; manual IOCs are
@@ -350,6 +356,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
   and company name render at the top of the report title page.
 
 ### Ops
+- **Logging to file (session + per-case audit trail)** — every log line tees to the console **and** to files: a global session log (`logs/session-<time>.log`, beside the cases root, fresh per server start) plus a per-case log (`cases/<id>/logs/session-<time>.log`). `DFIR_LOG_LEVEL` (`debug|info|warn|error`) sets the default, and **Settings → Log verbosity** changes it **live with no restart**; at `debug` the log traces every AI call (which model/phase + token usage), each screenshot captured, the OCR redaction pass, prompt anonymization, and every enrichment lookup
 - **Portable Windows EXE** — zip attached to every GitHub Release; unzip + double-click, no Node install required
 - **Docker / Docker Compose** — `docker compose up`; evidence on a host volume, no bundled AI backend
 - **Customizable AI prompts** — override any of the 6 prompts via env var or file; edits apply without restart (`npm run prompts:eject` to dump defaults)
@@ -483,6 +490,8 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 | `DFIR_PORT` | `4773` | Server port (must match the extension and dashboard) |
 | `DFIR_HOST` | `127.0.0.1` | Bind interface; Docker image sets `0.0.0.0`, Compose re-maps to localhost on the host |
 | `DFIR_MAX_BODY_MB` | `256` | Max upload size in MB; raise if large SIEM/EDR exports fail with HTTP 413 |
+| `DFIR_LOG_LEVEL` | `info` | Log verbosity (`debug`/`info`/`warn`/`error`). Tees to console + `logs/session-<time>.log` (global) + `cases/<id>/logs/session-<time>.log` (per-case). `debug` traces AI calls, captures, OCR, anonymization, enrichment. Change live (no restart) via Settings → Log verbosity |
+| `DFIR_LOG_DIR` | `logs/` beside cases root | Folder for the **global** session log. Relative paths anchor to `companion/`. Per-case logs always stay in the case folder |
 
 ### AI — extraction (required to enable analysis)
 
@@ -655,6 +664,7 @@ survives a server restart; results appear on the dashboard timeline/IOCs.
 | `DFIR_HUNT_PLATFORMS` | all | Comma-separated platform allowlist for hunt-pivot cards: `velociraptor`, `defender`, `elastic`, `splunk`, `sigma`, `yara`, `suricata` |
 | `DFIR_CORRELATE_WINDOW_S` | `2` | Time window (s) for same-path cross-source event merge |
 | `DFIR_PHASE_GAP_S` | `300` | Gap between events (s) that starts a new attack phase |
+| `DFIR_DEDUP` | `on` | Skip AI analysis of a screenshot **only when it's byte-identical** to the previous capture (SHA-256 exact match — the screen didn't change). Any difference is analyzed; still stored as evidence either way. Set `off` to analyze **every** screenshot |
 
 Example `.env` (two-tier OpenRouter setup):
 

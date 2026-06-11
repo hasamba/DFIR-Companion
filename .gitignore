@@ -3,6 +3,11 @@
 # (e.g. the default-ish ../cases). Keep it out of git.
 /cases/
 
+# Server + per-case session logs (DFIR_LOG_LEVEL). Written beside the cases root; may
+# carry case identifiers / activity traces — keep out of git like the evidence above.
+/logs/
+logs/
+
 # Secrets / local config
 **/.env
 

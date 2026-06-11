@@ -1,5 +1,5 @@
 import { createAnonymizer } from "./anonymize.js";
-import type { AnonPolicy, KnownEntities } from "./anonymize.js";
+import type { AnonPolicy, KnownEntities, CustomEntity } from "./anonymize.js";
 import sharp from "sharp";
 
 export interface OcrWord {
@@ -25,6 +25,9 @@ export interface OcrRedactResult {
   wordCount: number;
   /** The words that were boxed — sensitive matches with a usable bounding box. */
   redactions: OcrWord[];
+  /** Entities the anonymizer tokenized out of the OCR'd text, with their category — fed back into
+   *  the case's auto-discovery list. Never includes one-way secrets. */
+  discovered: CustomEntity[];
 }
 
 /**
@@ -46,6 +49,7 @@ export async function ocrRedactImage(
     changed: false,
     wordCount,
     redactions: [],
+    discovered: [],
   });
 
   if (!policy.enabled) return unchanged(0);
@@ -60,10 +64,15 @@ export async function ocrRedactImage(
       w.text.trim().length > 0 &&
       anon.apply(w.text) !== w.text,
   );
+  // What the anonymizer tokenized out of this image — surfaced into the case's auto-discovery
+  // list. Captured before the bbox filter so an entity is recorded even if it couldn't be drawn.
+  const discovered = anon.discoveries();
   // A match with a zero-size bbox can't be drawn — exclude it from the boxes AND the count,
   // so `redactions` reflects exactly what was painted onto the image.
   const redactions = matched.filter((w) => w.bbox.w > 0 && w.bbox.h > 0);
-  if (redactions.length === 0) return unchanged(words.length);
+  if (redactions.length === 0) {
+    return { buffer: imageBuffer, changed: false, wordCount: words.length, redactions: [], discovered };
+  }
 
   const overlays = redactions.map((w) => ({
     input: Buffer.from(
@@ -76,7 +85,7 @@ export async function ocrRedactImage(
   }));
 
   const buffer = await sharp(imageBuffer).composite(overlays).toBuffer();
-  return { buffer, changed: true, wordCount: words.length, redactions };
+  return { buffer, changed: true, wordCount: words.length, redactions, discovered };
 }
 
 /**
