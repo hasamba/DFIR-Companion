@@ -541,6 +541,7 @@
       <option value="timeline-csv">Forensic timeline (CSV)</option>
       <option value="timesketch-jsonl">Timesketch JSONL</option>
       <option value="state-json">Full case state (JSON)</option>
+      <option value="stix">STIX 2.1 bundle (JSON)</option>
       <option value="save-template">Save as Template…</option>
     </select>
     <select id="pushSelect" class="toolbar-select" data-tip="Push this case to an external platform" style="display:none">
@@ -6008,6 +6009,9 @@
         window.location.href = `/cases/${c}/timeline.jsonl`;
       } else if (action === "state-json") {
         window.open(`/cases/${c}/state`, "_blank", "noopener");
+      } else if (action === "stix") {
+        // On-demand STIX 2.1 bundle (JSON) — import into any TIP (OpenCTI, MISP, Anomali…).
+        window.location.href = `/cases/${c}/export/stix`;
       } else if (action === "save-template") {
         openSaveTemplate();
       }
