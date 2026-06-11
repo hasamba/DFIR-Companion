@@ -494,6 +494,15 @@
     #searchFilterBar { padding: 5px 16px; background: #0e1116; border-bottom: 1px solid #1a1f28;
       display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: #9aa4b2; }
     #searchFilterBar[hidden] { display: none; }
+    /* Cross-case warning banner (captures arriving for a case other than the one being viewed). */
+    #caseMismatchBanner { display: flex; align-items: center; gap: 10px; padding: 7px 16px;
+      background: #3a2a00; color: #ffcf66; border-bottom: 1px solid #5a4416; font-size: 12.5px; }
+    #caseMismatchBanner[hidden] { display: none; }
+    #caseMismatchText { flex: 1; }
+    #caseMismatchBanner button { background: #5a4416; color: #ffe6a6; border: 1px solid #7a5d1e;
+      border-radius: 5px; cursor: pointer; padding: 3px 9px; font-size: 12px; }
+    #caseMismatchBanner button:hover { background: #6d5219; }
+    #caseMismatchDismiss { padding: 3px 8px; }
     .sf-search-wrap { position: relative; display: flex; align-items: center; }
     #globalSearch { font-size: 12px; padding: 4px 26px 4px 8px; width: 240px;
       background: #161a22; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 5px; }
@@ -1175,6 +1184,13 @@
     <label>to <input id="filterTo" type="datetime-local" title="Filter timeline to (UTC)" /></label>
     <button id="clearFiltersBtn" type="button" hidden>Clear</button>
     <span id="searchMatchCount"></span>
+  </div>
+
+  <!-- Cross-case warning: shown when screenshots arrive for a case other than the one being viewed. -->
+  <div id="caseMismatchBanner" hidden>
+    <span id="caseMismatchText"></span>
+    <button id="caseMismatchSwitch" type="button">Switch case</button>
+    <button id="caseMismatchDismiss" type="button" title="Dismiss">✕</button>
   </div>
 
   <main>
@@ -5209,9 +5225,44 @@
         state.mitreTechniques.map(m => `<div>${mitreLinks([m.id])} — ${esc(m.name)} (${esc(m.findingIds.join(", "))})</div>`).join("") || "—";
     }
 
+    // ── Cross-case capture warning ───────────────────────────────────────────────────────────
+    // The capture extension POSTs to /captures with ITS configured case; the server broadcasts a
+    // `capture_ingest` to every dashboard. If captures are arriving for a case we're not viewing,
+    // the analyst's extension and dashboard have drifted apart — warn (it's an easy trap).
+    let foreignCaptureCase = null;     // the other case captures are arriving for
+    let foreignCaptureTimer = null;    // auto-clears the banner if foreign captures stop
+    let mismatchDismissed = "";        // a foreign case the user dismissed — stay quiet until it changes
+    function showCaseMismatch(otherCase, myCase) {
+      if (!otherCase || otherCase === myCase || otherCase === mismatchDismissed) return;
+      foreignCaptureCase = otherCase;
+      document.getElementById("caseMismatchText").innerHTML =
+        `⚠ Screenshots are arriving for case <strong>${esc(otherCase)}</strong>, but you're viewing <strong>${esc(myCase)}</strong> — your capture extension is pointed at a different case.`;
+      document.getElementById("caseMismatchSwitch").textContent = `Switch to ${otherCase}`;
+      document.getElementById("caseMismatchBanner").hidden = false;
+      if (foreignCaptureTimer) clearTimeout(foreignCaptureTimer);
+      foreignCaptureTimer = setTimeout(hideCaseMismatch, 120000);  // stale after 2 min of quiet
+    }
+    function hideCaseMismatch() {
+      foreignCaptureCase = null;
+      if (foreignCaptureTimer) { clearTimeout(foreignCaptureTimer); foreignCaptureTimer = null; }
+      document.getElementById("caseMismatchBanner").hidden = true;
+    }
+    document.getElementById("caseMismatchSwitch").onclick = () => {
+      if (!foreignCaptureCase) return;
+      document.getElementById("caseId").value = foreignCaptureCase;
+      mismatchDismissed = "";
+      hideCaseMismatch();
+      connect();
+    };
+    document.getElementById("caseMismatchDismiss").onclick = () => {
+      mismatchDismissed = foreignCaptureCase || "";   // suppress this case until a different one appears
+      hideCaseMismatch();
+    };
+
     function connect() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
+      hideCaseMismatch(); mismatchDismissed = "";   // fresh start for the newly-connected case
       if (ws) { try { ws.close(); } catch {} ws = null; }
       // Remember the case so a page refresh reconnects automatically.
       localStorage.setItem("dfir.caseId", caseId);
@@ -5273,6 +5324,12 @@
         const msg = JSON.parse(ev.data);
         if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
+        else if (msg.type === "capture_ingest") {
+          // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
+          // otherwise the extension is feeding a different case than we're viewing — warn.
+          if (msg.caseId && msg.caseId !== caseId) showCaseMismatch(msg.caseId, caseId);
+          else hideCaseMismatch();
+        }
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }

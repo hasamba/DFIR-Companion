@@ -33,4 +33,17 @@ export class LiveHub {
       else set.delete(socket);
     }
   }
+
+  // Send a message to EVERY live subscriber, regardless of which case they're viewing. Used for
+  // cross-case signals — e.g. warning a dashboard that captures are arriving for a different case
+  // than the one it's connected to. A socket subscribed to one case receives it once.
+  broadcastAll(message: unknown): void {
+    const data = JSON.stringify(message);
+    for (const set of this.subs.values()) {
+      for (const socket of set) {
+        if (socket.readyState === socket.OPEN) socket.send(data);
+        else set.delete(socket);
+      }
+    }
+  }
 }

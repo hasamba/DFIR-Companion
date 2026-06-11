@@ -208,6 +208,9 @@ export interface AppOptions {
   // Called when an AI analysis window starts / finishes / fails, so the
   // server can push a live "AI status" indicator to dashboard clients.
   onAiStatus?: (caseId: string, event: AiStatusEvent) => void;
+  // Called for every ingested capture (duplicate or not). Lets the server broadcast a cross-case
+  // signal so a dashboard can warn when captures are arriving for a DIFFERENT case than it's viewing.
+  onCapture?: (caseId: string) => void;
   // When true, run the synthesis pass automatically (debounced) after capture
   // windows are analyzed, so the live dashboard shows findings/attacker path.
   autoSynthesize?: boolean;
@@ -614,6 +617,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           `file=${metadata.screenshotFile || "(none)"}${metadata.isDuplicate ? " (duplicate — not analyzed)" : ""}`,
         { caseId: metadata.caseId },
       );
+      // Cross-case signal: lets a dashboard warn when captures arrive for a case it isn't viewing.
+      options.onCapture?.(metadata.caseId);
       // Evidence is always stored; AI analysis only runs when enabled for the case.
       if (!metadata.isDuplicate && options.pipeline && hasAiProvider() && (await getControl(metadata.caseId)).enabled) {
         const buf = buffers.get(metadata.caseId) ?? [];
@@ -3957,6 +3962,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     autoSynthesize,
     autoSynthesizeDebounceMs,
     onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
+    // Broadcast to ALL dashboards so one viewing a different case can warn that captures are
+    // arriving here (the capture extension is pointed at a case the analyst isn't looking at).
+    onCapture: (caseId) => hub.broadcastAll({ type: "capture_ingest", caseId }),
     onState: (s) => hub.broadcast(s),
     enrichmentProviders: buildEnrichmentProviders(),
     enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,
