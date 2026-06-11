@@ -181,7 +181,11 @@ the report/CSV IOC `sources` column. **Adversary group hints** (`analysis/advers
 same shape: the case's identified ATT&CK techniques (findings + events + the MITRE table) are scored for
 overlap against each known MITRE **Groups** entry from a bundled **offline dataset** (`data/attack-groups.json`,
 loaded+cached by `analysis/adversaryGroupsData.ts`; regenerate via `npm run data:update-attack` →
-`scripts/update-attack-groups.ts`, the only network touch and offline-prep only). **No AI, no runtime network** —
+`scripts/update-attack-groups.ts`, the only network touch and offline-prep only). Matching is **hybrid /
+sub-technique-aware**: both sides keep full ids (T1059.001); an exact sub-technique match scores 1.0, a base-only
+match (`BASE_MATCH_WEIGHT`=0.5) scores half — so `score = exactCount + 0.5·(overlapCount−exactCount)` ranks focused
+actors above ones sharing only the broad technique, while breadth (`overlapCount`, base-or-better) drives the
+`minOverlap` threshold. **No AI, no runtime network** —
 hypothesis fuel, NOT attribution (every hint carries the group's total technique count so a diffuse 4-of-150
 reads differently from a focused 4-of-12, and the caveat is shown everywhere). `ReportWriter.adversaryHints` →
 `GET /cases/:id/adversary-hints`, dashboard *Adversary Hints* panel + report §4.6.1; thresholds

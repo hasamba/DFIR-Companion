@@ -267,17 +267,21 @@ function adversaryHints(state: InvestigationState, lines: string[]): void {
   }
   lines.push(
     `Scored against ${result.caseTechniqueCount} case technique(s) over ${result.groupCount} groups ` +
-      `(MITRE ATT&CK v${result.attackVersion}); ≥${result.minOverlap} overlapping techniques.`,
+      `(MITRE ATT&CK v${result.attackVersion}); ≥${result.minOverlap} overlapping techniques. ` +
+      `**Bold** = exact sub-technique match (stronger signal); plain = base-technique match.`,
     "",
   );
-  lines.push("| Group | Aliases | Overlap | Overlapping techniques |", "| --- | --- | --- | --- |");
+  lines.push("| Group | Aliases | Overlap (exact) | Overlapping techniques |", "| --- | --- | --- | --- |");
   for (const h of result.hints) {
     // Escape [] in the link text so a group name containing a bracket can't truncate the Markdown link.
     const name = `[${cellMd(`${h.id} ${h.name}`).replace(/[[\]]/g, "\\$&")}](${h.url})`;
-    const overlap = `${h.overlapCount} of ${h.groupTechniqueCount}`;
+    const overlap = `${h.overlapCount} of ${h.groupTechniqueCount}${h.exactCount ? ` (${h.exactCount} exact)` : ""}`;
+    const exactSet = new Set(h.exactTechniques);
+    const techniques = h.overlapTechniques
+      .map((t) => (exactSet.has(t) ? `**${attackTechniqueMd(t)}**` : attackTechniqueMd(t)))
+      .join(", ");
     lines.push(
-      `| ${cellMd(name)} | ${cellMd(h.aliases.join(", ") || "—")} | ${overlap} | ` +
-        `${h.overlapTechniques.map(attackTechniqueMd).join(", ")} |`,
+      `| ${cellMd(name)} | ${cellMd(h.aliases.join(", ") || "—")} | ${overlap} | ${techniques} |`,
     );
   }
   lines.push("");

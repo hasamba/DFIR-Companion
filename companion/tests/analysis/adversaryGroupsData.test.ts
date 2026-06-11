@@ -21,12 +21,16 @@ describe("loadAdversaryGroupsDataset (bundled file)", () => {
     expect(apt29?.techniques.length).toBeGreaterThan(0);
   });
 
-  it("stores techniques as valid base ids (no sub-techniques in the slim file)", () => {
+  it("stores techniques as valid full ids, keeping sub-technique granularity", () => {
+    let subTechniqueSeen = 0;
     for (const g of ds.groups) {
       for (const t of g.techniques) {
-        expect(normalizeTechniqueId(t)).toBe(t); // already base + valid
+        expect(normalizeTechniqueId(t)).toBe(t); // already a valid, normalized full id
+        if (t.includes(".")) subTechniqueSeen++;
       }
     }
+    // the whole point of the hybrid scorer: the slim file must retain sub-techniques
+    expect(subTechniqueSeen).toBeGreaterThan(100);
   });
 
   it("caches — repeated calls return the same instance", () => {
