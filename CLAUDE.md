@@ -136,6 +136,18 @@ N ago / +N new events" and "+N new IOCs" banners + per-row `NEW` highlights abov
 analog of `synth-meta.json`) — this is at the route level, so the per-format `import-*` routes and script imports
 don't record it.
 
+**IOC whitelist (auto-mark known-good legitimate).** A GLOBAL store (`IocWhitelistStore`, `whitelist/ioc-whitelist.json`
+next to `cases/`, mirrors `ArtifactBundleStore`/`TemplateStore`) holds known-good patterns: **CIDR** (internal IP
+ranges), **exact** (hashes/values), **regex**, each optionally type-scoped. The pure matcher (`analysis/iocWhitelist.ts` —
+IPv4 CIDR containment, regex/exact, CSV/JSON parse+serialize, `sanitizeRuleInput`) is unit-tested independently of I/O.
+An IOC matching a rule is **auto-marked LEGITIMATE** — it reuses the existing legitimate machinery (writes an `ioc`
+`LegitimateMarker`), so it's reversible and synthesis already excludes it (`applyLegitimate`). Applied in the `/import`
+route's `.then()` BEFORE re-synthesis (route-level, like import-meta — other import paths use the manual apply), and on
+demand via `POST /cases/:id/ioc-whitelist/apply`. Opt-in: the list starts empty (whitelisting internal ranges can hide
+lateral movement). Surfaced in **Settings → IOC Whitelist** (CRUD + CSV/JSON import-export). Use a SUBDIR for the file,
+not a loose sibling of `cases/` — when `DFIR_CASES_ROOT` is a drive-root child (`C:\cases`) the sibling is `C:\`, where
+Windows forbids creating files.
+
 **Cross-source correlation runs in `mergeDelta`** (`correlate.ts`): events describing the
 same artifact collapse into one — by exact dup (time+description, so re-imports don't
 double), shared hash, or same path within a time window. The merged event unions `sources`

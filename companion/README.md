@@ -149,6 +149,12 @@ Examples:
 | `GET /cases/:id/legitimate` | List client-confirmed legitimate findings/IOCs/events (excluded from analysis). |
 | `POST /cases/:id/legitimate` | `{ kind: "finding"\|"ioc"\|"event", ref, note, label? }` — mark a finding (ref = title), IOC (ref = value), or **forensic event** (ref = event id; `label` = its description for display) legitimate; re-runs synthesis without it. The dashboard's per-item **⚑ mark legitimate** button calls this. Legit **events** are hidden from the timeline and excluded from synthesis input but the raw event is preserved in state, so un-marking restores it. |
 | `POST /cases/:id/legitimate/remove` | `{ id }` — un-mark; re-runs synthesis. |
+| `GET /ioc-whitelist` | List the **global IOC whitelist** rules (known-good CIDR/exact/regex patterns). |
+| `POST /ioc-whitelist` | `{ match: "cidr"\|"regex"\|"exact", pattern, iocType?, note? }` — add a rule (validated; idempotent). Matching IOCs are auto-marked legitimate on import. |
+| `DELETE /ioc-whitelist/:ruleId` | Remove a whitelist rule. |
+| `POST /ioc-whitelist/import` | `{ text }` — bulk-import rules from pasted **CSV** (header `match,pattern,type,note`) or **JSON**; skips duplicates. |
+| `GET /ioc-whitelist/export?format=csv\|json` | Download the whitelist as CSV or JSON. |
+| `POST /cases/:id/ioc-whitelist/apply` | Apply the whitelist to this case's current IOCs now — marks matches legitimate, re-synthesizes; returns `{ matched, added, legitimate }`. |
 | `GET /cases/:id/ai-control` | Current AI on/off state: `{ enabled, lastAnalyzedSeq }`. |
 | `POST /cases/:id/ai-control` | `{ enabled }` — turn AI analysis on/off for the case. **Defaults off** (a fresh case captures evidence without running AI). Evidence is always captured; when off, no AI runs. Turning it **on** backfills every screenshot captured while it was off. The dashboard's **AI: ON/OFF** button calls this. |
 | `GET /cases/:id/enrich-control` | Per-source enrichment state: `{ anyConfigured, providers: [{ name, scope, enabled }] }`. `scope` is `local` (your own MISP/YETI — OPSEC-safe) or `external` (third-party SaaS). |

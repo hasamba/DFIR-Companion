@@ -78,6 +78,8 @@ import { TemplateStore, buildInitialQuestions, buildInitialNextSteps } from "./a
 import { diffTimeline } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
 import { mergeEnrichedSubset } from "./analysis/iocBulkOps.js";
+import { IocWhitelistStore } from "./analysis/iocWhitelistStore.js";
+import { whitelistMatches, parseWhitelistText, toWhitelistCsv, sanitizeRuleInput } from "./analysis/iocWhitelist.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { CustomerStore, parseList, sanitizeTargets } from "./analysis/customerStore.js";
@@ -224,6 +226,9 @@ export interface AppOptions {
   artifactBundleStore?: ArtifactBundleStore;
   veloHuntStore?: VeloHuntStore;
   onVeloHunt?: (caseId: string) => void;
+  // IOC whitelist (global, shared across cases): known-good patterns (CIDR ranges, hashes, regexes)
+  // that auto-mark matching IOCs LEGITIMATE on import. Opt-in (the store starts empty).
+  iocWhitelistStore?: IocWhitelistStore;
   // Which hunt-query platforms the dashboard's 🔍 generator offers (DFIR_HUNT_PLATFORMS allowlist).
   // Exposed on /health so the dashboard renders only these cards. Undefined → all platforms.
   huntPlatforms?: HuntPlatform[];
@@ -1778,6 +1783,121 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // ── IOC whitelist (Phase 2 of #35) ─────────────────────────────────────────────────────────
+  // A GLOBAL, environment-level set of "known-good" patterns the analyst maintains (internal IP
+  // ranges as CIDR, known-good hashes, regexes for internal domains). An IOC matching a rule is
+  // auto-marked LEGITIMATE — reusing the legitimate machinery, so it's reversible and shows in the
+  // "Confirmed Legitimate" panel. Auto-applied on import; also on demand per case.
+
+  // Apply the whitelist to a case's current IOCs: add a legitimate marker for each match that isn't
+  // already marked. Pure read-modify-write on legitimate.json (no re-synthesis here — the caller
+  // decides). Returns how many IOCs matched and how many NEW markers were added.
+  async function applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }> {
+    if (!options.iocWhitelistStore || !options.stateStore) return { matched: 0, added: 0 };
+    const rules = await options.iocWhitelistStore.load();
+    if (rules.length === 0) return { matched: 0, added: 0 };
+    const state = await options.stateStore.load(caseId);
+    const matches = whitelistMatches(state.iocs, rules);
+    if (matches.length === 0) return { matched: 0, added: 0 };
+    const markers = await legitimate.load(caseId);
+    const byId = new Map<string, LegitimateMarker>(markers.map((m) => [m.id, m]));
+    let added = 0;
+    for (const { ioc, rule } of matches) {
+      const id = markerId("ioc", ioc.value);
+      if (byId.has(id)) continue;
+      byId.set(id, {
+        id, kind: "ioc", ref: ioc.value,
+        note: `auto-whitelist: ${rule.match} ${rule.pattern}${rule.note ? ` — ${rule.note}` : ""}`,
+        markedAt: new Date().toISOString(), label: ioc.value,
+      });
+      added++;
+    }
+    if (added > 0) await legitimate.save(caseId, [...byId.values()]);
+    return { matched: matches.length, added };
+  }
+
+  app.get("/ioc-whitelist", async (_req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(200).json([]);
+    try {
+      return res.status(200).json(await options.iocWhitelistStore.load());
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Add one rule. Body: { match: "cidr"|"regex"|"exact", pattern, iocType?, note? }
+  app.post("/ioc-whitelist", async (req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
+    const input = sanitizeRuleInput(req.body ?? {});
+    if (!input) return res.status(400).json({ error: "invalid rule — need match (cidr|regex|exact) and a valid pattern (valid CIDR for cidr, valid regex for regex)" });
+    try {
+      const rule = await options.iocWhitelistStore.add(input);
+      return res.status(201).json(rule);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/ioc-whitelist/:ruleId", async (req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
+    try {
+      const removed = await options.iocWhitelistStore.remove(req.params.ruleId);
+      if (!removed) return res.status(404).json({ error: "rule not found" });
+      return res.status(200).json({ removed: true });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import rules from pasted CSV or JSON. Body: { text }. Returns { added, total }.
+  app.post("/ioc-whitelist/import", async (req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
+    const text = typeof req.body?.text === "string" ? req.body.text : "";
+    if (!text.trim()) return res.status(400).json({ error: "text is required (CSV or JSON)" });
+    try {
+      const parsed = parseWhitelistText(text);
+      if (parsed.length === 0) return res.status(400).json({ error: "no valid rules found — expected JSON array or CSV with a 'pattern' column" });
+      const added = await options.iocWhitelistStore.addMany(parsed);
+      return res.status(200).json({ added: added.length, parsed: parsed.length, total: (await options.iocWhitelistStore.load()).length });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Export the whitelist as CSV or JSON (?format=csv|json, default json) for backup / sharing.
+  app.get("/ioc-whitelist/export", async (req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
+    try {
+      const rules = await options.iocWhitelistStore.load();
+      if (String(req.query.format) === "csv") {
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", 'attachment; filename="ioc-whitelist.csv"');
+        return res.status(200).send(toWhitelistCsv(rules));
+      }
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", 'attachment; filename="ioc-whitelist.json"');
+      return res.status(200).send(JSON.stringify(rules, null, 2));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Apply the whitelist to THIS case's current IOCs now (the analyst just added rules, or wants to
+  // sweep an already-imported case). Marks matches legitimate, then re-synthesizes so they drop.
+  app.post("/cases/:id/ioc-whitelist/apply", async (req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const result = await applyWhitelistToCase(caseId);
+      if (result.added > 0) resynthesizeInBackground(caseId);
+      logLine(`[whitelist] ${caseId} apply — matched ${result.matched}, added ${result.added}`);
+      return res.status(200).json({ ...result, legitimate: await legitimate.load(caseId) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Investigation time-window. Setting it re-synthesizes so out-of-scope events
   // (and the findings/IOCs derived from them) drop out of the analysis.
   const scopeStore = new ScopeStore(store);
@@ -1894,6 +2014,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
               options.onImportMeta?.(caseId);
             } catch { /* non-fatal */ }
           }
+          // Phase 2 (#35): auto-mark IOCs that match the global whitelist as legitimate BEFORE
+          // re-synthesis, so known-good indicators drop out of the analysis. Best-effort.
+          try {
+            const wl = await applyWhitelistToCase(caseId);
+            if (wl.added > 0) logLine(`[whitelist] ${caseId} auto-marked ${wl.added} imported IOC(s) legitimate`);
+          } catch { /* non-fatal */ }
           resynthesizeInBackground(caseId);
         })
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
@@ -3612,6 +3738,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const stateStore = new StateStoreImpl(store);
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
+  // A dedicated subdir (mirrors bundles/templates) rather than a loose file beside cases/, because
+  // when DFIR_CASES_ROOT is a drive root child (e.g. C:\cases) the sibling is C:\ — and Windows
+  // forbids creating files directly in a drive root. A subdir is always creatable + writable.
+  const iocWhitelistStore = new IocWhitelistStore(join(dirname(casesRoot), "whitelist", "ioc-whitelist.json"));
   const veloHuntStore = new VeloHuntStore(store);
   const hub = new LiveHub();
   const reportMetaStore = new ReportMetaStore(store);
@@ -3681,6 +3811,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     irisClient: buildIrisClient(),
     velociraptorClient: buildVelociraptorClient(),
     artifactBundleStore,
+    iocWhitelistStore,
     veloHuntStore,
     onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),
     // Trim the dashboard's hunt-query modal to the tools this team runs (default: all).
