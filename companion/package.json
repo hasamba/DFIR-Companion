@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "dev": "tsx src/server.ts",
     "verify:ai": "tsx scripts/verify-ai.ts",
+    "ocr:demo": "tsx scripts/ocr-redact-demo.ts",
     "coverage": "tsx scripts/coverage.ts",
     "reanalyze": "tsx scripts/reanalyze.ts",
     "synthesize": "tsx scripts/synthesize.ts",
