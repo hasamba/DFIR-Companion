@@ -771,8 +771,7 @@
           <div class="sfield"><label>Screenshot flush interval (ms)<span class="sfield-hint">DFIR_FLUSH_INTERVAL_MS</span></label><input id="env-DFIR_FLUSH_INTERVAL_MS" placeholder="300000" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>Duplicate screenshot detection<span class="sfield-hint">DFIR_DEDUP — set <code>off</code> to analyze every screenshot (never skip as duplicate)</span></label><input id="env-DFIR_DEDUP" placeholder="on" /></div>
-          <div class="sfield"><label>Duplicate threshold<span class="sfield-hint">DFIR_DEDUP_THRESHOLD — max hash distance to treat consecutive captures as the same frame; lower = stricter (fewer skipped). Default 10</span></label><input id="env-DFIR_DEDUP_THRESHOLD" placeholder="10" /></div>
+          <div class="sfield"><label>Duplicate screenshot detection<span class="sfield-hint">DFIR_DEDUP — skips a capture only if it's byte-identical to the one before it (screen didn't change). Any change is analyzed. Set <code>off</code> to analyze every screenshot regardless</span></label><input id="env-DFIR_DEDUP" placeholder="on" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>

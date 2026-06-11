@@ -2,27 +2,16 @@ import { z } from "zod";
 import type { CaptureMetadata } from "../types.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { isValidCaseId } from "../storage/caseStore.js";
-import { computeHash, isDuplicate } from "../dedup/perceptualHash.js";
+import { computeContentHash } from "../dedup/contentHash.js";
 import { slugifyTitle } from "./titleSlug.js";
 
-// Max Hamming distance (on the 256-bit dHash) for two consecutive captures to count as the
-// same frame. Tuned for the perceptualHash above: an exact re-capture is ~0; two different
-// log/table pages that share the same UI chrome differ by many bits, so a small threshold
-// separates them. Lower = stricter (fewer dropped as duplicate); higher = more aggressive.
-export const DEFAULT_DUP_THRESHOLD = 10;
-
-// Resolve the dedup threshold from the environment, or null to DISABLE dedup entirely
-// (every capture is analyzed). `DFIR_DEDUP=off` (also false/no/0) disables it;
-// `DFIR_DEDUP_THRESHOLD=<n>` overrides the distance. Read per call so a restart picks up edits.
-export function resolveDedupThreshold(env: NodeJS.ProcessEnv = process.env): number | null {
+// Is deduplication enabled? Default on. `DFIR_DEDUP=off` (also false/no/0) turns it off so
+// EVERY capture is analyzed. Read per call so a restart picks up the change. When on, a capture
+// is a duplicate only if its content hash is byte-identical to the previous capture's (exact
+// match — see contentHash.ts); any on-screen change at all → analyzed.
+export function isDedupEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const sw = (env.DFIR_DEDUP ?? "").trim().toLowerCase();
-  if (sw === "off" || sw === "false" || sw === "no" || sw === "0") return null;
-  const raw = env.DFIR_DEDUP_THRESHOLD;
-  if (raw !== undefined && raw.trim() !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n >= 0) return Math.floor(n);
-  }
-  return DEFAULT_DUP_THRESHOLD;
+  return !(sw === "off" || sw === "false" || sw === "no" || sw === "0");
 }
 
 const payloadSchema = z.object({
@@ -44,13 +33,13 @@ export class CaseNotFoundError extends Error {
   }
 }
 
-// In-memory cache of the last hash per case, to decide duplicates without re-reading disk.
+// In-memory cache of the last content hash per case, to decide duplicates without re-reading disk.
 const lastHashByCase = new Map<string, string>();
 
 export async function ingestCapture(
   store: CaseStore,
   rawPayload: unknown,
-  threshold: number | null = resolveDedupThreshold(),
+  dedup: boolean = isDedupEnabled(),
 ): Promise<CaptureMetadata> {
   const payload = payloadSchema.parse(rawPayload);
 
@@ -61,11 +50,12 @@ export async function ingestCapture(
   }
 
   const bytes = Buffer.from(payload.imageBase64, "base64");
-  const hash = await computeHash(bytes);
+  const hash = computeContentHash(bytes);
 
   const previous = lastHashByCase.get(payload.caseId);
-  // threshold === null → dedup disabled, so nothing is ever flagged as a duplicate.
-  const duplicate = threshold !== null && previous !== undefined && isDuplicate(previous, hash, threshold);
+  // Exact match only: a duplicate is a byte-identical re-capture of the previous frame (the
+  // screen didn't change). Any difference → not a duplicate → analyzed. dedup=false disables it.
+  const duplicate = dedup && previous !== undefined && previous === hash;
   lastHashByCase.set(payload.caseId, hash);
 
   const sequenceNumber = await store.nextSequenceNumber(payload.caseId);
@@ -89,7 +79,7 @@ export async function ingestCapture(
     url: payload.url,
     tabTitle: payload.tabTitle,
     triggerType: payload.triggerType,
-    perceptualHash: hash,
+    contentHash: hash,
     isDuplicate: duplicate,
     screenshotFile,
   };
