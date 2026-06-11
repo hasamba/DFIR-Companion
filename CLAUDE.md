@@ -136,6 +136,18 @@ N ago / +N new events" and "+N new IOCs" banners + per-row `NEW` highlights abov
 analog of `synth-meta.json`) — this is at the route level, so the per-format `import-*` routes and script imports
 don't record it.
 
+**IOC whitelist (auto-mark known-good legitimate).** A GLOBAL store (`IocWhitelistStore`, `whitelist/ioc-whitelist.json`
+next to `cases/`, mirrors `ArtifactBundleStore`/`TemplateStore`) holds known-good patterns: **CIDR** (internal IP
+ranges), **exact** (hashes/values), **regex**, each optionally type-scoped. The pure matcher (`analysis/iocWhitelist.ts` —
+IPv4 CIDR containment, regex/exact, CSV/JSON parse+serialize, `sanitizeRuleInput`) is unit-tested independently of I/O.
+An IOC matching a rule is **auto-marked LEGITIMATE** — it reuses the existing legitimate machinery (writes an `ioc`
+`LegitimateMarker`), so it's reversible and synthesis already excludes it (`applyLegitimate`). Applied in the `/import`
+route's `.then()` BEFORE re-synthesis (route-level, like import-meta — other import paths use the manual apply), and on
+demand via `POST /cases/:id/ioc-whitelist/apply`. Opt-in: the list starts empty (whitelisting internal ranges can hide
+lateral movement). Surfaced in **Settings → IOC Whitelist** (CRUD + CSV/JSON import-export). Use a SUBDIR for the file,
+not a loose sibling of `cases/` — when `DFIR_CASES_ROOT` is a drive-root child (`C:\cases`) the sibling is `C:\`, where
+Windows forbids creating files.
+
 **Cross-source correlation runs in `mergeDelta`** (`correlate.ts`): events describing the
 same artifact collapse into one — by exact dup (time+description, so re-imports don't
 double), shared hash, or same path within a time window. The merged event unions `sources`
@@ -151,7 +163,12 @@ double), shared hash, or same path within a time window. The merged event unions
 the time gap between consecutive events (`DFIR_PHASE_GAP_S`, default 5 min), each labelled with its
 dominant ATT&CK tactic (reuses `tacticForTechniques`) — the *when* axis, complementary to the categorical
 kill chain. Like the graphs, it's **derived on read** (not persisted to state): `ReportWriter.phases` →
-`GET /cases/:id/phases`, dashboard *Attack Phases* panel + report §3.2. Side files in `state/`:
+`GET /cases/:id/phases`, dashboard *Attack Phases* panel + report §3.2. **IOC corroboration**
+(`analysis/iocCorroboration.ts`, pure) is the same shape: IOCs carry no `sources` field, so per-IOC
+corroboration (which tools observed each indicator) is **derived on read** by matching the IOC value
+against the events' `sources` (indexed exact-token match — boundary-aware so `10.0.0.1` ≠ `10.0.0.10`).
+`ReportWriter.iocSources` → `GET /cases/:id/ioc-sources`, the dashboard's *⊕ N sources* IOC badge +
+the report/CSV IOC `sources` column. Side files in `state/`:
 `ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (per-source enrichment
 selection — the enabled provider names; **default = local-only** (MISP/YETI), external opt-in),
 `pending_analysis.json`, `report-meta.json` (human-authored report
@@ -159,13 +176,14 @@ sections — title page, distribution, BIA, glossary, recommendations…), `comm
 (investigator comments on entities — never wiped by synthesis), `tags.json`
 (analyst triage labels on entities — confirmed-malicious/false-positive/key-evidence/… — also never wiped by synthesis),
 `synth-meta.json` (when synthesis last actually ran + the findings diff for the "last synthesized N ago" / what-changed view; written by `synthesize` only on a real run, not a skip),
-`import-meta.json` (when the last import ran + its kind/file + the forensic-timeline diff AND the IOC diff for the "📥 last import N ago / +N new events / +N new IOCs" banners + per-row `NEW` highlights; written by the unified `/import` route after the importer completes — the import analog of `synth-meta.json`).
+`import-meta.json` (when the last import ran + its kind/file + the forensic-timeline diff AND the IOC diff for the "📥 last import N ago / +N new events / +N new IOCs" banners + per-row `NEW` highlights; written by the unified `/import` route after the importer completes — the import analog of `synth-meta.json`),
+`playbook.json` (the **Response Playbook** — a trackable checklist auto-derived from the case's next steps + Critical/High findings (`analysis/playbook.ts` `derivePlaybookTasks`/`mergePlaybook`, pure + idempotent: an auto-task's id IS its source key, so a re-derive REFRESHES its text but PRESERVES the analyst's status/assignee/due/notes/order; a *pristine* untouched auto-task whose source vanished is pruned, a touched one is kept) plus custom tasks; the `GET` route re-syncs write-if-changed against current state, and `synthesize` re-syncs on each run — never wiped by synthesis), `playbook-control.json` (the per-case **IR-templates** toggle `{ useTemplates }`, `PlaybookControlStore`, default off — when on, `derivePlaybookTasks` expands each Critical/High finding into severity-based response phases (Critical → Contain/Investigate/Eradicate/Recover, High → Investigate/Contain), the Investigate step tailored to the finding's dominant ATT&CK tactic via `tacticForTechniques`).
 
 **Per-case stores** follow the same pattern (atomic temp-file rename via `storage/atomicWrite.ts` —
 which **retries the rename through a transient `EPERM`/`EBUSY`/`EACCES` lock**, since `cases/` may live
 in a synced folder where Dropbox/OneDrive/AV briefly locks the file mid-rename; route every new store's
 save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
-`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `ImportMetaStore`. Pure filters/transforms live next to
+`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `ImportMetaStore`, `PlaybookStore`, `PlaybookControlStore`. Pure filters/transforms live next to
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`, `diffFindings`, `diffTimeline`, `diffIocs`) and are unit-tested independently of I/O.
 
@@ -359,6 +377,16 @@ page + container id are remembered per case in `state/notion-export.json` (recre
 the block). New page = a row in `DFIR_NOTION_DATABASE_ID` (the investigation template) or a child of
 `DFIR_NOTION_PARENT_PAGE_ID`; the analyst picks new-vs-existing in a dashboard modal. Screenshots are
 referenced by filename (not uploaded). Appends are batched to Notion's 100-block/2-level-nesting limits.
+
+**ClickUp** (`integrations/clickup/` — `clickupClient` + pure `clickupMap` + `pushPlaybookToClickUp`
+orchestrator + `ClickUpExportStore`) pushes the **Response Playbook** (issue #36) to a ClickUp list as
+tasks (`DFIR_CLICKUP_TOKEN`; route `POST /cases/:id/push/clickup` `{ listId? }`, `/clickup/status`,
+`/health.clickupEnabled`). Status is mapped onto the list's REAL custom statuses (`resolveClickUpStatus`
+against `listStatuses()`), priority → ClickUp's int (critical→1…low→4). The crux mirrors Notion's
+remember-the-target idea but per TASK: each playbook task's ClickUp id is saved in
+`state/clickup-export.json` (`ClickUpExportStore`), so a re-push **updates** the task it created
+(`updateTask`) instead of duplicating (`createTask`). Like IRIS/Notion the client takes an injectable
+`fetchFn` (no network in tests). The playbook is **synced** (honoring the IR-templates flag) before the push.
 
 **Customizable prompts.** The six prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
 consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`,

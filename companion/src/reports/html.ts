@@ -5,6 +5,7 @@ import { buildAssetGraph } from "../analysis/assetGraph.js";
 import { renderMarkdownReport } from "./markdown.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
+import type { PlaybookTask } from "../analysis/playbook.js";
 import { renderAssetGraphSvg } from "./assetGraphSvg.js";
 import { renderSwimlaneSvg } from "./swimlaneSvg.js";
 import { buildSwimlaneData } from "../analysis/swimlane.js";
@@ -115,8 +116,8 @@ export function injectPrintTrigger(html: string): string {
   return idx === -1 ? html + PRINT_TRIGGER : html.slice(0, idx) + PRINT_TRIGGER + html.slice(idx);
 }
 
-export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary, assetGraph?: AssetGraph, notebookEntries?: NotebookEntry[]): string {
-  const markdown = renderMarkdownReport(state, meta, exposure, assetGraph, notebookEntries);
+export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary, assetGraph?: AssetGraph, notebookEntries?: NotebookEntry[], playbookTasks?: PlaybookTask[]): string {
+  const markdown = renderMarkdownReport(state, meta, exposure, assetGraph, notebookEntries, playbookTasks);
 
   const marked = new Marked({ gfm: true });
   // Escape any raw HTML tokens in the source instead of emitting them verbatim.
