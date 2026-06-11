@@ -16,6 +16,8 @@ import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGrap
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../analysis/swimlane.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
+import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
+import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
@@ -143,6 +145,14 @@ export class ReportWriter {
   async iocSources(caseId: string): Promise<Record<string, string[]>> {
     const state = await this.loadFilteredState(caseId);
     return deriveIocSources(state.iocs, state.forensicTimeline);
+  }
+
+  // Adversary group hints (#46): rank known ATT&CK groups by how much their technique set overlaps
+  // the case's identified techniques — offline hypothesis fuel, NOT attribution. Derived on demand
+  // from the bundled dataset with the same scope/legitimate filtering as the report.
+  async adversaryHints(caseId: string): Promise<AdversaryHintsResult> {
+    const state = await this.loadFilteredState(caseId);
+    return buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
   }
 
   async writeAll(caseId: string): Promise<ReportPaths> {

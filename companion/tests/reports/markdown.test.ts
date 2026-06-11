@@ -32,6 +32,26 @@ describe("renderMarkdownReport", () => {
     expect(md).not.toContain("| Time | Count | Severity | Event | MITRE | Findings | Evidence |");
   });
 
+  it("renders the adversary-group hints subsection (4.6.1) with the not-attribution caveat", () => {
+    const state = emptyState("c1");
+    // Common techniques several real groups share → at least one hint clears the 3-overlap default.
+    state.findings.push({ id: "f1", severity: "High", title: "intrusion", description: "",
+      relatedIocs: [], mitreTechniques: ["T1566", "T1059.001", "T1078", "T1003", "T1021", "T1053"],
+      sourceScreenshots: [], firstSeen: "2026-05-28T10:00:00.000Z", lastUpdated: "2026-05-28T10:00:00.000Z", status: "open" });
+
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("#### 4.6.1 Adversary group hints");
+    expect(md).toContain("not attribution");
+    expect(md).toContain("| Group | Aliases | Overlap | Overlapping techniques |");
+    expect(md).toMatch(/https:\/\/attack\.mitre\.org\/groups\/G\d{4}\//);
+  });
+
+  it("shows a placeholder for adversary hints when the case has no techniques", () => {
+    const md = renderMarkdownReport(emptyState("c9"));
+    expect(md).toContain("#### 4.6.1 Adversary group hints");
+    expect(md).toContain("No techniques identified yet");
+  });
+
   it("includes every template chapter and shows placeholders for empty human sections", () => {
     const md = renderMarkdownReport(emptyState("c9"));
     for (const heading of [
