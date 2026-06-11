@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-06-11
+
 ### Added
 - **Dashboard warns when captures are arriving for a different case than you're viewing.** The capture extension POSTs to `/captures` with *its own* configured case id, which is easy to leave pointed at an old case while the dashboard has moved on — so screenshots (and their analysis/anonymization) silently land somewhere you're not looking. The server now broadcasts a lightweight `capture_ingest` signal to every connected dashboard (new `LiveHub.broadcastAll`); a dashboard whose connected case differs from the incoming capture's case shows a banner — *"⚠ Screenshots are arriving for case X, but you're viewing Y — your capture extension is pointed at a different case"* — with a one-click **Switch to X** and a dismiss. It also **checks on connect** (`GET /captures/recent`) so opening a case while screenshots recently (≤2 min) landed on a different one warns immediately, not only on the next live capture. It auto-clears when a capture for the current case arrives or after 2 minutes of quiet. Surfaces a previously-invisible footgun (it's exactly why the anonymization auto-discovery looked "empty" — the entities were landing on the other case).
 - **Anonymization auto-discovery now learns from screenshots, and you can remove wrong entries.** Previously the Anonymization screen's "auto-detected entities" list was derived only from the forensic timeline, so it could sit empty while the OCR pass was busy blacking out hosts/accounts/paths in screenshots — confusing, and meaning a bare hostname seen only in an image was never tokenized. Now the OCR redactor reports every entity it tokenizes out of a screenshot (`anonymizer.discoveries()`), and those are persisted per case (`state/anon-discovered.json`) and surfaced in the list, grouped by type (Hosts / Accounts / Internal domains / IPs / Emails / Paths / Other) — so the list genuinely "grows with the investigation" and the same value is tokenized consistently on later runs. Each entry has a **✕ remove**: removal both hides it from the list **and stops it being anonymized** going forward (a per-case suppression veto enforced at the anonymizer's single `assign()` chokepoint, so it works even for pattern matches like a mis-detected `DOMAIN\user` path), and is reversible with **↺ restore**. One-way secrets are never listed (they're placeholder-redacted, not tokenized). New `DiscoveredEntitiesStore` + pure merge/suppress helpers (unit-tested), `discoveries()` on the anonymizer, and routes `POST /cases/:id/anon-entities/suppress` + `…/unsuppress` (GET now also returns the grouped `auto` set + `suppressed`).
@@ -1014,7 +1016,8 @@ Initial baseline.
   report exports.
 - Scripts: `dev`, `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.13.0...v0.14.0
