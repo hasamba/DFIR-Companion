@@ -8,11 +8,12 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { createApp } from "../../src/server.js";
 
 let app: ReturnType<typeof createApp>;
+let cases: CaseStore;
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-anonroute-"));
-  const store = new CaseStore(root);
-  await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  app = createApp(store, { stateStore: new StateStore(store) });
+  cases = new CaseStore(root);
+  await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  app = createApp(cases, { stateStore: new StateStore(cases) });
 });
 
 describe("/cases/:id/anon-control", () => {
@@ -50,6 +51,19 @@ describe("/cases/:id/anon-entities", () => {
     expect(post.status).toBe(200);
     expect(post.body.custom).toEqual([{ value: "DC9", category: "HOST" }, { value: "x", category: "OTHER" }]);
     expect((await request(app).get("/cases/c1/anon-entities")).body.custom.length).toBe(2);
+  });
+
+  it("GET surfaces OCR-discovered entities in the grouped auto set (by category)", async () => {
+    const { DiscoveredEntitiesStore } = await import("../../src/analysis/anonDiscovered.js");
+    const disc = new DiscoveredEntitiesStore(cases);
+    await disc.addDiscovered("c1", [
+      { value: "WIN11\\vagrant", category: "USER" },
+      { value: "10.0.0.5", category: "IP" },
+    ]);
+    const res = await request(app).get("/cases/c1/anon-entities");
+    expect(res.status).toBe(200);
+    expect(res.body.auto.accounts).toContain("WIN11\\vagrant");
+    expect(res.body.auto.ips).toContain("10.0.0.5");
   });
 
   it("suppress removes an entity (vetoes it) and unsuppress restores it; GET reflects the list", async () => {
