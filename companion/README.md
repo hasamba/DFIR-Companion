@@ -16,6 +16,10 @@ Server listens on **http://127.0.0.1:4773** (localhost only). Dashboard at
 http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g.
 `[DFIR] cases root: ...\cases`.
 
+> **Updating an existing checkout?** After `git pull`, re-run `npm install` — new features
+> can add dependencies (e.g. the screenshot OCR redaction added `tesseract.js`). Then restart
+> `npm run dev`; server code loads once at startup, so changes need a restart.
+
 > If you see `EADDRINUSE`, a companion is already running. Reuse it, or free the port:
 > `Get-NetTCPConnection -LocalPort 4773 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`
 

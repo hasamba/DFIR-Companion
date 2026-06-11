@@ -396,6 +396,11 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
    dropdown (**Refresh cases** if it isn't listed yet) and **Start**. Browse your evidence —
    the dashboard updates live.
 
+> **Updating an existing checkout?** After `git pull`, re-run `npm install` in **both**
+> `companion/` and `extension/` — new features can add dependencies (e.g. the screenshot
+> OCR redaction added `tesseract.js`). Then restart `npm run dev` (server code loads once
+> at startup).
+
 Full configuration, HTTP endpoints, the case-folder layout, and the analysis model
 are documented in **[companion/README.md](companion/README.md)**.
 
