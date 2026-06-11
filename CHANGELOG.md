@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **IOCs: bulk multi-select + batch actions (#35, Phase 1).** A checkbox column and select-all header let analysts select any subset of IOCs in the IOC panel; a bulk action toolbar appears when IOCs are selected. Four actions: **🔬 Enrich** — sends the selected IOCs to all enabled threat-intel providers via a new `POST /cases/:id/iocs/bulk-enrich` endpoint (runs in background, merges results back without touching unselected IOCs); **🏷 Tag** — opens the existing tag modal in bulk IOC mode to add a triage label to every selected IOC at once; **⚑ Mark Legitimate** — batch-marks selected IOCs as benign via the existing `/legitimate/batch` endpoint (one re-synthesis, not one per IOC); **📋 Copy** — copies selected IOC values to the clipboard, one per line. A new `POST /cases/:id/iocs/bulk-tag` route serializes the `TagsStore` writes to avoid the last-write-wins race. Selection resets on case switch. The `mergeEnrichedSubset` pure helper (unit-tested) handles writing enrichment results for a subset back into the full IOC list.
+
 ## [0.16.0] - 2026-06-11
 
 ### Changed

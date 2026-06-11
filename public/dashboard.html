@@ -208,6 +208,16 @@
     #evStarFilterBtn.active { color: #ffd93b; border-color: #ffd93b; background: #1c1500; }
     #iocFlaggedBtn { background: transparent; border: 1px solid #3a4050; color: #6b7280; border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
     #iocFlaggedBtn.active { color: #ff9f43; border-color: #ff9f43; background: #211405; }
+    /* IOC multi-select + bulk action bar */
+    .ioc-bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 0 4px; font-size: 12px; color: #9aa4b2; border-bottom: 1px solid #2a2f3a; margin-bottom: 4px; }
+    .ioc-bulk-bar.active { display: flex; }
+    .ioc-bulk-btn { background: #1e2330; border: 1px solid #3a4050; color: #cbd3df; border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+    .ioc-bulk-btn:hover { background: #2a3050; color: #fff; border-color: #6aa9ff; }
+    .ioc-cb { width: 13px; height: 13px; cursor: pointer; accent-color: #6aa9ff; flex-shrink: 0; margin: 0; }
+    .ioc-row { display: flex; align-items: center; gap: 4px; padding: 2px 0; border-bottom: 1px solid #1a1f28; position: relative; }
+    .ioc-row:hover { background: #0d1117; }
+    .ioc-row.ioc-selected { background: #142038; }
+    .ioc-header-row { display: flex; align-items: center; gap: 4px; padding: 2px 0 5px; border-bottom: 1px solid #2a2f3a; margin-bottom: 1px; font-size: 11px; color: #6b7280; }
     .vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid #2a2f3a; border-radius: 5px; }
     .vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
     .vql-result th, .vql-result td { border: 1px solid #2a2f3a; padding: 3px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
@@ -1061,6 +1071,7 @@
         </form>
       </div>
       <div id="iocImportMeta" class="synth-meta" style="display:none"></div>
+      <div class="ioc-bulk-bar" id="iocBulkBar"><span id="iocBulkCount" style="font-weight:600;color:#6aa9ff"></span> <span>Actions:</span> <button class="ioc-bulk-btn" id="iocBulkEnrichBtn" title="Enrich selected IOCs against enabled threat-intel providers">🔬 Enrich</button> <button class="ioc-bulk-btn" id="iocBulkTagBtn" title="Add a tag to all selected IOCs">🏷 Tag</button> <button class="ioc-bulk-btn" id="iocBulkLegitBtn" title="Mark selected IOCs as legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button> <button class="ioc-bulk-btn" id="iocBulkCopyBtn" title="Copy selected IOC values to clipboard (one per line)">📋 Copy</button> <button class="ioc-bulk-btn" id="iocBulkClearBtn" style="color:#9aa4b2">✕ Clear</button></div>
       <div id="iocs">—</div></section>
     <section id="sec-exposure" style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
       <div class="ce-body">
@@ -2005,10 +2016,11 @@
     }
     function renderTagModal() {
       if (!tagTarget) return;
-      // Bulk mode: tag N events at once (current tags not shown, only add-flow)
+      // Bulk mode: tag N entities at once (current tags not shown, only add-flow)
       if (tagTarget.bulk) {
-        document.getElementById("tagTitle").textContent = `Add tags to ${tagTarget.ids.length} selected event${tagTarget.ids.length !== 1 ? "s" : ""}`;
-        document.getElementById("tagCurrent").innerHTML = `<div style='color:#9aa4b2;font-size:12px'>Tags will be added to all selected events. Individual existing tags are not shown in bulk mode.</div>`;
+        const t = tagTarget.targetType || "event";
+        document.getElementById("tagTitle").textContent = `Add tags to ${tagTarget.ids.length} selected ${t}${tagTarget.ids.length !== 1 ? "s" : ""}`;
+        document.getElementById("tagCurrent").innerHTML = `<div style='color:#9aa4b2;font-size:12px'>Tags will be added to all selected ${t}s. Individual existing tags are not shown in bulk mode.</div>`;
         const sug = document.getElementById("tagSuggest");
         sug.innerHTML = SUGGESTED_TAGS.map(l => { const c = tagColor(l);
           return `<button class="tag-suggest-btn" style="color:${c};border-color:${c}" data-label="${escAttr(l)}">+ ${esc(l)}</button>`; }).join("");
@@ -2035,17 +2047,18 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId || !tagTarget || !String(label || "").trim()) return;
       const msg = document.getElementById("tagMsg"); msg.textContent = "adding…";
-      // Bulk mode: add the tag to every selected event. Serialize the POSTs — the server's
+      // Bulk mode: add the tag to every selected entity. Serialize the POSTs — the server's
       // TagsStore.add() is read-modify-write on tags.json, so concurrent requests clobber each
       // other (last write wins) and only one tag would survive. Await each before the next.
       if (tagTarget.bulk) {
         (async () => {
           try {
             const ids = tagTarget.ids;
+            const bulkTargetType = tagTarget.targetType || "event";
             for (let i = 0; i < ids.length; i++) {
               msg.textContent = `adding… (${i + 1}/${ids.length})`;
               const r = await fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
-                body: JSON.stringify({ targetType: "event", targetId: ids[i], author: investigatorName(), label }) });
+                body: JSON.stringify({ targetType: bulkTargetType, targetId: ids[i], author: investigatorName(), label }) });
               if (!r.ok) throw new Error("HTTP " + r.status);
             }
             document.getElementById("tagInput").value = ""; msg.textContent = ""; loadTags(caseId);
@@ -2338,6 +2351,7 @@
 
     // --- Multi-select (session-only, cleared on re-render) ----------------------
     let selectedEvents = new Set();
+    let selectedIocs = new Set();
     function updateBulkBar() {
       const bar = document.getElementById("evBulkBar");
       if (!bar) return;
@@ -2349,6 +2363,17 @@
       }
     }
     function clearSelection() { selectedEvents.clear(); renderTimelineEvents(lastFt); }
+    function updateIocBulkBar() {
+      const bar = document.getElementById("iocBulkBar");
+      if (!bar) return;
+      if (selectedIocs.size > 0) {
+        bar.classList.add("active");
+        document.getElementById("iocBulkCount").textContent = `${selectedIocs.size} IOC${selectedIocs.size !== 1 ? "s" : ""} selected`;
+      } else {
+        bar.classList.remove("active");
+      }
+    }
+    function clearIocSelection() { selectedIocs.clear(); if (lastState) renderIocs(lastState.iocs || []); }
     function bulkToggleStar() {
       const caseId = document.getElementById("caseId").value.trim();
       const anyUnstarred = [...selectedEvents].some(id => !starredEvents.has(id));
@@ -2356,8 +2381,8 @@
       saveStarred(caseId);
       renderTimelineEvents(lastFt);
     }
-    function openBulkTagModal(ids) {
-      tagTarget = { bulk: true, ids };
+    function openBulkTagModal(ids, targetType) {
+      tagTarget = { bulk: true, ids, targetType: targetType || "event" };
       document.getElementById("tagOverlay").classList.add("open");
       renderTagModal();
       document.getElementById("tagInput").focus();
@@ -2386,6 +2411,59 @@
       } catch {
         statusEl.textContent = "mark failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
       }
+    }
+
+    // --- Bulk IOC operations -------------------------------------------------------
+    async function bulkEnrichIocs() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !selectedIocs.size) return;
+      const ids = [...selectedIocs];
+      const statusEl = document.getElementById("status");
+      statusEl.textContent = `enriching ${ids.length} IOC${ids.length !== 1 ? "s" : ""}…`;
+      try {
+        const r = await fetch(`/cases/${caseId}/iocs/bulk-enrich`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ iocIds: ids }) });
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}));
+          throw new Error(e.error || "HTTP " + r.status);
+        }
+        statusEl.textContent = `enrichment started for ${ids.length} IOC${ids.length !== 1 ? "s" : ""} (see AI status)`;
+      } catch (e) {
+        statusEl.textContent = "enrich failed: " + e.message;
+      }
+    }
+    function bulkTagIocs() {
+      if (selectedIocs.size) openBulkTagModal([...selectedIocs], "ioc");
+    }
+    async function bulkMarkIocsLegitimate() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !selectedIocs.size) return;
+      const ids = [...selectedIocs];
+      const note = prompt(`Mark ${ids.length} IOC${ids.length !== 1 ? "s" : ""} as legitimate (benign — exclude from analysis). Reason (optional):`, "");
+      if (note === null) return;
+      const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
+      const items = ids.map(id => ({ kind: "ioc", ref: iocById.get(id) ?? id, label: iocById.get(id) ?? id }));
+      const statusEl = document.getElementById("status");
+      statusEl.textContent = `marking ${ids.length} IOC${ids.length !== 1 ? "s" : ""} legitimate…`;
+      try {
+        const r = await fetch(`/cases/${caseId}/legitimate/batch`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ items, note }) });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        renderLegitimate(await r.json());
+        selectedIocs.clear();
+        if (lastState) renderIocs(lastState.iocs || []);
+        statusEl.textContent = "marked legitimate — AI is re-synthesizing (see AI status)";
+      } catch {
+        statusEl.textContent = "mark failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
+      }
+    }
+    function bulkCopyIocs() {
+      const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
+      const text = [...selectedIocs].map(id => iocById.get(id) ?? id).join("\n");
+      navigator.clipboard.writeText(text).then(() => {
+        const statusEl = document.getElementById("status");
+        statusEl.textContent = `copied ${selectedIocs.size} IOC value${selectedIocs.size !== 1 ? "s" : ""} to clipboard`;
+      }).catch(() => {});
     }
 
     let veloEnabled = false;   // set from /health — whether the Velociraptor API is configured (Run button)
@@ -4058,15 +4136,34 @@
       const cnt = document.getElementById("iocFlaggedCount");
       if (cnt) cnt.textContent = flaggedTotal ? ` (${flaggedTotal} flagged)` : "";
       const visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
-      el.innerHTML = visible.length
-        ? visible.map(i => {
-            const isNew = newIocKeys.has(i.value);
-            const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
-            return `<div class="${isNew ? "ioc-new" : ""}">${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} <span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}</div>`;
-          }).join("")
-        : (showFlaggedIocsOnly
-            ? "<div style='color:#9aa4b2'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-            : "<div style='color:#9aa4b2'>No IOCs yet</div>");
+      if (!visible.length) {
+        el.innerHTML = showFlaggedIocsOnly
+          ? "<div style='color:#9aa4b2'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
+          : "<div style='color:#9aa4b2'>No IOCs yet</div>";
+        updateIocBulkBar();
+        return;
+      }
+      const allIds = visible.map(i => i.id);
+      const allSel = allIds.length > 0 && allIds.every(id => selectedIocs.has(id));
+      const someSel = allIds.some(id => selectedIocs.has(id));
+      const headerRow = `<div class="ioc-header-row">`
+        + `<input type="checkbox" class="ioc-cb" id="iocSelectAll" ${allSel ? "checked" : ""} title="Select / deselect all visible IOCs" />`
+        + ` <span>${visible.length} IOC${visible.length !== 1 ? "s" : ""}</span>`
+        + `</div>`;
+      const rows = visible.map(i => {
+        const isNew = newIocKeys.has(i.value);
+        const isSel = selectedIocs.has(i.id);
+        const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
+        return `<div class="ioc-row${isSel ? " ioc-selected" : ""}${isNew ? " ioc-new" : ""}" data-iocid="${escAttr(i.id)}">`
+          + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
+          + `${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
+          + `<span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}`
+          + `</div>`;
+      }).join("");
+      el.innerHTML = headerRow + rows;
+      const selAll = document.getElementById("iocSelectAll");
+      if (selAll && someSel && !allSel) selAll.indeterminate = true;
+      updateIocBulkBar();
     }
 
     // Render the forensic timeline from a pre-scoped+legit-filtered list.
@@ -4274,6 +4371,7 @@
       loadPlaybook(caseId);
       loadStarred(caseId);
       selectedEvents.clear();
+      selectedIocs.clear();
       showStarredOnly = false;
       const sfBtn = document.getElementById("evStarFilterBtn");
       if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
@@ -4585,11 +4683,17 @@
         toggleStar(caseId, star.getAttribute("data-evid"));
         return;
       }
-      // Bulk action bar buttons
+      // Bulk action bar buttons (events)
       if (e.target.id === "evBulkStarBtn") { bulkToggleStar(); return; }
       if (e.target.id === "evBulkTagBtn") { if (selectedEvents.size) openBulkTagModal([...selectedEvents]); return; }
       if (e.target.id === "evBulkLegitBtn") { bulkMarkLegitimate(); return; }
       if (e.target.id === "evBulkClearBtn") { clearSelection(); return; }
+      // Bulk action bar buttons (IOCs)
+      if (e.target.id === "iocBulkEnrichBtn") { bulkEnrichIocs(); return; }
+      if (e.target.id === "iocBulkTagBtn") { bulkTagIocs(); return; }
+      if (e.target.id === "iocBulkLegitBtn") { bulkMarkIocsLegitimate(); return; }
+      if (e.target.id === "iocBulkCopyBtn") { bulkCopyIocs(); return; }
+      if (e.target.id === "iocBulkClearBtn") { clearIocSelection(); return; }
       // Star filter toggle
       if (e.target.id === "evStarFilterBtn") {
         showStarredOnly = !showStarredOnly;
@@ -4638,6 +4742,32 @@
           if (row) row.classList.toggle("ev-selected", e.target.checked);
         });
         updateBulkBar();
+      }
+      // IOC checkbox: per-row checkbox
+      const iocRowCb = e.target.closest && e.target.closest(".ioc-row-cb");
+      if (iocRowCb) {
+        const id = iocRowCb.getAttribute("data-iocid");
+        if (e.target.checked) selectedIocs.add(id); else selectedIocs.delete(id);
+        const row = iocRowCb.closest(".ioc-row");
+        if (row) row.classList.toggle("ioc-selected", e.target.checked);
+        updateIocBulkBar();
+        const allIds = [...document.querySelectorAll(".ioc-row-cb")].map(cb => cb.getAttribute("data-iocid"));
+        const allSel = allIds.every(id => selectedIocs.has(id));
+        const someSel = allIds.some(id => selectedIocs.has(id));
+        const sa = document.getElementById("iocSelectAll");
+        if (sa) { sa.checked = allSel; sa.indeterminate = someSel && !allSel; }
+        return;
+      }
+      // IOC select-all checkbox
+      if (e.target.id === "iocSelectAll") {
+        document.querySelectorAll(".ioc-row-cb").forEach(cb => {
+          const id = cb.getAttribute("data-iocid");
+          if (e.target.checked) selectedIocs.add(id); else selectedIocs.delete(id);
+          cb.checked = e.target.checked;
+          const row = cb.closest(".ioc-row");
+          if (row) row.classList.toggle("ioc-selected", e.target.checked);
+        });
+        updateIocBulkBar();
       }
     });
     document.getElementById("commentText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) postComment(); });

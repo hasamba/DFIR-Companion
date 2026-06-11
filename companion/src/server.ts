@@ -65,7 +65,7 @@ import type { ReportWriter } from "./reports/reportWriter.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
-import { TagsStore } from "./analysis/tags.js";
+import { TagsStore, type Tag } from "./analysis/tags.js";
 import { NotebookStore, type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "./analysis/notebookStore.js";
 import { PlaybookStore, type NewPlaybookTask, type PlaybookTaskPatch } from "./analysis/playbookStore.js";
 import { PLAYBOOK_STATUSES, playbookStats, type PlaybookStatus, type PlaybookTask } from "./analysis/playbook.js";
@@ -77,6 +77,7 @@ import { ImportMetaStore } from "./analysis/importMeta.js";
 import { TemplateStore, buildInitialQuestions, buildInitialNextSteps } from "./analysis/templateStore.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
+import { mergeEnrichedSubset } from "./analysis/iocBulkOps.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { CustomerStore, parseList, sanitizeTargets } from "./analysis/customerStore.js";
@@ -1699,6 +1700,79 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await legitimate.save(req.params.id, next);
       resynthesizeInBackground(req.params.id);
       return res.status(200).json(next);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Enrich a specific subset of the case's IOCs — identified by ID — without touching the
+  // rest. Runs enrichIocs on the selected subset, then merges the results back. This is the
+  // backend for the dashboard bulk-select "Enrich selected" action. Runs in the background
+  // (202 accepted) so the caller isn't blocked on N provider round-trips.
+  // Body: { iocIds: string[], force?: boolean }
+  app.post("/cases/:id/iocs/bulk-enrich", async (req: Request, res: Response) => {
+    const providers = options.enrichmentProviders ?? [];
+    if (providers.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    const rawIds = Array.isArray(req.body?.iocIds) ? req.body.iocIds : [];
+    const iocIds = (rawIds as unknown[]).map(String).filter(Boolean);
+    if (!iocIds.length) return res.status(400).json({ error: "iocIds must be a non-empty array" });
+    const force = req.body?.force === true;
+    try {
+      const state = await options.stateStore.load(caseId);
+      const targetSet = new Set<string>(iocIds);
+      const subset = state.iocs.filter((i) => targetSet.has(i.id));
+      if (subset.length === 0) return res.status(404).json({ error: "none of the specified IOC IDs were found in this case" });
+      const enabledProviders = await enabledProvidersFor(caseId);
+      if (enabledProviders.length === 0) return res.status(422).json({ error: "no enrichment providers enabled for this case — enable providers in the enrichment panel first" });
+      void (async () => {
+        options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `enriching ${subset.length} selected IOC(s)` });
+        const { iocs: enrichedSubset, summary } = await enrichIocs(subset, {
+          providers: enabledProviders,
+          delayMs: options.enrichDelayMs,
+          perProviderDelayMs: options.enrichProviderDelayMs,
+          maxIocs: options.enrichMaxIocs,
+          force,
+          health: enrichHealth,
+          onProgress: (done, total) => options.onAiStatus?.(caseId, {
+            status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+            detail: `enriching selected IOC ${done}/${total}`,
+          }),
+        });
+        const current = await options.stateStore!.load(caseId);
+        const merged = mergeEnrichedSubset(current.iocs, enrichedSubset);
+        const next = { ...current, iocs: merged, updatedAt: new Date().toISOString() };
+        await options.stateStore!.save(next);
+        options.onState?.(next);
+        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} selected IOC(s) (errors ${summary.errors})` });
+        logLine(`[enrich] ${caseId} bulk ids=${iocIds.length} queried=${summary.queried} hits=${summary.withHits} errors=${summary.errors}`);
+      })().catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return res.status(202).json({ accepted: true, iocCount: subset.length, providers: enabledProviders.map((p) => p.name) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Add a triage label to many IOCs in one request. Serializes the TagsStore writes so
+  // concurrent requests don't clobber each other's read-modify-write on tags.json.
+  // Body: { iocIds: string[], label: string, author?: string }
+  app.post("/cases/:id/iocs/bulk-tag", async (req: Request, res: Response) => {
+    if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
+    const rawIds = Array.isArray(req.body?.iocIds) ? req.body.iocIds : [];
+    const iocIds = (rawIds as unknown[]).map(String).filter(Boolean);
+    const label = typeof req.body?.label === "string" ? req.body.label.trim() : "";
+    const author = typeof req.body?.author === "string" ? req.body.author.trim() : "";
+    if (!iocIds.length) return res.status(400).json({ error: "iocIds must be a non-empty array" });
+    if (!label) return res.status(400).json({ error: "label is required" });
+    const caseId = req.params.id;
+    try {
+      const tags: Tag[] = [];
+      for (const id of iocIds) {
+        tags.push(await options.tagsStore.add(caseId, { targetType: "ioc", targetId: id, label, author }));
+      }
+      options.onTags?.(caseId);
+      return res.status(200).json(tags);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
