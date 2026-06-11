@@ -3912,7 +3912,7 @@
       ).join("");
       document.getElementById("anonCustCat").innerHTML = ANON_ENTITY_CATEGORIES.map(c => `<option value="${escAttr(c)}">${esc(c)}</option>`).join("");
       const warn = document.getElementById("anonWarning");
-      if (anonControl.screenshotWarning) { warn.style.display = "block"; warn.textContent = "⚠ Screenshots are sent to the external vision model un-anonymized — pixels can't be tokenized. Point DFIR_AI_MODEL at a local Ollama vision model to keep them on-box. Imported CSV/log text and synthesis ARE anonymized."; }
+      if (anonControl.screenshotWarning) { warn.style.display = "block"; warn.textContent = "⚠ Screenshots are OCR-redacted (best-effort) before being sent to the external vision model — text matching the entities below is blacked out on an in-memory copy; the original on disk is untouched. OCR can miss text, so don't rely on it for highly sensitive screens. Point DFIR_AI_MODEL at a local Ollama vision model to keep screenshots fully on-box. Imported CSV/log text and synthesis are anonymized."; }
       else { warn.style.display = "none"; }
       document.getElementById("anonMsg").textContent = "loading entities…";
       loadAnonEntities(caseId)
