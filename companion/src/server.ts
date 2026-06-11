@@ -451,17 +451,30 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Analyze every non-duplicate capture taken since lastAnalyzedSeq — used when AI
   // is switched back on after capturing with it off. Runs in the background.
   async function backfill(caseId: string): Promise<void> {
-    if (!options.pipeline || !hasAiProvider()) return;
+    // Fired on an AI off→on transition. The dashboard optimistically shows
+    // "AI on — catching up on un-analyzed screenshots…" the instant you toggle — that text is
+    // NOT a live progress indicator, so EVERY exit path here must emit a terminal status, or it
+    // hangs forever (a real bug report: "this message is stuck, I don't know if it finished").
+    const idle = (detail?: string) =>
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), ...(detail ? { detail } : {}) });
+    if (!options.pipeline || !hasAiProvider()) {
+      idle("AI on — no AI model configured"); // can't analyze, but clear the optimistic message
+      return;
+    }
     let control = await getControl(caseId);
     let captures: CaptureMetadata[];
     try {
       const log = await readFile(store.capturesLogPath(caseId), "utf8");
       captures = log.split("\n").filter((l) => l.trim().length > 0).map((l) => JSON.parse(l) as CaptureMetadata);
     } catch {
+      idle(); // no capture log yet → nothing to catch up on
       return;
     }
     const pending = captures.filter((c) => !c.isDuplicate && c.sequenceNumber > control.lastAnalyzedSeq);
-    if (pending.length === 0) return;
+    if (pending.length === 0) {
+      idle(); // already up to date → clear the "catching up…" message
+      return;
+    }
     options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `catching up on ${pending.length} screenshot(s)` });
     try {
       for (let i = 0; i < pending.length; i += windowSize) {

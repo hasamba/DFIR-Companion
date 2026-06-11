@@ -956,11 +956,17 @@ describe("server analysis wiring", () => {
       triggerType: "navigation", imageBase64: await pngBase64(),
     });
 
-    for (let i = 0; i < 20 && !events.some((e) => e.status === "idle"); i++) {
+    // AI is toggled on for the still-empty case first, which now ALSO emits a terminal idle
+    // (backfill always reports a final status). So wait for the window flush's own analyzing→idle
+    // pair — not just "any idle", which the backfill would satisfy before the flush even runs.
+    const flushed = () => {
+      const ai = events.findIndex((e) => e.status === "analyzing" && e.phase === "extracting");
+      return ai >= 0 && events.slice(ai + 1).some((e) => e.status === "idle");
+    };
+    for (let i = 0; i < 40 && !flushed(); i++) {
       await new Promise((r) => setTimeout(r, 25));
     }
-    expect(events[0]).toEqual({ status: "analyzing", phase: "extracting" }); // processing screenshots
-    expect(events.some((e) => e.status === "idle")).toBe(true);
+    expect(flushed()).toBe(true); // the window flush reported analyzing(extracting) → idle
   });
 
   it("GET /health reports aiEnabled false without a pipeline, true with one", async () => {
@@ -1462,6 +1468,31 @@ describe("AI on/off control", () => {
       state = await stateStore.load("c1");
     }
     expect(state.findings).toHaveLength(1);
+  });
+
+  it("emits a terminal idle status when AI is turned on with nothing to catch up on", async () => {
+    // Regression: the dashboard optimistically shows "AI on — catching up on un-analyzed
+    // screenshots…" the moment you toggle. backfill used to `return` silently when there was
+    // nothing pending, so no terminal event was ever sent and that message hung forever
+    // ("this message is stuck, I don't know if it finished"). It must always report idle.
+    const root = await mkdtemp(join(tmpdir(), "dfir-aibackfill-idle-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const events: { status: string; detail?: string }[] = [];
+    const app = createApp(store, {
+      pipeline: findingPipeline(stateStore), stateStore, windowSize: 1,
+      onAiStatus: (_c, e) => events.push({ status: e.status, detail: e.detail }),
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+
+    // Fresh case, zero captures → toggling AI on has nothing to analyze, but must still emit idle.
+    await request(app).post("/cases/c1/ai-control").send({ enabled: true });
+    for (let i = 0; i < 40 && !events.some((e) => e.status === "idle"); i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(events.some((e) => e.status === "idle")).toBe(true);
+    // …and it must not have falsely claimed it was analyzing when there was nothing to do.
+    expect(events.some((e) => e.status === "analyzing")).toBe(false);
   });
 
   it("GET /cases/:id/ai-control reports the current state", async () => {
