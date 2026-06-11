@@ -8,11 +8,19 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <style>
     body { font-family: system-ui, sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
-    header { padding: 10px 16px; background: #161a22; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
-    /* Scope controls live in the header; a thin divider sets them apart and they
-       wrap to a second line only when there isn't room on the first. */
+    header { padding: 10px 16px; background: #161a22; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-start; }
+    /* The action controls live in their own wrapping flex container so the settings gear
+       (a sibling of it) is always pinned to the top-right of the first line, no matter how
+       many times the buttons wrap. The gear takes itself out of the buttons' wrap flow. */
+    /* flex-basis:0 (not auto) so the gear's line-break is decided against a zero base size,
+       not toolbar-main's huge max-content — otherwise the gear gets bumped to its own line on
+       narrow screens. toolbar-main then grows to fill the row and its content wraps internally,
+       while the gear stays pinned beside it at the top-right. */
+    .toolbar-main { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+    /* Scope/time controls are always their own row beneath the actions (a top-border divider),
+       so the actions row + gear stay together up top. */
     .scope-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: #9aa4b2;
-      padding-left: 12px; margin-left: 4px; border-left: 1px solid #2a2f3a; }
+      flex-basis: 100%; padding-top: 9px; border-top: 1px solid #2a2f3a; }
     .scope-group input[type="datetime-local"] { font-size: 12px; padding: 4px; }
     .scope-group button { padding: 4px 9px; font-size: 12px; }
     .scope-preset { background: transparent; color: #9aa4b2; border: 1px solid #2a2f3a; }
@@ -215,6 +223,20 @@
     #evStarFilterBtn.active { color: #ffd93b; border-color: #ffd93b; background: #1c1500; }
     #iocFlaggedBtn { background: transparent; border: 1px solid #3a4050; color: #6b7280; border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
     #iocFlaggedBtn.active { color: #ff9f43; border-color: #ff9f43; background: #211405; }
+    /* IOC multi-select + bulk action bar */
+    .ioc-bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 0 4px; font-size: 12px; color: #9aa4b2; border-bottom: 1px solid #2a2f3a; margin-bottom: 4px; }
+    .ioc-bulk-bar.active { display: flex; }
+    .ioc-bulk-btn { background: #1e2330; border: 1px solid #3a4050; color: #cbd3df; border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+    .ioc-bulk-btn:hover { background: #2a3050; color: #fff; border-color: #6aa9ff; }
+    .ioc-cb { width: 13px; height: 13px; cursor: pointer; accent-color: #6aa9ff; flex-shrink: 0; margin: 0; }
+    .ioc-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; border-bottom: 1px solid #1a1f28; position: relative; }
+    /* Only the checkbox is a flex item; everything else flows inline inside .ioc-body so tag
+       pills / enrich badges wrap naturally instead of overflowing the row (display:flex would
+       otherwise make every chip a non-wrapping flex item and break the layout). */
+    .ioc-body { flex: 1 1 auto; min-width: 0; line-height: 1.7; }
+    .ioc-row:hover { background: #0d1117; }
+    .ioc-row.ioc-selected { background: #142038; }
+    .ioc-header-row { display: flex; align-items: center; gap: 4px; padding: 2px 0 5px; border-bottom: 1px solid #2a2f3a; margin-bottom: 1px; font-size: 11px; color: #6b7280; }
     .vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid #2a2f3a; border-radius: 5px; }
     .vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
     .vql-result th, .vql-result td { border: 1px solid #2a2f3a; padding: 3px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
@@ -287,6 +309,60 @@
     .toolbar-select:hover { border-color: #4a5466; }
     .toolbar-select:focus { outline: none; border-color: #2d6cdf; }
     .toolbar-select option { background: #161a22; color: #e6e6e6; }
+    /* ── Toolbar action icons ───────────────────────────────────────────────────────────
+       Each action button carries an icon via ::before (NOT a child element) so it survives
+       the textContent rewrites of the Enrich/Anon/AI toggles and the Collapse/Expand button.
+       In .icons-only mode (auto-applied by fitToolbar() when the row would wrap) the labels
+       collapse to font-size:0 and only the icon remains, so the toolbar fits one line; the
+       hover tooltips (data-tip) keep every icon discoverable. */
+    #connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
+    #aiToggle::before, #synthesize::before, #importBtn::before, #toggleAll::before,
+    #toggleSearchBar::before {
+      content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
+      margin-right: 6px; background: no-repeat center / contain; }
+    #connect::before     { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 15l6-6'/><path d='M11 6l1-1a4 4 0 0 1 6 6l-1 1'/><path d='M13 18l-1 1a4 4 0 0 1-6-6l1-1'/></svg>"); }
+    #newCaseBtn::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='18' height='18' rx='2'/><path d='M12 8v8M8 12h8'/></svg>"); }
+    #enrichToggle::before{ background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='M21 21l-4.3-4.3'/></svg>"); }
+    #anonToggle::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3l18 18'/><path d='M10.6 10.6a2 2 0 0 0 2.8 2.8'/><path d='M9.5 5.2A9.5 9.5 0 0 1 21 12a13 13 0 0 1-2 2.6M6 6.3A13 13 0 0 0 3 12a9.5 9.5 0 0 0 12.5 5.8'/></svg>"); }
+    #aiToggle::before    { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z'/><path d='M18.5 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'/></svg>"); }
+    #synthesize::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/></svg>"); }
+    #importBtn::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v11'/><path d='M8 10l4 4 4-4'/><path d='M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2'/></svg>"); }
+    #toggleAll::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M7 9l5-5 5 5'/><path d='M7 15l5 5 5-5'/></svg>"); }
+    /* Export, Push and Collapse-all are ALWAYS icon-only — their labels never show, so the wider
+       labelled actions get the room; hover tooltips keep them discoverable. The dropdowns can't take
+       a ::before (replaced elements), so the icon rides as a background layer beside the chevron, and
+       the selected-value text is hidden via a transparent colour (the popup options stay readable). */
+    #exportSelect, #pushSelect { background-repeat: no-repeat, no-repeat;
+      background-position: left 9px center, right 8px center; background-size: 15px 15px, 11px 11px;
+      color: transparent; width: 50px; padding: 7px 21px 7px 25px; }
+    #toggleAll, #toggleSearchBar { font-size: 0; padding-left: 9px; padding-right: 9px; }
+    #toggleAll::before, #toggleSearchBar::before { margin-right: 0; }
+    /* Search toggle — magnifier (white stroke, like the other primary action icons). It toggles the
+       search/filter row below; while any filter is active it adopts the house "active" teal so a
+       collapsed row still signals the view is filtered. */
+    #toggleSearchBar::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>"); }
+    #toggleSearchBar.has-filter { background: #0e7c75; box-shadow: inset 0 0 0 1px #15a89d; }
+    #toggleSearchBar.has-filter:hover { background: #0f8a82; }
+    #exportSelect { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 21V10'/><path d='M8 6l4-4 4 4'/><path d='M4 14v6a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-6'/></svg>"),
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%239aa4b2' stroke-width='1.6'/></svg>"); }
+    #pushSelect { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 2L11 13'/><path d='M22 2l-7 20-4-9-9-4z'/></svg>"),
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%239aa4b2' stroke-width='1.6'/></svg>"); }
+    /* Tight-mode collapse — when even the labelled actions won't fit, fitToolbar() adds .icons-only
+       and the remaining labels go to zero width (icon px size is immune to font-size:0). Export/Push/
+       Collapse are already icon-only above, so this only affects the seven labelled buttons. */
+    .toolbar-main.icons-only button { font-size: 0; padding-left: 9px; padding-right: 9px; }
+    .toolbar-main.icons-only button::before { margin-right: 0; }
+    /* The capture count carries a camera icon (always shown). When space is tight the word
+       "Screenshots:" drops and only the camera + number remain, and the AI-status message is
+       hidden entirely — the two longest status strings, freeing the row to stay on one line. */
+    #captureCount::before { content: ""; display: inline-block; width: 14px; height: 14px;
+      vertical-align: -2px; margin-right: 5px; background: no-repeat center / contain;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z'/><circle cx='12' cy='13' r='4'/></svg>"); }
+    .toolbar-main.icons-only #aiStatus { display: none; }
+    .toolbar-main.icons-only .cc-label { display: none; }
+    .toolbar-main.icons-only #status { margin-left: auto; }  /* re-anchor right alignment (the hidden #aiStatus carried it) */
+    .toolbar-main.icons-only { gap: 8px 7px; }               /* tighter column gap suits an icon row and buys ~55px to stay on one line */
+    .toolbar-main.icons-only #caseId { width: 140px; }       /* narrow the case box when tight (the name still scrolls inside it) */
     /* Custom tooltip — uniform styling for [data-tip] controls. Native `title` tooltips can't be
        CSS-styled (their first line rendered brighter than the rest); this gives one flat color. */
     .tip { position: fixed; z-index: 1000; max-width: 360px; background: #0b0e13; color: #cbd3df;
@@ -361,10 +437,11 @@
     .swimlane-detail { margin-top: 10px; padding: 10px 12px; background: #0f1115; border: 1px solid #2a2f3a;
       border-radius: 6px; font-size: 12px; }
     .swimlane-detail-header { font-weight: 600; margin-bottom: 6px; }
-    /* Settings icon (inline header, right side) */
+    /* Settings icon — sibling of .toolbar-main, align-self:flex-start keeps it pinned to the
+       top-right of the first line even when the action buttons wrap below it. */
     #settingsBtn { background: none; border: none; color: #9aa4b2; cursor: pointer; padding: 4px;
       display: flex; align-items: center; border-radius: 7px; line-height: 0;
-      transition: color .15s, background .15s; flex-shrink: 0; }
+      transition: color .15s, background .15s; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
     #settingsBtn:hover { color: #cbd3df; background: rgba(255,255,255,.07); }
     /* Settings modal */
     .settings-modal { width: min(820px, 96vw); max-height: 90vh; }
@@ -403,14 +480,33 @@
     .sec-selall button:hover { background: #353b47; color: #cbd3df; }
     .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid #2a2f3a; padding-top: 12px; }
     .settings-msg { font-size: 11px; margin-left: 4px; }
+    /* Global search + time-range filter row — revealed by the toolbar search icon, hidden by default. */
+    #searchFilterBar { padding: 5px 16px; background: #0e1116; border-bottom: 1px solid #1a1f28;
+      display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: #9aa4b2; }
+    #searchFilterBar[hidden] { display: none; }
+    .sf-search-wrap { position: relative; display: flex; align-items: center; }
+    #globalSearch { font-size: 12px; padding: 4px 26px 4px 8px; width: 240px;
+      background: #161a22; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 5px; }
+    #globalSearch:focus { outline: none; border-color: #2d6cdf; }
+    #clearSearch { position: absolute; right: 3px; background: transparent; border: none;
+      color: #6b7280; cursor: pointer; padding: 0 3px; font-size: 13px; line-height: 1; }
+    #clearSearch:hover { color: #ff7a7a; }
+    .sf-sep { width: 1px; align-self: stretch; background: #2a2f3a; margin: 0 2px; }
+    #filterFrom, #filterTo { font-size: 12px; padding: 3px 5px; background: #161a22;
+      color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 5px; }
+    #clearFiltersBtn { background: transparent; border: 1px solid #2a2f3a; border-radius: 4px;
+      color: #9aa4b2; cursor: pointer; padding: 2px 7px; font-size: 11px; }
+    #clearFiltersBtn:hover { color: #ff7a7a; border-color: #ff7a7a; }
+    #searchMatchCount { color: #6aa9ff; font-size: 11px; }
   </style>
 </head>
 <body>
   <header>
+    <div id="toolbarMain" class="toolbar-main">
     <strong>DFIR Companion</strong>
     <input id="caseId" placeholder="caseId" list="caseList" autocomplete="off" />
     <datalist id="caseList"></datalist>
-    <button id="connect">Connect</button>
+    <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
@@ -433,9 +529,11 @@
     </select>
     <span id="reportLinks" class="report-links"></span>
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
+    <button id="toggleSearchBar" type="button" aria-label="Search &amp; filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Search &amp; filter events, findings and IOCs by text and time range (press /)">Search</button>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
-    <span id="captureCount" style="font-weight:bold;">Screenshots: 0</span>
+    <span id="captureCount" style="font-weight:bold;"><span class="cc-label">Screenshots:</span> <span id="captureCountNum">0</span></span>
+    </div>
     <button id="settingsBtn" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.07 7.07 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 3h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 9.47a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41H14c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.09-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
     <div class="scope-group">
       <span style="color:#cbd3df;">Scope:</span>
@@ -546,6 +644,23 @@
       </div>
     </div>
   </div>
+  <div id="clickupOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Push playbook to ClickUp</h3>
+      <p style="color:#9aa4b2; font-size:12px; margin:0 0 10px">
+        Exports the Response Playbook tasks into a ClickUp list (status, priority, assignee, due date).
+        Re-pushing the same case <strong>updates</strong> the tasks it created — it won't duplicate them.</p>
+      <label style="display:block; font-size:13px; margin:6px 0">ClickUp list ID
+        <input id="clickupListId" placeholder="e.g. 901234567" style="width:100%; box-sizing:border-box; padding:5px; margin-top:4px;" />
+      </label>
+      <p style="color:#52617a; font-size:11px; margin:4px 0 0">Find it in the list's URL: <code>app.clickup.com/…/li/<b>901234567</b></code></p>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="clickupPushBtn">Push</button>
+        <button id="clickupCancel" style="background:#2a2f3a;">Cancel</button>
+        <span id="clickupMsg" style="color:#9aa4b2; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
   <div id="huntOverlay" class="comment-overlay">
     <div class="comment-modal hunt-modal">
       <h3 id="huntTitle">Hunt queries</h3>
@@ -609,6 +724,7 @@
         <button class="stab" data-stab="exposure">Exposure</button>
         <button class="stab" data-stab="integrations">Integrations</button>
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
+        <button class="stab" data-stab="whitelist">IOC Whitelist</button>
       </div>
 
       <!-- General -->
@@ -640,6 +756,10 @@
         <div class="sfield-row">
           <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>
           <div class="sfield"><label>Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Bind host<span class="sfield-hint">DFIR_HOST — keep 127.0.0.1 (localhost only) unless you know what you're doing</span></label><input id="env-DFIR_HOST" placeholder="127.0.0.1" /></div>
+          <div class="sfield"><label>Port<span class="sfield-hint">DFIR_PORT — the dashboard moves with it; reopen on the new port</span></label><input id="env-DFIR_PORT" placeholder="4773" /></div>
         </div>
       </div>
 
@@ -702,6 +822,24 @@
           <div class="sfield"><label>Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Synth base URL<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
         </div>
+        <div class="settings-group-head">Debugging & custom prompts</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Log token usage<span class="sfield-hint">DFIR_AI_DEBUG_USAGE — on to log prompt-cache token usage to the console</span></label><input id="env-DFIR_AI_DEBUG_USAGE" placeholder="off" /></div>
+        </div>
+        <p class="rm-hint" style="font-size:11px;color:#9aa4b2;margin:2px 0 8px">Point any of the AI prompts at a <strong>file</strong> to override the built-in default (re-read each call — no restart needed). The inline <code>DFIR_AI_*_PROMPT</code> overrides aren't editable here (they're multi-line); use a file path below or <code>npm run prompts:eject</code>.</p>
+        <div class="sfield-row">
+          <div class="sfield"><label>System prompt file<span class="sfield-hint">DFIR_AI_SYSTEM_PROMPT_FILE</span></label><input id="env-DFIR_AI_SYSTEM_PROMPT_FILE" placeholder="path/to/system.txt" /></div>
+          <div class="sfield"><label>Synthesis prompt file<span class="sfield-hint">DFIR_AI_SYNTH_PROMPT_FILE</span></label><input id="env-DFIR_AI_SYNTH_PROMPT_FILE" placeholder="path/to/synth.txt" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>CSV prompt file<span class="sfield-hint">DFIR_AI_CSV_PROMPT_FILE</span></label><input id="env-DFIR_AI_CSV_PROMPT_FILE" placeholder="path/to/csv.txt" /></div>
+          <div class="sfield"><label>Log prompt file<span class="sfield-hint">DFIR_AI_LOG_PROMPT_FILE</span></label><input id="env-DFIR_AI_LOG_PROMPT_FILE" placeholder="path/to/log.txt" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Ask prompt file<span class="sfield-hint">DFIR_AI_ASK_PROMPT_FILE</span></label><input id="env-DFIR_AI_ASK_PROMPT_FILE" placeholder="path/to/ask.txt" /></div>
+          <div class="sfield"><label>Exec-summary prompt file<span class="sfield-hint">DFIR_AI_EXEC_PROMPT_FILE</span></label><input id="env-DFIR_AI_EXEC_PROMPT_FILE" placeholder="path/to/exec.txt" /></div>
+          <div class="sfield"><label>Narrative prompt file<span class="sfield-hint">DFIR_AI_NARRATIVE_PROMPT_FILE</span></label><input id="env-DFIR_AI_NARRATIVE_PROMPT_FILE" placeholder="path/to/narrative.txt" /></div>
+        </div>
       </div>
 
       <!-- Enrichment -->
@@ -712,7 +850,7 @@
           <div class="sfield"><label>AbuseIPDB key<span class="sfield-hint">DFIR_ABUSEIPDB_KEY</span></label><input id="env-DFIR_ABUSEIPDB_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>Hunting.ch key (abuse.ch)<span class="sfield-hint">DFIR_HUNTINGCH_KEY</span></label><input id="env-DFIR_HUNTINGCH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Hunting.ch key (abuse.ch)<span class="sfield-hint">DFIR_HUNTINGCH_KEY — legacy alias DFIR_MB_KEY also works</span></label><input id="env-DFIR_HUNTINGCH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>RockyRaccoon key<span class="sfield-hint">DFIR_ROCKYRACCOON_KEY</span></label><input id="env-DFIR_ROCKYRACCOON_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="settings-group-head">CrowdStrike Falcon Intelligence</div>
@@ -723,6 +861,9 @@
             <label>Cloud<span class="sfield-hint">DFIR_CROWDSTRIKE_CLOUD</span></label>
             <select id="env-DFIR_CROWDSTRIKE_CLOUD"><option value="">— default (us-1) —</option><option value="us-1">us-1</option><option value="us-2">us-2</option><option value="eu-1">eu-1</option><option value="gov-us-1">gov-us-1</option><option value="gov-us-2">gov-us-2</option></select>
           </div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Base URL override<span class="sfield-hint">DFIR_CROWDSTRIKE_BASE_URL — leave blank to derive from Cloud</span></label><input id="env-DFIR_CROWDSTRIKE_BASE_URL" placeholder="(optional)" /></div>
         </div>
         <div class="settings-group-head">MISP</div>
         <div class="sfield-row">
@@ -751,6 +892,23 @@
           <div class="sfield"><label>Enrich delay (ms)<span class="sfield-hint">DFIR_ENRICH_DELAY_MS</span></label><input id="env-DFIR_ENRICH_DELAY_MS" placeholder="1500" /></div>
           <div class="sfield"><label>Max IOCs / run<span class="sfield-hint">DFIR_ENRICH_MAX</span></label><input id="env-DFIR_ENRICH_MAX" placeholder="100" /></div>
           <div class="sfield"><label>Health TTL (ms)<span class="sfield-hint">DFIR_ENRICH_HEALTH_TTL_MS</span></label><input id="env-DFIR_ENRICH_HEALTH_TTL_MS" placeholder="60000" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Health poll (ms)<span class="sfield-hint">DFIR_ENRICH_HEALTH_POLL_MS — re-probe down providers &amp; auto-resume; 0 disables</span></label><input id="env-DFIR_ENRICH_HEALTH_POLL_MS" placeholder="60000" /></div>
+        </div>
+        <div class="settings-group-head">Per-provider throttle overrides (ms) — blank uses the global delay</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>VirusTotal<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_VIRUSTOTAL</span></label><input id="env-DFIR_ENRICH_DELAY_MS_VIRUSTOTAL" placeholder="(optional)" /></div>
+          <div class="sfield"><label>AbuseIPDB<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_ABUSEIPDB</span></label><input id="env-DFIR_ENRICH_DELAY_MS_ABUSEIPDB" placeholder="(optional)" /></div>
+          <div class="sfield"><label>Hunting.ch<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_HUNTINGCH</span></label><input id="env-DFIR_ENRICH_DELAY_MS_HUNTINGCH" placeholder="(optional)" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>CrowdStrike<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_CROWDSTRIKE</span></label><input id="env-DFIR_ENRICH_DELAY_MS_CROWDSTRIKE" placeholder="(optional)" /></div>
+          <div class="sfield"><label>MISP<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_MISP</span></label><input id="env-DFIR_ENRICH_DELAY_MS_MISP" placeholder="(optional)" /></div>
+          <div class="sfield"><label>YETI<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_YETI</span></label><input id="env-DFIR_ENRICH_DELAY_MS_YETI" placeholder="(optional)" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>RockyRaccoon<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_ROCKYRACCOON</span></label><input id="env-DFIR_ENRICH_DELAY_MS_ROCKYRACCOON" placeholder="(optional)" /></div>
         </div>
       </div>
 
@@ -818,6 +976,15 @@
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_NOTION_CA</span></label><input id="env-DFIR_NOTION_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_NOTION_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_NOTION_INSECURE" placeholder="false" /></div>
         </div>
+        <div class="settings-group-head">ClickUp</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>API token<span class="sfield-hint">DFIR_CLICKUP_TOKEN — personal token (Settings › Apps › API Token, pk_…)</span></label><input id="env-DFIR_CLICKUP_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Default list ID<span class="sfield-hint">DFIR_CLICKUP_LIST_ID — optional; pre-fills the push modal (list URL's …/li/&lt;id&gt;)</span></label><input id="env-DFIR_CLICKUP_LIST_ID" placeholder="(optional)" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_CLICKUP_CA</span></label><input id="env-DFIR_CLICKUP_CA" placeholder="path/to/ca.pem" /></div>
+          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_CLICKUP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_CLICKUP_INSECURE" placeholder="false" /></div>
+        </div>
         <div class="settings-group-head">Velociraptor</div>
         <div class="sfield-row">
           <div class="sfield"><label>API config path<span class="sfield-hint">DFIR_VELOCIRAPTOR_API_CONFIG</span></label><input id="env-DFIR_VELOCIRAPTOR_API_CONFIG" placeholder="path/to/api.config.yaml" /></div>
@@ -827,6 +994,16 @@
           <div class="sfield"><label>GUI URL<span class="sfield-hint">DFIR_VELOCIRAPTOR_GUI_URL</span></label><input id="env-DFIR_VELOCIRAPTOR_GUI_URL" placeholder="https://velo:8889" /></div>
           <div class="sfield"><label>GUI org<span class="sfield-hint">DFIR_VELOCIRAPTOR_ORG — for deep links (default root)</span></label><input id="env-DFIR_VELOCIRAPTOR_ORG" placeholder="root" /></div>
           <div class="sfield"><label>Hunt platforms<span class="sfield-hint">DFIR_HUNT_PLATFORMS — comma-separated; blank = all</span></label><input id="env-DFIR_HUNT_PLATFORMS" placeholder="velociraptor,sigma,yara,…" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Hunt auto-collect wait (min)<span class="sfield-hint">DFIR_VELO_HUNT_WAIT_MIN — default 10 (clamped 1–1440)</span></label><input id="env-DFIR_VELO_HUNT_WAIT_MIN" placeholder="10" /></div>
+          <div class="sfield"><label>Collection timeout (ms)<span class="sfield-hint">DFIR_VELOCIRAPTOR_TIMEOUT_MS</span></label><input id="env-DFIR_VELOCIRAPTOR_TIMEOUT_MS" placeholder="(optional)" /></div>
+          <div class="sfield"><label>Max rows<span class="sfield-hint">DFIR_VELOCIRAPTOR_MAX_ROWS</span></label><input id="env-DFIR_VELOCIRAPTOR_MAX_ROWS" placeholder="(optional)" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Max output — interactive (bytes)<span class="sfield-hint">DFIR_VELOCIRAPTOR_MAX_OUTPUT</span></label><input id="env-DFIR_VELOCIRAPTOR_MAX_OUTPUT" placeholder="52428800" /></div>
+          <div class="sfield"><label>Max output — collect (bytes)<span class="sfield-hint">DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT</span></label><input id="env-DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT" placeholder="268435456" /></div>
+          <div class="sfield"><label>Upload VQL override<span class="sfield-hint">DFIR_VELOCIRAPTOR_UPLOAD_VQL — version-specific; blank = default</span></label><input id="env-DFIR_VELOCIRAPTOR_UPLOAD_VQL" placeholder="(optional)" /></div>
         </div>
 
       </div>
@@ -880,12 +1057,97 @@
         </details>
       </div>
 
+      <!-- IOC Whitelist (Phase 2 of #35) -->
+      <div class="stab-pane" id="stab-whitelist">
+        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+          Known-good patterns that <strong>auto-mark matching IOCs as legitimate on import</strong> (and on demand).
+          Global — shared across all cases. Reversible: matches appear in <em>Confirmed Legitimate</em> and can be un-marked.
+        </div>
+        <div style="background:#211405;border:1px solid #5a4a1a;border-radius:6px;padding:6px 9px;font-size:12px;color:#ffce8a;margin-bottom:12px">
+          ⚠ Whitelisting is opt-in for a reason — auto-excluding internal IP ranges can hide lateral movement. Only add patterns you trust.
+        </div>
+
+        <div class="sfield">
+          <label>Add a rule</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <select id="wlMatch" style="flex:0 0 auto">
+              <option value="cidr">CIDR (IP range)</option>
+              <option value="exact">Exact (hash / value)</option>
+              <option value="regex">Regex</option>
+            </select>
+            <input id="wlPattern" placeholder="10.0.0.0/8  ·  d41d8cd9…  ·  \.corp\.local$" style="flex:1 1 240px" />
+            <select id="wlType" style="flex:0 0 auto" title="Optional: restrict to one IOC type">
+              <option value="">any type</option>
+              <option value="ip">ip</option>
+              <option value="domain">domain</option>
+              <option value="hash">hash</option>
+              <option value="file">file</option>
+              <option value="process">process</option>
+              <option value="url">url</option>
+              <option value="other">other</option>
+            </select>
+            <input id="wlNote" placeholder="note (why it's known-good)" style="flex:1 1 160px" />
+            <button id="wlAddBtn" type="button">Add</button>
+          </div>
+          <div style="margin-top:6px;font-size:11px;color:#7e8aa0">
+            Quick add:
+            <button type="button" class="wl-quick" data-m="cidr" data-p="10.0.0.0/8" data-t="ip">10.0.0.0/8</button>
+            <button type="button" class="wl-quick" data-m="cidr" data-p="172.16.0.0/12" data-t="ip">172.16.0.0/12</button>
+            <button type="button" class="wl-quick" data-m="cidr" data-p="192.168.0.0/16" data-t="ip">192.168.0.0/16</button>
+            <button type="button" class="wl-quick" data-m="cidr" data-p="127.0.0.0/8" data-t="ip">127.0.0.0/8</button>
+          </div>
+          <span id="wlMsg" class="manual-msg"></span>
+        </div>
+
+        <div class="sfield">
+          <label>Rules <span id="wlCount" class="sfield-hint" style="display:inline"></span></label>
+          <div id="wlList" style="max-height:240px;overflow:auto;border:1px solid #2a2f3a;border-radius:6px;padding:4px"></div>
+        </div>
+
+        <div class="sfield-row">
+          <div class="sfield" style="flex:1">
+            <label>Import (paste CSV or JSON)</label>
+            <textarea id="wlImportText" rows="3" spellcheck="false" placeholder="match,pattern,type,note&#10;cidr,10.0.0.0/8,ip,internal" style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+              <button id="wlImportBtn" type="button">Import</button>
+              <button id="wlExportCsvBtn" type="button" style="background:#2a2f3a">Export CSV</button>
+              <button id="wlExportJsonBtn" type="button" style="background:#2a2f3a">Export JSON</button>
+            </div>
+          </div>
+        </div>
+
+        <hr class="settings-hr" />
+        <div class="sfield">
+          <label>Apply to the current case</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button id="wlApplyBtn" type="button">Apply whitelist to loaded case</button>
+            <span id="wlApplyMsg" class="manual-msg"></span>
+          </div>
+          <span class="sfield-hint">Scans the loaded case's current IOCs and marks matches legitimate (already auto-runs on every import).</span>
+        </div>
+      </div>
+
       <div class="settings-footer">
         <button id="settingsSaveBtn">Save</button>
         <button id="settingsCloseBtn" style="background:#2a2f3a;">Close</button>
         <span id="settingsSaveMsg" class="settings-msg"></span>
       </div>
     </div>
+  </div>
+
+  <!-- Global search + time-range filter row — revealed by the toolbar search icon (hidden by default) -->
+  <div id="searchFilterBar" hidden>
+    <span>Search:</span>
+    <div class="sf-search-wrap">
+      <input id="globalSearch" type="search" placeholder="events, findings, IOCs… (press / to focus)" autocomplete="off" />
+      <button id="clearSearch" type="button" title="Clear search (Esc)" hidden>✕</button>
+    </div>
+    <div class="sf-sep"></div>
+    <span>Time range:</span>
+    <label>from <input id="filterFrom" type="datetime-local" title="Filter timeline from (UTC)" /></label>
+    <label>to <input id="filterTo" type="datetime-local" title="Filter timeline to (UTC)" /></label>
+    <button id="clearFiltersBtn" type="button" hidden>Clear</button>
+    <span id="searchMatchCount"></span>
   </div>
 
   <main>
@@ -1054,6 +1316,7 @@
         </form>
       </div>
       <div id="iocImportMeta" class="synth-meta" style="display:none"></div>
+      <div class="ioc-bulk-bar" id="iocBulkBar"><span id="iocBulkCount" style="font-weight:600;color:#6aa9ff"></span> <span>Actions:</span> <button class="ioc-bulk-btn" id="iocBulkEnrichBtn" title="Enrich selected IOCs against enabled threat-intel providers">🔬 Enrich</button> <button class="ioc-bulk-btn" id="iocBulkTagBtn" title="Add a tag to all selected IOCs">🏷 Tag</button> <button class="ioc-bulk-btn" id="iocBulkLegitBtn" title="Mark selected IOCs as legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button> <button class="ioc-bulk-btn" id="iocBulkCopyBtn" title="Copy selected IOC values to clipboard (one per line)">📋 Copy</button> <button class="ioc-bulk-btn" id="iocBulkClearBtn" style="color:#9aa4b2">✕ Clear</button></div>
       <div id="iocs">—</div></section>
     <section id="sec-exposure" style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
       <div class="ce-body">
@@ -1079,6 +1342,69 @@
     <section id="sec-threads"><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
     <section id="sec-legitimate" style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
+    <style>
+      #sec-playbook .pb-badge{font-size:12px;color:#9aa4b2;font-weight:normal;margin-left:8px}
+      .pb-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px}
+      .pb-toolbar .pb-sync{background:#1f6feb;border:none;color:#fff;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px}
+      .pb-toolbar .pb-sync:hover{background:#2a7bff}
+      .pb-toolbar .pb-filter{font-size:12px;color:#9aa4b2;display:flex;align-items:center;gap:6px}
+      .pb-progress{flex:1;min-width:120px;height:8px;background:#1c2333;border-radius:5px;overflow:hidden}
+      #pbProgressBar{height:100%;width:0;background:#2ea043;transition:width .3s}
+      .pb-task{border:1px solid #222b3d;border-left:3px solid #3a4658;border-radius:8px;padding:9px 11px;margin-bottom:8px;background:#0f1521}
+      .pb-task[draggable=true]{cursor:grab}
+      .pb-task.drag-over{border-top:2px solid #1f6feb}
+      .pb-drag{color:#52617a;cursor:grab;font-size:13px;user-select:none}
+      .pb-drag.pb-drag-off{visibility:hidden}
+      .pb-task.pb-done{opacity:.6}
+      .pb-task.pb-done .pb-title{text-decoration:line-through}
+      .pb-task.pb-skipped{opacity:.5}
+      .pb-task.pb-skipped .pb-title{text-decoration:line-through;color:#7d8696}
+      .pb-row1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+      .pb-row2{display:flex;align-items:center;gap:8px;margin-top:6px}
+      .pb-status{background:#161d2b;color:#cdd6e3;border:1px solid #2a3346;border-radius:5px;font-size:11px;padding:2px 4px}
+      .pb-title{flex:1;min-width:160px;font-size:13px;color:#e6edf3}
+      .pb-desc{font-size:11px;color:#8a94a6;margin:5px 0 0;white-space:pre-wrap}
+      .pb-pri{font-size:10px;text-transform:uppercase;font-weight:600;padding:1px 6px;border-radius:9px}
+      .pb-pri-critical{background:#5a1722;color:#ff7b8a}
+      .pb-pri-high{background:#5a3a14;color:#ffb454}
+      .pb-pri-medium{background:#1f3a52;color:#6fb3e0}
+      .pb-pri-low{background:#23304a;color:#8aa0c0}
+      .pb-src{font-size:10px;color:#52617a}
+      .pb-finding-link{font-size:10px;color:#6fb3e0;text-decoration:none}
+      .pb-finding-link:hover{text-decoration:underline}
+      .pb-move{display:flex;gap:3px;margin-left:auto}
+      .pb-move button{background:#161d2b;color:#9aa4b2;border:1px solid #2a3346;border-radius:4px;cursor:pointer;font-size:10px;padding:1px 6px;line-height:1.4}
+      .pb-move button:hover{color:#fff;border-color:#3a4658}
+      .pb-move .pb-del:hover{color:#ff7b8a;border-color:#5a1722}
+      .pb-assignee,.pb-due{background:#161d2b;color:#cdd6e3;border:1px solid #2a3346;border-radius:5px;font-size:11px;padding:3px 6px}
+      .pb-assignee{width:130px}
+      .pb-add-form{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+      .pb-add-form #pbTitle{flex:1;min-width:200px;background:#161d2b;color:#cdd6e3;border:1px solid #2a3346;border-radius:6px;padding:6px 9px}
+      .pb-add-form select{background:#161d2b;color:#cdd6e3;border:1px solid #2a3346;border-radius:6px;padding:6px}
+      .pb-add-form #pbAddBtn{background:#21262d;color:#cdd6e3;border:1px solid #2a3346;border-radius:6px;padding:6px 12px;cursor:pointer}
+    </style>
+    <section id="sec-playbook" style="grid-column: 1 / -1" class="collapsed">
+      <h2>Playbook <span id="pbBadge" class="pb-badge"></span></h2>
+      <p style="font-size:12px;color:#9aa4b2;margin:0 0 10px">Actionable checklist auto-derived from the recommended next steps and Critical/High findings, re-synced on each synthesis — your status, assignee, due date, and custom tasks are always preserved. Survives synthesis; included in the report.</p>
+      <div class="pb-toolbar">
+        <button id="pbSyncBtn" class="pb-sync" title="Re-derive tasks from the latest next steps & findings">↻ Sync from analysis</button>
+        <label class="pb-filter" title="Expand each Critical/High finding into Contain → Investigate → Eradicate → Recover tasks (High → Investigate + Contain), tailored to the finding's ATT&CK tactic"><input type="checkbox" id="pbTemplates"> IR templates</label>
+        <label class="pb-filter"><input type="checkbox" id="pbOpenOnly"> Open only</label>
+        <div class="pb-progress" title="Completion"><div id="pbProgressBar"></div></div>
+      </div>
+      <div id="pbList" style="margin-top:12px">—</div>
+      <div class="pb-add-form">
+        <input id="pbTitle" placeholder="Add a custom task…" />
+        <select id="pbPriority" title="Priority">
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium" selected>Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <button id="pbAddBtn">Add task</button>
+        <span id="pbMsg" class="manual-msg"></span>
+      </div>
+    </section>
     <section id="sec-notebook" style="grid-column: 1 / -1" class="collapsed">
       <h2>Analyst Notebook</h2>
       <p style="font-size:12px;color:#9aa4b2;margin:0 0 10px">Free-form hypotheses, notes, and open questions. Entries survive synthesis and are never wiped. Optionally included in AI synthesis context (opt-in below).</p>
@@ -1149,6 +1475,60 @@
     let lastState = null;                    // last raw state from server, for re-render on scope change
     let legitMarkers = [];                    // confirmed-legitimate markers; events here are hidden from the timeline
     let lastFt = [];                          // last scoped+legit-filtered forensic timeline, for severity re-filter without re-fetching
+    let searchTerm = "";                      // active text search (lower-cased; empty = no filter)
+    let filterFrom = null;                    // timeline view lower bound (ISO UTC string or null)
+    let filterTo = null;                      // timeline view upper bound (ISO UTC string or null)
+    let _searchDebounce = null;
+
+    // --- Search/filter helpers (mirror companion/src/analysis/searchFilter.ts) ---------
+    function _evMatchesSearch(e, q) {
+      return (e.description || "").toLowerCase().includes(q) ||
+        (e.asset || "").toLowerCase().includes(q) ||
+        (e.mitreTechniques || []).some(t => t.toLowerCase().includes(q)) ||
+        (e.sources || []).some(s => (s || "").toLowerCase().includes(q));
+    }
+    function _iocMatchesSearch(i, q) {
+      return (i.value || "").toLowerCase().includes(q) || (i.type || "").toLowerCase().includes(q);
+    }
+    function _findingMatchesSearch(f, q) {
+      return (f.title || "").toLowerCase().includes(q) ||
+        (f.description || "").toLowerCase().includes(q) ||
+        (f.mitreTechniques || []).some(t => t.toLowerCase().includes(q));
+    }
+    function _evMatchesTimeRange(e, from, to) {
+      const ts = e.timestamp; if (!ts) return true;
+      const t = Date.parse(ts); if (isNaN(t)) return true;
+      if (from) { const f = Date.parse(from); if (!isNaN(f) && t < f) return false; }
+      if (to)   { const u = Date.parse(to);   if (!isNaN(u) && t > u) return false; }
+      return true;
+    }
+    function _hasActiveFilter() { return !!(searchTerm || filterFrom || filterTo); }
+    function _updateSearchCount(shown, total) {
+      const el = document.getElementById("searchMatchCount");
+      if (!el) return;
+      if (!_hasActiveFilter()) { el.textContent = ""; _updateSearchToggleIndicator(); return; }
+      el.textContent = shown < total ? `${shown} of ${total} event${total !== 1 ? "s" : ""} shown` : `${total} event${total !== 1 ? "s" : ""} shown`;
+      _updateSearchToggleIndicator();
+    }
+    // Accent the (possibly collapsed) search icon while any filter is active, so a hidden
+    // bar still signals that the timeline/IOCs are being filtered.
+    function _updateSearchToggleIndicator() {
+      const t = document.getElementById("toggleSearchBar");
+      if (t) t.classList.toggle("has-filter", _hasActiveFilter());
+    }
+    // Open/close the search + time-range row (revealed by the toolbar search icon).
+    function setSearchBarOpen(open, focus) {
+      const bar = document.getElementById("searchFilterBar");
+      const toggle = document.getElementById("toggleSearchBar");
+      if (!bar || !toggle) return;
+      bar.hidden = !open;
+      toggle.classList.toggle("open", open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open && focus !== false) {
+        const gs = document.getElementById("globalSearch");
+        if (gs) { gs.focus(); gs.select(); }
+      }
+    }
 
     // The case timeline is UTC, so the <input type="datetime-local"> pickers (scope, manual event)
     // are treated as UTC wall-clock, NOT the browser's local zone: show the UTC components, and parse
@@ -1935,10 +2315,11 @@
     }
     function renderTagModal() {
       if (!tagTarget) return;
-      // Bulk mode: tag N events at once (current tags not shown, only add-flow)
+      // Bulk mode: tag N entities at once (current tags not shown, only add-flow)
       if (tagTarget.bulk) {
-        document.getElementById("tagTitle").textContent = `Add tags to ${tagTarget.ids.length} selected event${tagTarget.ids.length !== 1 ? "s" : ""}`;
-        document.getElementById("tagCurrent").innerHTML = `<div style='color:#9aa4b2;font-size:12px'>Tags will be added to all selected events. Individual existing tags are not shown in bulk mode.</div>`;
+        const t = tagTarget.targetType || "event";
+        document.getElementById("tagTitle").textContent = `Add tags to ${tagTarget.ids.length} selected ${t}${tagTarget.ids.length !== 1 ? "s" : ""}`;
+        document.getElementById("tagCurrent").innerHTML = `<div style='color:#9aa4b2;font-size:12px'>Tags will be added to all selected ${t}s. Individual existing tags are not shown in bulk mode.</div>`;
         const sug = document.getElementById("tagSuggest");
         sug.innerHTML = SUGGESTED_TAGS.map(l => { const c = tagColor(l);
           return `<button class="tag-suggest-btn" style="color:${c};border-color:${c}" data-label="${escAttr(l)}">+ ${esc(l)}</button>`; }).join("");
@@ -1965,17 +2346,18 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId || !tagTarget || !String(label || "").trim()) return;
       const msg = document.getElementById("tagMsg"); msg.textContent = "adding…";
-      // Bulk mode: add the tag to every selected event. Serialize the POSTs — the server's
+      // Bulk mode: add the tag to every selected entity. Serialize the POSTs — the server's
       // TagsStore.add() is read-modify-write on tags.json, so concurrent requests clobber each
       // other (last write wins) and only one tag would survive. Await each before the next.
       if (tagTarget.bulk) {
         (async () => {
           try {
             const ids = tagTarget.ids;
+            const bulkTargetType = tagTarget.targetType || "event";
             for (let i = 0; i < ids.length; i++) {
               msg.textContent = `adding… (${i + 1}/${ids.length})`;
               const r = await fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
-                body: JSON.stringify({ targetType: "event", targetId: ids[i], author: investigatorName(), label }) });
+                body: JSON.stringify({ targetType: bulkTargetType, targetId: ids[i], author: investigatorName(), label }) });
               if (!r.ok) throw new Error("HTTP " + r.status);
             }
             document.getElementById("tagInput").value = ""; msg.textContent = ""; loadTags(caseId);
@@ -2019,9 +2401,10 @@
       if (!el) return;
       if (!notebookEntries.length) { el.innerHTML = "<div style='color:#9aa4b2;font-size:12px'>No entries yet.</div>"; return; }
       el.innerHTML = notebookEntries.map(e => {
+        const who = e.author ? `<span style="font-size:10px;color:#cbd3df;font-weight:600">${esc(e.author)}</span>` : "";
         const ts = e.timestamp ? `<span style="margin-left:auto;font-size:10px;color:#52617a">${esc(e.timestamp.slice(0,16).replace('T',' '))} UTC</span>` : "";
         return `<div class="nb-entry ${escAttr(e.type)}" data-id="${escAttr(e.id)}">` +
-          `<div class="nb-entry-header"><span class="nb-type-badge ${escAttr(e.type)}">${esc(e.type)}</span>${ts}</div>` +
+          `<div class="nb-entry-header"><span class="nb-type-badge ${escAttr(e.type)}">${esc(e.type)}</span>${who}${ts}</div>` +
           `<div class="nb-entry-text">${esc(e.text)}</div>` +
           `<div class="nb-entry-actions">` +
           `<button class="nb-action-btn" onclick="nbStartEdit('${escAttr(e.id)}')">Edit</button>` +
@@ -2070,7 +2453,7 @@
           .catch(e => { msg.textContent = "failed: " + e.message; });
       } else {
         fetch(`/cases/${caseId}/notebook`, { method: "POST",
-          headers: { "content-type": "application/json" }, body: JSON.stringify({ text, type }) })
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ text, type, author: investigatorName() }) })
           .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
           .then(() => { document.getElementById("nbText").value = ""; msg.textContent = ""; loadNotebook(caseId); })
           .catch(e => { msg.textContent = "failed: " + e.message; });
@@ -2084,6 +2467,161 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ enabled: aiEnabled, includeNotebook: this.checked }) })
         .catch(() => { this.checked = !this.checked; });
+    });
+
+    // --- Playbook (issue #36) -----------------------------------------------------
+    // Trackable checklist auto-derived (server-side) from the case's next steps + Critical/High
+    // findings, plus analyst-added custom tasks. GET re-syncs idempotently (analyst status/edits
+    // preserved), so loading the panel always reflects the latest synthesis.
+    let playbookTasks = [];
+    let pbOpenOnly = false;
+    const PB_STATUS = [["todo", "To do"], ["in_progress", "In progress"], ["done", "Done"], ["skipped", "Skipped"]];
+    const pbCaseId = () => document.getElementById("caseId").value.trim();
+
+    function loadPlaybook(caseId) {
+      fetch(`/cases/${caseId}/playbook`).then(r => r.ok ? r.json() : { tasks: [], stats: null, control: null }).then(d => {
+        playbookTasks = Array.isArray(d.tasks) ? d.tasks : [];
+        const tpl = document.getElementById("pbTemplates");
+        if (tpl && d.control) tpl.checked = !!d.control.useTemplates;
+        renderPlaybook(d.stats);
+      }).catch(() => {});
+    }
+
+    function pbLocalStats(tasks) {
+      const total = tasks.length, done = tasks.filter(t => t.status === "done").length;
+      return { total, done, completionPct: total ? Math.round(done / total * 100) : 0 };
+    }
+
+    function renderPlaybook(stats) {
+      const el = document.getElementById("pbList");
+      if (!el) return;
+      stats = stats || pbLocalStats(playbookTasks);
+      const badge = document.getElementById("pbBadge");
+      if (badge) badge.textContent = playbookTasks.length ? `${stats.done}/${stats.total} done · ${stats.completionPct}%` : "";
+      const bar = document.getElementById("pbProgressBar");
+      if (bar) bar.style.width = (stats.completionPct || 0) + "%";
+      let tasks = playbookTasks;
+      if (pbOpenOnly) tasks = tasks.filter(t => t.status !== "done" && t.status !== "skipped");
+      if (!tasks.length) {
+        el.innerHTML = `<div style='color:#9aa4b2;font-size:12px'>${playbookTasks.length ? "No open tasks — all done or skipped." : "No tasks yet — run synthesis (or add a custom task below)."}</div>`;
+        return;
+      }
+      const canDrag = !pbOpenOnly;   // reordering a filtered subset would be ambiguous
+      el.innerHTML = tasks.map(t => {
+        const opts = PB_STATUS.map(([v, l]) => `<option value="${v}" ${t.status === v ? "selected" : ""}>${l}</option>`).join("");
+        const src = t.source === "custom" ? "custom" : (t.source === "finding" ? "from finding" : "from next step");
+        const findingLink = t.relatedFindingId ? `<a href="#" class="pb-finding-link" title="Go to findings" onclick="pbJumpFinding();return false">↳ finding</a>` : "";
+        const desc = t.description ? `<div class="pb-desc">${esc(t.description)}</div>` : "";
+        return `<div class="pb-task pb-${escAttr(t.status)}" data-id="${escAttr(t.id)}" ${canDrag ? 'draggable="true"' : ""}>` +
+          `<div class="pb-row1">` +
+            `<span class="pb-drag ${canDrag ? "" : "pb-drag-off"}" title="Drag to reorder">⠿</span>` +
+            `<select class="pb-status" onchange="pbPatch('${escAttr(t.id)}',{status:this.value})">${opts}</select>` +
+            `<span class="pb-pri pb-pri-${escAttr(t.priority)}">${esc(t.priority)}</span>` +
+            `<span class="pb-title">${esc(t.title)}</span>` +
+            `<span class="pb-src">${src}</span>${findingLink}` +
+            `<span class="pb-move">` +
+              `<button onclick="pbMove('${escAttr(t.id)}',-1)" title="Move up">▲</button>` +
+              `<button onclick="pbMove('${escAttr(t.id)}',1)" title="Move down">▼</button>` +
+              `<button class="pb-del" onclick="pbDelete('${escAttr(t.id)}')" title="Delete">✕</button>` +
+            `</span>` +
+          `</div>` + desc +
+          `<div class="pb-row2">` +
+            `<input class="pb-assignee" placeholder="assignee" value="${escAttr(t.assignee || "")}" onchange="pbPatch('${escAttr(t.id)}',{assignee:this.value})" />` +
+            `<input class="pb-due" type="date" value="${escAttr(t.dueDate || "")}" onchange="pbPatch('${escAttr(t.id)}',{dueDate:this.value})" title="Due date" />` +
+          `</div>` +
+        `</div>`;
+      }).join("");
+      if (canDrag) pbWireDrag(el);
+    }
+
+    // Drag-and-drop reorder (mirrors the section-reorder pattern). On drop, persist the new
+    // full id order via PATCH …/order, which re-renders from the server's order.
+    function pbWireDrag(container) {
+      let dragSrc = null;
+      container.querySelectorAll(".pb-task").forEach(row => {
+        row.addEventListener("dragstart", e => { dragSrc = row; e.dataTransfer.effectAllowed = "move"; });
+        row.addEventListener("dragover", e => {
+          e.preventDefault(); e.dataTransfer.dropEffect = "move";
+          if (row !== dragSrc) {
+            container.querySelectorAll(".pb-task").forEach(r => r.classList.remove("drag-over"));
+            row.classList.add("drag-over");
+          }
+        });
+        row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+        row.addEventListener("drop", e => {
+          e.preventDefault(); row.classList.remove("drag-over");
+          if (dragSrc && dragSrc !== row) {
+            container.insertBefore(dragSrc, row);
+            const ids = [...container.querySelectorAll(".pb-task")].map(r => r.dataset.id);
+            const caseId = pbCaseId();
+            if (caseId) fetch(`/cases/${caseId}/playbook/order`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) })
+              .then(() => loadPlaybook(caseId)).catch(() => {});
+          }
+        });
+        row.addEventListener("dragend", () => { dragSrc = null; container.querySelectorAll(".pb-task").forEach(r => r.classList.remove("drag-over")); });
+      });
+    }
+
+    function pbPatch(id, patch) {
+      const caseId = pbCaseId(); if (!caseId) return;
+      fetch(`/cases/${caseId}/playbook/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => loadPlaybook(caseId))
+        .catch(e => { const m = document.getElementById("pbMsg"); if (m) m.textContent = "failed (restart the companion server?): " + e.message; });
+    }
+
+    function pbDelete(id) {
+      const caseId = pbCaseId(); if (!caseId) return;
+      fetch(`/cases/${caseId}/playbook/${id}`, { method: "DELETE" }).then(() => loadPlaybook(caseId)).catch(() => {});
+    }
+
+    function pbMove(id, dir) {
+      const ids = playbookTasks.map(t => t.id);
+      const i = ids.indexOf(id); if (i < 0) return;
+      const j = i + dir; if (j < 0 || j >= ids.length) return;
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+      const caseId = pbCaseId(); if (!caseId) return;
+      fetch(`/cases/${caseId}/playbook/order`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) })
+        .then(() => loadPlaybook(caseId)).catch(() => {});
+    }
+
+    function pbJumpFinding() {
+      const sec = document.getElementById("sec-findings");
+      if (sec) { sec.classList.remove("collapsed"); sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
+    }
+
+    document.getElementById("pbAddBtn").onclick = function() {
+      const caseId = pbCaseId();
+      const title = document.getElementById("pbTitle").value.trim();
+      const priority = document.getElementById("pbPriority").value;
+      const msg = document.getElementById("pbMsg");
+      if (!caseId || !title) { if (msg) msg.textContent = "title required"; return; }
+      if (msg) msg.textContent = "adding…";
+      fetch(`/cases/${caseId}/playbook`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title, priority }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => { document.getElementById("pbTitle").value = ""; if (msg) msg.textContent = ""; loadPlaybook(caseId); })
+        .catch(e => { if (msg) msg.textContent = "failed: " + e.message; });
+    };
+
+    document.getElementById("pbSyncBtn").onclick = function() {
+      const caseId = pbCaseId(); if (!caseId) return;
+      const msg = document.getElementById("pbMsg"); if (msg) msg.textContent = "syncing…";
+      fetch(`/cases/${caseId}/playbook/sync`, { method: "POST" })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => { if (msg) msg.textContent = ""; loadPlaybook(caseId); })
+        .catch(e => { if (msg) msg.textContent = "sync failed (restart the companion server?): " + e.message; });
+    };
+
+    document.getElementById("pbOpenOnly").addEventListener("change", function() { pbOpenOnly = this.checked; renderPlaybook(); });
+
+    document.getElementById("pbTemplates").addEventListener("change", function() {
+      const caseId = pbCaseId();
+      if (!caseId) { this.checked = !this.checked; return; }
+      const msg = document.getElementById("pbMsg"); if (msg) msg.textContent = "applying…";
+      fetch(`/cases/${caseId}/playbook/control`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ useTemplates: this.checked }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => { if (msg) msg.textContent = ""; loadPlaybook(caseId); })
+        .catch(e => { this.checked = !this.checked; if (msg) msg.textContent = "failed (restart the companion server?): " + e.message; });
     });
 
     // --- Hunt-pivot query generator -----------------------------------------------
@@ -2113,6 +2651,7 @@
 
     // --- Multi-select (session-only, cleared on re-render) ----------------------
     let selectedEvents = new Set();
+    let selectedIocs = new Set();
     function updateBulkBar() {
       const bar = document.getElementById("evBulkBar");
       if (!bar) return;
@@ -2124,6 +2663,17 @@
       }
     }
     function clearSelection() { selectedEvents.clear(); updateBulkBar(); renderTimelineEvents(lastFt); swSelToolbar(); swRenderCanvas(); }
+    function updateIocBulkBar() {
+      const bar = document.getElementById("iocBulkBar");
+      if (!bar) return;
+      if (selectedIocs.size > 0) {
+        bar.classList.add("active");
+        document.getElementById("iocBulkCount").textContent = `${selectedIocs.size} IOC${selectedIocs.size !== 1 ? "s" : ""} selected`;
+      } else {
+        bar.classList.remove("active");
+      }
+    }
+    function clearIocSelection() { selectedIocs.clear(); if (lastState) renderIocs(lastState.iocs || []); }
     function bulkToggleStar() {
       const caseId = document.getElementById("caseId").value.trim();
       const anyUnstarred = [...selectedEvents].some(id => !starredEvents.has(id));
@@ -2131,8 +2681,8 @@
       saveStarred(caseId);
       renderTimelineEvents(lastFt);
     }
-    function openBulkTagModal(ids) {
-      tagTarget = { bulk: true, ids };
+    function openBulkTagModal(ids, targetType) {
+      tagTarget = { bulk: true, ids, targetType: targetType || "event" };
       document.getElementById("tagOverlay").classList.add("open");
       renderTagModal();
       document.getElementById("tagInput").focus();
@@ -2162,6 +2712,59 @@
       } catch {
         statusEl.textContent = "mark failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
       }
+    }
+
+    // --- Bulk IOC operations -------------------------------------------------------
+    async function bulkEnrichIocs() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !selectedIocs.size) return;
+      const ids = [...selectedIocs];
+      const statusEl = document.getElementById("status");
+      statusEl.textContent = `enriching ${ids.length} IOC${ids.length !== 1 ? "s" : ""}…`;
+      try {
+        const r = await fetch(`/cases/${caseId}/iocs/bulk-enrich`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ iocIds: ids }) });
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}));
+          throw new Error(e.error || "HTTP " + r.status);
+        }
+        statusEl.textContent = `enrichment started for ${ids.length} IOC${ids.length !== 1 ? "s" : ""} (see AI status)`;
+      } catch (e) {
+        statusEl.textContent = "enrich failed: " + e.message;
+      }
+    }
+    function bulkTagIocs() {
+      if (selectedIocs.size) openBulkTagModal([...selectedIocs], "ioc");
+    }
+    async function bulkMarkIocsLegitimate() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !selectedIocs.size) return;
+      const ids = [...selectedIocs];
+      const note = prompt(`Mark ${ids.length} IOC${ids.length !== 1 ? "s" : ""} as legitimate (benign — exclude from analysis). Reason (optional):`, "");
+      if (note === null) return;
+      const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
+      const items = ids.map(id => ({ kind: "ioc", ref: iocById.get(id) ?? id, label: iocById.get(id) ?? id }));
+      const statusEl = document.getElementById("status");
+      statusEl.textContent = `marking ${ids.length} IOC${ids.length !== 1 ? "s" : ""} legitimate…`;
+      try {
+        const r = await fetch(`/cases/${caseId}/legitimate/batch`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ items, note }) });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        renderLegitimate(await r.json());
+        selectedIocs.clear();
+        if (lastState) renderIocs(lastState.iocs || []);
+        statusEl.textContent = "marked legitimate — AI is re-synthesizing (see AI status)";
+      } catch {
+        statusEl.textContent = "mark failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
+      }
+    }
+    function bulkCopyIocs() {
+      const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
+      const text = [...selectedIocs].map(id => iocById.get(id) ?? id).join("\n");
+      navigator.clipboard.writeText(text).then(() => {
+        const statusEl = document.getElementById("status");
+        statusEl.textContent = `copied ${selectedIocs.size} IOC value${selectedIocs.size !== 1 ? "s" : ""} to clipboard`;
+      }).catch(() => {});
     }
 
     let veloEnabled = false;   // set from /health — whether the Velociraptor API is configured (Run button)
@@ -2256,11 +2859,11 @@
         out.push(`-- running process (live)\nSELECT Pid, Ppid, Name, CommandLine, Exe\nFROM pslist()\nWHERE lowcase(string=Name) IN (${names})${c.parent ? `\n-- expected parent: ${baseName(c.parent)}` : ""}`);
       }
       if (c.paths.length) {
-        out.push(`-- file presence (exact path) + its hashes\nSELECT FullPath, Size, Mtime, hash(path=FullPath) AS Hashes\nFROM glob(globs=${hq(vqlGlob(c.paths[0]))})`);
-        out.push(`-- or locate it anywhere on C: by name\nSELECT FullPath, Size, Mtime FROM glob(globs=${hq("C:/**/" + baseName(c.paths[0]))})`);
+        out.push(`-- file presence (exact path) + its hashes\nSELECT OSPath, Size, Mtime, hash(path=OSPath) AS Hashes\nFROM glob(globs=${hq(vqlGlob(c.paths[0]))})`);
+        out.push(`-- or locate it anywhere on C: by name\nSELECT OSPath, Size, Mtime FROM glob(globs=${hq("C:/**/" + baseName(c.paths[0]))})`);
       }
       if (c.hashes.length) {
-        out.push(`-- on-disk hash sweep (narrow the glob root — hashing every file is expensive)\nSELECT FullPath, Size, Mtime, hash(path=FullPath) AS Hashes\nFROM glob(globs="C:/Users/**")\nWHERE hash(path=FullPath).SHA256 =~ ${hq("(?i)" + c.hashes[0])}`);
+        out.push(`-- on-disk hash sweep (narrow the glob root — hashing every file is expensive)\nSELECT OSPath, Size, Mtime, hash(path=OSPath) AS Hashes\nFROM glob(globs="C:/Users/**")\nWHERE hash(path=OSPath).SHA256 =~ ${hq("(?i)" + c.hashes[0])}`);
       }
       if (c.ips.length) {
         out.push(`-- active network connections\nSELECT Pid, Name, Status, Laddr.IP AS Local, Raddr.IP AS Remote, Raddr.Port AS RemotePort\nFROM netstat()\nWHERE Raddr.IP IN (${c.ips.map(hq).join(", ")})`);
@@ -3386,7 +3989,7 @@
       countUpdate = () =>
         fetch(`/cases/${caseId}/captures/count`)
           .then(r => r.json())
-          .then(d => document.getElementById("captureCount").textContent = `Screenshots: ${d.count}`)
+          .then(d => document.getElementById("captureCountNum").textContent = d.count)
           .catch(() => {});
       countUpdate();
       startCount();
@@ -3547,6 +4150,29 @@
       if (!caseId) return;
       clearTimeout(phasesTimer);
       phasesTimer = setTimeout(() => loadPhases(caseId), 800);
+    }
+
+    // Per-IOC corroboration (#35 Phase 3): { iocId: [tools that observed it] }, derived server-side
+    // from the forensic events' sources. Powers the "⊕ N sources" badge in the IOC panel.
+    let iocSourcesById = {};
+    let iocSourcesTimer = null;
+    function loadIocSources(caseId) {
+      fetch(`/cases/${caseId}/ioc-sources`).then(r => r.json()).then(m => {
+        iocSourcesById = (m && typeof m === "object") ? m : {};
+        if (lastState) renderIocs((projectScope(lastState).iocs) || []);
+      }).catch(() => {});
+    }
+    function scheduleIocSourcesReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(iocSourcesTimer);
+      iocSourcesTimer = setTimeout(() => loadIocSources(caseId), 800);
+    }
+    // "⊕ N" corroboration badge for an IOC seen by 2+ tools (mirrors the forensic-timeline badge).
+    function iocCorroBadge(iocId) {
+      const src = iocSourcesById[iocId];
+      if (!src || src.length < 2) return "";
+      return ` <span title="Corroborated by ${src.length} sources: ${escAttr(src.join(", "))}" style="background:#13331f;color:#6bcB77;border:1px solid #1f5a35;border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">⊕ ${esc(src.length)}</span>`;
     }
 
     function renderPhases() {
@@ -4281,16 +4907,41 @@
       const flaggedTotal = iocs.filter(iocFlagged).length;
       const cnt = document.getElementById("iocFlaggedCount");
       if (cnt) cnt.textContent = flaggedTotal ? ` (${flaggedTotal} flagged)` : "";
-      const visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
-      el.innerHTML = visible.length
-        ? visible.map(i => {
-            const isNew = newIocKeys.has(i.value);
-            const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
-            return `<div class="${isNew ? "ioc-new" : ""}">${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} <span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}</div>`;
-          }).join("")
-        : (showFlaggedIocsOnly
-            ? "<div style='color:#9aa4b2'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-            : "<div style='color:#9aa4b2'>No IOCs yet</div>");
+      let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
+      if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
+      if (!visible.length) {
+        el.innerHTML = showFlaggedIocsOnly
+          ? "<div style='color:#9aa4b2'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
+          : searchTerm && iocs.length > 0 ? "<div style='color:#9aa4b2'>No IOCs match the search.</div>"
+          : "<div style='color:#9aa4b2'>No IOCs yet</div>";
+        updateIocBulkBar();
+        return;
+      }
+      const allIds = visible.map(i => i.id);
+      const allSel = allIds.length > 0 && allIds.every(id => selectedIocs.has(id));
+      const someSel = allIds.some(id => selectedIocs.has(id));
+      const headerRow = `<div class="ioc-header-row">`
+        + `<input type="checkbox" class="ioc-cb" id="iocSelectAll" ${allSel ? "checked" : ""} title="Select / deselect all visible IOCs" />`
+        + ` <span>${visible.length} IOC${visible.length !== 1 ? "s" : ""}</span>`
+        + `</div>`;
+      const rows = visible.map(i => {
+        const isNew = newIocKeys.has(i.value);
+        const isSel = selectedIocs.has(i.id);
+        const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
+        return `<div class="ioc-row${isSel ? " ioc-selected" : ""}${isNew ? " ioc-new" : ""}" data-iocid="${escAttr(i.id)}">`
+          + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
+          + `<span class="ioc-body">`
+          // Mirror the forensic timeline: control cluster (comment + tag-add + hunt icons),
+          // then the id, then the tag PILLS, then the indicator itself.
+          +   `${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
+          +   `<span style="color:#6aa9ff">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)}${iocCorroBadge(i.id)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}`
+          + `</span>`
+          + `</div>`;
+      }).join("");
+      el.innerHTML = headerRow + rows;
+      const selAll = document.getElementById("iocSelectAll");
+      if (selAll && someSel && !allSel) selAll.indeterminate = true;
+      updateIocBulkBar();
     }
 
     // Render the forensic timeline from a pre-scoped+legit-filtered list.
@@ -4302,19 +4953,23 @@
       const filtering = activeSevs.size < allSevs.length;
       let visible = filtering ? ft.filter(e => activeSevs.has(e.severity)) : ft;
       if (showStarredOnly) visible = visible.filter(e => starredEvents.has(String(e.id)));
+      if (searchTerm) visible = visible.filter(e => _evMatchesSearch(e, searchTerm));
+      if (filterFrom || filterTo) visible = visible.filter(e => _evMatchesTimeRange(e, filterFrom, filterTo));
 
       const countEl = document.getElementById('timelineCount');
       if (countEl) {
         const total = ft.length;
-        countEl.textContent = (filtering || showStarredOnly)
+        countEl.textContent = (filtering || showStarredOnly || _hasActiveFilter())
           ? `(${visible.length} of ${total} events)`
           : `(${total} event${total !== 1 ? 's' : ''})`;
       }
+      _updateSearchCount(visible.length, ft.length);
 
       const caseId = lastState && lastState.caseId;
 
       if (!visible.length) {
-        document.getElementById("forensicTimeline").innerHTML = "—";
+        document.getElementById("forensicTimeline").innerHTML =
+          (_hasActiveFilter() && ft.length > 0) ? "<div style='color:#9aa4b2'>No events match the current filters.</div>" : "—";
         return;
       }
 
@@ -4444,7 +5099,9 @@
         : "";
       const sorted = [...state.findings].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
       const minConf = parseInt(document.getElementById("confFilter").value, 10) || 0;
-      const filtered = sorted.filter(f => f.confidence === undefined || f.confidence >= minConf);
+      const filtered = sorted.filter(f =>
+        (f.confidence === undefined || f.confidence >= minConf) &&
+        (!searchTerm || _findingMatchesSearch(f, searchTerm)));
       document.getElementById("findings").innerHTML =
         filtered.map(f => {
           const evidence = [...(f.sourceScreenshots || []), ...(evByFinding[f.id] || [])];
@@ -4465,7 +5122,7 @@
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${evidenceLinks(state.caseId, evidence)}</div>`;
-        }).join("") || (minConf > 0 && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings above ${minConf}% confidence.</span>` : "—");
+        }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings match the search.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings above ${minConf}% confidence.</span>` : "—");
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
@@ -4492,18 +5149,29 @@
       loadEvidenceGraph(caseId);
       loadPhases(caseId);
       loadSwimlane(caseId);
+      loadIocSources(caseId);
       loadComments(caseId);
       loadTags(caseId);
       loadNotebook(caseId);
       loadNbAiToggle(caseId);
+      loadPlaybook(caseId);
       loadStarred(caseId);
       selectedEvents.clear();
+      selectedIocs.clear();
       showStarredOnly = false;
       const sfBtn = document.getElementById("evStarFilterBtn");
       if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
       showFlaggedIocsOnly = false;
       const ifBtn = document.getElementById("iocFlaggedBtn");
       if (ifBtn) ifBtn.classList.remove("active");
+      searchTerm = ""; filterFrom = null; filterTo = null;
+      const gsEl = document.getElementById("globalSearch"); if (gsEl) gsEl.value = "";
+      const ffEl = document.getElementById("filterFrom"); if (ffEl) ffEl.value = "";
+      const ftEl = document.getElementById("filterTo"); if (ftEl) ftEl.value = "";
+      const csBtn = document.getElementById("clearSearch"); if (csBtn) csBtn.hidden = true;
+      const cfBtn = document.getElementById("clearFiltersBtn"); if (cfBtn) cfBtn.hidden = true;
+      const smcEl = document.getElementById("searchMatchCount"); if (smcEl) smcEl.textContent = "";
+      setSearchBarOpen(false, false); _updateSearchToggleIndicator();
       loadSynthMeta(caseId);
       loadImportMeta(caseId);
       loadCustomerExposure(caseId);
@@ -4523,14 +5191,27 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleSwimlaneReload(); loadSynthMeta(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
+        else if (msg.type === "playbook_changed") loadPlaybook(caseId);
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
         else if (msg.type === "velo_hunt_changed") loadVeloHuntJobs(caseId);
+        else if (msg.type === "legitimate_changed") loadLegitimate(caseId);
+        else if (msg.type === "scope_changed") {
+          scope = { start: msg.start ?? null, end: msg.end ?? null };
+          document.getElementById("scopeStart").value = isoToUtcInput(scope.start);
+          document.getElementById("scopeEnd").value = isoToUtcInput(scope.end);
+          renderScopeInfo();
+          // render() projects with the freshly-updated `scope` global AND caches its argument
+          // as `lastState`, so pass the RAW state — passing projectScope(lastState) would cache
+          // a scope-narrowed subset, permanently dropping out-of-window events on the next
+          // scope widen/clear until a fresh server state arrives.
+          if (lastState) render(lastState);
+        }
       };
     }
 
@@ -4808,11 +5489,17 @@
         toggleStar(caseId, star.getAttribute("data-evid"));
         return;
       }
-      // Bulk action bar buttons
+      // Bulk action bar buttons (events)
       if (e.target.id === "evBulkStarBtn") { bulkToggleStar(); return; }
       if (e.target.id === "evBulkTagBtn") { if (selectedEvents.size) openBulkTagModal([...selectedEvents]); return; }
       if (e.target.id === "evBulkLegitBtn") { bulkMarkLegitimate(); return; }
       if (e.target.id === "evBulkClearBtn") { clearSelection(); return; }
+      // Bulk action bar buttons (IOCs)
+      if (e.target.id === "iocBulkEnrichBtn") { bulkEnrichIocs(); return; }
+      if (e.target.id === "iocBulkTagBtn") { bulkTagIocs(); return; }
+      if (e.target.id === "iocBulkLegitBtn") { bulkMarkIocsLegitimate(); return; }
+      if (e.target.id === "iocBulkCopyBtn") { bulkCopyIocs(); return; }
+      if (e.target.id === "iocBulkClearBtn") { clearIocSelection(); return; }
       // Star filter toggle
       if (e.target.id === "evStarFilterBtn") {
         showStarredOnly = !showStarredOnly;
@@ -4864,6 +5551,32 @@
         updateBulkBar();
         swReflectSelection();   // mirror onto the swimlane dots
       }
+      // IOC checkbox: per-row checkbox
+      const iocRowCb = e.target.closest && e.target.closest(".ioc-row-cb");
+      if (iocRowCb) {
+        const id = iocRowCb.getAttribute("data-iocid");
+        if (e.target.checked) selectedIocs.add(id); else selectedIocs.delete(id);
+        const row = iocRowCb.closest(".ioc-row");
+        if (row) row.classList.toggle("ioc-selected", e.target.checked);
+        updateIocBulkBar();
+        const allIds = [...document.querySelectorAll(".ioc-row-cb")].map(cb => cb.getAttribute("data-iocid"));
+        const allSel = allIds.every(id => selectedIocs.has(id));
+        const someSel = allIds.some(id => selectedIocs.has(id));
+        const sa = document.getElementById("iocSelectAll");
+        if (sa) { sa.checked = allSel; sa.indeterminate = someSel && !allSel; }
+        return;
+      }
+      // IOC select-all checkbox
+      if (e.target.id === "iocSelectAll") {
+        document.querySelectorAll(".ioc-row-cb").forEach(cb => {
+          const id = cb.getAttribute("data-iocid");
+          if (e.target.checked) selectedIocs.add(id); else selectedIocs.delete(id);
+          cb.checked = e.target.checked;
+          const row = cb.closest(".ioc-row");
+          if (row) row.classList.toggle("ioc-selected", e.target.checked);
+        });
+        updateIocBulkBar();
+      }
     });
     document.getElementById("commentText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) postComment(); });
     // Tag modal + delegated chip clicks (the tag-add buttons are handled by the main click handler above).
@@ -4901,6 +5614,58 @@
     document.getElementById("stCancel").onclick = closeSaveTemplate;
     document.getElementById("saveTemplateOverlay").addEventListener("click", (e) => { if (e.target.id === "saveTemplateOverlay") closeSaveTemplate(); });
     document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
+    // --- Search bar + time-range filter listeners --------------------------------
+    (function () {
+      const gs = document.getElementById("globalSearch");
+      const cs = document.getElementById("clearSearch");
+      const ff = document.getElementById("filterFrom");
+      const ft = document.getElementById("filterTo");
+      const cfBtn = document.getElementById("clearFiltersBtn");
+      const toggleBtn = document.getElementById("toggleSearchBar");
+
+      toggleBtn.addEventListener("click", () => {
+        setSearchBarOpen(document.getElementById("searchFilterBar").hidden);
+      });
+
+      function applySearch() {
+        searchTerm = gs.value.trim().toLowerCase();
+        cs.hidden = !searchTerm;
+        if (lastState) render(lastState);
+      }
+      function applyTimeRange() {
+        filterFrom = utcInputToIso(ff.value);
+        filterTo = utcInputToIso(ft.value);
+        cfBtn.hidden = !filterFrom && !filterTo;
+        renderTimelineEvents(lastFt);
+      }
+
+      gs.addEventListener("input", () => {
+        clearTimeout(_searchDebounce);
+        _searchDebounce = setTimeout(applySearch, 300);
+      });
+      gs.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          if (gs.value) { gs.value = ""; applySearch(); }   // first Esc clears the query…
+          else { setSearchBarOpen(false); gs.blur(); }       // …a second one collapses the bar
+        }
+      });
+      cs.addEventListener("click", () => { gs.value = ""; applySearch(); gs.focus(); });
+
+      ff.addEventListener("change", applyTimeRange);
+      ft.addEventListener("change", applyTimeRange);
+      cfBtn.addEventListener("click", () => {
+        ff.value = ""; ft.value = "";
+        applyTimeRange();
+      });
+
+      // Press "/" to reveal + focus the search bar (when not already in a text field).
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "/" && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+          e.preventDefault(); setSearchBarOpen(true);
+        }
+      });
+    })();
+
     document.getElementById("aiToggle").onclick = toggleAi;
     document.getElementById("applyScope").onclick = applyScope;
     document.getElementById("clearScope").onclick = () => {
@@ -5259,14 +6024,20 @@
     fetch("/notion/status").then((r) => r.json()).then((s) => {
       if (s && s.configured) { addPushOption("notion", "Export to Notion"); notionHasDefault = !!(s.hasDatabase || s.hasParent); }
     }).catch(() => {});
+    // ClickUp: a configured token shows the option; the modal asks for the target list id.
+    let clickupDefaultList = "";
+    fetch("/clickup/status").then((r) => r.json()).then((s) => {
+      if (s && s.configured) { addPushOption("clickup", "Push to ClickUp"); clickupDefaultList = s.defaultListId || ""; }
+    }).catch(() => {});
     pushSelect.onchange = (e) => {
       const sel = e.target;
       const target = sel.value;
       sel.value = ""; // reset to the "Push to…" placeholder
       const caseId = document.getElementById("caseId").value.trim();
       if (!target || !caseId) return;
-      // Notion needs the new-vs-existing question first, so it opens a modal instead of an immediate POST.
+      // Notion/ClickUp need a target question first, so they open a modal instead of an immediate POST.
       if (target === "notion") { openNotionModal(); return; }
+      if (target === "clickup") { openClickupModal(caseId); return; }
       const c = encodeURIComponent(caseId);
       sel.disabled = true;
       const targetLabel = target === "iris" ? "IRIS" : target === "timesketch" ? "Timesketch" : "MISP";
@@ -5354,6 +6125,42 @@
           closeNotionModal();
         })
         .catch((err) => document.getElementById("notionMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
+        .finally(() => { btn.disabled = false; });
+    };
+
+    // ── Push playbook to ClickUp modal ────────────────────────────────────────
+    const clickupOverlay = document.getElementById("clickupOverlay");
+    function openClickupModal(caseId) {
+      document.getElementById("clickupMsg").textContent = "";
+      const input = document.getElementById("clickupListId");
+      input.value = clickupDefaultList;   // default; overwritten by the saved list if present
+      fetch(`/cases/${encodeURIComponent(caseId)}/clickup-export`).then((r) => r.ok ? r.json() : null)
+        .then((s) => { if (s && s.listId) input.value = s.listId; }).catch(() => {});
+      clickupOverlay.classList.add("open");
+    }
+    function closeClickupModal() { clickupOverlay.classList.remove("open"); }
+    document.getElementById("clickupCancel").onclick = closeClickupModal;
+    clickupOverlay.addEventListener("click", (e) => { if (e.target === clickupOverlay) closeClickupModal(); });
+    document.getElementById("clickupPushBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { document.getElementById("clickupMsg").textContent = "connect to a case first"; return; }
+      const listId = document.getElementById("clickupListId").value.trim();
+      if (!listId) { document.getElementById("clickupMsg").textContent = "enter a ClickUp list ID"; return; }
+      const btn = document.getElementById("clickupPushBtn");
+      btn.disabled = true;
+      document.getElementById("clickupMsg").textContent = "pushing…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/push/clickup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ listId }) })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((res) => {
+          document.getElementById("status").textContent =
+            `ClickUp: +${res.created} created, ${res.updated} updated` +
+            (res.skipped ? `, ${res.skipped} skipped` : "") +
+            (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
+          if (res.taskUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.taskUrl)}" target="_blank" rel="noopener">Open in ClickUp</a>`;
+          if (res.warnings && res.warnings.length) console.warn("clickup push warnings:", res.warnings);
+          closeClickupModal();
+        })
+        .catch((err) => document.getElementById("clickupMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
         .finally(() => { btn.disabled = false; });
     };
 
@@ -5464,9 +6271,13 @@
     const SECTION_DEFS = [
       { id: "sec-ask",          label: "Ask the LLM" },
       { id: "sec-exec",         label: "Executive Summary" },
-      { id: "sec-next-steps",   label: "Recommended Next Steps" },
+      { id: "sec-playbook",     label: "Playbook" },
       { id: "sec-attack-path",  label: "Attack Path" },
       { id: "sec-findings",     label: "Findings" },
+      // Recommended Next Steps is hidden by default — the Playbook (above) supersedes it for
+      // action-tracking. Its data still feeds the Playbook, report, and exports; re-enable it
+      // anytime from Settings → section visibility.
+      { id: "sec-next-steps",   label: "Recommended Next Steps", defaultHidden: true },
       { id: "sec-timeline",     label: "Forensic Timeline" },
       { id: "sec-kill-chain",   label: "Kill Chain" },
       { id: "sec-phases",       label: "Attack Phases" },
@@ -5487,6 +6298,12 @@
     function loadSectionsVis() {
       try { return JSON.parse(localStorage.getItem(SECTIONS_VIS_KEY) || "{}"); } catch { return {}; }
     }
+    // A section is visible unless the user hid it, OR — when the user hasn't chosen — unless it's
+    // flagged defaultHidden (e.g. Recommended Next Steps). An explicit user choice always wins.
+    function isSectionVisible(id, vis) {
+      if (vis[id] === undefined) { const d = SECTION_DEFS.find(s => s.id === id); return !(d && d.defaultHidden); }
+      return vis[id] !== false;
+    }
     function loadSectionsOrder() {
       try { return JSON.parse(localStorage.getItem(SECTIONS_ORDER_KEY) || "[]"); } catch { return []; }
     }
@@ -5499,7 +6316,18 @@
       const byId = Object.fromEntries(SECTION_DEFS.map(d => [d.id, d]));
       const result = saved.filter(id => byId[id]).map(id => byId[id]);
       const savedSet = new Set(saved);
-      SECTION_DEFS.filter(d => !savedSet.has(d.id)).forEach(d => result.push(d));
+      // Insert any section missing from the saved order at its CANONICAL position (right after its
+      // nearest preceding SECTION_DEFS sibling that's already placed) rather than dumping it at the
+      // end — so a newly-added section (e.g. Playbook) appears where it's defined, not at the bottom.
+      SECTION_DEFS.forEach((def, i) => {
+        if (savedSet.has(def.id)) return;
+        let insertAt = result.length;
+        for (let j = i - 1; j >= 0; j--) {
+          const idx = result.findIndex(d => d.id === SECTION_DEFS[j].id);
+          if (idx >= 0) { insertAt = idx + 1; break; }
+        }
+        result.splice(insertAt, 0, def);
+      });
       return result;
     }
     function applySecOrder() {
@@ -5516,7 +6344,7 @@
       const vis = loadSectionsVis();
       SECTION_DEFS.forEach(({ id }) => {
         const el = document.getElementById(id);
-        if (el) el.style.display = (vis[id] === false) ? "none" : "";
+        if (el) el.style.display = isSectionVisible(id, vis) ? "" : "none";
       });
     }
 
@@ -5526,7 +6354,7 @@
       const vis = loadSectionsVis();
       const ordered = getEffectiveOrder();
       container.innerHTML = ordered.map(({ id, label }) =>
-        `<label class="sec-check" draggable="true" data-id="${esc(id)}"><span class="drag-handle" title="Drag to reorder">⠿</span><input type="checkbox" id="scb-${esc(id)}" ${vis[id] !== false ? "checked" : ""}> ${esc(label)}</label>`
+        `<label class="sec-check" draggable="true" data-id="${esc(id)}"><span class="drag-handle" title="Drag to reorder">⠿</span><input type="checkbox" id="scb-${esc(id)}" ${isSectionVisible(id, vis) ? "checked" : ""}> ${esc(label)}</label>`
       ).join("");
       let dragSrc = null;
       container.querySelectorAll(".sec-check").forEach(row => {
@@ -5649,6 +6477,21 @@
     document.getElementById("settingsBtn").onclick = openSettingsModal;
     document.getElementById("settingsSaveBtn").onclick = saveSettings;
     document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
+    // IOC whitelist controls
+    document.getElementById("wlAddBtn").addEventListener("click", wlAddRule);
+    document.getElementById("wlPattern").addEventListener("keydown", e => { if (e.key === "Enter") wlAddRule(); });
+    document.getElementById("wlImportBtn").addEventListener("click", wlImport);
+    document.getElementById("wlExportCsvBtn").addEventListener("click", () => wlExport("csv"));
+    document.getElementById("wlExportJsonBtn").addEventListener("click", () => wlExport("json"));
+    document.getElementById("wlApplyBtn").addEventListener("click", wlApplyToCase);
+    document.getElementById("stab-whitelist").addEventListener("click", e => {
+      const q = e.target.closest(".wl-quick");
+      if (q) { document.getElementById("wlMatch").value = q.dataset.m; document.getElementById("wlPattern").value = q.dataset.p; document.getElementById("wlType").value = q.dataset.t || ""; return; }
+      const del = e.target.closest(".wl-del");
+      if (del) {
+        fetch(`/ioc-whitelist/${del.dataset.id}`, { method: "DELETE" }).then(r => { if (r.ok) loadWhitelist(); }).catch(() => {});
+      }
+    });
     document.getElementById("settingsOverlay").addEventListener("click", (e) => { if (e.target.id === "settingsOverlay") closeSettingsModal(); });
     document.getElementById("secSelectAll").addEventListener("click", () => {
       document.querySelectorAll("#secChecks .sec-check input[type=checkbox]").forEach(cb => { cb.checked = true; });
@@ -5661,8 +6504,69 @@
         const tab = btn.dataset.stab;
         document.querySelectorAll(".stab").forEach(b => b.classList.toggle("active", b === btn));
         document.querySelectorAll(".stab-pane").forEach(p => p.classList.toggle("active", p.id === "stab-" + tab));
+        if (tab === "whitelist") loadWhitelist();
       });
     });
+
+    // --- IOC Whitelist (Phase 2 of #35) — global known-good patterns, Settings → IOC Whitelist ----
+    function renderWhitelist(rules) {
+      const el = document.getElementById("wlList");
+      const cnt = document.getElementById("wlCount");
+      if (cnt) cnt.textContent = rules.length ? `(${rules.length})` : "";
+      if (!el) return;
+      if (!rules.length) { el.innerHTML = "<div style='color:#9aa4b2;font-size:12px;padding:4px'>No rules yet — add one above or import.</div>"; return; }
+      el.innerHTML = rules.map(r => {
+        const type = r.iocType ? `<span style="color:#9aa4b2">${esc(r.iocType)}</span> ` : "";
+        const note = r.note ? ` <span style="color:#7e8aa0">— ${esc(r.note)}</span>` : "";
+        return `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;border-bottom:1px solid #1a1f28;font-size:12px">`
+          + `<span style="color:#6aa9ff;flex:0 0 46px">${esc(r.match)}</span>`
+          + `<span style="flex:1;font-family:monospace;word-break:break-all">${esc(r.pattern)}</span>`
+          + `<span style="flex:0 0 auto">${type}${note}</span>`
+          + `<button class="wl-del" data-id="${escAttr(r.id)}" title="Delete rule" style="background:transparent;border:1px solid #5a2a2a;color:#ff9f9f;border-radius:5px;padding:0 7px;cursor:pointer">✕</button>`
+          + `</div>`;
+      }).join("");
+    }
+    function loadWhitelist() {
+      fetch("/ioc-whitelist").then(r => r.json()).then(renderWhitelist).catch(() => {});
+    }
+    function wlAddRule() {
+      const match = document.getElementById("wlMatch").value;
+      const pattern = document.getElementById("wlPattern").value.trim();
+      const iocType = document.getElementById("wlType").value;
+      const note = document.getElementById("wlNote").value.trim();
+      const msg = document.getElementById("wlMsg");
+      if (!pattern) { msg.textContent = "pattern is required"; return; }
+      msg.textContent = "adding…";
+      fetch("/ioc-whitelist", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ match, pattern, iocType, note }) })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(() => { document.getElementById("wlPattern").value = ""; document.getElementById("wlNote").value = ""; msg.textContent = ""; loadWhitelist(); })
+        .catch(e => { msg.textContent = e.message; });
+    }
+    function wlImport() {
+      const text = document.getElementById("wlImportText").value;
+      const msg = document.getElementById("wlMsg");
+      if (!text.trim()) { msg.textContent = "paste CSV or JSON first"; return; }
+      msg.textContent = "importing…";
+      fetch("/ioc-whitelist/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(j => { msg.textContent = `imported ${j.added} new rule${j.added !== 1 ? "s" : ""} (${j.parsed} parsed)`; document.getElementById("wlImportText").value = ""; loadWhitelist(); })
+        .catch(e => { msg.textContent = e.message; });
+    }
+    function wlExport(format) { window.open(`/ioc-whitelist/export?format=${format}`, "_blank"); }
+    function wlApplyToCase() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("wlApplyMsg");
+      if (!caseId) { msg.textContent = "load a case first"; return; }
+      msg.textContent = "applying…";
+      fetch(`/cases/${caseId}/ioc-whitelist/apply`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(j => {
+          msg.textContent = `${j.matched} matched · ${j.added} newly marked legitimate`;
+          if (j.legitimate) renderLegitimate(j.legitimate);
+        })
+        .catch(e => { msg.textContent = "failed: " + e.message + " — restart the server if the endpoint 404s."; });
+    }
 
     applySectionsVis();
 
@@ -5726,6 +6630,44 @@
       document.addEventListener("focusin", (e) => { const el = e.target.closest && e.target.closest("[data-tip]"); if (el) { cur = el; show(el); } });
       document.addEventListener("focusout", hide);
       window.addEventListener("scroll", hide, true);
+    })();
+
+    // ── Responsive toolbar: collapse action buttons to icon-only when the row would wrap ──
+    // Keeps the toolbar on one line (plus the scope row) regardless of viewport width or the
+    // dynamic toggle/case-name text. Pure layout measurement — no persisted setting to manage.
+    (function () {
+      const tb = document.getElementById("toolbarMain");
+      if (!tb) return;
+      let queued = false;
+      function fitToolbar() {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(() => {
+          queued = false;
+          tb.classList.remove("icons-only");        // measure with full labels showing
+          const btn = tb.querySelector("button");
+          const rowH = btn ? btn.offsetHeight : 34;  // one action-row height
+          if (tb.scrollHeight > rowH * 1.6) tb.classList.add("icons-only");  // it wrapped → collapse
+        });
+      }
+      // React to viewport width changes via the (full-width, height-stable) header, so toggling
+      // the class on toolbarMain — which only changes its HEIGHT — never re-triggers a loop.
+      const hdr = document.querySelector("header");
+      if (window.ResizeObserver && hdr) {
+        let lastW = -1;
+        new ResizeObserver((es) => {
+          const w = es[0].contentRect.width;
+          if (Math.abs(w - lastW) > 1) { lastW = w; fitToolbar(); }
+        }).observe(hdr);
+      } else {
+        window.addEventListener("resize", fitToolbar);
+      }
+      // React to dynamic label changes (Enrich/Anon/AI toggle text, Collapse/Expand, case load).
+      // Observe text/children only — NOT attributes — so our own class toggle doesn't loop.
+      if (window.MutationObserver) {
+        new MutationObserver(fitToolbar).observe(tb, { childList: true, characterData: true, subtree: true });
+      }
+      fitToolbar();
     })();
   </script>
 </body>

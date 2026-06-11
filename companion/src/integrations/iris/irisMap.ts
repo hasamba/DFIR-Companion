@@ -10,6 +10,7 @@ import type {
 import type { GraphAsset } from "../../analysis/assetGraph.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
 import type { IrisAssetBody, IrisIocBody, IrisEventBody, IrisTaskBody } from "./irisClient.js";
+import type { PlaybookTask, PlaybookStatus } from "../../analysis/playbook.js";
 import { tacticForTechniques } from "./mitreTactics.js";
 import { attackTechniqueMd, attackTechniqueUrl } from "../../analysis/attack.js";
 
@@ -217,6 +218,37 @@ export function mapNextStepTask(step: NextStep): IrisTaskBody {
     task_description: description,
     task_tags: [TAG, step.priority].join(","),
   };
+}
+
+// Build an IRIS task from a Response Playbook task (issue #36). Same shape as a next-step task —
+// `[priority] title`, so a playbook task derived from a next step dedupes against it — but it also
+// carries the analyst's assignee/due/notes into the description and its status/source into the
+// tags. The caller resolves task_status_id from `playbookStatusCandidates` against the install's
+// status map and adds task_assignees_id.
+export function mapPlaybookTask(task: PlaybookTask): IrisTaskBody {
+  const title = `[${task.priority}] ${task.title}`.trim();
+  const description = [
+    task.description,
+    task.assignee ? `Assignee: ${task.assignee}` : "",
+    task.dueDate ? `Due: ${task.dueDate}` : "",
+    task.notes ? `Notes: ${task.notes}` : "",
+  ].filter(Boolean).join("\n\n");
+  return {
+    task_title: title.length >= 2 ? title : `${title} (task)`,
+    task_description: description,
+    task_tags: [TAG, task.priority, task.status, task.source].join(","),
+  };
+}
+
+// Candidate IRIS task-status names (lowercased), best→fallback, for a playbook status. IRIS
+// status ids vary per install, so the push resolves these against the live taskStatusMap.
+export function playbookStatusCandidates(status: PlaybookStatus): string[] {
+  switch (status) {
+    case "done": return ["done", "completed", "closed"];
+    case "in_progress": return ["in progress", "in_progress", "wip", "open"];
+    case "skipped": return ["canceled", "cancelled", "done", "closed"];
+    default: return ["to do", "open", "todo", "not started"];
+  }
 }
 
 // ---- summary & notes -------------------------------------------------------
