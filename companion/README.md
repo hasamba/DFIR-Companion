@@ -297,10 +297,19 @@ always contain the real data ("tokenize-in-transit").
   **add/remove custom entities** (value + category, including a free-form **"Other"**
   for codenames). Custom entities are tokenized by exact match even if that category's
   detector is off. Persisted in `state/anon-entities.json`.
-- **Screenshots are best-effort.** Pixel content can't be tokenized. With an external
-  vision model the screenshot images are sent as-is (the dashboard shows a warning when
-  anon is on and the vision model is external). Pointing `DFIR_AI_MODEL` at a local
-  Ollama vision model keeps screenshots on-box.
+- **Screenshots are OCR-redacted (best-effort).** With an external vision model, each
+  screenshot is run through local OCR (Tesseract.js, on-box — no cloud OCR API) **before**
+  it is sent: words matching the case entity set are covered with opaque black rectangles in
+  an **in-memory** copy. The original screenshot files on disk are never modified. OCR is
+  best-effort, so the dashboard still warns when anon is on and the vision model is external.
+  Pointing `DFIR_AI_MODEL` at a local Ollama vision model keeps screenshots on-box and skips
+  OCR entirely.
+  - **Visibility:** a one-line `[OCR] case=… redaction ran on N screenshot(s) — scrubbed M
+    word(s)…` is logged whenever the pre-pass runs (so you can tell the redacted path ran vs.
+    images going to the model un-redacted). `DFIR_OCR_DEBUG=1` adds a per-screenshot line —
+    words OCR read and **which** were blacked out (local log only). `DFIR_OCR_DEBUG_DIR=<path>`
+    also writes each redacted copy sent to the model to `<path>/<caseId>/` so you can eyeball
+    the boxes; the original evidence is never touched.
 - `DFIR_ANONYMIZE=off` flips the default for **new** cases (existing cases keep their
   saved setting).
 

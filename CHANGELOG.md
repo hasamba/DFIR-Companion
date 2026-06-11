@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Local OCR screenshot anonymization (closes #19).** When anonymization is enabled and the AI vision provider is external (cloud), each screenshot is now OCR-redacted **in-memory** before it is sent to the model: Tesseract.js (WASM, runs fully on-box — no cloud OCR API) reads the image, matches recognised words against the same per-case entity set the text path uses (`createAnonymizer`), and composites opaque black rectangles over matching regions using `sharp`. Only the copy forwarded to the model is redacted; the original screenshot file on disk is never touched (evidence-first invariant). The OCR runner is injectable (`OcrRunner` interface) so tests never spawn Tesseract. The existing "screenshots may contain un-redacted text" warning is preserved — OCR is still best-effort.
+- **OCR redaction visibility.** The OCR pre-pass now logs a one-line summary whenever it runs (`[OCR] case=… redaction ran on N screenshot(s) — scrubbed M word(s)…`), so you can confirm screenshots took the redacted path vs. going to the model un-redacted (anon off / local provider). `DFIR_OCR_DEBUG=1` adds a per-screenshot line listing how many words OCR read and **which** words were blacked out (local log only); `DFIR_OCR_DEBUG_DIR=<path>` also writes each redacted copy that is sent to the model to `<path>/<caseId>/` for visual inspection (originals untouched). `ocrRedactImage` now returns `{ buffer, changed, wordCount, redactions }` instead of a bare buffer.
+
+### Fixed
+- **OCR redaction was a silent no-op (`tesseract.js` default export).** `TesseractOcrRunner` destructured `recognize` directly off the ESM dynamic import, but `tesseract.js` is CommonJS so `recognize` lives on `.default` — every call threw `recognize is not a function`. Because OCR failures are swallowed (the original image is forwarded), screenshots were being sent to the external model **un-redacted**. Now reads `recognize` off the default export, with a regression test asserting the module shape.
 
 ## [0.15.0] - 2026-06-10
 
