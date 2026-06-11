@@ -7,8 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import {
   ingestCapture,
   _resetDedupCache,
-  resolveDedupThreshold,
-  DEFAULT_DUP_THRESHOLD,
+  isDedupEnabled,
 } from "../../src/ingest/captureIngest.js";
 
 let root: string;
@@ -47,7 +46,7 @@ describe("ingestCapture", () => {
 
     expect(meta.sequenceNumber).toBe(1);
     expect(meta.isDuplicate).toBe(false);
-    expect(meta.perceptualHash).toMatch(/^[0-9a-f]{128}$/);
+    expect(meta.contentHash).toMatch(/^[0-9a-f]{64}$/); // SHA-256 hex
 
     const onDisk = await readFile(join(store.screenshotsDir("c1"), meta.screenshotFile));
     expect(onDisk.length).toBeGreaterThan(0);
@@ -56,7 +55,7 @@ describe("ingestCapture", () => {
     expect(log).toHaveLength(1);
   });
 
-  it("marks a near-identical second capture as duplicate", async () => {
+  it("marks a BYTE-IDENTICAL second capture as duplicate", async () => {
     const img = await pngBase64(128, 128, 128);
     await ingestCapture(store, payload({ imageBase64: img }));
     const second = await ingestCapture(store, payload({ imageBase64: img }));
@@ -64,10 +63,17 @@ describe("ingestCapture", () => {
     expect(second.sequenceNumber).toBe(2);
   });
 
-  it("never flags a duplicate when dedup is disabled (threshold null)", async () => {
+  it("does NOT mark a different second capture as duplicate (exact match only)", async () => {
+    await ingestCapture(store, payload({ imageBase64: await pngBase64(128, 128, 128) }));
+    // A different image — even slightly — is not a duplicate; it must be analyzed.
+    const second = await ingestCapture(store, payload({ imageBase64: await pngBase64(128, 128, 129) }));
+    expect(second.isDuplicate).toBe(false);
+  });
+
+  it("never flags a duplicate when dedup is disabled", async () => {
     const img = await pngBase64(128, 128, 128);
-    await ingestCapture(store, payload({ imageBase64: img }), null);
-    const second = await ingestCapture(store, payload({ imageBase64: img }), null);
+    await ingestCapture(store, payload({ imageBase64: img }), false);
+    const second = await ingestCapture(store, payload({ imageBase64: img }), false);
     expect(second.isDuplicate).toBe(false);
   });
 
@@ -96,24 +102,17 @@ describe("ingestCapture", () => {
   });
 });
 
-describe("resolveDedupThreshold", () => {
-  it("defaults to DEFAULT_DUP_THRESHOLD when unset", () => {
-    expect(resolveDedupThreshold({})).toBe(DEFAULT_DUP_THRESHOLD);
+describe("isDedupEnabled", () => {
+  it("is enabled by default (unset)", () => {
+    expect(isDedupEnabled({})).toBe(true);
   });
-  it("honors a custom DFIR_DEDUP_THRESHOLD", () => {
-    expect(resolveDedupThreshold({ DFIR_DEDUP_THRESHOLD: "25" })).toBe(25);
-    expect(resolveDedupThreshold({ DFIR_DEDUP_THRESHOLD: "0" })).toBe(0);
+  it("stays enabled for any other value", () => {
+    expect(isDedupEnabled({ DFIR_DEDUP: "on" })).toBe(true);
+    expect(isDedupEnabled({ DFIR_DEDUP: "true" })).toBe(true);
   });
-  it("falls back to the default on an invalid threshold", () => {
-    expect(resolveDedupThreshold({ DFIR_DEDUP_THRESHOLD: "abc" })).toBe(DEFAULT_DUP_THRESHOLD);
-    expect(resolveDedupThreshold({ DFIR_DEDUP_THRESHOLD: "-3" })).toBe(DEFAULT_DUP_THRESHOLD);
-  });
-  it("returns null (disabled) when DFIR_DEDUP is off/false/no/0", () => {
-    for (const v of ["off", "OFF", "false", "no", "0"]) {
-      expect(resolveDedupThreshold({ DFIR_DEDUP: v })).toBeNull();
+  it("is disabled when DFIR_DEDUP is off/false/no/0 (case-insensitive)", () => {
+    for (const v of ["off", "OFF", "false", "No", "0"]) {
+      expect(isDedupEnabled({ DFIR_DEDUP: v })).toBe(false);
     }
-  });
-  it("DFIR_DEDUP=off wins over a set threshold", () => {
-    expect(resolveDedupThreshold({ DFIR_DEDUP: "off", DFIR_DEDUP_THRESHOLD: "25" })).toBeNull();
   });
 });
