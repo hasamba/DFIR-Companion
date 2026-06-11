@@ -280,8 +280,11 @@ async function embedIcon(icoPath) {
 }
 
 async function stageRuntimeAssets(icoPath) {
-  console.log("[sea] stage public/ + sharp + sample .env");
+  console.log("[sea] stage public/ + data/ + sharp + sample .env");
   await copyTree(join(REPO_DIR, "public"), join(DIST_DIR, "public"));
+  // Bundled offline datasets (e.g. the MITRE ATT&CK Groups file behind Adversary Hints) ship
+  // next to the EXE — adversaryGroupsData.ts resolves them via dirname(process.execPath)/data.
+  await copyTree(join(COMPANION_DIR, "data"), join(DIST_DIR, "data"));
   if (icoPath && existsSync(icoPath)) {
     await copyFile(icoPath, join(DIST_DIR, "dfir-companion.ico"));
   }

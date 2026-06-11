@@ -124,6 +124,10 @@ For each case the AI builds and keeps up to date:
 - **Attack phases** — the timeline grouped into temporal **bursts** (activity clustered
   by time gap), each labelled with its dominant ATT&CK tactic — the *when did each stage
   happen* view, complementary to the categorical kill chain. Deterministic, no AI call.
+- **Adversary hints** — known **MITRE ATT&CK groups** ranked by how much their technique
+  set overlaps the case's, as early hypothesis fuel. Offline (a bundled dataset, no
+  AI/network); each card shows aliases, sectors/regions, the overlap ratio, and the
+  shared techniques. Statistical similarity, **not attribution**.
 - **Compromised assets** — the victim hosts and user accounts, with an interactive
   **asset ↔ IoC graph** showing which indicators touched each.
 - **Key investigative questions** — initial access, lateral movement, compromised

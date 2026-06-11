@@ -1285,6 +1285,65 @@ describe("state and report routes", () => {
     expect(res.body.i2).toEqual(["Zeek"]);                            // single tool
   });
 
+  it("ranks adversary group hints by technique overlap against the bundled MITRE dataset", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-advhints-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore);
+    const app = createApp(store, { stateStore, reportWriter });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    // A broad set of very common techniques (incl. a sub-technique, to exercise base-rollup) so
+    // multiple real groups clear the default 3-overlap threshold.
+    seeded.findings.push(
+      { id: "f1", severity: "High", title: "intrusion", description: "", relatedIocs: [], sourceScreenshots: [],
+        mitreTechniques: ["T1566", "T1059.001", "T1078"], firstSeen: "2026-05-20T14:00:00Z", lastUpdated: "2026-05-20T14:00:00Z", status: "open" },
+    );
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-20T14:01:00Z", description: "cred dumping", severity: "High",
+        mitreTechniques: ["T1003", "T1021", "T1053"], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    await stateStore.save(seeded);
+
+    const res = await request(app).get("/cases/c1/adversary-hints");
+    expect(res.status).toBe(200);
+    expect(res.body.caveat).toMatch(/not attribution/i);
+    expect(res.body.attackVersion).not.toBe("unknown");
+    expect(res.body.caseTechniqueCount).toBe(6); // T1566,T1059,T1078,T1003,T1021,T1053 (sub rolled up)
+    expect(Array.isArray(res.body.hints)).toBe(true);
+    expect(res.body.hints.length).toBeGreaterThan(0);
+    for (const h of res.body.hints) {
+      expect(h.overlapCount).toBeGreaterThanOrEqual(3);          // meets the threshold
+      expect(h.overlapCount).toBeLessThanOrEqual(6);             // can't exceed the case set
+      expect(h.overlapTechniques.length).toBe(h.overlapCount);
+      expect(h.url).toMatch(/^https:\/\/attack\.mitre\.org\/groups\/G\d{4}\/$/);
+    }
+    // ranked by overlap descending
+    const counts = res.body.hints.map((h: { overlapCount: number }) => h.overlapCount);
+    expect(counts).toEqual([...counts].sort((a: number, b: number) => b - a));
+  });
+
+  it("returns adversary hints below threshold as an empty list (still 200 with caveat)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-advhints-empty-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore);
+    const app = createApp(store, { stateStore, reportWriter });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    // Only two techniques → no group can overlap by the default minimum of 3.
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-20T14:01:00Z", description: "x", severity: "Low",
+        mitreTechniques: ["T1566", "T1059"], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    await stateStore.save(seeded);
+
+    const res = await request(app).get("/cases/c1/adversary-hints");
+    expect(res.status).toBe(200);
+    expect(res.body.caseTechniqueCount).toBe(2);
+    expect(res.body.hints).toEqual([]);
+  });
+
   it("exports just the incident timeline as CSV on demand (no full report needed)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-timeline-csv-"));
     const store = new CaseStore(root);
