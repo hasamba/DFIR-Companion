@@ -1309,18 +1309,21 @@ describe("state and report routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.caveat).toMatch(/not attribution/i);
     expect(res.body.attackVersion).not.toBe("unknown");
-    expect(res.body.caseTechniqueCount).toBe(6); // T1566,T1059,T1078,T1003,T1021,T1053 (sub rolled up)
+    expect(res.body.caseTechniqueCount).toBe(6); // T1566,T1059.001,T1078,T1003,T1021,T1053 (sub-techniques kept)
     expect(Array.isArray(res.body.hints)).toBe(true);
     expect(res.body.hints.length).toBeGreaterThan(0);
     for (const h of res.body.hints) {
-      expect(h.overlapCount).toBeGreaterThanOrEqual(3);          // meets the threshold
+      expect(h.overlapCount).toBeGreaterThanOrEqual(3);          // meets the threshold (breadth)
       expect(h.overlapCount).toBeLessThanOrEqual(6);             // can't exceed the case set
       expect(h.overlapTechniques.length).toBe(h.overlapCount);
+      expect(h.exactCount).toBeLessThanOrEqual(h.overlapCount);
+      expect(h.exactTechniques.length).toBe(h.exactCount);
+      expect(h.score).toBeCloseTo(h.exactCount + 0.5 * (h.overlapCount - h.exactCount)); // weighted
       expect(h.url).toMatch(/^https:\/\/attack\.mitre\.org\/groups\/G\d{4}\/$/);
     }
-    // ranked by overlap descending
-    const counts = res.body.hints.map((h: { overlapCount: number }) => h.overlapCount);
-    expect(counts).toEqual([...counts].sort((a: number, b: number) => b - a));
+    // ranked by weighted score descending (exact agreement wins, not raw breadth)
+    const scores = res.body.hints.map((h: { score: number }) => h.score);
+    expect(scores).toEqual([...scores].sort((a: number, b: number) => b - a));
   });
 
   it("returns adversary hints below threshold as an empty list (still 200 with caveat)", async () => {
