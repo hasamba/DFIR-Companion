@@ -1407,6 +1407,45 @@ describe("state and report routes", () => {
     expect(res.status).toBe(501);
   });
 
+  it("exports a STIX 2.1 bundle on demand, with the victim org from report metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-stix-route-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportMetaStore = new ReportMetaStore(store);
+    const reportWriter = new ReportWriter(store, stateStore, undefined, undefined, reportMetaStore);
+    const app = createApp(store, { stateStore, reportWriter });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.iocs.push({ id: "i1", type: "domain", value: "c2.evil.com", firstSeen: "2026-05-20T09:00:00Z" });
+    seeded.findings.push({ id: "f1", severity: "High", title: "C2 beacon", description: "d", relatedIocs: ["i1"],
+      sourceScreenshots: [], mitreTechniques: ["T1071"], firstSeen: "t", lastUpdated: "t", status: "open" });
+    seeded.mitreTechniques.push({ id: "T1071", name: "Application Layer Protocol", findingIds: ["f1"] });
+    await stateStore.save(seeded);
+    await reportMetaStore.save("c1", { organization: "Acme Corp" });
+
+    const res = await request(app).get("/cases/c1/export/stix");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/json");
+    expect(res.headers["content-disposition"]).toContain('attachment; filename="stix-bundle-c1.json"');
+    const bundle = JSON.parse(res.text);
+    expect(bundle.type).toBe("bundle");
+    const types = bundle.objects.map((o: { type: string }) => o.type);
+    expect(types).toEqual(expect.arrayContaining(["identity", "report", "indicator", "attack-pattern", "relationship"]));
+    expect(bundle.objects.filter((o: { type: string }) => o.type === "identity")
+      .map((o: { name: string }) => o.name)).toContain("Acme Corp");
+    expect(bundle.objects.find((o: { type: string }) => o.type === "indicator").pattern)
+      .toBe("[domain-name:value = 'c2.evil.com']");
+  });
+
+  it("returns 501 for the STIX export when no reportWriter is configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-stix-501-"));
+    const store = new CaseStore(root);
+    const app = createApp(store, {}); // no reportWriter
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const res = await request(app).get("/cases/c1/export/stix");
+    expect(res.status).toBe(501);
+  });
+
   it("GET/PUT /cases/:id/report-meta round-trips and flows into the generated report", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-report-meta-route-"));
     const store = new CaseStore(root);

@@ -11,7 +11,7 @@ import { parseCsv } from "./csvImport.js";
 
 export type ImportKind =
   | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "network"
-  | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "csv" | "log" | "unknown";
+  | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "email" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -184,6 +184,38 @@ function detectCsv(text: string): ImportKind {
   return "log";
 }
 
+// ───────────────────────────── email (.eml / .msg) signatures ─────────────────────────────
+
+// Header names that are essentially email-only as a line-start — they never lead a line in a
+// CSV/syslog/generic log, so one is enough to claim an .eml ahead of the generic log fallback.
+const EMAIL_SPECIFIC = /^(message-id|mime-version|dkim-signature|authentication-results|return-path|delivered-to|x-originating-ip|received-spf):/i;
+// A header-shaped line ("Name: value" — printable name, no spaces).
+const HEADER_LINE = /^[\x21-\x39\x3b-\x7e]+:(\s|$)/;
+
+// A `.msg` file forced through UTF-8 text decoding keeps its MAPI stream-name markers as ASCII;
+// the filename is a strong secondary hint (its binary body sniffs as nothing else).
+function looksLikeMsg(filename: string, text: string): boolean {
+  return /\.msg$/i.test(filename) ||
+    text.includes("__substg1.0_") || text.includes("__properties_version1.0") || text.includes("__nameid_version1.0");
+}
+
+// An .eml is a leading RFC 822 header block: ≥2 header-shaped lines including ≥1 email-only header.
+function isEmail(filename: string, text: string): boolean {
+  if (looksLikeMsg(filename, text)) return true;
+  const head = text.replace(/\r\n/g, "\n").split("\n").slice(0, 80);
+  let headers = 0;
+  let hasSpecific = false;
+  for (const line of head) {
+    if (line.trim() === "") { if (headers > 0) break; else continue; } // blank ends the header block
+    if (/^[ \t]/.test(line)) continue;                                 // folded continuation
+    if (HEADER_LINE.test(line)) {
+      headers++;
+      if (EMAIL_SPECIFIC.test(line)) hasSpecific = true;
+    } else break; // a non-header line before any blank → not an email header block
+  }
+  return hasSpecific && headers >= 2;
+}
+
 // Velociraptor names its JSON exports after the collected artifact, e.g.
 // `Velociraptor-Windows.Triage.HighValueMemory.json` or `Generic.System.Pstree.json`. Many
 // artifacts (process lists, file listings, memory acquisition) emit rows with no distinctive
@@ -219,6 +251,10 @@ export function detectImportKind(filename: string, text: string): ImportKind {
     const { root, sample } = jsonSample(t);
     if (sample) return vrHint(detectJson(root, sample));
   }
+
+  // Email artifact (.eml RFC 822 header block, or a best-effort .msg) — checked before the
+  // CSV/log fallback so a header-block email isn't mistaken for a line-oriented log.
+  if (isEmail(filename, t)) return "email";
 
   // Tabular (CSV / EZ / Plaso / Hayabusa-csv / M365-csv) vs a line-oriented log.
   const csvKind = detectCsv(t);

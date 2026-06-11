@@ -40,6 +40,7 @@ import { parseCloudTrail, type AwsImportOptions } from "./awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "./cloudActivityImport.js";
 import { parsePlasoCsv, type PlasoImportOptions } from "./plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "./sandboxImport.js";
+import { parseEmail, type EmailImportOptions } from "./emailImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
@@ -1531,6 +1532,54 @@ export class AnalysisPipeline {
       threadsClosed: [],
       timelineNote: `Sandbox import (${parsed.format}): ${parsed.kept} event(s)` +
         (parsed.signatures > 0 ? `, ${parsed.signatures} signature(s)` : "") +
+        `, ${parsed.iocs.length} IOC(s)`,
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import an email artifact (.eml RFC 2822, or best-effort .msg). Deterministic (no AI call):
+  // ONE forensic event dated at the message's own Date: header, severity DERIVED from the email's
+  // SPF/DKIM/DMARC verdict + sender heuristics; URLs, sender/reply-to domains, originating IP and
+  // attachment names/hashes become IOCs. Covers ATT&CK T1566 (Phishing). Tagged "Email".
+  async importEmail(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;            // unique per import (e.g. "em3") so ids never collide
+      importedAt: string;
+      email?: EmailImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseEmail(text, opts.email);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Email"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Email import (${parsed.format}): ${parsed.kept} event(s)` +
+        (parsed.subject ? ` — "${parsed.subject.slice(0, 80)}"` : "") +
         `, ${parsed.iocs.length} IOC(s)`,
       summary: "",
     };
