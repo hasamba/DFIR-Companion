@@ -96,6 +96,11 @@
     .asset-graph-wrap:fullscreen .asset-graph { flex: 1; max-height: none; }
     /* Swimlane fullscreen: the section fills the screen; scroll if there are more lanes than fit. */
     #sec-swimlane:fullscreen { background: #11161d; padding: 16px; overflow: auto; }
+    /* Fallback "maximize" for when the native Fullscreen API is unavailable or rejected (e.g.
+       the dashboard is served over a plain-HTTP LAN IP, which isn't a secure context). Fills the
+       viewport via fixed positioning — needs no secure context, so it always works. */
+    #sec-swimlane.swimlane-maximized { position: fixed; inset: 0; z-index: 9999; margin: 0;
+      background: #11161d; padding: 16px; overflow: auto; }
     .asset-subhead { font-size: 12px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 6px; }
     .asset-chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px;
       font-size: 12px; background: #0f1115; border: 1px solid #2a2f3a; color: #e6e6e6; }
@@ -3851,12 +3856,28 @@
       document.getElementById("swimlaneZoomFit").addEventListener("click", function() {
         swFitView(); swUpdateZoomLabel(); swRenderCanvas();
       });
+      // Prefer the native Fullscreen API; fall back to a CSS "maximize" (fixed, fills the
+      // viewport) when it's unavailable or rejected — e.g. served over a plain-HTTP LAN IP,
+      // which isn't a secure context. Only the toggle is affected, never the chart itself.
+      function swMaximizeCss(on) {
+        document.getElementById("sec-swimlane").classList.toggle("swimlane-maximized", on);
+        setTimeout(swRenderCanvas, 60);
+      }
       document.getElementById("swimlaneFullscreen").addEventListener("click", function() {
         const sec = document.getElementById("sec-swimlane");
-        if (document.fullscreenElement === sec) document.exitFullscreen();
-        else if (sec.requestFullscreen) sec.requestFullscreen();
+        if (sec.classList.contains("swimlane-maximized")) { swMaximizeCss(false); return; }
+        if (document.fullscreenElement === sec) { document.exitFullscreen(); return; }
+        if (sec.requestFullscreen) sec.requestFullscreen().catch(() => swMaximizeCss(true));
+        else swMaximizeCss(true);
       });
-      // Re-render at the new viewport width when the swimlane enters/exits fullscreen.
+      // Esc exits the CSS fallback (the native API already handles its own Esc).
+      document.addEventListener("keydown", function(e) {
+        if (e.key === "Escape" &&
+            document.getElementById("sec-swimlane").classList.contains("swimlane-maximized")) {
+          swMaximizeCss(false);
+        }
+      });
+      // Re-render at the new viewport width when the swimlane enters/exits native fullscreen.
       document.addEventListener("fullscreenchange", function() {
         if (document.fullscreenElement && document.fullscreenElement.id !== "sec-swimlane") return;
         setTimeout(swRenderCanvas, 60);   // wait for the fullscreen relayout before measuring
