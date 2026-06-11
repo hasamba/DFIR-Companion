@@ -1384,6 +1384,23 @@
     <section id="sec-questions" style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section id="sec-threads"><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
+    <section id="sec-adversary" style="grid-column: 1 / -1"><h2>Adversary Hints<span class="ev-sub">known ATT&amp;CK groups by technique overlap — hypothesis fuel, not attribution (derived, no AI)</span></h2><div id="adversaryHints">—</div></section>
+    <style>
+      #sec-adversary .adv-caveat{color:#ffb454;font-size:12px;margin-bottom:8px}
+      #sec-adversary .adv-meta{color:#9aa4b2;font-size:11px;margin-bottom:8px}
+      #sec-adversary .adv-empty{color:#9aa4b2}
+      #sec-adversary .adv-list{display:flex;flex-direction:column;gap:8px}
+      #sec-adversary .adv-card{background:#161b22;border:1px solid #232a33;border-left:3px solid #c79bff;border-radius:6px;padding:8px 10px}
+      #sec-adversary .adv-card-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+      #sec-adversary .adv-name{color:#c79bff;font-weight:bold;text-decoration:none}
+      #sec-adversary .adv-name:hover{text-decoration:underline}
+      #sec-adversary .adv-aliases{color:#9aa4b2;font-size:11px}
+      #sec-adversary .adv-score{margin-left:auto;background:#2a2233;color:#c79bff;border:1px solid #4a3a5a;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
+      #sec-adversary .adv-desc{color:#c9d1db;font-size:12px;margin:6px 0}
+      #sec-adversary .adv-techs{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+      #sec-adversary .adv-tech{background:#0f1620;color:#6aa9ff;border:1px solid #1f2a3a;border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
+      #sec-adversary .adv-tech:hover{text-decoration:underline}
+    </style>
     <section id="sec-legitimate" style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
     <style>
       #sec-playbook .pb-badge{font-size:12px;color:#9aa4b2;font-weight:normal;margin-left:8px}
@@ -4296,6 +4313,63 @@
       renderPhases();
     });
 
+    // ── Adversary Hints (#46) ─────────────────────────────────────────────────────────────
+    // Known ATT&CK groups ranked by technique overlap with the case — offline hypothesis fuel,
+    // NOT attribution. Derived server-side (GET /cases/:id/adversary-hints) from the bundled MITRE
+    // Groups dataset; re-derived (debounced) on each state change, like the phases panel.
+    let adversaryHintsData = null;
+    let adversaryHintsTimer = null;
+    function loadAdversaryHints(caseId) {
+      fetch(`/cases/${caseId}/adversary-hints`).then(r => r.json()).then(d => {
+        adversaryHintsData = (d && typeof d === "object") ? d : null;
+        renderAdversaryHints();
+      }).catch(() => {});
+    }
+    function scheduleAdversaryHintsReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(adversaryHintsTimer);
+      adversaryHintsTimer = setTimeout(() => loadAdversaryHints(caseId), 800);
+    }
+    function renderAdversaryHints() {
+      const el = document.getElementById("adversaryHints");
+      if (!el) return;
+      const d = adversaryHintsData;
+      const caveat = `<div class="adv-caveat">⚠ ${esc((d && d.caveat) || "Statistical similarity based on technique overlap — not attribution.")}</div>`;
+      if (!d || !d.groupCount) {
+        el.innerHTML = caveat + `<div class="adv-empty">Adversary-group dataset not available — run <code>npm run data:update-attack</code>.</div>`;
+        return;
+      }
+      if (!d.caseTechniqueCount) {
+        el.innerHTML = caveat + `<div class="adv-empty">No techniques identified yet — adversary hints need at least one ATT&CK technique.</div>`;
+        return;
+      }
+      if (!d.hints || !d.hints.length) {
+        el.innerHTML = caveat + `<div class="adv-empty">No group reaches the ${esc(d.minOverlap)}-technique overlap threshold across the case's ${esc(d.caseTechniqueCount)} identified technique(s).</div>`;
+        return;
+      }
+      const meta = `<div class="adv-meta">Top ${esc(d.hints.length)} of ${esc(d.groupCount)} groups · scored over ${esc(d.caseTechniqueCount)} case technique(s) · MITRE ATT&CK v${esc(d.attackVersion)}</div>`;
+      const cards = d.hints.map(h => {
+        const aliases = (h.aliases && h.aliases.length) ? `<span class="adv-aliases">aka ${esc(h.aliases.join(", "))}</span>` : "";
+        const ratio = `${esc(h.overlapCount)} / ${esc(h.groupTechniqueCount)}`;
+        const techs = (h.overlapTechniques || []).map(t => {
+          const u = attackUrl(t);
+          return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="adv-tech">${esc(t)}</a>` : `<span class="adv-tech">${esc(t)}</span>`;
+        }).join("");
+        const desc = h.description ? `<div class="adv-desc">${esc(h.description)}</div>` : "";
+        return `<div class="adv-card">` +
+          `<div class="adv-card-head">` +
+            `<a href="${escAttr(h.url)}" target="_blank" rel="noopener" class="adv-name">${esc(h.id)} ${esc(h.name)}</a>` +
+            aliases +
+            `<span class="adv-score" title="${esc(h.overlapCount)} of the case's techniques are attributed to this group, of ${esc(h.groupTechniqueCount)} it is known to use">⊕ ${ratio}</span>` +
+          `</div>` +
+          desc +
+          `<div class="adv-techs">${techs}</div>` +
+        `</div>`;
+      }).join("");
+      el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>`;
+    }
+
     // ── Timeline Swimlane ───────────────────────────────────────────────────────────────
     // Canvas-based swimlane chart: assets/severity/tactics on Y-axis, time on X-axis.
     // Data comes from GET /cases/:id/swimlane?groupBy=... (server applies scope+legit filtering).
@@ -5279,6 +5353,7 @@
       loadAssetOverrides(caseId);
       loadEvidenceGraph(caseId);
       loadPhases(caseId);
+      loadAdversaryHints(caseId);
       loadSwimlane(caseId);
       loadIocSources(caseId);
       loadComments(caseId);
@@ -5328,7 +5403,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleAdversaryHintsReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "capture_ingest") {
           // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
@@ -6435,6 +6510,7 @@
       { id: "sec-questions",    label: "Key Investigative Questions" },
       { id: "sec-threads",      label: "Investigation Threads" },
       { id: "sec-mitre",        label: "MITRE ATT&CK" },
+      { id: "sec-adversary",    label: "Adversary Hints" },
       { id: "sec-legitimate",   label: "Confirmed Legitimate" },
       { id: "sec-notebook",     label: "Analyst Notebook" },
       { id: "sec-inv-log",      label: "Investigation Log" },

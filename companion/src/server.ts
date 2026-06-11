@@ -793,6 +793,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Adversary group hints (#46): known ATT&CK groups ranked by technique overlap with the case —
+  // offline hypothesis fuel (NOT attribution), derived on demand from the bundled MITRE Groups
+  // dataset with the same scope/legitimate filtering as the report. Powers the dashboard panel.
+  app.get("/cases/:id/adversary-hints", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.adversaryHints(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export just the incident (forensic) timeline as CSV, generated on demand from the
   // current state (same scope/legitimate filtering as the report) — no full report needed.
   app.get("/cases/:id/incident-timeline.csv", async (req: Request, res: Response) => {
