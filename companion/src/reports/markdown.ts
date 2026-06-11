@@ -7,6 +7,8 @@ import { buildEvidenceGraph } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
+import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
+import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
 import { playbookStats, type PlaybookStatus, type PlaybookTask } from "../analysis/playbook.js";
@@ -239,6 +241,48 @@ function attackPhases(state: InvestigationState, lines: string[]): void {
   lines.push("");
 }
 
+// 4.6 (appendix) — adversary group hints: known ATT&CK groups ranked by how much their technique
+// set overlaps the case's identified techniques. Offline hypothesis fuel from the bundled MITRE
+// Groups dataset — NOT attribution (every row shows the group's total technique count so a 4-of-150
+// diffuse match reads differently from a 4-of-12 focused one, and the caveat is stated up front).
+function adversaryHints(state: InvestigationState, lines: string[]): void {
+  lines.push("#### 4.6.1 Adversary group hints", "");
+  const result = buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
+  lines.push(`_${result.caveat}_`, "");
+  if (result.groupCount === 0) {
+    lines.push("_Adversary-group dataset not available — run `npm run data:update-attack`._", "");
+    return;
+  }
+  if (result.caseTechniqueCount === 0) {
+    lines.push("_No techniques identified yet — adversary hints need at least one ATT&CK technique._", "");
+    return;
+  }
+  if (result.hints.length === 0) {
+    lines.push(
+      `_No group reaches the ${result.minOverlap}-technique overlap threshold across the case's ` +
+        `${result.caseTechniqueCount} identified technique(s)._`,
+      "",
+    );
+    return;
+  }
+  lines.push(
+    `Scored against ${result.caseTechniqueCount} case technique(s) over ${result.groupCount} groups ` +
+      `(MITRE ATT&CK v${result.attackVersion}); ≥${result.minOverlap} overlapping techniques.`,
+    "",
+  );
+  lines.push("| Group | Aliases | Overlap | Overlapping techniques |", "| --- | --- | --- | --- |");
+  for (const h of result.hints) {
+    // Escape [] in the link text so a group name containing a bracket can't truncate the Markdown link.
+    const name = `[${cellMd(`${h.id} ${h.name}`).replace(/[[\]]/g, "\\$&")}](${h.url})`;
+    const overlap = `${h.overlapCount} of ${h.groupTechniqueCount}`;
+    lines.push(
+      `| ${cellMd(name)} | ${cellMd(h.aliases.join(", ") || "—")} | ${overlap} | ` +
+        `${h.overlapTechniques.map(attackTechniqueMd).join(", ")} |`,
+    );
+  }
+  lines.push("");
+}
+
 function customerExposure(exposure: CustomerExposureSummary | undefined, lines: string[]): void {
   // Always present (like 4.7 Key questions) so the section numbering stays consistent whether or
   // not a leak/breach check was run; a placeholder makes "not assessed" explicit to the reader.
@@ -333,6 +377,8 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
     }
     lines.push("");
   }
+
+  adversaryHints(state, lines);
 
   lines.push("### 4.7 Key investigative questions", "");
   if (state.keyQuestions.length === 0) {

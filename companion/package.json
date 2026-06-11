@@ -23,6 +23,7 @@
     "misp:push": "tsx scripts/push-misp.ts",
     "notion:push": "tsx scripts/push-notion.ts",
     "seed-demo": "tsx scripts/seed-demo-case.ts",
+    "data:update-attack": "tsx scripts/update-attack-groups.ts",
     "icons": "tsx scripts/make-icons.ts",
     "package:sea": "node scripts/build-sea.mjs"
   },
