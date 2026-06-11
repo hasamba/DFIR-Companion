@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { ingestCapture, _resetDedupCache } from "../../src/ingest/captureIngest.js";
+import {
+  ingestCapture,
+  _resetDedupCache,
+  resolveDedupThreshold,
+  DEFAULT_DUP_THRESHOLD,
+} from "../../src/ingest/captureIngest.js";
 
 let root: string;
 let store: CaseStore;
@@ -42,7 +47,7 @@ describe("ingestCapture", () => {
 
     expect(meta.sequenceNumber).toBe(1);
     expect(meta.isDuplicate).toBe(false);
-    expect(meta.perceptualHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(meta.perceptualHash).toMatch(/^[0-9a-f]{128}$/);
 
     const onDisk = await readFile(join(store.screenshotsDir("c1"), meta.screenshotFile));
     expect(onDisk.length).toBeGreaterThan(0);
@@ -57,6 +62,13 @@ describe("ingestCapture", () => {
     const second = await ingestCapture(store, payload({ imageBase64: img }));
     expect(second.isDuplicate).toBe(true);
     expect(second.sequenceNumber).toBe(2);
+  });
+
+  it("never flags a duplicate when dedup is disabled (threshold null)", async () => {
+    const img = await pngBase64(128, 128, 128);
+    await ingestCapture(store, payload({ imageBase64: img }), null);
+    const second = await ingestCapture(store, payload({ imageBase64: img }), null);
+    expect(second.isDuplicate).toBe(false);
   });
 
   it("includes the slugified tab title in the screenshot filename", async () => {
@@ -81,5 +93,27 @@ describe("ingestCapture", () => {
     const bad = payload({ imageBase64: await pngBase64(1, 1, 1) });
     delete (bad as Record<string, unknown>).url;
     await expect(ingestCapture(store, bad)).rejects.toThrow();
+  });
+});
+
+describe("resolveDedupThreshold", () => {
+  it("defaults to DEFAULT_DUP_THRESHOLD when unset", () => {
+    expect(resolveDedupThreshold({})).toBe(DEFAULT_DUP_THRESHOLD);
+  });
+  it("honors a custom DFIR_DEDUP_THRESHOLD", () => {
+    expect(resolveDedupThreshold({ DFIR_DEDUP_THRESHOLD: "25" })).toBe(25);
+    expect(resolveDedupThreshold({ DFIR_DEDUP_THRESHOLD: "0" })).toBe(0);
+  });
+  it("falls back to the default on an invalid threshold", () => {
+    expect(resolveDedupThreshold({ DFIR_DEDUP_THRESHOLD: "abc" })).toBe(DEFAULT_DUP_THRESHOLD);
+    expect(resolveDedupThreshold({ DFIR_DEDUP_THRESHOLD: "-3" })).toBe(DEFAULT_DUP_THRESHOLD);
+  });
+  it("returns null (disabled) when DFIR_DEDUP is off/false/no/0", () => {
+    for (const v of ["off", "OFF", "false", "no", "0"]) {
+      expect(resolveDedupThreshold({ DFIR_DEDUP: v })).toBeNull();
+    }
+  });
+  it("DFIR_DEDUP=off wins over a set threshold", () => {
+    expect(resolveDedupThreshold({ DFIR_DEDUP: "off", DFIR_DEDUP_THRESHOLD: "25" })).toBeNull();
   });
 });
