@@ -3,6 +3,7 @@ import sharp from "sharp";
 import {
   ocrRedactImage,
   DEFAULT_CONFIDENCE_THRESHOLD,
+  TesseractOcrRunner,
   type OcrRunner,
   type OcrWord,
 } from "../../src/analysis/ocrRedact.js";
@@ -122,5 +123,20 @@ describe("ocrRedactImage", () => {
     // zero-width bbox filtered out → nothing to composite → original returned
     const result = await ocrRedactImage(img, ENABLED_POLICY, KNOWN, mockRunner(words));
     expect(result).toBe(img);
+  });
+});
+
+describe("TesseractOcrRunner", () => {
+  it("resolves a callable recognize() from the tesseract.js module shape", async () => {
+    // Regression guard: tesseract.js is CommonJS, so under ESM dynamic import `recognize`
+    // lives on the default export, NOT as a top-level named binding (`mod.recognize` is
+    // undefined). The runner must read it off `.default`. Importing the namespace does not
+    // spawn the WASM worker (that only happens on an actual recognize() call), so this stays
+    // within the "no real OCR in tests" invariant while still catching the broken-import bug.
+    const mod = await import("tesseract.js");
+    const recognize = mod.default?.recognize ?? mod.recognize;
+    expect(typeof recognize).toBe("function");
+    // The runner exists and exposes the method we wire into the pipeline.
+    expect(typeof new TesseractOcrRunner().recognize).toBe("function");
   });
 });
