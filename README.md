@@ -660,6 +660,8 @@ survives a server restart; results appear on the dashboard timeline/IOCs.
 | `DFIR_HUNT_PLATFORMS` | all | Comma-separated platform allowlist for hunt-pivot cards: `velociraptor`, `defender`, `elastic`, `splunk`, `sigma`, `yara`, `suricata` |
 | `DFIR_CORRELATE_WINDOW_S` | `2` | Time window (s) for same-path cross-source event merge |
 | `DFIR_PHASE_GAP_S` | `300` | Gap between events (s) that starts a new attack phase |
+| `DFIR_DEDUP` | `on` | Skip AI analysis of a screenshot that's the same frame as the previous one (still stored as evidence). Set `off` to analyze **every** screenshot |
+| `DFIR_DEDUP_THRESHOLD` | `10` | Max perceptual-hash distance (512-bit dual dHash) for consecutive captures to count as the same frame; lower = stricter (fewer skipped as duplicates) |
 
 Example `.env` (two-tier OpenRouter setup):
 
