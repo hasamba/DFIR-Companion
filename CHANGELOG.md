@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OCR redaction was a silent no-op (`tesseract.js` default export).** `TesseractOcrRunner` destructured `recognize` directly off the ESM dynamic import, but `tesseract.js` is CommonJS so `recognize` lives on `.default` — every call threw `recognize is not a function`. Because OCR failures are swallowed (the original image is forwarded), screenshots were being sent to the external model **un-redacted**. Now reads `recognize` off the default export, with a regression test asserting the module shape.
 - **"AI on — catching up on un-analyzed screenshots…" no longer gets stuck.** When you turned AI on, the dashboard showed that optimistic status line immediately, but it only cleared once the server reported the catch-up was done — and `backfill()` returned **silently** (no terminal event) when there was nothing to analyze (already up to date, no captures yet, or no AI model configured). So in the common case the message hung forever with no way to tell whether analysis had finished. `backfill` now **always emits a terminal `idle` status** on every exit path, and the dashboard's `clearTransientStatus()` recognises the "catching up" line so it resets to *connected (live)* when idle arrives. (The trustworthy live indicator remains the **AI badge** top-right.)
 
+### Security
+- **Added `SECURITY.md`** documenting the localhost posture, how to report a vulnerability, and the **5 deferred `npm audit` advisories** — all in the `vitest` **dev** toolchain (test-only, not shipped), whose only fix is a breaking major `vitest` upgrade and whose exploit preconditions (a listening dev/UI server while browsing a hostile site) don't occur in this project's workflow. Tracked with a revisit condition rather than force-upgraded.
+
 ## [0.16.0] - 2026-06-11
 
 ### Changed

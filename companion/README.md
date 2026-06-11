@@ -121,6 +121,11 @@ Examples:
 
 > `reanalyze` uses your API quota (~1 call per `--window` screenshots).
 
+> **`npm audit` advisories:** the 5 advisories `npm audit` reports are all in the `vitest`
+> **dev** toolchain (test-only, not shipped) and are tracked + deferred deliberately — the only
+> fix is a breaking major `vitest` upgrade and the exploit preconditions don't occur in this
+> project's workflow. See [`../SECURITY.md`](../SECURITY.md) before "fixing" them.
+
 ## HTTP endpoints
 
 | Method & path | Purpose |
