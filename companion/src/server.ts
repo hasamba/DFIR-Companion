@@ -840,6 +840,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Export a STIX 2.1 bundle (JSON) for the case, generated on demand from the current state
+  // (same scope/legitimate filtering as the report). Drops straight into any TIP that ingests
+  // STIX — OpenCTI, MISP, Anomali, ThreatConnect — making the case portable without lock-in.
+  app.get("/cases/:id/export/stix", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const bundle = await options.reportWriter.stixBundle(req.params.id);
+      res.type("application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="stix-bundle-${req.params.id}.json"`);
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(JSON.stringify(bundle, null, 2));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Human-authored report metadata (title page, distribution, BIA, limitations, glossary,
   // recommendations…). GET returns the stored values (or defaults); PUT replaces them with a
   // normalized payload. These merge into report.md alongside the auto-derived sections.
