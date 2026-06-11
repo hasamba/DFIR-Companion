@@ -125,6 +125,10 @@
     .comment-chip:hover { color: #6aa9ff; border-color: #6aa9ff; }
     .comment-chip.has { color: #6aa9ff; border-color: #2d4a6a; background: #11202e; }
     .anon-chip { display:inline-block; background:#22272e; border:1px solid #30363d; border-radius:10px; padding:1px 7px; margin:1px 0; font-size:11px; }
+    .anon-chip.anon-chip-sup { opacity:.6; }
+    .anon-chip .anon-auto-rm, .anon-chip .anon-auto-restore { background:transparent; border:none; color:#8a93a3; cursor:pointer; font-size:10px; padding:0 0 0 1px; line-height:1; }
+    .anon-chip .anon-auto-rm:hover { color:#ff7a7a; }
+    .anon-chip .anon-auto-restore:hover { color:#6bcB77; }
     .anon-auto-grp { margin-bottom:6px; }
     .anon-cust-row { display:flex; align-items:center; gap:8px; padding:2px 0; }
     .anon-cust-rm { background:#3a2230; border:none; color:#ff8aa0; border-radius:4px; cursor:pointer; padding:0 6px; }
@@ -584,7 +588,7 @@
         </label>
         <div id="anonWarning" style="display:none;margin-top:10px;padding:8px;border-radius:6px;background:#3a2a00;color:#ffcf66;font-size:12px"></div>
         <div class="asset-subhead" style="margin:12px 0 2px">Auto-detected entities (read-only — grows with the investigation)</div>
-        <div style="font-size:11px;color:#9aa4b2;margin:0 0 4px">The categories above already redact IPs, paths, usernames, emails and secrets by <em>pattern</em> everywhere (including in screenshots), so redaction happens even when this list is empty. This list adds specific <strong>named</strong> hosts/accounts/domains found in the case for exact-match tokenizing — a bare hostname is only tokenized once it appears here. If auto-detection missed one, add it under <em>Custom entities</em> below.</div>
+        <div style="font-size:11px;color:#9aa4b2;margin:0 0 4px">Entities found in the case — including ones the companion read out of <strong>screenshots</strong> — appear here grouped by type and are anonymized on every run. Click <strong>✕</strong> to remove a wrong one (e.g. a mis-matched path): it stops being anonymized and won't come back (<strong>↺</strong> restores it). The category patterns above also redact by shape everywhere, so redaction can happen before anything is listed here.</div>
         <div id="anonAuto" style="font-size:12px;background:#0e1116;border-radius:6px;padding:6px"></div>
         <div class="asset-subhead" style="margin:12px 0 2px">Custom entities (add anything the auto-detection missed)</div>
         <div id="anonCustom" style="max-height:120px;overflow:auto;font-size:12px;margin-bottom:6px"></div>
@@ -3876,6 +3880,7 @@
     let anonControl = null;          // { enabled, categories, redactSecrets, screenshotWarning }
     let anonAuto = { hosts: [], accounts: [], internalDomains: [] };
     let anonCustom = [];             // working copy: [{ value, category }]
+    let anonSuppressed = [];         // values removed from auto-discovery (server-persisted)
 
     function renderAnonToggle() {
       const b = document.getElementById("anonToggle");
@@ -3901,13 +3906,43 @@
     function loadAnonEntities(caseId) {
       return fetch(`/cases/${caseId}/anon-entities`)
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(d => { anonAuto = d.auto || { hosts: [], accounts: [], internalDomains: [] }; anonCustom = (d.custom || []).map(e => ({ ...e })); });
+        .then(d => { anonAuto = d.auto || {}; anonCustom = (d.custom || []).map(e => ({ ...e })); anonSuppressed = d.suppressed || []; });
     }
     function renderAutoEntities() {
-      const chip = v => `<span class="anon-chip">${esc(v)}</span>`;
-      const grp = (label, arr) => `<div class="anon-auto-grp"><div class="asset-subhead">${esc(label)} (${arr.length})</div><div>${arr.length ? arr.map(chip).join(" ") : "<em style='color:#9aa4b2'>none yet</em>"}</div></div>`;
-      document.getElementById("anonAuto").innerHTML =
-        grp("Hosts", anonAuto.hosts || []) + grp("Accounts", anonAuto.accounts || []) + grp("Internal domains", anonAuto.internalDomains || []);
+      const caseId = document.getElementById("caseId").value.trim();
+      const a = anonAuto || {};
+      // Groups (incl. entities discovered from screenshots), only those with entries.
+      const groups = [
+        ["Hosts", a.hosts], ["Accounts", a.accounts], ["Internal domains", a.internalDomains],
+        ["IPs", a.ips], ["Emails", a.emails], ["Paths", a.paths], ["Other", a.other],
+      ].filter(([, arr]) => (arr || []).length);
+      const chip = v => `<span class="anon-chip">${esc(v)} <button class="anon-auto-rm" data-value="${escAttr(v)}" title="Remove — stop anonymizing this value">✕</button></span>`;
+      const grp = (label, arr) => `<div class="anon-auto-grp"><div class="asset-subhead">${esc(label)} (${arr.length})</div><div>${arr.map(chip).join(" ")}</div></div>`;
+      let html = groups.length ? groups.map(([l, arr]) => grp(l, arr)).join("") : "<em style='color:#9aa4b2'>none yet</em>";
+      const sup = anonSuppressed || [];
+      if (sup.length) {
+        const supChip = v => `<span class="anon-chip anon-chip-sup">${esc(v)} <button class="anon-auto-restore" data-value="${escAttr(v)}" title="Restore — anonymize this again">↺</button></span>`;
+        html += `<div class="anon-auto-grp"><div class="asset-subhead">Removed (${sup.length}) — not anonymized</div><div>${sup.map(supChip).join(" ")}</div></div>`;
+      }
+      const el = document.getElementById("anonAuto");
+      el.innerHTML = html;
+      el.querySelectorAll(".anon-auto-rm").forEach(b => b.onclick = () => suppressAutoEntity(caseId, b.getAttribute("data-value")));
+      el.querySelectorAll(".anon-auto-restore").forEach(b => b.onclick = () => unsuppressAutoEntity(caseId, b.getAttribute("data-value")));
+    }
+    // Remove a wrong auto-discovered entity → server suppresses it (stops anonymizing it), then refresh.
+    function suppressAutoEntity(caseId, value) {
+      if (!caseId || !value) return;
+      fetch(`/cases/${caseId}/anon-entities/suppress`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ value }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => loadAnonEntities(caseId)).then(() => renderAutoEntities())
+        .catch(() => { document.getElementById("anonMsg").textContent = "could not remove entity — restart the server if this persists"; });
+    }
+    function unsuppressAutoEntity(caseId, value) {
+      if (!caseId || !value) return;
+      fetch(`/cases/${caseId}/anon-entities/unsuppress`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ value }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => loadAnonEntities(caseId)).then(() => renderAutoEntities())
+        .catch(() => { document.getElementById("anonMsg").textContent = "could not restore entity — restart the server if this persists"; });
     }
     function renderCustomEntities() {
       document.getElementById("anonCustom").innerHTML = anonCustom.length
@@ -3940,7 +3975,7 @@
       document.getElementById("anonMsg").textContent = "loading entities…";
       loadAnonEntities(caseId)
         .then(() => { renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = ""; })
-        .catch(() => { anonAuto = { hosts: [], accounts: [], internalDomains: [] }; anonCustom = []; renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = "failed to load entities — restart the server if this persists"; });
+        .catch(() => { anonAuto = {}; anonCustom = []; anonSuppressed = []; renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = "failed to load entities — restart the server if this persists"; });
       document.getElementById("anonOverlay").classList.add("open");
     }
     function saveAnon() {

@@ -9,6 +9,8 @@ import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { AnonControlStore, type AnonControl } from "./analysis/anonControl.js";
 import { CustomEntitiesStore, sanitizeCustomEntities } from "./analysis/anonEntities.js";
+import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
+import type { AnonTokenCategory } from "./analysis/anonymize.js";
 import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js";
 import { TesseractOcrRunner } from "./analysis/ocrRedact.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
@@ -1392,6 +1394,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // + external) that residual text may survive — `screenshotWarning` gates that notice.
   const anonControl = new AnonControlStore(store);
   const customEntities = new CustomEntitiesStore(store);
+  const discoveredEntities = new DiscoveredEntitiesStore(store);
   const visionIsLocal = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
 
   // Anonymization control: GET reports the control + whether screenshots are exposed (anon on +
@@ -1431,17 +1434,40 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // The entities that will be anonymized for a case: `auto` (derived from the timeline — grows as
-  // the investigation does, read-only) + `custom` (analyst-added). POST replaces the custom list.
+  // The entities that will be anonymized for a case: `auto` (auto-discovery — derived from the
+  // timeline PLUS entities the OCR pass tokenized out of screenshots, grouped by category, with
+  // analyst-suppressed values removed) + `custom` (analyst-added) + `suppressed` (removed values).
+  // POST replaces the custom list; the /suppress + /unsuppress routes manage auto-discovery removals.
   app.get("/cases/:id/anon-entities", async (req: Request, res: Response) => {
     try {
       const custom = await customEntities.load(req.params.id);
-      let auto = { hosts: [] as string[], accounts: [] as string[], internalDomains: [] as string[] };
+      const disc = await discoveredEntities.load(req.params.id);
+      const suppressed = new Set(disc.suppressed);
+      const groups: Record<AnonTokenCategory, string[]> = { IP: [], EMAIL: [], USER: [], HOST: [], DOMAIN: [], PATH: [], OTHER: [] };
       if (options.stateStore) {
         const d = deriveKnownEntities(await options.stateStore.load(req.params.id));
-        auto = { hosts: d.hosts, accounts: d.accounts, internalDomains: d.internalDomains };
+        groups.HOST.push(...d.hosts);
+        groups.USER.push(...d.accounts);
+        groups.DOMAIN.push(...d.internalDomains);
       }
-      return res.status(200).json({ auto, custom });
+      for (const e of disc.discovered) groups[e.category]?.push(e.value);
+      // Per group: drop suppressed values + dedupe case-insensitively (keep first spelling).
+      const clean = (arr: string[]): string[] => {
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const v of arr) {
+          const k = v.toLowerCase();
+          if (suppressed.has(k) || seen.has(k)) continue;
+          seen.add(k);
+          out.push(v);
+        }
+        return out;
+      };
+      const auto = {
+        hosts: clean(groups.HOST), accounts: clean(groups.USER), internalDomains: clean(groups.DOMAIN),
+        ips: clean(groups.IP), emails: clean(groups.EMAIL), paths: clean(groups.PATH), other: clean(groups.OTHER),
+      };
+      return res.status(200).json({ auto, custom, suppressed: disc.suppressed });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -1451,6 +1477,28 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const entities = sanitizeCustomEntities(req.body?.entities);
       await customEntities.save(req.params.id, entities);
       return res.status(200).json({ custom: entities });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+  // Remove a wrong entity from auto-discovery: it's hidden from the list AND never anonymized again
+  // (the anonymizer's suppression set), reversible via /unsuppress.
+  app.post("/cases/:id/anon-entities/suppress", async (req: Request, res: Response) => {
+    try {
+      const value = typeof req.body?.value === "string" ? req.body.value.trim() : "";
+      if (!value) return res.status(400).json({ error: "value is required" });
+      const next = await discoveredEntities.suppress(req.params.id, value);
+      return res.status(200).json({ suppressed: next.suppressed });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+  app.post("/cases/:id/anon-entities/unsuppress", async (req: Request, res: Response) => {
+    try {
+      const value = typeof req.body?.value === "string" ? req.body.value.trim() : "";
+      if (!value) return res.status(400).json({ error: "value is required" });
+      const next = await discoveredEntities.unsuppress(req.params.id, value);
+      return res.status(200).json({ suppressed: next.suppressed });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -3813,6 +3861,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     onState: params.onState,
     anonStore: new AnonControlStore(params.store),
     customEntitiesStore: new CustomEntitiesStore(params.store),
+    discoveredStore: new DiscoveredEntitiesStore(params.store),
     synthMetaStore: new SynthMetaStore(params.store),
     notebookStore: new NotebookStore(params.store),
     aiControlStore: new AiControlStore(params.store),
