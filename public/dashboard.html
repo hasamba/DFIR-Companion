@@ -2177,9 +2177,10 @@
       if (!el) return;
       if (!notebookEntries.length) { el.innerHTML = "<div style='color:#9aa4b2;font-size:12px'>No entries yet.</div>"; return; }
       el.innerHTML = notebookEntries.map(e => {
+        const who = e.author ? `<span style="font-size:10px;color:#cbd3df;font-weight:600">${esc(e.author)}</span>` : "";
         const ts = e.timestamp ? `<span style="margin-left:auto;font-size:10px;color:#52617a">${esc(e.timestamp.slice(0,16).replace('T',' '))} UTC</span>` : "";
         return `<div class="nb-entry ${escAttr(e.type)}" data-id="${escAttr(e.id)}">` +
-          `<div class="nb-entry-header"><span class="nb-type-badge ${escAttr(e.type)}">${esc(e.type)}</span>${ts}</div>` +
+          `<div class="nb-entry-header"><span class="nb-type-badge ${escAttr(e.type)}">${esc(e.type)}</span>${who}${ts}</div>` +
           `<div class="nb-entry-text">${esc(e.text)}</div>` +
           `<div class="nb-entry-actions">` +
           `<button class="nb-action-btn" onclick="nbStartEdit('${escAttr(e.id)}')">Edit</button>` +
@@ -2228,7 +2229,7 @@
           .catch(e => { msg.textContent = "failed: " + e.message; });
       } else {
         fetch(`/cases/${caseId}/notebook`, { method: "POST",
-          headers: { "content-type": "application/json" }, body: JSON.stringify({ text, type }) })
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ text, type, author: investigatorName() }) })
           .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
           .then(() => { document.getElementById("nbText").value = ""; msg.textContent = ""; loadNotebook(caseId); })
           .catch(e => { msg.textContent = "failed: " + e.message; });
