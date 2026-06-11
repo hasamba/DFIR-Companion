@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Export a **STIX 2.1 bundle** (JSON) for the case — report + one indicator per IOC (STIX patterns, with the threat-intel verdict) + ATT&CK attack-patterns + malware families + victim/producer identities + `indicates` relationships; deterministic UUIDv5 ids so re-exports are byte-stable. Drops into any TIP (OpenCTI, MISP, Anomali…). No STIX library (closes #45).
+
 ## [0.17.0] - 2026-06-11
 
 ### Added
