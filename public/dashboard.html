@@ -371,10 +371,17 @@
     /* Global search + time-range filter bar (collapsed behind a search icon) */
     #searchFilterBar { padding: 5px 16px; background: #0e1116; border-bottom: 1px solid #1a1f28;
       display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: #9aa4b2; }
-    #toggleSearchBar { background: #161a22; color: #9aa4b2; border: 1px solid #2a2f3a; border-radius: 5px;
-      cursor: pointer; padding: 3px 9px; font-size: 13px; line-height: 1.2; }
-    #toggleSearchBar:hover, #toggleSearchBar.open { color: #e6e6e6; border-color: #2d6cdf; }
-    #toggleSearchBar.has-filter { color: #6aa9ff; border-color: #2d6cdf; }
+    /* Search toggle — line-art magnifier (same Feather/Lucide style as the toolbar action
+       icons), recoloured per state via a CSS mask so one SVG serves idle/hover-open/filter-active. */
+    #toggleSearchBar { background: #161a22; border: 1px solid #2a2f3a; border-radius: 5px;
+      cursor: pointer; width: 30px; height: 26px; padding: 0; font-size: 0; flex-shrink: 0; }
+    #toggleSearchBar::before { content: ""; display: block; width: 15px; height: 15px; margin: 0 auto;
+      background-color: #9aa4b2;
+      -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>") center / contain no-repeat;
+              mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>") center / contain no-repeat; }
+    #toggleSearchBar:hover, #toggleSearchBar.open, #toggleSearchBar.has-filter { border-color: #2d6cdf; }
+    #toggleSearchBar:hover::before, #toggleSearchBar.open::before { background-color: #e6e6e6; }
+    #toggleSearchBar.has-filter::before { background-color: #6aa9ff; }
     #searchFilterControls { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
     #searchFilterControls[hidden] { display: none; }
     .sf-search-wrap { position: relative; display: flex; align-items: center; }
@@ -878,7 +885,7 @@
 
   <!-- Global search + time-range filter bar (revealed by the search icon) -->
   <div id="searchFilterBar">
-    <button id="toggleSearchBar" type="button" title="Search & filter (press /)" aria-expanded="false" aria-controls="searchFilterControls">🔍 Search</button>
+    <button id="toggleSearchBar" type="button" title="Search & filter (press /)" aria-label="Search & filter" aria-expanded="false" aria-controls="searchFilterControls"></button>
     <div id="searchFilterControls" hidden>
       <span>Search:</span>
       <div class="sf-search-wrap">
