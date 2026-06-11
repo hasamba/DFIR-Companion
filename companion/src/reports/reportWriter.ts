@@ -16,6 +16,7 @@ import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGrap
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../analysis/swimlane.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
+import { buildStixBundle, type StixBundle } from "./stix.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
@@ -143,6 +144,19 @@ export class ReportWriter {
   async iocSources(caseId: string): Promise<Record<string, string[]>> {
     const state = await this.loadFilteredState(caseId);
     return deriveIocSources(state.iocs, state.forensicTimeline);
+  }
+
+  // Build a STIX 2.1 bundle for the case (same scope/legitimate filtering as the report) — the
+  // portable, vendor-neutral export every TIP (OpenCTI, MISP, Anomali…) ingests. The victim
+  // identity, producing firm, and incident id come from the human-authored report metadata.
+  async stixBundle(caseId: string): Promise<StixBundle> {
+    const state = await this.loadFilteredState(caseId);
+    const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
+    return buildStixBundle(state, {
+      organization: meta.organization,
+      producer: meta.companyName,
+      incidentId: meta.incidentId,
+    });
   }
 
   async writeAll(caseId: string): Promise<ReportPaths> {
