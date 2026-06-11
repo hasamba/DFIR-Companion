@@ -96,9 +96,15 @@ function commentFor(acc: TechniqueAcc): string {
   return parts.join(" • ");
 }
 
+// Current MITRE ATT&CK Enterprise version the layer is stamped with. The Navigator prompts to
+// run its upgrade workflow when a layer's version is older than the Navigator's own — so this
+// must track the live ATT&CK release. Overridable per export (and via DFIR_ATTACK_VERSION in
+// ReportWriter) so a new ATT&CK release needs no code change. Bump when MITRE ships a new version.
+export const DEFAULT_ATTACK_VERSION = "19";
+
 export interface AttackLayerOptions {
   name?: string;             // layer name shown in the Navigator tab (default derived from the case id)
-  attackVersion?: string;    // informational ATT&CK version tag (default "16")
+  attackVersion?: string;    // ATT&CK version tag stamped in the layer (default DEFAULT_ATTACK_VERSION)
 }
 
 /**
@@ -176,7 +182,7 @@ export function buildAttackLayer(state: InvestigationState, opts: AttackLayerOpt
 
   return {
     name,
-    versions: { attack: opts.attackVersion?.trim() || "16", navigator: "5.1.0", layer: "4.5" },
+    versions: { attack: opts.attackVersion?.trim() || DEFAULT_ATTACK_VERSION, navigator: "5.1.0", layer: "4.5" },
     domain: "enterprise-attack",
     description,
     techniques,
