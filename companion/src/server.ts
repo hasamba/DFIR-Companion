@@ -1229,8 +1229,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // re-runs synthesis so the AI re-derives its conclusions without it.
   const legitimate = new LegitimateStore(store);
 
-  // Per-case anonymization control (default ON) + the analyst-added entity list. Screenshots can't
-  // be tokenized, so the dashboard warns when anon is on and the vision provider is external.
+  // Per-case anonymization control (default ON) + the analyst-added entity list. Screenshots are
+  // OCR-redacted (best-effort) when the vision provider is external, so the dashboard warns (anon on
+  // + external) that residual text may survive — `screenshotWarning` gates that notice.
   const anonControl = new AnonControlStore(store);
   const customEntities = new CustomEntitiesStore(store);
   const visionIsLocal = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
