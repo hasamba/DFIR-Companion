@@ -309,7 +309,8 @@
        collapse to font-size:0 and only the icon remains, so the toolbar fits one line; the
        hover tooltips (data-tip) keep every icon discoverable. */
     #connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
-    #aiToggle::before, #synthesize::before, #importBtn::before, #toggleAll::before {
+    #aiToggle::before, #synthesize::before, #importBtn::before, #toggleAll::before,
+    #toggleSearchBar::before {
       content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
       margin-right: 6px; background: no-repeat center / contain; }
     #connect::before     { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 15l6-6'/><path d='M11 6l1-1a4 4 0 0 1 6 6l-1 1'/><path d='M13 18l-1 1a4 4 0 0 1-6-6l1-1'/></svg>"); }
@@ -327,8 +328,14 @@
     #exportSelect, #pushSelect { background-repeat: no-repeat, no-repeat;
       background-position: left 9px center, right 8px center; background-size: 15px 15px, 11px 11px;
       color: transparent; width: 50px; padding: 7px 21px 7px 25px; }
-    #toggleAll { font-size: 0; padding-left: 9px; padding-right: 9px; }
-    #toggleAll::before { margin-right: 0; }
+    #toggleAll, #toggleSearchBar { font-size: 0; padding-left: 9px; padding-right: 9px; }
+    #toggleAll::before, #toggleSearchBar::before { margin-right: 0; }
+    /* Search toggle — magnifier (white stroke, like the other primary action icons). It toggles the
+       search/filter row below; while any filter is active it adopts the house "active" teal so a
+       collapsed row still signals the view is filtered. */
+    #toggleSearchBar::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>"); }
+    #toggleSearchBar.has-filter { background: #0e7c75; box-shadow: inset 0 0 0 1px #15a89d; }
+    #toggleSearchBar.has-filter:hover { background: #0f8a82; }
     #exportSelect { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 21V10'/><path d='M8 6l4-4 4 4'/><path d='M4 14v6a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-6'/></svg>"),
       url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%239aa4b2' stroke-width='1.6'/></svg>"); }
     #pushSelect { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 2L11 13'/><path d='M22 2l-7 20-4-9-9-4z'/></svg>"),
@@ -438,22 +445,10 @@
     .sec-selall button:hover { background: #353b47; color: #cbd3df; }
     .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid #2a2f3a; padding-top: 12px; }
     .settings-msg { font-size: 11px; margin-left: 4px; }
-    /* Global search + time-range filter bar (collapsed behind a search icon) */
+    /* Global search + time-range filter row — revealed by the toolbar search icon, hidden by default. */
     #searchFilterBar { padding: 5px 16px; background: #0e1116; border-bottom: 1px solid #1a1f28;
       display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: #9aa4b2; }
-    /* Search toggle — line-art magnifier (same Feather/Lucide style as the toolbar action
-       icons), recoloured per state via a CSS mask so one SVG serves idle/hover-open/filter-active. */
-    #toggleSearchBar { background: #161a22; border: 1px solid #2a2f3a; border-radius: 5px;
-      cursor: pointer; width: 30px; height: 26px; padding: 0; font-size: 0; flex-shrink: 0; }
-    #toggleSearchBar::before { content: ""; display: block; width: 15px; height: 15px; margin: 0 auto;
-      background-color: #9aa4b2;
-      -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>") center / contain no-repeat;
-              mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>") center / contain no-repeat; }
-    #toggleSearchBar:hover, #toggleSearchBar.open, #toggleSearchBar.has-filter { border-color: #2d6cdf; }
-    #toggleSearchBar:hover::before, #toggleSearchBar.open::before { background-color: #e6e6e6; }
-    #toggleSearchBar.has-filter::before { background-color: #6aa9ff; }
-    #searchFilterControls { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
-    #searchFilterControls[hidden] { display: none; }
+    #searchFilterBar[hidden] { display: none; }
     .sf-search-wrap { position: relative; display: flex; align-items: center; }
     #globalSearch { font-size: 12px; padding: 4px 26px 4px 8px; width: 240px;
       background: #161a22; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 5px; }
@@ -499,6 +494,7 @@
     </select>
     <span id="reportLinks" class="report-links"></span>
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
+    <button id="toggleSearchBar" type="button" aria-label="Search &amp; filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Search &amp; filter events, findings and IOCs by text and time range (press /)">Search</button>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
     <span id="captureCount" style="font-weight:bold;"><span class="cc-label">Screenshots:</span> <span id="captureCountNum">0</span></span>
@@ -1104,22 +1100,19 @@
     </div>
   </div>
 
-  <!-- Global search + time-range filter bar (revealed by the search icon) -->
-  <div id="searchFilterBar">
-    <button id="toggleSearchBar" type="button" title="Search & filter (press /)" aria-label="Search & filter" aria-expanded="false" aria-controls="searchFilterControls"></button>
-    <div id="searchFilterControls" hidden>
-      <span>Search:</span>
-      <div class="sf-search-wrap">
-        <input id="globalSearch" type="search" placeholder="events, findings, IOCs… (press / to focus)" autocomplete="off" />
-        <button id="clearSearch" type="button" title="Clear search (Esc)" hidden>✕</button>
-      </div>
-      <div class="sf-sep"></div>
-      <span>Time range:</span>
-      <label>from <input id="filterFrom" type="datetime-local" title="Filter timeline from (UTC)" /></label>
-      <label>to <input id="filterTo" type="datetime-local" title="Filter timeline to (UTC)" /></label>
-      <button id="clearFiltersBtn" type="button" hidden>Clear</button>
-      <span id="searchMatchCount"></span>
+  <!-- Global search + time-range filter row — revealed by the toolbar search icon (hidden by default) -->
+  <div id="searchFilterBar" hidden>
+    <span>Search:</span>
+    <div class="sf-search-wrap">
+      <input id="globalSearch" type="search" placeholder="events, findings, IOCs… (press / to focus)" autocomplete="off" />
+      <button id="clearSearch" type="button" title="Clear search (Esc)" hidden>✕</button>
     </div>
+    <div class="sf-sep"></div>
+    <span>Time range:</span>
+    <label>from <input id="filterFrom" type="datetime-local" title="Filter timeline from (UTC)" /></label>
+    <label>to <input id="filterTo" type="datetime-local" title="Filter timeline to (UTC)" /></label>
+    <button id="clearFiltersBtn" type="button" hidden>Clear</button>
+    <span id="searchMatchCount"></span>
   </div>
 
   <main>
@@ -1452,12 +1445,12 @@
       const t = document.getElementById("toggleSearchBar");
       if (t) t.classList.toggle("has-filter", _hasActiveFilter());
     }
-    // Open/close the collapsible search + time-range line (the icon is always visible).
+    // Open/close the search + time-range row (revealed by the toolbar search icon).
     function setSearchBarOpen(open, focus) {
-      const controls = document.getElementById("searchFilterControls");
+      const bar = document.getElementById("searchFilterBar");
       const toggle = document.getElementById("toggleSearchBar");
-      if (!controls || !toggle) return;
-      controls.hidden = !open;
+      if (!bar || !toggle) return;
+      bar.hidden = !open;
       toggle.classList.toggle("open", open);
       toggle.setAttribute("aria-expanded", open ? "true" : "false");
       if (open && focus !== false) {
@@ -5108,7 +5101,7 @@
       const toggleBtn = document.getElementById("toggleSearchBar");
 
       toggleBtn.addEventListener("click", () => {
-        setSearchBarOpen(document.getElementById("searchFilterControls").hidden);
+        setSearchBarOpen(document.getElementById("searchFilterBar").hidden);
       });
 
       function applySearch() {
