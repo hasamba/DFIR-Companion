@@ -368,9 +368,15 @@
     .sec-selall button:hover { background: #353b47; color: #cbd3df; }
     .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid #2a2f3a; padding-top: 12px; }
     .settings-msg { font-size: 11px; margin-left: 4px; }
-    /* Global search + time-range filter bar */
+    /* Global search + time-range filter bar (collapsed behind a search icon) */
     #searchFilterBar { padding: 5px 16px; background: #0e1116; border-bottom: 1px solid #1a1f28;
       display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: #9aa4b2; }
+    #toggleSearchBar { background: #161a22; color: #9aa4b2; border: 1px solid #2a2f3a; border-radius: 5px;
+      cursor: pointer; padding: 3px 9px; font-size: 13px; line-height: 1.2; }
+    #toggleSearchBar:hover, #toggleSearchBar.open { color: #e6e6e6; border-color: #2d6cdf; }
+    #toggleSearchBar.has-filter { color: #6aa9ff; border-color: #2d6cdf; }
+    #searchFilterControls { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+    #searchFilterControls[hidden] { display: none; }
     .sf-search-wrap { position: relative; display: flex; align-items: center; }
     #globalSearch { font-size: 12px; padding: 4px 26px 4px 8px; width: 240px;
       background: #161a22; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 5px; }
@@ -870,19 +876,22 @@
     </div>
   </div>
 
-  <!-- Global search + time-range filter bar (always visible) -->
+  <!-- Global search + time-range filter bar (revealed by the search icon) -->
   <div id="searchFilterBar">
-    <span>Search:</span>
-    <div class="sf-search-wrap">
-      <input id="globalSearch" type="search" placeholder="events, findings, IOCs… (press / to focus)" autocomplete="off" />
-      <button id="clearSearch" type="button" title="Clear search (Esc)" hidden>✕</button>
+    <button id="toggleSearchBar" type="button" title="Search & filter (press /)" aria-expanded="false" aria-controls="searchFilterControls">🔍 Search</button>
+    <div id="searchFilterControls" hidden>
+      <span>Search:</span>
+      <div class="sf-search-wrap">
+        <input id="globalSearch" type="search" placeholder="events, findings, IOCs… (press / to focus)" autocomplete="off" />
+        <button id="clearSearch" type="button" title="Clear search (Esc)" hidden>✕</button>
+      </div>
+      <div class="sf-sep"></div>
+      <span>Time range:</span>
+      <label>from <input id="filterFrom" type="datetime-local" title="Filter timeline from (UTC)" /></label>
+      <label>to <input id="filterTo" type="datetime-local" title="Filter timeline to (UTC)" /></label>
+      <button id="clearFiltersBtn" type="button" hidden>Clear</button>
+      <span id="searchMatchCount"></span>
     </div>
-    <div class="sf-sep"></div>
-    <span>Time range:</span>
-    <label>from <input id="filterFrom" type="datetime-local" title="Filter timeline from (UTC)" /></label>
-    <label>to <input id="filterTo" type="datetime-local" title="Filter timeline to (UTC)" /></label>
-    <button id="clearFiltersBtn" type="button" hidden>Clear</button>
-    <span id="searchMatchCount"></span>
   </div>
 
   <main>
@@ -1141,8 +1150,28 @@
     function _updateSearchCount(shown, total) {
       const el = document.getElementById("searchMatchCount");
       if (!el) return;
-      if (!_hasActiveFilter()) { el.textContent = ""; return; }
+      if (!_hasActiveFilter()) { el.textContent = ""; _updateSearchToggleIndicator(); return; }
       el.textContent = shown < total ? `${shown} of ${total} event${total !== 1 ? "s" : ""} shown` : `${total} event${total !== 1 ? "s" : ""} shown`;
+      _updateSearchToggleIndicator();
+    }
+    // Accent the (possibly collapsed) search icon while any filter is active, so a hidden
+    // bar still signals that the timeline/IOCs are being filtered.
+    function _updateSearchToggleIndicator() {
+      const t = document.getElementById("toggleSearchBar");
+      if (t) t.classList.toggle("has-filter", _hasActiveFilter());
+    }
+    // Open/close the collapsible search + time-range line (the icon is always visible).
+    function setSearchBarOpen(open, focus) {
+      const controls = document.getElementById("searchFilterControls");
+      const toggle = document.getElementById("toggleSearchBar");
+      if (!controls || !toggle) return;
+      controls.hidden = !open;
+      toggle.classList.toggle("open", open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open && focus !== false) {
+        const gs = document.getElementById("globalSearch");
+        if (gs) { gs.focus(); gs.select(); }
+      }
     }
 
     // The case timeline is UTC, so the <input type="datetime-local"> pickers (scope, manual event)
@@ -4064,6 +4093,7 @@
       const csBtn = document.getElementById("clearSearch"); if (csBtn) csBtn.hidden = true;
       const cfBtn = document.getElementById("clearFiltersBtn"); if (cfBtn) cfBtn.hidden = true;
       const smcEl = document.getElementById("searchMatchCount"); if (smcEl) smcEl.textContent = "";
+      setSearchBarOpen(false, false); _updateSearchToggleIndicator();
       loadSynthMeta(caseId);
       loadImportMeta(caseId);
       loadCustomerExposure(caseId);
@@ -4466,6 +4496,11 @@
       const ff = document.getElementById("filterFrom");
       const ft = document.getElementById("filterTo");
       const cfBtn = document.getElementById("clearFiltersBtn");
+      const toggleBtn = document.getElementById("toggleSearchBar");
+
+      toggleBtn.addEventListener("click", () => {
+        setSearchBarOpen(document.getElementById("searchFilterControls").hidden);
+      });
 
       function applySearch() {
         searchTerm = gs.value.trim().toLowerCase();
@@ -4484,7 +4519,10 @@
         _searchDebounce = setTimeout(applySearch, 300);
       });
       gs.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") { gs.value = ""; applySearch(); }
+        if (e.key === "Escape") {
+          if (gs.value) { gs.value = ""; applySearch(); }   // first Esc clears the query…
+          else { setSearchBarOpen(false); gs.blur(); }       // …a second one collapses the bar
+        }
       });
       cs.addEventListener("click", () => { gs.value = ""; applySearch(); gs.focus(); });
 
@@ -4495,10 +4533,10 @@
         applyTimeRange();
       });
 
-      // Press "/" to focus the search bar (when not already in a text field).
+      // Press "/" to reveal + focus the search bar (when not already in a text field).
       document.addEventListener("keydown", (e) => {
         if (e.key === "/" && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
-          e.preventDefault(); gs.focus(); gs.select();
+          e.preventDefault(); setSearchBarOpen(true);
         }
       });
     })();
