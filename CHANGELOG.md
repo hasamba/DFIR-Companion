@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Email / `.eml` / `.msg` import** — a deterministic (no AI call) importer for phishing/BEC evidence: one timeline event at the message's own `Date:` header, severity derived from SPF/DKIM/DMARC failures + sender-spoof heuristics, URLs/sender domains/originating IP/attachment names+hashes harvested as IOCs (ATT&CK T1566). `.eml` parses fully via a dependency-free `parseMimeEmail`; `.msg` (Outlook OLE) is best-effort (recovers the embedded transport headers — export as `.eml` for full fidelity). Auto-detected by the unified Import button (closes #44).
+
 ## [0.17.0] - 2026-06-11
 
 ### Added

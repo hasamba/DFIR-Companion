@@ -161,6 +161,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **GCP / Azure** | Cloud Audit Logs, Azure Activity Log | Action table (IAM/logging/secrets) |
 | **Plaso** | `psort` CSV (dynamic + l2tcsv) | — (Info events) |
 | **Sandbox reports** | CAPEv2 `report.json`, Falcon Sandbox summary | Sample verdict + behavioural signatures |
+| **Email** | `.eml` (RFC 2822), best-effort `.msg` | SPF/DKIM/DMARC fail → sender spoof heuristics (T1566 Phishing) |
 | **CSV** | Velociraptor / EDR exports | — |
 | **Generic logs** | Firewall, syslog, VPN; repetitive lines → counted patterns | AI-triaged |
 
