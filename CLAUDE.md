@@ -168,7 +168,15 @@ kill chain. Like the graphs, it's **derived on read** (not persisted to state): 
 corroboration (which tools observed each indicator) is **derived on read** by matching the IOC value
 against the events' `sources` (indexed exact-token match — boundary-aware so `10.0.0.1` ≠ `10.0.0.10`).
 `ReportWriter.iocSources` → `GET /cases/:id/ioc-sources`, the dashboard's *⊕ N sources* IOC badge +
-the report/CSV IOC `sources` column. Side files in `state/`:
+the report/CSV IOC `sources` column. **Adversary group hints** (`analysis/adversaryHints.ts`, pure) are the
+same shape: the case's identified ATT&CK techniques (findings + events + the MITRE table) are scored for
+overlap against each known MITRE **Groups** entry from a bundled **offline dataset** (`data/attack-groups.json`,
+loaded+cached by `analysis/adversaryGroupsData.ts`; regenerate via `npm run data:update-attack` →
+`scripts/update-attack-groups.ts`, the only network touch and offline-prep only). **No AI, no runtime network** —
+hypothesis fuel, NOT attribution (every hint carries the group's total technique count so a diffuse 4-of-150
+reads differently from a focused 4-of-12, and the caveat is shown everywhere). `ReportWriter.adversaryHints` →
+`GET /cases/:id/adversary-hints`, dashboard *Adversary Hints* panel + report §4.6.1; thresholds
+`DFIR_ADVERSARY_MIN_OVERLAP`/`DFIR_ADVERSARY_TOP_N`. Side files in `state/`:
 `ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (per-source enrichment
 selection — the enabled provider names; **default = local-only** (MISP/YETI), external opt-in),
 `pending_analysis.json`, `report-meta.json` (human-authored report

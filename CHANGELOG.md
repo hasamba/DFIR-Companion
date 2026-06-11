@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Adversary group hints — known MITRE ATT&CK groups ranked by technique overlap with the case (offline, no AI/network), shown in a dashboard panel + report §4.6.1 with a "not attribution" caveat; bundled dataset refreshable via `npm run data:update-attack` (closes #46).
+
 ## [0.17.0] - 2026-06-11
 
 ### Added
