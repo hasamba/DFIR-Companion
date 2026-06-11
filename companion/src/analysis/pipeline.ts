@@ -5,9 +5,10 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AIProvider, AnalyzeImage, AnalyzeRequest, AnalyzeResult } from "../providers/provider.js";
 import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/logger.js";
-import { createAnonymizer, deriveKnownEntities } from "./anonymize.js";
+import { createAnonymizer, deriveKnownEntities, type CustomEntity } from "./anonymize.js";
 import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
 import type { CustomEntitiesStore } from "./anonEntities.js";
+import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity } from "./stateTypes.js";
@@ -545,6 +546,10 @@ export interface PipelineOptions {
   anonStore?: AnonControlStore;
   // Per-case analyst-added entities to anonymize (exact-match), merged with the auto-derived ones.
   customEntitiesStore?: CustomEntitiesStore;
+  // Per-case OCR-discovered entities + the analyst's suppression list. When set, the OCR pass feeds
+  // every entity it tokenizes out of a screenshot back here (so the auto-discovery list grows), and
+  // suppressed values are excluded from anonymization. Absent → no screenshot auto-discovery.
+  discoveredStore?: DiscoveredEntitiesStore;
   stateStore: StateStore;
   imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage>;
   retries?: number;
@@ -631,9 +636,16 @@ export class AnalysisPipeline {
       return parseJsonLoose(result.rawText);
     }
     const known = deriveKnownEntities(state);
-    if (this.opts.customEntitiesStore) known.custom = await this.opts.customEntitiesStore.load(caseId);
+    const custom = this.opts.customEntitiesStore ? await this.opts.customEntitiesStore.load(caseId) : [];
+    // Auto-discovered screenshot entities are tokenized too; suppressed ones are never tokenized.
+    const disc = this.opts.discoveredStore ? await this.opts.discoveredStore.load(caseId) : { discovered: [], suppressed: [] };
+    known.custom = [...custom, ...disc.discovered];
+    known.suppressed = disc.suppressed;
     const anon = createAnonymizer(policy, known);
     this.log.debug(`anonymized prompt before [${label}] AI call`, { caseId });
+
+    // OCR-discovered entities to persist into the case's auto-discovery list after this pass.
+    const discoveredFromOcr: CustomEntity[] = [];
 
     // OCR-redact image buffers when an external-provider runner is configured.
     let images = req.images;
@@ -651,6 +663,7 @@ export class AnalysisPipeline {
           try {
             const buf = Buffer.from(img.base64, "base64");
             const res = await ocrRedactImage(buf, policy, known, runner);
+            if (res.discovered.length) discoveredFromOcr.push(...res.discovered);
             if (res.changed) {
               redactedImages++;
               totalRedactions += res.redactions.length;
@@ -677,6 +690,16 @@ export class AnalysisPipeline {
           `${totalRedactions} word(s) across ${redactedImages} image(s) before sending to the model`,
         { caseId },
       );
+      // Feed what OCR tokenized back into the case's auto-discovery list (dedupe/suppress handled
+      // by the store). Best-effort — a write failure must not fail the analysis.
+      if (this.opts.discoveredStore && discoveredFromOcr.length > 0) {
+        try {
+          const added = await this.opts.discoveredStore.addDiscovered(caseId, discoveredFromOcr);
+          this.log.debug(`[OCR] auto-discovery now holds ${added.discovered.length} entit(y/ies)`, { caseId });
+        } catch (err) {
+          this.log.warn(`[OCR] could not persist discovered entities: ${(err as Error).message}`, { caseId });
+        }
+      }
     }
 
     const result = await provider.analyze({ ...req, userPrompt: anon.apply(req.userPrompt), images });

@@ -209,7 +209,10 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **AI-input anonymization** — reversibly tokenizes internal IPs/usernames/hostnames/domains/emails/
   user-paths and one-way-redacts secrets before the LLM sees them, restoring real values on display;
   adversary IOCs (public IPs, hashes, attacker domains) are preserved. Per-case toggle + a
-  viewable/editable entity list (auto-derived + manual). Default on.
+  viewable entity list that **auto-discovers** entities from the timeline **and from screenshots**
+  (the OCR redaction pass feeds back what it scrubbed, grouped by type) plus manual additions; each
+  auto-discovered entry has a **✕ remove** that stops it being anonymized (reversible) so you can
+  prune false positives. Default on.
 
 ### Correlation & deduplication
 - **Cross-source correlation** — the same artifact reported by different tools (e.g. Velociraptor +

@@ -265,3 +265,36 @@ describe("anonymizer — custom entities", () => {
     expect(a.apply("nothing here")).toBe("nothing here");
   });
 });
+
+describe("anonymizer — suppression (analyst removed a wrong entity)", () => {
+  it("never tokenizes a suppressed value, even when a pattern would match it", () => {
+    // config\PowershellInfo.log is a relative path the USER (DOMAIN\user) pattern mis-matches.
+    const known: KnownEntities = { ...NONE, suppressed: ["config\\powershellinfo.log"] };
+    const a = createAnonymizer(policy({ USER: true }), known);
+    const out = a.apply("Out-File config\\PowershellInfo.log by WIN11\\vagrant");
+    expect(out).toContain("config\\PowershellInfo.log"); // suppressed → left verbatim
+    expect(out).not.toContain("WIN11\\vagrant");          // a real account is still tokenized
+    expect(out).toMatch(/ANON_USER_1/);
+  });
+  it("suppression is case-insensitive", () => {
+    const a = createAnonymizer(policy({ HOST: true }), { hosts: ["WIN11"], accounts: [], internalDomains: [], suppressed: ["win11"] });
+    expect(a.apply("host WIN11 online")).toBe("host WIN11 online");
+  });
+});
+
+describe("anonymizer — discoveries()", () => {
+  it("reports each tokenized entity with its category, deduped", () => {
+    const a = createAnonymizer(policy({ USER: true, IP: true }), NONE);
+    a.apply("WIN11\\vagrant on 10.0.0.5");
+    a.apply("WIN11\\vagrant again"); // dup → not repeated
+    const disc = a.discoveries();
+    expect(disc).toContainEqual({ value: "WIN11\\vagrant", category: "USER" });
+    expect(disc).toContainEqual({ value: "10.0.0.5", category: "IP" });
+    expect(disc.filter((e) => e.value === "WIN11\\vagrant")).toHaveLength(1);
+  });
+  it("never reports one-way secrets (they are placeholder-redacted, not tokenized)", () => {
+    const a = createAnonymizer(policy({}, true), NONE);
+    a.apply("password = hunter2trustno1");
+    expect(a.discoveries()).toEqual([]);
+  });
+});

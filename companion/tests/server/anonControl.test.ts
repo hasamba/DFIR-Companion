@@ -51,4 +51,18 @@ describe("/cases/:id/anon-entities", () => {
     expect(post.body.custom).toEqual([{ value: "DC9", category: "HOST" }, { value: "x", category: "OTHER" }]);
     expect((await request(app).get("/cases/c1/anon-entities")).body.custom.length).toBe(2);
   });
+
+  it("suppress removes an entity (vetoes it) and unsuppress restores it; GET reflects the list", async () => {
+    const s = await request(app).post("/cases/c1/anon-entities/suppress").send({ value: "config\\PowershellInfo.log" });
+    expect(s.status).toBe(200);
+    expect(s.body.suppressed).toEqual(["config\\powershellinfo.log"]);
+    expect((await request(app).get("/cases/c1/anon-entities")).body.suppressed).toEqual(["config\\powershellinfo.log"]);
+
+    const bad = await request(app).post("/cases/c1/anon-entities/suppress").send({});
+    expect(bad.status).toBe(400);
+
+    const u = await request(app).post("/cases/c1/anon-entities/unsuppress").send({ value: "config\\PowershellInfo.log" });
+    expect(u.status).toBe(200);
+    expect(u.body.suppressed).toEqual([]);
+  });
 });
