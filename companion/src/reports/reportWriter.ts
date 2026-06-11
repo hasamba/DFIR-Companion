@@ -99,9 +99,12 @@ export class ReportWriter {
   }
 
   // Build a MITRE ATT&CK Navigator layer for the case (same scope/legitimate filtering as the
-  // report) — the JSON drops straight into the Navigator's "Open Existing Layer" upload.
+  // report) — the JSON drops straight into the Navigator's "Open Existing Layer" upload. The
+  // stamped ATT&CK version follows DFIR_ATTACK_VERSION (default DEFAULT_ATTACK_VERSION) so a new
+  // ATT&CK release doesn't make the Navigator prompt to upgrade every exported layer.
   async attackLayer(caseId: string): Promise<NavigatorLayer> {
-    return buildAttackLayer(await this.loadFilteredState(caseId));
+    const attackVersion = process.env.DFIR_ATTACK_VERSION?.trim() || undefined;
+    return buildAttackLayer(await this.loadFilteredState(caseId), attackVersion ? { attackVersion } : {});
   }
 
   // Export the forensic timeline as Timesketch-compatible JSONL (same scope/legitimate filtering).
