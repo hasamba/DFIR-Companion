@@ -136,6 +136,18 @@ N ago / +N new events" and "+N new IOCs" banners + per-row `NEW` highlights abov
 analog of `synth-meta.json`) — this is at the route level, so the per-format `import-*` routes and script imports
 don't record it.
 
+**IOC whitelist (auto-mark known-good legitimate).** A GLOBAL store (`IocWhitelistStore`, `whitelist/ioc-whitelist.json`
+next to `cases/`, mirrors `ArtifactBundleStore`/`TemplateStore`) holds known-good patterns: **CIDR** (internal IP
+ranges), **exact** (hashes/values), **regex**, each optionally type-scoped. The pure matcher (`analysis/iocWhitelist.ts` —
+IPv4 CIDR containment, regex/exact, CSV/JSON parse+serialize, `sanitizeRuleInput`) is unit-tested independently of I/O.
+An IOC matching a rule is **auto-marked LEGITIMATE** — it reuses the existing legitimate machinery (writes an `ioc`
+`LegitimateMarker`), so it's reversible and synthesis already excludes it (`applyLegitimate`). Applied in the `/import`
+route's `.then()` BEFORE re-synthesis (route-level, like import-meta — other import paths use the manual apply), and on
+demand via `POST /cases/:id/ioc-whitelist/apply`. Opt-in: the list starts empty (whitelisting internal ranges can hide
+lateral movement). Surfaced in **Settings → IOC Whitelist** (CRUD + CSV/JSON import-export). Use a SUBDIR for the file,
+not a loose sibling of `cases/` — when `DFIR_CASES_ROOT` is a drive-root child (`C:\cases`) the sibling is `C:\`, where
+Windows forbids creating files.
+
 **Cross-source correlation runs in `mergeDelta`** (`correlate.ts`): events describing the
 same artifact collapse into one — by exact dup (time+description, so re-imports don't
 double), shared hash, or same path within a time window. The merged event unions `sources`
@@ -151,7 +163,12 @@ double), shared hash, or same path within a time window. The merged event unions
 the time gap between consecutive events (`DFIR_PHASE_GAP_S`, default 5 min), each labelled with its
 dominant ATT&CK tactic (reuses `tacticForTechniques`) — the *when* axis, complementary to the categorical
 kill chain. Like the graphs, it's **derived on read** (not persisted to state): `ReportWriter.phases` →
-`GET /cases/:id/phases`, dashboard *Attack Phases* panel + report §3.2. Side files in `state/`:
+`GET /cases/:id/phases`, dashboard *Attack Phases* panel + report §3.2. **IOC corroboration**
+(`analysis/iocCorroboration.ts`, pure) is the same shape: IOCs carry no `sources` field, so per-IOC
+corroboration (which tools observed each indicator) is **derived on read** by matching the IOC value
+against the events' `sources` (indexed exact-token match — boundary-aware so `10.0.0.1` ≠ `10.0.0.10`).
+`ReportWriter.iocSources` → `GET /cases/:id/ioc-sources`, the dashboard's *⊕ N sources* IOC badge +
+the report/CSV IOC `sources` column. Side files in `state/`:
 `ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (per-source enrichment
 selection — the enabled provider names; **default = local-only** (MISP/YETI), external opt-in),
 `pending_analysis.json`, `report-meta.json` (human-authored report

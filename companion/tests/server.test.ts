@@ -1204,6 +1204,34 @@ describe("state and report routes", () => {
     expect(res.body[1].maxSeverity).toBe("Critical");
   });
 
+  it("derives per-IOC corroboration (tools that observed each indicator) on demand", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-iocsrc-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore);
+    const app = createApp(store, { stateStore, reportWriter });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    seeded.iocs.push(
+      { id: "i1", type: "hash", value: "ABCDEF123456", firstSeen: "2026-05-20T14:00:00Z" },
+      { id: "i2", type: "domain", value: "lonely.example", firstSeen: "2026-05-20T14:00:00Z" },
+    );
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-20T14:01:00Z", description: "malware", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sha256: "abcdef123456", sources: ["THOR"] },
+      { id: "e2", timestamp: "2026-05-20T14:02:00Z", description: "same file flagged", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sha256: "abcdef123456", sources: ["Velociraptor"] },
+      { id: "e3", timestamp: "2026-05-20T14:03:00Z", description: "dns for lonely.example", severity: "Low",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sources: ["Zeek"] },
+    );
+    await stateStore.save(seeded);
+
+    const res = await request(app).get("/cases/c1/ioc-sources");
+    expect(res.status).toBe(200);
+    expect(res.body.i1.sort()).toEqual(["THOR", "Velociraptor"]);   // corroborated by 2 tools
+    expect(res.body.i2).toEqual(["Zeek"]);                            // single tool
+  });
+
   it("exports just the incident timeline as CSV on demand (no full report needed)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-timeline-csv-"));
     const store = new CaseStore(root);
