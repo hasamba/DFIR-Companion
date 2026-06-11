@@ -4161,8 +4161,10 @@
         return `<div class="ioc-row${isSel ? " ioc-selected" : ""}${isNew ? " ioc-new" : ""}" data-iocid="${escAttr(i.id)}">`
           + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
           + `<span class="ioc-body">`
-          +   `${commentChip("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
-          +   `<span style="color:#6aa9ff">${esc(i.id)}</span> ${tagChip("ioc", i.id)} <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}`
+          // Mirror the forensic timeline: control cluster (comment + tag-add + hunt icons),
+          // then the id, then the tag PILLS, then the indicator itself.
+          +   `${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
+          +   `<span style="color:#6aa9ff">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}`
           + `</span>`
           + `</div>`;
       }).join("");
