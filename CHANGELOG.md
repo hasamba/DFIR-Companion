@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Dashboard: global full-text search + time-range filter, tucked behind a search icon.** A single **🔍 Search** button sits in a slim bar under the header; clicking it (or pressing `/` anywhere outside a text field) reveals the search box + *from/to* time-range pickers — they're no longer always on screen. The text search filters the forensic timeline, findings, and IOCs as you type (300 ms debounce; mirrors `analysis/searchFilter.ts`); the time-range filter bounds the timeline to a UTC window; a match-count (`N of M events shown`) appears while filtering. `Esc` in the box clears the query, then a second `Esc` collapses the bar; the icon keeps an accent while any filter is active, so a collapsed bar still signals the view is filtered. Clear buttons reset each control independently, and switching cases collapses the bar and clears all filters.
+
 ## [0.15.0] - 2026-06-10
 
 ### Changed
