@@ -214,7 +214,11 @@
     .ioc-bulk-btn { background: #1e2330; border: 1px solid #3a4050; color: #cbd3df; border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
     .ioc-bulk-btn:hover { background: #2a3050; color: #fff; border-color: #6aa9ff; }
     .ioc-cb { width: 13px; height: 13px; cursor: pointer; accent-color: #6aa9ff; flex-shrink: 0; margin: 0; }
-    .ioc-row { display: flex; align-items: center; gap: 4px; padding: 2px 0; border-bottom: 1px solid #1a1f28; position: relative; }
+    .ioc-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; border-bottom: 1px solid #1a1f28; position: relative; }
+    /* Only the checkbox is a flex item; everything else flows inline inside .ioc-body so tag
+       pills / enrich badges wrap naturally instead of overflowing the row (display:flex would
+       otherwise make every chip a non-wrapping flex item and break the layout). */
+    .ioc-body { flex: 1 1 auto; min-width: 0; line-height: 1.7; }
     .ioc-row:hover { background: #0d1117; }
     .ioc-row.ioc-selected { background: #142038; }
     .ioc-header-row { display: flex; align-items: center; gap: 4px; padding: 2px 0 5px; border-bottom: 1px solid #2a2f3a; margin-bottom: 1px; font-size: 11px; color: #6b7280; }
@@ -4156,8 +4160,10 @@
         const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
         return `<div class="ioc-row${isSel ? " ioc-selected" : ""}${isNew ? " ioc-new" : ""}" data-iocid="${escAttr(i.id)}">`
           + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
-          + `${commentChip("ioc", i.id)} ${tagChip("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
-          + `<span style="color:#6aa9ff">${esc(i.id)}</span> <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}`
+          + `<span class="ioc-body">`
+          +   `${commentChip("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
+          +   `<span style="color:#6aa9ff">${esc(i.id)}</span> ${tagChip("ioc", i.id)} <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}`
+          + `</span>`
           + `</div>`;
       }).join("");
       el.innerHTML = headerRow + rows;
