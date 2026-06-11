@@ -112,15 +112,24 @@ import {
   LeakCheckExposureProvider,
   ShodanExposureProvider,
 } from "./integrations/customerExposureProviders.js";
+import {
+  LoggerImpl,
+  createConsoleLogger,
+  normalizeLogLevel,
+  isLogLevel,
+  type Logger,
+} from "./logging/logger.js";
 
-// Server console logging — every line is prefixed with an ISO-8601 timestamp so the local
-// log can be correlated with case events and outbound threat-intel API calls. This is a
-// localhost single-user tool, so the console IS the log; these helpers are the one place
-// that formatting lives.
-function ts(): string { return new Date().toISOString(); }
-function logLine(msg: string): void { console.log(`${ts()} ${msg}`); }
-function warnLine(msg: string): void { console.warn(`${ts()} ${msg}`); }
-function errLine(msg: string): void { console.error(`${ts()} ${msg}`); }
+// Server logging. A single shared Logger tees every line to the console AND to log files
+// (a global session log + per-case logs); the helpers below delegate to it so the existing
+// call sites keep working. startServer() swaps in the file-backed logger and the dashboard's
+// Logging toggle changes its level live (no restart); tests/CLI get a console-only default.
+let serverLogger: Logger = createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
+export function setServerLogger(logger: Logger): void { serverLogger = logger; }
+export function getServerLogger(): Logger { return serverLogger; }
+function logLine(msg: string): void { serverLogger.info(msg); }
+function warnLine(msg: string): void { serverLogger.warn(msg); }
+function errLine(msg: string): void { serverLogger.error(msg); }
 
 // Truncate a long indicator (e.g. a SHA-256) for a readable one-line log entry.
 function shortValue(value: string): string {
@@ -341,7 +350,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS] });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel() });
+  });
+
+  // Read / change the live log verbosity (debug | info | warn | error). The dashboard's
+  // Settings → Logging control flips this at runtime — no server restart — and it takes
+  // effect immediately across the server AND the analysis pipeline (they share one logger).
+  app.get("/log-level", (_req: Request, res: Response) => {
+    res.status(200).json({ level: serverLogger.getLevel(), levels: ["debug", "info", "warn", "error"] });
+  });
+  app.post("/log-level", (req: Request, res: Response) => {
+    const level = (req.body as { level?: unknown })?.level;
+    if (!isLogLevel(level)) {
+      return res.status(400).json({ error: "level must be one of: debug, info, warn, error" });
+    }
+    const previous = serverLogger.getLevel();
+    serverLogger.setLevel(level);
+    logLine(`[log] level changed ${previous} -> ${level}`);
+    return res.status(200).json({ level: serverLogger.getLevel() });
   });
 
   // How many captures have been recorded for a case (counts the audit-log lines).
@@ -581,6 +607,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const metadata = await ingestCapture(store, req.body);
       res.status(201).json(metadata);
+      serverLogger.debug(
+        `screenshot captured seq=${metadata.sequenceNumber} trigger=${metadata.triggerType} ` +
+          `file=${metadata.screenshotFile || "(none)"}${metadata.isDuplicate ? " (duplicate — not analyzed)" : ""}`,
+        { caseId: metadata.caseId },
+      );
       // Evidence is always stored; AI analysis only runs when enabled for the case.
       if (!metadata.isDuplicate && options.pipeline && hasAiProvider() && (await getControl(metadata.caseId)).enabled) {
         const buf = buffers.get(metadata.caseId) ?? [];
@@ -3767,6 +3798,8 @@ export interface RuntimePipelineParams {
   onState?: (state: InvestigationState) => void;
   // Provided only when the AI vision provider is external (not local). See ocrRedact.ts.
   ocrRunner?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["ocrRunner"];
+  // Shared logger so AI/OCR/anonymization debug traces land in the same session + per-case logs.
+  logger?: Logger;
 }
 
 export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
@@ -3784,11 +3817,25 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     notebookStore: new NotebookStore(params.store),
     aiControlStore: new AiControlStore(params.store),
     ocrRunner: params.ocrRunner,
+    logger: params.logger,
   });
 }
 
 export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"): void {
   const store = new CaseStore(casesRoot);
+  // File-backed logging: a fresh global SESSION log per server run (logs/session-<ts>.log,
+  // beside cases/) PLUS a per-CASE log (cases/<id>/logs/session-<ts>.log) — the investigation
+  // audit trail that travels with the case. Colons/dots are stripped from the timestamp so the
+  // filename is valid on Windows. A logs/ subdir is always creatable (even when DFIR_CASES_ROOT
+  // is a drive-root child like C:\cases, where a loose sibling file would be forbidden). The
+  // dashboard's Settings → Logging toggle changes the level live; DFIR_LOG_LEVEL sets the default.
+  const sessionStamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const logger = new LoggerImpl({
+    level: normalizeLogLevel(process.env.DFIR_LOG_LEVEL),
+    sessionLogPath: join(dirname(casesRoot), "logs", `session-${sessionStamp}.log`),
+    caseLogPath: (caseId) => join(store.caseDir(caseId), "logs", `session-${sessionStamp}.log`),
+  });
+  setServerLogger(logger);
   const stateStore = new StateStoreImpl(store);
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
@@ -3818,7 +3865,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
   const visionIsLocalForPipeline = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
   const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
-  const wiredPipeline = buildRuntimePipeline({ provider, synthesisProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner });
+  const wiredPipeline = buildRuntimePipeline({ provider, synthesisProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger });
 
   // Live synthesis on by default — set DFIR_AI_AUTO_SYNTHESIZE=off to disable.
   const autoSynthesize = (process.env.DFIR_AI_AUTO_SYNTHESIZE ?? "on").toLowerCase() !== "off";

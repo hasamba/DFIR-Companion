@@ -29,6 +29,7 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | --- | --- | --- |
 | `DFIR_CASES_ROOT` | Where case folders are written. Relative paths resolve against `companion/`, so the same folder is used no matter where you launch from. | `./cases` or `../cases` |
 | `DFIR_PORT` | Port the localhost server binds to. Default `4773`. Must be 1–65535; invalid values fall back to the default with a warning. Change this if 4773 is taken, or to run multiple companions side-by-side. The extension and dashboard must use the same port. | `4773` or `4774` |
+| `DFIR_LOG_LEVEL` | Log verbosity: `debug` \| `info` \| `warn` \| `error` (default `info`). Logs tee to the console **and** to files — a global `logs/session-<time>.log` (beside the cases root) + a per-case `cases/<id>/logs/session-<time>.log` (new file per server start). `debug` traces every AI call (model/phase + token usage), screenshot capture, OCR redaction, anonymization, and enrichment lookups. Change live (no restart) from **Settings → Log verbosity**. | `info` or `debug` |
 | `DFIR_AI_PROVIDER` | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini`. Leave **unset** to run capture-only (no AI). | `litellm` |
 | `DFIR_AI_MODEL` | Model id understood by the provider. | `ollama/llama3.1` |
 | `DFIR_AI_KEY` | Provider API key (blank for an auth-less local LiteLLM proxy). | `sk-...` |
@@ -210,6 +211,7 @@ the server from a `chrome-extension://` origin.
       imports/0002_<name>.log             evidence (raw uploaded log files — firewall, syslog, sshd, IIS/Apache/nginx, app logs)
       metadata/captures.jsonl             append-only audit trail
       metadata/imports.jsonl              append-only import audit trail (CSV + log + THOR + SIEM/EDR + Chainsaw/EVTX + Hayabusa + Velociraptor + Suricata/Zeek + KAPE/EZ + Cyber Triage + M365/Entra + AWS CloudTrail + GCP/Azure + Plaso + Sandbox uploads share the same sequence)
+      logs/session-<time>.log             per-case audit trail (AI calls / captures / OCR / anonymization / enrichment for this case; one file per server session, DFIR_LOG_LEVEL)
       state/
         investigation.json                accumulating findings/timeline/forensic events
         pending_analysis.json             written if an analysis window fails (auto-cleared on success)
