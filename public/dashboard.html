@@ -5317,6 +5317,12 @@
         if (Array.isArray(h.huntPlatforms)) enabledHuntPlatforms = new Set(h.huntPlatforms);   // hunt-modal allowlist
       }).catch(() => setAi("unknown", "unknown"));
 
+      // Check-on-connect: if screenshots recently arrived for a DIFFERENT case, warn right away
+      // (the live WS event only fires on the next capture, which may be a while off).
+      fetch("/captures/recent").then(r => r.ok ? r.json() : null).then(d => {
+        if (d && d.caseId && d.caseId !== caseId && d.ageMs < 120000) showCaseMismatch(d.caseId, caseId);
+      }).catch(() => {});
+
       ws = new WebSocket(`ws://${location.host}/ws?caseId=${encodeURIComponent(caseId)}`);
       ws.onopen = () => document.getElementById("status").textContent = "connected (live)";
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";

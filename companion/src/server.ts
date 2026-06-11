@@ -375,6 +375,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return res.status(200).json({ level: serverLogger.getLevel() });
   });
 
+  // Most-recent capture across ALL cases (in-memory; resets on restart). Powers the dashboard's
+  // check-on-connect for the cross-case capture warning.
+  let lastCapture: { caseId: string; at: number } | null = null;
+
   // How many captures have been recorded for a case (counts the audit-log lines).
   app.get("/cases/:id/captures/count", async (req: Request, res: Response) => {
     try {
@@ -385,6 +389,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return res.status(200).json({ count: 0 });
       return res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // The most-recent capture across ALL cases (in-memory; resets on restart) + its age in ms.
+  // A freshly-connected dashboard checks this to warn when screenshots are landing on a different
+  // case than the one it's viewing — catching the mismatch even without a live capture event.
+  app.get("/captures/recent", (_req: Request, res: Response) => {
+    if (!lastCapture) return res.status(200).json({ caseId: null });
+    return res.status(200).json({ caseId: lastCapture.caseId, ageMs: Date.now() - lastCapture.at });
   });
 
   const windowSize = options.windowSize ?? 4;
@@ -617,7 +629,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           `file=${metadata.screenshotFile || "(none)"}${metadata.isDuplicate ? " (duplicate — not analyzed)" : ""}`,
         { caseId: metadata.caseId },
       );
-      // Cross-case signal: lets a dashboard warn when captures arrive for a case it isn't viewing.
+      // Cross-case signal: lets a dashboard warn when captures arrive for a case it isn't viewing
+      // (live, via the WS broadcast) or detect it on connect (via /captures/recent).
+      lastCapture = { caseId: metadata.caseId, at: Date.now() };
       options.onCapture?.(metadata.caseId);
       // Evidence is always stored; AI analysis only runs when enabled for the case.
       if (!metadata.isDuplicate && options.pipeline && hasAiProvider() && (await getControl(metadata.caseId)).enabled) {
