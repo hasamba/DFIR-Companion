@@ -90,11 +90,13 @@ async function main(): Promise<void> {
     );
   }
 
-  const redacted = await ocrRedactImage(input, POLICY, KNOWN, runner);
-  const changed = redacted !== input;
-  await fs.writeFile(path.join(OUT_DIR, "redacted.png"), redacted);
+  const result = await ocrRedactImage(input, POLICY, KNOWN, runner);
+  await fs.writeFile(path.join(OUT_DIR, "redacted.png"), result.buffer);
 
-  console.log(`\nRedaction applied: ${changed ? "YES (boxes composited)" : "NO (nothing matched)"}`);
+  console.log(`\nRedaction applied: ${result.changed ? "YES (boxes composited)" : "NO (nothing matched)"}`);
+  if (result.redactions.length > 0) {
+    console.log(`Boxed words: ${result.redactions.map((w) => w.text).join(", ")}`);
+  }
 
   if (!argPath) {
     // Self-check against the synthetic expectations.

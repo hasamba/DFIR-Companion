@@ -15,11 +15,24 @@ export interface OcrRunner {
 
 export const DEFAULT_CONFIDENCE_THRESHOLD = 60;
 
+/** Outcome of one OCR-redact pass — the image plus what OCR saw, for logging/inspection. */
+export interface OcrRedactResult {
+  /** The redacted image, or the ORIGINAL buffer (same reference) when nothing was redacted. */
+  buffer: Buffer;
+  /** True when at least one black box was composited (the buffer differs from the input). */
+  changed: boolean;
+  /** Total words OCR read from the image (0 if OCR did not run, e.g. policy disabled). */
+  wordCount: number;
+  /** The words that were boxed — sensitive matches with a usable bounding box. */
+  redactions: OcrWord[];
+}
+
 /**
  * Return a copy of `imageBuffer` with opaque black rectangles composited over every
- * OCR word that the anonymizer would tokenize. Returns the ORIGINAL buffer (same
- * reference, no copy) when there is nothing to redact — evidence-first invariant:
- * the caller's original screenshot buffer is never mutated.
+ * OCR word that the anonymizer would tokenize, plus what OCR saw (for logging). The
+ * returned `buffer` is the ORIGINAL buffer (same reference, no copy) when there is
+ * nothing to redact — evidence-first invariant: the caller's original screenshot
+ * buffer is never mutated.
  */
 export async function ocrRedactImage(
   imageBuffer: Buffer,
@@ -27,35 +40,43 @@ export async function ocrRedactImage(
   known: KnownEntities,
   runner: OcrRunner,
   confidenceThreshold = DEFAULT_CONFIDENCE_THRESHOLD,
-): Promise<Buffer> {
-  if (!policy.enabled) return imageBuffer;
+): Promise<OcrRedactResult> {
+  const unchanged = (wordCount: number): OcrRedactResult => ({
+    buffer: imageBuffer,
+    changed: false,
+    wordCount,
+    redactions: [],
+  });
+
+  if (!policy.enabled) return unchanged(0);
 
   const words = await runner.recognize(imageBuffer);
-  if (words.length === 0) return imageBuffer;
+  if (words.length === 0) return unchanged(0);
 
   const anon = createAnonymizer(policy, known);
-  const toRedact = words.filter(
+  const matched = words.filter(
     (w) =>
       w.confidence >= confidenceThreshold &&
       w.text.trim().length > 0 &&
       anon.apply(w.text) !== w.text,
   );
-  if (toRedact.length === 0) return imageBuffer;
+  // A match with a zero-size bbox can't be drawn — exclude it from the boxes AND the count,
+  // so `redactions` reflects exactly what was painted onto the image.
+  const redactions = matched.filter((w) => w.bbox.w > 0 && w.bbox.h > 0);
+  if (redactions.length === 0) return unchanged(words.length);
 
-  const overlays = toRedact
-    .filter((w) => w.bbox.w > 0 && w.bbox.h > 0)
-    .map((w) => ({
-      input: Buffer.from(
-        `<svg xmlns="http://www.w3.org/2000/svg" width="${w.bbox.w}" height="${w.bbox.h}">` +
-          `<rect width="${w.bbox.w}" height="${w.bbox.h}" fill="black"/>` +
-          `</svg>`,
-      ),
-      left: w.bbox.x,
-      top: w.bbox.y,
-    }));
+  const overlays = redactions.map((w) => ({
+    input: Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${w.bbox.w}" height="${w.bbox.h}">` +
+        `<rect width="${w.bbox.w}" height="${w.bbox.h}" fill="black"/>` +
+        `</svg>`,
+    ),
+    left: w.bbox.x,
+    top: w.bbox.y,
+  }));
 
-  if (overlays.length === 0) return imageBuffer;
-  return sharp(imageBuffer).composite(overlays).toBuffer();
+  const buffer = await sharp(imageBuffer).composite(overlays).toBuffer();
+  return { buffer, changed: true, wordCount: words.length, redactions };
 }
 
 /**

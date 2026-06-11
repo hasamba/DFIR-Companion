@@ -39,7 +39,10 @@ describe("ocrRedactImage", () => {
   it("returns original buffer (same reference) when runner returns no words", async () => {
     const img = await whiteImage();
     const result = await ocrRedactImage(img, ENABLED_POLICY, KNOWN, mockRunner([]));
-    expect(result).toBe(img);
+    expect(result.buffer).toBe(img);
+    expect(result.changed).toBe(false);
+    expect(result.wordCount).toBe(0);
+    expect(result.redactions).toEqual([]);
   });
 
   it("returns original buffer when no word matches the entity set", async () => {
@@ -48,7 +51,10 @@ describe("ocrRedactImage", () => {
       { text: "unrelated", bbox: { x: 10, y: 10, w: 60, h: 20 }, confidence: 95 },
     ];
     const result = await ocrRedactImage(img, ENABLED_POLICY, KNOWN, mockRunner(words));
-    expect(result).toBe(img);
+    expect(result.buffer).toBe(img);
+    expect(result.changed).toBe(false);
+    expect(result.wordCount).toBe(1); // OCR read the word, it just wasn't sensitive
+    expect(result.redactions).toEqual([]);
   });
 
   it("returns a different buffer when a hostname matches", async () => {
@@ -57,8 +63,10 @@ describe("ocrRedactImage", () => {
       { text: "VICTIM-PC", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 90 },
     ];
     const result = await ocrRedactImage(img, ENABLED_POLICY, KNOWN, mockRunner(words));
-    expect(result).not.toBe(img);
-    expect(result.length).toBeGreaterThan(0);
+    expect(result.buffer).not.toBe(img);
+    expect(result.buffer.length).toBeGreaterThan(0);
+    expect(result.changed).toBe(true);
+    expect(result.redactions.map((w) => w.text)).toEqual(["VICTIM-PC"]);
   });
 
   it("skips words below the confidence threshold", async () => {
@@ -73,7 +81,9 @@ describe("ocrRedactImage", () => {
       mockRunner(words),
       DEFAULT_CONFIDENCE_THRESHOLD,
     );
-    expect(result).toBe(img);
+    expect(result.buffer).toBe(img);
+    expect(result.changed).toBe(false);
+    expect(result.wordCount).toBe(1);
   });
 
   it("redacts words at exactly the confidence threshold", async () => {
@@ -92,7 +102,8 @@ describe("ocrRedactImage", () => {
       mockRunner(words),
       DEFAULT_CONFIDENCE_THRESHOLD,
     );
-    expect(result).not.toBe(img);
+    expect(result.buffer).not.toBe(img);
+    expect(result.changed).toBe(true);
   });
 
   it("returns original buffer when policy is disabled", async () => {
@@ -101,7 +112,9 @@ describe("ocrRedactImage", () => {
       { text: "VICTIM-PC", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 95 },
     ];
     const result = await ocrRedactImage(img, DISABLED_POLICY, KNOWN, mockRunner(words));
-    expect(result).toBe(img);
+    expect(result.buffer).toBe(img);
+    expect(result.changed).toBe(false);
+    expect(result.wordCount).toBe(0); // policy off → OCR never runs
   });
 
   it("redacts multiple matching words in one pass", async () => {
@@ -112,7 +125,11 @@ describe("ocrRedactImage", () => {
       { text: "corp.local", bbox: { x: 160, y: 10, w: 70, h: 20 }, confidence: 85 },
     ];
     const result = await ocrRedactImage(img, ENABLED_POLICY, KNOWN, mockRunner(words));
-    expect(result).not.toBe(img);
+    expect(result.buffer).not.toBe(img);
+    expect(result.changed).toBe(true);
+    expect(result.wordCount).toBe(3);
+    // "safe" survives; the host and internal domain are boxed.
+    expect(result.redactions.map((w) => w.text).sort()).toEqual(["VICTIM-PC", "corp.local"]);
   });
 
   it("skips overlay entries with zero-size bboxes", async () => {
@@ -122,7 +139,9 @@ describe("ocrRedactImage", () => {
     ];
     // zero-width bbox filtered out → nothing to composite → original returned
     const result = await ocrRedactImage(img, ENABLED_POLICY, KNOWN, mockRunner(words));
-    expect(result).toBe(img);
+    expect(result.buffer).toBe(img);
+    expect(result.changed).toBe(false);
+    expect(result.redactions).toEqual([]); // matched the entity but had no drawable box
   });
 });
 
