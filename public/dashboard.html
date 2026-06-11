@@ -3970,7 +3970,9 @@
     // "report written: …" notice).
     function clearTransientStatus() {
       const el = document.getElementById("status");
-      if (/synthesiz|applying scope|marking legitimate|import/i.test(el.textContent)) {
+      // "catching up" is the optimistic message toggleAi() writes when AI is switched on; it must
+      // be cleared once the backfill reports idle, or it stays stuck (it's not a live indicator).
+      if (/synthesiz|applying scope|marking legitimate|import|catching up/i.test(el.textContent)) {
         el.textContent = ws && ws.readyState === 1 ? "connected (live)" : "disconnected";
       }
     }
