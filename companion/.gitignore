@@ -1,5 +1,7 @@
 node_modules/
 cases/
+# Server + per-case session logs (DFIR_LOG_LEVEL). May contain case identifiers / activity traces.
+logs/
 dist/
 *.timestamp-*.mjs
 .env

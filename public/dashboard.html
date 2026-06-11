@@ -125,6 +125,10 @@
     .comment-chip:hover { color: #6aa9ff; border-color: #6aa9ff; }
     .comment-chip.has { color: #6aa9ff; border-color: #2d4a6a; background: #11202e; }
     .anon-chip { display:inline-block; background:#22272e; border:1px solid #30363d; border-radius:10px; padding:1px 7px; margin:1px 0; font-size:11px; }
+    .anon-chip.anon-chip-sup { opacity:.6; }
+    .anon-chip .anon-auto-rm, .anon-chip .anon-auto-restore { background:transparent; border:none; color:#8a93a3; cursor:pointer; font-size:10px; padding:0 0 0 1px; line-height:1; }
+    .anon-chip .anon-auto-rm:hover { color:#ff7a7a; }
+    .anon-chip .anon-auto-restore:hover { color:#6bcB77; }
     .anon-auto-grp { margin-bottom:6px; }
     .anon-cust-row { display:flex; align-items:center; gap:8px; padding:2px 0; }
     .anon-cust-rm { background:#3a2230; border:none; color:#ff8aa0; border-radius:4px; cursor:pointer; padding:0 6px; }
@@ -252,6 +256,11 @@
     .ev-row.ev-new { box-shadow: inset 3px 0 0 #6bcB77; }
     .ioc-new { box-shadow: inset 3px 0 0 #6bcB77; padding-left: 6px; border-radius: 3px; }
     .ev-new-badge { background:#13331f; color:#6bcB77; border:1px solid #1f5a35; border-radius:4px; padding:0 5px; font-size:10px; font-weight:bold; }
+    /* Affected host/asset chip on each forensic-timeline event */
+    .ev-host { background:#1a2433; color:#8fb3e0; border:1px solid #2a3a52; border-radius:4px; padding:0 5px; font-size:10px; font-weight:600; white-space:nowrap; }
+    /* Clickable finding references inside a timeline event → jump to the finding */
+    .finding-jump { color:#6aa9ff; text-decoration:none; border-bottom:1px dotted #6aa9ff; cursor:pointer; }
+    .finding-jump:hover { color:#9cc5ff; border-bottom-style:solid; }
     /* Ask the LLM panel */
     .ask-row { display: flex; gap: 8px; margin-bottom: 10px; }
     .ask-row input { flex: 1; }
@@ -418,8 +427,9 @@
     .swimlane-hint strong { color: #c9d1db; font-weight: 600; }
     .swimlane-selbar { display: none; align-items: center; gap: 8px; padding: 5px 0 6px; font-size: 12px; color: #9aa4b2; }
     .swimlane-selbar.active { display: flex; flex-wrap: wrap; }
-    /* Brief highlight when a swimlane dot click locates its row in the timeline table. */
-    .ev-row.ev-flash { animation: evFlash 1.5s ease-out; }
+    /* Brief highlight when a swimlane dot click locates its row in the timeline table,
+       or when a timeline event's finding link jumps to the finding. */
+    .ev-row.ev-flash, .finding.ev-flash { animation: evFlash 1.5s ease-out; }
     @keyframes evFlash { 0%,40% { background: #243a5e; } 100% { background: transparent; } }
     .swimlane-wrap { display: flex; border: 1px solid #2a2f3a; border-radius: 6px; overflow: hidden; background: #0f1115; }
     .swimlane-labels { width: 160px; flex-shrink: 0; border-right: 1px solid #2a2f3a; overflow: hidden; }
@@ -484,6 +494,15 @@
     #searchFilterBar { padding: 5px 16px; background: #0e1116; border-bottom: 1px solid #1a1f28;
       display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: #9aa4b2; }
     #searchFilterBar[hidden] { display: none; }
+    /* Cross-case warning banner (captures arriving for a case other than the one being viewed). */
+    #caseMismatchBanner { display: flex; align-items: center; gap: 10px; padding: 7px 16px;
+      background: #3a2a00; color: #ffcf66; border-bottom: 1px solid #5a4416; font-size: 12.5px; }
+    #caseMismatchBanner[hidden] { display: none; }
+    #caseMismatchText { flex: 1; }
+    #caseMismatchBanner button { background: #5a4416; color: #ffe6a6; border: 1px solid #7a5d1e;
+      border-radius: 5px; cursor: pointer; padding: 3px 9px; font-size: 12px; }
+    #caseMismatchBanner button:hover { background: #6d5219; }
+    #caseMismatchDismiss { padding: 3px 8px; }
     .sf-search-wrap { position: relative; display: flex; align-items: center; }
     #globalSearch { font-size: 12px; padding: 4px 26px 4px 8px; width: 240px;
       background: #161a22; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 5px; }
@@ -529,7 +548,7 @@
     </select>
     <span id="reportLinks" class="report-links"></span>
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
-    <button id="toggleSearchBar" type="button" aria-label="Search &amp; filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Search &amp; filter events, findings and IOCs by text and time range (press /)">Search</button>
+    <button id="toggleSearchBar" type="button" aria-label="Filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Filter events, findings and IOCs by text and time range (press /)">Filter</button>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
     <span id="captureCount" style="font-weight:bold;"><span class="cc-label">Screenshots:</span> <span id="captureCountNum">0</span></span>
@@ -578,7 +597,8 @@
         </label>
         <div id="anonWarning" style="display:none;margin-top:10px;padding:8px;border-radius:6px;background:#3a2a00;color:#ffcf66;font-size:12px"></div>
         <div class="asset-subhead" style="margin:12px 0 2px">Auto-detected entities (read-only — grows with the investigation)</div>
-        <div id="anonAuto" style="max-height:140px;overflow:auto;font-size:12px;background:#0e1116;border-radius:6px;padding:6px"></div>
+        <div style="font-size:11px;color:#9aa4b2;margin:0 0 4px">Entities found in the case — including ones the companion read out of <strong>screenshots</strong> — appear here grouped by type and are anonymized on every run. Click <strong>✕</strong> to remove a wrong one (e.g. a mis-matched path): it stops being anonymized and won't come back (<strong>↺</strong> restores it). The category patterns above also redact by shape everywhere, so redaction can happen before anything is listed here.</div>
+        <div id="anonAuto" style="font-size:12px;background:#0e1116;border-radius:6px;padding:6px"></div>
         <div class="asset-subhead" style="margin:12px 0 2px">Custom entities (add anything the auto-detection missed)</div>
         <div id="anonCustom" style="max-height:120px;overflow:auto;font-size:12px;margin-bottom:6px"></div>
         <div style="display:flex;gap:6px;align-items:center">
@@ -739,6 +759,16 @@
           <div class="sec-selall"><button type="button" id="secSelectAll">Select all</button><button type="button" id="secDeselectAll">Deselect all</button></div>
           <div class="sec-checks" id="secChecks"></div>
         </div>
+        <div class="sfield">
+          <label>Log verbosity <span class="sfield-hint" style="display:inline">— takes effect immediately (no restart)</span></label>
+          <select id="logLevelSelect">
+            <option value="error">error — only failures</option>
+            <option value="warn">warn — failures + warnings</option>
+            <option value="info">info — normal activity (default)</option>
+            <option value="debug">debug — trace AI calls, screenshots, OCR, anonymization, enrichment</option>
+          </select>
+          <span class="sfield-hint">Default from DFIR_LOG_LEVEL. Logs tee to the console AND to files: <code>logs/session-&lt;time&gt;.log</code> (all activity) plus <code>cases/&lt;id&gt;/logs/session-&lt;time&gt;.log</code> (per-case audit trail). A new file is created each time the server starts.</span>
+        </div>
         <hr class="settings-hr" />
         <div class="srestart-note">⚠ Fields below require a server restart to take effect</div>
         <div class="sfield-row">
@@ -754,8 +784,14 @@
           <div class="sfield"><label>Screenshot flush interval (ms)<span class="sfield-hint">DFIR_FLUSH_INTERVAL_MS</span></label><input id="env-DFIR_FLUSH_INTERVAL_MS" placeholder="300000" /></div>
         </div>
         <div class="sfield-row">
+          <div class="sfield"><label>Duplicate screenshot detection<span class="sfield-hint">DFIR_DEDUP — skips a capture only if it's byte-identical to the one before it (screen didn't change). Any change is analyzed. Set <code>off</code> to analyze every screenshot regardless</span></label><input id="env-DFIR_DEDUP" placeholder="on" /></div>
+        </div>
+        <div class="sfield-row">
           <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>
           <div class="sfield"><label>Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Log directory<span class="sfield-hint">DFIR_LOG_DIR — folder for the global session log; blank = <code>logs/</code> beside the cases root. Per-case logs always stay in the case folder</span></label><input id="env-DFIR_LOG_DIR" placeholder="(logs/ beside cases root)" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Bind host<span class="sfield-hint">DFIR_HOST — keep 127.0.0.1 (localhost only) unless you know what you're doing</span></label><input id="env-DFIR_HOST" placeholder="127.0.0.1" /></div>
@@ -1137,10 +1173,10 @@
 
   <!-- Global search + time-range filter row — revealed by the toolbar search icon (hidden by default) -->
   <div id="searchFilterBar" hidden>
-    <span>Search:</span>
+    <span>Filter:</span>
     <div class="sf-search-wrap">
-      <input id="globalSearch" type="search" placeholder="events, findings, IOCs… (press / to focus)" autocomplete="off" />
-      <button id="clearSearch" type="button" title="Clear search (Esc)" hidden>✕</button>
+      <input id="globalSearch" type="search" placeholder="Filter events, findings, IOCs…" title="Filter events, findings, IOCs — press / to focus, Esc to clear" autocomplete="off" />
+      <button id="clearSearch" type="button" title="Clear filter (Esc)" hidden>✕</button>
     </div>
     <div class="sf-sep"></div>
     <span>Time range:</span>
@@ -1148,6 +1184,13 @@
     <label>to <input id="filterTo" type="datetime-local" title="Filter timeline to (UTC)" /></label>
     <button id="clearFiltersBtn" type="button" hidden>Clear</button>
     <span id="searchMatchCount"></span>
+  </div>
+
+  <!-- Cross-case warning: shown when screenshots arrive for a case other than the one being viewed. -->
+  <div id="caseMismatchBanner" hidden>
+    <span id="caseMismatchText"></span>
+    <button id="caseMismatchSwitch" type="button">Switch case</button>
+    <button id="caseMismatchDismiss" type="button" title="Dismiss">✕</button>
   </div>
 
   <main>
@@ -3853,6 +3896,7 @@
     let anonControl = null;          // { enabled, categories, redactSecrets, screenshotWarning }
     let anonAuto = { hosts: [], accounts: [], internalDomains: [] };
     let anonCustom = [];             // working copy: [{ value, category }]
+    let anonSuppressed = [];         // values removed from auto-discovery (server-persisted)
 
     function renderAnonToggle() {
       const b = document.getElementById("anonToggle");
@@ -3878,13 +3922,43 @@
     function loadAnonEntities(caseId) {
       return fetch(`/cases/${caseId}/anon-entities`)
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(d => { anonAuto = d.auto || { hosts: [], accounts: [], internalDomains: [] }; anonCustom = (d.custom || []).map(e => ({ ...e })); });
+        .then(d => { anonAuto = d.auto || {}; anonCustom = (d.custom || []).map(e => ({ ...e })); anonSuppressed = d.suppressed || []; });
     }
     function renderAutoEntities() {
-      const chip = v => `<span class="anon-chip">${esc(v)}</span>`;
-      const grp = (label, arr) => `<div class="anon-auto-grp"><div class="asset-subhead">${esc(label)} (${arr.length})</div><div>${arr.length ? arr.map(chip).join(" ") : "<em style='color:#9aa4b2'>none yet</em>"}</div></div>`;
-      document.getElementById("anonAuto").innerHTML =
-        grp("Hosts", anonAuto.hosts || []) + grp("Accounts", anonAuto.accounts || []) + grp("Internal domains", anonAuto.internalDomains || []);
+      const caseId = document.getElementById("caseId").value.trim();
+      const a = anonAuto || {};
+      // Groups (incl. entities discovered from screenshots), only those with entries.
+      const groups = [
+        ["Hosts", a.hosts], ["Accounts", a.accounts], ["Internal domains", a.internalDomains],
+        ["IPs", a.ips], ["Emails", a.emails], ["Paths", a.paths], ["Other", a.other],
+      ].filter(([, arr]) => (arr || []).length);
+      const chip = v => `<span class="anon-chip">${esc(v)} <button class="anon-auto-rm" data-value="${escAttr(v)}" title="Remove — stop anonymizing this value">✕</button></span>`;
+      const grp = (label, arr) => `<div class="anon-auto-grp"><div class="asset-subhead">${esc(label)} (${arr.length})</div><div>${arr.map(chip).join(" ")}</div></div>`;
+      let html = groups.length ? groups.map(([l, arr]) => grp(l, arr)).join("") : "<em style='color:#9aa4b2'>none yet</em>";
+      const sup = anonSuppressed || [];
+      if (sup.length) {
+        const supChip = v => `<span class="anon-chip anon-chip-sup">${esc(v)} <button class="anon-auto-restore" data-value="${escAttr(v)}" title="Restore — anonymize this again">↺</button></span>`;
+        html += `<div class="anon-auto-grp"><div class="asset-subhead">Removed (${sup.length}) — not anonymized</div><div>${sup.map(supChip).join(" ")}</div></div>`;
+      }
+      const el = document.getElementById("anonAuto");
+      el.innerHTML = html;
+      el.querySelectorAll(".anon-auto-rm").forEach(b => b.onclick = () => suppressAutoEntity(caseId, b.getAttribute("data-value")));
+      el.querySelectorAll(".anon-auto-restore").forEach(b => b.onclick = () => unsuppressAutoEntity(caseId, b.getAttribute("data-value")));
+    }
+    // Remove a wrong auto-discovered entity → server suppresses it (stops anonymizing it), then refresh.
+    function suppressAutoEntity(caseId, value) {
+      if (!caseId || !value) return;
+      fetch(`/cases/${caseId}/anon-entities/suppress`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ value }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => loadAnonEntities(caseId)).then(() => renderAutoEntities())
+        .catch(() => { document.getElementById("anonMsg").textContent = "could not remove entity — restart the server if this persists"; });
+    }
+    function unsuppressAutoEntity(caseId, value) {
+      if (!caseId || !value) return;
+      fetch(`/cases/${caseId}/anon-entities/unsuppress`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ value }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => loadAnonEntities(caseId)).then(() => renderAutoEntities())
+        .catch(() => { document.getElementById("anonMsg").textContent = "could not restore entity — restart the server if this persists"; });
     }
     function renderCustomEntities() {
       document.getElementById("anonCustom").innerHTML = anonCustom.length
@@ -3917,7 +3991,7 @@
       document.getElementById("anonMsg").textContent = "loading entities…";
       loadAnonEntities(caseId)
         .then(() => { renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = ""; })
-        .catch(() => { anonAuto = { hosts: [], accounts: [], internalDomains: [] }; anonCustom = []; renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = "failed to load entities — restart the server if this persists"; });
+        .catch(() => { anonAuto = {}; anonCustom = []; anonSuppressed = []; renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = "failed to load entities — restart the server if this persists"; });
       document.getElementById("anonOverlay").classList.add("open");
     }
     function saveAnon() {
@@ -4478,6 +4552,20 @@
       }
     }
 
+    // Jump from a timeline event's finding link to that finding in the Findings section,
+    // expanding the section if collapsed, then scroll + flash it (reuses the ev-flash animation).
+    function jumpToFinding(fid) {
+      const sec = document.getElementById("sec-findings");
+      if (sec) sec.classList.remove("collapsed");
+      const target = [...document.querySelectorAll("#findings .finding")]
+        .find(div => div.getAttribute("data-fid") === fid);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.classList.remove("ev-flash"); void target.offsetWidth;  // restart the animation
+      target.classList.add("ev-flash");
+      setTimeout(() => target.classList.remove("ev-flash"), 1600);
+    }
+
     // Set the investigation scope window to the currently visible time range, then apply it.
     function swScopeToView() {
       if (!swViewStartMs || !swViewEndMs) return;
@@ -4914,7 +5002,7 @@
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div style='color:#9aa4b2'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : searchTerm && iocs.length > 0 ? "<div style='color:#9aa4b2'>No IOCs match the search.</div>"
+          : searchTerm && iocs.length > 0 ? "<div style='color:#9aa4b2'>No IOCs match the filter.</div>"
           : "<div style='color:#9aa4b2'>No IOCs yet</div>";
         updateIocBulkBar();
         return;
@@ -5008,6 +5096,12 @@
           chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner);
         }
         const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
+        // Affected host/asset, shown as a compact chip before the description for fast scanning.
+        const host = e.asset ? ` <span class="ev-host" title="Affected host / asset">🖥 ${esc(e.asset)}</span>` : "";
+        // Findings this event backs — clickable, jump to the finding in the Findings section.
+        const findingLinks = (e.relatedFindingIds && e.relatedFindingIds.length)
+          ? `<br><small>findings: ${e.relatedFindingIds.map(fid => `<a class="finding-jump" data-fid="${escAttr(fid)}" title="Jump to finding ${escAttr(fid)}">${esc(fid)}</a>`).join(", ")}</small>`
+          : "";
 
         return `<div class="ev-row${isSelected ? " ev-selected" : ""}${isNew ? " ev-new" : ""}" data-evid="${escAttr(id)}">`
           + `<div class="ev-col-ctrl">`
@@ -5016,10 +5110,10 @@
           + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)}`
           + `</div>`
           + `<div class="ev-col-time"><span class="sev-${esc(e.severity)}">${span}</span></div>`
-          + `<div class="ev-col-content">${tagPills("event", e.id)}${newBadge}${badge}${corro}${chain} <strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}`
+          + `<div class="ev-col-content">${tagPills("event", e.id)}${newBadge}${badge}${corro}${chain}${host} <strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}`
           + `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}`
           + `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}`
-          + `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}`
+          + findingLinks
           + `${evidenceLinks(caseId, e.sourceScreenshots)}</div>`
           + `</div>`;
       }).join("");
@@ -5119,21 +5213,56 @@
           }
           // Chips lead the row (comment · tag), matching IOCs / Key Questions / Threads, then the
           // severity badge and the finding id/title.
-          return `<div class="finding">${commentChip("finding", f.id)} ${tagChip("finding", f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ` +
+          return `<div class="finding" data-fid="${escAttr(f.id)}">${commentChip("finding", f.id)} ${tagChip("finding", f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ` +
             `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${evidenceLinks(state.caseId, evidence)}</div>`;
-        }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings match the search.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings above ${minConf}% confidence.</span>` : "—");
+        }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings above ${minConf}% confidence.</span>` : "—");
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
         state.mitreTechniques.map(m => `<div>${mitreLinks([m.id])} — ${esc(m.name)} (${esc(m.findingIds.join(", "))})</div>`).join("") || "—";
     }
 
+    // ── Cross-case capture warning ───────────────────────────────────────────────────────────
+    // The capture extension POSTs to /captures with ITS configured case; the server broadcasts a
+    // `capture_ingest` to every dashboard. If captures are arriving for a case we're not viewing,
+    // the analyst's extension and dashboard have drifted apart — warn (it's an easy trap).
+    let foreignCaptureCase = null;     // the other case captures are arriving for
+    let foreignCaptureTimer = null;    // auto-clears the banner if foreign captures stop
+    let mismatchDismissed = "";        // a foreign case the user dismissed — stay quiet until it changes
+    function showCaseMismatch(otherCase, myCase) {
+      if (!otherCase || otherCase === myCase || otherCase === mismatchDismissed) return;
+      foreignCaptureCase = otherCase;
+      document.getElementById("caseMismatchText").innerHTML =
+        `⚠ Screenshots are arriving for case <strong>${esc(otherCase)}</strong>, but you're viewing <strong>${esc(myCase)}</strong> — your capture extension is pointed at a different case.`;
+      document.getElementById("caseMismatchSwitch").textContent = `Switch to ${otherCase}`;
+      document.getElementById("caseMismatchBanner").hidden = false;
+      if (foreignCaptureTimer) clearTimeout(foreignCaptureTimer);
+      foreignCaptureTimer = setTimeout(hideCaseMismatch, 120000);  // stale after 2 min of quiet
+    }
+    function hideCaseMismatch() {
+      foreignCaptureCase = null;
+      if (foreignCaptureTimer) { clearTimeout(foreignCaptureTimer); foreignCaptureTimer = null; }
+      document.getElementById("caseMismatchBanner").hidden = true;
+    }
+    document.getElementById("caseMismatchSwitch").onclick = () => {
+      if (!foreignCaptureCase) return;
+      document.getElementById("caseId").value = foreignCaptureCase;
+      mismatchDismissed = "";
+      hideCaseMismatch();
+      connect();
+    };
+    document.getElementById("caseMismatchDismiss").onclick = () => {
+      mismatchDismissed = foreignCaptureCase || "";   // suppress this case until a different one appears
+      hideCaseMismatch();
+    };
+
     function connect() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
+      hideCaseMismatch(); mismatchDismissed = "";   // fresh start for the newly-connected case
       if (ws) { try { ws.close(); } catch {} ws = null; }
       // Remember the case so a page refresh reconnects automatically.
       localStorage.setItem("dfir.caseId", caseId);
@@ -5188,6 +5317,12 @@
         if (Array.isArray(h.huntPlatforms)) enabledHuntPlatforms = new Set(h.huntPlatforms);   // hunt-modal allowlist
       }).catch(() => setAi("unknown", "unknown"));
 
+      // Check-on-connect: if screenshots recently arrived for a DIFFERENT case, warn right away
+      // (the live WS event only fires on the next capture, which may be a while off).
+      fetch("/captures/recent").then(r => r.ok ? r.json() : null).then(d => {
+        if (d && d.caseId && d.caseId !== caseId && d.ageMs < 120000) showCaseMismatch(d.caseId, caseId);
+      }).catch(() => {});
+
       ws = new WebSocket(`ws://${location.host}/ws?caseId=${encodeURIComponent(caseId)}`);
       ws.onopen = () => document.getElementById("status").textContent = "connected (live)";
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
@@ -5195,6 +5330,12 @@
         const msg = JSON.parse(ev.data);
         if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
+        else if (msg.type === "capture_ingest") {
+          // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
+          // otherwise the extension is feeding a different case than we're viewing — warn.
+          if (msg.caseId && msg.caseId !== caseId) showCaseMismatch(msg.caseId, caseId);
+          else hideCaseMismatch();
+        }
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
@@ -5517,6 +5658,9 @@
         if (lastState) renderIocs(lastState.iocs || []);
         return;
       }
+      // Finding reference link inside a timeline event → jump to the finding.
+      const fjump = e.target.closest && e.target.closest(".finding-jump");
+      if (fjump) { e.preventDefault(); jumpToFinding(fjump.getAttribute("data-fid")); return; }
       const chip = e.target.closest && e.target.closest(".comment-chip");
       if (chip) { openCommentModal(chip.getAttribute("data-ct"), chip.getAttribute("data-ci")); return; }
       const tag = e.target.closest && e.target.closest(".tag-add");
@@ -6461,6 +6605,7 @@
       document.getElementById("settingsInvestigator").value = localStorage.getItem("dfir.investigator") || "";
       renderSecChecks();
       fetchEnvSettings();
+      fetchLogLevel();
       // Reset to first tab
       document.querySelectorAll(".stab").forEach((b, i) => b.classList.toggle("active", i === 0));
       document.querySelectorAll(".stab-pane").forEach((p, i) => p.classList.toggle("active", i === 0));
@@ -6479,6 +6624,24 @@
     document.getElementById("settingsBtn").onclick = openSettingsModal;
     document.getElementById("settingsSaveBtn").onclick = saveSettings;
     document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
+    // Live log-verbosity control (no restart — server + pipeline share one logger).
+    async function fetchLogLevel() {
+      try {
+        const r = await fetch("/log-level");
+        if (!r.ok) return;
+        const j = await r.json();
+        const sel = document.getElementById("logLevelSelect");
+        if (sel && j.level) sel.value = j.level;
+      } catch { /* leave the select at its default */ }
+    }
+    document.getElementById("logLevelSelect").addEventListener("change", async (e) => {
+      const level = e.target.value;
+      try {
+        const r = await fetch("/log-level", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ level }) });
+        const msg = document.getElementById("settingsSaveMsg");
+        if (msg) { msg.textContent = r.ok ? `Log level set to ${level}.` : "Could not change log level — restart the server?"; setTimeout(() => { msg.textContent = ""; }, 3000); }
+      } catch { /* network/404 — server likely stale */ }
+    });
     // IOC whitelist controls
     document.getElementById("wlAddBtn").addEventListener("click", wlAddRule);
     document.getElementById("wlPattern").addEventListener("keydown", e => { if (e.key === "Enter") wlAddRule(); });

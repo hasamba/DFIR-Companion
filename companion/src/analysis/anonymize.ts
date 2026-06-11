@@ -31,13 +31,21 @@ export interface KnownEntities {
   hosts: string[];          // victim hostnames / FQDNs (longest-first)
   accounts: string[];       // DOMAIN\user or user@domain
   internalDomains: string[]; // AD/email domains to tokenize (lowercased, longest-first)
-  custom?: CustomEntity[];   // analyst-added exact-match entities (always tokenized when enabled)
+  custom?: CustomEntity[];   // analyst-added + auto-discovered exact-match entities (tokenized when enabled)
+  // Values the analyst REMOVED from auto-discovery (lowercased). Never tokenized — even when a
+  // pattern would match — so removing a false positive (e.g. a mis-matched path) actually stops it
+  // being redacted. Checked at the single assign() chokepoint, so it covers every matcher.
+  suppressed?: string[];
 }
 
 export interface Anonymizer {
   apply(text: string): string;
   restore(text: string): string;
   restoreDeep<T>(value: T): T;
+  // The entities this anonymizer tokenized so far (across apply() calls), with their category —
+  // used to feed OCR-discovered entities back into the case's auto-discovery list. Never includes
+  // one-way secrets (those are redacted to a placeholder, not minted as a reversible token).
+  discoveries(): CustomEntity[];
 }
 
 export const SECRET_PLACEHOLDER = "[REDACTED_SECRET]";
@@ -72,8 +80,12 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   const toToken = new Map<string, string>();  // "CAT:reallower" -> token
   const toReal = new Map<string, string>();   // token (UPPER) -> real value
   const counters: Record<string, number> = {};
+  // Values the analyst removed from auto-discovery — never tokenize them (leave as-is), even when
+  // a pattern matches. The check sits in assign(), the single point every matcher funnels through.
+  const suppressed = new Set((known.suppressed ?? []).map((s) => s.toLowerCase()));
 
   function assign(category: AnonTokenCategory, real: string): string {
+    if (suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
     const key = `${category}:${real.toLowerCase()}`;
     const existing = toToken.get(key);
     if (existing) return existing;
@@ -82,6 +94,21 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     toToken.set(key, token);
     toReal.set(token, real);
     return token;
+  }
+
+  // Every (real value, category) this anonymizer minted a token for. Secrets never appear here —
+  // redactSecrets() replaces them with a placeholder rather than calling assign().
+  function discoveries(): CustomEntity[] {
+    const out: CustomEntity[] = [];
+    const seen = new Set<string>();
+    for (const [token, real] of toReal) {
+      const cat = (/^ANON_([A-Z]+)_\d+$/.exec(token)?.[1] ?? "OTHER") as AnonTokenCategory;
+      const key = `${cat}:${real.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ value: real, category: cat });
+    }
+    return out;
   }
 
   // ── detectors (filled in across later tasks; order is fixed in apply()) ──
@@ -189,7 +216,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     return value;
   }
 
-  return { apply, restore, restoreDeep };
+  return { apply, restore, restoreDeep, discoveries };
 }
 
 // Tokens that LOOK like a "DOMAIN\user" or "host.domain" but are NEVER a victim/customer

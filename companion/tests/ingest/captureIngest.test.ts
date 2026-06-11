@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { ingestCapture, _resetDedupCache } from "../../src/ingest/captureIngest.js";
+import {
+  ingestCapture,
+  _resetDedupCache,
+  isDedupEnabled,
+} from "../../src/ingest/captureIngest.js";
 
 let root: string;
 let store: CaseStore;
@@ -42,7 +46,7 @@ describe("ingestCapture", () => {
 
     expect(meta.sequenceNumber).toBe(1);
     expect(meta.isDuplicate).toBe(false);
-    expect(meta.perceptualHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(meta.contentHash).toMatch(/^[0-9a-f]{64}$/); // SHA-256 hex
 
     const onDisk = await readFile(join(store.screenshotsDir("c1"), meta.screenshotFile));
     expect(onDisk.length).toBeGreaterThan(0);
@@ -51,12 +55,26 @@ describe("ingestCapture", () => {
     expect(log).toHaveLength(1);
   });
 
-  it("marks a near-identical second capture as duplicate", async () => {
+  it("marks a BYTE-IDENTICAL second capture as duplicate", async () => {
     const img = await pngBase64(128, 128, 128);
     await ingestCapture(store, payload({ imageBase64: img }));
     const second = await ingestCapture(store, payload({ imageBase64: img }));
     expect(second.isDuplicate).toBe(true);
     expect(second.sequenceNumber).toBe(2);
+  });
+
+  it("does NOT mark a different second capture as duplicate (exact match only)", async () => {
+    await ingestCapture(store, payload({ imageBase64: await pngBase64(128, 128, 128) }));
+    // A different image — even slightly — is not a duplicate; it must be analyzed.
+    const second = await ingestCapture(store, payload({ imageBase64: await pngBase64(128, 128, 129) }));
+    expect(second.isDuplicate).toBe(false);
+  });
+
+  it("never flags a duplicate when dedup is disabled", async () => {
+    const img = await pngBase64(128, 128, 128);
+    await ingestCapture(store, payload({ imageBase64: img }), false);
+    const second = await ingestCapture(store, payload({ imageBase64: img }), false);
+    expect(second.isDuplicate).toBe(false);
   });
 
   it("includes the slugified tab title in the screenshot filename", async () => {
@@ -81,5 +99,20 @@ describe("ingestCapture", () => {
     const bad = payload({ imageBase64: await pngBase64(1, 1, 1) });
     delete (bad as Record<string, unknown>).url;
     await expect(ingestCapture(store, bad)).rejects.toThrow();
+  });
+});
+
+describe("isDedupEnabled", () => {
+  it("is enabled by default (unset)", () => {
+    expect(isDedupEnabled({})).toBe(true);
+  });
+  it("stays enabled for any other value", () => {
+    expect(isDedupEnabled({ DFIR_DEDUP: "on" })).toBe(true);
+    expect(isDedupEnabled({ DFIR_DEDUP: "true" })).toBe(true);
+  });
+  it("is disabled when DFIR_DEDUP is off/false/no/0 (case-insensitive)", () => {
+    for (const v of ["off", "OFF", "false", "No", "0"]) {
+      expect(isDedupEnabled({ DFIR_DEDUP: v })).toBe(false);
+    }
   });
 });

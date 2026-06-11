@@ -9,6 +9,8 @@ import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { AnonControlStore, type AnonControl } from "./analysis/anonControl.js";
 import { CustomEntitiesStore, sanitizeCustomEntities } from "./analysis/anonEntities.js";
+import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
+import type { AnonTokenCategory } from "./analysis/anonymize.js";
 import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js";
 import { TesseractOcrRunner } from "./analysis/ocrRedact.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
@@ -112,15 +114,24 @@ import {
   LeakCheckExposureProvider,
   ShodanExposureProvider,
 } from "./integrations/customerExposureProviders.js";
+import {
+  LoggerImpl,
+  createConsoleLogger,
+  normalizeLogLevel,
+  isLogLevel,
+  type Logger,
+} from "./logging/logger.js";
 
-// Server console logging — every line is prefixed with an ISO-8601 timestamp so the local
-// log can be correlated with case events and outbound threat-intel API calls. This is a
-// localhost single-user tool, so the console IS the log; these helpers are the one place
-// that formatting lives.
-function ts(): string { return new Date().toISOString(); }
-function logLine(msg: string): void { console.log(`${ts()} ${msg}`); }
-function warnLine(msg: string): void { console.warn(`${ts()} ${msg}`); }
-function errLine(msg: string): void { console.error(`${ts()} ${msg}`); }
+// Server logging. A single shared Logger tees every line to the console AND to log files
+// (a global session log + per-case logs); the helpers below delegate to it so the existing
+// call sites keep working. startServer() swaps in the file-backed logger and the dashboard's
+// Logging toggle changes its level live (no restart); tests/CLI get a console-only default.
+let serverLogger: Logger = createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
+export function setServerLogger(logger: Logger): void { serverLogger = logger; }
+export function getServerLogger(): Logger { return serverLogger; }
+function logLine(msg: string): void { serverLogger.info(msg); }
+function warnLine(msg: string): void { serverLogger.warn(msg); }
+function errLine(msg: string): void { serverLogger.error(msg); }
 
 // Truncate a long indicator (e.g. a SHA-256) for a readable one-line log entry.
 function shortValue(value: string): string {
@@ -197,6 +208,9 @@ export interface AppOptions {
   // Called when an AI analysis window starts / finishes / fails, so the
   // server can push a live "AI status" indicator to dashboard clients.
   onAiStatus?: (caseId: string, event: AiStatusEvent) => void;
+  // Called for every ingested capture (duplicate or not). Lets the server broadcast a cross-case
+  // signal so a dashboard can warn when captures are arriving for a DIFFERENT case than it's viewing.
+  onCapture?: (caseId: string) => void;
   // When true, run the synthesis pass automatically (debounced) after capture
   // windows are analyzed, so the live dashboard shows findings/attacker path.
   autoSynthesize?: boolean;
@@ -341,8 +355,29 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS] });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel() });
   });
+
+  // Read / change the live log verbosity (debug | info | warn | error). The dashboard's
+  // Settings → Logging control flips this at runtime — no server restart — and it takes
+  // effect immediately across the server AND the analysis pipeline (they share one logger).
+  app.get("/log-level", (_req: Request, res: Response) => {
+    res.status(200).json({ level: serverLogger.getLevel(), levels: ["debug", "info", "warn", "error"] });
+  });
+  app.post("/log-level", (req: Request, res: Response) => {
+    const level = (req.body as { level?: unknown })?.level;
+    if (!isLogLevel(level)) {
+      return res.status(400).json({ error: "level must be one of: debug, info, warn, error" });
+    }
+    const previous = serverLogger.getLevel();
+    serverLogger.setLevel(level);
+    logLine(`[log] level changed ${previous} -> ${level}`);
+    return res.status(200).json({ level: serverLogger.getLevel() });
+  });
+
+  // Most-recent capture across ALL cases (in-memory; resets on restart). Powers the dashboard's
+  // check-on-connect for the cross-case capture warning.
+  let lastCapture: { caseId: string; at: number } | null = null;
 
   // How many captures have been recorded for a case (counts the audit-log lines).
   app.get("/cases/:id/captures/count", async (req: Request, res: Response) => {
@@ -354,6 +389,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return res.status(200).json({ count: 0 });
       return res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // The most-recent capture across ALL cases (in-memory; resets on restart) + its age in ms.
+  // A freshly-connected dashboard checks this to warn when screenshots are landing on a different
+  // case than the one it's viewing — catching the mismatch even without a live capture event.
+  app.get("/captures/recent", (_req: Request, res: Response) => {
+    if (!lastCapture) return res.status(200).json({ caseId: null });
+    return res.status(200).json({ caseId: lastCapture.caseId, ageMs: Date.now() - lastCapture.at });
   });
 
   const windowSize = options.windowSize ?? 4;
@@ -581,6 +624,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const metadata = await ingestCapture(store, req.body);
       res.status(201).json(metadata);
+      serverLogger.debug(
+        `screenshot captured seq=${metadata.sequenceNumber} trigger=${metadata.triggerType} ` +
+          `file=${metadata.screenshotFile || "(none)"}${metadata.isDuplicate ? " (duplicate — not analyzed)" : ""}`,
+        { caseId: metadata.caseId },
+      );
+      // Cross-case signal: lets a dashboard warn when captures arrive for a case it isn't viewing
+      // (live, via the WS broadcast) or detect it on connect (via /captures/recent).
+      lastCapture = { caseId: metadata.caseId, at: Date.now() };
+      options.onCapture?.(metadata.caseId);
       // Evidence is always stored; AI analysis only runs when enabled for the case.
       if (!metadata.isDuplicate && options.pipeline && hasAiProvider() && (await getControl(metadata.caseId)).enabled) {
         const buf = buffers.get(metadata.caseId) ?? [];
@@ -1361,6 +1413,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // + external) that residual text may survive — `screenshotWarning` gates that notice.
   const anonControl = new AnonControlStore(store);
   const customEntities = new CustomEntitiesStore(store);
+  const discoveredEntities = new DiscoveredEntitiesStore(store);
   const visionIsLocal = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
 
   // Anonymization control: GET reports the control + whether screenshots are exposed (anon on +
@@ -1400,17 +1453,40 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // The entities that will be anonymized for a case: `auto` (derived from the timeline — grows as
-  // the investigation does, read-only) + `custom` (analyst-added). POST replaces the custom list.
+  // The entities that will be anonymized for a case: `auto` (auto-discovery — derived from the
+  // timeline PLUS entities the OCR pass tokenized out of screenshots, grouped by category, with
+  // analyst-suppressed values removed) + `custom` (analyst-added) + `suppressed` (removed values).
+  // POST replaces the custom list; the /suppress + /unsuppress routes manage auto-discovery removals.
   app.get("/cases/:id/anon-entities", async (req: Request, res: Response) => {
     try {
       const custom = await customEntities.load(req.params.id);
-      let auto = { hosts: [] as string[], accounts: [] as string[], internalDomains: [] as string[] };
+      const disc = await discoveredEntities.load(req.params.id);
+      const suppressed = new Set(disc.suppressed);
+      const groups: Record<AnonTokenCategory, string[]> = { IP: [], EMAIL: [], USER: [], HOST: [], DOMAIN: [], PATH: [], OTHER: [] };
       if (options.stateStore) {
         const d = deriveKnownEntities(await options.stateStore.load(req.params.id));
-        auto = { hosts: d.hosts, accounts: d.accounts, internalDomains: d.internalDomains };
+        groups.HOST.push(...d.hosts);
+        groups.USER.push(...d.accounts);
+        groups.DOMAIN.push(...d.internalDomains);
       }
-      return res.status(200).json({ auto, custom });
+      for (const e of disc.discovered) groups[e.category]?.push(e.value);
+      // Per group: drop suppressed values + dedupe case-insensitively (keep first spelling).
+      const clean = (arr: string[]): string[] => {
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const v of arr) {
+          const k = v.toLowerCase();
+          if (suppressed.has(k) || seen.has(k)) continue;
+          seen.add(k);
+          out.push(v);
+        }
+        return out;
+      };
+      const auto = {
+        hosts: clean(groups.HOST), accounts: clean(groups.USER), internalDomains: clean(groups.DOMAIN),
+        ips: clean(groups.IP), emails: clean(groups.EMAIL), paths: clean(groups.PATH), other: clean(groups.OTHER),
+      };
+      return res.status(200).json({ auto, custom, suppressed: disc.suppressed });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -1420,6 +1496,28 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const entities = sanitizeCustomEntities(req.body?.entities);
       await customEntities.save(req.params.id, entities);
       return res.status(200).json({ custom: entities });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+  // Remove a wrong entity from auto-discovery: it's hidden from the list AND never anonymized again
+  // (the anonymizer's suppression set), reversible via /unsuppress.
+  app.post("/cases/:id/anon-entities/suppress", async (req: Request, res: Response) => {
+    try {
+      const value = typeof req.body?.value === "string" ? req.body.value.trim() : "";
+      if (!value) return res.status(400).json({ error: "value is required" });
+      const next = await discoveredEntities.suppress(req.params.id, value);
+      return res.status(200).json({ suppressed: next.suppressed });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+  app.post("/cases/:id/anon-entities/unsuppress", async (req: Request, res: Response) => {
+    try {
+      const value = typeof req.body?.value === "string" ? req.body.value.trim() : "";
+      if (!value) return res.status(400).json({ error: "value is required" });
+      const next = await discoveredEntities.unsuppress(req.params.id, value);
+      return res.status(200).json({ suppressed: next.suppressed });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -3767,6 +3865,8 @@ export interface RuntimePipelineParams {
   onState?: (state: InvestigationState) => void;
   // Provided only when the AI vision provider is external (not local). See ocrRedact.ts.
   ocrRunner?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["ocrRunner"];
+  // Shared logger so AI/OCR/anonymization debug traces land in the same session + per-case logs.
+  logger?: Logger;
 }
 
 export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
@@ -3780,15 +3880,34 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     onState: params.onState,
     anonStore: new AnonControlStore(params.store),
     customEntitiesStore: new CustomEntitiesStore(params.store),
+    discoveredStore: new DiscoveredEntitiesStore(params.store),
     synthMetaStore: new SynthMetaStore(params.store),
     notebookStore: new NotebookStore(params.store),
     aiControlStore: new AiControlStore(params.store),
     ocrRunner: params.ocrRunner,
+    logger: params.logger,
   });
 }
 
-export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"): void {
+export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", logDir?: string): void {
   const store = new CaseStore(casesRoot);
+  // File-backed logging: a fresh global SESSION log per server run (session-<ts>.log) PLUS a
+  // per-CASE log (cases/<id>/logs/session-<ts>.log) — the investigation audit trail that travels
+  // with the case. The global log dir defaults to logs/ beside the cases root but is overridable
+  // with DFIR_LOG_DIR (resolved by the caller). Per-case logs always live inside the case dir so
+  // the audit trail stays with the case. Colons/dots are stripped from the timestamp so the
+  // filename is valid on Windows; a logs/ subdir is always creatable (even when DFIR_CASES_ROOT
+  // is a drive-root child like C:\cases). The Settings → Logging toggle changes the level live;
+  // DFIR_LOG_LEVEL sets the default.
+  const sessionStamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const globalLogDir = logDir ?? join(dirname(casesRoot), "logs");
+  const logger = new LoggerImpl({
+    level: normalizeLogLevel(process.env.DFIR_LOG_LEVEL),
+    sessionLogPath: join(globalLogDir, `session-${sessionStamp}.log`),
+    caseLogPath: (caseId) => join(store.caseDir(caseId), "logs", `session-${sessionStamp}.log`),
+  });
+  setServerLogger(logger);
+  logLine(`[DFIR] session log: ${join(globalLogDir, `session-${sessionStamp}.log`)}`);
   const stateStore = new StateStoreImpl(store);
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
@@ -3818,7 +3937,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
   const visionIsLocalForPipeline = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
   const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
-  const wiredPipeline = buildRuntimePipeline({ provider, synthesisProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner });
+  const wiredPipeline = buildRuntimePipeline({ provider, synthesisProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger });
 
   // Live synthesis on by default — set DFIR_AI_AUTO_SYNTHESIZE=off to disable.
   const autoSynthesize = (process.env.DFIR_AI_AUTO_SYNTHESIZE ?? "on").toLowerCase() !== "off";
@@ -3857,6 +3976,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     autoSynthesize,
     autoSynthesizeDebounceMs,
     onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
+    // Broadcast to ALL dashboards so one viewing a different case can warn that captures are
+    // arriving here (the capture extension is pointed at a case the analyst isn't looking at).
+    onCapture: (caseId) => hub.broadcastAll({ type: "capture_ingest", caseId }),
     onState: (s) => hub.broadcast(s),
     enrichmentProviders: buildEnrichmentProviders(),
     enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,
@@ -3993,5 +4115,14 @@ if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.
   // image sets DFIR_HOST=0.0.0.0 so the container's published port works; compose maps that
   // port to 127.0.0.1 on the host, so it never listens on the host's public interfaces.
   const host = process.env.DFIR_HOST && process.env.DFIR_HOST !== "" ? process.env.DFIR_HOST : "127.0.0.1";
-  startServer(casesRoot, port, host);
+
+  // Optional override for the GLOBAL session-log directory (per-case logs always live in the
+  // case dir). Relative paths anchor to companion/ like DFIR_CASES_ROOT; unset → logs/ beside
+  // the cases root.
+  const rawLogDir = process.env.DFIR_LOG_DIR;
+  const logDir = rawLogDir && rawLogDir.trim() !== ""
+    ? (isAbsolute(rawLogDir) ? rawLogDir : resolve(companionDir, rawLogDir))
+    : undefined;
+
+  startServer(casesRoot, port, host, logDir);
 }
