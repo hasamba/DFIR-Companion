@@ -38,11 +38,11 @@ describe("parseVqlOutput", () => {
 
 describe("splitVqlStatements", () => {
   it("strips the leading comment so the query does not start with '--' (the CLI flag-parse bug)", () => {
-    const vql = "-- file presence (exact path) + its hashes\nSELECT FullPath FROM glob(globs=\"C:/x\")";
+    const vql = "-- file presence (exact path) + its hashes\nSELECT OSPath FROM glob(globs=\"C:/x\")";
     const out = splitVqlStatements(vql);
     expect(out).toHaveLength(1);
     expect(out[0].startsWith("--")).toBe(false);
-    expect(out[0]).toBe('SELECT FullPath FROM glob(globs="C:/x")');
+    expect(out[0]).toBe('SELECT OSPath FROM glob(globs="C:/x")');
   });
   it("splits multiple blank-line-separated pivots into separate statements", () => {
     const vql = "-- a\nSELECT 1\n\n-- b\nSELECT 2";
@@ -95,7 +95,7 @@ describe("VelociraptorClient.launchHunt", () => {
       return { rows: [{ Hunt: { HuntId: "H.ABC123", state: "RUNNING" } }], raw: "" };
     };
     const res = await new VelociraptorClient({ ...cfg, guiUrl: "https://velo.example/" }, runner)
-      .launchHunt("-- file presence\nSELECT FullPath FROM glob(globs=\"C:/**/x.exe\")", "find x.exe");
+      .launchHunt("-- file presence\nSELECT OSPath FROM glob(globs=\"C:/**/x.exe\")", "find x.exe");
     expect(res.huntId).toBe("H.ABC123");
     expect(res.artifact).toBe("Custom.Hunt.Companion.find_x_exe");
     expect(res.sources).toEqual(["Pivot0"]);
@@ -122,7 +122,7 @@ describe("VelociraptorClient.launchHunt", () => {
     let program = "";
     const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.X2", state: "RUNNING" } }], raw: "" }; };
     await new VelociraptorClient(cfg, runner).launchHunt(
-      "SELECT FullPath FROM glob(globs=\"C:/x\")",
+      "SELECT OSPath FROM glob(globs=\"C:/x\")",
       'Velociraptor detection: Mimikatz Tools - \\\\.\\C:\\Tools\\mimidrv.sys',
     );
     expect(program).not.toContain("\\");   // no backslashes survive into the embedded YAML/VQL
