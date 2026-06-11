@@ -24,6 +24,7 @@ describe("buildAttackLayer", () => {
     const layer = buildAttackLayer(emptyState("c1"));
     expect(layer.domain).toBe("enterprise-attack");
     expect(layer.versions.layer).toBe("4.5");
+    expect(layer.versions.attack).toBe("19"); // current ATT&CK release — avoids the Navigator upgrade prompt
     expect(layer.techniques).toEqual([]);
     expect(layer.legendItems).toEqual([]);
     expect(layer.name).toBe("DFIR Companion — c1");
