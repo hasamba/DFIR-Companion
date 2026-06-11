@@ -10,6 +10,7 @@ import { renderHtmlReport } from "./html.js";
 import { renderDocxReport } from "./docx.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
+import { buildAttackLayer, type NavigatorLayer } from "./attackLayer.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGraph.js";
@@ -93,6 +94,12 @@ export class ReportWriter {
   // full report. Uses the same scope/legitimate filtering so it matches the report's 3.1.
   async incidentTimelineCsv(caseId: string): Promise<string> {
     return forensicTimelineCsv(await this.loadFilteredState(caseId));
+  }
+
+  // Build a MITRE ATT&CK Navigator layer for the case (same scope/legitimate filtering as the
+  // report) — the JSON drops straight into the Navigator's "Open Existing Layer" upload.
+  async attackLayer(caseId: string): Promise<NavigatorLayer> {
+    return buildAttackLayer(await this.loadFilteredState(caseId));
   }
 
   // Export the forensic timeline as Timesketch-compatible JSONL (same scope/legitimate filtering).
