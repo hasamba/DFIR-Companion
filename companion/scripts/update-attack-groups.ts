@@ -58,11 +58,11 @@ interface SlimGroup {
   name: string; // e.g. "APT29"
   aliases: string[]; // other names, e.g. ["Cozy Bear", "The Dukes"]
   description: string; // short attribution/sector context (citations stripped, trimmed)
-  techniques: string[]; // base technique ids the group uses, e.g. ["T1059", "T1566"], sorted
+  techniques: string[]; // technique ids the group uses (sub-technique where MITRE maps it), sorted
 }
 
 const MITRE_SOURCE = "mitre-attack";
-const TECHNIQUE_RE = /^T(\d{4})(?:\.\d{3})?$/; // technique or sub-technique
+const TECHNIQUE_RE = /^T(\d{4})(?:\.(\d{3}))?$/; // technique or sub-technique
 const DESC_MAX = 400;
 
 // The ATT&CK external id (Gxxxx / Txxxx) for an object, or undefined.
@@ -70,11 +70,14 @@ function attackId(obj: StixObject): string | undefined {
   return obj.external_references?.find((r) => r.source_name === MITRE_SOURCE)?.external_id;
 }
 
-// Base technique id ("T1059.001" → "T1059"), or null when not a technique id.
-function baseTechnique(raw: string | undefined): string | null {
+// Full, validated technique id, KEEPING the sub-technique ("T1059.001" stays "T1059.001",
+// "T1486" stays "T1486"), or null when not a technique id. The hint scorer matches at this full
+// granularity (exact sub-technique = strong signal) and derives the base itself for partial credit.
+function fullTechnique(raw: string | undefined): string | null {
   if (!raw) return null;
   const m = TECHNIQUE_RE.exec(raw.trim().toUpperCase());
-  return m ? `T${m[1]}` : null;
+  if (!m) return null;
+  return m[2] ? `T${m[1]}.${m[2]}` : `T${m[1]}`;
 }
 
 // MITRE descriptions embed "(Citation: Foo 2020)" markers and Markdown — strip those to a clean,
@@ -107,12 +110,12 @@ async function main(): Promise<void> {
   const objects = bundle.objects ?? [];
   console.log(`[attack] ${objects.length} STIX objects`);
 
-  // 1. attack-pattern STIX id → base technique id (live techniques only).
+  // 1. attack-pattern STIX id → full technique id (live techniques only).
   const techniqueById = new Map<string, string>();
   for (const o of objects) {
     if (o.type !== "attack-pattern" || !o.id || !isLive(o)) continue;
-    const base = baseTechnique(attackId(o));
-    if (base) techniqueById.set(o.id, base);
+    const full = fullTechnique(attackId(o));
+    if (full) techniqueById.set(o.id, full);
   }
 
   // 2. intrusion-set STIX id → slim group record (live groups only).
@@ -128,7 +131,7 @@ async function main(): Promise<void> {
   }
 
   // 3. "uses" relationships intrusion-set → attack-pattern accumulate the group's technique set.
-  const techSets = new Map<string, Set<string>>(); // group STIX id → base techniques
+  const techSets = new Map<string, Set<string>>(); // group STIX id → full technique ids
   for (const o of objects) {
     if (o.type !== "relationship" || o.relationship_type !== "uses") continue;
     if (!o.source_ref || !o.target_ref) continue;
@@ -158,7 +161,7 @@ async function main(): Promise<void> {
     note: "Statistical similarity based on technique overlap — NOT attribution.",
     attackVersion,
     generated: new Date().toISOString().slice(0, 10),
-    techniqueField: "base" as const, // techniques are normalized to base ids (sub-techniques rolled up)
+    techniqueField: "full" as const, // techniques keep sub-technique granularity (T1059.001), base derived at match time
     groupCount: groups.length,
     groups,
   };

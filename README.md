@@ -126,8 +126,9 @@ For each case the AI builds and keeps up to date:
   happen* view, complementary to the categorical kill chain. Deterministic, no AI call.
 - **Adversary hints** — known **MITRE ATT&CK groups** ranked by how much their technique
   set overlaps the case's, as early hypothesis fuel. Offline (a bundled dataset, no
-  AI/network); each card shows aliases, sectors/regions, the overlap ratio, and the
-  shared techniques. Statistical similarity, **not attribution**.
+  AI/network); sub-technique-aware, so an **exact** sub-technique match (highlighted) outranks
+  a base-technique-only one. Each card shows aliases, sectors/regions, the overlap ratio, the
+  exact-match count, and the shared techniques. Statistical similarity, **not attribution**.
 - **Compromised assets** — the victim hosts and user accounts, with an interactive
   **asset ↔ IoC graph** showing which indicators touched each.
 - **Key investigative questions** — initial access, lateral movement, compromised
