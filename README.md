@@ -136,34 +136,12 @@ For each case the AI builds and keeps up to date:
 ## Features
 
 ### Capture & ingest
-- **MV3 browser extension** — timer + event-driven capture, `Ctrl+Shift+S` hotkey, offline queue, per-case start/stop
-- **Import screenshots** — multi-select PNG/JPEG/WebP from any tool; same ingest path as the extension
-- **One Import button** — drop any artifact file; server **auto-detects the format** and routes it automatically
-- **Minimum-severity floor** — filter import noise at the gate; severity-less formats always pass through unchanged
-- **Evidence-first** — files written to disk + append-only audit log before any analysis; perceptual-hash dedup
-
-### Capture & evidence
-- **MV3 browser extension** — timer + event-driven capture (navigation, tab switch, click);
-  lossless full-resolution PNG; offline queue + auto-sync; per-case Start/Stop; **`Ctrl+Shift+S`
-  hotkey** to toggle capture; captured tab title baked into the screenshot filename. It
-  **attaches to an existing case** picked from a server-provided dropdown — case creation is a
-  deliberate dashboard action, never an extension side effect.
-- **Case management in the dashboard** — a **+ New case** form is the one place cases are born
-  (id, name, investigator); the companion rejects captures to an unknown case so evidence never
-  lands in a half-made one.
-- **Case templates** — the New case modal offers five built-in templates (Ransomware, BEC/Email
-  Compromise, Insider Threat, Web App Intrusion, General Malware) that pre-populate the Key
-  Questions list with incident-type–specific investigation questions (pinned so synthesis can
-  answer them). Each template also lists recommended import types and hunt platforms as hints.
-  Custom templates can be saved from the Export menu (**Save as Template…**) and reused across
-  cases; they're stored in a `templates/` directory alongside `cases/`.
-- **Evidence-first ingest** — screenshot written to disk + append-only `captures.jsonl` audit
-  line **before** any analysis; perceptual-hash duplicate detection.
-- **Import external screenshots** — dashboard **Import Screenshots** button (multi-select PNG/JPEG/WebP)
-  feeds images from any other tool through the same ingest path as the extension, so they're stored
-  and analyzed identically.
-- **Localhost only** — server binds `127.0.0.1`; CORS + Private-Network-Access so the
-  `chrome-extension://` origin can reach it.
+- **MV3 browser extension** — timer + event-driven capture (navigation / tab switch / click), `Ctrl+Shift+S` hotkey, offline queue + auto-sync, per-case Start/Stop. Attaches to an existing case from a dropdown — it never creates one.
+- **Case management in the dashboard** — **+ New case** is the one place cases are born; captures to an unknown case are rejected. Five built-in **templates** pre-load incident-type investigation questions + import/hunt hints (save your own too).
+- **Import screenshots** — multi-select PNG/JPEG/WebP from any tool, through the same ingest path as the extension.
+- **One Import button** — drop any artifact file; the server auto-detects the format and routes it. Optional minimum-severity floor at the gate.
+- **Evidence-first** — written to disk + append-only audit log before any analysis; exact-hash (SHA-256) duplicate detection (`DFIR_DEDUP=off` to disable).
+- **Localhost only** — binds `127.0.0.1` (CORS + Private-Network-Access so the extension origin can reach it).
 
 ### Evidence importers
 
@@ -187,54 +165,28 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Generic logs** | Firewall, syslog, VPN; repetitive lines → counted patterns | AI-triaged |
 
 ### AI analysis
-- **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only
-  **synthesis** → findings, IOCs, MITRE ATT&CK, attacker path, **narrative timeline**, key questions, next steps, threads.
-- **Providers** — OpenAI, OpenRouter, Ollama, **local LiteLLM** (an OpenAI-compatible gateway over
-  Ollama / vLLM / 100+ backends — keeps evidence fully on-box) or any OpenAI-compatible endpoint via
-  `DFIR_AI_BASE_URL`, Gemini; optional **two-tier** (cheap extraction + strong synthesis); high-detail
-  image tiling for small-text OCR; tunable timeout; **bounded `max_tokens`** + **truncation-tolerant
-  JSON parsing** (no more spurious OpenRouter 402 / parse errors); **context-window budgeting**
-  (`DFIR_AI_CONTEXT_TOKENS`, default 128k) — every prompt is trimmed/batched to fit, so a big case
-  never 400s on *"maximum context length"*; an unfittable prompt fails with actionable guidance.
-- **EDR/XDR + SIEM consoles are evidence** — CrowdStrike, Defender, SentinelOne, Splunk, Elastic,
-  Sentinel, QRadar detections are extracted; analyst tool-operation / UI navigation is filtered out,
-  with an **incident-signal allowlist** so a real detection is never dropped.
-- **Severity-aware findings** — a Critical/High artifact row becomes a finding by default; a
-  deterministic safety net auto-creates one (`AUTO` badge) for any high-severity event synthesis missed.
-- **Live auto-synthesis** — debounced re-synthesis during capture so the dashboard stays current.
-- **Efficient, grounded synthesis** — skips the AI call when nothing relevant changed (skip-if-unchanged);
-  picks events *stratified* (all Critical/High + earliest initial-access + an even time-spread) for better
-  kill-chain coverage than top-N-by-severity; and prepends a compact *compromised assets ← IoCs* +
-  *threat-intel verdicts* digest so findings and the attacker path are grounded, not inferred.
-- **AI-input anonymization** — reversibly tokenizes internal IPs/usernames/hostnames/domains/emails/
-  user-paths and one-way-redacts secrets before the LLM sees them, restoring real values on display;
-  adversary IOCs (public IPs, hashes, attacker domains) are preserved. Per-case toggle + a
-  viewable entity list that **auto-discovers** entities from the timeline **and from screenshots**
-  (the OCR redaction pass feeds back what it scrubbed, grouped by type) plus manual additions; each
-  auto-discovered entry has a **✕ remove** that stops it being anonymized (reversible) so you can
-  prune false positives. Default on.
+- **Two-phase** — cheap per-window vision **extraction** → forensic timeline; strong text-only **synthesis** → findings, IOCs, MITRE ATT&CK, attack path, narrative, key questions, next steps.
+- **Providers** — OpenAI, OpenRouter, Ollama, local LiteLLM (or any OpenAI-compatible endpoint), Gemini. Optional **two-tier** (cheap extract + strong synth); context-window budgeting + bounded, truncation-tolerant output (no spurious OpenRouter 402 / context 400s).
+- **EDR/XDR + SIEM consoles are evidence** — detections are extracted; analyst tool-navigation is filtered out, with an incident-signal allowlist so a real detection is never dropped.
+- **Severity-aware findings** — a Critical/High row becomes a finding; a deterministic safety net auto-creates one (`AUTO` badge) for any high-severity event synthesis missed.
+- **Efficient, grounded synthesis** — live debounced re-synthesis during capture; skip-if-unchanged; stratified event selection + a *compromised assets ← IoCs* grounding digest.
+- **AI-input anonymization** — reversibly tokenizes internal IPs/users/hosts/domains/emails/paths and one-way-redacts secrets (adversary IOCs preserved). Entities auto-discover from the timeline **and screenshots**, each removable; default on.
 
 ### Correlation & deduplication
-- **Cross-source correlation** — the same artifact reported by different tools (e.g. Velociraptor +
-  THOR on one file) collapses into **one corroborated event** (shared hash / same path within a time
-  window / exact duplicate), tagged with the **real tool names** as sources. Runs on every merge;
-  importing the same report twice never doubles the timeline.
+- **Cross-source correlation** — the same artifact seen by different tools collapses into one corroborated event (shared hash / same path in a time window / exact duplicate), tagged with the real tool names. Idempotent — re-importing never doubles the timeline.
 
 ### Investigation workflow
 - **Ask the case** — free-form Q&A grounded in the full timeline; unknown answers direct you to what artifact to collect and where
-- **Response Playbook** — the AI's recommended next steps + Critical/High findings become a trackable checklist (status, priority, assignee, due date, drag-and-drop reorder, custom tasks) with a completion badge; an opt-in **IR templates** toggle expands each Critical/High finding into severity-based response phases (Contain → Investigate → Eradicate → Recover, tailored to the ATT&CK tactic); auto-tasks re-derive on each synthesis but always preserve your progress; survives synthesis and renders into the report
-- **Triage tags** — label any entity `confirmed-malicious`, `false-positive`, `key-evidence`, `pivot-point`, etc.; color-coded pills, survive synthesis
-- **Analyst comments** — attach notes to any entity; synced live over WebSocket for multi-investigator collaboration
-- **Timeline bulk actions** — star, multi-select, bulk-tag, or mark-legitimate in one batched write + re-synthesis
-- **IOC bulk actions** — multi-select IOCs (checkbox column + select-all) and, from a bulk toolbar, **enrich** the selection against enabled threat-intel providers, **tag**, **mark legitimate**, or **copy** the values — each as one batched operation (enrichment touches only the selected indicators; mark-legitimate is one re-synthesis, not one per IOC)
-- **IOC whitelist** (Settings → IOC Whitelist) — persistent, environment-level known-good patterns (CIDR ranges, exact hashes/values, regex) that **auto-mark matching IOCs legitimate on import** (and on demand); global across cases, import/exportable as CSV or JSON; opt-in by design (whitelisting internal ranges can hide lateral movement)
-- **IOC corroboration badges** — each IOC shows a **⊕ N** badge for the number of distinct tools that observed it (the same hash/IP/domain seen by e.g. both THOR and Velociraptor); derived from the events' sources, surfaced in the IOC panel, the report's IOC table, and the IOC CSV export
-- **Hunt-pivot generator** — one click from any event or IOC generates ready-to-run queries: Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, and Suricata rules; no AI, runs offline; configurable platform allowlist
-- **Velociraptor live hunts** — run a pivot VQL as a fleet hunt across all enrolled endpoints from the dashboard (opt-in, requires API config)
-- **Velociraptor triage bundles** (Settings → Velociraptor) — browse the server's collectable artifacts, save named bundles (a "Best Practice" quick-wins sweep ships by default, all editable), run one as a hunt scoped by label/OS + min-severity, then auto-collect (result rows **and** uploaded JSON reports like THOR/Hayabusa) → import → synthesize after a configurable delay; persisted per-case job with a live countdown + "Collect now". Per-artifact tuning: **parameters** (e.g. Hayabusa `RuleLevel`/`RuleStatus`) and **exclude filters** (VQL `WHERE` to drop noise at the source) (opt-in, requires API config)
-- **IOC "flagged only" filter** — one click in the IOCs panel hides everything except indicators a threat-intel engine rated **malicious or suspicious**
-- **Scope + legitimacy** — set a date/time window; mark findings/IOCs/events as legitimate (reversible); all views re-project deterministically
-- **Synthesis & import freshness** — "last synthesized N ago" + what-changed diff; "last import N ago" + new-event/IOC highlights with `NEW` badges
+- **Response Playbook** — recommended next steps + Critical/High findings become a trackable checklist (status, priority, assignee, due date, reorder, custom tasks); opt-in IR-templates expand findings into Contain → Investigate → Eradicate → Recover phases. Survives synthesis; renders into the report.
+- **Triage tags & comments** — label any entity (`confirmed-malicious`, `false-positive`, …) and attach notes; synced live over WebSocket; survive synthesis.
+- **Bulk actions** — multi-select timeline events or IOCs and star / tag / mark-legitimate / (IOCs) enrich or copy — each one batched write + a single re-synthesis.
+- **IOC whitelist** (Settings) — persistent known-good patterns (CIDR / exact / regex) auto-mark matching IOCs legitimate on import; global, CSV/JSON import-export; opt-in.
+- **IOC corroboration** — a **⊕ N** badge per IOC for how many distinct tools observed it (panel, report, CSV).
+- **IOC flagged-only filter** — one click hides everything except indicators a threat-intel engine rated malicious/suspicious.
+- **Hunt-pivot generator** — one click on any event/IOC emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, and Suricata queries; offline, no AI.
+- **Velociraptor** (opt-in, API config) — run a pivot as a fleet hunt; or **triage bundles** (Settings): browse artifacts → save bundles → run as a hunt (label/OS + min-severity) → auto-collect + import + synthesize, with per-artifact params/exclude filters.
+- **Scope + legitimacy** — set a time window; mark findings/IOCs/events legitimate (reversible); all views re-project.
+- **Freshness** — "last synthesized N ago" + what-changed diff; "last import N ago" + `NEW` row highlights.
 
 ### Threat-intel enrichment (off by default — opt-in per case)
 - **Sources** — VirusTotal, Hunting.ch (MalwareBazaar · ThreatFox · URLhaus · YARAify), CrowdStrike Falcon TI, AbuseIPDB, MISP, YETI, RockyRaccoon (Windows process prevalence + anomalous parent/child detection)
@@ -246,117 +198,24 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **OPSEC boundary** — only analyst-entered customer domains are queried; adversary/IOC domains are never sent; raw passwords never persisted
 
 ### Dashboard & reports
-- **Live dashboard** over WebSocket — **collapsible, drag-to-reorder sections** (order + collapse state
-  persist per browser), scope bar, clickable evidence links, and badges (`×N` aggregate, `⊕ N sources`,
-  `AUTO`, enrichment verdicts, `⚠ unusual parent`).
-- **Forensic timeline rows** show the affected **🖥 host** (the event's asset) for fast per-host scanning,
-  and the row's **finding references are clickable** — they jump to and flash the finding in the Findings
-  section. The report's incident timeline (§3.1) carries a matching **Host** column.
-- **Manual add** — a **+ Add event / + Add IOC manually** form on the timeline and IOC sections lets the
-  analyst record something the AI didn't catch. Manual events (time, description, severity, optional
-  asset/MITRE) are tagged `manual`, re-synthesized into findings, and survive re-analysis; manual IOCs are
-  deduped and enriched.
-- **MITRE techniques link to [attack.mitre.org](https://attack.mitre.org/)** everywhere they appear
-  (findings, timeline, MITRE section, the report, and the IRIS push) — sub-techniques included.
-- **Compromised assets + asset↔IoC graph** — events carry the affected **host** (from THOR / CSV /
-  screenshots); the dashboard lists compromised hosts/users and draws an interactive **asset ↔ IoC graph**
-  (which IoC touched each asset, and per asset all its IoCs) with Host/Account/Service toggles,
-  **fullscreen**, **horizontal / vertical / radial** layouts, **zoom** (buttons + mouse-wheel),
-  click-a-node-to-focus, and **drag-to-reposition nodes** (manual positions persist per case as "pins"
-  on top of the chosen layout; ↺ Reset layout clears them). A *Compromised assets* section also appears
-  in the report.
-- **Evidence Chain graph (causal: process trees + lateral movement)** — the *how it happened* view to
-  complement the *what happened when* timeline. Derived deterministically (no AI) from fields the
-  importers already populate: **process trees** (parent→child from `processName`/`parentName`, chained
-  through shared `(asset, process)` nodes) and **lateral movement** (same binary **hash** across hosts →
-  high confidence; same **account** across hosts → medium — Windows virtual principals like DWM/UMFD/MSI
-  filtered out so they don't fake edges), and a **host→tree anchor** that hangs each process tree off its
-  host so lateral movement **stitches them into one cross-host attack graph** (`evil.exe` runs on HOST-A →
-  moves to HOST-B → spawns there) rather than disconnected islands. Every edge carries **confidence + the
-  rule that derived it + its backing events**, so a causal claim is auditable. Dashboard **Evidence Chain** panel (process-tree /
-  lateral toggles, confidence legend, layered SVG with arrowheads, zoom, fullscreen, click-to-focus, and
-  **drag-to-reposition nodes** — positions persist per case, ↺ Reset layout restores the auto layout) and a
-  report **§4.8 Chain of evidence** section. Derived on read (`GET /cases/:id/evidence-graph`).
-- **Timeline Swimlane (visual chart)** — the *what happened when, across which assets* view: an
-  interactive canvas chart with **assets / severity / tactic** on the Y-axis (Group-by selector; the
-  panel subtitle tracks the choice), **time** on the X-axis, and events as **severity-colored dots**.
-  Mouse-wheel **zoom** (pinned to the cursor) + **drag-to-pan** + Fit/zoom buttons, **click-a-dot** for a
-  detail panel (severity, time, description, MITRE, sources, related findings) that also **jumps to and
-  flashes the matching Forensic Timeline row**, and hover tooltips. **Select events** by **Shift-click** or
-  **Shift-drag** a box → the selection is **bidirectional with the timeline table** (the same rings ⇄ row
-  checkboxes ⇄ bulk-action bars) and feeds a one-click **⚑ Mark Legitimate** batch action; **⌖ Scope to
-  view** sets the investigation scope window to the visible time range. **⤢ Fullscreen** (with a CSS
-  fallback off secure-context) and **⤓ PNG** export (labels + chart composited) for ad-hoc screenshots; a
-  static **Timeline Swimlane** SVG is embedded in the HTML report. Derived on read with the same
-  scope/legitimate filtering as the report (`GET /cases/:id/swimlane?groupBy=asset|severity|tactic`).
-- **Reports** — Markdown **and HTML** report (standalone, print-friendly), plus a one-click **PDF**
-  export that opens the print-styled HTML and triggers the browser's *Save as PDF* dialog (zero
-  dependencies, fully offline) + CSVs (findings, IOCs incl. enrichment, capture timeline, forensic
-  timeline incl. count/sources) + full JSON state export. All of these — generate report (MD+HTML),
-  generate report (PDF), forensic-timeline CSV, Timesketch JSONL, full JSON state — are reachable from
-  the dashboard's single **Export** menu.
-- **Word (.docx) report export** — download the incident report as a `.docx` for in-Word polish (one-way: edits don't round-trip).
-- **AI executive summary** — one click (✨ Generate on the Executive Summary section) produces a
-  management-facing, plain-language summary over the synthesized case (no ATT&CK ids / hashes / tool
-  names); review it, then save it into the report's Executive Summary (it overrides the auto-derived
-  summary). Prompt is customizable like the others (`DFIR_AI_EXEC_PROMPT` / `…_PROMPT_FILE`).
-- **Narrative Timeline** — a flowing prose story of the incident generated for management and
-  non-technical stakeholders ("At [time], the attacker gained initial access by…"). Generated as
-  part of synthesis (stored in `state.narrativeTimeline`, always re-generated with the attacker path);
-  a **✨ Generate** button on the dashboard also regenerates it standalone. **✏ Edit** opens an inline
-  textarea for analyst refinement before export; edits persist via `PUT /cases/:id/narrative`. Included
-  in the report as **§3.2 Narrative timeline** right after the incident-timeline table.
-- **Push to DFIR-IRIS** — push a case into a [DFIR-IRIS](https://dfir-iris.org/) instance with one
-  click (dashboard **Push** menu → **DFIR-IRIS**, or `npm run iris:push -- <caseId>`). It **find-or-creates
-  the IRIS case by name** (= the Companion case id) — re-exporting an existing case *updates* it — and
-  maps **assets → assets**, **IOCs → IOCs** (type/TLP resolved at runtime, with threat-intel verdicts as
-  description/tags), **forensic timeline → timeline** (events **auto-categorized** by MITRE tactic and
-  linked to their assets/IOCs), the **executive summary → case summary**, **Recommended Next Steps →
-  IRIS tasks**, and **every other section → notes** (attacker path, findings, MITRE, key questions, BIA,
-  recommendations…). Idempotent: assets dedupe by name, IOCs by value, events by title+time, tasks by
-  title; the summary and Companion notes are refreshed each run. Configure with `DFIR_IRIS_URL` +
-  `DFIR_IRIS_KEY` (self-signed/internal-CA supported via `DFIR_IRIS_CA`/`_INSECURE`).
-- **Timesketch timeline export & push** — turn the forensic timeline into a [Timesketch](https://timesketch.org/)
-  timeline. The **Export** menu → **Timesketch JSONL** downloads the timeline as Timesketch import format
-  (`message` / `datetime` / `timestamp_desc` + every structured field — severity, MITRE, asset, hashes, path,
-  process chain — kept as **searchable columns**, plus a `tag` list) for manual upload; needs no config. **Push**
-  menu → **Timesketch** (or `npm run timesketch:push -- <caseId>`) does it in one click: it logs in
-  (Timesketch local auth), **find-or-creates the sketch by name** (= the Companion case id), and uploads the
-  timeline. **Idempotent** — the managed timeline is **clean-replaced** on re-push, so events never duplicate.
-  The pushed/exported timeline matches the report (same scope/legitimate filtering). Configure with
-  `DFIR_TIMESKETCH_URL` + `DFIR_TIMESKETCH_USER` + `DFIR_TIMESKETCH_PASSWORD` (self-signed/internal-CA
-  supported via `DFIR_TIMESKETCH_CA`/`_INSECURE`).
-- **Export to Notion** — push a case into a [Notion](https://notion.so/) page so investigators can
-  collaborate around it (dashboard **Push** menu → **Export to Notion**, or
-  `npm run notion:push -- <caseId> --page <urlOrId>`). It asks **new page or existing page**: *new*
-  creates the page as a row in a Notion **database** (`DFIR_NOTION_DATABASE_ID` — the ongoing
-  investigation template) or under a parent page (`DFIR_NOTION_PARENT_PAGE_ID`); *existing* updates a
-  page you paste. The Companion writes **all** its content — summary, findings, timeline, IOCs, MITRE,
-  attacker path, key questions, next steps — **inside ONE managed toggle block it owns** on the page.
-  A re-export refreshes only that block with the latest case data, so **anything you wrote outside it
-  (your own notes, pasted finding screenshots) is never touched**. The target page + managed block are
-  remembered per case (`state/notion-export.json`); delete the block and the next export recreates it.
-  Configure with `DFIR_NOTION_TOKEN` (share the target page/database with the integration).
-- **Push to ClickUp** — export the **Response Playbook** into a [ClickUp](https://clickup.com/) list as
-  tasks (dashboard **Push** menu → **Push to ClickUp**). Each task carries its **status** (mapped onto the
-  list's own statuses — To do / In progress / Complete; Skipped → Closed), **priority** (critical→Urgent …
-  low→Low), **due date**, and assignee/notes. **Re-pushing the same case updates the tasks it created**
-  (each playbook task's ClickUp id is remembered in `state/clickup-export.json`) rather than duplicating.
-  The list id is asked for in a modal (pre-filled from the last push or `DFIR_CLICKUP_LIST_ID`). Configure
-  with `DFIR_CLICKUP_TOKEN`.
-- **Full incident-report template** — `report.md` follows the [AnttiKurittu incident-report-template](https://github.com/AnttiKurittu/incident-report-template)
-  (title page → executive summary → BIA, limitations, goals, glossary → incident/investigation
-  timelines → investigation → conclusions/recommendations → attachments). Technical sections
-  auto-fill from the case (incl. an **auto-calculated glossary** from a curated DFIR dictionary);
-  human-authored sections (optional **company name + logo branding**, title page with **multiple
-  investigators / reviewer / incident manager**, optional incident ID + distribution, BIA,
-  recommendations…) are filled in the dashboard **Case Details** panel, persist per case, override
-  the derived content, and show a "to be completed" placeholder until filled. The optional company
-  logo (raster image, uploaded in the dashboard, stored inline so the report stays self-contained)
-  and company name render at the top of the report title page.
+- **Live dashboard** over WebSocket — collapsible, drag-to-reorder sections (persisted), scope bar, clickable evidence links, and badges (`×N`, `⊕ N`, `AUTO`, verdicts, `⚠ unusual parent`).
+- **Forensic timeline rows** show the affected **🖥 host** and **clickable finding links** (jump + flash the finding); the report timeline (§3.1) has a matching Host column.
+- **Manual add** — record an event or IOC the AI missed (tagged `manual`, re-synthesized, survives re-analysis).
+- **MITRE techniques link to [attack.mitre.org](https://attack.mitre.org/)** everywhere (sub-techniques included).
+- **Compromised assets + asset ↔ IoC graph** — which IoC touched each asset; interactive graph with Host/Account/Service toggles, layouts, zoom, fullscreen, and drag-to-pin. Also a report section.
+- **Evidence Chain graph** — the *how it happened* causal view: process trees + lateral movement (same hash/account across hosts) stitched into one cross-host attack graph, every edge auditable (confidence + rule + backing events). Deterministic; dashboard panel + report §4.8.
+- **Timeline Swimlane** — interactive assets/severity/tactic × time chart; click-a-dot detail (jumps to the timeline row), Shift-select → mark-legitimate, scope-to-view, fullscreen, PNG export; a static SVG is embedded in the report.
+- **Reports** — Markdown + HTML (standalone, print-friendly) + one-click **PDF** (browser *Save as PDF*, offline) + CSVs (findings, IOCs, timelines) + full JSON state + **Word (.docx)** — all from the dashboard **Export** menu.
+- **AI executive summary** — ✨ Generate a management-facing summary (no ATT&CK ids/hashes/tool names) and save it into the report.
+- **Narrative Timeline** — prose story of the incident for non-technical stakeholders; generated in synthesis, editable, report §3.2.
+- **Push to DFIR-IRIS** — one click (or `npm run iris:push`) find-or-creates the IRIS case by name and maps assets/IOCs/timeline/summary/tasks/notes; idempotent. `DFIR_IRIS_URL` + `DFIR_IRIS_KEY`.
+- **Timesketch export & push** — **Export → Timesketch JSONL** (structured fields kept as searchable columns) or one-click **Push** (find-or-creates the sketch, clean-replaces on re-push). `DFIR_TIMESKETCH_*`.
+- **Export to Notion** — push a case into a new or existing Notion page; all content lives in ONE managed block the Companion owns, so your own notes outside it are never touched. `DFIR_NOTION_TOKEN`.
+- **Push to ClickUp** — export the Response Playbook to a ClickUp list as tasks (status/priority/due/assignee); re-push updates the tasks it created. `DFIR_CLICKUP_TOKEN`.
+- **Full incident-report template** — `report.md` follows the [AnttiKurittu template](https://github.com/AnttiKurittu/incident-report-template); technical sections auto-fill (incl. an auto-glossary), human-authored sections (branding, title page, BIA, recommendations…) are filled in the dashboard and persist per case.
 
 ### Ops
-- **Logging to file (session + per-case audit trail)** — every log line tees to the console **and** to files: a global session log (`logs/session-<time>.log`, beside the cases root, fresh per server start) plus a per-case log (`cases/<id>/logs/session-<time>.log`). `DFIR_LOG_LEVEL` (`debug|info|warn|error`) sets the default, and **Settings → Log verbosity** changes it **live with no restart**; at `debug` the log traces every AI call (which model/phase + token usage), each screenshot captured, the OCR redaction pass, prompt anonymization, and every enrichment lookup
+- **Logging to file** — every line tees to the console + a global session log + a per-case audit trail; `DFIR_LOG_LEVEL` (+ live Settings toggle, `DFIR_LOG_DIR`). `debug` traces AI calls, captures, OCR, anonymization, enrichment
 - **Portable Windows EXE** — zip attached to every GitHub Release; unzip + double-click, no Node install required
 - **Docker / Docker Compose** — `docker compose up`; evidence on a host volume, no bundled AI backend
 - **Customizable AI prompts** — override any of the 6 prompts via env var or file; edits apply without restart (`npm run prompts:eject` to dump defaults)
