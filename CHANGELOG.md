@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Export a MITRE ATT&CK Navigator layer (JSON) for the case — techniques colored by worst observed severity, drops straight into the Navigator (closes #43).
+- Export a **STIX 2.1 bundle** (JSON) for the case — report + one indicator per IOC (STIX patterns, with the threat-intel verdict) + ATT&CK attack-patterns + malware families + victim/producer identities + `indicates` relationships; deterministic UUIDv5 ids so re-exports are byte-stable. Drops into any TIP (OpenCTI, MISP, Anomali…). No STIX library (closes #45).
 - **Email / `.eml` / `.msg` import** — a deterministic (no AI call) importer for phishing/BEC evidence: one timeline event at the message's own `Date:` header, severity derived from SPF/DKIM/DMARC failures + sender-spoof heuristics, URLs/sender domains/originating IP/attachment names+hashes harvested as IOCs (ATT&CK T1566). `.eml` parses fully via a dependency-free `parseMimeEmail`; `.msg` (Outlook OLE) is best-effort (recovers the embedded transport headers — export as `.eml` for full fidelity). Auto-detected by the unified Import button (closes #44).
 
 ## [0.17.0] - 2026-06-11

@@ -10,12 +10,14 @@ import { renderHtmlReport } from "./html.js";
 import { renderDocxReport } from "./docx.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
+import { buildAttackLayer, type NavigatorLayer } from "./attackLayer.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../analysis/swimlane.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
+import { buildStixBundle, type StixBundle } from "./stix.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
@@ -94,6 +96,12 @@ export class ReportWriter {
     return forensicTimelineCsv(await this.loadFilteredState(caseId));
   }
 
+  // Build a MITRE ATT&CK Navigator layer for the case (same scope/legitimate filtering as the
+  // report) — the JSON drops straight into the Navigator's "Open Existing Layer" upload.
+  async attackLayer(caseId: string): Promise<NavigatorLayer> {
+    return buildAttackLayer(await this.loadFilteredState(caseId));
+  }
+
   // Export the forensic timeline as Timesketch-compatible JSONL (same scope/legitimate filtering).
   // Used by the "Export Timesketch JSONL" download and as the payload for the Timesketch push.
   async timesketchJsonl(caseId: string): Promise<string> {
@@ -143,6 +151,19 @@ export class ReportWriter {
   async iocSources(caseId: string): Promise<Record<string, string[]>> {
     const state = await this.loadFilteredState(caseId);
     return deriveIocSources(state.iocs, state.forensicTimeline);
+  }
+
+  // Build a STIX 2.1 bundle for the case (same scope/legitimate filtering as the report) — the
+  // portable, vendor-neutral export every TIP (OpenCTI, MISP, Anomali…) ingests. The victim
+  // identity, producing firm, and incident id come from the human-authored report metadata.
+  async stixBundle(caseId: string): Promise<StixBundle> {
+    const state = await this.loadFilteredState(caseId);
+    const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
+    return buildStixBundle(state, {
+      organization: meta.organization,
+      producer: meta.companyName,
+      incidentId: meta.incidentId,
+    });
   }
 
   async writeAll(caseId: string): Promise<ReportPaths> {
