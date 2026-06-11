@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join as joinPath } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AIProvider, AnalyzeImage, AnalyzeRequest } from "../providers/provider.js";
@@ -40,6 +42,30 @@ import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
+import { ocrRedactImage, type OcrRunner } from "./ocrRedact.js";
+
+// Write a redacted screenshot copy to DFIR_OCR_DEBUG_DIR for visual inspection. The redacted
+// buffer keeps the source image format (sharp infers it from the input), so the extension is
+// derived from the source mime type. Best-effort: a dump failure must never break analysis, and
+// caseId is sanitized so it can't escape the debug dir. This never touches the evidence files.
+async function dumpRedactedImage(
+  dir: string,
+  caseId: string,
+  index: number,
+  mimeType: string,
+  buffer: Buffer,
+): Promise<void> {
+  try {
+    const ext = (mimeType.split("/")[1] ?? "png").replace(/[^a-z0-9]/gi, "") || "png";
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const safeCase = caseId.replace(/[^a-z0-9_-]/gi, "_");
+    const outDir = joinPath(dir, safeCase);
+    await mkdir(outDir, { recursive: true });
+    await writeFile(joinPath(outDir, `${stamp}-img${index + 1}.${ext}`), buffer);
+  } catch (err) {
+    console.warn(`[OCR dump] ${(err as Error).message}`);
+  }
+}
 
 export const SYSTEM_PROMPT = [
   "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation. The",
@@ -530,6 +556,10 @@ export interface PipelineOptions {
   // and — when true — appends the analyst's notebook entries to the synthesis prompt.
   notebookStore?: NotebookStore;
   aiControlStore?: AiControlStore;
+  // When set (external AI provider only), each screenshot is OCR-redacted before the vision
+  // call: words the anonymizer would tokenize are covered with opaque rectangles. The original
+  // evidence file is never touched — only the in-memory buffer sent to the model is redacted.
+  ocrRunner?: OcrRunner;
 }
 
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
@@ -569,11 +599,11 @@ export class AnalysisPipeline {
     return this.opts.provider;
   }
 
-  // Run one AI call with optional per-case anonymization. Tokenizes the userPrompt (images are
-  // passed through — pixels can't be tokenized; that's the documented best-effort limitation),
-  // then restores the parsed JSON response BEFORE schema validation, so real values containing
-  // JSON metacharacters (e.g. a path's backslashes) never corrupt the parse. Returns the
-  // loose-parsed, restored object for the caller to schema-validate.
+  // Run one AI call with optional per-case anonymization. Tokenizes the userPrompt and —
+  // when an ocrRunner is configured (external provider only) — OCR-redacts image buffers
+  // before sending. The original image files on disk are never touched; only the in-memory
+  // copies forwarded to the model are redacted. Restores the parsed JSON response BEFORE
+  // schema validation so real values with JSON metacharacters never corrupt parsing.
   private async analyzeRestored(
     caseId: string,
     state: InvestigationState,
@@ -589,7 +619,50 @@ export class AnalysisPipeline {
     const known = deriveKnownEntities(state);
     if (this.opts.customEntitiesStore) known.custom = await this.opts.customEntitiesStore.load(caseId);
     const anon = createAnonymizer(policy, known);
-    const result = await provider.analyze({ ...req, userPrompt: anon.apply(req.userPrompt) });
+
+    // OCR-redact image buffers when an external-provider runner is configured.
+    let images = req.images;
+    if (this.opts.ocrRunner && images.length > 0) {
+      const runner = this.opts.ocrRunner;
+      const debug = !!process.env.DFIR_OCR_DEBUG;          // per-image log incl. matched words
+      const dumpDir = process.env.DFIR_OCR_DEBUG_DIR;      // write the redacted copy for inspection
+      const count = images.length;
+      let totalRedactions = 0;
+      let redactedImages = 0;
+      images = await Promise.all(
+        images.map(async (img, i) => {
+          try {
+            const buf = Buffer.from(img.base64, "base64");
+            const res = await ocrRedactImage(buf, policy, known, runner);
+            if (res.changed) {
+              redactedImages++;
+              totalRedactions += res.redactions.length;
+              if (dumpDir) await dumpRedactedImage(dumpDir, caseId, i, img.mimeType, res.buffer);
+            }
+            if (debug) {
+              const matched = res.redactions.map((w) => w.text).join(", ");
+              console.warn(
+                `[OCR] case=${caseId} image ${i + 1}/${count}: read ${res.wordCount} word(s), ` +
+                  `redacted ${res.redactions.length}${matched ? ` [${matched}]` : ""}`,
+              );
+            }
+            return res.changed ? { ...img, base64: res.buffer.toString("base64") } : img;
+          } catch (err) {
+            // OCR failure is non-fatal — log and forward the original image.
+            console.warn(`[OCR redact] ${(err as Error).message}`);
+            return img;
+          }
+        }),
+      );
+      // Always-on confirmation that the OCR pre-pass ran (vs. images going to the model
+      // unredacted because anon is off or the provider is local). One line per analyze call.
+      console.warn(
+        `[OCR] case=${caseId}: redaction ran on ${count} screenshot(s) — scrubbed ` +
+          `${totalRedactions} word(s) across ${redactedImages} image(s) before sending to the model`,
+      );
+    }
+
+    const result = await provider.analyze({ ...req, userPrompt: anon.apply(req.userPrompt), images });
     return anon.restoreDeep(parseJsonLoose(result.rawText));
   }
 

@@ -10,6 +10,7 @@ import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { AnonControlStore, type AnonControl } from "./analysis/anonControl.js";
 import { CustomEntitiesStore, sanitizeCustomEntities } from "./analysis/anonEntities.js";
 import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js";
+import { TesseractOcrRunner } from "./analysis/ocrRedact.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { parseCsv } from "./analysis/csvImport.js";
@@ -1355,8 +1356,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // re-runs synthesis so the AI re-derives its conclusions without it.
   const legitimate = new LegitimateStore(store);
 
-  // Per-case anonymization control (default ON) + the analyst-added entity list. Screenshots can't
-  // be tokenized, so the dashboard warns when anon is on and the vision provider is external.
+  // Per-case anonymization control (default ON) + the analyst-added entity list. Screenshots are
+  // OCR-redacted (best-effort) when the vision provider is external, so the dashboard warns (anon on
+  // + external) that residual text may survive — `screenshotWarning` gates that notice.
   const anonControl = new AnonControlStore(store);
   const customEntities = new CustomEntitiesStore(store);
   const visionIsLocal = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
@@ -3763,6 +3765,8 @@ export interface RuntimePipelineParams {
   store: CaseStore;
   imageLoader?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["imageLoader"];
   onState?: (state: InvestigationState) => void;
+  // Provided only when the AI vision provider is external (not local). See ocrRedact.ts.
+  ocrRunner?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["ocrRunner"];
 }
 
 export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
@@ -3779,6 +3783,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     synthMetaStore: new SynthMetaStore(params.store),
     notebookStore: new NotebookStore(params.store),
     aiControlStore: new AiControlStore(params.store),
+    ocrRunner: params.ocrRunner,
   });
 }
 
@@ -3808,7 +3813,12 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
-  const wiredPipeline = buildRuntimePipeline({ provider, synthesisProvider, stateStore, store, onState: (s) => hub.broadcast(s) });
+  // Provide the Tesseract OCR runner only when the vision model is on an external (cloud)
+  // provider — if the model is local, screenshots never leave the machine so redaction is
+  // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
+  const visionIsLocalForPipeline = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
+  const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
+  const wiredPipeline = buildRuntimePipeline({ provider, synthesisProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner });
 
   // Live synthesis on by default — set DFIR_AI_AUTO_SYNTHESIZE=off to disable.
   const autoSynthesize = (process.env.DFIR_AI_AUTO_SYNTHESIZE ?? "on").toLowerCase() !== "off";
