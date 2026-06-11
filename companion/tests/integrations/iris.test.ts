@@ -245,4 +245,31 @@ describe("pushCaseToIris", () => {
     expect(res.iocs.added).toBe(0);
     expect(res.warnings.some((w) => w.includes("mystery"))).toBe(true);
   });
+
+  it("pushes PLAYBOOK tasks (status-aware) instead of next steps when provided", async () => {
+    const m = new MockIris();
+    const now = "2026-06-10T00:00:00.000Z";
+    const playbookTasks = [
+      { id: "next_step:s1", title: "Isolate DC01", description: "Active C2", status: "in_progress" as const, priority: "critical" as const, source: "next_step" as const, sourceKey: "next_step:s1", order: 0, createdAt: now, updatedAt: now, assignee: "ana" },
+      { id: "custom:1", title: "Notify client", description: "", status: "done" as const, priority: "high" as const, source: "custom" as const, order: 1, createdAt: now, updatedAt: now },
+    ];
+    const res = await pushCaseToIris(m, { caseName: "Case Alpha", state: sampleState(), playbookTasks });
+    expect(res.tasks.added).toBe(2);                              // playbook tasks, not the 1 next step
+    expect(m.addedTasks.map((t) => t.task_title)).toEqual(["[critical] Isolate DC01", "[high] Notify client"]);
+    expect(m.addedTasks[0].task_status_id).toBe(2);              // in_progress → "in progress"
+    expect(m.addedTasks[1].task_status_id).toBe(4);              // done → "done"
+    expect(String(m.addedTasks[0].task_description)).toContain("Assignee: ana");
+  });
+
+  it("dedupes a playbook task derived from a next step against an existing IRIS task (same title)", async () => {
+    const m = new MockIris();
+    const now = "2026-06-10T00:00:00.000Z";
+    m.existingTasks = [{ id: 9, title: "[critical] Isolate DC01" }];
+    const playbookTasks = [
+      { id: "next_step:s1", title: "Isolate DC01", description: "", status: "todo" as const, priority: "critical" as const, source: "next_step" as const, sourceKey: "next_step:s1", order: 0, createdAt: now, updatedAt: now },
+    ];
+    const res = await pushCaseToIris(m, { caseName: "Case Alpha", state: sampleState(), playbookTasks });
+    expect(res.tasks.existing).toBe(1);
+    expect(res.tasks.added).toBe(0);
+  });
 });

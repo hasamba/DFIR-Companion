@@ -4,31 +4,34 @@ function ci(s: string | undefined | null, q: string): boolean {
   return (s || "").toLowerCase().includes(q);
 }
 
-/** Whether a forensic event matches a lower-cased search term. */
+/** Whether a forensic event matches a search term (case-insensitive). */
 export function eventMatchesSearch(event: ForensicEvent, term: string): boolean {
   if (!term) return true;
+  const q = term.toLowerCase();
   return (
-    ci(event.description, term) ||
-    ci(event.asset, term) ||
-    (event.mitreTechniques || []).some(t => ci(t, term)) ||
-    (event.sources || []).some(s => ci(s, term))
+    ci(event.description, q) ||
+    ci(event.asset, q) ||
+    (event.mitreTechniques || []).some(t => ci(t, q)) ||
+    (event.sources || []).some(s => ci(s, q))
   );
 }
 
-/** Whether a finding matches a lower-cased search term. */
+/** Whether a finding matches a search term (case-insensitive). */
 export function findingMatchesSearch(finding: Finding, term: string): boolean {
   if (!term) return true;
+  const q = term.toLowerCase();
   return (
-    ci(finding.title, term) ||
-    ci(finding.description, term) ||
-    (finding.mitreTechniques || []).some(t => ci(t, term))
+    ci(finding.title, q) ||
+    ci(finding.description, q) ||
+    (finding.mitreTechniques || []).some(t => ci(t, q))
   );
 }
 
-/** Whether an IOC matches a lower-cased search term. */
+/** Whether an IOC matches a search term (case-insensitive). */
 export function iocMatchesSearch(ioc: IOC, term: string): boolean {
   if (!term) return true;
-  return ci(ioc.value, term) || ci(ioc.type, term);
+  const q = term.toLowerCase();
+  return ci(ioc.value, q) || ci(ioc.type, q);
 }
 
 /**

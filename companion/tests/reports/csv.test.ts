@@ -23,7 +23,7 @@ describe("CSV renderers", () => {
 
   it("iocsCsv and timelineCsv produce headers even when empty", () => {
     const state = emptyState("c1");
-    expect(iocsCsv(state).trim()).toBe("id,type,value,firstSeen,enrichment");
+    expect(iocsCsv(state).trim()).toBe("id,type,value,firstSeen,sources,sourceCount,enrichment");
     expect(timelineCsv(state).trim()).toBe("timestamp,windowSequence,description,sourceScreenshots");
   });
 

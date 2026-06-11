@@ -65,8 +65,11 @@ import type { ReportWriter } from "./reports/reportWriter.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
-import { TagsStore } from "./analysis/tags.js";
+import { TagsStore, type Tag } from "./analysis/tags.js";
 import { NotebookStore, type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "./analysis/notebookStore.js";
+import { PlaybookStore, type NewPlaybookTask, type PlaybookTaskPatch } from "./analysis/playbookStore.js";
+import { PLAYBOOK_STATUSES, playbookStats, type PlaybookStatus, type PlaybookTask } from "./analysis/playbook.js";
+import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
 import type { AssetType } from "./analysis/assetGraph.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
@@ -74,6 +77,9 @@ import { ImportMetaStore } from "./analysis/importMeta.js";
 import { TemplateStore, buildInitialQuestions, buildInitialNextSteps } from "./analysis/templateStore.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
+import { mergeEnrichedSubset } from "./analysis/iocBulkOps.js";
+import { IocWhitelistStore } from "./analysis/iocWhitelistStore.js";
+import { whitelistMatches, parseWhitelistText, toWhitelistCsv, sanitizeRuleInput } from "./analysis/iocWhitelist.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { CustomerStore, parseList, sanitizeTargets } from "./analysis/customerStore.js";
@@ -96,6 +102,9 @@ import { pushCaseToMisp, type MispPushOptions } from "./integrations/misp/mispPu
 import { NotionClient, parseNotionPageId } from "./integrations/notion/notionClient.js";
 import { pushCaseToNotion, type NotionPushOptions, type NotionPushTarget } from "./integrations/notion/notionPush.js";
 import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
+import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
+import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
+import { pushPlaybookToClickUp } from "./integrations/clickup/clickupPush.js";
 import {
   DeHashedExposureProvider,
   HaveIBeenPwnedExposureProvider,
@@ -156,11 +165,26 @@ export interface AppOptions {
   // clients over the WS to re-fetch when an entry is added, updated, or removed.
   notebookStore?: NotebookStore;
   onNotebook?: (caseId: string) => void;
+  // Per-case playbook (issue #36): a trackable checklist auto-derived from the case's next
+  // steps + high-severity findings (idempotent re-derive preserves analyst progress), plus
+  // custom tasks. Persisted in state/playbook.json; survives synthesis. onPlaybook pings
+  // dashboard clients over the WS to re-fetch when a task changes or a sync runs.
+  playbookStore?: PlaybookStore;
+  onPlaybook?: (caseId: string) => void;
+  // Per-case playbook settings (Phase 2): whether Critical/High findings expand into severity-based
+  // IR templates. Read when deriving auto-tasks; default off (opt-in per case).
+  playbookControlStore?: PlaybookControlStore;
   // Manual edits to the asset ↔ IoC graph (renames, additions, suppressions, link overrides).
   // Persisted per case in state/asset-overrides.json; survives synthesis. onAssetOverrides
   // pings dashboard clients over the WS to re-fetch the graph when overrides change.
   assetOverridesStore?: AssetOverridesStore;
   onAssetOverrides?: (caseId: string) => void;
+  // Confirmed-legitimate markers (false-positive exclusions). onLegitimate pings dashboard
+  // clients over the WS so other investigators see the change immediately, before synthesis.
+  onLegitimate?: (caseId: string) => void;
+  // Investigation time-window changes. onScope pings dashboard clients with the new window so
+  // other investigators can apply the same scope instantly, without waiting for re-synthesis.
+  onScope?: (caseId: string, scope: ScopeWindow) => void;
   // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
   // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
   synthMetaStore?: SynthMetaStore;
@@ -208,6 +232,9 @@ export interface AppOptions {
   artifactBundleStore?: ArtifactBundleStore;
   veloHuntStore?: VeloHuntStore;
   onVeloHunt?: (caseId: string) => void;
+  // IOC whitelist (global, shared across cases): known-good patterns (CIDR ranges, hashes, regexes)
+  // that auto-mark matching IOCs LEGITIMATE on import. Opt-in (the store starts empty).
+  iocWhitelistStore?: IocWhitelistStore;
   // Which hunt-query platforms the dashboard's 🔍 generator offers (DFIR_HUNT_PLATFORMS allowlist).
   // Exposed on /health so the dashboard renders only these cards. Undefined → all platforms.
   huntPlatforms?: HuntPlatform[];
@@ -227,6 +254,13 @@ export interface AppOptions {
   notionClient?: NotionClient;
   notionOptions?: NotionPushOptions;
   notionExportStore?: NotionExportStore;
+  // ClickUp export (issue #36 Phase 3): a configured client (when DFIR_CLICKUP_TOKEN is set) pushes
+  // the Response Playbook as ClickUp tasks. The per-task ClickUp ids are remembered per case in
+  // clickupExportStore so a re-export updates instead of duplicating. Default target list id +
+  // base URL come from clickupOptions.
+  clickupClient?: ClickUpClient;
+  clickupExportStore?: ClickUpExportStore;
+  clickupOptions?: { defaultListId?: string };
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -306,7 +340,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS] });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS] });
   });
 
   // How many captures have been recorded for a case (counts the audit-log lines).
@@ -663,6 +697,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       return res.status(200).json(await options.reportWriter.phases(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Per-IOC corroboration: { iocId: [tools that observed it] }, derived on demand by matching each
+  // IOC value against the forensic events' sources (same scope/legitimate filtering as the report).
+  // Powers the dashboard's "⊕ N sources" badge on IOCs (#35 Phase 3).
+  app.get("/cases/:id/ioc-sources", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.iocSources(req.params.id));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -1077,8 +1123,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const state = await options.stateStore.load(caseId);
       const meta = options.reportMetaStore ? await options.reportMetaStore.load(caseId) : undefined;
+      // Push the analyst-curated playbook (status-aware) when available, else the raw next steps.
+      const playbookTasks = options.playbookStore ? await syncPlaybook(caseId) : undefined;
       logLine(`[iris] ${caseId} push START`);
-      const result = await pushCaseToIris(options.irisClient, { caseName: caseId, state, meta }, options.irisOptions);
+      const result = await pushCaseToIris(
+        options.irisClient,
+        { caseName: caseId, state, meta, playbookTasks: playbookTasks?.length ? playbookTasks : undefined },
+        options.irisOptions,
+      );
       logLine(`[iris] ${caseId} push DONE -> case ${result.caseId} (${result.created ? "created" : "updated"}); ` +
         `assets +${result.assets.added}/${result.assets.existing}, iocs +${result.iocs.added}/${result.iocs.existing}, ` +
         `timeline +${result.timeline.added}/${result.timeline.existing}, tasks +${result.tasks.added}/${result.tasks.existing}, ` +
@@ -1189,6 +1241,55 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[notion] ${caseId} export ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Whether a ClickUp push target is configured (so the dashboard can show/hide the option).
+  app.get("/clickup/status", (_req: Request, res: Response) => {
+    res.status(200).json({
+      configured: !!options.clickupClient,
+      hasDefaultList: !!options.clickupOptions?.defaultListId,
+      defaultListId: options.clickupOptions?.defaultListId ?? "",
+    });
+  });
+
+  // The last ClickUp export pointer (saved list id) so the modal can prefill it.
+  app.get("/cases/:id/clickup-export", async (req: Request, res: Response) => {
+    if (!options.clickupExportStore) return res.status(501).json({ error: "ClickUp not configured" });
+    try {
+      return res.status(200).json(await options.clickupExportStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Push the Response Playbook to a ClickUp list as tasks. Body { listId? } — falls back to the
+  // saved list, then the configured default. Re-export UPDATES the tasks it created (by remembered
+  // id) instead of duplicating.
+  app.post("/cases/:id/push/clickup", async (req: Request, res: Response) => {
+    if (!options.clickupClient) return res.status(501).json({ error: "ClickUp not configured (set DFIR_CLICKUP_TOKEN)" });
+    if (!options.clickupExportStore) return res.status(501).json({ error: "clickup export store not configured" });
+    if (!options.playbookStore || !options.stateStore) return res.status(501).json({ error: "playbook not configured" });
+    const caseId = req.params.id;
+    try {
+      const saved = await options.clickupExportStore.load(caseId);
+      const requested = typeof req.body?.listId === "string" ? req.body.listId.trim() : "";
+      const listId = requested || saved.listId || options.clickupOptions?.defaultListId || "";
+      if (!listId) return res.status(400).json({ error: "a ClickUp list id is required" });
+      const tasks = await syncPlaybook(caseId);
+      if (!tasks.length) return res.status(400).json({ error: "the playbook is empty — run synthesis or add tasks first" });
+      logLine(`[clickup] ${caseId} push START -> list ${listId} (${tasks.length} tasks)`);
+      const result = await pushPlaybookToClickUp(
+        options.clickupClient,
+        { caseId, listId, tasks },
+        options.clickupExportStore,
+        new Date().toISOString(),
+      );
+      logLine(`[clickup] ${caseId} push DONE: +${result.created} created, ${result.updated} updated, ${result.skipped} skipped, warnings ${result.warnings.length}`);
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[clickup] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
     }
   });
@@ -1535,6 +1636,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const markers = await legitimate.load(req.params.id);
       const next = [...markers.filter((m) => m.id !== marker.id), marker];
       await legitimate.save(req.params.id, next);
+      options.onLegitimate?.(req.params.id);
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it
       return res.status(200).json(next);
     } catch (err) {
@@ -1562,6 +1664,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       for (const m of built) byId.set(m.id, m);
       const next = [...byId.values()];
       await legitimate.save(req.params.id, next);
+      options.onLegitimate?.(req.params.id);
       resynthesizeInBackground(req.params.id); // ONE re-synthesis for the whole batch
       return res.status(200).json(next);
     } catch (err) {
@@ -1620,8 +1723,197 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const markers = await legitimate.load(req.params.id);
       const next = markers.filter((m) => m.id !== id);
       await legitimate.save(req.params.id, next);
+      options.onLegitimate?.(req.params.id);
       resynthesizeInBackground(req.params.id);
       return res.status(200).json(next);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Enrich a specific subset of the case's IOCs — identified by ID — without touching the
+  // rest. Runs enrichIocs on the selected subset, then merges the results back. This is the
+  // backend for the dashboard bulk-select "Enrich selected" action. Runs in the background
+  // (202 accepted) so the caller isn't blocked on N provider round-trips.
+  // Body: { iocIds: string[], force?: boolean }
+  app.post("/cases/:id/iocs/bulk-enrich", async (req: Request, res: Response) => {
+    const providers = options.enrichmentProviders ?? [];
+    if (providers.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    const rawIds = Array.isArray(req.body?.iocIds) ? req.body.iocIds : [];
+    const iocIds = (rawIds as unknown[]).map(String).filter(Boolean);
+    if (!iocIds.length) return res.status(400).json({ error: "iocIds must be a non-empty array" });
+    const force = req.body?.force === true;
+    try {
+      const state = await options.stateStore.load(caseId);
+      const targetSet = new Set<string>(iocIds);
+      const subset = state.iocs.filter((i) => targetSet.has(i.id));
+      if (subset.length === 0) return res.status(404).json({ error: "none of the specified IOC IDs were found in this case" });
+      const enabledProviders = await enabledProvidersFor(caseId);
+      if (enabledProviders.length === 0) return res.status(422).json({ error: "no enrichment providers enabled for this case — enable providers in the enrichment panel first" });
+      void (async () => {
+        options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `enriching ${subset.length} selected IOC(s)` });
+        const { iocs: enrichedSubset, summary } = await enrichIocs(subset, {
+          providers: enabledProviders,
+          delayMs: options.enrichDelayMs,
+          perProviderDelayMs: options.enrichProviderDelayMs,
+          maxIocs: options.enrichMaxIocs,
+          force,
+          health: enrichHealth,
+          onProgress: (done, total) => options.onAiStatus?.(caseId, {
+            status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+            detail: `enriching selected IOC ${done}/${total}`,
+          }),
+        });
+        const current = await options.stateStore!.load(caseId);
+        const merged = mergeEnrichedSubset(current.iocs, enrichedSubset);
+        const next = { ...current, iocs: merged, updatedAt: new Date().toISOString() };
+        await options.stateStore!.save(next);
+        options.onState?.(next);
+        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} selected IOC(s) (errors ${summary.errors})` });
+        logLine(`[enrich] ${caseId} bulk ids=${iocIds.length} queried=${summary.queried} hits=${summary.withHits} errors=${summary.errors}`);
+      })().catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return res.status(202).json({ accepted: true, iocCount: subset.length, providers: enabledProviders.map((p) => p.name) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Add a triage label to many IOCs in one request. Serializes the TagsStore writes so
+  // concurrent requests don't clobber each other's read-modify-write on tags.json.
+  // Body: { iocIds: string[], label: string, author?: string }
+  app.post("/cases/:id/iocs/bulk-tag", async (req: Request, res: Response) => {
+    if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
+    const rawIds = Array.isArray(req.body?.iocIds) ? req.body.iocIds : [];
+    const iocIds = (rawIds as unknown[]).map(String).filter(Boolean);
+    const label = typeof req.body?.label === "string" ? req.body.label.trim() : "";
+    const author = typeof req.body?.author === "string" ? req.body.author.trim() : "";
+    if (!iocIds.length) return res.status(400).json({ error: "iocIds must be a non-empty array" });
+    if (!label) return res.status(400).json({ error: "label is required" });
+    const caseId = req.params.id;
+    try {
+      const tags: Tag[] = [];
+      for (const id of iocIds) {
+        tags.push(await options.tagsStore.add(caseId, { targetType: "ioc", targetId: id, label, author }));
+      }
+      options.onTags?.(caseId);
+      return res.status(200).json(tags);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── IOC whitelist (Phase 2 of #35) ─────────────────────────────────────────────────────────
+  // A GLOBAL, environment-level set of "known-good" patterns the analyst maintains (internal IP
+  // ranges as CIDR, known-good hashes, regexes for internal domains). An IOC matching a rule is
+  // auto-marked LEGITIMATE — reusing the legitimate machinery, so it's reversible and shows in the
+  // "Confirmed Legitimate" panel. Auto-applied on import; also on demand per case.
+
+  // Apply the whitelist to a case's current IOCs: add a legitimate marker for each match that isn't
+  // already marked. Pure read-modify-write on legitimate.json (no re-synthesis here — the caller
+  // decides). Returns how many IOCs matched and how many NEW markers were added.
+  async function applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }> {
+    if (!options.iocWhitelistStore || !options.stateStore) return { matched: 0, added: 0 };
+    const rules = await options.iocWhitelistStore.load();
+    if (rules.length === 0) return { matched: 0, added: 0 };
+    const state = await options.stateStore.load(caseId);
+    const matches = whitelistMatches(state.iocs, rules);
+    if (matches.length === 0) return { matched: 0, added: 0 };
+    const markers = await legitimate.load(caseId);
+    const byId = new Map<string, LegitimateMarker>(markers.map((m) => [m.id, m]));
+    let added = 0;
+    for (const { ioc, rule } of matches) {
+      const id = markerId("ioc", ioc.value);
+      if (byId.has(id)) continue;
+      byId.set(id, {
+        id, kind: "ioc", ref: ioc.value,
+        note: `auto-whitelist: ${rule.match} ${rule.pattern}${rule.note ? ` — ${rule.note}` : ""}`,
+        markedAt: new Date().toISOString(), label: ioc.value,
+      });
+      added++;
+    }
+    if (added > 0) await legitimate.save(caseId, [...byId.values()]);
+    return { matched: matches.length, added };
+  }
+
+  app.get("/ioc-whitelist", async (_req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(200).json([]);
+    try {
+      return res.status(200).json(await options.iocWhitelistStore.load());
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Add one rule. Body: { match: "cidr"|"regex"|"exact", pattern, iocType?, note? }
+  app.post("/ioc-whitelist", async (req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
+    const input = sanitizeRuleInput(req.body ?? {});
+    if (!input) return res.status(400).json({ error: "invalid rule — need match (cidr|regex|exact) and a valid pattern (valid CIDR for cidr, valid regex for regex)" });
+    try {
+      const rule = await options.iocWhitelistStore.add(input);
+      return res.status(201).json(rule);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/ioc-whitelist/:ruleId", async (req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
+    try {
+      const removed = await options.iocWhitelistStore.remove(req.params.ruleId);
+      if (!removed) return res.status(404).json({ error: "rule not found" });
+      return res.status(200).json({ removed: true });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import rules from pasted CSV or JSON. Body: { text }. Returns { added, total }.
+  app.post("/ioc-whitelist/import", async (req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
+    const text = typeof req.body?.text === "string" ? req.body.text : "";
+    if (!text.trim()) return res.status(400).json({ error: "text is required (CSV or JSON)" });
+    try {
+      const parsed = parseWhitelistText(text);
+      if (parsed.length === 0) return res.status(400).json({ error: "no valid rules found — expected JSON array or CSV with a 'pattern' column" });
+      const added = await options.iocWhitelistStore.addMany(parsed);
+      return res.status(200).json({ added: added.length, parsed: parsed.length, total: (await options.iocWhitelistStore.load()).length });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Export the whitelist as CSV or JSON (?format=csv|json, default json) for backup / sharing.
+  app.get("/ioc-whitelist/export", async (req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
+    try {
+      const rules = await options.iocWhitelistStore.load();
+      if (String(req.query.format) === "csv") {
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", 'attachment; filename="ioc-whitelist.csv"');
+        return res.status(200).send(toWhitelistCsv(rules));
+      }
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", 'attachment; filename="ioc-whitelist.json"');
+      return res.status(200).send(JSON.stringify(rules, null, 2));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Apply the whitelist to THIS case's current IOCs now (the analyst just added rules, or wants to
+  // sweep an already-imported case). Marks matches legitimate, then re-synthesizes so they drop.
+  app.post("/cases/:id/ioc-whitelist/apply", async (req: Request, res: Response) => {
+    if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const result = await applyWhitelistToCase(caseId);
+      if (result.added > 0) resynthesizeInBackground(caseId);
+      logLine(`[whitelist] ${caseId} apply — matched ${result.matched}, added ${result.added}`);
+      return res.status(200).json({ ...result, legitimate: await legitimate.load(caseId) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -1649,6 +1941,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       };
       const scope: ScopeWindow = { start: norm(req.body?.start), end: norm(req.body?.end) };
       await scopeStore.save(req.params.id, scope);
+      options.onScope?.(req.params.id, scope);
       resynthesizeInBackground(req.params.id); // re-derive within the window
       return res.status(200).json(scope);
     } catch (err) {
@@ -1743,6 +2036,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
               options.onImportMeta?.(caseId);
             } catch { /* non-fatal */ }
           }
+          // Phase 2 (#35): auto-mark IOCs that match the global whitelist as legitimate BEFORE
+          // re-synthesis, so known-good indicators drop out of the analysis. Best-effort.
+          try {
+            const wl = await applyWhitelistToCase(caseId);
+            if (wl.added > 0) logLine(`[whitelist] ${caseId} auto-marked ${wl.added} imported IOC(s) legitimate`);
+          } catch { /* non-fatal */ }
           resynthesizeInBackground(caseId);
         })
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
@@ -2649,6 +2948,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       // Explicit user action → force, so it always runs even if inputs are unchanged.
       const state = await options.pipeline.synthesize(caseId, { force: true });
+      // Keep the playbook checklist aligned with the fresh next steps/findings (idempotent —
+      // preserves analyst status/edits). Best-effort: never fail synthesis on a playbook hiccup.
+      if (options.playbookStore) {
+        try {
+          const { useTemplates } = await loadPlaybookControl(caseId);
+          await options.playbookStore.sync(caseId, state, { useTemplates });
+          options.onPlaybook?.(caseId);
+        } catch { /* non-fatal */ }
+      }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       return res.status(200).json({
         findings: state.findings.length,
@@ -2850,6 +3158,140 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Per-case playbook (issue #36): a trackable checklist auto-derived from the case's next
+  // steps + Critical/High findings, plus analyst-added custom tasks. The list is re-derived
+  // idempotently on every GET (write-if-changed) so it tracks the latest synthesis without
+  // ever clobbering analyst status/edits. POST adds a custom task; POST /sync forces a
+  // re-derive; PATCH /order reorders; PATCH /:taskId edits; DELETE /:taskId removes.
+  // GET/PUT …/control toggles severity-based IR templates (Phase 2). The response carries
+  // computed completion stats for the dashboard badge.
+  const loadPlaybookControl = async (caseId: string): Promise<PlaybookControl> =>
+    options.playbookControlStore ? options.playbookControlStore.load(caseId) : { ...DEFAULT_PLAYBOOK_CONTROL };
+
+  // Re-derive against current state honoring the case's template setting (no-op-safe write).
+  const syncPlaybook = async (caseId: string): Promise<PlaybookTask[]> => {
+    if (!options.playbookStore || !options.stateStore) return options.playbookStore ? options.playbookStore.load(caseId) : [];
+    const state = await options.stateStore.load(caseId);
+    const { useTemplates } = await loadPlaybookControl(caseId);
+    return options.playbookStore.sync(caseId, state, { useTemplates });
+  };
+
+  app.get("/cases/:id/playbook/control", async (req: Request, res: Response) => {
+    if (!options.playbookControlStore) return res.status(200).json({ ...DEFAULT_PLAYBOOK_CONTROL });
+    try {
+      return res.status(200).json(await options.playbookControlStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.put("/cases/:id/playbook/control", async (req: Request, res: Response) => {
+    if (!options.playbookControlStore) return res.status(501).json({ error: "playbook control not configured" });
+    if (typeof req.body?.useTemplates !== "boolean") return res.status(400).json({ error: "useTemplates (boolean) is required" });
+    try {
+      const control = await options.playbookControlStore.set(req.params.id, { useTemplates: req.body.useTemplates });
+      const tasks = await syncPlaybook(req.params.id);   // re-derive immediately under the new mode
+      options.onPlaybook?.(req.params.id);
+      return res.status(200).json({ control, tasks, stats: playbookStats(tasks) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/cases/:id/playbook", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    try {
+      // Auto-sync against current state so the panel reflects the latest next steps/findings.
+      const tasks = options.stateStore ? await syncPlaybook(req.params.id) : await options.playbookStore.load(req.params.id);
+      return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Force a re-derive from the current case state (the "Sync from analysis" button).
+  app.post("/cases/:id/playbook/sync", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    try {
+      const tasks = await syncPlaybook(req.params.id);
+      options.onPlaybook?.(req.params.id);
+      return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Reorder tasks by a supplied id sequence. Registered BEFORE /:taskId so "order" is not
+  // captured as a task id.
+  app.patch("/cases/:id/playbook/order", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : null;
+    if (!ids) return res.status(400).json({ error: "ids array is required" });
+    try {
+      const tasks = await options.playbookStore.reorder(req.params.id, ids);
+      options.onPlaybook?.(req.params.id);
+      return res.status(200).json({ tasks, stats: playbookStats(tasks) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/playbook", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+    if (!title) return res.status(400).json({ error: "title is required" });
+    const input: NewPlaybookTask = {
+      title,
+      description: typeof req.body?.description === "string" ? req.body.description : undefined,
+      status: PLAYBOOK_STATUSES.includes(req.body?.status as PlaybookStatus) ? (req.body.status as PlaybookStatus) : undefined,
+      priority: typeof req.body?.priority === "string" ? req.body.priority : undefined,
+      assignee: typeof req.body?.assignee === "string" ? req.body.assignee : undefined,
+      dueDate: typeof req.body?.dueDate === "string" ? req.body.dueDate : undefined,
+      notes: typeof req.body?.notes === "string" ? req.body.notes : undefined,
+      relatedFindingId: typeof req.body?.relatedFindingId === "string" ? req.body.relatedFindingId : undefined,
+    };
+    try {
+      const task = await options.playbookStore.add(req.params.id, input);
+      options.onPlaybook?.(req.params.id);
+      return res.status(201).json(task);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/cases/:id/playbook/:taskId", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    const patch: PlaybookTaskPatch = {};
+    if (typeof req.body?.title === "string") patch.title = req.body.title;
+    if (typeof req.body?.description === "string") patch.description = req.body.description;
+    if (typeof req.body?.status === "string") patch.status = req.body.status as PlaybookStatus;
+    if (typeof req.body?.priority === "string") patch.priority = req.body.priority;
+    if (typeof req.body?.assignee === "string") patch.assignee = req.body.assignee;
+    if (typeof req.body?.dueDate === "string") patch.dueDate = req.body.dueDate;
+    if (typeof req.body?.notes === "string") patch.notes = req.body.notes;
+    try {
+      const updated = await options.playbookStore.update(req.params.id, req.params.taskId, patch);
+      if (!updated) return res.status(404).json({ error: "playbook task not found" });
+      options.onPlaybook?.(req.params.id);
+      return res.status(200).json(updated);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/cases/:id/playbook/:taskId", async (req: Request, res: Response) => {
+    if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
+    try {
+      const removed = await options.playbookStore.remove(req.params.id, req.params.taskId);
+      if (!removed) return res.status(404).json({ error: "playbook task not found" });
+      options.onPlaybook?.(req.params.id);
+      return res.status(204).end();
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Per-case analyst notebook (hypotheses, notes, open questions). GET lists all entries;
   // POST adds one; PATCH updates text/type/linkedEntityIds; DELETE removes by id.
   // Entries survive synthesis (side file, not InvestigationState). The AI synthesis pass
@@ -2886,6 +3328,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const entry = await options.notebookStore.add(req.params.id, {
         text,
         type,
+        author: typeof req.body?.author === "string" ? req.body.author : undefined,
         linkedEntityIds: Array.isArray(req.body?.linkedEntityIds) ? req.body.linkedEntityIds.map(String) : undefined,
       });
       options.onNotebook?.(req.params.id);
@@ -3119,7 +3562,7 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
 // self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
 // DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
-function tlsFetchFor(name: "MISP" | "YETI" | "IRIS" | "TIMESKETCH" | "NOTION") {
+function tlsFetchFor(name: "MISP" | "YETI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP") {
   return buildTlsFetch({
     caCertPath: process.env[`DFIR_${name}_CA`],
     insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
@@ -3202,6 +3645,19 @@ export function notionPushOptions(): NotionPushOptions {
     containerTitle: process.env.DFIR_NOTION_CONTAINER_TITLE || undefined,
     maxTimelineRows: Number(process.env.DFIR_NOTION_MAX_TIMELINE) || undefined,
   };
+}
+
+// Build the ClickUp client from env (DFIR_CLICKUP_TOKEN). Returns undefined when not configured,
+// which hides the dashboard's "Push to ClickUp" option. An optional DFIR_CLICKUP_LIST_ID is the
+// default target list (the analyst can still override it per push).
+export function buildClickUpClient(): ClickUpClient | undefined {
+  const token = process.env.DFIR_CLICKUP_TOKEN;
+  if (!token) return undefined;
+  return new ClickUpClient({ token, fetchFn: tlsFetchFor("CLICKUP") });
+}
+
+export function clickupOptions(): { defaultListId?: string } {
+  return { defaultListId: process.env.DFIR_CLICKUP_LIST_ID || undefined };
 }
 
 export function buildEnrichmentProviders(): EnrichmentProvider[] {
@@ -3305,17 +3761,24 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
   const stateStore = new StateStoreImpl(store);
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
+  // A dedicated subdir (mirrors bundles/templates) rather than a loose file beside cases/, because
+  // when DFIR_CASES_ROOT is a drive root child (e.g. C:\cases) the sibling is C:\ — and Windows
+  // forbids creating files directly in a drive root. A subdir is always creatable + writable.
+  const iocWhitelistStore = new IocWhitelistStore(join(dirname(casesRoot), "whitelist", "ioc-whitelist.json"));
   const veloHuntStore = new VeloHuntStore(store);
   const hub = new LiveHub();
   const reportMetaStore = new ReportMetaStore(store);
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
   const notebookStore = new NotebookStore(store);
+  const playbookStore = new PlaybookStore(store);
+  const playbookControlStore = new PlaybookControlStore(store);
   const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
   const importMetaStore = new ImportMetaStore(store);
   const notionExportStore = new NotionExportStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore);
+  const clickupExportStore = new ClickUpExportStore(store);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore);
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
@@ -3345,8 +3808,13 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
     notebookStore,
     onNotebook: (caseId) => hub.broadcastTo(caseId, { type: "notebook_changed" }),
+    playbookStore,
+    playbookControlStore,
+    onPlaybook: (caseId) => hub.broadcastTo(caseId, { type: "playbook_changed" }),
     assetOverridesStore,
     onAssetOverrides: (caseId) => hub.broadcastTo(caseId, { type: "asset_overrides_changed" }),
+    onLegitimate: (caseId) => hub.broadcastTo(caseId, { type: "legitimate_changed" }),
+    onScope: (caseId, scope) => hub.broadcastTo(caseId, { type: "scope_changed", ...scope }),
     synthMetaStore,
     importMetaStore,
     onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
@@ -3368,6 +3836,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     irisClient: buildIrisClient(),
     velociraptorClient: buildVelociraptorClient(),
     artifactBundleStore,
+    iocWhitelistStore,
     veloHuntStore,
     onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),
     // Trim the dashboard's hunt-query modal to the tools this team runs (default: all).
@@ -3381,6 +3850,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     notionClient: buildNotionClient(),
     notionOptions: notionPushOptions(),
     notionExportStore,
+    clickupClient: buildClickUpClient(),
+    clickupExportStore,
+    clickupOptions: clickupOptions(),
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
