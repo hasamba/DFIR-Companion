@@ -12,7 +12,11 @@
     /* The action controls live in their own wrapping flex container so the settings gear
        (a sibling of it) is always pinned to the top-right of the first line, no matter how
        many times the buttons wrap. The gear takes itself out of the buttons' wrap flow. */
-    .toolbar-main { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+    /* flex-basis:0 (not auto) so the gear's line-break is decided against a zero base size,
+       not toolbar-main's huge max-content — otherwise the gear gets bumped to its own line on
+       narrow screens. toolbar-main then grows to fill the row and its content wraps internally,
+       while the gear stays pinned beside it at the top-right. */
+    .toolbar-main { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
     /* Scope/time controls are always their own row beneath the actions (a top-border divider),
        so the actions row + gear stay together up top. */
     .scope-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: #9aa4b2;
@@ -333,6 +337,17 @@
     .toolbar-main.icons-only button::before { margin-right: 0; }
     .toolbar-main.icons-only #exportSelect, .toolbar-main.icons-only #pushSelect {
       color: transparent; width: 52px; padding-left: 26px; padding-right: 22px; }
+    /* The capture count carries a camera icon (always shown). When space is tight the word
+       "Screenshots:" drops and only the camera + number remain, and the AI-status message is
+       hidden entirely — the two longest status strings, freeing the row to stay on one line. */
+    #captureCount::before { content: ""; display: inline-block; width: 14px; height: 14px;
+      vertical-align: -2px; margin-right: 5px; background: no-repeat center / contain;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z'/><circle cx='12' cy='13' r='4'/></svg>"); }
+    .toolbar-main.icons-only #aiStatus { display: none; }
+    .toolbar-main.icons-only .cc-label { display: none; }
+    .toolbar-main.icons-only #status { margin-left: auto; }  /* re-anchor right alignment (the hidden #aiStatus carried it) */
+    .toolbar-main.icons-only { gap: 8px 7px; }               /* tighter column gap suits an icon row and buys ~55px to stay on one line */
+    .toolbar-main.icons-only #caseId { width: 140px; }       /* narrow the case box when tight (the name still scrolls inside it) */
     /* Custom tooltip — uniform styling for [data-tip] controls. Native `title` tooltips can't be
        CSS-styled (their first line rendered brighter than the rest); this gives one flat color. */
     .tip { position: fixed; z-index: 1000; max-width: 360px; background: #0b0e13; color: #cbd3df;
@@ -455,7 +470,7 @@
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
-    <span id="captureCount" style="font-weight:bold;">Screenshots: 0</span>
+    <span id="captureCount" style="font-weight:bold;"><span class="cc-label">Screenshots:</span> <span id="captureCountNum">0</span></span>
     </div>
     <button id="settingsBtn" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.07 7.07 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 3h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 9.47a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41H14c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.09-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
     <div class="scope-group">
@@ -3806,7 +3821,7 @@
       countUpdate = () =>
         fetch(`/cases/${caseId}/captures/count`)
           .then(r => r.json())
-          .then(d => document.getElementById("captureCount").textContent = `Screenshots: ${d.count}`)
+          .then(d => document.getElementById("captureCountNum").textContent = d.count)
           .catch(() => {});
       countUpdate();
       startCount();
