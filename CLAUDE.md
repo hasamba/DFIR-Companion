@@ -118,8 +118,17 @@ with their own severity + MITRE, dropped/extracted hashes + network host/domain/
 (or the CSV `threat_level`)→severity + reason-keyword bump, `scoreDescription`→description, reason→MITRE,
 process-chain/path/host/args carried through; the export is mostly MFT telemetry so it **splits the feed** —
 unscored Process+Task→Info evidence, unscored File super-timeline **dropped by default** (`fileTelemetry` opts in),
-Active-Connection remote IP→IOC; reuses `csvImport`'s `parseCsv` + `siemImport`'s `extractRecords`/`aggregateEvents`).
-The last thirteen
+Active-Connection remote IP→IOC; reuses `csvImport`'s `parseCsv` + `siemImport`'s `extractRecords`/`aggregateEvents`),
+and **email artifacts** (`importEmail` → `emailImport.ts` — `.eml` (RFC 2822/MIME) + best-effort `.msg` (Outlook OLE);
+the #1 initial-access vector. ONE event at the message's own `Date:` header; severity DERIVED from the email's own
+verdict — SPF/DKIM/DMARC **fail**→High, suspicious sender (From vs different-org Reply-To/Return-Path, or a
+display-name spoofing another domain)→Medium, clean→Info; URLs (links + defanged `hxxp` re-fanged) / sender+reply-to
+domains / originating IP (`X-Originating-IP` or earliest external `Received` hop) / attachment names+hashes → IOCs;
+MITRE T1566 (+`.001` attachment, +`.002` link). The dependency-free `parseMimeEmail` hand-rolls MIME (header
+unfolding, RFC 2047 encoded-words, multipart walk, base64/quoted-printable bodies) — no `mailparser`. `.msg` is
+BEST-EFFORT: the import pipeline is text-only, so the binary OLE container is scraped for its embedded RFC 822
+transport-headers stream + URLs (export `.eml` for full fidelity); reuses `siemImport`'s `addIoc`/`cleanIp`).
+The last fourteen
 are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.

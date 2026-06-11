@@ -108,6 +108,40 @@ describe("detectImportKind — CSV formats", () => {
   });
 });
 
+describe("detectImportKind — email", () => {
+  const eml = [
+    "Return-Path: <attacker@evil.example>",
+    "Received: from mx.evil.example (mx.evil.example [203.0.113.7]) by mail.victim.com",
+    "Authentication-Results: mail.victim.com; spf=fail; dkim=fail; dmarc=fail",
+    "From: \"IT Support\" <attacker@evil.example>",
+    "To: victim@victim.com",
+    "Subject: Urgent: reset your password",
+    "Date: Tue, 01 Dec 2017 08:00:00 +0000",
+    "Message-ID: <abc@evil.example>",
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain",
+    "",
+    "Click http://evil.example/login now.",
+  ].join("\n");
+
+  it("email: .eml RFC 822 header block", () => {
+    expect(detectImportKind("phish.eml", eml)).toBe("email");
+  });
+  it("email: filename hint isn't required — content alone suffices", () => {
+    expect(detectImportKind("message.txt", eml)).toBe("email");
+  });
+  it("email: .msg via OLE MAPI stream markers in mangled text", () => {
+    const msg = "���__substg1.0_007D001F\x00F\x00r\x00o\x00m\x00:\x00 \x00a@b.com";
+    expect(detectImportKind("evidence.msg", msg)).toBe("email");
+  });
+  it("email: .msg filename alone routes (binary body sniffs as nothing else)", () => {
+    expect(detectImportKind("outlook.msg", "garbled binary payload with no markers")).toBe("email");
+  });
+  it("not email: a syslog with no email-only header stays 'log'", () => {
+    expect(detectImportKind("auth.log", "From: someone\nNote: this is not an email\nrandom line")).toBe("log");
+  });
+});
+
 describe("detectImportKind — logs & edges", () => {
   it("log: a line-oriented syslog file", () => {
     expect(detectImportKind("auth.log", "Jan  1 00:00:01 host sshd[1]: Failed password for root\nJan  1 00:00:02 host sshd[1]: Failed password for admin")).toBe("log");
