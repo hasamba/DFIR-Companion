@@ -3926,6 +3926,29 @@
       phasesTimer = setTimeout(() => loadPhases(caseId), 800);
     }
 
+    // Per-IOC corroboration (#35 Phase 3): { iocId: [tools that observed it] }, derived server-side
+    // from the forensic events' sources. Powers the "⊕ N sources" badge in the IOC panel.
+    let iocSourcesById = {};
+    let iocSourcesTimer = null;
+    function loadIocSources(caseId) {
+      fetch(`/cases/${caseId}/ioc-sources`).then(r => r.json()).then(m => {
+        iocSourcesById = (m && typeof m === "object") ? m : {};
+        if (lastState) renderIocs((projectScope(lastState).iocs) || []);
+      }).catch(() => {});
+    }
+    function scheduleIocSourcesReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(iocSourcesTimer);
+      iocSourcesTimer = setTimeout(() => loadIocSources(caseId), 800);
+    }
+    // "⊕ N" corroboration badge for an IOC seen by 2+ tools (mirrors the forensic-timeline badge).
+    function iocCorroBadge(iocId) {
+      const src = iocSourcesById[iocId];
+      if (!src || src.length < 2) return "";
+      return ` <span title="Corroborated by ${src.length} sources: ${escAttr(src.join(", "))}" style="background:#13331f;color:#6bcB77;border:1px solid #1f5a35;border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">⊕ ${esc(src.length)}</span>`;
+    }
+
     function renderPhases() {
       const el = document.getElementById("phases");
       if (!el) return;
@@ -4235,7 +4258,7 @@
           // Mirror the forensic timeline: control cluster (comment + tag-add + hunt icons),
           // then the id, then the tag PILLS, then the indicator itself.
           +   `${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
-          +   `<span style="color:#6aa9ff">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}`
+          +   `<span style="color:#6aa9ff">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:#9aa4b2">${esc(i.type)}:</span> ${esc(i.value)}${iocCorroBadge(i.id)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}`
           + `</span>`
           + `</div>`;
       }).join("");
@@ -4443,6 +4466,7 @@
       loadAssetOverrides(caseId);
       loadEvidenceGraph(caseId);
       loadPhases(caseId);
+      loadIocSources(caseId);
       loadComments(caseId);
       loadTags(caseId);
       loadNotebook(caseId);
@@ -4476,7 +4500,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);

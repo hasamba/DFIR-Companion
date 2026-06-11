@@ -696,6 +696,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Per-IOC corroboration: { iocId: [tools that observed it] }, derived on demand by matching each
+  // IOC value against the forensic events' sources (same scope/legitimate filtering as the report).
+  // Powers the dashboard's "⊕ N sources" badge on IOCs (#35 Phase 3).
+  app.get("/cases/:id/ioc-sources", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.iocSources(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export just the incident (forensic) timeline as CSV, generated on demand from the
   // current state (same scope/legitimate filtering as the report) — no full report needed.
   app.get("/cases/:id/incident-timeline.csv", async (req: Request, res: Response) => {

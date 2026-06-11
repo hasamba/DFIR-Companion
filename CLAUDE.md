@@ -163,7 +163,12 @@ double), shared hash, or same path within a time window. The merged event unions
 the time gap between consecutive events (`DFIR_PHASE_GAP_S`, default 5 min), each labelled with its
 dominant ATT&CK tactic (reuses `tacticForTechniques`) — the *when* axis, complementary to the categorical
 kill chain. Like the graphs, it's **derived on read** (not persisted to state): `ReportWriter.phases` →
-`GET /cases/:id/phases`, dashboard *Attack Phases* panel + report §3.2. Side files in `state/`:
+`GET /cases/:id/phases`, dashboard *Attack Phases* panel + report §3.2. **IOC corroboration**
+(`analysis/iocCorroboration.ts`, pure) is the same shape: IOCs carry no `sources` field, so per-IOC
+corroboration (which tools observed each indicator) is **derived on read** by matching the IOC value
+against the events' `sources` (indexed exact-token match — boundary-aware so `10.0.0.1` ≠ `10.0.0.10`).
+`ReportWriter.iocSources` → `GET /cases/:id/ioc-sources`, the dashboard's *⊕ N sources* IOC badge +
+the report/CSV IOC `sources` column. Side files in `state/`:
 `ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (per-source enrichment
 selection — the enabled provider names; **default = local-only** (MISP/YETI), external opt-in),
 `pending_analysis.json`, `report-meta.json` (human-authored report
