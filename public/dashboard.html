@@ -1398,10 +1398,13 @@
       #sec-adversary .adv-name:hover{text-decoration:underline}
       #sec-adversary .adv-aliases{color:#9aa4b2;font-size:11px}
       #sec-adversary .adv-score{margin-left:auto;background:#2a2233;color:#c79bff;border:1px solid #4a3a5a;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
+      #sec-adversary .adv-exact{background:#13331f;color:#6bcb77;border:1px solid #1f5a35;border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
       #sec-adversary .adv-desc{color:#c9d1db;font-size:12px;margin:6px 0}
       #sec-adversary .adv-techs{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
       #sec-adversary .adv-tech{background:#0f1620;color:#6aa9ff;border:1px solid #1f2a3a;border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
       #sec-adversary .adv-tech:hover{text-decoration:underline}
+      #sec-adversary .adv-tech-exact{background:#13243a;color:#9ecbff;border-color:#3a567d;font-weight:bold}
+      #sec-adversary .adv-tech-base{opacity:0.6}
     </style>
     <section id="sec-legitimate" style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
     <style>
@@ -4350,20 +4353,24 @@
         el.innerHTML = caveat + `<div class="adv-empty">No group reaches the ${esc(d.minOverlap)}-technique overlap threshold across the case's ${esc(d.caseTechniqueCount)} identified technique(s).</div>`;
         return;
       }
-      const meta = `<div class="adv-meta">Top ${esc(d.hints.length)} of ${esc(d.groupCount)} groups · scored over ${esc(d.caseTechniqueCount)} case technique(s) · MITRE ATT&CK v${esc(d.attackVersion)}</div>`;
+      const meta = `<div class="adv-meta">Top ${esc(d.hints.length)} of ${esc(d.groupCount)} groups · scored over ${esc(d.caseTechniqueCount)} case technique(s) · MITRE ATT&CK v${esc(d.attackVersion)} · <strong>bold</strong> = exact sub-technique match (stronger), dim = base-technique match</div>`;
       const cards = d.hints.map(h => {
         const aliases = (h.aliases && h.aliases.length) ? `<span class="adv-aliases">aka ${esc(h.aliases.join(", "))}</span>` : "";
         const ratio = `${esc(h.overlapCount)} / ${esc(h.groupTechniqueCount)}`;
+        const exactSet = new Set(h.exactTechniques || []);
+        const exactBadge = h.exactCount ? `<span class="adv-exact" title="${esc(h.exactCount)} exact sub-technique match(es) — the strong signal">${esc(h.exactCount)} exact</span>` : "";
         const techs = (h.overlapTechniques || []).map(t => {
           const u = attackUrl(t);
-          return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="adv-tech">${esc(t)}</a>` : `<span class="adv-tech">${esc(t)}</span>`;
+          const cls = exactSet.has(t) ? "adv-tech adv-tech-exact" : "adv-tech adv-tech-base";
+          return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="${cls}">${esc(t)}</a>` : `<span class="${cls}">${esc(t)}</span>`;
         }).join("");
         const desc = h.description ? `<div class="adv-desc">${esc(h.description)}</div>` : "";
         return `<div class="adv-card">` +
           `<div class="adv-card-head">` +
             `<a href="${escAttr(h.url)}" target="_blank" rel="noopener" class="adv-name">${esc(h.id)} ${esc(h.name)}</a>` +
             aliases +
-            `<span class="adv-score" title="${esc(h.overlapCount)} of the case's techniques are attributed to this group, of ${esc(h.groupTechniqueCount)} it is known to use">⊕ ${ratio}</span>` +
+            `<span class="adv-score" title="${esc(h.overlapCount)} of the case's techniques overlap this group (${esc(h.exactCount)} exact sub-technique), of ${esc(h.groupTechniqueCount)} it is known to use">⊕ ${ratio}</span>` +
+            exactBadge +
           `</div>` +
           desc +
           `<div class="adv-techs">${techs}</div>` +

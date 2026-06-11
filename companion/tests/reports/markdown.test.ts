@@ -42,7 +42,8 @@ describe("renderMarkdownReport", () => {
     const md = renderMarkdownReport(state);
     expect(md).toContain("#### 4.6.1 Adversary group hints");
     expect(md).toContain("not attribution");
-    expect(md).toContain("| Group | Aliases | Overlap | Overlapping techniques |");
+    expect(md).toContain("| Group | Aliases | Overlap (exact) | Overlapping techniques |");
+    expect(md).toContain("exact sub-technique match"); // the legend explaining bold
     expect(md).toMatch(/https:\/\/attack\.mitre\.org\/groups\/G\d{4}\//);
   });
 
