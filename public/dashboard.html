@@ -535,7 +535,7 @@
     </select>
     <span id="reportLinks" class="report-links"></span>
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
-    <button id="toggleSearchBar" type="button" aria-label="Search &amp; filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Search &amp; filter events, findings and IOCs by text and time range (press /)">Search</button>
+    <button id="toggleSearchBar" type="button" aria-label="Filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Filter events, findings and IOCs by text and time range (press /)">Filter</button>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
     <span id="captureCount" style="font-weight:bold;"><span class="cc-label">Screenshots:</span> <span id="captureCountNum">0</span></span>
@@ -776,6 +776,9 @@
         <div class="sfield-row">
           <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>
           <div class="sfield"><label>Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Log directory<span class="sfield-hint">DFIR_LOG_DIR — folder for the global session log; blank = <code>logs/</code> beside the cases root. Per-case logs always stay in the case folder</span></label><input id="env-DFIR_LOG_DIR" placeholder="(logs/ beside cases root)" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Bind host<span class="sfield-hint">DFIR_HOST — keep 127.0.0.1 (localhost only) unless you know what you're doing</span></label><input id="env-DFIR_HOST" placeholder="127.0.0.1" /></div>
@@ -1157,10 +1160,10 @@
 
   <!-- Global search + time-range filter row — revealed by the toolbar search icon (hidden by default) -->
   <div id="searchFilterBar" hidden>
-    <span>Search:</span>
+    <span>Filter:</span>
     <div class="sf-search-wrap">
-      <input id="globalSearch" type="search" placeholder="Search events, findings, IOCs…" title="Search events, findings, IOCs — press / to focus, Esc to clear" autocomplete="off" />
-      <button id="clearSearch" type="button" title="Clear search (Esc)" hidden>✕</button>
+      <input id="globalSearch" type="search" placeholder="Filter events, findings, IOCs…" title="Filter events, findings, IOCs — press / to focus, Esc to clear" autocomplete="off" />
+      <button id="clearSearch" type="button" title="Clear filter (Esc)" hidden>✕</button>
     </div>
     <div class="sf-sep"></div>
     <span>Time range:</span>
@@ -4948,7 +4951,7 @@
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div style='color:#9aa4b2'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : searchTerm && iocs.length > 0 ? "<div style='color:#9aa4b2'>No IOCs match the search.</div>"
+          : searchTerm && iocs.length > 0 ? "<div style='color:#9aa4b2'>No IOCs match the filter.</div>"
           : "<div style='color:#9aa4b2'>No IOCs yet</div>";
         updateIocBulkBar();
         return;
@@ -5164,7 +5167,7 @@
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${evidenceLinks(state.caseId, evidence)}</div>`;
-        }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings match the search.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings above ${minConf}% confidence.</span>` : "—");
+        }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:#9aa4b2">No findings above ${minConf}% confidence.</span>` : "—");
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =

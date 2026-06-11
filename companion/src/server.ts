@@ -3821,21 +3821,25 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
   });
 }
 
-export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"): void {
+export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", logDir?: string): void {
   const store = new CaseStore(casesRoot);
-  // File-backed logging: a fresh global SESSION log per server run (logs/session-<ts>.log,
-  // beside cases/) PLUS a per-CASE log (cases/<id>/logs/session-<ts>.log) — the investigation
-  // audit trail that travels with the case. Colons/dots are stripped from the timestamp so the
-  // filename is valid on Windows. A logs/ subdir is always creatable (even when DFIR_CASES_ROOT
-  // is a drive-root child like C:\cases, where a loose sibling file would be forbidden). The
-  // dashboard's Settings → Logging toggle changes the level live; DFIR_LOG_LEVEL sets the default.
+  // File-backed logging: a fresh global SESSION log per server run (session-<ts>.log) PLUS a
+  // per-CASE log (cases/<id>/logs/session-<ts>.log) — the investigation audit trail that travels
+  // with the case. The global log dir defaults to logs/ beside the cases root but is overridable
+  // with DFIR_LOG_DIR (resolved by the caller). Per-case logs always live inside the case dir so
+  // the audit trail stays with the case. Colons/dots are stripped from the timestamp so the
+  // filename is valid on Windows; a logs/ subdir is always creatable (even when DFIR_CASES_ROOT
+  // is a drive-root child like C:\cases). The Settings → Logging toggle changes the level live;
+  // DFIR_LOG_LEVEL sets the default.
   const sessionStamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const globalLogDir = logDir ?? join(dirname(casesRoot), "logs");
   const logger = new LoggerImpl({
     level: normalizeLogLevel(process.env.DFIR_LOG_LEVEL),
-    sessionLogPath: join(dirname(casesRoot), "logs", `session-${sessionStamp}.log`),
+    sessionLogPath: join(globalLogDir, `session-${sessionStamp}.log`),
     caseLogPath: (caseId) => join(store.caseDir(caseId), "logs", `session-${sessionStamp}.log`),
   });
   setServerLogger(logger);
+  logLine(`[DFIR] session log: ${join(globalLogDir, `session-${sessionStamp}.log`)}`);
   const stateStore = new StateStoreImpl(store);
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
@@ -4040,5 +4044,14 @@ if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.
   // image sets DFIR_HOST=0.0.0.0 so the container's published port works; compose maps that
   // port to 127.0.0.1 on the host, so it never listens on the host's public interfaces.
   const host = process.env.DFIR_HOST && process.env.DFIR_HOST !== "" ? process.env.DFIR_HOST : "127.0.0.1";
-  startServer(casesRoot, port, host);
+
+  // Optional override for the GLOBAL session-log directory (per-case logs always live in the
+  // case dir). Relative paths anchor to companion/ like DFIR_CASES_ROOT; unset → logs/ beside
+  // the cases root.
+  const rawLogDir = process.env.DFIR_LOG_DIR;
+  const logDir = rawLogDir && rawLogDir.trim() !== ""
+    ? (isAbsolute(rawLogDir) ? rawLogDir : resolve(companionDir, rawLogDir))
+    : undefined;
+
+  startServer(casesRoot, port, host, logDir);
 }
