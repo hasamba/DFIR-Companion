@@ -102,6 +102,13 @@
     /* Fullscreen: the wrapper fills the screen and the graph grows to fit. */
     .asset-graph-wrap:fullscreen { background: #11161d; padding: 12px; display: flex; flex-direction: column; }
     .asset-graph-wrap:fullscreen .asset-graph { flex: 1; max-height: none; }
+    /* Swimlane fullscreen: the section fills the screen; scroll if there are more lanes than fit. */
+    #sec-swimlane:fullscreen { background: #11161d; padding: 16px; overflow: auto; }
+    /* Fallback "maximize" for when the native Fullscreen API is unavailable or rejected (e.g.
+       the dashboard is served over a plain-HTTP LAN IP, which isn't a secure context). Fills the
+       viewport via fixed positioning — needs no secure context, so it always works. */
+    #sec-swimlane.swimlane-maximized { position: fixed; inset: 0; z-index: 9999; margin: 0;
+      background: #11161d; padding: 16px; overflow: auto; }
     .asset-subhead { font-size: 12px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 6px; }
     .asset-chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px;
       font-size: 12px; background: #0f1115; border: 1px solid #2a2f3a; color: #e6e6e6; }
@@ -402,6 +409,34 @@
     .ph-ev-row:last-child { border-bottom: none; }
     .ph-ev-time { flex-shrink: 0; font-size: 11px; }
     .ph-ev-desc { flex: 1; min-width: 0; word-break: break-word; }
+    /* Timeline Swimlane — Canvas-based chart: assets on Y-axis, time on X-axis. */
+    .swimlane-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; color: #9aa4b2; margin-bottom: 8px; }
+    .swimlane-controls select { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 6px; padding: 3px 6px; font-size: 12px; }
+    .swimlane-controls button { padding: 3px 9px; font-size: 12px; }
+    .swimlane-ctrl-sep { width: 1px; align-self: stretch; background: #2a2f3a; margin: 0 2px; }
+    .swimlane-hint { font-size: 11px; color: #8b94a3; margin: -2px 0 8px; }
+    .swimlane-hint strong { color: #c9d1db; font-weight: 600; }
+    .swimlane-selbar { display: none; align-items: center; gap: 8px; padding: 5px 0 6px; font-size: 12px; color: #9aa4b2; }
+    .swimlane-selbar.active { display: flex; flex-wrap: wrap; }
+    /* Brief highlight when a swimlane dot click locates its row in the timeline table. */
+    .ev-row.ev-flash { animation: evFlash 1.5s ease-out; }
+    @keyframes evFlash { 0%,40% { background: #243a5e; } 100% { background: transparent; } }
+    .swimlane-wrap { display: flex; border: 1px solid #2a2f3a; border-radius: 6px; overflow: hidden; background: #0f1115; }
+    .swimlane-labels { width: 160px; flex-shrink: 0; border-right: 1px solid #2a2f3a; overflow: hidden; }
+    .swimlane-label { box-sizing: border-box; display: flex; align-items: center; padding: 0 8px;
+      font-size: 11px; color: #cbd3df; border-bottom: 1px solid #1c2230;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+    .swimlane-label.host { color: #6aa9ff; }
+    .swimlane-label.account { color: #c9d1db; }
+    .swimlane-label.unassigned { color: #6b7585; font-style: italic; }
+    .swimlane-canvas-wrap { flex: 1; min-width: 0; overflow: hidden; position: relative; }
+    #swimlaneCanvas { display: block; width: 100%; cursor: crosshair; }
+    #swimlaneTooltip { position: fixed; background: #161a22; border: 1px solid #2a2f3a; border-radius: 5px;
+      padding: 6px 10px; font-size: 11px; color: #e6e6e6; pointer-events: none; z-index: 999;
+      max-width: 320px; word-break: break-word; display: none; }
+    .swimlane-detail { margin-top: 10px; padding: 10px 12px; background: #0f1115; border: 1px solid #2a2f3a;
+      border-radius: 6px; font-size: 12px; }
+    .swimlane-detail-header { font-weight: 600; margin-bottom: 6px; }
     /* Settings icon — sibling of .toolbar-main, align-self:flex-start keeps it pinned to the
        top-right of the first line even when the action buttons wrap below it. */
     #settingsBtn { background: none; border: none; color: #9aa4b2; cursor: pointer; padding: 4px;
@@ -1147,6 +1182,42 @@
       <div id="forensicTimeline">—</div></section>
     <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
     <section id="sec-phases" style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
+    <section id="sec-swimlane" style="grid-column: 1 / -1">
+      <h2>Timeline Swimlane<span class="ev-sub" id="swimlaneSub">visual chart — Y-axis: assets · X-axis: time · color: severity (derived, no AI)</span></h2>
+      <div class="swimlane-hint">💡 <strong>Click</strong> a dot for details and to flash its row in the Forensic Timeline · <strong>Shift-click</strong> a dot (or <strong>Shift-drag</strong> a box) to select events, then <strong>⚑ Mark Legitimate</strong></div>
+      <div class="swimlane-controls">
+        <span>Group by:</span>
+        <select id="swimlaneGroupBy" title="Choose the Y-axis grouping for the swimlane">
+          <option value="asset">Asset</option>
+          <option value="severity">Severity</option>
+          <option value="tactic">Tactic</option>
+        </select>
+        <span class="swimlane-ctrl-sep"></span>
+        <button id="swimlaneZoomOut" type="button" title="Zoom out (or scroll the mouse wheel over the chart)">−</button>
+        <span id="swimlaneZoomLevel" style="min-width:38px;text-align:center">100%</span>
+        <button id="swimlaneZoomIn" type="button" title="Zoom in">+</button>
+        <button id="swimlaneZoomFit" type="button" title="Fit all events into the view">Fit</button>
+        <span class="swimlane-ctrl-sep"></span>
+        <button id="swimlaneScopeView" type="button" title="Set the investigation scope window to the time range currently visible in the chart">⌖ Scope to view</button>
+        <button id="swimlanePng" type="button" title="Download the swimlane as a PNG image (for reports)">⤓ PNG</button>
+        <button id="swimlaneFullscreen" type="button" title="Show the swimlane full screen">⤢ Fullscreen</button>
+      </div>
+      <div class="swimlane-selbar" id="swimlaneSelBar">
+        <span id="swimlaneSelCount" style="font-weight:600;color:#6aa9ff"></span>
+        <button class="ev-bulk-btn" id="swimlaneSelLegit" title="Mark every selected event legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button>
+        <button class="ev-bulk-btn" id="swimlaneSelClear" style="color:#9aa4b2">✕ Clear</button>
+      </div>
+      <div class="swimlane-wrap" id="swimlaneWrap">
+        <div class="swimlane-labels" id="swimlaneLabels"></div>
+        <div class="swimlane-canvas-wrap">
+          <canvas id="swimlaneCanvas"></canvas>
+        </div>
+      </div>
+      <div id="swimlaneDetail" class="swimlane-detail" hidden></div>
+      <!-- Kept inside the section so the hover tooltip still renders in fullscreen (only the
+           fullscreen element's descendants paint). position:fixed keeps it viewport-anchored. -->
+      <div id="swimlaneTooltip"></div>
+    </section>
     <section id="sec-assets" style="grid-column: 1 / -1">
       <h2>Compromised Assets &amp; IoC Graph<button class="add-toggle" type="button" title="Add / edit assets and links manually" aria-label="Add asset">+</button></h2>
       <div class="manual-add" hidden>
@@ -2591,7 +2662,7 @@
         bar.classList.remove("active");
       }
     }
-    function clearSelection() { selectedEvents.clear(); renderTimelineEvents(lastFt); }
+    function clearSelection() { selectedEvents.clear(); updateBulkBar(); renderTimelineEvents(lastFt); swSelToolbar(); swRenderCanvas(); }
     function updateIocBulkBar() {
       const bar = document.getElementById("iocBulkBar");
       if (!bar) return;
@@ -2636,6 +2707,7 @@
         renderLegitimate(await r.json());
         selectedEvents.clear();
         renderTimelineEvents(lastFt);
+        swSelToolbar(); swRenderCanvas();   // clear the rings + hide the swimlane selection bar
         statusEl.textContent = "marked legitimate — AI is re-synthesizing (see AI status)";
       } catch {
         statusEl.textContent = "mark failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
@@ -4148,6 +4220,454 @@
       renderPhases();
     });
 
+    // ── Timeline Swimlane ───────────────────────────────────────────────────────────────
+    // Canvas-based swimlane chart: assets/severity/tactics on Y-axis, time on X-axis.
+    // Data comes from GET /cases/:id/swimlane?groupBy=... (server applies scope+legit filtering).
+    // View window (swViewStartMs…swViewEndMs) drives all rendering; zoom/pan mutate it.
+
+    const SW_LANE_H = 36;    // px per lane row
+    const SW_AXIS_H = 26;    // px for the time-axis strip
+    const SW_DOT_R  = 5;     // default event dot radius (px)
+    const SW_SEV_COLOR = { Critical:"#ff5c5c", High:"#ff9f43", Medium:"#ffd93b", Low:"#6bcb77", Info:"#6aa9ff" };
+    const SW_LABEL_COLOR = { host:"#6aa9ff", account:"#c9d1db", severity:"#c9d1db", tactic:"#c9d1db", unassigned:"#6b7585" };
+
+    // View window: swViewStartMs…swViewEndMs drive all rendering; zoom/pan mutate it.
+    let swLanes = [];          // [{id,label,type,events:[…]}] from server
+    let swDataMinMs = 0, swDataMaxMs = 0;
+    let swViewStartMs = 0, swViewEndMs = 0;
+    let swDrag = false, swDragMoved = false, swDragStartX = 0, swDragViewStart = 0;
+    let swHoverEvId = null, swSelEvId = null, swTimer = null;
+    let swRubber = null;       // {x0,y0,x1,y1} canvas-px rect while Shift-dragging a selection box
+    // Multi-select reuses the timeline table's shared `selectedEvents` Set (declared above), so
+    // selection is bidirectional: dots ringed here ⇄ rows checked there ⇄ the bulk-action bars.
+
+    function swFitView() { swViewStartMs = swDataMinMs; swViewEndMs = swDataMaxMs; }
+
+    // Keep the panel subtitle's "Y-axis: …" in sync with the Group by selection.
+    const SW_AXIS_LABEL = { asset: "assets", severity: "severity", tactic: "tactic" };
+    function swUpdateSubtitle() {
+      const sub = document.getElementById("swimlaneSub");
+      if (!sub) return;
+      const g = document.getElementById("swimlaneGroupBy").value || "asset";
+      sub.textContent = `visual chart — Y-axis: ${SW_AXIS_LABEL[g] || g} · X-axis: time · color: severity (derived, no AI)`;
+    }
+
+    function swZoomRatio() {
+      const d = swDataMaxMs - swDataMinMs, v = swViewEndMs - swViewStartMs;
+      return (!d || !v) ? 1 : d / v;
+    }
+
+    function swTsToX(ms, W) {
+      const span = swViewEndMs - swViewStartMs;
+      return span ? ((ms - swViewStartMs) / span) * W : W / 2;
+    }
+
+    function swXToTs(x, W) {
+      const span = swViewEndMs - swViewStartMs;
+      return swViewStartMs + (x / W) * span;
+    }
+
+    function loadSwimlane(caseId) {
+      const groupBy = document.getElementById("swimlaneGroupBy").value || "asset";
+      swUpdateSubtitle();
+      fetch(`/cases/${caseId}/swimlane?groupBy=${encodeURIComponent(groupBy)}`)
+        .then(r => r.json()).then(d => {
+          swLanes = Array.isArray(d.lanes) ? d.lanes : [];
+          swDataMinMs = d.minTime ? Date.parse(d.minTime) : 0;
+          swDataMaxMs = d.maxTime ? Date.parse(d.maxTime) : 0;
+          if (swDataMinMs === swDataMaxMs) { swDataMinMs -= 60000; swDataMaxMs += 60000; }
+          swFitView(); swSelEvId = null;
+          const det = document.getElementById("swimlaneDetail");
+          if (det) det.hidden = true;
+          swRenderLabels(); swRenderCanvas(); swUpdateZoomLabel(); swSelToolbar();
+        }).catch(() => {});
+    }
+
+    function scheduleSwimlaneReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(swTimer);
+      swTimer = setTimeout(() => loadSwimlane(caseId), 800);
+    }
+
+    function swRenderLabels() {
+      const el = document.getElementById("swimlaneLabels");
+      if (!el) return;
+      if (!swLanes.length) { el.innerHTML = ""; return; }
+      el.innerHTML = swLanes.map(l =>
+        `<div class="swimlane-label ${esc(l.type)}" style="height:${SW_LANE_H}px" title="${escAttr(l.label)}">${esc(l.label)}</div>`
+      ).join("") + `<div style="height:${SW_AXIS_H}px"></div>`;
+    }
+
+    function swRenderCanvas() {
+      const canvas = document.getElementById("swimlaneCanvas");
+      if (!canvas) return;
+      const W = Math.max(100, canvas.parentElement.clientWidth || 600);
+      const H = swLanes.length * SW_LANE_H + SW_AXIS_H;
+      canvas.width = W; canvas.height = H; canvas.style.height = H + "px";
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, W, H);
+      if (!swLanes.length) {
+        ctx.fillStyle = "#6b7585"; ctx.font = "12px system-ui,sans-serif"; ctx.textAlign = "center";
+        ctx.fillText("No dated events to display. Load a case with a forensic timeline.", W / 2, 24);
+        return;
+      }
+      // Lane stripes
+      swLanes.forEach((_, i) => {
+        ctx.fillStyle = i % 2 === 0 ? "#0f1115" : "#11141a";
+        ctx.fillRect(0, i * SW_LANE_H, W, SW_LANE_H);
+        ctx.strokeStyle = "#1c2230"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, (i+1)*SW_LANE_H-.5); ctx.lineTo(W, (i+1)*SW_LANE_H-.5); ctx.stroke();
+      });
+      // Time axis
+      const axY = swLanes.length * SW_LANE_H;
+      ctx.fillStyle = "#0d1017"; ctx.fillRect(0, axY, W, SW_AXIS_H);
+      ctx.strokeStyle = "#2a2f3a"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, axY+.5); ctx.lineTo(W, axY+.5); ctx.stroke();
+      // Tick marks
+      const visSpan = swViewEndMs - swViewStartMs;
+      const rawI = visSpan / Math.max(3, Math.floor(W/90));
+      const TICK_STEPS = [1000,5000,10000,30000,60000,120000,300000,600000,900000,1800000,
+                          3600000,6*3600000,12*3600000,24*3600000,2*86400000,7*86400000];
+      const tickI = TICK_STEPS.find(v => v >= rawI) || TICK_STEPS[TICK_STEPS.length-1];
+      ctx.fillStyle = "#9aa4b2"; ctx.font = "10px system-ui,sans-serif"; ctx.textAlign = "center";
+      for (let t = Math.ceil(swViewStartMs/tickI)*tickI; t <= swViewEndMs; t += tickI) {
+        const x = swTsToX(t, W);
+        ctx.strokeStyle = "#1e2430"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x+.5,0); ctx.lineTo(x+.5,axY); ctx.stroke();
+        ctx.strokeStyle = "#3a4150";
+        ctx.beginPath(); ctx.moveTo(x+.5,axY); ctx.lineTo(x+.5,axY+5); ctx.stroke();
+        const nd = new Date(t);
+        const lbl = tickI >= 86400000 ? nd.toISOString().slice(0,10)
+                  : tickI >= 3600000  ? nd.toISOString().slice(11,16)+"Z"
+                  :                     nd.toISOString().slice(11,19)+"Z";
+        ctx.fillText(lbl, x, axY+18);
+      }
+      // Event dots
+      swLanes.forEach((lane, i) => {
+        const cy = i*SW_LANE_H + SW_LANE_H/2;
+        for (const e of lane.events) {
+          const ms = Date.parse(e.timestamp); if (Number.isNaN(ms)) continue;
+          const x = swTsToX(ms, W); if (x < -SW_DOT_R || x > W+SW_DOT_R) continue;
+          const r = e.count && e.count > 5 ? SW_DOT_R+2 : SW_DOT_R;
+          ctx.beginPath(); ctx.arc(x, cy, r, 0, 2*Math.PI);
+          ctx.fillStyle = e.id === swSelEvId ? "#fff" : (SW_SEV_COLOR[e.severity]||"#6aa9ff");
+          ctx.fill();
+          if (e.id === swHoverEvId || e.id === swSelEvId) {
+            ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
+          }
+          // Multi-select ring (events chosen for a batch action; bidirectional with the table).
+          if (selectedEvents.has(e.id)) {
+            ctx.beginPath(); ctx.arc(x, cy, r+3, 0, 2*Math.PI);
+            ctx.strokeStyle = "#6aa9ff"; ctx.lineWidth = 2; ctx.stroke();
+          }
+        }
+      });
+      // Rubber-band selection rectangle (while Shift-dragging)
+      if (swRubber) {
+        const rx = Math.min(swRubber.x0, swRubber.x1), ry = Math.min(swRubber.y0, swRubber.y1);
+        const rw = Math.abs(swRubber.x1 - swRubber.x0), rh = Math.abs(swRubber.y1 - swRubber.y0);
+        ctx.fillStyle = "rgba(106,169,255,0.15)"; ctx.fillRect(rx, ry, rw, rh);
+        ctx.strokeStyle = "#6aa9ff"; ctx.lineWidth = 1; ctx.strokeRect(rx+.5, ry+.5, rw, rh);
+      }
+    }
+
+    function swHitTest(canvas, cx, cy) {
+      const li = Math.floor(cy / SW_LANE_H);
+      if (li < 0 || li >= swLanes.length) return null;
+      const lane = swLanes[li], cy0 = li*SW_LANE_H + SW_LANE_H/2;
+      let best = null, bd = SW_DOT_R*3;
+      for (const e of lane.events) {
+        const ms = Date.parse(e.timestamp); if (Number.isNaN(ms)) continue;
+        const x = swTsToX(ms, canvas.width);
+        const d = Math.sqrt((cx-x)**2 + (cy-cy0)**2);
+        if (d < bd) { best = e; bd = d; }
+      }
+      return best;
+    }
+
+    function swShowDetail(evObj) {
+      const det = document.getElementById("swimlaneDetail");
+      if (!det) return;
+      if (!evObj) { det.hidden = true; return; }
+      const desc = String(evObj.description||"").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i,"");
+      det.hidden = false;
+      det.innerHTML =
+        `<div class="swimlane-detail-header">` +
+        `<span class="sev-${esc(evObj.severity)}">[${esc(evObj.severity)}]</span> ` +
+        `<span style="color:#9aa4b2">${esc(evObj.timestamp||"")}</span>` +
+        (evObj.count&&evObj.count>1 ? ` <span style="color:#9aa4b2">(×${evObj.count})</span>` : "") +
+        `</div><div>${esc(desc)}</div>` +
+        ((evObj.mitreTechniques||[]).length ? `<div>MITRE: ${mitreLinks(evObj.mitreTechniques)}</div>` : "") +
+        ((evObj.sources||[]).length ? `<div style="color:#9aa4b2">Sources: ${esc(evObj.sources.join(", "))}</div>` : "") +
+        ((evObj.relatedFindingIds||[]).length
+          ? `<div style="color:#9aa4b2">Related: ${evObj.relatedFindingIds.map(f=>`<span style="color:#6aa9ff">${esc(f)}</span>`).join(", ")}</div>`
+          : "");
+    }
+
+    function swUpdateZoomLabel() {
+      const el = document.getElementById("swimlaneZoomLevel");
+      if (el) el.textContent = Math.round(swZoomRatio() * 100) + "%";
+    }
+
+    // ---- Selection (bidirectional with the timeline table via the shared `selectedEvents`) ----
+    function swSelToolbar() {
+      const bar = document.getElementById("swimlaneSelBar");
+      if (!bar) return;
+      const n = selectedEvents.size;
+      if (n > 0) {
+        bar.classList.add("active");
+        document.getElementById("swimlaneSelCount").textContent = `${n} event${n !== 1 ? "s" : ""} selected`;
+      } else {
+        bar.classList.remove("active");
+      }
+    }
+    // Selection changed FROM the swimlane → refresh both bulk bars, the table, and the chart.
+    function swSelectionChanged() {
+      updateBulkBar(); swSelToolbar();
+      renderTimelineEvents(lastFt);   // table rows reflect the new selection
+      swRenderCanvas();               // dots get / lose their ring
+    }
+    // Selection changed FROM the table → just refresh the swimlane chrome (table already updated).
+    function swReflectSelection() { swSelToolbar(); swRenderCanvas(); }
+
+    function swCanvasXY(e, canvas) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - rect.left) * (canvas.width / rect.width),
+        y: (e.clientY - rect.top) * (canvas.height / rect.height),
+      };
+    }
+
+    // Finish a Shift-drag: a tiny box is a single toggle; a real box adds every enclosed dot.
+    function swFinishRubber() {
+      const canvas = document.getElementById("swimlaneCanvas");
+      if (!canvas || !swRubber) return;
+      const x0 = Math.min(swRubber.x0, swRubber.x1), x1 = Math.max(swRubber.x0, swRubber.x1);
+      const y0 = Math.min(swRubber.y0, swRubber.y1), y1 = Math.max(swRubber.y0, swRubber.y1);
+      if ((x1 - x0) < 4 && (y1 - y0) < 4) {
+        const hit = swHitTest(canvas, swRubber.x1, swRubber.y1);
+        if (hit) { selectedEvents.has(hit.id) ? selectedEvents.delete(hit.id) : selectedEvents.add(hit.id); }
+      } else {
+        swLanes.forEach((lane, i) => {
+          const cy = i * SW_LANE_H + SW_LANE_H / 2;
+          if (cy < y0 || cy > y1) return;
+          for (const e of lane.events) {
+            const ms = Date.parse(e.timestamp); if (Number.isNaN(ms)) continue;
+            const x = swTsToX(ms, canvas.width);
+            if (x >= x0 && x <= x1) selectedEvents.add(e.id);
+          }
+        });
+      }
+      swSelectionChanged();
+    }
+
+    // Scroll the timeline table to a clicked dot's row and flash it (the reverse of the ring sync).
+    function swLocateInTable(id) {
+      const rows = document.querySelectorAll("#forensicTimeline .ev-row");
+      for (const row of rows) {
+        if (row.getAttribute("data-evid") === id) {
+          row.scrollIntoView({ behavior: "smooth", block: "center" });
+          row.classList.remove("ev-flash"); void row.offsetWidth;  // restart the animation
+          row.classList.add("ev-flash");
+          setTimeout(() => row.classList.remove("ev-flash"), 1600);
+          return;
+        }
+      }
+    }
+
+    // Set the investigation scope window to the currently visible time range, then apply it.
+    function swScopeToView() {
+      if (!swViewStartMs || !swViewEndMs) return;
+      document.getElementById("scopeStart").value = isoToUtcInput(new Date(swViewStartMs).toISOString());
+      document.getElementById("scopeEnd").value = isoToUtcInput(new Date(swViewEndMs).toISOString());
+      applyScope();
+    }
+
+    // Download the swimlane as a PNG — composes the lane labels + the chart canvas into one image
+    // (the on-screen labels are separate HTML, so a bare canvas export would lose them).
+    function swExportPng() {
+      const canvas = document.getElementById("swimlaneCanvas");
+      if (!canvas || !swLanes.length) return;
+      const labelW = 160;
+      const off = document.createElement("canvas");
+      off.width = labelW + canvas.width;
+      off.height = canvas.height;
+      const o = off.getContext("2d");
+      o.fillStyle = "#0f1115"; o.fillRect(0, 0, off.width, off.height);
+      o.textBaseline = "middle"; o.font = "12px system-ui,sans-serif";
+      swLanes.forEach((l, i) => {
+        o.fillStyle = SW_LABEL_COLOR[l.type] || "#c9d1db";
+        const name = l.label.length > 22 ? l.label.slice(0, 21) + "…" : l.label;
+        o.fillText(name, 8, i * SW_LANE_H + SW_LANE_H / 2);
+      });
+      o.strokeStyle = "#2a2f3a"; o.beginPath(); o.moveTo(labelW - .5, 0); o.lineTo(labelW - .5, canvas.height); o.stroke();
+      o.drawImage(canvas, labelW, 0);
+      const caseId = document.getElementById("caseId").value.trim() || "case";
+      const a = document.createElement("a");
+      a.href = off.toDataURL("image/png");
+      a.download = `swimlane-${caseId}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+
+    (function setupSwimlane() {
+      const canvas = document.getElementById("swimlaneCanvas");
+      const tooltip = document.getElementById("swimlaneTooltip");
+      if (!canvas) return;
+
+      // Zoom via mouse wheel — pin the time under the cursor
+      canvas.addEventListener("wheel", function(e) {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const cx = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const pivotMs = swXToTs(cx, canvas.width);
+        const factor = e.deltaY < 0 ? 1.3 : 1/1.3;
+        const curSpan = swViewEndMs - swViewStartMs;
+        const dataSpan = swDataMaxMs - swDataMinMs;
+        const newSpan = Math.max(1000, Math.min(dataSpan, curSpan / factor));
+        const frac = cx / canvas.width;
+        let ns = pivotMs - frac * newSpan;
+        let ne = ns + newSpan;
+        if (ns < swDataMinMs) { ns = swDataMinMs; ne = ns + newSpan; }
+        if (ne > swDataMaxMs) { ne = swDataMaxMs; ns = ne - newSpan; }
+        swViewStartMs = Math.max(swDataMinMs, ns);
+        swViewEndMs   = Math.min(swDataMaxMs, ne);
+        swUpdateZoomLabel(); swRenderCanvas();
+      }, { passive: false });
+
+      // Pan via drag — OR start a Shift-drag rubber-band selection box.
+      canvas.addEventListener("mousedown", function(e) {
+        if (e.shiftKey) {
+          const p = swCanvasXY(e, canvas);
+          swRubber = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+          swDrag = false; e.preventDefault();
+          return;
+        }
+        swDrag = true; swDragMoved = false;
+        swDragStartX = e.clientX; swDragViewStart = swViewStartMs;
+        canvas.style.cursor = "grabbing";
+      });
+      window.addEventListener("mousemove", function(e) {
+        if (swRubber) {
+          const p = swCanvasXY(e, canvas);
+          swRubber.x1 = Math.max(0, Math.min(canvas.width, p.x));
+          swRubber.y1 = Math.max(0, Math.min(canvas.height, p.y));
+          swRenderCanvas(); return;
+        }
+        if (swDrag) {
+          const dx = e.clientX - swDragStartX;
+          if (Math.abs(dx) > 3) swDragMoved = true;
+          const span = swViewEndMs - swViewStartMs;
+          const dtMs = -(dx / (canvas.width||600)) * span;
+          let ns = swDragViewStart + dtMs;
+          if (ns < swDataMinMs) ns = swDataMinMs;
+          if (ns + span > swDataMaxMs) ns = swDataMaxMs - span;
+          swViewStartMs = Math.max(swDataMinMs, ns);
+          swViewEndMs = swViewStartMs + span;
+          swRenderCanvas(); return;
+        }
+        const rect = canvas.getBoundingClientRect();
+        const cx = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const cy = (e.clientY - rect.top) * (canvas.height / rect.height);
+        if (swLanes.length && cy < swLanes.length * SW_LANE_H) {
+          const hit = swHitTest(canvas, cx, cy);
+          if (hit) {
+            const d = String(hit.description||"").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i,"").slice(0,120);
+            tooltip.textContent = `[${hit.severity}] ${hit.timestamp}` +
+              (hit.count&&hit.count>1 ? ` (×${hit.count})` : "") + `\n${d}`;
+            tooltip.style.display = "block";
+            tooltip.style.left = (e.clientX+14)+"px";
+            tooltip.style.top  = (e.clientY-10)+"px";
+            if (swHoverEvId !== hit.id) { swHoverEvId = hit.id; swRenderCanvas(); }
+          } else {
+            tooltip.style.display = "none";
+            if (swHoverEvId) { swHoverEvId = null; swRenderCanvas(); }
+          }
+        } else {
+          tooltip.style.display = "none";
+          if (swHoverEvId) { swHoverEvId = null; swRenderCanvas(); }
+        }
+      });
+      window.addEventListener("mouseup", function() {
+        if (swRubber) { swFinishRubber(); swRubber = null; swRenderCanvas(); return; }
+        if (swDrag) { swDrag = false; canvas.style.cursor = "crosshair"; }
+      });
+      canvas.addEventListener("mouseleave", function() {
+        tooltip.style.display = "none";
+        if (swHoverEvId) { swHoverEvId = null; swRenderCanvas(); }
+      });
+
+      // Click to select event (ignored when the drag moved the view; Shift-clicks are selection).
+      canvas.addEventListener("click", function(e) {
+        if (swDragMoved) { swDragMoved = false; return; }
+        if (e.shiftKey) return;   // handled on mouseup as a rubber-band toggle
+        const rect = canvas.getBoundingClientRect();
+        const cx = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const cy = (e.clientY - rect.top) * (canvas.height / rect.height);
+        const hit = swHitTest(canvas, cx, cy);
+        swSelEvId = hit ? hit.id : null;
+        swShowDetail(hit || null);
+        swRenderCanvas();
+        if (hit) swLocateInTable(hit.id);   // jump to + flash the matching table row
+      });
+
+      document.getElementById("swimlaneGroupBy").addEventListener("change", function() {
+        const caseId = document.getElementById("caseId").value.trim();
+        if (caseId) loadSwimlane(caseId);
+      });
+      document.getElementById("swimlaneZoomIn").addEventListener("click", function() {
+        const c = (swViewStartMs+swViewEndMs)/2, h = (swViewEndMs-swViewStartMs)/2/1.5;
+        swViewStartMs = Math.max(swDataMinMs,c-h); swViewEndMs = Math.min(swDataMaxMs,c+h);
+        swUpdateZoomLabel(); swRenderCanvas();
+      });
+      document.getElementById("swimlaneZoomOut").addEventListener("click", function() {
+        const c = (swViewStartMs+swViewEndMs)/2;
+        const h = Math.min((swDataMaxMs-swDataMinMs)/2, (swViewEndMs-swViewStartMs)/2*1.5);
+        swViewStartMs = Math.max(swDataMinMs,c-h); swViewEndMs = Math.min(swDataMaxMs,c+h);
+        swUpdateZoomLabel(); swRenderCanvas();
+      });
+      document.getElementById("swimlaneZoomFit").addEventListener("click", function() {
+        swFitView(); swUpdateZoomLabel(); swRenderCanvas();
+      });
+      // Prefer the native Fullscreen API; fall back to a CSS "maximize" (fixed, fills the
+      // viewport) when it's unavailable or rejected — e.g. served over a plain-HTTP LAN IP,
+      // which isn't a secure context. Only the toggle is affected, never the chart itself.
+      function swMaximizeCss(on) {
+        document.getElementById("sec-swimlane").classList.toggle("swimlane-maximized", on);
+        setTimeout(swRenderCanvas, 60);
+      }
+      document.getElementById("swimlaneFullscreen").addEventListener("click", function() {
+        const sec = document.getElementById("sec-swimlane");
+        if (sec.classList.contains("swimlane-maximized")) { swMaximizeCss(false); return; }
+        if (document.fullscreenElement === sec) { document.exitFullscreen(); return; }
+        if (sec.requestFullscreen) sec.requestFullscreen().catch(() => swMaximizeCss(true));
+        else swMaximizeCss(true);
+      });
+      // Esc exits the CSS fallback (the native API already handles its own Esc).
+      document.addEventListener("keydown", function(e) {
+        if (e.key === "Escape" &&
+            document.getElementById("sec-swimlane").classList.contains("swimlane-maximized")) {
+          swMaximizeCss(false);
+        }
+      });
+      // Re-render at the new viewport width when the swimlane enters/exits native fullscreen.
+      document.addEventListener("fullscreenchange", function() {
+        if (document.fullscreenElement && document.fullscreenElement.id !== "sec-swimlane") return;
+        setTimeout(swRenderCanvas, 60);   // wait for the fullscreen relayout before measuring
+      });
+      document.getElementById("swimlaneScopeView").addEventListener("click", swScopeToView);
+      document.getElementById("swimlanePng").addEventListener("click", swExportPng);
+      document.getElementById("swimlaneSelLegit").addEventListener("click", function() {
+        if (selectedEvents.size) bulkMarkLegitimate();   // shared with the table's bulk bar
+      });
+      document.getElementById("swimlaneSelClear").addEventListener("click", function() {
+        selectedEvents.clear(); swSelectionChanged();
+      });
+      if (typeof ResizeObserver !== "undefined") {
+        new ResizeObserver(() => swRenderCanvas()).observe(document.getElementById("swimlaneWrap"));
+      }
+    })();
+
     function renderKillChain(ft) {
       const byTactic = {};
       for (const tac of KC_CHAIN_ORDER) byTactic[tac] = [];
@@ -4628,6 +5148,7 @@
       loadAssetOverrides(caseId);
       loadEvidenceGraph(caseId);
       loadPhases(caseId);
+      loadSwimlane(caseId);
       loadIocSources(caseId);
       loadComments(caseId);
       loadTags(caseId);
@@ -4670,7 +5191,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
@@ -5016,6 +5537,7 @@
         const someSel = allIds.some(id => selectedEvents.has(id));
         const sa = document.getElementById("evSelectAll");
         if (sa) { sa.checked = allSel; sa.indeterminate = someSel && !allSel; }
+        swReflectSelection();   // mirror onto the swimlane dots
         return;
       }
       if (e.target.id === "evSelectAll") {
@@ -5027,6 +5549,7 @@
           if (row) row.classList.toggle("ev-selected", e.target.checked);
         });
         updateBulkBar();
+        swReflectSelection();   // mirror onto the swimlane dots
       }
       // IOC checkbox: per-row checkbox
       const iocRowCb = e.target.closest && e.target.closest(".ioc-row-cb");
@@ -5758,6 +6281,7 @@
       { id: "sec-timeline",     label: "Forensic Timeline" },
       { id: "sec-kill-chain",   label: "Kill Chain" },
       { id: "sec-phases",       label: "Attack Phases" },
+      { id: "sec-swimlane",     label: "Timeline Swimlane" },
       { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
       { id: "sec-evidence",     label: "Evidence Chain" },
       { id: "sec-iocs",         label: "IOCs" },

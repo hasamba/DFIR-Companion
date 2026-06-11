@@ -271,6 +271,18 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
   lateral toggles, confidence legend, layered SVG with arrowheads, zoom, fullscreen, click-to-focus, and
   **drag-to-reposition nodes** — positions persist per case, ↺ Reset layout restores the auto layout) and a
   report **§4.8 Chain of evidence** section. Derived on read (`GET /cases/:id/evidence-graph`).
+- **Timeline Swimlane (visual chart)** — the *what happened when, across which assets* view: an
+  interactive canvas chart with **assets / severity / tactic** on the Y-axis (Group-by selector; the
+  panel subtitle tracks the choice), **time** on the X-axis, and events as **severity-colored dots**.
+  Mouse-wheel **zoom** (pinned to the cursor) + **drag-to-pan** + Fit/zoom buttons, **click-a-dot** for a
+  detail panel (severity, time, description, MITRE, sources, related findings) that also **jumps to and
+  flashes the matching Forensic Timeline row**, and hover tooltips. **Select events** by **Shift-click** or
+  **Shift-drag** a box → the selection is **bidirectional with the timeline table** (the same rings ⇄ row
+  checkboxes ⇄ bulk-action bars) and feeds a one-click **⚑ Mark Legitimate** batch action; **⌖ Scope to
+  view** sets the investigation scope window to the visible time range. **⤢ Fullscreen** (with a CSS
+  fallback off secure-context) and **⤓ PNG** export (labels + chart composited) for ad-hoc screenshots; a
+  static **Timeline Swimlane** SVG is embedded in the HTML report. Derived on read with the same
+  scope/legitimate filtering as the report (`GET /cases/:id/swimlane?groupBy=asset|severity|tactic`).
 - **Reports** — Markdown **and HTML** report (standalone, print-friendly), plus a one-click **PDF**
   export that opens the print-styled HTML and triggers the browser's *Save as PDF* dialog (zero
   dependencies, fully offline) + CSVs (findings, IOCs incl. enrichment, capture timeline, forensic

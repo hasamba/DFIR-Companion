@@ -7,6 +7,8 @@ import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { renderAssetGraphSvg } from "./assetGraphSvg.js";
+import { renderSwimlaneSvg } from "./swimlaneSvg.js";
+import { buildSwimlaneData } from "../analysis/swimlane.js";
 import type { AssetGraph } from "../analysis/assetGraph.js";
 
 // Standalone HTML export of the incident report. We render the canonical Markdown report
@@ -145,6 +147,11 @@ export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = e
     ? `\n<h2>Asset–IoC Graph</h2>\n<div class="asset-graph">\n${graphSvg}\n</div>`
     : "";
 
+  const swimlaneSvg = renderSwimlaneSvg(buildSwimlaneData(state.forensicTimeline, "asset"));
+  const swimlaneSection = swimlaneSvg
+    ? `\n<h2>Timeline Swimlane</h2>\n<div class="asset-graph">\n${swimlaneSvg}\n</div>`
+    : "";
+
   return [
     "<!doctype html>",
     '<html lang="en">',
@@ -156,7 +163,7 @@ export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = e
     "</head>",
     "<body>",
     '<main class="report">',
-    body.trim() + graphSection,
+    body.trim() + graphSection + swimlaneSection,
     "</main>",
     "</body>",
     "</html>",
