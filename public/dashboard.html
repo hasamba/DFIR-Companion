@@ -338,6 +338,8 @@
     .swimlane-controls select { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 6px; padding: 3px 6px; font-size: 12px; }
     .swimlane-controls button { padding: 3px 9px; font-size: 12px; }
     .swimlane-ctrl-sep { width: 1px; align-self: stretch; background: #2a2f3a; margin: 0 2px; }
+    .swimlane-hint { font-size: 11px; color: #8b94a3; margin: -2px 0 8px; }
+    .swimlane-hint strong { color: #c9d1db; font-weight: 600; }
     .swimlane-selbar { display: none; align-items: center; gap: 8px; padding: 5px 0 6px; font-size: 12px; color: #9aa4b2; }
     .swimlane-selbar.active { display: flex; flex-wrap: wrap; }
     /* Brief highlight when a swimlane dot click locates its row in the timeline table. */
@@ -920,6 +922,7 @@
     <section id="sec-phases" style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
     <section id="sec-swimlane" style="grid-column: 1 / -1">
       <h2>Timeline Swimlane<span class="ev-sub" id="swimlaneSub">visual chart — Y-axis: assets · X-axis: time · color: severity (derived, no AI)</span></h2>
+      <div class="swimlane-hint">💡 <strong>Click</strong> a dot for details and to flash its row in the Forensic Timeline · <strong>Shift-click</strong> a dot (or <strong>Shift-drag</strong> a box) to select events, then <strong>⚑ Mark Legitimate</strong></div>
       <div class="swimlane-controls">
         <span>Group by:</span>
         <select id="swimlaneGroupBy" title="Choose the Y-axis grouping for the swimlane">
@@ -941,7 +944,6 @@
         <span id="swimlaneSelCount" style="font-weight:600;color:#6aa9ff"></span>
         <button class="ev-bulk-btn" id="swimlaneSelLegit" title="Mark every selected event legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button>
         <button class="ev-bulk-btn" id="swimlaneSelClear" style="color:#9aa4b2">✕ Clear</button>
-        <span style="color:#6b7585">tip: Shift-click a dot, or Shift-drag a box, to select events</span>
       </div>
       <div class="swimlane-wrap" id="swimlaneWrap">
         <div class="swimlane-labels" id="swimlaneLabels"></div>
