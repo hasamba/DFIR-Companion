@@ -252,6 +252,11 @@
     .ev-row.ev-new { box-shadow: inset 3px 0 0 #6bcB77; }
     .ioc-new { box-shadow: inset 3px 0 0 #6bcB77; padding-left: 6px; border-radius: 3px; }
     .ev-new-badge { background:#13331f; color:#6bcB77; border:1px solid #1f5a35; border-radius:4px; padding:0 5px; font-size:10px; font-weight:bold; }
+    /* Affected host/asset chip on each forensic-timeline event */
+    .ev-host { background:#1a2433; color:#8fb3e0; border:1px solid #2a3a52; border-radius:4px; padding:0 5px; font-size:10px; font-weight:600; white-space:nowrap; }
+    /* Clickable finding references inside a timeline event → jump to the finding */
+    .finding-jump { color:#6aa9ff; text-decoration:none; border-bottom:1px dotted #6aa9ff; cursor:pointer; }
+    .finding-jump:hover { color:#9cc5ff; border-bottom-style:solid; }
     /* Ask the LLM panel */
     .ask-row { display: flex; gap: 8px; margin-bottom: 10px; }
     .ask-row input { flex: 1; }
@@ -418,8 +423,9 @@
     .swimlane-hint strong { color: #c9d1db; font-weight: 600; }
     .swimlane-selbar { display: none; align-items: center; gap: 8px; padding: 5px 0 6px; font-size: 12px; color: #9aa4b2; }
     .swimlane-selbar.active { display: flex; flex-wrap: wrap; }
-    /* Brief highlight when a swimlane dot click locates its row in the timeline table. */
-    .ev-row.ev-flash { animation: evFlash 1.5s ease-out; }
+    /* Brief highlight when a swimlane dot click locates its row in the timeline table,
+       or when a timeline event's finding link jumps to the finding. */
+    .ev-row.ev-flash, .finding.ev-flash { animation: evFlash 1.5s ease-out; }
     @keyframes evFlash { 0%,40% { background: #243a5e; } 100% { background: transparent; } }
     .swimlane-wrap { display: flex; border: 1px solid #2a2f3a; border-radius: 6px; overflow: hidden; background: #0f1115; }
     .swimlane-labels { width: 160px; flex-shrink: 0; border-right: 1px solid #2a2f3a; overflow: hidden; }
@@ -738,6 +744,16 @@
           <label>Dashboard sections <span class="sfield-hint" style="display:inline">— drag to reorder · check to show</span></label>
           <div class="sec-selall"><button type="button" id="secSelectAll">Select all</button><button type="button" id="secDeselectAll">Deselect all</button></div>
           <div class="sec-checks" id="secChecks"></div>
+        </div>
+        <div class="sfield">
+          <label>Log verbosity <span class="sfield-hint" style="display:inline">— takes effect immediately (no restart)</span></label>
+          <select id="logLevelSelect">
+            <option value="error">error — only failures</option>
+            <option value="warn">warn — failures + warnings</option>
+            <option value="info">info — normal activity (default)</option>
+            <option value="debug">debug — trace AI calls, screenshots, OCR, anonymization, enrichment</option>
+          </select>
+          <span class="sfield-hint">Default from DFIR_LOG_LEVEL. Logs tee to the console AND to files: <code>logs/session-&lt;time&gt;.log</code> (all activity) plus <code>cases/&lt;id&gt;/logs/session-&lt;time&gt;.log</code> (per-case audit trail). A new file is created each time the server starts.</span>
         </div>
         <hr class="settings-hr" />
         <div class="srestart-note">⚠ Fields below require a server restart to take effect</div>
@@ -1139,7 +1155,7 @@
   <div id="searchFilterBar" hidden>
     <span>Search:</span>
     <div class="sf-search-wrap">
-      <input id="globalSearch" type="search" placeholder="events, findings, IOCs… (press / to focus)" autocomplete="off" />
+      <input id="globalSearch" type="search" placeholder="Search events, findings, IOCs…" title="Search events, findings, IOCs — press / to focus, Esc to clear" autocomplete="off" />
       <button id="clearSearch" type="button" title="Clear search (Esc)" hidden>✕</button>
     </div>
     <div class="sf-sep"></div>
@@ -4478,6 +4494,20 @@
       }
     }
 
+    // Jump from a timeline event's finding link to that finding in the Findings section,
+    // expanding the section if collapsed, then scroll + flash it (reuses the ev-flash animation).
+    function jumpToFinding(fid) {
+      const sec = document.getElementById("sec-findings");
+      if (sec) sec.classList.remove("collapsed");
+      const target = [...document.querySelectorAll("#findings .finding")]
+        .find(div => div.getAttribute("data-fid") === fid);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.classList.remove("ev-flash"); void target.offsetWidth;  // restart the animation
+      target.classList.add("ev-flash");
+      setTimeout(() => target.classList.remove("ev-flash"), 1600);
+    }
+
     // Set the investigation scope window to the currently visible time range, then apply it.
     function swScopeToView() {
       if (!swViewStartMs || !swViewEndMs) return;
@@ -5008,6 +5038,12 @@
           chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner);
         }
         const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
+        // Affected host/asset, shown as a compact chip before the description for fast scanning.
+        const host = e.asset ? ` <span class="ev-host" title="Affected host / asset">🖥 ${esc(e.asset)}</span>` : "";
+        // Findings this event backs — clickable, jump to the finding in the Findings section.
+        const findingLinks = (e.relatedFindingIds && e.relatedFindingIds.length)
+          ? `<br><small>findings: ${e.relatedFindingIds.map(fid => `<a class="finding-jump" data-fid="${escAttr(fid)}" title="Jump to finding ${escAttr(fid)}">${esc(fid)}</a>`).join(", ")}</small>`
+          : "";
 
         return `<div class="ev-row${isSelected ? " ev-selected" : ""}${isNew ? " ev-new" : ""}" data-evid="${escAttr(id)}">`
           + `<div class="ev-col-ctrl">`
@@ -5016,10 +5052,10 @@
           + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)}`
           + `</div>`
           + `<div class="ev-col-time"><span class="sev-${esc(e.severity)}">${span}</span></div>`
-          + `<div class="ev-col-content">${tagPills("event", e.id)}${newBadge}${badge}${corro}${chain} <strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}`
+          + `<div class="ev-col-content">${tagPills("event", e.id)}${newBadge}${badge}${corro}${chain}${host} <strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}`
           + `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:#ff8a8a">${esc(e.chainCheck.note)}</small>` : ""}`
           + `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}`
-          + `${e.relatedFindingIds && e.relatedFindingIds.length ? `<br><small>findings: ${esc(e.relatedFindingIds.join(", "))}</small>` : ""}`
+          + findingLinks
           + `${evidenceLinks(caseId, e.sourceScreenshots)}</div>`
           + `</div>`;
       }).join("");
@@ -5119,7 +5155,7 @@
           }
           // Chips lead the row (comment · tag), matching IOCs / Key Questions / Threads, then the
           // severity badge and the finding id/title.
-          return `<div class="finding">${commentChip("finding", f.id)} ${tagChip("finding", f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ` +
+          return `<div class="finding" data-fid="${escAttr(f.id)}">${commentChip("finding", f.id)} ${tagChip("finding", f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ` +
             `<span style="color:#6aa9ff">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
@@ -5517,6 +5553,9 @@
         if (lastState) renderIocs(lastState.iocs || []);
         return;
       }
+      // Finding reference link inside a timeline event → jump to the finding.
+      const fjump = e.target.closest && e.target.closest(".finding-jump");
+      if (fjump) { e.preventDefault(); jumpToFinding(fjump.getAttribute("data-fid")); return; }
       const chip = e.target.closest && e.target.closest(".comment-chip");
       if (chip) { openCommentModal(chip.getAttribute("data-ct"), chip.getAttribute("data-ci")); return; }
       const tag = e.target.closest && e.target.closest(".tag-add");
@@ -6461,6 +6500,7 @@
       document.getElementById("settingsInvestigator").value = localStorage.getItem("dfir.investigator") || "";
       renderSecChecks();
       fetchEnvSettings();
+      fetchLogLevel();
       // Reset to first tab
       document.querySelectorAll(".stab").forEach((b, i) => b.classList.toggle("active", i === 0));
       document.querySelectorAll(".stab-pane").forEach((p, i) => p.classList.toggle("active", i === 0));
@@ -6479,6 +6519,24 @@
     document.getElementById("settingsBtn").onclick = openSettingsModal;
     document.getElementById("settingsSaveBtn").onclick = saveSettings;
     document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
+    // Live log-verbosity control (no restart — server + pipeline share one logger).
+    async function fetchLogLevel() {
+      try {
+        const r = await fetch("/log-level");
+        if (!r.ok) return;
+        const j = await r.json();
+        const sel = document.getElementById("logLevelSelect");
+        if (sel && j.level) sel.value = j.level;
+      } catch { /* leave the select at its default */ }
+    }
+    document.getElementById("logLevelSelect").addEventListener("change", async (e) => {
+      const level = e.target.value;
+      try {
+        const r = await fetch("/log-level", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ level }) });
+        const msg = document.getElementById("settingsSaveMsg");
+        if (msg) { msg.textContent = r.ok ? `Log level set to ${level}.` : "Could not change log level — restart the server?"; setTimeout(() => { msg.textContent = ""; }, 3000); }
+      } catch { /* network/404 — server likely stale */ }
+    });
     // IOC whitelist controls
     document.getElementById("wlAddBtn").addEventListener("click", wlAddRule);
     document.getElementById("wlPattern").addEventListener("keydown", e => { if (e.key === "Enter") wlAddRule(); });
