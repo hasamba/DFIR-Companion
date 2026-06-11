@@ -179,6 +179,12 @@ export interface AppOptions {
   // pings dashboard clients over the WS to re-fetch the graph when overrides change.
   assetOverridesStore?: AssetOverridesStore;
   onAssetOverrides?: (caseId: string) => void;
+  // Confirmed-legitimate markers (false-positive exclusions). onLegitimate pings dashboard
+  // clients over the WS so other investigators see the change immediately, before synthesis.
+  onLegitimate?: (caseId: string) => void;
+  // Investigation time-window changes. onScope pings dashboard clients with the new window so
+  // other investigators can apply the same scope instantly, without waiting for re-synthesis.
+  onScope?: (caseId: string, scope: ScopeWindow) => void;
   // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
   // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
   synthMetaStore?: SynthMetaStore;
@@ -1630,6 +1636,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const markers = await legitimate.load(req.params.id);
       const next = [...markers.filter((m) => m.id !== marker.id), marker];
       await legitimate.save(req.params.id, next);
+      options.onLegitimate?.(req.params.id);
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it
       return res.status(200).json(next);
     } catch (err) {
@@ -1657,6 +1664,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       for (const m of built) byId.set(m.id, m);
       const next = [...byId.values()];
       await legitimate.save(req.params.id, next);
+      options.onLegitimate?.(req.params.id);
       resynthesizeInBackground(req.params.id); // ONE re-synthesis for the whole batch
       return res.status(200).json(next);
     } catch (err) {
@@ -1715,6 +1723,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const markers = await legitimate.load(req.params.id);
       const next = markers.filter((m) => m.id !== id);
       await legitimate.save(req.params.id, next);
+      options.onLegitimate?.(req.params.id);
       resynthesizeInBackground(req.params.id);
       return res.status(200).json(next);
     } catch (err) {
@@ -1932,6 +1941,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       };
       const scope: ScopeWindow = { start: norm(req.body?.start), end: norm(req.body?.end) };
       await scopeStore.save(req.params.id, scope);
+      options.onScope?.(req.params.id, scope);
       resynthesizeInBackground(req.params.id); // re-derive within the window
       return res.status(200).json(scope);
     } catch (err) {
@@ -3802,6 +3812,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1"):
     onPlaybook: (caseId) => hub.broadcastTo(caseId, { type: "playbook_changed" }),
     assetOverridesStore,
     onAssetOverrides: (caseId) => hub.broadcastTo(caseId, { type: "asset_overrides_changed" }),
+    onLegitimate: (caseId) => hub.broadcastTo(caseId, { type: "legitimate_changed" }),
+    onScope: (caseId, scope) => hub.broadcastTo(caseId, { type: "scope_changed", ...scope }),
     synthMetaStore,
     importMetaStore,
     onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
