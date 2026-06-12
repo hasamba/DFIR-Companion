@@ -460,7 +460,10 @@ function winAccounts(ed: Row): string[] {
   return [...out];
 }
 
-function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" | null {
+// Grade a process image + command line for attacker tradecraft: "strong" (mimikatz / lsadump /
+// log-clearing), "weak" (a LOLBin or an encoded / hidden / download command), or null. Exported so
+// the memory-forensics importer can bump a Volatility `cmdline` row the same way.
+export function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" | null {
   const blob = `${image} ${cmd}`;
   if (STRONG_CMD.test(blob)) return "strong";
   if (LOLBINS.has(baseName(image).toLowerCase()) || SUSP_CMD.test(blob)) return "weak";

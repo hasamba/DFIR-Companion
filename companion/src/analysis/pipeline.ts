@@ -40,6 +40,7 @@ import { parseCloudTrail, type AwsImportOptions } from "./awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "./cloudActivityImport.js";
 import { parsePlasoCsv, type PlasoImportOptions } from "./plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "./sandboxImport.js";
+import { parseMemory, type MemoryImportOptions } from "./memoryImport.js";
 import { parseEmail, type EmailImportOptions } from "./emailImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
@@ -1532,6 +1533,59 @@ export class AnalysisPipeline {
       threadsClosed: [],
       timelineNote: `Sandbox import (${parsed.format}): ${parsed.kept} event(s)` +
         (parsed.signatures > 0 ? `, ${parsed.signatures} signature(s)` : "") +
+        `, ${parsed.iocs.length} IOC(s)`,
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import memory-forensics tool output (Volatility 3 or Rekall). Deterministic (no AI call): each
+  // plugin table is identified by its columns and mapped — pslist/psscan/pstree → process-tree
+  // events (with parent→child links), netscan/netstat → network-connection events (+ foreign IP/
+  // port IOCs), malfind → High injected-code events (ATT&CK T1055), cmdline → command-line events
+  // (bumped on LOLBin/encoded tradecraft), svcscan/modules → service/driver evidence. Tagged
+  // "Volatility" / "Rekall" for cross-source correlation; reads the artifact's own time.
+  async importMemory(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;            // unique per import (e.g. "mem3") so ids never collide
+      importedAt: string;
+      memory?: MemoryImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseMemory(text, { ...opts.memory, filename: opts.label });
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const tool = parsed.tool || "Volatility";
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [tool],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Memory import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s) across ${parsed.tables} plugin(s)` +
+        (parsed.injected > 0 ? `, ${parsed.injected} injected-code hit(s)` : "") +
+        (parsed.connections > 0 ? `, ${parsed.connections} connection(s)` : "") +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         `, ${parsed.iocs.length} IOC(s)`,
       summary: "",
     };
