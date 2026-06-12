@@ -173,6 +173,21 @@ at startup from `DFIR_NSRL_FILE` (`;`-separated paths, fire-and-forget, idempote
 so both behave identically; loaded hashes persist (no restart needed, and they survive one). Same SUBDIR-not-sibling
 rationale as the whitelist.
 
+**NSRL RDS SQLite backend (#63, second backend).** The flat store above is fine for small curated lists, but the REAL
+NSRL RDS is distributed as a SQLite DB (the "modern RDS minimal" `RDS_*.db`) — ~160 GB, hundreds of millions of rows —
+that can't be held in memory. So `analysis/nsrlDb.ts` (`NsrlDb`) **queries it on demand** instead of ingesting: opened
+READ-ONLY, one indexed point-lookup per hash. It auto-detects the base table (prefers `METADATA`; `FILE` is a view) and
+the sha256/md5 columns, samples one row to learn the stored hash case (binds in that case so the equality uses the index),
+and keys on **sha256 + md5** (what events/IOCs carry; sha1 is intentionally skipped — no events carry it and indexing it
+wastes tens of GB). `node:sqlite` is loaded LAZILY via `process.getBuiltinModule` in `analysis/sqliteRuntime.ts` — NOT a
+static `import` — because (a) bundlers (Vitest/Vite) can't yet resolve the newer builtin and (b) it only exists on Node 22.5+,
+so a top-level import would crash the Node-20 floor just by being in the graph; opening a DB on old Node throws an actionable
+error and the flat store still works. The two backends UNION in `applyNsrlToCase` (known-good if either has the hash). Path
+from `DFIR_NSRL_DB` (env-managed → the UI connect is read-only) or, when unset, a UI-set path persisted in `nsrl/db-path.txt`
+(`POST`/`DELETE /nsrl/db`, mutable `nsrlDb` in the createApp closure). The analyst must index the queried column(s) first
+(`CREATE INDEX … ON METADATA(sha256)` + `ANALYZE`) — see the NSRL section in `companion/README.md`. When bumping
+`@types/node` to a version that ships `node:sqlite` types, delete the ambient `src/node-sqlite.d.ts`.
+
 **Cross-source correlation runs in `mergeDelta`** (`correlate.ts`): events describing the
 same artifact collapse into one — by exact dup (time+description, so re-imports don't
 double), shared hash, or same path within a time window. The merged event unions `sources`

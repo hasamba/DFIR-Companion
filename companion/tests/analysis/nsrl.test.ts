@@ -81,4 +81,10 @@ describe("nsrlMatchEvents", () => {
     expect(out).toHaveLength(1);
     expect(out[0].hash).toBe(MD5); // sha256 not in set, md5 is
   });
+  it("also accepts a lookup predicate (the SQLite-RDS / union backend form)", () => {
+    const lookup = (h: string): boolean => h === SHA256;     // pretend-DB: only this sha256 is known-good
+    const out = nsrlMatchEvents(events, lookup);
+    expect(out.map((m) => m.event.id)).toEqual(["e1"]);
+    expect(nsrlMatchIocs([{ id: "i", type: "hash", value: SHA256, firstSeen: "t" }], lookup)).toHaveLength(1);
+  });
 });

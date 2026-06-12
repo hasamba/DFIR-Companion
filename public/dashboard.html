@@ -1210,6 +1210,24 @@
 
         <hr class="settings-hr" />
         <div class="sfield">
+          <label>NSRL RDS database (SQLite) <span id="nsrlDbBadge" class="sfield-hint" style="display:inline"></span></label>
+          <div id="nsrlDbStatus" style="font-size:12px;color:#9aa4b2;padding:2px 0">Loading…</div>
+          <div id="nsrlDbControls" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
+            <input id="nsrlDbPath" placeholder="D:\NSRL\RDS_2026.03.1_modern.db" style="flex:1 1 300px;font-family:monospace" />
+            <button id="nsrlDbConnectBtn" type="button">Connect</button>
+            <button id="nsrlDbDisconnectBtn" type="button" style="background:#3a2020;border:1px solid #5a2a2a;color:#ff9f9f">Disconnect</button>
+          </div>
+          <span id="nsrlDbMsg" class="manual-msg"></span>
+          <div style="margin-top:6px;font-size:11px;color:#7e8aa0">
+            For the <strong>full ~160 GB NSRL RDS</strong> (too big to load into memory) — queried on demand, no ingest.
+            Download the <em>Modern RDS minimal</em> SQLite set and <strong>index the hash column(s)</strong> first
+            (<code>CREATE INDEX … ON METADATA(sha256)</code> + <code>ANALYZE</code>; matching keys on sha256/md5, not sha1).
+            See the README's NSRL section for the full setup.
+          </div>
+        </div>
+
+        <hr class="settings-hr" />
+        <div class="sfield">
           <label>Apply to the current case</label>
           <div style="display:flex;gap:8px;align-items:center">
             <button id="nsrlApplyBtn" type="button">Apply NSRL to loaded case</button>
@@ -6801,6 +6819,9 @@
     document.getElementById("nsrlExportBtn").addEventListener("click", () => window.open("/nsrl/export", "_blank"));
     document.getElementById("nsrlClearBtn").addEventListener("click", nsrlClear);
     document.getElementById("nsrlApplyBtn").addEventListener("click", nsrlApplyToCase);
+    document.getElementById("nsrlDbConnectBtn").addEventListener("click", nsrlDbConnect);
+    document.getElementById("nsrlDbDisconnectBtn").addEventListener("click", nsrlDbDisconnect);
+    document.getElementById("nsrlDbPath").addEventListener("keydown", e => { if (e.key === "Enter") nsrlDbConnect(); });
     document.getElementById("stab-whitelist").addEventListener("click", e => {
       const q = e.target.closest(".wl-quick");
       if (q) { document.getElementById("wlMatch").value = q.dataset.m; document.getElementById("wlPattern").value = q.dataset.p; document.getElementById("wlType").value = q.dataset.t || ""; return; }
@@ -6896,7 +6917,46 @@
         if (status) status.textContent = n
           ? `${n.toLocaleString()} known-good hash${n !== 1 ? "es" : ""} loaded — matches auto-marked legitimate on import.`
           : "No hashes loaded yet — import an NSRL set below to start filtering known-good files.";
+        renderNsrlDb(j);
       }).catch(() => { if (status) status.textContent = "could not load — restart the server if this persists."; });
+    }
+    function renderNsrlDb(j) {
+      const st = document.getElementById("nsrlDbStatus");
+      const badge = document.getElementById("nsrlDbBadge");
+      const controls = document.getElementById("nsrlDbControls");
+      const disc = document.getElementById("nsrlDbDisconnectBtn");
+      const db = (j && j.db) || { connected: false };
+      if (db.connected) {
+        if (badge) badge.textContent = "● connected";
+        if (badge) badge.style.color = "#7ee787";
+        if (st) st.innerHTML = `Querying <code>${esc(db.path || "")}</code> — table <strong>${esc(db.table || "?")}</strong>, columns ${esc((db.columns || []).join(", ") || "?")}.`;
+      } else {
+        if (badge) { badge.textContent = ""; }
+        if (st) st.textContent = "Not connected — for the full RDS, connect the SQLite .db below.";
+      }
+      // Env-managed: the path comes from DFIR_NSRL_DB; hide the runtime connect controls.
+      const envManaged = j && j.dbEnvManaged;
+      if (controls) controls.style.display = envManaged ? "none" : "flex";
+      if (envManaged && st) st.innerHTML += ` <span style="color:#7e8aa0">(path set by <code>DFIR_NSRL_DB</code>)</span>`;
+      if (disc) disc.style.display = db.connected ? "" : "none";
+    }
+    function nsrlDbConnect() {
+      const path = document.getElementById("nsrlDbPath").value.trim();
+      const msg = document.getElementById("nsrlDbMsg");
+      if (!path) { msg.textContent = "enter the RDS .db file path"; return; }
+      msg.textContent = "connecting…";
+      fetch("/nsrl/db", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path }) })
+        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "HTTP " + r.status); return j; })
+        .then(j => { msg.textContent = `connected (table ${j.table}, ${(j.columns || []).join("/")})`; document.getElementById("nsrlDbPath").value = ""; loadNsrl(); })
+        .catch(e => { msg.textContent = e.message; });
+    }
+    function nsrlDbDisconnect() {
+      const msg = document.getElementById("nsrlDbMsg");
+      msg.textContent = "disconnecting…";
+      fetch("/nsrl/db", { method: "DELETE" })
+        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "HTTP " + r.status); return j; })
+        .then(() => { msg.textContent = "disconnected"; loadNsrl(); })
+        .catch(e => { msg.textContent = e.message; });
     }
     function nsrlImport() {
       const text = document.getElementById("nsrlImportText").value;

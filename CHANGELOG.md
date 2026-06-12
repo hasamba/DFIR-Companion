@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **NSRL known-good hash checking** — a global NSRL/RDS hash set auto-marks matching forensic events + IOCs legitimate on import (reversible) to cut false positives; load by paste, by server file path, or `DFIR_NSRL_FILE` startup pre-load; Settings → NSRL (closes #63).
+- **NSRL known-good hash checking** — auto-marks matching forensic events + IOCs legitimate on import (reversible) to cut false positives. Two backends: a flat hash set (paste / server file / `DFIR_NSRL_FILE`) for custom lists, and **direct query of the full NSRL RDS SQLite database** (`DFIR_NSRL_DB` or connect in-UI) — the real ~160 GB set, never loaded into memory. Keys on sha256/md5; Settings → NSRL (closes #63).
 
 ## [0.18.0] - 2026-06-11
 

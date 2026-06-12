@@ -73,34 +73,45 @@ export function parseNsrlText(text: string): string[] {
   return [...out];
 }
 
-// IOCs of type "hash" whose value is in the NSRL set, paired with the matched hash (for the marker
-// note). Other IOC types are never NSRL-matchable.
+// A known-good-hash test over an already-normalized hash. Lets the matchers run against either the
+// flat in-memory set (NsrlStore) or the on-demand SQLite RDS backend (NsrlDb) through one interface.
+export type NsrlLookup = (normalizedHash: string) => boolean;
+
+function asLookup(src: ReadonlySet<string> | NsrlLookup): NsrlLookup {
+  return typeof src === "function" ? src : (h) => src.has(h);
+}
+
+// IOCs of type "hash" whose value is known-good, paired with the matched hash (for the marker note).
+// Other IOC types are never NSRL-matchable. `hashes` is a Set (flat store) or a lookup predicate
+// (e.g. the SQLite RDS, or a union of both).
 export function nsrlMatchIocs(
   iocs: readonly IOC[],
-  hashes: ReadonlySet<string>,
+  hashes: ReadonlySet<string> | NsrlLookup,
 ): Array<{ ioc: IOC; hash: string }> {
-  if (hashes.size === 0) return [];
+  if (typeof hashes !== "function" && hashes.size === 0) return [];
+  const lookup = asLookup(hashes);
   const out: Array<{ ioc: IOC; hash: string }> = [];
   for (const ioc of iocs) {
     if (ioc.type !== "hash") continue;
     const n = normalizeHash(ioc.value);
-    if (n && hashes.has(n)) out.push({ ioc, hash: n });
+    if (n && lookup(n)) out.push({ ioc, hash: n });
   }
   return out;
 }
 
-// Forensic events whose file hash (sha256 preferred, else md5) is in the NSRL set — i.e. a
-// known-good file. Paired with the matched hash for the marker note.
+// Forensic events whose file hash (sha256 preferred, else md5) is known-good — i.e. a known-good
+// file. Paired with the matched hash for the marker note.
 export function nsrlMatchEvents(
   events: readonly ForensicEvent[],
-  hashes: ReadonlySet<string>,
+  hashes: ReadonlySet<string> | NsrlLookup,
 ): Array<{ event: ForensicEvent; hash: string }> {
-  if (hashes.size === 0) return [];
+  if (typeof hashes !== "function" && hashes.size === 0) return [];
+  const lookup = asLookup(hashes);
   const out: Array<{ event: ForensicEvent; hash: string }> = [];
   for (const event of events) {
     const sha = normalizeHash(event.sha256 ?? "");
     const md5 = normalizeHash(event.md5 ?? "");
-    const matched = sha && hashes.has(sha) ? sha : md5 && hashes.has(md5) ? md5 : null;
+    const matched = sha && lookup(sha) ? sha : md5 && lookup(md5) ? md5 : null;
     if (matched) out.push({ event, hash: matched });
   }
   return out;

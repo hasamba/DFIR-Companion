@@ -171,6 +171,8 @@ Examples:
 | `GET /nsrl` | **NSRL known-good hash set** stats: `{ count, enabled }` (count of loaded NIST NSRL / RDS hashes). |
 | `POST /nsrl/import` | `{ text }` — import known-good hashes from a pasted **NSRLFile.txt** (RDS CSV), a **hashdeep CSV**, or a **hash-per-line / comma list** (MD5/SHA-1/SHA-256); dedups, returns `{ added, parsed, total }`. |
 | `POST /nsrl/import-file` | `{ path }` — load hashes from file(s) on the **server's filesystem** (`;`-separated for multiple) — the in-UI equivalent of `DFIR_NSRL_FILE`, for big RDS sets you don't want to paste. Best-effort per file; returns `{ added, total, files[] }`. |
+| `POST /nsrl/db` | `{ path }` — connect (or swap) the **NSRL RDS SQLite database** at runtime — the full ~160 GB set, queried on demand (not loaded into memory). Opens read-only, auto-detects the `METADATA` table + sha256/md5 columns, persists the path. Rejected (400) when `DFIR_NSRL_DB` env-manages the path. Returns the connection status. |
+| `DELETE /nsrl/db` | Disconnect the RDS database (the flat set is unaffected). |
 | `POST /nsrl/clear` | Wipe the global NSRL set (e.g. to swap RDS releases). |
 | `GET /nsrl/export` | Download the set as a newline-delimited hash list. |
 | `POST /cases/:id/nsrl/apply` | Apply the NSRL set to this case now — marks events/IOCs with a known-good file hash legitimate, re-synthesizes; returns `{ matchedIocs, matchedEvents, added, legitimate }`. Auto-runs on every import; also pre-load big sets at startup via `DFIR_NSRL_FILE`. |
@@ -213,6 +215,43 @@ Examples:
 
 CORS (incl. Private Network Access) is enabled so the browser extension can reach
 the server from a `chrome-extension://` origin.
+
+## NSRL known-good hashes (#63)
+
+A known-software hash matches a benign OS/application file, so flagging it lets the Companion
+**auto-mark the matching forensic event / IOC legitimate** (reversibly) and drop it from findings —
+cutting false positives. Two backends, used together (a hash is known-good if **either** has it):
+
+**1. Flat hash set** — for a small, curated list. Manage it in **Settings → NSRL**: paste an
+`NSRLFile.txt` (RDS CSV), a hashdeep CSV, or a hash-per-line list; load a file off the server by path;
+or pre-load at startup with `DFIR_NSRL_FILE` (`;`-separated paths). Stored normalized in
+`nsrl/known-hashes.txt`, held in memory.
+
+**2. The full NSRL RDS SQLite database** — for the real ~160 GB Reference Data Set, which is far too
+large to load into memory. The Companion **queries it on demand** (one indexed point-lookup per hash),
+read-only, via Node's built-in SQLite. Point at it with `DFIR_NSRL_DB=<path-to.db>` or connect it in
+**Settings → NSRL**.
+
+Matching keys on **sha256 + md5** (what forensic events/IOCs carry), *not* sha1 — so index the column(s)
+you query. One-time setup (significantly speeds up every lookup):
+
+```powershell
+# Download the "Modern RDS minimal" SQLite set (RDS_*.db) from the NSRL site, then:
+sqlite3 "D:\NSRL\RDS_2026.03.1_modern.db" "CREATE INDEX IF NOT EXISTS idx_metadata_sha256 ON METADATA(sha256);"
+# (optional, if you also want md5 matches)
+sqlite3 "D:\NSRL\RDS_2026.03.1_modern.db" "CREATE INDEX IF NOT EXISTS idx_metadata_md5 ON METADATA(md5);"
+sqlite3 "D:\NSRL\RDS_2026.03.1_modern.db" "ANALYZE;"
+```
+
+The hash column lives on the `METADATA` base table (`FILE` is a view), which the Companion auto-detects.
+
+> **"database or disk is full" while building the index?** The sort spills tens of GB to `%TEMP%` on
+> C:. Redirect it to the DB's drive first: `mkdir D:\NSRL\sqlite_tmp` then
+> `set SQLITE_TMPDIR=D:\NSRL\sqlite_tmp` before launching `sqlite3` (or `PRAGMA temp_store_directory='D:\NSRL\sqlite_tmp';`).
+
+**Opt-in by design:** both backends start empty/disconnected. NSRL is *known*, not strictly
+*known-good* — some RDS sets include hacktools, and a known hash can still be malicious in context
+(DLL side-loading, a renamed LOLBin) — and every match is reversible from *Confirmed Legitimate*.
 
 ## Case folder layout
 
