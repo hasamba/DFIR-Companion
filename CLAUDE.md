@@ -219,9 +219,23 @@ sections — title page, distribution, BIA, glossary, recommendations…), `comm
 which **retries the rename through a transient `EPERM`/`EBUSY`/`EACCES` lock**, since `cases/` may live
 in a synced folder where Dropbox/OneDrive/AV briefly locks the file mid-rename; route every new store's
 save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
-`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `ImportMetaStore`, `PlaybookStore`, `PlaybookControlStore`. Pure filters/transforms live next to
+`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `ImportMetaStore`, `PlaybookStore`, `PlaybookControlStore`, `ReportTemplateControlStore` (`state/report-template.json` `{ templateId }`). Pure filters/transforms live next to
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`, `diffFindings`, `diffTimeline`, `diffIocs`) and are unit-tested independently of I/O.
+
+**Custom report templates (#60).** A report is rendered through a **report template** that controls
+**branding** (accent colour, cover title/subtitle, running header/footer — all with a tiny, safe
+Handlebars-style `{{placeholder}}` + `{{#if}}` engine, NO helpers/injection — and show/hide logo+name) and
+**section layout** (which of the canonical MAJOR sections appear and in what order). Pure logic lives in
+`reports/reportTemplate.ts` (schema, `BUILT_IN_REPORT_TEMPLATES` — `standard` reproduces the historical
+fixed-format report byte-for-byte — `normalizeSections`, `renderTemplateString`, `buildBrandingContext`).
+Templates are **GLOBAL** (`ReportTemplateStore`, `report-templates/` dir beside `cases/`, built-ins editable
+via override files — mirrors `ArtifactBundleStore`); the per-case choice is `ReportTemplateControlStore`. The
+**Markdown renderer is template-driven** (keyed section builders iterated per `orderedEnabledSections`), so the
+HTML (accent → stylesheet) and Word (accent → heading colour) exports inherit it — keep `report.md` the single
+source of truth. `ReportWriter.loadTemplate` resolves the per-case template (falls back to default on a dangling
+id), threaded through `renderContents` so the redacted export honors it too. When you add a report section, add
+its key+label to `REPORT_SECTION_DEFS`, a builder case in `renderMarkdownReport`, and the dashboard `RT_SECTIONS` list.
 
 **Investigation snapshot (portable case export/import, #56).** `GET /cases/:id/export/snapshot` bundles a
 case into ONE shareable JSON — case meta + the **allowlisted** `state/*.json` files + evidence *references*

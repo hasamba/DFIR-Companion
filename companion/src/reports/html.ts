@@ -4,6 +4,7 @@ import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { buildAssetGraph } from "../analysis/assetGraph.js";
 import { renderMarkdownReport } from "./markdown.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
+import { defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { renderAssetGraphSvg } from "./assetGraphSvg.js";
@@ -45,7 +46,12 @@ function safeImageUrl(href: string): boolean {
 
 // Self-contained, dependency-free stylesheet. Tuned for on-screen reading and for
 // "Print → Save as PDF" from the browser (A4 margins, avoids breaking rows across pages).
-const STYLE = `
+// The accent colour (h1 underline + links) comes from the report template's branding so a
+// custom template can match a firm's colours; the default template keeps the historical blue.
+// `accent` is a validated `#rrggbb` value (see reportTemplate.ts normalizeHexColor), so it can
+// never inject arbitrary CSS.
+function styleFor(accent: string): string {
+  return `
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
   body { margin: 0; background: #f5f6f8; color: #1b1f24;
@@ -53,12 +59,12 @@ const STYLE = `
   main.report { max-width: 900px; margin: 0 auto; padding: 48px 56px; background: #fff;
     box-shadow: 0 1px 4px rgba(0,0,0,.08); }
   img { max-width: 280px; max-height: 96px; object-fit: contain; margin: 0 0 8px; }
-  h1 { font-size: 28px; margin: 0 0 24px; padding-bottom: 12px; border-bottom: 3px solid #2d6cdf; }
+  h1 { font-size: 28px; margin: 0 0 24px; padding-bottom: 12px; border-bottom: 3px solid ${accent}; }
   h2 { font-size: 20px; margin: 32px 0 10px; padding-top: 8px; border-top: 1px solid #e6e8ec; color: #16213a; }
   h3 { font-size: 16px; margin: 22px 0 8px; color: #2a3550; }
   h4 { font-size: 14px; margin: 16px 0 6px; color: #44506a; }
   p { margin: 8px 0; }
-  a { color: #2d6cdf; }
+  a { color: ${accent}; }
   code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 90%;
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
   blockquote { margin: 10px 0; padding: 8px 14px; border-left: 4px solid #c7ccd4;
@@ -78,6 +84,7 @@ const STYLE = `
     @page { margin: 18mm; }
   }
 `;
+}
 
 function reportTitle(state: InvestigationState, meta: ReportMeta): string {
   const id = meta.incidentId.trim();
@@ -116,8 +123,8 @@ export function injectPrintTrigger(html: string): string {
   return idx === -1 ? html + PRINT_TRIGGER : html.slice(0, idx) + PRINT_TRIGGER + html.slice(idx);
 }
 
-export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary, assetGraph?: AssetGraph, notebookEntries?: NotebookEntry[], playbookTasks?: PlaybookTask[]): string {
-  const markdown = renderMarkdownReport(state, meta, exposure, assetGraph, notebookEntries, playbookTasks);
+export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = emptyReportMeta(), exposure?: CustomerExposureSummary, assetGraph?: AssetGraph, notebookEntries?: NotebookEntry[], playbookTasks?: PlaybookTask[], template: ReportTemplate = defaultReportTemplate()): string {
+  const markdown = renderMarkdownReport(state, meta, exposure, assetGraph, notebookEntries, playbookTasks, template);
 
   const marked = new Marked({ gfm: true });
   // Escape any raw HTML tokens in the source instead of emitting them verbatim.
@@ -159,7 +166,7 @@ export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = e
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<title>${escapeHtml(reportTitle(state, meta))}</title>`,
-    `<style>${STYLE}</style>`,
+    `<style>${styleFor(template.accentColor)}</style>`,
     "</head>",
     "<body>",
     '<main class="report">',

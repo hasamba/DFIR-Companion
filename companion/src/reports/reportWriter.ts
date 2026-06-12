@@ -27,6 +27,9 @@ import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js"
 import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
+import { defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
+import type { ReportTemplateStore } from "./reportTemplateStore.js";
+import type { ReportTemplateControlStore } from "./reportTemplateControl.js";
 import { applyAnonDeep, type RedactedReportContents } from "../analysis/redactedExport.js";
 import type { ReportMeta } from "./reportMeta.js";
 
@@ -51,7 +54,19 @@ export class ReportWriter {
     private readonly notebook?: NotebookStore,
     private readonly assetOverrides?: AssetOverridesStore,
     private readonly playbook?: PlaybookStore,
+    private readonly reportTemplates?: ReportTemplateStore,
+    private readonly reportTemplateControl?: ReportTemplateControlStore,
   ) {}
+
+  // Resolve the report template selected for the case (issue #60). Falls back to the default
+  // "standard" template when no selection is stored, the stores aren't wired, or the selected
+  // template was since deleted — so report generation never breaks on a dangling id.
+  private async loadTemplate(caseId: string): Promise<ReportTemplate> {
+    if (!this.reportTemplates || !this.reportTemplateControl) return defaultReportTemplate();
+    const { templateId } = await this.reportTemplateControl.load(caseId);
+    const tpl = await this.reportTemplates.get(templateId);
+    return tpl ?? defaultReportTemplate();
+  }
 
   // Load the case state with the same deterministic report filters applied: drop
   // out-of-scope events (and the findings/IOCs/MITRE supported only by them) and exclude
@@ -86,7 +101,7 @@ export class ReportWriter {
   async docx(caseId: string): Promise<Buffer> {
     const state = await this.loadFilteredState(caseId);
     const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
-    return renderDocxReport(state, meta, await this.loadExposure(caseId));
+    return renderDocxReport(state, meta, await this.loadExposure(caseId), await this.loadTemplate(caseId));
   }
 
   private async loadExposure(caseId: string): Promise<CustomerExposureSummary | undefined> {
@@ -202,10 +217,11 @@ export class ReportWriter {
     graph: AssetGraph,
     notebookEntries: NotebookEntry[] | undefined,
     playbookTasks: PlaybookTask[] | undefined,
+    template: ReportTemplate = defaultReportTemplate(),
   ): RedactedReportContents {
     return {
-      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks),
-      html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks),
+      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template),
+      html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template),
       findingsCsv: findingsCsv(state),
       iocsCsv: iocsCsv(state),
       timelineCsv: timelineCsv(state),
@@ -230,9 +246,10 @@ export class ReportWriter {
     const exposure = await this.loadExposure(caseId);
     const notebookEntries = await this.loadNotebook(caseId);
     const playbookTasks = await this.loadPlaybook(caseId);
+    const template = await this.loadTemplate(caseId);
     const overrides = this.assetOverrides ? await this.assetOverrides.load(caseId) : emptyOverrides();
     const graph = applyAssetOverrides(buildAssetGraph(state), overrides);
-    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks);
+    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template);
     await writeFile(paths.markdown, c.markdown, "utf8");
     await writeFile(paths.html, c.html, "utf8");
     await writeFile(paths.findingsCsv, c.findingsCsv, "utf8");
@@ -261,6 +278,8 @@ export class ReportWriter {
       redact,
     );
     const graph = applyAssetOverrides(buildAssetGraph(state), overrides);
-    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks);
+    // The redacted export honors the per-case report template too (branding/section layout).
+    const template = await this.loadTemplate(caseId);
+    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template);
   }
 }

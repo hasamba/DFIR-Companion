@@ -80,6 +80,8 @@ import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
+import { ReportTemplateStore } from "./reports/reportTemplateStore.js";
+import { ReportTemplateControlStore } from "./reports/reportTemplateControl.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore, type Tag } from "./analysis/tags.js";
@@ -189,6 +191,11 @@ export interface AppOptions {
   // Human-authored report metadata (title page, distribution, BIA, glossary, recommendations…)
   // edited from the dashboard and merged into report.md.
   reportMetaStore?: ReportMetaStore;
+  // Custom report templates (issue #60): GLOBAL branded layouts (accent, cover, header/footer,
+  // section selection) + the per-case selection of which template renders the report.
+  reportTemplateStore?: ReportTemplateStore;
+  reportTemplateControlStore?: ReportTemplateControlStore;
+  onReportTemplate?: (caseId: string) => void;
   // Investigator comments on case entities (collaboration). onComments pings dashboard
   // clients over the WS to re-fetch when a comment is added/removed.
   commentsStore?: CommentsStore;
@@ -1007,6 +1014,80 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.reportMetaStore) return res.status(501).json({ error: "report metadata not configured" });
     try {
       const saved = await options.reportMetaStore.save(req.params.id, req.body);
+      return res.status(200).json(saved);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Report templates (issue #60) ─────────────────────────────────────────────────────────
+  // Global, shared-across-cases branded layouts: accent colour, cover title/subtitle, running
+  // header & footer, and which report sections appear and in what order. Built-ins are editable in
+  // place (saving under a built-in id writes an override; DELETE resets it). Mirrors /bundles.
+  app.get("/report-templates", async (_req: Request, res: Response) => {
+    if (!options.reportTemplateStore) return res.status(200).json([]);
+    try {
+      return res.status(200).json(await options.reportTemplateStore.list());
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/report-templates/:id", async (req: Request, res: Response) => {
+    if (!options.reportTemplateStore) return res.status(501).json({ error: "report templates not configured" });
+    try {
+      const tpl = await options.reportTemplateStore.get(req.params.id);
+      if (!tpl) return res.status(404).json({ error: `report template "${req.params.id}" not found` });
+      return res.status(200).json(tpl);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/report-templates", async (req: Request, res: Response) => {
+    if (!options.reportTemplateStore) return res.status(501).json({ error: "report templates not configured" });
+    try {
+      const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+      if (!name) return res.status(400).json({ error: "name is required" });
+      const saved = await options.reportTemplateStore.save(req.body);
+      return res.status(201).json(saved);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Delete a custom template, OR reset an edited built-in back to its shipped default (idempotent for
+  // a pristine built-in). 404 only for an unknown non-built-in id.
+  app.delete("/report-templates/:id", async (req: Request, res: Response) => {
+    if (!options.reportTemplateStore) return res.status(501).json({ error: "report templates not configured" });
+    try {
+      const removed = await options.reportTemplateStore.delete(req.params.id);
+      if (!removed && !options.reportTemplateStore.isBuiltIn(req.params.id)) {
+        return res.status(404).json({ error: `report template "${req.params.id}" not found` });
+      }
+      return res.status(204).send();
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Per-case selection of which report template renders the report. GET returns { templateId }
+  // (default "standard"); PUT sets it and re-broadcasts so other dashboards refresh.
+  app.get("/cases/:id/report-template", async (req: Request, res: Response) => {
+    if (!options.reportTemplateControlStore) return res.status(501).json({ error: "report templates not configured" });
+    try {
+      return res.status(200).json(await options.reportTemplateControlStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.put("/cases/:id/report-template", async (req: Request, res: Response) => {
+    if (!options.reportTemplateControlStore) return res.status(501).json({ error: "report templates not configured" });
+    const templateId = typeof req.body?.templateId === "string" ? req.body.templateId : undefined;
+    try {
+      const saved = await options.reportTemplateControlStore.set(req.params.id, { templateId });
+      options.onReportTemplate?.(req.params.id);
       return res.status(200).json(saved);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -4458,6 +4539,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const stateStore = new StateStoreImpl(store);
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
+  // Report templates are GLOBAL like case templates/bundles — a dedicated subdir beside cases/.
+  const reportTemplateStore = new ReportTemplateStore(join(dirname(casesRoot), "report-templates"));
   // A dedicated subdir (mirrors bundles/templates) rather than a loose file beside cases/, because
   // when DFIR_CASES_ROOT is a drive root child (e.g. C:\cases) the sibling is C:\ — and Windows
   // forbids creating files directly in a drive root. A subdir is always creatable + writable.
@@ -4477,6 +4560,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const veloHuntStore = new VeloHuntStore(store);
   const hub = new LiveHub();
   const reportMetaStore = new ReportMetaStore(store);
+  const reportTemplateControlStore = new ReportTemplateControlStore(store);
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
   const notebookStore = new NotebookStore(store);
@@ -4487,7 +4571,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const importMetaStore = new ImportMetaStore(store);
   const notionExportStore = new NotionExportStore(store);
   const clickupExportStore = new ClickUpExportStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore);
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
@@ -4533,6 +4617,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // ocrRunner is undefined in that case), so give createApp its own always-available runner.
     ocrRunner: ocrRunner ?? new TesseractOcrRunner(),
     reportMetaStore,
+    reportTemplateStore,
+    reportTemplateControlStore,
+    onReportTemplate: (caseId) => hub.broadcastTo(caseId, { type: "report_template_changed" }),
     commentsStore,
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     tagsStore,
