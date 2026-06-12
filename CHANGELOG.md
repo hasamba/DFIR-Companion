@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mobile companion** — installable read-only PWA at `/mobile` (case status, worst findings, severe/recent timeline, IOC verdicts) for quick glances during IR; `/cases/:id/mobile-summary` endpoint, `DFIR_MOBILE_MAX_*` caps (closes #59).
 - **AI-suggested fleet hunts** — generate proactive Velociraptor VQL hunts from the case findings, review the VQL + rationale, one-click deploy across all enrolled endpoints (closes #57).
 - **Memory forensics import** — deterministic Volatility 3 (JSON renderer) + Rekall importer: pslist/psscan/pstree → process tree, netscan → connections, malfind → injected code (T1055), cmdline/svcscan/modules → evidence (closes #61).
+- **Investigation snapshot** export/import — one shareable JSON (timeline, findings, IOCs, graph state, analyst decisions, evidence references) restores a case on another machine, with no AI keys or machine config (closes #56).
 
 ## [0.18.0] - 2026-06-11
 
