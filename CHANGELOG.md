@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Linux evidence importers** — deterministic auditd (`audit.log`/`ausearch`/`aureport`), journald (`journalctl -o json`), and sysdig/Falco (alert + `-j` event JSON) ingest, auto-detected by the unified Import button (closes #62).
+- **Mobile companion** — installable read-only PWA at `/mobile` (case status, worst findings, severe/recent timeline, IOC verdicts) for quick glances during IR; `/cases/:id/mobile-summary` endpoint, `DFIR_MOBILE_MAX_*` caps (closes #59).
+- **AI-suggested fleet hunts** — generate proactive Velociraptor VQL hunts from the case findings, review the VQL + rationale, one-click deploy across all enrolled endpoints (closes #57).
+- **Memory forensics import** — deterministic Volatility 3 (JSON renderer) + Rekall importer: pslist/psscan/pstree → process tree, netscan → connections, malfind → injected code (T1055), cmdline/svcscan/modules → evidence (closes #61).
+- **Investigation snapshot** export/import — one shareable JSON (timeline, findings, IOCs, graph state, analyst decisions, evidence references) restores a case on another machine, with no AI keys or machine config (closes #56).
+- **Redacted case export** — shareable ZIP for external parties: report/CSVs/state tokenized (internal IPs/hosts/users/emails/paths → consistent `ANON_*`), secrets redacted, screenshot EXIF stripped + PII text blurred (OCR); AI keys/config excluded (closes #54).
+- **Dark / light theme** — full-coverage theme toggle in the dashboard header; follows the OS `prefers-color-scheme` by default, manual choice persists in `localStorage` across sessions; every panel, graph and the swimlane canvas themed via CSS variables (closes #53).
 - **Custom report templates** — global branded report layouts (accent colour, cover title/subtitle, running header/footer with `{{placeholder}}` interpolation, and per-section enable/reorder), built-ins editable in place, selected per case; flows to Markdown/HTML/Word (closes #60).
 
 ## [0.18.0] - 2026-06-11
