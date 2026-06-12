@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Custom report templates** — global branded report layouts (accent colour, cover title/subtitle, running header/footer with `{{placeholder}}` interpolation, and per-section enable/reorder), built-ins editable in place, selected per case; flows to Markdown/HTML/Word (closes #60).
+
 ## [0.18.0] - 2026-06-11
 
 ### Added

@@ -12,6 +12,15 @@ import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
 import { playbookStats, type PlaybookStatus, type PlaybookTask } from "../analysis/playbook.js";
+import {
+  DEFAULT_COVER_TITLE,
+  buildBrandingContext,
+  defaultReportTemplate,
+  orderedEnabledSections,
+  renderTemplateString,
+  type ReportSectionKey,
+  type ReportTemplate,
+} from "./reportTemplate.js";
 
 // Renders report.md following the AnttiKurittu incident-report-template structure
 // (https://github.com/AnttiKurittu/incident-report-template). Technical sections are
@@ -44,17 +53,30 @@ function trimmedList(values: string[]): string[] {
   return values.map((v) => v.trim()).filter((v) => v.length > 0);
 }
 
-function titlePage(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
-  // Optional report branding — the investigating firm's logo and name above the title.
-  // companyLogo is a validated raster data URI (see reportMeta.ts); the alt text strips
+function titlePage(
+  state: InvestigationState,
+  meta: ReportMeta,
+  template: ReportTemplate,
+  ctx: Record<string, string>,
+  lines: string[],
+): void {
+  // Optional report branding — the investigating firm's logo and name above the title. The report
+  // template can hide either (showLogo / showCompanyName) for a layout that supplies its own
+  // branding. companyLogo is a validated raster data URI (see reportMeta.ts); the alt text strips
   // brackets so an analyst-supplied company name can't break the Markdown image syntax.
   const company = meta.companyName.trim();
-  if (meta.companyLogo.trim().length > 0) {
+  if (template.showLogo && meta.companyLogo.trim().length > 0) {
     const alt = (company.length > 0 ? `${company} logo` : "Company logo").replace(/[[\]]/g, "");
     lines.push(`![${alt}](${meta.companyLogo.trim()})`, "");
   }
-  if (company.length > 0) lines.push(`**${company}**`, "");
-  lines.push("# Incident Investigation Report", "");
+  if (template.showCompanyName && company.length > 0) lines.push(`**${company}**`, "");
+  // Cover title/subtitle come from the template's branding strings, interpolated with the case's
+  // report metadata ({{organization}}, {{incidentId}}, …). The default template's coverTitle is
+  // the historical "Incident Investigation Report" with no subtitle, so output is unchanged.
+  const title = renderTemplateString(template.coverTitle, ctx).trim() || DEFAULT_COVER_TITLE;
+  lines.push(`# ${title}`, "");
+  const subtitle = renderTemplateString(template.coverSubtitle, ctx).trim();
+  if (subtitle.length > 0) lines.push(`_${subtitle}_`, "");
   lines.push(`**Organization:** ${humanOr(meta.organization, "_(organization not set)_")}`, "");
   // Incident ID is optional — omit the line entirely when blank.
   if (meta.incidentId.trim().length > 0) lines.push(`**Incident ID:** ${meta.incidentId.trim()}`, "");
@@ -537,40 +559,55 @@ export function renderMarkdownReport(
   assetGraph?: AssetGraph,
   notebookEntries?: NotebookEntry[],
   playbookTasks?: PlaybookTask[],
+  template: ReportTemplate = defaultReportTemplate(),
 ): string {
   const lines: string[] = [];
+  const ctx = buildBrandingContext(state, meta);
 
-  titlePage(state, meta, lines);
-  // Section 1 — report metadata (revisions, distribution, disclaimer, intended audience).
-  // The major heading is rendered explicitly so the AnttiKurittu template's section
-  // structure is complete: "1 Report metadata" sits above 1.1 / 1.2 / 1.3 / 1.4.
-  lines.push("## 1 Report metadata", "");
-  revisions(state, meta, lines);
-  distribution(meta, lines);
-  if (meta.includeDisclaimer) disclaimer(lines);
-  intendedAudience(meta, lines);
+  // Optional running header banner (branding) — interpolated; empty in the default template.
+  const header = renderTemplateString(template.headerText, ctx).trim();
+  if (header.length > 0) lines.push(`> ${header}`, "");
 
-  executiveSummary(state, meta, lines);
-  businessImpact(meta, lines);
-  investigationLimitations(meta, lines);
-  investigationGoals(state, meta, lines);
-  glossary(state, meta, lines);
+  // Each canonical report section is a keyed builder; the template decides which appear and in
+  // what order. The default template enables them all in the canonical order, so the default
+  // report is byte-identical to the historical fixed-format one.
+  const builders: Record<ReportSectionKey, () => void> = {
+    titlePage: () => titlePage(state, meta, template, ctx, lines),
+    // Section 1 — report metadata. The major heading is rendered explicitly so the AnttiKurittu
+    // template's section structure is complete: "1 Report metadata" sits above 1.1 / 1.2 / 1.3 / 1.4.
+    reportMetadata: () => {
+      lines.push("## 1 Report metadata", "");
+      revisions(state, meta, lines);
+      distribution(meta, lines);
+      if (meta.includeDisclaimer) disclaimer(lines);
+      intendedAudience(meta, lines);
+    },
+    executiveSummary: () => executiveSummary(state, meta, lines),
+    businessImpact: () => businessImpact(meta, lines),
+    investigationLimitations: () => investigationLimitations(meta, lines),
+    investigationGoals: () => investigationGoals(state, meta, lines),
+    glossary: () => glossary(state, meta, lines),
+    timeline: () => {
+      lines.push("## 3 Timeline of events", "");
+      incidentTimeline(state, lines);
+      narrativeTimeline(state, lines);
+      attackPhases(state, lines);
+    },
+    investigation: () => investigation(state, lines, exposure, assetGraph),
+    conclusions: () => conclusions(state, meta, lines),
+    playbook: () => {
+      if (playbookTasks && playbookTasks.length > 0) playbookSection(playbookTasks, lines);
+    },
+    notebook: () => {
+      if (notebookEntries && notebookEntries.length > 0) analystNotebook(notebookEntries, lines);
+    },
+  };
 
-  lines.push("## 3 Timeline of events", "");
-  incidentTimeline(state, lines);
-  narrativeTimeline(state, lines);
-  attackPhases(state, lines);
+  for (const key of orderedEnabledSections(template)) builders[key]();
 
-  investigation(state, lines, exposure, assetGraph);
-  conclusions(state, meta, lines);
-
-  if (playbookTasks && playbookTasks.length > 0) {
-    playbookSection(playbookTasks, lines);
-  }
-
-  if (notebookEntries && notebookEntries.length > 0) {
-    analystNotebook(notebookEntries, lines);
-  }
+  // Optional footer / confidentiality banner (branding) — interpolated; empty in the default template.
+  const footer = renderTemplateString(template.footerText, ctx).trim();
+  if (footer.length > 0) lines.push("---", "", `_${footer}_`, "");
 
   return lines.join("\n");
 }

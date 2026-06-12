@@ -221,6 +221,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Export to Notion** — push a case into a new or existing Notion page; all content lives in ONE managed block the Companion owns, so your own notes outside it are never touched. `DFIR_NOTION_TOKEN`.
 - **Push to ClickUp** — export the Response Playbook to a ClickUp list as tasks (status/priority/due/assignee); re-push updates the tasks it created. `DFIR_CLICKUP_TOKEN`.
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu template](https://github.com/AnttiKurittu/incident-report-template); technical sections auto-fill (incl. an auto-glossary), human-authored sections (branding, title page, BIA, recommendations…) are filled in the dashboard and persist per case.
+- **Custom report templates** — global branded layouts (accent colour, cover title/subtitle, running header/footer with `{{organization}}`/`{{incidentId}}`-style placeholders, and which sections appear + in what order). Built-ins are editable in place; pick one per case in **Case Details**; the choice flows to the Markdown, HTML, and Word (.docx) exports. Managed in **Settings → Report Templates**.
 
 ### Ops
 - **Logging to file** — every line tees to the console + a global session log + a per-case audit trail; `DFIR_LOG_LEVEL` (+ live Settings toggle, `DFIR_LOG_DIR`). `debug` traces AI calls, captures, OCR, anonymization, enrichment
