@@ -878,6 +878,9 @@
           <div class="sfield"><label>Exec-summary prompt file<span class="sfield-hint">DFIR_AI_EXEC_PROMPT_FILE</span></label><input id="env-DFIR_AI_EXEC_PROMPT_FILE" placeholder="path/to/exec.txt" /></div>
           <div class="sfield"><label>Narrative prompt file<span class="sfield-hint">DFIR_AI_NARRATIVE_PROMPT_FILE</span></label><input id="env-DFIR_AI_NARRATIVE_PROMPT_FILE" placeholder="path/to/narrative.txt" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Fleet-hunts prompt file<span class="sfield-hint">DFIR_AI_HUNTS_PROMPT_FILE — Suggested Fleet Hunts (#57)</span></label><input id="env-DFIR_AI_HUNTS_PROMPT_FILE" placeholder="path/to/hunts.txt" /></div>
+        </div>
       </div>
 
       <!-- Enrichment -->
@@ -1405,6 +1408,27 @@
       #sec-adversary .adv-tech:hover{text-decoration:underline}
       #sec-adversary .adv-tech-exact{background:#13243a;color:#9ecbff;border-color:#3a567d;font-weight:bold}
       #sec-adversary .adv-tech-base{opacity:0.6}
+    </style>
+    <section id="sec-velohunts" style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#9aa4b2"></span></h2><div id="veloHuntSuggest">—</div></section>
+    <style>
+      #sec-velohunts .vhs-empty{color:#9aa4b2;font-size:12px}
+      #sec-velohunts .vhs-caveat{color:#ffb454;font-size:12px;margin-bottom:8px}
+      #sec-velohunts .vhs-list{display:flex;flex-direction:column;gap:10px}
+      #sec-velohunts .vhs-card{background:#161b22;border:1px solid #232a33;border-left:3px solid #2f8f4e;border-radius:6px;padding:8px 10px}
+      #sec-velohunts .vhs-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+      #sec-velohunts .vhs-title{color:#d6deea;font-weight:bold}
+      #sec-velohunts .vhs-sev{border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
+      #sec-velohunts .vhs-rationale{color:#c9d1db;font-size:12px;margin:6px 0}
+      #sec-velohunts .vhs-techs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+      #sec-velohunts .vhs-tech{background:#0f1620;color:#6aa9ff;border:1px solid #1f2a3a;border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
+      #sec-velohunts .vhs-tech:hover{text-decoration:underline}
+      #sec-velohunts textarea.vhs-vql{width:100%;box-sizing:border-box;min-height:90px;resize:vertical;background:#0f1115;color:#d6deea;border:1px solid #2a2f3a;border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;padding:8px;margin-top:4px}
+      #sec-velohunts .vhs-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+      #sec-velohunts .vhs-copy{background:#2d6cdf;border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #sec-velohunts .vhs-copy.copied{background:#2f8f4e}
+      #sec-velohunts .vhs-deploy{background:#2f8f4e;border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #sec-velohunts .vhs-deploy:disabled{opacity:.6;cursor:default}
+      #sec-velohunts .vhs-res{margin-top:6px}
     </style>
     <section id="sec-legitimate" style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
     <style>
@@ -3146,12 +3170,16 @@
     // Launch a HUNT that runs the card's VQL on ALL enrolled Velociraptor clients, then poll for the
     // rows endpoints return (results arrive asynchronously as clients check in).
     function runHunt(idx) {
-      const vql = huntText(idx);
-      const res = document.getElementById("huntRunRes" + idx);
-      const btn = document.querySelector('.hunt-run[data-idx="' + idx + '"]');
+      launchHuntInto(huntText(idx), huntLabel, document.getElementById("huntRunRes" + idx), document.querySelector('.hunt-run[data-idx="' + idx + '"]'));
+    }
+    // Shared launch+poll for any VQL hunt (the per-entity hunt modal AND the AI-suggested fleet
+    // hunts both deploy through the same POST /velociraptor/hunt → launchHunt path). `res` is the
+    // element to render status into; `btn` (optional) is disabled while in flight.
+    function launchHuntInto(vql, description, res, btn) {
+      if (!res) return;
       res.innerHTML = "<div style='color:#9aa4b2;font-size:12px'>launching hunt on all clients…</div>";
       if (btn) btn.disabled = true;
-      fetch("/velociraptor/hunt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vql, description: huntLabel }) })
+      fetch("/velociraptor/hunt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vql, description: description || "DFIR hunt" }) })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { res.innerHTML = `<div style="color:#ff9f43;font-size:12px">error: ${esc(j.error || "hunt failed")}</div>`; return; }
@@ -4379,6 +4407,91 @@
       el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>`;
     }
 
+    // ── Suggested Fleet Hunts (#57) ───────────────────────────────────────────────────────
+    // AI-proposed Velociraptor VQL hunts derived from the case findings. On-demand (an AI call,
+    // so it does NOT auto-load like the derived panels): the analyst clicks "Suggest hunts", reviews
+    // each hunt's VQL + rationale, optionally edits the VQL, then one-click deploys it across the
+    // fleet via the shared launchHuntInto() (POST /velociraptor/hunt). Ephemeral — not persisted.
+    const VHS_SEV_COLOR = { Critical:"#ff5c5c", High:"#ff9f43", Medium:"#ffd93b", Low:"#6bcb77", Info:"#6aa9ff" };
+    const VHS_SEV_RANK = { Critical:0, High:1, Medium:2, Low:3, Info:4 };
+
+    function resetVeloHuntSuggest() {
+      const el = document.getElementById("veloHuntSuggest");
+      if (el) el.innerHTML = `<div class="vhs-empty">Click <strong>✨ Suggest hunts</strong> to have the AI propose proactive Velociraptor VQL hunts from this case's findings — queries that run across every enrolled endpoint to find the same tradecraft elsewhere. Review the VQL before deploying.</div>`;
+      const msg = document.getElementById("suggestHuntsMsg");
+      if (msg) msg.textContent = "";
+    }
+
+    function doSuggestHunts() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const btn = document.getElementById("suggestHuntsBtn");
+      const msg = document.getElementById("suggestHuntsMsg");
+      const el = document.getElementById("veloHuntSuggest");
+      if (btn) btn.disabled = true;
+      if (msg) msg.textContent = "thinking… (one AI call over the findings)";
+      fetch(`/cases/${caseId}/velociraptor/suggest-hunts`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) {
+            if (msg) msg.textContent = "";
+            el.innerHTML = `<div class="vhs-empty" style="color:#ff9f43">error: ${esc(j.error || "could not generate hunts")} — restart the companion server if this 404s</div>`;
+            return;
+          }
+          renderVeloHuntSuggest(j.suggestions || []);
+          if (msg) msg.textContent = (j.suggestions || []).length ? `${j.suggestions.length} hunt(s) proposed` : "";
+        })
+        .catch((e) => { if (msg) msg.textContent = ""; el.innerHTML = `<div class="vhs-empty" style="color:#ff9f43">error: ${esc(e.message)}</div>`; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+
+    function renderVeloHuntSuggest(suggestions) {
+      const el = document.getElementById("veloHuntSuggest");
+      if (!el) return;
+      if (!suggestions.length) {
+        el.innerHTML = `<div class="vhs-empty">No fleet-hunts proposed. The AI found nothing fleet-wide to hunt for — try after running synthesis so findings exist, or add more evidence.</div>`;
+        return;
+      }
+      const ordered = [...suggestions].sort((a, b) => (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9));
+      const caveat = `<div class="vhs-caveat">⚠ AI-generated VQL — review each query before deploying. Deploying launches a hunt across ALL enrolled endpoints.${veloEnabled ? "" : " The Velociraptor API is not configured, so Deploy is disabled — copy the VQL to run it yourself."}</div>`;
+      const cards = ordered.map((s, idx) => {
+        const sev = s.severity || "Medium";
+        const sevColor = VHS_SEV_COLOR[sev] || "#9aa4b2";
+        const sevBadge = `<span class="vhs-sev" style="background:${sevColor}22;color:${sevColor};border:1px solid ${sevColor}55">${esc(sev)}</span>`;
+        const techs = (s.mitreTechniques || []).map((t) => {
+          const u = attackUrl(t);
+          return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="vhs-tech">${esc(t)}</a>` : `<span class="vhs-tech">${esc(t)}</span>`;
+        }).join("");
+        const rationale = s.rationale ? `<div class="vhs-rationale">${esc(s.rationale)}</div>` : "";
+        const deployBtn = veloEnabled
+          ? `<button class="vhs-deploy" data-idx="${idx}" title="Launch this hunt across ALL enrolled Velociraptor clients">▶ Deploy hunt (all clients)</button>`
+          : `<button class="vhs-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">▶ Deploy hunt (all clients)</button>`;
+        return `<div class="vhs-card">`
+          + `<div class="vhs-head"><span class="vhs-title">${esc(s.title)}</span>${sevBadge}</div>`
+          + rationale
+          + (techs ? `<div class="vhs-techs">${techs}</div>` : "")
+          + `<textarea class="vhs-vql" id="vhsQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
+          + `<div class="vhs-actions"><button class="vhs-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}</div>`
+          + `<div class="vhs-res" id="vhsRes${idx}"></div>`
+          + `</div>`;
+      }).join("");
+      el.innerHTML = caveat + `<div class="vhs-list">${cards}</div>`;
+      // Stash the titles for the deploy description (the textarea only holds VQL).
+      el.querySelectorAll(".vhs-copy").forEach((b) => b.onclick = () => {
+        const q = document.getElementById("vhsQ" + b.dataset.idx);
+        navigator.clipboard.writeText(q ? q.value : "").then(() => {
+          b.textContent = "Copied ✓"; b.classList.add("copied");
+          setTimeout(() => { b.textContent = "Copy VQL"; b.classList.remove("copied"); }, 1500);
+        }).catch(() => { b.textContent = "copy failed"; });
+      });
+      el.querySelectorAll(".vhs-deploy:not([disabled])").forEach((b) => b.onclick = () => {
+        const idx = b.dataset.idx;
+        const q = document.getElementById("vhsQ" + idx);
+        const title = (ordered[idx] && ordered[idx].title) || "DFIR fleet hunt";
+        launchHuntInto(q ? q.value : "", title, document.getElementById("vhsRes" + idx), b);
+      });
+    }
+
     // ── Timeline Swimlane ───────────────────────────────────────────────────────────────
     // Canvas-based swimlane chart: assets/severity/tactics on Y-axis, time on X-axis.
     // Data comes from GET /cases/:id/swimlane?groupBy=... (server applies scope+legit filtering).
@@ -5391,6 +5504,7 @@
       loadImportMeta(caseId);
       loadCustomerExposure(caseId);
       loadVeloTriage(caseId);
+      resetVeloHuntSuggest();   // clear AI-suggested fleet hunts; analyst regenerates per case on demand
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
@@ -5819,6 +5933,8 @@
     document.getElementById("huntOverlay").addEventListener("click", (e) => { if (e.target.id === "huntOverlay") closeHuntModal(); });
     // Executive summary generator (stopPropagation so the h2 click doesn't collapse the section).
     document.getElementById("genExecBtn").addEventListener("click", (e) => { e.stopPropagation(); genExecSummary(); });
+    // Suggested Fleet Hunts generator (#57) — same stopPropagation guard so clicking ✨ doesn't toggle the section.
+    document.getElementById("suggestHuntsBtn").addEventListener("click", (e) => { e.stopPropagation(); doSuggestHunts(); });
     document.getElementById("askBtn").onclick = doAsk;
     document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
     document.getElementById("connect").onclick = connect;

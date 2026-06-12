@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **AI-suggested fleet hunts** — generate proactive Velociraptor VQL hunts from the case findings, review the VQL + rationale, one-click deploy across all enrolled endpoints (closes #57).
+
 ## [0.18.0] - 2026-06-11
 
 ### Added
