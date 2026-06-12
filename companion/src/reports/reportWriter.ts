@@ -18,6 +18,7 @@ import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../ana
 import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../analysis/swimlane.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
+import { buildMobileSummary, mobileSummaryEnvOptions, type MobileCaseSummary } from "../analysis/mobileSummary.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import { buildStixBundle, type StixBundle } from "./stix.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
@@ -166,6 +167,16 @@ export class ReportWriter {
   async adversaryHints(caseId: string): Promise<AdversaryHintsResult> {
     const state = await this.loadFilteredState(caseId);
     return buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
+  }
+
+  // Compact, READ-ONLY case summary for the mobile companion PWA (#59): case status, the worst
+  // findings, the most severe/recent timeline events, and the IOC list with verdicts. Derived on
+  // demand with the same scope/legitimate filtering as the report so the phone view agrees with
+  // the desktop dashboard. Per-list caps come from DFIR_MOBILE_MAX_* (defaults in mobileSummary).
+  async mobileSummary(caseId: string): Promise<MobileCaseSummary> {
+    const state = await this.loadFilteredState(caseId);
+    const meta = await this.cases.getCaseMeta(caseId);
+    return buildMobileSummary(state, { ...mobileSummaryEnvOptions(), caseName: meta?.name });
   }
 
   // Build a STIX 2.1 bundle for the case (same scope/legitimate filtering as the report) — the
