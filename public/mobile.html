@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>DFIR Companion — Mobile</title>
+  <meta name="theme-color" content="#0f1115" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="DFIR Mobile" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #161a22; --panel2: #1c212b; --line: #2a2f3a;
+      --text: #e6e6e6; --muted: #9aa4b2; --accent: #6aa9ff; --accent2: #2d6cdf;
+      --crit: #ff5c5c; --high: #ff9f43; --med: #ffd93b; --low: #6bcb77; --info: #6aa9ff;
+      --mal: #ff6b6b; --susp: #ffd93b; --harm: #6bcb77; --unk: #9aa4b2;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text);
+      font-size: 15px; line-height: 1.45; min-height: 100vh;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+    a { color: var(--accent); text-decoration: none; }
+    button { font-family: inherit; }
+
+    /* Sticky top bar */
+    header {
+      position: sticky; top: 0; z-index: 10; background: var(--panel);
+      border-bottom: 1px solid var(--line); padding: 10px 14px;
+      display: flex; align-items: center; gap: 10px;
+      padding-top: calc(10px + env(safe-area-inset-top));
+    }
+    header .back {
+      background: transparent; border: 0; color: var(--accent); font-size: 22px; line-height: 1;
+      padding: 6px 8px; margin: -6px -2px; cursor: pointer; min-width: 40px; min-height: 40px;
+    }
+    header .title { flex: 1; min-width: 0; }
+    header .title h1 { margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    header .title .sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    header .refresh {
+      background: transparent; border: 1px solid var(--line); color: var(--accent); border-radius: 8px;
+      font-size: 16px; padding: 7px 10px; cursor: pointer; min-width: 40px; min-height: 40px;
+    }
+    header .refresh:active { background: var(--panel2); }
+    header .refresh.spin { animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    main { padding: 12px 14px 40px; max-width: 720px; margin: 0 auto; }
+
+    .banner { border-radius: 10px; padding: 9px 12px; font-size: 13px; margin-bottom: 12px; }
+    .banner.offline { background: #3a2e00; color: #e0b84a; border: 1px solid #5a4800; }
+    .banner.error { background: #3a1a1a; color: #e06060; border: 1px solid #5a2a2a; }
+    .banner.hidden { display: none; }
+
+    /* Case list */
+    .case-card {
+      display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+      padding: 14px; margin-bottom: 10px; cursor: pointer;
+    }
+    .case-card:active { background: var(--panel2); }
+    .case-card .name { font-size: 16px; font-weight: 600; }
+    .case-card .meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .empty { color: var(--muted); text-align: center; padding: 40px 16px; }
+
+    /* Status header */
+    .sev-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .sev-chip {
+      flex: 1 1 0; min-width: 56px; text-align: center; background: var(--panel); border: 1px solid var(--line);
+      border-radius: 10px; padding: 8px 4px;
+    }
+    .sev-chip .n { font-size: 19px; font-weight: 700; line-height: 1; }
+    .sev-chip .l { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-top: 4px; }
+    .sev-chip.zero { opacity: .45; }
+    .sev-chip.Critical .n { color: var(--crit); } .sev-chip.High .n { color: var(--high); }
+    .sev-chip.Medium .n { color: var(--med); } .sev-chip.Low .n { color: var(--low); } .sev-chip.Info .n { color: var(--info); }
+
+    .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+    .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; text-align: center; }
+    .tile .n { font-size: 17px; font-weight: 700; }
+    .tile .l { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin-top: 2px; }
+    .tile.flag .n { color: var(--high); }
+
+    .summary-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 14px; }
+    .summary-card .updated { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+    .summary-card .txt { font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+    .summary-card .txt.clamp { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+    .summary-card .more { background: transparent; border: 0; color: var(--accent); font-size: 12px; padding: 6px 0 0; cursor: pointer; }
+
+    /* Segmented control */
+    .seg { display: flex; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin-bottom: 12px; position: sticky; top: 0; }
+    .seg button {
+      flex: 1; background: transparent; border: 0; color: var(--muted); font-size: 13px; font-weight: 600;
+      padding: 9px 4px; border-radius: 8px; cursor: pointer;
+    }
+    .seg button.active { background: var(--accent2); color: #fff; }
+    .seg button .badge { font-size: 11px; opacity: .8; font-weight: 500; }
+
+    /* List items */
+    .item { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; margin-bottom: 9px; border-left-width: 3px; }
+    .item.Critical { border-left-color: var(--crit); } .item.High { border-left-color: var(--high); }
+    .item.Medium { border-left-color: var(--med); } .item.Low { border-left-color: var(--low); } .item.Info { border-left-color: var(--info); }
+    .item .top { display: flex; align-items: baseline; gap: 8px; }
+    .item .sev { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; flex-shrink: 0; }
+    .sevtext.Critical { color: var(--crit); } .sevtext.High { color: var(--high); }
+    .sevtext.Medium { color: var(--med); } .sevtext.Low { color: var(--low); } .sevtext.Info { color: var(--info); }
+    .item .ts { font-size: 11px; color: var(--muted); flex-shrink: 0; margin-left: auto; }
+    .item .title { font-size: 14px; font-weight: 600; margin: 2px 0; word-break: break-word; }
+    .item .desc { font-size: 13px; color: #cbd3df; word-break: break-word; }
+    .item .row2 { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
+    .pill { font-size: 10px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+    .pill.mitre { color: var(--accent); border-color: #244; }
+    .pill.asset { color: #cbd3df; }
+    .pill.src { color: var(--low); border-color: #2a5a2a; }
+    .pill.count { color: var(--high); border-color: #5a4800; }
+    .pill.status-confirmed { color: var(--crit); border-color: #5a2a2a; }
+    .pill.status-dismissed { color: var(--muted); text-decoration: line-through; }
+    .pill.status-open { color: var(--accent); }
+
+    .ioc .val { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 13px; word-break: break-all; }
+    .verdict { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 1px 7px; border-radius: 99px; }
+    .verdict.malicious { background: #3a1a1a; color: var(--mal); border: 1px solid #5a2a2a; }
+    .verdict.suspicious { background: #3a2e00; color: var(--susp); border: 1px solid #5a4800; }
+    .verdict.harmless { background: #1a3a1a; color: var(--harm); border: 1px solid #2a5a2a; }
+    .verdict.unknown { background: var(--panel2); color: var(--unk); border: 1px solid var(--line); }
+    .verdict.none { color: #5b6472; }
+
+    .truncnote { text-align: center; font-size: 12px; color: var(--muted); padding: 6px 0 4px; }
+    .footer { text-align: center; font-size: 11px; color: #5b6472; margin-top: 22px; }
+    .footer a { color: var(--muted); }
+    .loading { text-align: center; color: var(--muted); padding: 40px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <button class="back" id="backBtn" aria-label="Back" style="display:none">‹</button>
+    <div class="title">
+      <h1 id="topTitle">DFIR Companion</h1>
+      <div class="sub" id="topSub">Mobile · read-only</div>
+    </div>
+    <button class="refresh" id="refreshBtn" aria-label="Refresh" title="Refresh">⟳</button>
+  </header>
+
+  <main id="main">
+    <div class="loading">Loading…</div>
+  </main>
+
+  <script>
+    "use strict";
+    // ── Read-only mobile companion (#59). Talks to the companion at the same origin:
+    //   GET /cases                      → case picker
+    //   GET /cases/:id/mobile-summary   → compact, scope/legit-filtered case summary
+    // No POST/PUT/DELETE anywhere — this view never edits state or triggers AI.
+
+    const main = document.getElementById("main");
+    const backBtn = document.getElementById("backBtn");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const topTitle = document.getElementById("topTitle");
+    const topSub = document.getElementById("topSub");
+
+    const SEVERITIES = ["Critical", "High", "Medium", "Low", "Info"];
+    const LS_CASES = "dfir-mobile:cases";
+    const LS_SUMMARY = (id) => "dfir-mobile:summary:" + id;
+    const LS_TAB = "dfir-mobile:tab";
+
+    // Escape every piece of server/AI/user text before it touches innerHTML (XSS guard).
+    function esc(s) {
+      return String(s == null ? "" : s)
+        .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+    }
+    function fmtTime(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return esc(iso);
+      return d.toLocaleString([], { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    }
+    function relTime(iso) {
+      const d = new Date(iso); const t = d.getTime();
+      if (isNaN(t)) return "";
+      const s = Math.round((Date.now() - t) / 1000);
+      if (s < 60) return "just now";
+      const m = Math.round(s / 60); if (m < 60) return m + "m ago";
+      const h = Math.round(m / 60); if (h < 48) return h + "h ago";
+      return Math.round(h / 24) + "d ago";
+    }
+    function lsGet(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
+    function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+
+    async function getJson(url) {
+      const res = await fetch(url, { headers: { "Accept": "application/json" }, cache: "no-store" });
+      if (!res.ok) {
+        let msg = "HTTP " + res.status;
+        try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
+        const err = new Error(msg); err.status = res.status; throw err;
+      }
+      return res.json();
+    }
+
+    function setHeader(title, sub, showBack) {
+      topTitle.textContent = title;
+      topSub.textContent = sub;
+      backBtn.style.display = showBack ? "" : "none";
+    }
+    function banner(kind, text) {
+      return `<div class="banner ${kind}">${esc(text)}</div>`;
+    }
+
+    // ── Case list ────────────────────────────────────────────────────────────────────────
+    function renderCaseList(cases, note) {
+      setHeader("DFIR Companion", "Mobile · read-only", false);
+      let html = "";
+      if (note) html += note;
+      if (!cases || cases.length === 0) {
+        html += `<div class="empty">No cases yet.<br>Create one from the desktop dashboard.</div>`;
+      } else {
+        for (const c of cases) {
+          html += `<a class="case-card" href="#/case/${encodeURIComponent(c.caseId)}">
+            <div class="name">${esc(c.name || c.caseId)}</div>
+            <div class="meta">${esc(c.caseId)}${c.investigator ? " · " + esc(c.investigator) : ""}${c.createdAt ? " · created " + esc(fmtTime(c.createdAt)) : ""}</div>
+          </a>`;
+        }
+      }
+      html += footer();
+      main.innerHTML = html;
+    }
+
+    async function loadCaseList() {
+      main.innerHTML = `<div class="loading">Loading cases…</div>`;
+      try {
+        const cases = await getJson("/cases");
+        lsSet(LS_CASES, cases);
+        renderCaseList(cases, "");
+      } catch (e) {
+        const cached = lsGet(LS_CASES);
+        if (cached) renderCaseList(cached, banner("offline", "Offline — showing the last loaded case list."));
+        else { setHeader("DFIR Companion", "Mobile · read-only", false); main.innerHTML = banner("error", "Could not reach the companion: " + e.message) + footer(); }
+      }
+    }
+
+    // ── Case detail ──────────────────────────────────────────────────────────────────────
+    function sevRow(counts) {
+      return `<div class="sev-row">` + SEVERITIES.map((s) => {
+        const n = counts[s] || 0;
+        return `<div class="sev-chip ${s} ${n ? "" : "zero"}"><div class="n">${n}</div><div class="l">${s}</div></div>`;
+      }).join("") + `</div>`;
+    }
+    function tiles(c) {
+      const t = (n, l, cls) => `<div class="tile ${cls || ""}"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+      return `<div class="tiles">
+        ${t(c.findings, "Findings")}
+        ${t(c.events, "Events")}
+        ${t(c.iocs, "IOCs")}
+        ${t(c.flaggedIocs, "Flagged", "flag")}
+        ${t(c.openThreads, "Threads")}
+        ${t(c.techniques, "Techniques")}
+      </div>`;
+    }
+    function summaryCard(s) {
+      const updated = `Updated ${esc(fmtTime(s.updatedAt))}${relTime(s.updatedAt) ? " · " + esc(relTime(s.updatedAt)) : ""}`;
+      const txt = s.summary ? `<div class="txt clamp" id="sumTxt">${esc(s.summary)}</div><button class="more" id="sumMore" type="button">Show more</button>`
+                            : `<div class="txt" style="color:var(--muted)">No summary yet — run analysis on the desktop.</div>`;
+      return `<div class="summary-card"><div class="updated">${updated}</div>${txt}</div>`;
+    }
+
+    function mitrePills(arr) {
+      return (arr || []).slice(0, 8).map((m) => `<span class="pill mitre">${esc(m)}</span>`).join("");
+    }
+    function findingItem(f) {
+      const conf = (typeof f.confidence === "number") ? `<span class="pill">conf ${esc(f.confidence)}%</span>` : "";
+      const status = f.status ? `<span class="pill status-${esc(f.status)}">${esc(f.status)}</span>` : "";
+      return `<div class="item ${esc(f.severity)}">
+        <div class="top"><span class="sev sevtext ${esc(f.severity)}">${esc(f.severity)}</span></div>
+        <div class="title">${esc(f.title)}</div>
+        <div class="row2">${status}${conf}${mitrePills(f.mitreTechniques)}</div>
+      </div>`;
+    }
+    function eventItem(e) {
+      const count = e.count && e.count > 1 ? `<span class="pill count">×${esc(e.count)}</span>` : "";
+      const asset = e.asset ? `<span class="pill asset">🖥 ${esc(e.asset)}</span>` : "";
+      const sources = (e.sources || []).length ? `<span class="pill src">⊕ ${esc((e.sources || []).join(", "))}</span>` : "";
+      return `<div class="item ${esc(e.severity)}">
+        <div class="top"><span class="sev sevtext ${esc(e.severity)}">${esc(e.severity)}</span><span class="ts">${esc(fmtTime(e.timestamp))}</span></div>
+        <div class="desc">${esc(e.description)}</div>
+        <div class="row2">${asset}${count}${sources}${mitrePills(e.mitreTechniques)}</div>
+      </div>`;
+    }
+    function iocItem(i) {
+      const v = i.verdict;
+      const verdict = v ? `<span class="verdict ${esc(v)}">${esc(v)}</span>` : `<span class="verdict none">not enriched</span>`;
+      return `<div class="item ioc Info">
+        <div class="top"><span class="pill">${esc(i.type)}</span>${verdict}<span class="ts">${esc(relTime(i.firstSeen) || fmtTime(i.firstSeen))}</span></div>
+        <div class="val">${esc(i.value)}</div>
+      </div>`;
+    }
+
+    function listFor(tab, s) {
+      let section, render, emptyMsg;
+      if (tab === "timeline") { section = s.events; render = eventItem; emptyMsg = "No timeline events."; }
+      else if (tab === "iocs") { section = s.iocs; render = iocItem; emptyMsg = "No IOCs."; }
+      else { section = s.findings; render = findingItem; emptyMsg = "No findings."; }
+      const items = section.items || [];
+      if (items.length === 0) return `<div class="empty">${emptyMsg}</div>`;
+      let html = items.map(render).join("");
+      if (section.total > items.length) html += `<div class="truncnote">Showing ${items.length} of ${section.total} — open the desktop dashboard for the full list.</div>`;
+      return html;
+    }
+
+    function renderCase(s, note) {
+      setHeader(s.caseName || s.caseId, "Read-only · " + esc(s.caseId), true);
+      const tab = lsGet(LS_TAB) || "findings";
+      let html = "";
+      if (note) html += note;
+      html += sevRow(s.severityCounts || {});
+      html += tiles(s.counts || {});
+      html += summaryCard(s);
+      html += `<div class="seg">
+        <button data-tab="findings" class="${tab === "findings" ? "active" : ""}">Findings <span class="badge">${(s.findings.total) || 0}</span></button>
+        <button data-tab="timeline" class="${tab === "timeline" ? "active" : ""}">Timeline <span class="badge">${(s.events.total) || 0}</span></button>
+        <button data-tab="iocs" class="${tab === "iocs" ? "active" : ""}">IOCs <span class="badge">${(s.iocs.total) || 0}</span></button>
+      </div>`;
+      html += `<div id="listArea">${listFor(tab, s)}</div>`;
+      html += footer();
+      main.innerHTML = html;
+
+      // Wire up the segmented control (re-renders just the list area).
+      main.querySelectorAll(".seg button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const t = btn.getAttribute("data-tab");
+          lsSet(LS_TAB, t);
+          main.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("active", b === btn));
+          document.getElementById("listArea").innerHTML = listFor(t, s);
+        });
+      });
+      // Summary "show more".
+      const more = document.getElementById("sumMore");
+      if (more) more.addEventListener("click", () => {
+        const txt = document.getElementById("sumTxt");
+        const clamped = txt.classList.toggle("clamp");
+        more.textContent = clamped ? "Show more" : "Show less";
+      });
+    }
+
+    async function loadCase(id) {
+      main.innerHTML = `<div class="loading">Loading case…</div>`;
+      try {
+        const s = await getJson("/cases/" + encodeURIComponent(id) + "/mobile-summary");
+        lsSet(LS_SUMMARY(id), { at: Date.now(), data: s });
+        renderCase(s, "");
+      } catch (e) {
+        const cached = lsGet(LS_SUMMARY(id));
+        if (cached && cached.data) renderCase(cached.data, banner("offline", "Offline — showing cached data from " + relTime(new Date(cached.at).toISOString()) + "."));
+        else { setHeader("DFIR Companion", "Mobile · read-only", true); main.innerHTML = banner("error", "Could not load case: " + e.message) + footer(); }
+      }
+    }
+
+    function footer() {
+      return `<div class="footer">DFIR Companion · read-only mobile view · <a href="/dashboard">open desktop dashboard ›</a></div>`;
+    }
+
+    // ── Hash routing (#/  ·  #/case/<id>) ─────────────────────────────────────────────────
+    function currentRoute() {
+      const h = location.hash || "#/";
+      const m = h.match(/^#\/case\/(.+)$/);
+      if (m) return { view: "case", id: decodeURIComponent(m[1]) };
+      return { view: "list" };
+    }
+    function route() {
+      const r = currentRoute();
+      if (r.view === "case") loadCase(r.id);
+      else loadCaseList();
+    }
+
+    backBtn.addEventListener("click", () => { location.hash = "#/"; });
+    refreshBtn.addEventListener("click", () => {
+      refreshBtn.classList.add("spin");
+      Promise.resolve(route()).finally(() => setTimeout(() => refreshBtn.classList.remove("spin"), 400));
+    });
+    window.addEventListener("hashchange", route);
+
+    // ── PWA: register the (mobile-scoped) service worker for an installable, offline app-shell.
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js", { scope: "/mobile" }).catch(() => {});
+      });
+    }
+
+    route();
+  </script>
+</body>
+</html>
