@@ -267,6 +267,9 @@
     .report-links { font-size: 12px; }
     .report-links a { color: #6aa9ff; text-decoration: none; }
     .report-links a:hover { text-decoration: underline; }
+    #mobileLink { font-size: 12px; color: #6aa9ff; text-decoration: none; padding: 4px 8px;
+      border: 1px solid #2a3340; border-radius: 6px; white-space: nowrap; }
+    #mobileLink:hover { color: #ffd93b; border-color: #ffd93b; }
     #aiStatus { font-size: 12px; padding: 3px 8px; border-radius: 10px; }
     .ai-unknown { background: #2a2f3a; color: #9aa4b2; }
     .ai-off { background: #2a2f3a; color: #9aa4b2; }
@@ -325,8 +328,8 @@
        collapse to font-size:0 and only the icon remains, so the toolbar fits one line; the
        hover tooltips (data-tip) keep every icon discoverable. */
     #connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
-    #aiToggle::before, #synthesize::before, #importBtn::before, #toggleAll::before,
-    #toggleSearchBar::before {
+    #aiToggle::before, #synthesize::before, #importBtn::before, #importSnapshotBtn::before,
+    #toggleAll::before, #toggleSearchBar::before {
       content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
       margin-right: 6px; background: no-repeat center / contain; }
     #connect::before     { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 15l6-6'/><path d='M11 6l1-1a4 4 0 0 1 6 6l-1 1'/><path d='M13 18l-1 1a4 4 0 0 1-6-6l1-1'/></svg>"); }
@@ -336,6 +339,8 @@
     #aiToggle::before    { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z'/><path d='M18.5 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'/></svg>"); }
     #synthesize::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/></svg>"); }
     #importBtn::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v11'/><path d='M8 10l4 4 4-4'/><path d='M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2'/></svg>"); }
+    /* Import snapshot — an archive box (distinct from the evidence-import down-arrow) for restoring a packaged case. */
+    #importSnapshotBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 8v13H3V8'/><rect x='1' y='3' width='22' height='5' rx='1'/><path d='M10 12h4'/></svg>"); }
     #toggleAll::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M7 9l5-5 5 5'/><path d='M7 15l5 5 5-5'/></svg>"); }
     /* Export, Push and Collapse-all are ALWAYS icon-only — their labels never show, so the wider
        labelled actions get the room; hover tooltips keep them discoverable. The dropdowns can't take
@@ -527,13 +532,16 @@
     <datalist id="caseList"></datalist>
     <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
+    <input id="snapshotImportFile" type="file" accept=".json,application/json" style="display:none" />
+    <button id="importSnapshotBtn" data-tip="Import an investigation snapshot (.json) shared by a teammate — restores the timeline, findings, IOCs, graph state and analyst decisions as a new case on this machine. No AI keys or machine config travel with it.">Import snapshot…</button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" data-tip="Derive findings, MITRE and attack path from the timeline">AI Re-synthesize</button>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.eml,.msg,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,image/png,image/jpeg,image/webp" style="display:none" />
-    <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, email .eml/.msg, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import…</button>
-    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch JSONL, JSON state)">
+    <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import…</button>
+    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch JSONL, JSON state, or a shareable investigation snapshot)">
+
       <option value="">Export…</option>
       <option value="report">Generate report (Markdown + HTML)</option>
       <option value="report-pdf">Generate report (PDF)</option>
@@ -542,6 +550,7 @@
       <option value="attack-layer">ATT&amp;CK Navigator layer (JSON)</option>
       <option value="timesketch-jsonl">Timesketch JSONL</option>
       <option value="state-json">Full case state (JSON)</option>
+      <option value="snapshot">Investigation snapshot (shareable JSON)</option>
       <option value="stix">STIX 2.1 bundle (JSON)</option>
       <option value="redacted">Redacted case package (ZIP)…</option>
       <option value="save-template">Save as Template…</option>
@@ -550,6 +559,7 @@
       <option value="">Push to…</option>
     </select>
     <span id="reportLinks" class="report-links"></span>
+    <a id="mobileLink" href="/mobile" target="_blank" rel="noopener" data-tip="Open the read-only mobile companion (phone/tablet view) — timeline, findings, IOCs, status">📱 Mobile</a>
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
     <button id="toggleSearchBar" type="button" aria-label="Filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Filter events, findings and IOCs by text and time range (press /)">Filter</button>
     <span id="status">disconnected</span>
@@ -901,6 +911,9 @@
           <div class="sfield"><label>Ask prompt file<span class="sfield-hint">DFIR_AI_ASK_PROMPT_FILE</span></label><input id="env-DFIR_AI_ASK_PROMPT_FILE" placeholder="path/to/ask.txt" /></div>
           <div class="sfield"><label>Exec-summary prompt file<span class="sfield-hint">DFIR_AI_EXEC_PROMPT_FILE</span></label><input id="env-DFIR_AI_EXEC_PROMPT_FILE" placeholder="path/to/exec.txt" /></div>
           <div class="sfield"><label>Narrative prompt file<span class="sfield-hint">DFIR_AI_NARRATIVE_PROMPT_FILE</span></label><input id="env-DFIR_AI_NARRATIVE_PROMPT_FILE" placeholder="path/to/narrative.txt" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Fleet-hunts prompt file<span class="sfield-hint">DFIR_AI_HUNTS_PROMPT_FILE — Suggested Fleet Hunts (#57)</span></label><input id="env-DFIR_AI_HUNTS_PROMPT_FILE" placeholder="path/to/hunts.txt" /></div>
         </div>
       </div>
 
@@ -1429,6 +1442,27 @@
       #sec-adversary .adv-tech:hover{text-decoration:underline}
       #sec-adversary .adv-tech-exact{background:#13243a;color:#9ecbff;border-color:#3a567d;font-weight:bold}
       #sec-adversary .adv-tech-base{opacity:0.6}
+    </style>
+    <section id="sec-velohunts" style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#9aa4b2"></span></h2><div id="veloHuntSuggest">—</div></section>
+    <style>
+      #sec-velohunts .vhs-empty{color:#9aa4b2;font-size:12px}
+      #sec-velohunts .vhs-caveat{color:#ffb454;font-size:12px;margin-bottom:8px}
+      #sec-velohunts .vhs-list{display:flex;flex-direction:column;gap:10px}
+      #sec-velohunts .vhs-card{background:#161b22;border:1px solid #232a33;border-left:3px solid #2f8f4e;border-radius:6px;padding:8px 10px}
+      #sec-velohunts .vhs-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+      #sec-velohunts .vhs-title{color:#d6deea;font-weight:bold}
+      #sec-velohunts .vhs-sev{border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
+      #sec-velohunts .vhs-rationale{color:#c9d1db;font-size:12px;margin:6px 0}
+      #sec-velohunts .vhs-techs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+      #sec-velohunts .vhs-tech{background:#0f1620;color:#6aa9ff;border:1px solid #1f2a3a;border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
+      #sec-velohunts .vhs-tech:hover{text-decoration:underline}
+      #sec-velohunts textarea.vhs-vql{width:100%;box-sizing:border-box;min-height:90px;resize:vertical;background:#0f1115;color:#d6deea;border:1px solid #2a2f3a;border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;padding:8px;margin-top:4px}
+      #sec-velohunts .vhs-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+      #sec-velohunts .vhs-copy{background:#2d6cdf;border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #sec-velohunts .vhs-copy.copied{background:#2f8f4e}
+      #sec-velohunts .vhs-deploy{background:#2f8f4e;border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #sec-velohunts .vhs-deploy:disabled{opacity:.6;cursor:default}
+      #sec-velohunts .vhs-res{margin-top:6px}
     </style>
     <section id="sec-legitimate" style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
     <style>
@@ -2193,7 +2227,7 @@
     function renderEvidenceGraph() {
       const el = document.getElementById("evGraph");
       if (!evGraphData || !evGraphData.edges || !evGraphData.edges.length) {
-        el.innerHTML = "<div style='padding:16px;color:#9aa4b2'>No causal chains yet — import process-creation events (Sysmon EID 1, THOR, Velociraptor, Cyber Triage) or evidence spanning multiple hosts, then Synthesize.</div>";
+        el.innerHTML = "<div style='padding:16px;color:#9aa4b2'>No causal chains yet — import process-creation events (Sysmon EID 1, THOR, Velociraptor, Cyber Triage, Volatility/Rekall memory) or evidence spanning multiple hosts, then Synthesize.</div>";
         evNodes = []; evEdges = []; evDims = { W: 0, H: 0 }; updateEvZoomLabel();
         return;
       }
@@ -3170,12 +3204,16 @@
     // Launch a HUNT that runs the card's VQL on ALL enrolled Velociraptor clients, then poll for the
     // rows endpoints return (results arrive asynchronously as clients check in).
     function runHunt(idx) {
-      const vql = huntText(idx);
-      const res = document.getElementById("huntRunRes" + idx);
-      const btn = document.querySelector('.hunt-run[data-idx="' + idx + '"]');
+      launchHuntInto(huntText(idx), huntLabel, document.getElementById("huntRunRes" + idx), document.querySelector('.hunt-run[data-idx="' + idx + '"]'));
+    }
+    // Shared launch+poll for any VQL hunt (the per-entity hunt modal AND the AI-suggested fleet
+    // hunts both deploy through the same POST /velociraptor/hunt → launchHunt path). `res` is the
+    // element to render status into; `btn` (optional) is disabled while in flight.
+    function launchHuntInto(vql, description, res, btn) {
+      if (!res) return;
       res.innerHTML = "<div style='color:#9aa4b2;font-size:12px'>launching hunt on all clients…</div>";
       if (btn) btn.disabled = true;
-      fetch("/velociraptor/hunt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vql, description: huntLabel }) })
+      fetch("/velociraptor/hunt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vql, description: description || "DFIR hunt" }) })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { res.innerHTML = `<div style="color:#ff9f43;font-size:12px">error: ${esc(j.error || "hunt failed")}</div>`; return; }
@@ -4403,6 +4441,91 @@
       el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>`;
     }
 
+    // ── Suggested Fleet Hunts (#57) ───────────────────────────────────────────────────────
+    // AI-proposed Velociraptor VQL hunts derived from the case findings. On-demand (an AI call,
+    // so it does NOT auto-load like the derived panels): the analyst clicks "Suggest hunts", reviews
+    // each hunt's VQL + rationale, optionally edits the VQL, then one-click deploys it across the
+    // fleet via the shared launchHuntInto() (POST /velociraptor/hunt). Ephemeral — not persisted.
+    const VHS_SEV_COLOR = { Critical:"#ff5c5c", High:"#ff9f43", Medium:"#ffd93b", Low:"#6bcb77", Info:"#6aa9ff" };
+    const VHS_SEV_RANK = { Critical:0, High:1, Medium:2, Low:3, Info:4 };
+
+    function resetVeloHuntSuggest() {
+      const el = document.getElementById("veloHuntSuggest");
+      if (el) el.innerHTML = `<div class="vhs-empty">Click <strong>✨ Suggest hunts</strong> to have the AI propose proactive Velociraptor VQL hunts from this case's findings — queries that run across every enrolled endpoint to find the same tradecraft elsewhere. Review the VQL before deploying.</div>`;
+      const msg = document.getElementById("suggestHuntsMsg");
+      if (msg) msg.textContent = "";
+    }
+
+    function doSuggestHunts() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const btn = document.getElementById("suggestHuntsBtn");
+      const msg = document.getElementById("suggestHuntsMsg");
+      const el = document.getElementById("veloHuntSuggest");
+      if (btn) btn.disabled = true;
+      if (msg) msg.textContent = "thinking… (one AI call over the findings)";
+      fetch(`/cases/${caseId}/velociraptor/suggest-hunts`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) {
+            if (msg) msg.textContent = "";
+            el.innerHTML = `<div class="vhs-empty" style="color:#ff9f43">error: ${esc(j.error || "could not generate hunts")} — restart the companion server if this 404s</div>`;
+            return;
+          }
+          renderVeloHuntSuggest(j.suggestions || []);
+          if (msg) msg.textContent = (j.suggestions || []).length ? `${j.suggestions.length} hunt(s) proposed` : "";
+        })
+        .catch((e) => { if (msg) msg.textContent = ""; el.innerHTML = `<div class="vhs-empty" style="color:#ff9f43">error: ${esc(e.message)}</div>`; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+
+    function renderVeloHuntSuggest(suggestions) {
+      const el = document.getElementById("veloHuntSuggest");
+      if (!el) return;
+      if (!suggestions.length) {
+        el.innerHTML = `<div class="vhs-empty">No fleet-hunts proposed. The AI found nothing fleet-wide to hunt for — try after running synthesis so findings exist, or add more evidence.</div>`;
+        return;
+      }
+      const ordered = [...suggestions].sort((a, b) => (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9));
+      const caveat = `<div class="vhs-caveat">⚠ AI-generated VQL — review each query before deploying. Deploying launches a hunt across ALL enrolled endpoints.${veloEnabled ? "" : " The Velociraptor API is not configured, so Deploy is disabled — copy the VQL to run it yourself."}</div>`;
+      const cards = ordered.map((s, idx) => {
+        const sev = s.severity || "Medium";
+        const sevColor = VHS_SEV_COLOR[sev] || "#9aa4b2";
+        const sevBadge = `<span class="vhs-sev" style="background:${sevColor}22;color:${sevColor};border:1px solid ${sevColor}55">${esc(sev)}</span>`;
+        const techs = (s.mitreTechniques || []).map((t) => {
+          const u = attackUrl(t);
+          return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="vhs-tech">${esc(t)}</a>` : `<span class="vhs-tech">${esc(t)}</span>`;
+        }).join("");
+        const rationale = s.rationale ? `<div class="vhs-rationale">${esc(s.rationale)}</div>` : "";
+        const deployBtn = veloEnabled
+          ? `<button class="vhs-deploy" data-idx="${idx}" title="Launch this hunt across ALL enrolled Velociraptor clients">▶ Deploy hunt (all clients)</button>`
+          : `<button class="vhs-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">▶ Deploy hunt (all clients)</button>`;
+        return `<div class="vhs-card">`
+          + `<div class="vhs-head"><span class="vhs-title">${esc(s.title)}</span>${sevBadge}</div>`
+          + rationale
+          + (techs ? `<div class="vhs-techs">${techs}</div>` : "")
+          + `<textarea class="vhs-vql" id="vhsQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
+          + `<div class="vhs-actions"><button class="vhs-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}</div>`
+          + `<div class="vhs-res" id="vhsRes${idx}"></div>`
+          + `</div>`;
+      }).join("");
+      el.innerHTML = caveat + `<div class="vhs-list">${cards}</div>`;
+      // Stash the titles for the deploy description (the textarea only holds VQL).
+      el.querySelectorAll(".vhs-copy").forEach((b) => b.onclick = () => {
+        const q = document.getElementById("vhsQ" + b.dataset.idx);
+        navigator.clipboard.writeText(q ? q.value : "").then(() => {
+          b.textContent = "Copied ✓"; b.classList.add("copied");
+          setTimeout(() => { b.textContent = "Copy VQL"; b.classList.remove("copied"); }, 1500);
+        }).catch(() => { b.textContent = "copy failed"; });
+      });
+      el.querySelectorAll(".vhs-deploy:not([disabled])").forEach((b) => b.onclick = () => {
+        const idx = b.dataset.idx;
+        const q = document.getElementById("vhsQ" + idx);
+        const title = (ordered[idx] && ordered[idx].title) || "DFIR fleet hunt";
+        launchHuntInto(q ? q.value : "", title, document.getElementById("vhsRes" + idx), b);
+      });
+    }
+
     // ── Timeline Swimlane ───────────────────────────────────────────────────────────────
     // Canvas-based swimlane chart: assets/severity/tactics on Y-axis, time on X-axis.
     // Data comes from GET /cases/:id/swimlane?groupBy=... (server applies scope+legit filtering).
@@ -5415,6 +5538,7 @@
       loadImportMeta(caseId);
       loadCustomerExposure(caseId);
       loadVeloTriage(caseId);
+      resetVeloHuntSuggest();   // clear AI-suggested fleet hunts; analyst regenerates per case on demand
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
@@ -5889,6 +6013,8 @@
     document.getElementById("huntOverlay").addEventListener("click", (e) => { if (e.target.id === "huntOverlay") closeHuntModal(); });
     // Executive summary generator (stopPropagation so the h2 click doesn't collapse the section).
     document.getElementById("genExecBtn").addEventListener("click", (e) => { e.stopPropagation(); genExecSummary(); });
+    // Suggested Fleet Hunts generator (#57) — same stopPropagation guard so clicking ✨ doesn't toggle the section.
+    document.getElementById("suggestHuntsBtn").addEventListener("click", (e) => { e.stopPropagation(); doSuggestHunts(); });
     document.getElementById("askBtn").onclick = doAsk;
     document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
     document.getElementById("connect").onclick = connect;
@@ -5917,6 +6043,60 @@
     document.getElementById("reCancel").onclick = closeRedactedExport;
     document.getElementById("redactedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "redactedExportOverlay") closeRedactedExport(); });
     document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
+
+    // ── Import investigation snapshot (issue #56) ──────────────────────────────────
+    // Restore a teammate's shared snapshot (.json) as a NEW case on this machine — no AI keys, no
+    // machine config travel with it. POST the snapshot; on an id collision, prompt for a free id
+    // and retry under it. On success, attach the dashboard to the imported case.
+    document.getElementById("importSnapshotBtn").onclick = () => document.getElementById("snapshotImportFile").click();
+    document.getElementById("snapshotImportFile").onchange = async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";   // allow re-selecting the same file
+      if (!file) return;
+      const status = document.getElementById("status");
+      status.textContent = "reading snapshot…";
+      let snapshot;
+      try {
+        snapshot = JSON.parse(await file.text());
+      } catch (err) {
+        status.textContent = "import failed: not valid JSON";
+        return;
+      }
+      const importInto = async (targetCaseId) => {
+        const body = targetCaseId ? { snapshot, targetCaseId } : { snapshot };
+        return fetch("/snapshots/import", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        });
+      };
+      try {
+        let res = await importInto(undefined);
+        // Resolve id collisions by asking for a new id (up to a few tries), defaulting to "<id>-copy".
+        let guard = 0;
+        while (res.status === 409 && guard++ < 5) {
+          const j = await res.json().catch(() => ({}));
+          const suggested = (j.caseId || (snapshot.case && snapshot.case.caseId) || "imported") + "-copy";
+          const newId = window.prompt(`A case "${j.caseId || ""}" already exists. Import under a different case id:`, suggested);
+          if (!newId) { status.textContent = "import cancelled"; return; }
+          res = await importInto(newId.trim());
+        }
+        const body = await res.json().catch(() => ({}));
+        if (res.status === 201) {
+          const c = body.counts || {};
+          status.textContent = `imported case ${body.caseId} (${c.forensicEvents || 0} events, ${c.findings || 0} findings, ${c.iocs || 0} IOCs)`;
+          document.getElementById("caseId").value = body.caseId;
+          loadCaseList();
+          connect();   // attach to the freshly imported case
+        } else if (res.status === 404) {
+          // Route missing → the running companion predates this feature. Loud restart hint (the
+          // server loads its code once at startup), matching the dashboard's stale-server convention.
+          status.textContent = "import failed: this companion is missing the snapshot endpoint — restart the companion server (it loads server code once at startup), then re-import";
+        } else {
+          status.textContent = "import failed: " + (body.error || ("HTTP " + res.status));
+        }
+      } catch (err) {
+        status.textContent = "import failed: " + err.message + " — is the companion running?";
+      }
+    };
     // --- Search bar + time-range filter listeners --------------------------------
     (function () {
       const gs = document.getElementById("globalSearch");
@@ -6168,6 +6348,10 @@
         window.location.href = `/cases/${c}/timeline.jsonl`;
       } else if (action === "state-json") {
         window.open(`/cases/${c}/state`, "_blank", "noopener");
+      } else if (action === "snapshot") {
+        // Portable investigation snapshot (issue #56) — a single shareable JSON (no AI keys, no
+        // machine config) a teammate imports on another machine via "Import snapshot…".
+        window.location.href = `/cases/${c}/export/snapshot`;
       } else if (action === "stix") {
         // On-demand STIX 2.1 bundle (JSON) — import into any TIP (OpenCTI, MISP, Anomali…).
         window.location.href = `/cases/${c}/export/stix`;
