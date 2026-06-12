@@ -2030,7 +2030,12 @@ export class AnalysisPipeline {
     const tasksText = renderPlaybookHuntTasks(tasks, endpointsByTaskId);
     const endpointsText = renderKnownEndpoints(endpoints);
 
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    // This call hunts PER TASK (grounded by the tasks + findings + IOCs + endpoints), so it does NOT
+    // need the full synthesis timeline — a smaller stratified event sample keeps the signal while
+    // cutting the prompt (the timeline dominates it). A leaner prompt is faster + cheaper and shrinks
+    // the window for a transient provider transport failure on a long generation. Tune via
+    // DFIR_PBHUNT_MAX_EVENTS (default 120, well below synthesis's 300).
+    const max = Number(process.env.DFIR_PBHUNT_MAX_EVENTS) || 120;
     let events = selectSynthesisEvents(scopedEvents, max);
     const renderEvent = (e: ForensicEvent) =>
       `[${e.timestamp || "(undated)"}] [${e.severity}]${e.asset ? ` <${e.asset}>` : ""} ${e.description.slice(0, 240)}`;
