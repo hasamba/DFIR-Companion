@@ -208,6 +208,37 @@ const DEFAULT_UPLOAD_VQL =
 const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;     // valid Velociraptor artifact / source name
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/;        // valid hunt id
 const FLOW_RE = /^F\.[A-Za-z0-9]+$/;        // valid collection flow id (collect_client)
+const CLIENT_RE = /^C\.[A-Za-z0-9]+$/;      // valid Velociraptor client id
+
+// Pick the best client_id for a target host from `clients()` rows. Robust to the two real-world
+// mismatches that make a naive `search='host:<fqdn>'` miss: (a) the client enrolled with its SHORT
+// name while the case asset is an FQDN (or vice-versa), and (b) `os_info` field-name casing differing
+// across Velociraptor versions (`hostname`/`fqdn` vs `Hostname`/`Fqdn`). Rows are expected pre-ordered
+// newest-first, so the FIRST match wins (most-recently-seen). Pure + unit-tested. Returns "" if none.
+export function pickClientId(rows: readonly unknown[], host: string): string {
+  const target = String(host || "").trim().toLowerCase();
+  if (!target) return "";
+  const targetShort = target.split(".")[0];
+  interface Cand { id: string; hn: string; fq: string }
+  const cands: Cand[] = [];
+  for (const r of rows ?? []) {
+    const row = (r ?? {}) as { ClientId?: unknown; client_id?: unknown; OsInfo?: Record<string, unknown>; os_info?: Record<string, unknown> };
+    const id = String(row.ClientId ?? row.client_id ?? "");
+    if (!CLIENT_RE.test(id)) continue;                      // skip malformed/empty ids
+    const os = (row.OsInfo ?? row.os_info ?? {}) as Record<string, unknown>;
+    const hn = String(os.hostname ?? os.Hostname ?? "").trim().toLowerCase();
+    const fq = String(os.fqdn ?? os.Fqdn ?? "").trim().toLowerCase();
+    cands.push({ id, hn, fq });
+  }
+  // Pass 1: exact full match on hostname or FQDN (the safest disambiguation).
+  for (const c of cands) if (c.hn === target || c.fq === target) return c.id;
+  // Pass 2: first-label match either way (short name ⇄ FQDN, e.g. "WIN11" ↔ "WIN11.windomain.local").
+  for (const c of cands) {
+    if (c.hn && (c.hn === targetShort || c.hn.split(".")[0] === targetShort)) return c.id;
+    if (c.fq && (c.fq === targetShort || c.fq.split(".")[0] === targetShort)) return c.id;
+  }
+  return "";
+}
 
 // Slug for a generated artifact name: alphanumerics from the description, capped.
 function slugify(s: string): string {
@@ -356,31 +387,48 @@ export class VelociraptorClient {
     };
   }
 
+  // Resolve a hostname (SHORT name or FQDN) to a Velociraptor client_id. Velociraptor's client search
+  // index tokenizes the hostname on dots, so `search='host:WIN11.windomain.local'` (the whole FQDN as
+  // ONE term) frequently misses a client enrolled as `WIN11` (and the reverse). So we search the SHORT
+  // name (first label) to hit the index, then disambiguate in TS (`pickClientId`); if the index search
+  // still finds nothing we FALL BACK to enumerating all clients and filtering there. Returns "" if none.
+  private async resolveClientId(host: string): Promise<string> {
+    const short = oneLine(host.split(".")[0]);
+    const cols = "client_id AS ClientId, os_info AS OsInfo, last_seen_at AS LastSeen";
+    // 1) Indexed search by short name (fast). `search='host:<short>'` matches the indexed hostname token.
+    if (short) {
+      const rows = await this.runRaw(`SELECT ${cols} FROM clients(search='host:${short}') ORDER BY last_seen_at DESC LIMIT 500`);
+      const id = pickClientId(rows, host);
+      if (id) return id;
+    }
+    // 2) Fallback: enumerate all clients and match in TS (index-agnostic — always correct, just heavier).
+    const all = await this.runRaw(`SELECT ${cols} FROM clients() ORDER BY last_seen_at DESC LIMIT 5000`, this.collectCap());
+    return pickClientId(all, host);
+  }
+
   // Launch the VQL as a COLLECTION on a SINGLE endpoint (issue #70) — the "run on just this host"
   // counterpart to launchHunt's fleet-wide hunt. Resolves the hostname to a client_id (most-recently-
-  // seen wins), packages the pivot(s) as a CLIENT artifact, then `collect_client` on that one client.
-  // The hostname is the only free-text input — sanitized via oneLine() (strips the quote/backslash that
-  // could break out of the single-quoted VQL literal), exactly like launchHunt's description. Results
-  // are reviewed in the Velociraptor GUI via the returned flow deep link.
+  // seen wins; short-name ⇄ FQDN tolerant), packages the pivot(s) as a CLIENT artifact, then
+  // `collect_client` on that one client. The hostname is the only free-text input — sanitized via
+  // oneLine() (strips the quote/backslash that could break out of the single-quoted VQL literal), like
+  // launchHunt's description. Results are reviewed in the Velociraptor GUI via the returned flow link.
   async collectFromHost(hostname: string, vql: string, description: string): Promise<CollectLaunchResult> {
     const host = oneLine(hostname);
     if (!host) throw new Error("a target hostname is required for a single-endpoint collection");
     const statements = splitVqlStatements(sanitizeVqlDurations(vql));
     if (statements.length === 0) throw new Error("No runnable VQL found (the query is empty or only comments)");
+    const clientId = await this.resolveClientId(host);
+    if (!CLIENT_RE.test(clientId)) throw new Error(`No enrolled Velociraptor client matches host "${host}" — check the hostname (short name or FQDN) or run a fleet hunt instead`);
     const name = "Custom.Collect.Companion." + slugify(description);
     const sources = statements.map((_, i) => `Pivot${i}`);
     const yaml = buildHuntArtifact(name, statements, sources, description);
-    // One program: define the artifact, resolve the client (newest check-in for the host), collect on it.
+    // clientId is CLIENT_RE-validated (came from Velociraptor + the regex), so it's safe in the literal.
     const program =
       `LET def = '''${yaml}'''\n` +
       `LET _set <= artifact_set(definition=def)\n` +
-      `LET client <= SELECT client_id AS ClientId, os_info.hostname AS Hostname FROM clients(search='host:${host}') ORDER BY last_seen_at DESC LIMIT 1\n` +
-      `SELECT ClientId, collect_client(client_id=ClientId, artifacts=['${name}']) AS Flow FROM client`;
+      `SELECT collect_client(client_id='${clientId}', artifacts=['${name}']) AS Flow FROM scope()`;
     const rows = await this.runRaw(program);
-    const row = rows[0] as { ClientId?: unknown; Flow?: Record<string, unknown> } | undefined;
-    const clientId = String(row?.ClientId ?? "");
-    if (!row || !clientId) throw new Error(`No enrolled Velociraptor client matches host "${host}" — check the hostname or run a fleet hunt instead`);
-    const flow = row.Flow ?? {};
+    const flow = (rows[0] as { Flow?: Record<string, unknown> })?.Flow ?? {};
     const flowId = String(flow.flow_id ?? flow.FlowId ?? flow.session_id ?? "");
     if (!FLOW_RE.test(flowId)) throw new Error("Velociraptor did not return a collection flow id — check the api_client role has COLLECT_CLIENT/ARTIFACT_WRITER");
     return {

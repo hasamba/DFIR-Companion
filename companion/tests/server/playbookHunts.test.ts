@@ -26,9 +26,11 @@ const veloCfg: VelociraptorApiConfig = {
   guiUrl: "https://velo.example/",
 };
 
-// A runner for collect-host: resolve the client then launch the collection flow.
+// A runner for collect-host: resolve the client (FROM clients) then launch the collection flow.
 const collectRunner: VqlRunner = async (statements) => {
-  if (statements[0].includes("collect_client(")) return { rows: [{ ClientId: "C.web01", Flow: { flow_id: "F.123" } }], raw: "" };
+  const p = statements[0];
+  if (p.includes("collect_client(")) return { rows: [{ Flow: { flow_id: "F.123" } }], raw: "" };
+  if (p.includes("FROM clients(")) return { rows: [{ ClientId: "C.web01", OsInfo: { hostname: "web01" }, LastSeen: 1 }], raw: "" };
   return { rows: [], raw: "" };
 };
 
