@@ -525,6 +525,42 @@ uploaded JSON does; it's auto-detected and routed to the right importer), then s
 now** on the live job card to pull early. The in-flight job persists per case (`state/velo-hunt.json`) and
 survives a server restart; results appear on the dashboard timeline/IOCs.
 
+### Notifications (optional)
+
+Push **new/escalated findings**, **playbook updates**, and **investigation milestones** to **Slack** /
+**MS Teams** webhooks or **SMTP email**. There is **no enabling env var** — channels are created in the
+dashboard (**⚙ Settings → Notifications**) and stored next to `cases/` in `notifications/config.json`
+(gitignored; it holds the webhook URLs + SMTP passwords). The list starts empty (opt-in). Each channel has a
+**severity threshold** and **per-event toggles** (findings / playbook / milestones). Use the **Test** button to
+verify a channel end-to-end.
+
+> ⚠ **OPSEC:** notifications send case content (finding/task titles) to a third party. Don't enable on a
+> sensitive case unless the destination is trusted.
+
+**Slack — create an Incoming Webhook** (no manual OAuth scopes; Slack adds `incoming-webhook` automatically):
+
+1. Go to **https://api.slack.com/apps** → **Create New App** → **From scratch**; name it (e.g. `DFIR Companion`) and pick your workspace.
+2. Left sidebar → **Features → Incoming Webhooks** → toggle **Activate Incoming Webhooks** on.
+3. **Add New Webhook to Workspace** → choose the destination channel → **Allow**.
+4. Copy the **Webhook URL** (`https://hooks.slack.com/services/T…/B…/…`).
+5. In the Companion: **Settings → Notifications → Add a channel → Slack webhook**, paste the URL, **Add channel**, then **Test**.
+
+One webhook posts to one channel — add another webhook (and another Companion channel) for each extra channel.
+The URL is a secret (anyone with it can post there), which is why the config file is gitignored and the URL is
+redacted in API responses. *Bot-token scopes like `chat:write` are **not** needed — the Companion posts via the
+incoming webhook, not the Web API.*
+
+**MS Teams** — add an *Incoming Webhook* connector (or a Power Automate "when a webhook request is received" flow)
+to a channel and paste its URL (the Companion sends a MessageCard). **SMTP email** — give the channel a host/port,
+optional username+password, and from/to; opportunistic STARTTLS + AUTH LOGIN are used when offered. For a quick
+local test, point it at [Mailpit](https://github.com/axllent/mailpit) (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_PUBLIC_URL` | `http://<host>:<port>` | Public base URL used to deep-link a notification back to the case (set when reached via a hostname/proxy) |
+| `DFIR_NOTIFY_CA` | — | PEM CA bundle for a self-hosted webhook host (e.g. Mattermost) |
+| `DFIR_NOTIFY_INSECURE` | — | `=1` to skip TLS verification for the webhook host (lab only) |
+
 ### Analysis tuning
 
 | Variable | Default | Meaning |
