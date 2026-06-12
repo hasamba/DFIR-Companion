@@ -99,6 +99,9 @@ import { diffIocs } from "./analysis/iocsDiff.js";
 import { mergeEnrichedSubset } from "./analysis/iocBulkOps.js";
 import { IocWhitelistStore } from "./analysis/iocWhitelistStore.js";
 import { whitelistMatches, parseWhitelistText, toWhitelistCsv, sanitizeRuleInput } from "./analysis/iocWhitelist.js";
+import { NsrlStore, ingestNsrlFiles, splitNsrlPaths } from "./analysis/nsrlStore.js";
+import { parseNsrlText, nsrlMatchIocs, nsrlMatchEvents } from "./analysis/nsrl.js";
+import { NsrlDb, loadNsrlDbPath, saveNsrlDbPath, removeNsrlDbPath } from "./analysis/nsrlDb.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { CustomerStore, parseList, sanitizeTargets } from "./analysis/customerStore.js";
@@ -282,6 +285,16 @@ export interface AppOptions {
   // IOC whitelist (global, shared across cases): known-good patterns (CIDR ranges, hashes, regexes)
   // that auto-mark matching IOCs LEGITIMATE on import. Opt-in (the store starts empty).
   iocWhitelistStore?: IocWhitelistStore;
+  // NSRL known-good hash set (global, shared across cases, #63): a forensic event whose file hash —
+  // or an IOC whose value — is a known-software hash is auto-marked LEGITIMATE on import, reducing
+  // false positives. Opt-in (the store starts empty).
+  nsrlStore?: NsrlStore;
+  // NSRL RDS SQLite backend (#63): the real ~160 GB RDS queried on demand (complements the flat
+  // store). nsrlDbConfigFile persists a UI-set DB path; nsrlDbEnvManaged = DFIR_NSRL_DB is set, so
+  // the path is env-managed and the UI connect is read-only.
+  nsrlDb?: NsrlDb;
+  nsrlDbConfigFile?: string;
+  nsrlDbEnvManaged?: boolean;
   // Which hunt-query platforms the dashboard's 🔍 generator offers (DFIR_HUNT_PLATFORMS allowlist).
   // Exposed on /health so the dashboard renders only these cards. Undefined → all platforms.
   huntPlatforms?: HuntPlatform[];
@@ -1731,6 +1744,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Client-confirmed legitimate findings/IOCs (false positives). Marking one
   // re-runs synthesis so the AI re-derives its conclusions without it.
   const legitimate = new LegitimateStore(store);
+  // The active NSRL RDS SQLite connection (#63). Mutable: the Settings → NSRL connect/disconnect
+  // routes can swap it at runtime (unless env-managed). Starts from the startup-resolved DB.
+  let nsrlDb = options.nsrlDb;
 
   // Per-case anonymization control (default ON) + the analyst-added entity list. Screenshots are
   // OCR-redacted (best-effort) when the vision provider is external, so the dashboard warns (anon on
@@ -2409,6 +2425,177 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // ── NSRL known-good hashes (#63) ───────────────────────────────────────────────────────────────
+  // A GLOBAL set of known-software file hashes (NIST NSRL / RDS). A forensic event whose file hash —
+  // or an IOC whose value — is in the set is a known-good file, auto-marked LEGITIMATE to reduce
+  // false positives. Reuses the legitimate machinery (reversible, shown in "Confirmed Legitimate").
+  // Auto-applied on import; also on demand per case. Opt-in (the set starts empty).
+
+  // Sweep a case's current IOCs + forensic events for NSRL matches, adding a legitimate marker for
+  // each that isn't already marked (ioc → by value, event → by id, so the raw evidence is preserved
+  // and un-marking restores it). Pure read-modify-write on legitimate.json (no re-synthesis here —
+  // the caller decides). Returns how many IOCs/events matched and how many NEW markers were added.
+  async function applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }> {
+    if (!options.stateStore) return { matchedIocs: 0, matchedEvents: 0, added: 0 };
+    // A hash is known-good if EITHER backend has it: the flat in-memory set (small custom lists) or
+    // the on-demand SQLite RDS (the full ~160 GB set).
+    const flat = options.nsrlStore ? await options.nsrlStore.load() : undefined;
+    const haveFlat = Boolean(flat && flat.size > 0);
+    if (!haveFlat && !nsrlDb) return { matchedIocs: 0, matchedEvents: 0, added: 0 };
+    const lookup = (h: string): boolean => (flat?.has(h) ?? false) || (nsrlDb?.has(h) ?? false);
+    const state = await options.stateStore.load(caseId);
+    const iocMatches = nsrlMatchIocs(state.iocs, lookup);
+    const eventMatches = nsrlMatchEvents(state.forensicTimeline, lookup);
+    if (iocMatches.length === 0 && eventMatches.length === 0) return { matchedIocs: 0, matchedEvents: 0, added: 0 };
+    const markers = await legitimate.load(caseId);
+    const byId = new Map<string, LegitimateMarker>(markers.map((m) => [m.id, m]));
+    const now = new Date().toISOString();
+    let added = 0;
+    for (const { ioc, hash } of iocMatches) {
+      const id = markerId("ioc", ioc.value);
+      if (byId.has(id)) continue;
+      byId.set(id, { id, kind: "ioc", ref: ioc.value, note: `NSRL known-good hash (${hash})`, markedAt: now, label: ioc.value });
+      added++;
+    }
+    for (const { event, hash } of eventMatches) {
+      const id = markerId("event", event.id);
+      if (byId.has(id)) continue;
+      byId.set(id, { id, kind: "event", ref: event.id, note: `NSRL known-good file (${hash})`, markedAt: now, label: event.description });
+      added++;
+    }
+    if (added > 0) await legitimate.save(caseId, [...byId.values()]);
+    return { matchedIocs: iocMatches.length, matchedEvents: eventMatches.length, added };
+  }
+
+  // Stats for the Settings → NSRL panel: the flat set count + the RDS DB connection status. Degrades
+  // to "not configured" (200) like /ioc-whitelist. `enabled` = either backend is usable.
+  app.get("/nsrl", async (_req: Request, res: Response) => {
+    const db = nsrlDb ? nsrlDb.status() : { connected: false };
+    const dbConfigurable = Boolean(options.nsrlDbConfigFile) && !options.nsrlDbEnvManaged;
+    const dbEnvManaged = Boolean(options.nsrlDbEnvManaged);
+    if (!options.nsrlStore) return res.status(200).json({ count: 0, enabled: db.connected, db, dbConfigurable, dbEnvManaged });
+    try {
+      const count = await options.nsrlStore.count();
+      return res.status(200).json({ count, enabled: count > 0 || db.connected, db, dbConfigurable, dbEnvManaged });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Connect (or swap) the NSRL RDS SQLite database at runtime. Body: { path } (the RDS .db on the
+  // server). Opens read-only, validates it has a sha256/md5 column, persists the path so it survives
+  // a restart. Rejected when env-managed (DFIR_NSRL_DB owns the path). Localhost-only tool: opening a
+  // path the operator typed is intended (same trust as the env var).
+  app.post("/nsrl/db", async (req: Request, res: Response) => {
+    if (options.nsrlDbEnvManaged) return res.status(400).json({ error: "the NSRL RDS path is managed by the DFIR_NSRL_DB env var — unset it to configure here" });
+    if (!options.nsrlDbConfigFile) return res.status(501).json({ error: "NSRL RDS database not configured" });
+    const path = typeof req.body?.path === "string" ? req.body.path.trim() : "";
+    if (!path) return res.status(400).json({ error: "path is required (the NSRL RDS .db file on the server)" });
+    try {
+      const opened = NsrlDb.open(path); // throws on bad file / no usable hash column
+      if (nsrlDb) nsrlDb.close();
+      nsrlDb = opened;
+      await saveNsrlDbPath(options.nsrlDbConfigFile, path);
+      logLine(`[nsrl] connected RDS DB ${path} — table ${opened.table}, columns ${opened.columns.join("/")}`);
+      return res.status(200).json(opened.status());
+    } catch (err) {
+      return res.status(400).json({ error: `could not open NSRL RDS: ${(err as Error).message}` });
+    }
+  });
+
+  // Disconnect the RDS database (the flat set is unaffected).
+  app.delete("/nsrl/db", async (_req: Request, res: Response) => {
+    if (options.nsrlDbEnvManaged) return res.status(400).json({ error: "the NSRL RDS path is managed by the DFIR_NSRL_DB env var" });
+    if (!options.nsrlDbConfigFile) return res.status(501).json({ error: "NSRL RDS database not configured" });
+    try {
+      if (nsrlDb) { nsrlDb.close(); nsrlDb = undefined; }
+      await removeNsrlDbPath(options.nsrlDbConfigFile);
+      logLine(`[nsrl] disconnected RDS DB`);
+      return res.status(200).json({ connected: false });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import known-good hashes from pasted text or a loaded file: NSRLFile.txt (RDS CSV), a hashdeep
+  // CSV, or a plain hash-per-line / comma-separated list. Body: { text }. Returns { added, parsed, total }.
+  app.post("/nsrl/import", async (req: Request, res: Response) => {
+    if (!options.nsrlStore) return res.status(501).json({ error: "NSRL store not configured" });
+    const text = typeof req.body?.text === "string" ? req.body.text : "";
+    if (!text.trim()) return res.status(400).json({ error: "text is required (NSRL CSV or a hash list)" });
+    try {
+      const parsed = parseNsrlText(text);
+      if (parsed.length === 0) return res.status(400).json({ error: "no valid hashes found — expected MD5/SHA-1/SHA-256 hashes (NSRLFile.txt, a hashdeep CSV, or a hash-per-line list)" });
+      const { added, total } = await options.nsrlStore.addMany(parsed);
+      logLine(`[nsrl] import — +${added} new (${parsed.length} parsed, ${total} total)`);
+      return res.status(200).json({ added, parsed: parsed.length, total });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Load known-good hashes from file(s) on the SERVER's filesystem — the in-UI equivalent of
+  // DFIR_NSRL_FILE, for big RDS sets you don't want to paste. Body: { path } (a file path, or several
+  // `;`-separated). Best-effort per file (a bad path is reported, not fatal). Loaded hashes persist in
+  // the store, so unlike the env var this is a one-shot — no restart, and it survives one. Returns
+  // { added, total, files[] }. Localhost-only tool: reading a path the operator typed is intended
+  // (same trust as the env var); the response carries counts + errors only, never file contents.
+  app.post("/nsrl/import-file", async (req: Request, res: Response) => {
+    if (!options.nsrlStore) return res.status(501).json({ error: "NSRL store not configured" });
+    const paths = splitNsrlPaths(typeof req.body?.path === "string" ? req.body.path : "");
+    if (paths.length === 0) return res.status(400).json({ error: "path is required (a file on the server; ; -separated for multiple)" });
+    try {
+      const files = await ingestNsrlFiles(options.nsrlStore, paths);
+      for (const r of files) logLine(r.error ? `[nsrl] could not load ${r.file}: ${r.error}` : `[nsrl] loaded ${r.file} — +${r.added} new (${r.total} total known-good hashes)`);
+      const added = files.reduce((n, r) => n + r.added, 0);
+      const total = await options.nsrlStore.count();
+      // All paths failed → 400 (nothing loaded), like the paste import's no-valid-hashes 400.
+      const allFailed = files.every((r) => r.error);
+      return res.status(allFailed ? 400 : 200).json({ added, total, files });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Wipe the set (e.g. swapping in a different RDS release).
+  app.post("/nsrl/clear", async (_req: Request, res: Response) => {
+    if (!options.nsrlStore) return res.status(501).json({ error: "NSRL store not configured" });
+    try {
+      await options.nsrlStore.clear();
+      return res.status(200).json({ cleared: true, count: 0 });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Export the set as a newline-delimited hash list for backup / sharing.
+  app.get("/nsrl/export", async (_req: Request, res: Response) => {
+    if (!options.nsrlStore) return res.status(501).json({ error: "NSRL store not configured" });
+    try {
+      res.setHeader("Content-Type", "text/plain");
+      res.setHeader("Content-Disposition", 'attachment; filename="nsrl-known-hashes.txt"');
+      return res.status(200).send(await options.nsrlStore.exportText());
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Apply the NSRL set to THIS case now (the analyst just loaded a set, or wants to sweep an
+  // already-imported case). Marks matches legitimate, then re-synthesizes so they drop from findings.
+  app.post("/cases/:id/nsrl/apply", async (req: Request, res: Response) => {
+    if (!options.nsrlStore && !nsrlDb) return res.status(501).json({ error: "NSRL not configured (no hash set or RDS database)" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const result = await applyNsrlToCase(caseId);
+      if (result.added > 0) resynthesizeInBackground(caseId);
+      logLine(`[nsrl] ${caseId} apply — matched ${result.matchedIocs} IOC(s) + ${result.matchedEvents} event(s), added ${result.added}`);
+      return res.status(200).json({ ...result, legitimate: await legitimate.load(caseId) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Investigation time-window. Setting it re-synthesizes so out-of-scope events
   // (and the findings/IOCs derived from them) drop out of the analysis.
   const scopeStore = new ScopeStore(store);
@@ -2531,6 +2718,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           try {
             const wl = await applyWhitelistToCase(caseId);
             if (wl.added > 0) logLine(`[whitelist] ${caseId} auto-marked ${wl.added} imported IOC(s) legitimate`);
+          } catch { /* non-fatal */ }
+          // #63: auto-mark imported events/IOCs whose hash is in the global NSRL set (known-good
+          // files) legitimate, also BEFORE re-synthesis, to reduce false positives. Best-effort.
+          try {
+            const ns = await applyNsrlToCase(caseId);
+            if (ns.added > 0) logLine(`[nsrl] ${caseId} auto-marked ${ns.added} imported known-good item(s) legitimate`);
           } catch { /* non-fatal */ }
           resynthesizeInBackground(caseId);
         })
@@ -4545,6 +4738,39 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // when DFIR_CASES_ROOT is a drive root child (e.g. C:\cases) the sibling is C:\ — and Windows
   // forbids creating files directly in a drive root. A subdir is always creatable + writable.
   const iocWhitelistStore = new IocWhitelistStore(join(dirname(casesRoot), "whitelist", "ioc-whitelist.json"));
+  // NSRL known-good hash set (#63) — its own subdir next to cases/ (same drive-root rationale as the
+  // whitelist). Optionally pre-loaded at startup from file(s) named in DFIR_NSRL_FILE (; separated):
+  // an NSRLFile.txt RDS export, a hashdeep CSV, or a plain hash-per-line list. Ingest is idempotent.
+  const nsrlStore = new NsrlStore(join(dirname(casesRoot), "nsrl", "known-hashes.txt"));
+  const nsrlFiles = splitNsrlPaths(process.env.DFIR_NSRL_FILE);
+  if (nsrlFiles.length > 0) {
+    // Fire-and-forget (startServer is sync): ingest in the background via the same helper the
+    // Settings → NSRL "Load from file" route uses. The set is opt-in and the auto-apply sweep loads
+    // it fresh, so a late finish just means later imports pick it up.
+    void ingestNsrlFiles(nsrlStore, nsrlFiles).then((results) => {
+      for (const r of results) {
+        logLine(r.error
+          ? `[nsrl] could not load ${r.file}: ${r.error}`
+          : `[nsrl] loaded ${r.file} — +${r.added} new (${r.total} total known-good hashes)`);
+      }
+    });
+  }
+  // NSRL RDS SQLite backend (#63): the full ~160 GB set queried on demand. Path from DFIR_NSRL_DB
+  // (env-managed → UI connect is read-only) or, when that's unset, the UI-set path persisted in
+  // nsrl/db-path.txt. Opened read-only; a bad/missing DB logs and is skipped (the flat store still works).
+  const nsrlDbConfigFile = join(dirname(casesRoot), "nsrl", "db-path.txt");
+  const nsrlDbEnv = (process.env.DFIR_NSRL_DB ?? "").trim();
+  const nsrlDbEnvManaged = nsrlDbEnv.length > 0;
+  const resolvedNsrlDbPath = nsrlDbEnv || loadNsrlDbPath(nsrlDbConfigFile);
+  let nsrlDb: NsrlDb | undefined;
+  if (resolvedNsrlDbPath) {
+    try {
+      nsrlDb = NsrlDb.open(resolvedNsrlDbPath);
+      logLine(`[nsrl] connected RDS DB ${resolvedNsrlDbPath} — table ${nsrlDb.table}, columns ${nsrlDb.columns.join("/")}`);
+    } catch (err) {
+      logLine(`[nsrl] could not open RDS DB ${resolvedNsrlDbPath}: ${(err as Error).message}`);
+    }
+  }
   // Notifications (issue #58): a global channel store (own subdir, Windows drive-root-safe) + a
   // notifier wired with a TLS-aware fetch (Slack/Teams webhooks, honoring DFIR_NOTIFY_CA/_INSECURE
   // for self-hosted Mattermost) and the built-in SMTP transport for email channels.
@@ -4658,6 +4884,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     velociraptorClient: buildVelociraptorClient(),
     artifactBundleStore,
     iocWhitelistStore,
+    nsrlStore,
+    nsrlDb,
+    nsrlDbConfigFile,
+    nsrlDbEnvManaged,
     veloHuntStore,
     onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),
     // Trim the dashboard's hunt-query modal to the tools this team runs (default: all).

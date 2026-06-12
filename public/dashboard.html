@@ -1132,6 +1132,7 @@
         <button class="stab" data-stab="integrations">Integrations</button>
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
         <button class="stab" data-stab="whitelist">IOC Whitelist</button>
+        <button class="stab" data-stab="nsrl">NSRL</button>
         <button class="stab" data-stab="reports">Report Templates</button>
         <button class="stab" data-stab="notifications">Notifications</button>
       </div>
@@ -1552,6 +1553,77 @@
             <span id="wlApplyMsg" class="manual-msg"></span>
           </div>
           <span class="sfield-hint">Scans the loaded case's current IOCs and marks matches legitimate (already auto-runs on every import).</span>
+        </div>
+      </div>
+
+      <!-- NSRL known-good hashes (#63) -->
+      <div class="stab-pane" id="stab-nsrl">
+        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+          A set of <strong>known-software file hashes</strong> (NIST NSRL / RDS). A forensic event whose file hash —
+          or an IOC whose value — matches is a <strong>known-good file, auto-marked legitimate on import</strong> (and on demand),
+          reducing false positives. Global — shared across all cases. Reversible: matches appear in <em>Confirmed Legitimate</em>.
+        </div>
+        <div style="background:#211405;border:1px solid #5a4a1a;border-radius:6px;padding:6px 9px;font-size:12px;color:#ffce8a;margin-bottom:12px">
+          ⚠ NSRL lists <em>known</em>, not strictly known-<em>good</em>, software — some RDS sets include hacktools, and a known hash can still be malicious in context (DLL side-loading, a renamed LOLBin). Opt-in for a reason.
+        </div>
+
+        <div class="sfield">
+          <label>Loaded hashes <span id="nsrlCount" class="sfield-hint" style="display:inline"></span></label>
+          <div id="nsrlStatus" style="font-size:12px;color:#9aa4b2;padding:2px 0">Loading…</div>
+        </div>
+
+        <div class="sfield-row">
+          <div class="sfield" style="flex:1">
+            <label>Import known-good hashes</label>
+            <textarea id="nsrlImportText" rows="4" spellcheck="false" placeholder="Paste an NSRLFile.txt (RDS CSV), a hashdeep CSV, or a hash-per-line list — MD5 / SHA-1 / SHA-256" style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
+              <button id="nsrlImportBtn" type="button">Import</button>
+              <button id="nsrlExportBtn" type="button" style="background:#2a2f3a">Export</button>
+              <button id="nsrlClearBtn" type="button" style="background:#3a2020;border:1px solid #5a2a2a;color:#ff9f9f">Clear all</button>
+              <span id="nsrlMsg" class="manual-msg"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sfield">
+          <label>…or load from a file on the server</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <input id="nsrlFilePath" placeholder="C:\rds\NSRLFile.txt   ( ; -separate multiple )" style="flex:1 1 280px;font-family:monospace" />
+            <button id="nsrlFileBtn" type="button">Load file</button>
+          </div>
+          <span id="nsrlFileMsg" class="manual-msg"></span>
+          <div style="margin-top:6px;font-size:11px;color:#7e8aa0">
+            Reads an NSRLFile.txt / hashdeep CSV / hash list straight off this machine — for big RDS sets you don't want to paste.
+            The in-UI equivalent of the <code>DFIR_NSRL_FILE</code> env var, but on demand: loaded hashes persist, so there's no restart and they survive one.
+          </div>
+        </div>
+
+        <hr class="settings-hr" />
+        <div class="sfield">
+          <label>NSRL RDS database (SQLite) <span id="nsrlDbBadge" class="sfield-hint" style="display:inline"></span></label>
+          <div id="nsrlDbStatus" style="font-size:12px;color:#9aa4b2;padding:2px 0">Loading…</div>
+          <div id="nsrlDbControls" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
+            <input id="nsrlDbPath" placeholder="D:\NSRL\RDS_2026.03.1_modern.db" style="flex:1 1 300px;font-family:monospace" />
+            <button id="nsrlDbConnectBtn" type="button">Connect</button>
+            <button id="nsrlDbDisconnectBtn" type="button" style="background:#3a2020;border:1px solid #5a2a2a;color:#ff9f9f">Disconnect</button>
+          </div>
+          <span id="nsrlDbMsg" class="manual-msg"></span>
+          <div style="margin-top:6px;font-size:11px;color:#7e8aa0">
+            For the <strong>full ~160 GB NSRL RDS</strong> (too big to load into memory) — queried on demand, no ingest.
+            Download the <em>Modern RDS minimal</em> SQLite set and <strong>index the hash column(s)</strong> first
+            (<code>CREATE INDEX … ON METADATA(sha256)</code> + <code>ANALYZE</code>; matching keys on sha256/md5, not sha1).
+            See the README's NSRL section for the full setup.
+          </div>
+        </div>
+
+        <hr class="settings-hr" />
+        <div class="sfield">
+          <label>Apply to the current case</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button id="nsrlApplyBtn" type="button">Apply NSRL to loaded case</button>
+            <span id="nsrlApplyMsg" class="manual-msg"></span>
+          </div>
+          <span class="sfield-hint">Scans the loaded case's IOCs + forensic events and marks known-good matches legitimate (already auto-runs on every import).</span>
         </div>
       </div>
 
@@ -7530,6 +7602,16 @@
     document.getElementById("wlExportCsvBtn").addEventListener("click", () => wlExport("csv"));
     document.getElementById("wlExportJsonBtn").addEventListener("click", () => wlExport("json"));
     document.getElementById("wlApplyBtn").addEventListener("click", wlApplyToCase);
+    // NSRL known-good hashes (#63)
+    document.getElementById("nsrlImportBtn").addEventListener("click", nsrlImport);
+    document.getElementById("nsrlFileBtn").addEventListener("click", nsrlImportFile);
+    document.getElementById("nsrlFilePath").addEventListener("keydown", e => { if (e.key === "Enter") nsrlImportFile(); });
+    document.getElementById("nsrlExportBtn").addEventListener("click", () => window.open("/nsrl/export", "_blank"));
+    document.getElementById("nsrlClearBtn").addEventListener("click", nsrlClear);
+    document.getElementById("nsrlApplyBtn").addEventListener("click", nsrlApplyToCase);
+    document.getElementById("nsrlDbConnectBtn").addEventListener("click", nsrlDbConnect);
+    document.getElementById("nsrlDbDisconnectBtn").addEventListener("click", nsrlDbDisconnect);
+    document.getElementById("nsrlDbPath").addEventListener("keydown", e => { if (e.key === "Enter") nsrlDbConnect(); });
     document.getElementById("stab-whitelist").addEventListener("click", e => {
       const q = e.target.closest(".wl-quick");
       if (q) { document.getElementById("wlMatch").value = q.dataset.m; document.getElementById("wlPattern").value = q.dataset.p; document.getElementById("wlType").value = q.dataset.t || ""; return; }
@@ -7564,6 +7646,7 @@
         document.querySelectorAll(".stab").forEach(b => b.classList.toggle("active", b === btn));
         document.querySelectorAll(".stab-pane").forEach(p => p.classList.toggle("active", p.id === "stab-" + tab));
         if (tab === "whitelist") loadWhitelist();
+        if (tab === "nsrl") loadNsrl();
         if (tab === "reports") loadReportTemplates();
         if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
       });
@@ -7777,6 +7860,105 @@
         .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
         .then(j => {
           msg.textContent = `${j.matched} matched · ${j.added} newly marked legitimate`;
+          if (j.legitimate) renderLegitimate(j.legitimate);
+        })
+        .catch(e => { msg.textContent = "failed: " + e.message + " — restart the server if the endpoint 404s."; });
+    }
+
+    // --- NSRL known-good hashes (#63) — global hash set, Settings → NSRL ---------------------------
+    function loadNsrl() {
+      const status = document.getElementById("nsrlStatus");
+      const cnt = document.getElementById("nsrlCount");
+      fetch("/nsrl").then(r => r.json()).then(j => {
+        const n = j.count || 0;
+        if (cnt) cnt.textContent = n ? `(${n.toLocaleString()})` : "";
+        if (status) status.textContent = n
+          ? `${n.toLocaleString()} known-good hash${n !== 1 ? "es" : ""} loaded — matches auto-marked legitimate on import.`
+          : "No hashes loaded yet — import an NSRL set below to start filtering known-good files.";
+        renderNsrlDb(j);
+      }).catch(() => { if (status) status.textContent = "could not load — restart the server if this persists."; });
+    }
+    function renderNsrlDb(j) {
+      const st = document.getElementById("nsrlDbStatus");
+      const badge = document.getElementById("nsrlDbBadge");
+      const controls = document.getElementById("nsrlDbControls");
+      const disc = document.getElementById("nsrlDbDisconnectBtn");
+      const db = (j && j.db) || { connected: false };
+      if (db.connected) {
+        if (badge) badge.textContent = "● connected";
+        if (badge) badge.style.color = "#7ee787";
+        if (st) st.innerHTML = `Querying <code>${esc(db.path || "")}</code> — table <strong>${esc(db.table || "?")}</strong>, columns ${esc((db.columns || []).join(", ") || "?")}.`;
+      } else {
+        if (badge) { badge.textContent = ""; }
+        if (st) st.textContent = "Not connected — for the full RDS, connect the SQLite .db below.";
+      }
+      // Env-managed: the path comes from DFIR_NSRL_DB; hide the runtime connect controls.
+      const envManaged = j && j.dbEnvManaged;
+      if (controls) controls.style.display = envManaged ? "none" : "flex";
+      if (envManaged && st) st.innerHTML += ` <span style="color:#7e8aa0">(path set by <code>DFIR_NSRL_DB</code>)</span>`;
+      if (disc) disc.style.display = db.connected ? "" : "none";
+    }
+    function nsrlDbConnect() {
+      const path = document.getElementById("nsrlDbPath").value.trim();
+      const msg = document.getElementById("nsrlDbMsg");
+      if (!path) { msg.textContent = "enter the RDS .db file path"; return; }
+      msg.textContent = "connecting…";
+      fetch("/nsrl/db", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path }) })
+        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "HTTP " + r.status); return j; })
+        .then(j => { msg.textContent = `connected (table ${j.table}, ${(j.columns || []).join("/")})`; document.getElementById("nsrlDbPath").value = ""; loadNsrl(); })
+        .catch(e => { msg.textContent = e.message; });
+    }
+    function nsrlDbDisconnect() {
+      const msg = document.getElementById("nsrlDbMsg");
+      msg.textContent = "disconnecting…";
+      fetch("/nsrl/db", { method: "DELETE" })
+        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "HTTP " + r.status); return j; })
+        .then(() => { msg.textContent = "disconnected"; loadNsrl(); })
+        .catch(e => { msg.textContent = e.message; });
+    }
+    function nsrlImport() {
+      const text = document.getElementById("nsrlImportText").value;
+      const msg = document.getElementById("nsrlMsg");
+      if (!text.trim()) { msg.textContent = "paste an NSRL file or hash list first"; return; }
+      msg.textContent = "importing…";
+      fetch("/nsrl/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(j => { msg.textContent = `imported ${j.added.toLocaleString()} new hash${j.added !== 1 ? "es" : ""} (${j.parsed.toLocaleString()} parsed, ${j.total.toLocaleString()} total)`; document.getElementById("nsrlImportText").value = ""; loadNsrl(); })
+        .catch(e => { msg.textContent = e.message; });
+    }
+    function nsrlImportFile() {
+      const path = document.getElementById("nsrlFilePath").value.trim();
+      const msg = document.getElementById("nsrlFileMsg");
+      if (!path) { msg.textContent = "enter a file path on the server"; return; }
+      msg.textContent = "loading…";
+      fetch("/nsrl/import-file", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path }) })
+        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "HTTP " + r.status); return j; })
+        .then(j => {
+          const errs = (j.files || []).filter(f => f.error);
+          msg.textContent = `loaded ${(j.added || 0).toLocaleString()} new hash${j.added !== 1 ? "es" : ""} (${(j.total || 0).toLocaleString()} total)` + (errs.length ? ` · ${errs.length} file(s) failed: ${esc(errs.map(f => f.error).join("; "))}` : "");
+          if (!errs.length) document.getElementById("nsrlFilePath").value = "";
+          loadNsrl();
+        })
+        .catch(e => { msg.textContent = e.message + " — restart the server if the endpoint 404s."; });
+    }
+    function nsrlClear() {
+      if (!confirm("Clear the entire NSRL known-good hash set? This is global (affects all cases).")) return;
+      const msg = document.getElementById("nsrlMsg");
+      msg.textContent = "clearing…";
+      fetch("/nsrl/clear", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(() => { msg.textContent = "cleared"; loadNsrl(); })
+        .catch(e => { msg.textContent = e.message; });
+    }
+    function nsrlApplyToCase() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("nsrlApplyMsg");
+      if (!caseId) { msg.textContent = "load a case first"; return; }
+      msg.textContent = "applying…";
+      fetch(`/cases/${caseId}/nsrl/apply`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(j => {
+          msg.textContent = `${j.matchedIocs} IOC(s) + ${j.matchedEvents} event(s) matched · ${j.added} newly marked legitimate`;
           if (j.legitimate) renderLegitimate(j.legitimate);
         })
         .catch(e => { msg.textContent = "failed: " + e.message + " — restart the server if the endpoint 404s."; });
