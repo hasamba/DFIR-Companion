@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parseVqlOutput,
+  sanitizeVqlDurations,
   splitVqlStatements,
   VelociraptorClient,
   loadVelociraptorConfig,
@@ -33,6 +34,43 @@ describe("parseVqlOutput", () => {
   it("returns [] for empty or non-JSON output", () => {
     expect(parseVqlOutput("")).toEqual([]);
     expect(parseVqlOutput("not json")).toEqual([]);
+  });
+});
+
+describe("sanitizeVqlDurations", () => {
+  it("rewrites day suffix to seconds arithmetic", () => {
+    expect(sanitizeVqlDurations("WHERE TimeCreated > now() - 30d")).toBe("WHERE TimeCreated > now() - 30 * 86400");
+  });
+  it("rewrites hour suffix", () => {
+    expect(sanitizeVqlDurations("now() - 24h")).toBe("now() - 24 * 3600");
+  });
+  it("rewrites week suffix", () => {
+    expect(sanitizeVqlDurations("now() - 2w")).toBe("now() - 2 * 604800");
+  });
+  it("rewrites minute suffix", () => {
+    expect(sanitizeVqlDurations("now() - 15m")).toBe("now() - 15 * 60");
+  });
+  it("handles whitespace between operator and number", () => {
+    expect(sanitizeVqlDurations("now() -  7d")).toBe("now() - 7 * 86400");
+  });
+  it("rewrites addition context too", () => {
+    expect(sanitizeVqlDurations("now() + 1d")).toBe("now() + 1 * 86400");
+  });
+  it("does not touch standalone 'd' not preceded by operator+number", () => {
+    expect(sanitizeVqlDurations("SELECT d FROM foo()")).toBe("SELECT d FROM foo()");
+  });
+  it("does not mangle file paths like %4Operational or 30day_archive", () => {
+    const q = 'parse_evtx(files="C:/Logs/Windows Defender%4Operational.evtx")';
+    expect(sanitizeVqlDurations(q)).toBe(q);
+    const q2 = 'glob(globs="C:/data/30day_archive/**")';
+    expect(sanitizeVqlDurations(q2)).toBe(q2);
+  });
+  it("rewrites the exact failing query from issue", () => {
+    const input = 'SELECT * FROM parse_evtx(files="C:/Windows/System32/Winevt/Logs/Microsoft-Windows-Windows Defender%4Operational.evtx") WHERE System.EventID.Value = 5001 AND TimeCreated > now() - 30d';
+    const out = sanitizeVqlDurations(input);
+    expect(out).toContain("30 * 86400");
+    expect(out).not.toContain("30d");
+    expect(out).toContain("%4Operational");
   });
 });
 

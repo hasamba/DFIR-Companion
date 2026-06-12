@@ -20,6 +20,7 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { renderMarkdownReport } from "./markdown.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
+import { DEFAULT_ACCENT, defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
 
 // Render the canonical Markdown report as a Word (.docx) document. The Markdown produced
 // by `renderMarkdownReport` is the single source of truth — this file walks its tokens and
@@ -404,14 +405,23 @@ export async function renderDocxReport(
   state: InvestigationState,
   meta: ReportMeta = emptyReportMeta(),
   exposure?: CustomerExposureSummary,
+  template: ReportTemplate = defaultReportTemplate(),
 ): Promise<Buffer> {
-  const md = renderMarkdownReport(state, meta, exposure);
+  const md = renderMarkdownReport(state, meta, exposure, undefined, undefined, undefined, template);
   const marked = new Marked({ gfm: true });
   const tokens = marked.lexer(md);
   const children = tokensToDocxChildren(tokens);
+  // Brand the headings with the template's accent colour (a validated #rrggbb). The default
+  // template keeps the historical theme colour (no override) so an un-templated .docx is unchanged.
+  const accent = template.accentColor.replace(/^#/, "");
+  const brandStyles =
+    template.accentColor.toLowerCase() !== DEFAULT_ACCENT
+      ? { default: { heading1: { run: { color: accent } }, heading2: { run: { color: accent } } } }
+      : undefined;
   const doc = new Document({
     creator: "DFIR Companion",
     title: meta.incidentId.trim() || state.caseId,
+    styles: brandStyles,
     // Numbering definitions referenced by listItemParagraphs above.
     numbering: {
       config: [
