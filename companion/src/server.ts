@@ -12,9 +12,13 @@ import { CustomEntitiesStore, sanitizeCustomEntities } from "./analysis/anonEnti
 import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
 import type { AnonTokenCategory } from "./analysis/anonymize.js";
 import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js";
-import { TesseractOcrRunner } from "./analysis/ocrRedact.js";
+import { TesseractOcrRunner, type OcrRunner } from "./analysis/ocrRedact.js";
+import { resolveRedactedExportOptions, redactedExportFilename } from "./analysis/redactedExport.js";
+import { buildRedactedExport } from "./reports/redactedExportBuilder.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
+import { parseSnapshot } from "./analysis/snapshot.js";
+import { exportCaseSnapshot, importCaseSnapshot, SnapshotImportConflictError } from "./analysis/snapshotIo.js";
 import { parseCsv } from "./analysis/csvImport.js";
 import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
 import { resolveHuntPlatforms, HUNT_PLATFORMS, type HuntPlatform } from "./analysis/huntPlatforms.js";
@@ -44,8 +48,16 @@ import { parsePlasoCsv } from "./analysis/plasoImport.js";
 import type { PlasoImportOptions } from "./analysis/plasoImport.js";
 import { parseSandboxReport } from "./analysis/sandboxImport.js";
 import type { SandboxImportOptions } from "./analysis/sandboxImport.js";
+import { parseMemory } from "./analysis/memoryImport.js";
+import type { MemoryImportOptions } from "./analysis/memoryImport.js";
 import { parseEmail } from "./analysis/emailImport.js";
 import type { EmailImportOptions } from "./analysis/emailImport.js";
+import { parseAuditdLog } from "./analysis/auditdImport.js";
+import type { AuditdImportOptions } from "./analysis/auditdImport.js";
+import { parseJournald } from "./analysis/journaldImport.js";
+import type { JournaldImportOptions } from "./analysis/journaldImport.js";
+import { parseSysdig } from "./analysis/sysdigImport.js";
+import type { SysdigImportOptions } from "./analysis/sysdigImport.js";
 import { detectImportKind, type ImportKind } from "./analysis/importDetect.js";
 import { getEnvForSettings, updateEnv as updateEnvFile } from "./settings/envManager.js";
 import { parseMinSeverity } from "./analysis/severityFloor.js";
@@ -163,6 +175,10 @@ export interface AppOptions {
   flushIntervalMs?: number;
   stateStore?: StateStore;
   reportWriter?: ReportWriter;
+  // OCR backend for the redacted case export (#54), used to blur PII text in screenshots. Provided
+  // unconditionally in startServer (the export needs it even when the vision model is local); tests
+  // inject a stub. The export route falls back to a fresh TesseractOcrRunner when this is absent.
+  ocrRunner?: OcrRunner;
   // Human-authored report metadata (title page, distribution, BIA, glossary, recommendations…)
   // edited from the dashboard and merged into report.md.
   reportMetaStore?: ReportMetaStore;
@@ -807,6 +823,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Mobile companion summary (#59): a compact, READ-ONLY projection of the case for the phone PWA
+  // (/mobile) — case status, worst findings, most severe/recent events, IOC list with verdicts.
+  // Same scope/legitimate filtering as the report, so the phone view agrees with the dashboard.
+  app.get("/cases/:id/mobile-summary", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.mobileSummary(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export just the incident (forensic) timeline as CSV, generated on demand from the
   // current state (same scope/legitimate filtering as the report) — no full report needed.
   app.get("/cases/:id/incident-timeline.csv", async (req: Request, res: Response) => {
@@ -886,6 +914,53 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Export a portable INVESTIGATION SNAPSHOT (issue #56): a single JSON bundle of the case's
+  // timeline, findings, IOCs, asset-graph state, analyst decisions and evidence REFERENCES, with
+  // NO AI keys and no machine-specific config (see analysis/snapshot.ts allowlist). Reads the case
+  // directory directly — works regardless of which optional stores are wired — so a teammate can
+  // import it on another machine and pick up the investigation without re-running analysis.
+  app.get("/cases/:id/export/snapshot", async (req: Request, res: Response) => {
+    try {
+      const snapshot = await exportCaseSnapshot(store, req.params.id);
+      res.type("application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="snapshot-${req.params.id}.json"`);
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(JSON.stringify(snapshot, null, 2));
+    } catch (err) {
+      if ((err as Error).message.includes("does not exist")) {
+        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+      }
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import an investigation snapshot into a NEW case (issue #56). Body is the snapshot JSON, with an
+  // optional `targetCaseId` to import under a different id (resolves a conflict). The snapshot is
+  // validated (format/version/allowlist) before any write; a snapshot can ONLY restore allowlisted
+  // state files, never machine/account config. 409 if the target id already exists (the dashboard
+  // re-prompts), 400 if the payload isn't a valid snapshot.
+  app.post("/snapshots/import", async (req: Request, res: Response) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const targetCaseId = typeof body.targetCaseId === "string" && body.targetCaseId.trim()
+        ? body.targetCaseId.trim()
+        : undefined;
+      // The snapshot may be posted bare, or wrapped as { snapshot: {...}, targetCaseId }.
+      const rawSnapshot = body.snapshot !== undefined ? body.snapshot : body;
+      const snapshot = parseSnapshot(rawSnapshot);
+      const meta = await importCaseSnapshot(store, snapshot, { targetCaseId });
+      return res.status(201).json({ ...meta, counts: snapshot.counts });
+    } catch (err) {
+      if (err instanceof SnapshotImportConflictError) {
+        return res.status(409).json({ error: err.message, caseId: err.caseId });
+      }
+      // parseSnapshot throws plain Errors with a human-readable reason → 400 (bad upload).
+      const msg = (err as Error).message;
+      if (/snapshot|case id/i.test(msg)) return res.status(400).json({ error: msg });
+      return res.status(500).json({ error: msg });
+    }
+  });
+
   // Human-authored report metadata (title page, distribution, BIA, limitations, glossary,
   // recommendations…). GET returns the stored values (or defaults); PUT replaces them with a
   // normalized payload. These merge into report.md alongside the auto-derived sections.
@@ -961,6 +1036,21 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json(result);
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // AI-suggest proactive Velociraptor VQL fleet-hunts from the case findings (issue #57). Single
+  // text-only AI call, EPHEMERAL (no state change) — the dashboard shows each hunt's VQL + rationale
+  // for review, then deploys the chosen one through POST /velociraptor/hunt (launchHunt). Needs an AI
+  // provider; does NOT need the Velociraptor API (the VQL is useful to copy even when deploy is off).
+  app.post("/cases/:id/velociraptor/suggest-hunts", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
+    try {
+      const suggestions = await options.pipeline.suggestHunts(req.params.id);
+      logLine(`[velociraptor] suggested ${suggestions.length} fleet-hunt(s) for ${req.params.id}`);
+      return res.status(200).json({ suggestions });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -1046,7 +1136,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "cloud": return pipeline.importCloudActivity(caseId, text, base);
       case "plaso": return pipeline.importPlaso(caseId, text, base);
       case "sandbox": return pipeline.importSandbox(caseId, text, base);
+      case "memory": return pipeline.importMemory(caseId, text, base);
       case "email": return pipeline.importEmail(caseId, text, base);
+      case "auditd": return pipeline.importAuditd(caseId, text, base);
+      case "journald": return pipeline.importJournald(caseId, text, base);
+      case "sysdig": return pipeline.importSysdig(caseId, text, base);
       case "csv": return pipeline.analyzeCsv(caseId, text, base);
       case "log": return pipeline.analyzeLog(caseId, text, base);
       default: return Promise.reject(new Error(`unhandled import kind: ${kind as string}`));
@@ -1565,6 +1659,46 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (!value) return res.status(400).json({ error: "value is required" });
       const next = await discoveredEntities.unsuppress(req.params.id, value);
       return res.status(200).json({ suppressed: next.suppressed });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Redacted case package (#54): a shareable ZIP for external parties. Internal IPs / hosts /
+  // usernames / emails / paths in the report (and CSVs / state JSON) are tokenized, secrets are
+  // one-way redacted, screenshot EXIF is stripped, and detectable PII text in screenshots is
+  // blurred (best-effort OCR). AI provider keys + per-case config are NEVER included — the package
+  // is built from a curated allowlist, not a copy of the case folder. Built fresh per request; the
+  // canonical on-disk report (which keeps the REAL values) is never touched. Query flags
+  // (?screenshots=0 / ?blur=0 / ?csvs=0 / ?state=0 / ?report=0) opt parts out.
+  app.get("/cases/:id/export/redacted", async (req: Request, res: Response) => {
+    if (!options.reportWriter || !options.stateStore) {
+      return res.status(501).json({ error: "report writer not configured" });
+    }
+    if (!isValidCaseId(req.params.id)) {
+      return res.status(400).json({ error: "invalid case id" });
+    }
+    try {
+      const exportOptions = resolveRedactedExportOptions(req.query as Record<string, unknown>);
+      const { zip } = await buildRedactedExport(
+        {
+          store,
+          reportWriter: options.reportWriter,
+          stateStore: options.stateStore,
+          customEntities,
+          discoveredEntities,
+          // Victim org domains/emails the analyst entered for the exposure check are PII too —
+          // feed them to the anonymizer so they're tokenized even when absent from the timeline.
+          customerStore: new CustomerStore(store),
+          ocrRunner: options.ocrRunner ?? new TesseractOcrRunner(),
+        },
+        req.params.id,
+        exportOptions,
+      );
+      res.type("application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${redactedExportFilename(req.params.id)}"`);
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(zip);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -2139,7 +2273,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
     const kind = detectImportKind(originalName, text);
     if (kind === "unknown") {
-      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Email-eml-msg / CSV / log)" });
+      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / CSV / log)" });
     }
     if ((kind === "csv" || kind === "log") && !hasAiProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
@@ -3040,6 +3174,61 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Import memory-forensics tool output (Volatility 3 JSON renderer or Rekall JSON). Evidence-first;
+  // mapping is DETERMINISTIC (no AI call): pslist/psscan/pstree → process-tree events, netscan →
+  // connection events, malfind → injected-code (T1055), cmdline/svcscan/modules → evidence; the
+  // foreign IPs / file paths / process names are harvested as IOCs.
+  app.post("/cases/:id/import-memory", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.json === "string" ? req.body.json : "";
+    const originalName = String(req.body?.filename ?? "memory.json");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const minSeverity: Severity | undefined =
+      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
+      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
+      : rawLevel === "info" ? "Info" : undefined;
+    const dllTelemetry = req.body?.dllTelemetry === true || String(req.body?.dllTelemetry ?? "").toLowerCase() === "true";
+    const memoryOpts: MemoryImportOptions = { filename: originalName, ...(minSeverity ? { minSeverity } : {}), ...(dllTelemetry ? { dllTelemetry } : {}) };
+
+    try {
+      const preview = parseMemory(text, memoryOpts);
+      if (preview.format === "empty" && preview.kept === 0) return res.status(400).json({ error: "no parseable memory output found (expected a Volatility 3 JSON-renderer array or a Rekall JSON statement list)" });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "memory.json");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, tool: preview.tool, events: preview.kept, injected: preview.injected, connections: preview.connections, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} memory event(s)` });
+      void options.pipeline.importMemory(caseId, text, {
+        label: storedName,
+        idPrefix: `mem${seq}`,
+        importedAt,
+        memory: memoryOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `Memory import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Import an email artifact (.eml RFC 2822, or best-effort .msg). Evidence-first; mapped
   // DETERMINISTICALLY (no AI call): one event at the Date: header, severity from SPF/DKIM/DMARC +
   // sender heuristics, URLs/domains/IP/attachment-names as IOCs. Covers ATT&CK T1566 (Phishing).
@@ -3083,6 +3272,153 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `Email import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a Linux auditd log (raw audit.log / `ausearch` record format, or an `aureport` table).
+  // Evidence-first; mapped DETERMINISTICALLY (no AI call): records grouped by serial, per-type
+  // severity/MITRE, read at the audit() epoch.
+  app.post("/cases/:id/import-auditd", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.log === "string" ? req.body.log : "";
+    const originalName = String(req.body?.filename ?? "audit.log");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const minSeverity = parseMinSeverity(req.body?.minSeverity);
+    const auditdOpts: AuditdImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      const preview = parseAuditdLog(text, auditdOpts);
+      if (preview.format === "empty") return res.status(400).json({ error: "no parseable auditd records found (expected raw audit.log / ausearch 'type=… msg=audit(…)' lines or an aureport table)" });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "audit.log");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, records: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} auditd event(s)` });
+      void options.pipeline.importAuditd(caseId, text, {
+        label: storedName,
+        idPrefix: `ad${seq}`,
+        importedAt,
+        auditd: auditdOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `auditd import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a systemd-journald structured log (`journalctl -o json` / `-o json-pretty`). Evidence-first;
+  // mapped DETERMINISTICALLY (no AI call): severity from PRIORITY + tradecraft bumps, read at the
+  // entry's own µs-epoch time.
+  app.post("/cases/:id/import-journald", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.json === "string" ? req.body.json : "";
+    const originalName = String(req.body?.filename ?? "journal.json");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const minSeverity = parseMinSeverity(req.body?.minSeverity);
+    const journaldOpts: JournaldImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      const preview = parseJournald(text, journaldOpts);
+      if (preview.format === "empty") return res.status(400).json({ error: "no parseable journald entries found (expected `journalctl -o json` / `-o json-pretty` output)" });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "journal.json");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, entries: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} journald event(s)` });
+      void options.pipeline.importJournald(caseId, text, {
+        label: storedName,
+        idPrefix: `jd${seq}`,
+        importedAt,
+        journald: journaldOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `journald import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a sysdig / Falco export (Falco alert JSON and/or sysdig `-j` event JSON). Evidence-first;
+  // mapped DETERMINISTICALLY (no AI call): Falco rule hits → detections (verdict-first), raw sysdig
+  // syscall events → Info evidence, read at each event's own time.
+  app.post("/cases/:id/import-sysdig", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.json === "string" ? req.body.json : "";
+    const originalName = String(req.body?.filename ?? "falco.json");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const minSeverity = parseMinSeverity(req.body?.minSeverity);
+    const sysdigOpts: SysdigImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      const preview = parseSysdig(text, sysdigOpts);
+      if (preview.format === "empty") return res.status(400).json({ error: "no parseable sysdig/Falco records found (expected Falco alert JSON or sysdig `-j` event JSON; a binary .scap must be exported to JSON first)" });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "falco.json");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, records: preview.total, alerts: preview.alerts, groups: preview.groups, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} sysdig/Falco event(s)` });
+      void options.pipeline.importSysdig(caseId, text, {
+        label: storedName,
+        idPrefix: `sd${seq}`,
+        importedAt,
+        sysdig: sysdigOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `sysdig import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
@@ -4056,6 +4392,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     flushIntervalMs,
     stateStore,
     reportWriter,
+    // The redacted-export route needs OCR even when the vision model is local (the pipeline's
+    // ocrRunner is undefined in that case), so give createApp its own always-available runner.
+    ocrRunner: ocrRunner ?? new TesseractOcrRunner(),
     reportMetaStore,
     commentsStore,
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
@@ -4143,6 +4482,35 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   app.get("/dashboard", async (_req, res) => {
     const html = await readPublicAsset("dashboard.html", "utf8");
     res.type("html").send(html);
+  });
+
+  // Mobile companion (#59): a read-only, phone-optimized view (timeline / findings / IOCs / status)
+  // for quick glances during IR away from the workstation. It's a PWA — installable via the
+  // web manifest + a minimal service worker (offline app-shell). All three are static files in
+  // public/; the SW is served at root so its default control scope covers /mobile.
+  app.get("/mobile", async (_req, res) => {
+    const html = await readPublicAsset("mobile.html", "utf8");
+    res.type("html").send(html);
+  });
+
+  app.get("/manifest.webmanifest", async (_req, res) => {
+    try {
+      const json = await readPublicAsset("manifest.webmanifest", "utf8");
+      res.type("application/manifest+json").set("Cache-Control", "no-cache").send(json);
+    } catch {
+      res.status(404).end();
+    }
+  });
+
+  app.get("/sw.js", async (_req, res) => {
+    try {
+      const js = await readPublicAsset("sw.js", "utf8");
+      // no-cache + a same-origin allowed scope so the SW can control /mobile even if it's
+      // ever moved into a subdirectory; browsers re-check sw.js on every navigation anyway.
+      res.type("application/javascript").set("Cache-Control", "no-cache").set("Service-Worker-Allowed", "/").send(js);
+    } catch {
+      res.status(404).end();
+    }
   });
 
   // Bind host. Defaults to 127.0.0.1 (localhost-only — the OPSEC invariant for native runs).

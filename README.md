@@ -166,7 +166,11 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **GCP / Azure** | Cloud Audit Logs, Azure Activity Log | Action table (IAM/logging/secrets) |
 | **Plaso** | `psort` CSV (dynamic + l2tcsv) | — (Info events) |
 | **Sandbox reports** | CAPEv2 `report.json`, Falcon Sandbox summary | Sample verdict + behavioural signatures |
+| **Memory forensics** | Volatility 3 (`-r json`) + Rekall: pslist/pstree, netscan, malfind, cmdline, svcscan | malfind injected code → High (T1055); listings → Info/Low evidence |
 | **Email** | `.eml` (RFC 2822), best-effort `.msg` | SPF/DKIM/DMARC fail → sender spoof heuristics (T1566 Phishing) |
+| **Linux auditd** | raw `audit.log` / `ausearch` records, `aureport` tables | Record-type table (logins, account mgmt, sudo, SELinux, audit tampering) |
+| **systemd journald** | `journalctl -o json` / `-o json-pretty` | syslog PRIORITY + tradecraft bumps (sshd, sudo, useradd) |
+| **sysdig / Falco** | Falco alert JSON, sysdig `-j` event JSON | Falco rule priority; raw syscalls → Info telemetry |
 | **CSV** | Velociraptor / EDR exports | — |
 | **Generic logs** | Firewall, syslog, VPN; repetitive lines → counted patterns | AI-triaged |
 
@@ -191,6 +195,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **IOC flagged-only filter** — one click hides everything except indicators a threat-intel engine rated malicious/suspicious.
 - **Hunt-pivot generator** — one click on any event/IOC emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, and Suricata queries; offline, no AI.
 - **Velociraptor** (opt-in, API config) — run a pivot as a fleet hunt; or **triage bundles** (Settings): browse artifacts → save bundles → run as a hunt (label/OS + min-severity) → auto-collect + import + synthesize, with per-artifact params/exclude filters.
+- **AI-suggested fleet hunts** — the AI reads the findings and proposes proactive Velociraptor VQL hunts to sweep the whole fleet for the same tradecraft; review each hunt's VQL + rationale, then one-click deploy across all enrolled endpoints.
 - **Scope + legitimacy** — set a time window; mark findings/IOCs/events legitimate (reversible); all views re-project.
 - **Freshness** — "last synthesized N ago" + what-changed diff; "last import N ago" + `NEW` row highlights.
 
@@ -215,6 +220,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Reports** — Markdown + HTML (standalone, print-friendly) + one-click **PDF** (browser *Save as PDF*, offline) + CSVs (findings, IOCs, timelines) + full JSON state + **Word (.docx)** — all from the dashboard **Export** menu.
 - **ATT&CK Navigator layer** — **Export → ATT&CK Navigator layer (JSON)**: the case's MITRE techniques colored by worst observed severity (findings + forensic timeline), ready to upload into the [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/). Deterministic, offline.
 - **STIX 2.1 bundle** — **Export → STIX 2.1 bundle (JSON)**: a portable, vendor-neutral bundle — report, one indicator per IOC (STIX patterns + threat-intel verdict), ATT&CK attack-patterns, malware families, victim/producer identities, and `indicates` relationships — for any threat-intel platform (OpenCTI, MISP, Anomali, ThreatConnect). Deterministic UUIDv5 ids (stable re-exports), offline, no STIX library.
+- **Investigation snapshot** — **Export → Investigation snapshot (shareable JSON)** bundles the whole case (forensic timeline, findings, IOCs + enrichments, asset↔IoC graph state, and analyst decisions — scope, legitimate markers, comments, tags, notebook, playbook, report metadata — plus evidence *references*) into one file; **Import snapshot…** restores it as a new case on another machine, so a teammate picks up the investigation without re-running analysis. Carries **no AI keys and no machine-specific config** (an allowlist excludes enrichment opt-in, integration target ids, in-flight hunts and transient state). Offline, deterministic.
+- **Redacted case package** — **Export → Redacted case package (ZIP)**: a shareable bundle for external parties. Internal IPs / hosts / usernames / emails / paths in the report, CSVs and state JSON are replaced with consistent tokens (`ANON_HOST_1`…), secrets are one-way redacted, and screenshots have their EXIF stripped + detectable PII text blurred (best-effort OCR). Adversary indicators are preserved; AI provider keys and per-case config are never included. Choose which parts to include per export. Offline.
 - **AI executive summary** — ✨ Generate a management-facing summary (no ATT&CK ids/hashes/tool names) and save it into the report.
 - **Narrative Timeline** — prose story of the incident for non-technical stakeholders; generated in synthesis, editable, report §3.2.
 - **Push to DFIR-IRIS** — one click (or `npm run iris:push`) find-or-creates the IRIS case by name and maps assets/IOCs/timeline/summary/tasks/notes; idempotent. `DFIR_IRIS_URL` + `DFIR_IRIS_KEY`.
@@ -222,6 +229,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Export to Notion** — push a case into a new or existing Notion page; all content lives in ONE managed block the Companion owns, so your own notes outside it are never touched. `DFIR_NOTION_TOKEN`.
 - **Push to ClickUp** — export the Response Playbook to a ClickUp list as tasks (status/priority/due/assignee); re-push updates the tasks it created. `DFIR_CLICKUP_TOKEN`.
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu template](https://github.com/AnttiKurittu/incident-report-template); technical sections auto-fill (incl. an auto-glossary), human-authored sections (branding, title page, BIA, recommendations…) are filled in the dashboard and persist per case.
+- **Mobile companion** — an installable, **read-only** PWA at **`/mobile`** for quick glances during IR away from the workstation: case picker, status (severity + counts), worst findings, most severe/recent timeline events, and the IOC list with threat-intel verdicts. Same scope/legitimate filtering as the dashboard; no editing or AI. Offline app-shell + last-good cache. (Reach it from a phone/tablet by binding `DFIR_HOST=0.0.0.0` or tunnelling — the server is localhost-only by default.)
 
 ### Ops
 - **Logging to file** — every line tees to the console + a global session log + a per-case audit trail; `DFIR_LOG_LEVEL` (+ live Settings toggle, `DFIR_LOG_DIR`). `debug` traces AI calls, captures, OCR, anonymization, enrichment
@@ -402,6 +410,8 @@ Each prompt has two override forms (priority order): `DFIR_AI_<NAME>_PROMPT` (in
 | Holistic synthesis | `SYNTH` |
 | Case Q&A | `ASK` |
 | Executive summary | `EXEC` |
+| Narrative timeline | `NARRATIVE` |
+| Suggested fleet hunts | `HUNTS` |
 
 ### Threat-intel enrichment (optional — off by default)
 
@@ -508,6 +518,7 @@ velociraptor --config server.config.yaml config api_client --name dfir --role ad
 | `DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT` | `268435456` | Larger cap for **bundle-hunt collection** (rows + uploaded JSON; THOR/Hayabusa are big). An artifact/upload over this is skipped (logged), not fatal — the rest still import. |
 | `DFIR_VELO_HUNT_WAIT_MIN` | `10` | Default minutes before a **triage bundle** hunt auto-collects (per-run + per-bundle override; clamped 1–1440) |
 | `DFIR_VELOCIRAPTOR_UPLOAD_VQL` | — | Advanced: override the VQL that reads a hunt's uploaded JSON reports (version-sensitive; keep the `__HUNT_ID__` placeholder) |
+| `DFIR_HUNT_SUGGEST_MAX` | `8` | Max number of **AI-suggested fleet hunts** returned per generation (needs an AI provider, not the Velociraptor API) |
 
 **Triage bundles** (**Settings → Velociraptor** tab): *Browse server artifacts* lists the server's collectable
 `CLIENT` artifacts; assemble + save named **bundles** (a single **Best Practice** quick-wins sweep ships by
