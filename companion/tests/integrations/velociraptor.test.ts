@@ -173,6 +173,60 @@ describe("VelociraptorClient.launchHunt", () => {
   });
 });
 
+describe("VelociraptorClient.collectFromHost", () => {
+  it("resolves the host and collects a Custom artifact on just that client", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];   // collectFromHost runs one orchestration program
+      return { rows: [{ ClientId: "C.abc", Flow: { flow_id: "F.flow1" } }], raw: "" };
+    };
+    const res = await new VelociraptorClient({ ...cfg, guiUrl: "https://velo.example/" }, runner)
+      .collectFromHost("WEB01", "-- persistence\nSELECT Name FROM Artifact.Windows.System.Services()", "services on WEB01");
+    expect(res.clientId).toBe("C.abc");
+    expect(res.flowId).toBe("F.flow1");
+    expect(res.hostname).toBe("WEB01");
+    expect(res.artifact).toBe("Custom.Collect.Companion.services_on_WEB01");
+    expect(res.guiUrl).toBe("https://velo.example/app/index.html?org_id=root#/collected/C.abc/F.flow1");
+    // The program defines a CLIENT artifact, resolves the client by host, and collect_clients on it.
+    expect(program).toContain("artifact_set(");
+    expect(program).toContain("type: CLIENT");
+    expect(program).toContain("clients(search='host:WEB01')");
+    expect(program).toContain("collect_client(client_id=ClientId, artifacts=['Custom.Collect.Companion.services_on_WEB01'])");
+    expect(program).not.toContain("-- persistence");   // comments stripped from the artifact source
+  });
+
+  it("reads the flow id leniently (FlowId / session_id fallbacks)", async () => {
+    const r1: VqlRunner = async () => ({ rows: [{ ClientId: "C.1", Flow: { FlowId: "F.aa" } }], raw: "" });
+    expect((await new VelociraptorClient(cfg, r1).collectFromHost("H", "SELECT 1", "x")).flowId).toBe("F.aa");
+    const r2: VqlRunner = async () => ({ rows: [{ ClientId: "C.1", Flow: { session_id: "F.bb" } }], raw: "" });
+    expect((await new VelociraptorClient(cfg, r2).collectFromHost("H", "SELECT 1", "x")).flowId).toBe("F.bb");
+  });
+
+  it("throws when no client matches the host", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).collectFromHost("GHOST", "SELECT 1", "x"))
+      .rejects.toThrow(/No enrolled Velociraptor client matches host "GHOST"/);
+  });
+
+  it("throws when the collection flow id is missing/invalid", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ ClientId: "C.1", Flow: {} }], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).collectFromHost("H", "SELECT 1", "x")).rejects.toThrow(/flow id/);
+  });
+
+  it("sanitizes the hostname before embedding it in the VQL literal", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ ClientId: "C.1", Flow: { flow_id: "F.z" } }], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).collectFromHost("WEB'01\\x", "SELECT 1", "x");
+    expect(program).not.toContain("\\");
+    expect(program).toContain("clients(search='host:WEB01x')");   // quote + backslash stripped
+  });
+
+  it("throws when the VQL is empty or only comments", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).collectFromHost("H", "-- only a comment", "x")).rejects.toThrow(/No runnable VQL/);
+  });
+});
+
 describe("VelociraptorClient.huntResults", () => {
   it("reads a single-source hunt's results via artifact/source notation", async () => {
     let program = "";

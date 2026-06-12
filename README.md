@@ -197,6 +197,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Hunt-pivot generator** — one click on any event/IOC emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, and Suricata queries; offline, no AI.
 - **Velociraptor** (opt-in, API config) — run a pivot as a fleet hunt; or **triage bundles** (Settings): browse artifacts → save bundles → run as a hunt (label/OS + min-severity) → auto-collect + import + synthesize, with per-artifact params/exclude filters.
 - **AI-suggested fleet hunts** — the AI reads the findings and proposes proactive Velociraptor VQL hunts to sweep the whole fleet for the same tradecraft; review each hunt's VQL + rationale, then one-click deploy across all enrolled endpoints.
+- **AI-suggested playbook hunts** — for each *endpoint-related* Response Playbook task, the AI proposes a Velociraptor hunt; a task tied to **one** host deploys as a single-endpoint **collection** (`collect_client`), anything broader as a **fleet hunt** — review the VQL, then one-click deploy from the Playbook panel.
 - **Scope + legitimacy** — set a time window; mark findings/IOCs/events legitimate (reversible); all views re-project.
 - **Freshness** — "last synthesized N ago" + what-changed diff; "last import N ago" + `NEW` row highlights.
 
@@ -415,6 +416,7 @@ Each prompt has two override forms (priority order): `DFIR_AI_<NAME>_PROMPT` (in
 | Executive summary | `EXEC` |
 | Narrative timeline | `NARRATIVE` |
 | Suggested fleet hunts | `HUNTS` |
+| Suggested playbook hunts | `PBHUNTS` |
 
 ### Threat-intel enrichment (optional — off by default)
 
@@ -522,6 +524,7 @@ velociraptor --config server.config.yaml config api_client --name dfir --role ad
 | `DFIR_VELO_HUNT_WAIT_MIN` | `10` | Default minutes before a **triage bundle** hunt auto-collects (per-run + per-bundle override; clamped 1–1440) |
 | `DFIR_VELOCIRAPTOR_UPLOAD_VQL` | — | Advanced: override the VQL that reads a hunt's uploaded JSON reports (version-sensitive; keep the `__HUNT_ID__` placeholder) |
 | `DFIR_HUNT_SUGGEST_MAX` | `8` | Max number of **AI-suggested fleet hunts** returned per generation (needs an AI provider, not the Velociraptor API) |
+| `DFIR_PBHUNT_SUGGEST_MAX` | `8` | Max number of **AI-suggested playbook hunts** returned per generation (one per endpoint-related task; needs an AI provider) |
 
 **Triage bundles** (**Settings → Velociraptor** tab): *Browse server artifacts* lists the server's collectable
 `CLIENT` artifacts; assemble + save named **bundles** (a single **Best Practice** quick-wins sweep ships by

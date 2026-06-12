@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **AI-suggested playbook hunts** — propose a Velociraptor hunt for each endpoint-related Playbook task; a task tied to one host deploys as a single-endpoint collection (`collect_client`), otherwise a fleet hunt (closes #70).
+
 ## [0.19.0] - 2026-06-12
 
 ### Added

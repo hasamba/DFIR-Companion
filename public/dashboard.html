@@ -2047,17 +2047,47 @@
       .pb-add-form #pbTitle{flex:1;min-width:200px;background:var(--c-161d2b);color:var(--c-cdd6e3);border:1px solid var(--c-2a3346);border-radius:6px;padding:6px 9px}
       .pb-add-form select{background:var(--c-161d2b);color:var(--c-cdd6e3);border:1px solid var(--c-2a3346);border-radius:6px;padding:6px}
       .pb-add-form #pbAddBtn{background:var(--c-21262d);color:var(--c-cdd6e3);border:1px solid var(--c-2a3346);border-radius:6px;padding:6px 12px;cursor:pointer}
+      .pb-toolbar .pb-hunt{background:var(--c-2f8f4e);border:none;color:#fff;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px}
+      .pb-toolbar .pb-hunt:hover{background:var(--c-37a35b)}
+      .pb-toolbar .pb-hunt:disabled{opacity:.6;cursor:default}
+      .pb-hunt-msg{font-size:11px;color:var(--c-9aa4b2)}
+      #pbHuntSuggest{margin-top:12px}
+      #pbHuntSuggest .pbh-empty{color:var(--c-9aa4b2);font-size:12px}
+      #pbHuntSuggest .pbh-caveat{color:var(--c-ffb454);font-size:12px;margin-bottom:8px}
+      #pbHuntSuggest .pbh-list{display:flex;flex-direction:column;gap:10px}
+      #pbHuntSuggest .pbh-card{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-2f8f4e);border-radius:6px;padding:8px 10px}
+      #pbHuntSuggest .pbh-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+      #pbHuntSuggest .pbh-title{color:var(--c-d6deea);font-weight:bold}
+      #pbHuntSuggest .pbh-task{color:var(--c-8a94a6);font-size:11px}
+      #pbHuntSuggest .pbh-sev{border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
+      #pbHuntSuggest .pbh-mode{border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap;border:1px solid}
+      #pbHuntSuggest .pbh-mode-collection{background:var(--c-5a3a14);color:var(--c-ffb454);border-color:var(--c-ffb454)}
+      #pbHuntSuggest .pbh-mode-hunt{background:var(--c-1f3a52);color:var(--c-6fb3e0);border-color:var(--c-6fb3e0)}
+      #pbHuntSuggest .pbh-rationale{color:var(--c-c9d1db);font-size:12px;margin:6px 0}
+      #pbHuntSuggest .pbh-techs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+      #pbHuntSuggest .pbh-tech{background:var(--c-0f1620);color:var(--c-6aa9ff);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
+      #pbHuntSuggest .pbh-tech:hover{text-decoration:underline}
+      #pbHuntSuggest textarea.pbh-vql{width:100%;box-sizing:border-box;min-height:80px;resize:vertical;background:var(--c-0f1115);color:var(--c-d6deea);border:1px solid var(--c-2a2f3a);border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;padding:8px;margin-top:4px}
+      #pbHuntSuggest .pbh-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+      #pbHuntSuggest .pbh-copy{background:var(--c-2d6cdf);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #pbHuntSuggest .pbh-copy.copied{background:var(--c-2f8f4e)}
+      #pbHuntSuggest .pbh-deploy{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #pbHuntSuggest .pbh-deploy:disabled{opacity:.6;cursor:default}
+      #pbHuntSuggest .pbh-res{margin-top:6px}
     </style>
     <section id="sec-playbook" style="grid-column: 1 / -1" class="collapsed">
       <h2>Playbook <span id="pbBadge" class="pb-badge"></span></h2>
       <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Actionable checklist auto-derived from the recommended next steps and Critical/High findings, re-synced on each synthesis — your status, assignee, due date, and custom tasks are always preserved. Survives synthesis; included in the report.</p>
       <div class="pb-toolbar">
         <button id="pbSyncBtn" class="pb-sync" title="Re-derive tasks from the latest next steps & findings">↻ Sync from analysis</button>
+        <button id="pbHuntBtn" class="pb-hunt" type="button" title="Ask the AI to suggest a Velociraptor hunt for each endpoint-related task — a fleet hunt, or a single-endpoint collection when the task is tied to one host (review the VQL before deploying)">✨ Suggest Velociraptor hunts</button>
+        <span id="pbHuntMsg" class="pb-hunt-msg"></span>
         <label class="pb-filter" title="Expand each Critical/High finding into Contain → Investigate → Eradicate → Recover tasks (High → Investigate + Contain), tailored to the finding's ATT&CK tactic"><input type="checkbox" id="pbTemplates"> IR templates</label>
         <label class="pb-filter"><input type="checkbox" id="pbOpenOnly"> Open only</label>
         <div class="pb-progress" title="Completion"><div id="pbProgressBar"></div></div>
       </div>
       <div id="pbList" style="margin-top:12px">—</div>
+      <div id="pbHuntSuggest"></div>
       <div class="pb-add-form">
         <input id="pbTitle" placeholder="Add a custom task…" />
         <select id="pbPriority" title="Priority">
@@ -3331,6 +3361,125 @@
         .then(() => { if (msg) msg.textContent = ""; loadPlaybook(caseId); })
         .catch(e => { this.checked = !this.checked; if (msg) msg.textContent = "failed (restart the companion server?): " + e.message; });
     });
+
+    // ── Suggested Velociraptor hunts for the playbook (#70) ───────────────────────────────
+    // AI-proposed Velociraptor hunt per ENDPOINT-related playbook task. On-demand (an AI call): the
+    // analyst clicks "Suggest Velociraptor hunts", reviews each task's VQL + the deploy mode the
+    // server picked (🌐 fleet hunt vs 🎯 collection on one host), optionally edits the VQL, then
+    // one-click deploys — a fleet hunt via launchHuntInto() (POST /velociraptor/hunt) or a single-
+    // endpoint collection via collectHostInto() (POST /velociraptor/collect-host). Ephemeral.
+    function resetPlaybookHuntSuggest() {
+      const el = document.getElementById("pbHuntSuggest");
+      if (el) el.innerHTML = "";
+      const msg = document.getElementById("pbHuntMsg");
+      if (msg) msg.textContent = "";
+    }
+
+    function doSuggestPlaybookHunts() {
+      const caseId = pbCaseId();
+      if (!caseId) return;
+      const btn = document.getElementById("pbHuntBtn");
+      const msg = document.getElementById("pbHuntMsg");
+      const el = document.getElementById("pbHuntSuggest");
+      if (btn) btn.disabled = true;
+      if (msg) msg.textContent = "thinking… (one AI call over the playbook)";
+      fetch(`/cases/${caseId}/playbook/suggest-hunts`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) {
+            if (msg) msg.textContent = "";
+            if (el) el.innerHTML = `<div class="pbh-empty" style="color:var(--c-ff9f43)">error: ${esc(j.error || "could not generate hunts")} — restart the companion server if this 404s</div>`;
+            return;
+          }
+          renderPlaybookHuntSuggest(j.suggestions || []);
+          if (msg) msg.textContent = (j.suggestions || []).length ? `${j.suggestions.length} suggestion(s)` : "";
+        })
+        .catch((e) => { if (msg) msg.textContent = ""; if (el) el.innerHTML = `<div class="pbh-empty" style="color:var(--c-ff9f43)">error: ${esc(e.message)}</div>`; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+
+    function renderPlaybookHuntSuggest(suggestions) {
+      const el = document.getElementById("pbHuntSuggest");
+      if (!el) return;
+      if (!suggestions.length) {
+        el.innerHTML = `<div class="pbh-empty">No endpoint hunts proposed — the AI found no endpoint-related tasks to hunt for. Sync the playbook (or add evidence/findings) and try again.</div>`;
+        return;
+      }
+      const taskTitle = {};
+      (playbookTasks || []).forEach((t) => { taskTitle[t.id] = t.title; });
+      const ordered = [...suggestions].sort((a, b) => (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9));
+      const caveat = `<div class="pbh-caveat">⚠ AI-generated VQL — review each query before deploying. A 🌐 fleet hunt runs across ALL enrolled endpoints; a 🎯 collection runs on the one named host.${veloEnabled ? "" : " The Velociraptor API is not configured, so Deploy is disabled — copy the VQL to run it yourself."}</div>`;
+      const cards = ordered.map((s, idx) => {
+        const sev = s.severity || "Medium";
+        const sevColor = VHS_SEV_COLOR[sev] || "#9aa4b2";
+        const sevBadge = `<span class="pbh-sev" style="background:${sevColor}22;color:${sevColor};border:1px solid ${sevColor}55">${esc(sev)}</span>`;
+        const isCollection = s.mode === "collection" && s.targetHost;
+        const modeBadge = isCollection
+          ? `<span class="pbh-mode pbh-mode-collection">🎯 collection on ${esc(s.targetHost)}</span>`
+          : `<span class="pbh-mode pbh-mode-hunt">🌐 fleet hunt</span>`;
+        const tt = taskTitle[s.taskId];
+        const taskRef = tt ? `<div class="pbh-task">↳ task: ${esc(tt)}</div>` : "";
+        const techs = (s.mitreTechniques || []).map((t) => {
+          const u = attackUrl(t);
+          return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="pbh-tech">${esc(t)}</a>` : `<span class="pbh-tech">${esc(t)}</span>`;
+        }).join("");
+        const rationale = s.rationale ? `<div class="pbh-rationale">${esc(s.rationale)}</div>` : "";
+        const deployLabel = isCollection ? `▶ Collect on ${esc(s.targetHost)}` : "▶ Deploy hunt (all clients)";
+        const deployTitle = isCollection ? `Run this VQL as a collection on ${escAttr(s.targetHost)} only` : "Launch this hunt across ALL enrolled Velociraptor clients";
+        const deployBtn = veloEnabled
+          ? `<button class="pbh-deploy" data-idx="${idx}" title="${deployTitle}">${deployLabel}</button>`
+          : `<button class="pbh-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">${deployLabel}</button>`;
+        return `<div class="pbh-card">`
+          + `<div class="pbh-head"><span class="pbh-title">${esc(s.title)}</span>${sevBadge}${modeBadge}</div>`
+          + taskRef
+          + rationale
+          + (techs ? `<div class="pbh-techs">${techs}</div>` : "")
+          + `<textarea class="pbh-vql" id="pbhQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
+          + `<div class="pbh-actions"><button class="pbh-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}</div>`
+          + `<div class="pbh-res" id="pbhRes${idx}"></div>`
+          + `</div>`;
+      }).join("");
+      el.innerHTML = caveat + `<div class="pbh-list">${cards}</div>`;
+      el.querySelectorAll(".pbh-copy").forEach((b) => b.onclick = () => {
+        const q = document.getElementById("pbhQ" + b.dataset.idx);
+        navigator.clipboard.writeText(q ? q.value : "").then(() => {
+          b.textContent = "Copied ✓"; b.classList.add("copied");
+          setTimeout(() => { b.textContent = "Copy VQL"; b.classList.remove("copied"); }, 1500);
+        }).catch(() => { b.textContent = "copy failed"; });
+      });
+      el.querySelectorAll(".pbh-deploy:not([disabled])").forEach((b) => b.onclick = () => {
+        const idx = b.dataset.idx;
+        const s = ordered[idx];
+        const q = document.getElementById("pbhQ" + idx);
+        const vql = q ? q.value : "";
+        const desc = s.title || "DFIR playbook hunt";
+        const res = document.getElementById("pbhRes" + idx);
+        if (s.mode === "collection" && s.targetHost) collectHostInto(s.targetHost, vql, desc, res, b);
+        else launchHuntInto(vql, desc, res, b);
+      });
+    }
+
+    // Launch a single-endpoint COLLECTION (the collection-mode deploy). Mirrors launchHuntInto()'s
+    // success block but renders the flow + GUI deep link (a collection's results are read in the
+    // Velociraptor GUI; there is no per-source hunt-results poll for a single flow).
+    function collectHostInto(hostname, vql, description, res, btn) {
+      if (!res) return;
+      res.innerHTML = `<div style='color:var(--c-9aa4b2);font-size:12px'>launching collection on ${esc(hostname)}…</div>`;
+      if (btn) btn.disabled = true;
+      fetch("/velociraptor/collect-host", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hostname, vql, description: description || "DFIR collection" }) })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { res.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">error: ${esc(j.error || "collection failed")}</div>`; return; }
+          const link = j.guiUrl ? ` · <a href="${escAttr(j.guiUrl)}" target="_blank" rel="noopener" style="color:var(--c-6aa9ff)">open in Velociraptor ↗</a>` : "";
+          res.innerHTML =
+            `<div style="font-size:12px">🎯 Collection <strong>${esc(j.flowId)}</strong> launched on ${esc(j.hostname)} (${esc(j.clientId)})${link}`
+            + `<div style="color:var(--c-9aa4b2);margin-top:4px">Review the results in the Velociraptor GUI.</div></div>`;
+        })
+        .catch((e) => res.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">error: ${esc(e.message)} — restart the companion server if this 404s</div>`)
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+
+    document.getElementById("pbHuntBtn").addEventListener("click", function() { doSuggestPlaybookHunts(); });
 
     // --- Hunt-pivot query generator -----------------------------------------------
     // From a forensic event or IOC, generate ready-to-adapt hunt/pivot queries for the tools
@@ -6129,6 +6278,7 @@
       loadCustomerExposure(caseId);
       loadVeloTriage(caseId);
       resetVeloHuntSuggest();   // clear AI-suggested fleet hunts; analyst regenerates per case on demand
+      resetPlaybookHuntSuggest();   // clear AI-suggested playbook hunts (#70) too
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {

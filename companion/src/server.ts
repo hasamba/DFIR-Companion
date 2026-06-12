@@ -1163,6 +1163,27 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Launch the VQL as a single-endpoint COLLECTION on ONE host (issue #70 — the playbook-hunt deploy
+  // path for a task tied to exactly one endpoint). Resolves the hostname to a client_id and runs
+  // collect_client on it; returns the flow + a GUI deep link. 501 when the Velociraptor API is off.
+  app.post("/velociraptor/collect-host", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const hostname = typeof req.body?.hostname === "string" ? req.body.hostname.trim() : "";
+    const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
+    const description = typeof req.body?.description === "string" ? req.body.description : "";
+    if (!hostname) return res.status(400).json({ error: "hostname is required" });
+    if (!vql) return res.status(400).json({ error: "vql is required" });
+    try {
+      logLine(`[velociraptor] collect on host ${hostname}: ${description.slice(0, 80)}`);
+      const result = await options.velociraptorClient.collectFromHost(hostname, vql, description);
+      logLine(`[velociraptor] collection launched -> flow ${result.flowId} on ${result.clientId} (${result.hostname})`);
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[velociraptor] collect ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
   // AI-suggest proactive Velociraptor VQL fleet-hunts from the case findings (issue #57). Single
   // text-only AI call, EPHEMERAL (no state change) — the dashboard shows each hunt's VQL + rationale
   // for review, then deploys the chosen one through POST /velociraptor/hunt (launchHunt). Needs an AI
@@ -4155,6 +4176,25 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const tasks = await syncPlaybook(req.params.id);
       options.onPlaybook?.(req.params.id);
       return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // AI-suggest a Velociraptor hunt for each ENDPOINT-related playbook task (issue #70). Single
+  // text-only AI call, EPHEMERAL (no state change) — the dashboard shows each task's VQL + rationale
+  // for review, then deploys it as a fleet HUNT (POST /velociraptor/hunt) or, for a task tied to one
+  // endpoint, a single-client COLLECTION (POST /velociraptor/collect-host). Needs an AI provider +
+  // the playbook store; does NOT need the Velociraptor API (the VQL is useful to copy even when off).
+  // Registered BEFORE /:taskId so "suggest-hunts" is not captured as a task id.
+  app.post("/cases/:id/playbook/suggest-hunts", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
+    if (!options.playbookStore || !options.stateStore) return res.status(501).json({ error: "playbook not configured" });
+    try {
+      const tasks = await syncPlaybook(req.params.id);
+      const suggestions = await options.pipeline.suggestPlaybookHunts(req.params.id, tasks);
+      logLine(`[velociraptor] suggested ${suggestions.length} playbook hunt(s) for ${req.params.id}`);
+      return res.status(200).json({ suggestions });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

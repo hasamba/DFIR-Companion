@@ -176,6 +176,16 @@ export interface ArtifactHuntLaunchResult {
   guiUrl?: string;
 }
 
+// Result of launching a single-endpoint COLLECTION (issue #70 — collect_client on ONE host).
+// Distinct from a hunt (which fans out across the fleet): the VQL runs only on the resolved client.
+export interface CollectLaunchResult {
+  clientId: string;     // the Velociraptor client the collection runs on
+  flowId: string;       // the launched flow id (F.…)
+  hostname: string;     // the host the analyst asked for (echoed back)
+  artifact: string;     // the Custom.* artifact built from the VQL
+  guiUrl?: string;      // deep link to the flow in the Velociraptor GUI (when DFIR_VELOCIRAPTOR_GUI_URL set)
+}
+
 // A file UPLOADED by a hunt's collections (not a result row). Some artifacts (offline collectors,
 // THOR/Hayabusa wrappers like Generic.Scanner.ThorZIP) put their real triage data in an uploaded
 // JSON file rather than result rows — that JSON is what we ingest.
@@ -197,6 +207,7 @@ const DEFAULT_UPLOAD_VQL =
 
 const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;     // valid Velociraptor artifact / source name
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/;        // valid hunt id
+const FLOW_RE = /^F\.[A-Za-z0-9]+$/;        // valid collection flow id (collect_client)
 
 // Slug for a generated artifact name: alphanumerics from the description, capped.
 function slugify(s: string): string {
@@ -285,6 +296,15 @@ export class VelociraptorClient {
     return `${base}/app/index.html?org_id=${org}#/hunts/${huntId}`;
   }
 
+  // Deep link to a single client's COLLECTION (flow) in the GUI. Same `?org_id=` before `#` invariant
+  // as huntGuiUrl — the SPA reads the org from the query and the flow from the hash route.
+  private collectGuiUrl(clientId: string, flowId: string): string | undefined {
+    if (!this.config.guiUrl) return undefined;
+    const base = this.config.guiUrl.replace(/\/+$/, "");
+    const org = encodeURIComponent(this.config.guiOrg?.trim() || "root");
+    return `${base}/app/index.html?org_id=${org}#/collected/${clientId}/${flowId}`;
+  }
+
   // Run a single VQL program verbatim (no statement-splitting) — for internal orchestration VQL.
   // maxOutputBytes can be raised for bulk collection reads (forensic data is large).
   private async runRaw(program: string, maxOutputBytes: number = this.config.maxOutputBytes): Promise<unknown[]> {
@@ -333,6 +353,42 @@ export class VelociraptorClient {
       sources,
       state: String(hunt.state ?? hunt.State ?? "RUNNING"),
       guiUrl: this.huntGuiUrl(huntId),
+    };
+  }
+
+  // Launch the VQL as a COLLECTION on a SINGLE endpoint (issue #70) — the "run on just this host"
+  // counterpart to launchHunt's fleet-wide hunt. Resolves the hostname to a client_id (most-recently-
+  // seen wins), packages the pivot(s) as a CLIENT artifact, then `collect_client` on that one client.
+  // The hostname is the only free-text input — sanitized via oneLine() (strips the quote/backslash that
+  // could break out of the single-quoted VQL literal), exactly like launchHunt's description. Results
+  // are reviewed in the Velociraptor GUI via the returned flow deep link.
+  async collectFromHost(hostname: string, vql: string, description: string): Promise<CollectLaunchResult> {
+    const host = oneLine(hostname);
+    if (!host) throw new Error("a target hostname is required for a single-endpoint collection");
+    const statements = splitVqlStatements(sanitizeVqlDurations(vql));
+    if (statements.length === 0) throw new Error("No runnable VQL found (the query is empty or only comments)");
+    const name = "Custom.Collect.Companion." + slugify(description);
+    const sources = statements.map((_, i) => `Pivot${i}`);
+    const yaml = buildHuntArtifact(name, statements, sources, description);
+    // One program: define the artifact, resolve the client (newest check-in for the host), collect on it.
+    const program =
+      `LET def = '''${yaml}'''\n` +
+      `LET _set <= artifact_set(definition=def)\n` +
+      `LET client <= SELECT client_id AS ClientId, os_info.hostname AS Hostname FROM clients(search='host:${host}') ORDER BY last_seen_at DESC LIMIT 1\n` +
+      `SELECT ClientId, collect_client(client_id=ClientId, artifacts=['${name}']) AS Flow FROM client`;
+    const rows = await this.runRaw(program);
+    const row = rows[0] as { ClientId?: unknown; Flow?: Record<string, unknown> } | undefined;
+    const clientId = String(row?.ClientId ?? "");
+    if (!row || !clientId) throw new Error(`No enrolled Velociraptor client matches host "${host}" — check the hostname or run a fleet hunt instead`);
+    const flow = row.Flow ?? {};
+    const flowId = String(flow.flow_id ?? flow.FlowId ?? flow.session_id ?? "");
+    if (!FLOW_RE.test(flowId)) throw new Error("Velociraptor did not return a collection flow id — check the api_client role has COLLECT_CLIENT/ARTIFACT_WRITER");
+    return {
+      clientId,
+      flowId,
+      hostname: host,
+      artifact: name,
+      guiUrl: this.collectGuiUrl(clientId, flowId),
     };
   }
 
