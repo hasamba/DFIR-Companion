@@ -44,6 +44,8 @@ import { parsePlasoCsv } from "./analysis/plasoImport.js";
 import type { PlasoImportOptions } from "./analysis/plasoImport.js";
 import { parseSandboxReport } from "./analysis/sandboxImport.js";
 import type { SandboxImportOptions } from "./analysis/sandboxImport.js";
+import { parseMemory } from "./analysis/memoryImport.js";
+import type { MemoryImportOptions } from "./analysis/memoryImport.js";
 import { parseEmail } from "./analysis/emailImport.js";
 import type { EmailImportOptions } from "./analysis/emailImport.js";
 import { detectImportKind, type ImportKind } from "./analysis/importDetect.js";
@@ -1061,6 +1063,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "cloud": return pipeline.importCloudActivity(caseId, text, base);
       case "plaso": return pipeline.importPlaso(caseId, text, base);
       case "sandbox": return pipeline.importSandbox(caseId, text, base);
+      case "memory": return pipeline.importMemory(caseId, text, base);
       case "email": return pipeline.importEmail(caseId, text, base);
       case "csv": return pipeline.analyzeCsv(caseId, text, base);
       case "log": return pipeline.analyzeLog(caseId, text, base);
@@ -2154,7 +2157,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
     const kind = detectImportKind(originalName, text);
     if (kind === "unknown") {
-      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Email-eml-msg / CSV / log)" });
+      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / CSV / log)" });
     }
     if ((kind === "csv" || kind === "log") && !hasAiProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
@@ -3045,6 +3048,61 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `Sandbox import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import memory-forensics tool output (Volatility 3 JSON renderer or Rekall JSON). Evidence-first;
+  // mapping is DETERMINISTIC (no AI call): pslist/psscan/pstree → process-tree events, netscan →
+  // connection events, malfind → injected-code (T1055), cmdline/svcscan/modules → evidence; the
+  // foreign IPs / file paths / process names are harvested as IOCs.
+  app.post("/cases/:id/import-memory", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.json === "string" ? req.body.json : "";
+    const originalName = String(req.body?.filename ?? "memory.json");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const minSeverity: Severity | undefined =
+      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
+      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
+      : rawLevel === "info" ? "Info" : undefined;
+    const dllTelemetry = req.body?.dllTelemetry === true || String(req.body?.dllTelemetry ?? "").toLowerCase() === "true";
+    const memoryOpts: MemoryImportOptions = { filename: originalName, ...(minSeverity ? { minSeverity } : {}), ...(dllTelemetry ? { dllTelemetry } : {}) };
+
+    try {
+      const preview = parseMemory(text, memoryOpts);
+      if (preview.format === "empty" && preview.kept === 0) return res.status(400).json({ error: "no parseable memory output found (expected a Volatility 3 JSON-renderer array or a Rekall JSON statement list)" });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "memory.json");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, tool: preview.tool, events: preview.kept, injected: preview.injected, connections: preview.connections, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} memory event(s)` });
+      void options.pipeline.importMemory(caseId, text, {
+        label: storedName,
+        idPrefix: `mem${seq}`,
+        importedAt,
+        memory: memoryOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `Memory import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
