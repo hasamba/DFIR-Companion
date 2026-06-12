@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { formatSlack } from "../../src/integrations/notify/slackFormat.js";
 import { formatTeams } from "../../src/integrations/notify/teamsFormat.js";
+import { formatTelegram } from "../../src/integrations/notify/telegramFormat.js";
 import { formatEmail, buildRfc822Message } from "../../src/integrations/notify/emailFormat.js";
 import { postWebhook } from "../../src/integrations/notify/webhookSender.js";
 import {
@@ -40,7 +41,7 @@ function channel(over: Partial<NotificationChannel> = {}): NotificationChannel {
   };
 }
 
-describe("slack/teams/email formatters", () => {
+describe("slack/teams/email/telegram formatters", () => {
   it("Slack payload has a header, a section, and a text fallback", () => {
     const p = formatSlack(event());
     expect(p.text).toContain("Cobalt Strike beacon");
@@ -56,6 +57,29 @@ describe("slack/teams/email formatters", () => {
     const facts = c.sections[0].facts ?? [];
     expect(facts.find((f) => f.name === "Case")?.value).toBe("case-1");
     expect(facts.find((f) => f.name === "Severity")?.value).toBe("Critical");
+  });
+
+  it("Telegram payload has HTML parse_mode, severity emoji, and escaped content", () => {
+    const p = formatTelegram(event());
+    expect(p.parse_mode).toBe("HTML");
+    expect(p.text).toContain("🔴");
+    expect(p.text).toContain("Cobalt Strike beacon");
+    expect(p.text).toContain("C2 on DC01");
+    expect(p.text).toContain("<b>");
+    expect(p.text).toContain("critical finding");
+  });
+
+  it("Telegram formatter escapes HTML entities in content", () => {
+    const p = formatTelegram(event({ title: "Finding: <script>alert(1)</script>", lines: ["a & b"] }));
+    expect(p.text).not.toContain("<script>");
+    expect(p.text).toContain("&lt;script&gt;");
+    expect(p.text).toContain("a &amp; b");
+  });
+
+  it("Telegram formatter includes a link when url is set", () => {
+    const p = formatTelegram(event({ url: "http://127.0.0.1:4773/dashboard" }));
+    expect(p.text).toContain("Open case");
+    expect(p.text).toContain("http://127.0.0.1:4773/dashboard");
   });
 
   it("email content has subject/text/html; the RFC822 message is deterministic multipart base64", () => {
@@ -190,6 +214,32 @@ describe("dispatchEvent + createNotifier", () => {
     expect(results.every((r) => r.ok)).toBe(true);
     expect(sent).toContain("https://slack");
     expect(sent).toContain("https://teams");
+  });
+
+  it("routes telegram events to the Bot API sendMessage endpoint", async () => {
+    const sent: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      sent.push({ url: String(url), body: JSON.parse((init?.body as string) ?? "{}") });
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    const ch = channel({ id: "tg1", type: "telegram", webhookUrl: undefined,
+      telegram: { botToken: "123:TOKEN", chatId: "-1001234567890" } });
+    const results = await dispatchEvent([ch], event(), { fetchFn });
+    expect(results).toHaveLength(1);
+    expect(results[0].ok).toBe(true);
+    expect(sent[0].url).toBe("https://api.telegram.org/bot123:TOKEN/sendMessage");
+    expect(sent[0].body.chat_id).toBe("-1001234567890");
+    expect(sent[0].body.parse_mode).toBe("HTML");
+    expect(String(sent[0].body.text)).toContain("Cobalt Strike");
+  });
+
+  it("reports telegram channels as failed when no bot token is configured", async () => {
+    const fetchFn = (async () => new Response("ok")) as typeof fetch;
+    const ch = channel({ id: "tg2", type: "telegram", webhookUrl: undefined,
+      telegram: { botToken: "", chatId: "-100" } });
+    const [r] = await dispatchEvent([ch], event(), { fetchFn });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("no bot token");
   });
 
   it("reports email channels as failed when no SMTP transport is available", async () => {
