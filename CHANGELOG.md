@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Dark / light theme** — full-coverage theme toggle in the dashboard header; follows the OS `prefers-color-scheme` by default, manual choice persists in `localStorage` across sessions; every panel, graph and the swimlane canvas themed via CSS variables (closes #53).
+
 ## [0.18.0] - 2026-06-11
 
 ### Added
