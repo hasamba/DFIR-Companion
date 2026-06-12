@@ -11,9 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-06-12
+
 ### Added
 - **Linux evidence importers** — deterministic auditd (`audit.log`/`ausearch`/`aureport`), journald (`journalctl -o json`), and sysdig/Falco (alert + `-j` event JSON) ingest, auto-detected by the unified Import button (closes #62).
-- **Mobile companion** — installable read-only PWA at `/mobile` (case status, worst findings, severe/recent timeline, IOC verdicts) for quick glances during IR; `/cases/:id/mobile-summary` endpoint, `DFIR_MOBILE_MAX_*` caps (closes #59).
+- **Mobile companion** — installable read-only PWA at `/mobile` (case status, worst findings, severe/recent timeline, IOC verdicts) for quick glances during IR; navigate directly to `http://127.0.0.1:4773/mobile`; `/cases/:id/mobile-summary` endpoint, `DFIR_MOBILE_MAX_*` caps (closes #59).
 - **AI-suggested fleet hunts** — generate proactive Velociraptor VQL hunts from the case findings, review the VQL + rationale, one-click deploy across all enrolled endpoints (closes #57).
 - **Memory forensics import** — deterministic Volatility 3 (JSON renderer) + Rekall importer: pslist/psscan/pstree → process tree, netscan → connections, malfind → injected code (T1055), cmdline/svcscan/modules → evidence (closes #61).
 - **Investigation snapshot** export/import — one shareable JSON (timeline, findings, IOCs, graph state, analyst decisions, evidence references) restores a case on another machine, with no AI keys or machine config (closes #56).
@@ -22,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Custom report templates** — global branded report layouts (accent colour, cover title/subtitle, running header/footer with `{{placeholder}}` interpolation, and per-section enable/reorder), built-ins editable in place, selected per case; flows to Markdown/HTML/Word (closes #60).
 - **Notifications** — Slack / MS Teams webhooks + SMTP email channels for new/escalated findings, playbook updates, and investigation milestones, with per-channel severity thresholds + event toggles; opt-in, secrets redacted; Settings → Notifications (closes #58).
 - **NSRL known-good hash checking** — auto-marks matching forensic events + IOCs legitimate on import (reversible) to cut false positives. Two backends: a flat hash set (paste / server file / `DFIR_NSRL_FILE`) for custom lists, and **direct query of the full NSRL RDS SQLite database** (`DFIR_NSRL_DB` or connect in-UI) — the real ~160 GB set, never loaded into memory. Keys on sha256/md5; Settings → NSRL (closes #63).
+
+### Changed
+- Dashboard: removed **Mobile** toolbar button — navigate to `/mobile` directly in your browser.
+- Dashboard: finding tag chips reordered — tag icon after comment chip, tag labels after confidence score (matches timeline layout).
+- Dashboard: case ID input fixed-width to fit `INC-YYYY-NNN`.
+- Dashboard: removed ellipsis from **Import** and **Import snapshot** button labels.
 
 ## [0.18.0] - 2026-06-11
 
@@ -254,7 +262,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.15.0...v0.16.0
