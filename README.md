@@ -220,6 +220,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Timesketch export & push** — **Export → Timesketch JSONL** (structured fields kept as searchable columns) or one-click **Push** (find-or-creates the sketch, clean-replaces on re-push). `DFIR_TIMESKETCH_*`.
 - **Export to Notion** — push a case into a new or existing Notion page; all content lives in ONE managed block the Companion owns, so your own notes outside it are never touched. `DFIR_NOTION_TOKEN`.
 - **Push to ClickUp** — export the Response Playbook to a ClickUp list as tasks (status/priority/due/assignee); re-push updates the tasks it created. `DFIR_CLICKUP_TOKEN`.
+- **Notifications** — push **new/escalated findings**, **playbook updates**, and **investigation milestones** to **Slack** / **MS Teams** webhooks or **SMTP email**, with a per-channel severity threshold + per-event toggles. Opt-in (channels start empty); secrets are redacted; managed in **Settings → Notifications** with a one-click test. Optional `DFIR_PUBLIC_URL` deep-links back to the case.
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu template](https://github.com/AnttiKurittu/incident-report-template); technical sections auto-fill (incl. an auto-glossary), human-authored sections (branding, title page, BIA, recommendations…) are filled in the dashboard and persist per case.
 
 ### Ops
