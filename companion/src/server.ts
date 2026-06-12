@@ -809,6 +809,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Mobile companion summary (#59): a compact, READ-ONLY projection of the case for the phone PWA
+  // (/mobile) — case status, worst findings, most severe/recent events, IOC list with verdicts.
+  // Same scope/legitimate filtering as the report, so the phone view agrees with the dashboard.
+  app.get("/cases/:id/mobile-summary", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.mobileSummary(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export just the incident (forensic) timeline as CSV, generated on demand from the
   // current state (same scope/legitimate filtering as the report) — no full report needed.
   app.get("/cases/:id/incident-timeline.csv", async (req: Request, res: Response) => {
@@ -4216,6 +4228,35 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   app.get("/dashboard", async (_req, res) => {
     const html = await readPublicAsset("dashboard.html", "utf8");
     res.type("html").send(html);
+  });
+
+  // Mobile companion (#59): a read-only, phone-optimized view (timeline / findings / IOCs / status)
+  // for quick glances during IR away from the workstation. It's a PWA — installable via the
+  // web manifest + a minimal service worker (offline app-shell). All three are static files in
+  // public/; the SW is served at root so its default control scope covers /mobile.
+  app.get("/mobile", async (_req, res) => {
+    const html = await readPublicAsset("mobile.html", "utf8");
+    res.type("html").send(html);
+  });
+
+  app.get("/manifest.webmanifest", async (_req, res) => {
+    try {
+      const json = await readPublicAsset("manifest.webmanifest", "utf8");
+      res.type("application/manifest+json").set("Cache-Control", "no-cache").send(json);
+    } catch {
+      res.status(404).end();
+    }
+  });
+
+  app.get("/sw.js", async (_req, res) => {
+    try {
+      const js = await readPublicAsset("sw.js", "utf8");
+      // no-cache + a same-origin allowed scope so the SW can control /mobile even if it's
+      // ever moved into a subdirectory; browsers re-check sw.js on every navigation anyway.
+      res.type("application/javascript").set("Cache-Control", "no-cache").set("Service-Worker-Allowed", "/").send(js);
+    } catch {
+      res.status(404).end();
+    }
   });
 
   // Bind host. Defaults to 127.0.0.1 (localhost-only — the OPSEC invariant for native runs).
