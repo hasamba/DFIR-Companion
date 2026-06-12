@@ -552,6 +552,7 @@
       <option value="state-json">Full case state (JSON)</option>
       <option value="snapshot">Investigation snapshot (shareable JSON)</option>
       <option value="stix">STIX 2.1 bundle (JSON)</option>
+      <option value="redacted">Redacted case package (ZIP)…</option>
       <option value="save-template">Save as Template…</option>
     </select>
     <select id="pushSelect" class="toolbar-select" data-tip="Push this case to an external platform" style="display:none">
@@ -741,6 +742,29 @@
         <button id="stSave">Save template</button>
         <button id="stCancel" style="background:#2a2f3a;">Cancel</button>
         <span id="stMsg" style="color:#9aa4b2; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Redacted case export (#54) ───────────────────────────────────────── -->
+  <div id="redactedExportOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Redacted case package</h3>
+      <p style="color:#9aa4b2; font-size:12px; margin:0 0 10px">
+        Builds a shareable ZIP for external parties. Internal IPs, hostnames, usernames, emails and
+        paths are replaced with consistent tokens (<code>ANON_HOST_1</code>…), secrets are redacted,
+        screenshot EXIF is stripped, and detectable PII text in screenshots is blurred. AI provider
+        keys and per-case config are never included.</p>
+      <label style="display:block; font-size:12px; margin-bottom:6px;"><input type="checkbox" id="reIncludeReport" checked /> Include report (Markdown + HTML)</label>
+      <label style="display:block; font-size:12px; margin-bottom:6px;"><input type="checkbox" id="reIncludeCsvs" checked /> Include CSVs (findings, IOCs, timeline)</label>
+      <label style="display:block; font-size:12px; margin-bottom:6px;"><input type="checkbox" id="reIncludeState" checked /> Include full case state (JSON)</label>
+      <label style="display:block; font-size:12px; margin-bottom:6px;"><input type="checkbox" id="reIncludeScreens" checked /> Include screenshots</label>
+      <label style="display:block; font-size:12px; margin-bottom:6px;"><input type="checkbox" id="reBlur" checked /> Blur PII text in screenshots (OCR — slower)</label>
+      <p style="color:#caa86a; font-size:11px; margin:8px 0 0">⚠ Faces and other non-text visual PII are NOT auto-detected. Uncheck “Include screenshots” if unsure.</p>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="reDownload">Build &amp; download</button>
+        <button id="reCancel" style="background:#2a2f3a;">Cancel</button>
+        <span id="reMsg" style="color:#9aa4b2; font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -5642,6 +5666,52 @@
       }
     }
 
+    // ── Redacted case export (#54) ────────────────────────────────────────────
+    function openRedactedExport() {
+      document.getElementById("reMsg").textContent = "";
+      document.getElementById("redactedExportOverlay").classList.add("open");
+    }
+    function closeRedactedExport() { document.getElementById("redactedExportOverlay").classList.remove("open"); }
+    async function doRedactedExport() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("reMsg");
+      if (!caseId) { msg.textContent = "no case loaded"; return; }
+      const ck = (id) => document.getElementById(id).checked ? "1" : "0";
+      const q = new URLSearchParams({
+        report: ck("reIncludeReport"),
+        csvs: ck("reIncludeCsvs"),
+        state: ck("reIncludeState"),
+        screenshots: ck("reIncludeScreens"),
+        blur: ck("reBlur"),
+      }).toString();
+      const btn = document.getElementById("reDownload");
+      btn.disabled = true;
+      msg.textContent = "building… (OCR may take a while for many screenshots)";
+      try {
+        // Fetch the whole archive (so errors surface as JSON), then save it via an object URL.
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/export/redacted?${q}`);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || ("HTTP " + res.status));
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `case-${caseId}-redacted.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        closeRedactedExport();
+        document.getElementById("status").textContent = "redacted package downloaded";
+      } catch (err) {
+        msg.textContent = "export failed: " + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     // ── New case ── creation lives here (the extension only attaches to existing cases) ──
     async function openNewCase() {
       const idInput = document.getElementById("ncCaseId");
@@ -5969,6 +6039,9 @@
     document.getElementById("stSave").onclick = saveAsTemplate;
     document.getElementById("stCancel").onclick = closeSaveTemplate;
     document.getElementById("saveTemplateOverlay").addEventListener("click", (e) => { if (e.target.id === "saveTemplateOverlay") closeSaveTemplate(); });
+    document.getElementById("reDownload").onclick = doRedactedExport;
+    document.getElementById("reCancel").onclick = closeRedactedExport;
+    document.getElementById("redactedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "redactedExportOverlay") closeRedactedExport(); });
     document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
 
     // ── Import investigation snapshot (issue #56) ──────────────────────────────────
@@ -6282,6 +6355,8 @@
       } else if (action === "stix") {
         // On-demand STIX 2.1 bundle (JSON) — import into any TIP (OpenCTI, MISP, Anomali…).
         window.location.href = `/cases/${c}/export/stix`;
+      } else if (action === "redacted") {
+        openRedactedExport();
       } else if (action === "save-template") {
         openSaveTemplate();
       }
