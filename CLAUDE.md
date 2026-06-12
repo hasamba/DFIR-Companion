@@ -223,6 +223,19 @@ save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`, `diffFindings`, `diffTimeline`, `diffIocs`) and are unit-tested independently of I/O.
 
+**Investigation snapshot (portable case export/import, #56).** `GET /cases/:id/export/snapshot` bundles a
+case into ONE shareable JSON — case meta + the **allowlisted** `state/*.json` files + evidence *references*
+(capture/import audit rows, no bytes) + headline counts — and `POST /snapshots/import` restores it as a NEW
+case on another machine (`{ snapshot, targetCaseId? }`; 409 on id collision, 400 on a non-snapshot). Pure rules
+in `analysis/snapshot.ts` (`buildSnapshot`/`parseSnapshot`/`prepareImport` + `SNAPSHOT_STATE_FILES` allowlist),
+I/O in `analysis/snapshotIo.ts`. The allowlist is the trust boundary, applied on BOTH export and import: it
+carries investigation data + analyst decisions only — **no AI keys** (they live in `.env`, never in case state)
+and **no machine/account config** (`ai-control`, `enrich-control` (external-enrichment opt-in stays off so the
+recipient re-opts-in), `notion`/`clickup-export` ids, `velo-hunt` jobs, the anon maps, `pending_analysis` are
+excluded). **When you add a new per-case store, decide if it belongs in `SNAPSHOT_STATE_FILES`** — investigation
+data/analyst decisions go in; anything machine/account/transient stays out (the allowlist means a new store is
+NOT shared until deliberately added, so nothing leaks by default).
+
 **Threat-intel enrichment** (`enrichment/`): `EnrichmentProvider`s (VirusTotal, Hunting.ch,
 CrowdStrike, AbuseIPDB, MISP, YETI, RockyRaccoon) look up IOCs by kind; `enrichService.ts` routes/
 throttles/caps/caches; `chainValidate.ts` checks RockyRaccoon parent→child chains. **Hunting.ch**
