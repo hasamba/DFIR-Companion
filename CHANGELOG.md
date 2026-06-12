@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Memory forensics import** — deterministic Volatility 3 (JSON renderer) + Rekall importer: pslist/psscan/pstree → process tree, netscan → connections, malfind → injected code (T1055), cmdline/svcscan/modules → evidence (closes #61).
 - **Investigation snapshot** export/import — one shareable JSON (timeline, findings, IOCs, graph state, analyst decisions, evidence references) restores a case on another machine, with no AI keys or machine config (closes #56).
 - **Redacted case export** — shareable ZIP for external parties: report/CSVs/state tokenized (internal IPs/hosts/users/emails/paths → consistent `ANON_*`), secrets redacted, screenshot EXIF stripped + PII text blurred (OCR); AI keys/config excluded (closes #54).
+- **Dark / light theme** — full-coverage theme toggle in the dashboard header; follows the OS `prefers-color-scheme` by default, manual choice persists in `localStorage` across sessions; every panel, graph and the swimlane canvas themed via CSS variables (closes #53).
 
 ## [0.18.0] - 2026-06-11
 
