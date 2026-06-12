@@ -2057,7 +2057,10 @@
       .pb-toolbar .pb-hunt:disabled{opacity:.6;cursor:default}
       .pb-hunt-msg{font-size:11px;color:var(--c-9aa4b2)}
       /* AI-suggested Velociraptor hunts, rendered INLINE under their playbook task (#70). */
-      #sec-playbook .pbh-card{margin-top:8px;background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-2f8f4e);border-radius:6px}
+      #sec-playbook .pbh-card{margin-top:8px;background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-2f8f4e);border-radius:6px;cursor:auto}
+      /* The card sits inside a draggable .pb-task row; keep its body text selectable/copyable (not the row's grab). */
+      #sec-playbook .pbh-body,#sec-playbook .pbh-body *{user-select:text;-webkit-user-select:text}
+      #sec-playbook .pbh-rationale,#sec-playbook .pbh-res,#sec-playbook .pbh-res *{cursor:auto}
       #sec-playbook .pbh-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 9px;cursor:pointer;user-select:none}
       #sec-playbook .pbh-caret{color:var(--c-8a94a6);font-size:11px;width:10px}
       #sec-playbook .pbh-flag{color:var(--c-2f8f4e);font-size:11px;font-weight:bold;white-space:nowrap}
@@ -3441,7 +3444,7 @@
           ? `<button class="pbh-deploy" data-idx="${idx}" title="${deployTitle}">${deployLabel}</button>`
           : `<button class="pbh-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">${deployLabel}</button>`;
         const veloNote = veloEnabled ? "" : `<div class="pbh-caveat">⚠ Velociraptor API not configured — Deploy is disabled; copy the VQL to run it yourself.</div>`;
-        return `<div class="pbh-card" data-idx="${idx}">`
+        return `<div class="pbh-card" data-idx="${idx}" draggable="false">`
           + `<div class="pbh-head pbh-toggle">`
             + `<span class="pbh-caret">${collapsed ? "▸" : "▾"}</span>`
             + `<span class="pbh-flag">✨ Velociraptor</span>`

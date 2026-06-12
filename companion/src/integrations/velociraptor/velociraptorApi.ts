@@ -432,7 +432,10 @@ export class VelociraptorClient {
     const rows = await this.runRaw(program);
     const flow = (rows[0] as { Flow?: Record<string, unknown> })?.Flow ?? {};
     const flowId = String(flow.flow_id ?? flow.FlowId ?? flow.session_id ?? "");
-    if (!FLOW_RE.test(flowId)) throw new Error("Velociraptor did not return a collection flow id — check the api_client role has COLLECT_CLIENT/ARTIFACT_WRITER");
+    // collect_client returns a null flow when the custom artifact can't COMPILE — almost always the VQL
+    // references a non-existent Artifact.<Name>/plugin or has a syntax error (the simple cases launch
+    // fine, so it's rarely a permissions issue). Point the analyst at the VQL first.
+    if (!FLOW_RE.test(flowId)) throw new Error("Velociraptor did not launch the collection (no flow id). The VQL likely references a non-existent artifact/plugin or has a syntax error so it can't compile — edit the VQL and retry. (Less commonly: the api_client role lacks COLLECT_CLIENT/ARTIFACT_WRITER.)");
     return { clientId, flowId, hostname: hostname || clientId, artifact: name, sources, guiUrl: this.collectGuiUrl(clientId, flowId) };
   }
 
