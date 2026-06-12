@@ -134,6 +134,22 @@ describe("dashboard.html", () => {
     expect(html).toContain("minSeverity");
   });
 
+  it("wires the report-template editor (Settings) and the per-case template picker (#60)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // Settings → Report Templates tab + editor controls
+    expect(html).toContain('data-stab="reports"');
+    expect(html).toContain('id="stab-reports"');
+    expect(html).toContain('id="rtPicker"');
+    expect(html).toContain('id="rtSections"');
+    expect(html).toContain('id="rtSaveBtn"');
+    expect(html).toContain("/report-templates");        // CRUD endpoint
+    expect(html).toContain("loadReportTemplates");
+    // Per-case picker in Case Details, wired to the per-case selection endpoint
+    expect(html).toContain('id="rm-reportTemplate"');
+    expect(html).toContain("/report-template");
+    expect(html).toContain("saveCaseTemplate");
+  });
+
   it("offers zoom in/out/fit buttons and mouse-wheel zoom for the graph", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="assetZoomIn"');
