@@ -210,6 +210,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Dashboard & reports
 - **Live dashboard** over WebSocket — collapsible, drag-to-reorder sections (persisted), scope bar, clickable evidence links, and badges (`×N`, `⊕ N`, `AUTO`, verdicts, `⚠ unusual parent`).
+- **Dark / light theme** — a header toggle (🌙/☀️) flips the whole UI; follows your OS preference by default and remembers a manual choice across sessions. Full coverage — every panel, graph, and the swimlane canvas.
 - **Forensic timeline rows** show the affected **🖥 host** and **clickable finding links** (jump + flash the finding); the report timeline (§3.1) has a matching Host column.
 - **Manual add** — record an event or IOC the AI missed (tagged `manual`, re-synthesized, survives re-analysis).
 - **MITRE techniques link to [attack.mitre.org](https://attack.mitre.org/)** everywhere (sub-techniques included).
