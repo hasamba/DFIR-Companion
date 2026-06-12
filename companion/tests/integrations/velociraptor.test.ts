@@ -215,6 +215,7 @@ describe("VelociraptorClient.collectOnClient", () => {
     expect(res.hostname).toBe("WIN11.windomain.local");
     expect(res.artifact).toBe("Custom.Collect.Companion.services_on_WIN11");
     expect(res.guiUrl).toBe("https://velo.example/app/index.html?org_id=root#/collected/C.abc/F.flow1");
+    expect(res.sources).toEqual(["Pivot0"]);   // for reading results back via collectionResults
     const prog = programs.find((p) => p.includes("collect_client(")) || "";
     expect(prog).toContain("type: CLIENT");
     expect(prog).toContain("collect_client(client_id='C.abc', artifacts=['Custom.Collect.Companion.services_on_WIN11'])");
@@ -246,6 +247,33 @@ describe("VelociraptorClient.collectOnClient", () => {
   it("throws when the VQL is empty or only comments", async () => {
     const { runner } = collectRunner([]);
     await expect(new VelociraptorClient(cfg, runner).collectOnClient("C.1", "-- only a comment", "x")).rejects.toThrow(/No runnable VQL/);
+  });
+});
+
+describe("VelociraptorClient.collectionResults", () => {
+  it("reads a flow's rows via source(client_id, flow_id, artifact/source)", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Name: "PSEXESVC", Pid: 42 }], raw: "" }; };
+    const res = await new VelociraptorClient(cfg, runner).collectionResults("C.abc", "F.flow1", "Custom.Collect.Companion.x", ["Pivot0"]);
+    expect(res.rows).toHaveLength(1);
+    expect(program).toContain("source(client_id='C.abc', flow_id='F.flow1', artifact='Custom.Collect.Companion.x/Pivot0')");
+  });
+
+  it("chains multiple sources", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).collectionResults("C.abc", "F.flow1", "Custom.Collect.Companion.x", ["Pivot0", "Pivot1"]);
+    expect(program).toContain("chain(");
+    expect(program).toContain("artifact='Custom.Collect.Companion.x/Pivot0'");
+    expect(program).toContain("artifact='Custom.Collect.Companion.x/Pivot1'");
+  });
+
+  it("validates the client / flow / artifact ids", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    const c = new VelociraptorClient(cfg, runner);
+    await expect(c.collectionResults("bad", "F.1", "Custom.X")).rejects.toThrow(/client id/);
+    await expect(c.collectionResults("C.1", "bad", "Custom.X")).rejects.toThrow(/flow id/);
+    await expect(c.collectionResults("C.1", "F.1", "bad name")).rejects.toThrow(/artifact name/);
   });
 });
 

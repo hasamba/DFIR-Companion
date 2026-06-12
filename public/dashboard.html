@@ -3496,9 +3496,9 @@
       });
     }
 
-    // Launch a single-endpoint COLLECTION (the collection-mode deploy). Mirrors launchHuntInto()'s
-    // success block but renders the flow + GUI deep link (a collection's results are read in the
-    // Velociraptor GUI; there is no per-source hunt-results poll for a single flow).
+    // Launch a single-endpoint COLLECTION (the collection-mode deploy). Mirrors launchHuntInto():
+    // shows the flow + GUI deep link AND pulls the results back into the dashboard with a Refresh
+    // button + auto-poll (results arrive as the endpoint checks in), rendered as a table like a hunt.
     function collectHostInto(hostname, vql, description, res, btn) {
       if (!res) return;
       res.innerHTML = `<div style='color:var(--c-9aa4b2);font-size:12px'>launching collection on ${esc(hostname)}…</div>`;
@@ -3509,11 +3509,37 @@
           if (!ok || j.error) { res.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">error: ${esc(j.error || "collection failed")}</div>`; return; }
           const link = j.guiUrl ? ` · <a href="${escAttr(j.guiUrl)}" target="_blank" rel="noopener" style="color:var(--c-6aa9ff)">open in Velociraptor ↗</a>` : "";
           res.innerHTML =
-            `<div style="font-size:12px">🎯 Collection <strong>${esc(j.flowId)}</strong> launched on ${esc(j.hostname)} (${esc(j.clientId)})${link}`
-            + `<div style="color:var(--c-9aa4b2);margin-top:4px">Review the results in the Velociraptor GUI.</div></div>`;
+            `<div style="font-size:12px;margin-bottom:6px">🎯 Collection <strong>${esc(j.flowId)}</strong> on ${esc(j.hostname)} (${esc(j.clientId)})${link} `
+            + `<button class="collect-refresh" data-cid="${escAttr(j.clientId)}" data-fid="${escAttr(j.flowId)}" data-art="${escAttr(j.artifact)}" data-src="${escAttr((j.sources || []).join(","))}">↻ Refresh results</button></div>`
+            + `<div class="collect-results-rows" style="color:var(--c-9aa4b2);font-size:12px">waiting for the endpoint to respond…</div>`;
+          const rb = res.querySelector(".collect-refresh");
+          const target = res.querySelector(".collect-results-rows");
+          rb.onclick = () => fetchCollectionResults(rb, target);
+          // Auto-poll a few times — a collection's results land as the endpoint next checks in.
+          let tries = 0;
+          const poll = () => { tries++; fetchCollectionResults(rb, target).then((n) => { if (!n && tries < 6) setTimeout(poll, 5000); }); };
+          setTimeout(poll, 3000);
         })
         .catch((e) => res.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">error: ${esc(e.message)} — restart the companion server if this 404s</div>`)
         .finally(() => { if (btn) btn.disabled = false; });
+    }
+    // Fetch a launched collection flow's rows into `target`; resolves to the row count. Reuses
+    // renderVqlRows() (the same table the hunt-results flow renders).
+    function fetchCollectionResults(rb, target) {
+      const clientId = rb.dataset.cid, flowId = rb.dataset.fid, artifact = rb.dataset.art;
+      const sources = (rb.dataset.src || "").split(",").filter(Boolean);
+      target.innerHTML = "<span style='color:var(--c-9aa4b2)'>fetching results…</span>";
+      return fetch("/velociraptor/collect-results", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId, flowId, artifact, sources }) })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { target.innerHTML = `<div style="color:var(--c-ff9f43)">error: ${esc(j.error || "failed")}</div>`; return 0; }
+          const n = (j.rows || []).length;
+          target.innerHTML = n
+            ? renderVqlRows(j)
+            : "<span style='color:var(--c-9aa4b2)'>no results yet — the endpoint reports on its next poll. Click ↻ to refresh.</span>";
+          return n;
+        })
+        .catch((e) => { target.innerHTML = `<div style="color:var(--c-ff9f43)">error: ${esc(e.message)}</div>`; return 0; });
     }
 
     document.getElementById("pbHuntBtn").addEventListener("click", function() { doSuggestPlaybookHunts(); });

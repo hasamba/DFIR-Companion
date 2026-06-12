@@ -1237,6 +1237,23 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Read a single COLLECTION flow's result rows so the dashboard can show them inline + auto-poll (the
+  // per-flow analog of /velociraptor/hunt-results). Body `{ clientId, flowId, artifact, sources }`.
+  app.post("/velociraptor/collect-results", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const clientId = typeof req.body?.clientId === "string" ? req.body.clientId.trim() : "";
+    const flowId = typeof req.body?.flowId === "string" ? req.body.flowId.trim() : "";
+    const artifact = typeof req.body?.artifact === "string" ? req.body.artifact.trim() : "";
+    const sources = Array.isArray(req.body?.sources) ? req.body.sources.filter((s: unknown): s is string => typeof s === "string") : [];
+    if (!clientId || !flowId || !artifact) return res.status(400).json({ error: "clientId, flowId and artifact are required" });
+    try {
+      const result = await options.velociraptorClient.collectionResults(clientId, flowId, artifact, sources);
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
   // AI-suggest proactive Velociraptor VQL fleet-hunts from the case findings (issue #57). Single
   // text-only AI call, EPHEMERAL (no state change) — the dashboard shows each hunt's VQL + rationale
   // for review, then deploys the chosen one through POST /velociraptor/hunt (launchHunt). Needs an AI

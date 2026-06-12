@@ -183,6 +183,7 @@ export interface CollectLaunchResult {
   flowId: string;       // the launched flow id (F.…)
   hostname: string;     // the host the analyst asked for (echoed back)
   artifact: string;     // the Custom.* artifact built from the VQL
+  sources: string[];    // its source names (one per pivot statement) — to read results back via collectionResults
   guiUrl?: string;      // deep link to the flow in the Velociraptor GUI (when DFIR_VELOCIRAPTOR_GUI_URL set)
 }
 
@@ -432,7 +433,26 @@ export class VelociraptorClient {
     const flow = (rows[0] as { Flow?: Record<string, unknown> })?.Flow ?? {};
     const flowId = String(flow.flow_id ?? flow.FlowId ?? flow.session_id ?? "");
     if (!FLOW_RE.test(flowId)) throw new Error("Velociraptor did not return a collection flow id — check the api_client role has COLLECT_CLIENT/ARTIFACT_WRITER");
-    return { clientId, flowId, hostname: hostname || clientId, artifact: name, guiUrl: this.collectGuiUrl(clientId, flowId) };
+    return { clientId, flowId, hostname: hostname || clientId, artifact: name, sources, guiUrl: this.collectGuiUrl(clientId, flowId) };
+  }
+
+  // Read a single COLLECTION flow's result rows (issue #70) — the per-flow analog of huntResults(),
+  // so the dashboard can show a collection's results inline (and auto-poll) instead of only deep-linking
+  // to the GUI. Reads each named source via `source(client_id=, flow_id=, artifact='Custom.X/Pivot0')`
+  // (same `artifact/source` addressing huntResults uses). All ids are validated to stay safe in the literals.
+  async collectionResults(clientId: string, flowId: string, artifact: string, sources: string[] = [], where?: string): Promise<VelociraptorRunResult> {
+    if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
+    if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
+    if (!ARTIFACT_RE.test(artifact)) throw new Error("invalid artifact name");
+    const safe = sources.filter((s) => ARTIFACT_RE.test(s));
+    const refs = safe.length ? safe.map((s) => `${artifact}/${s}`) : [artifact];
+    const w = sanitizeWhere(where);
+    const whereClause = w ? ` WHERE (${w})` : "";
+    const limit = this.config.maxRows + 1;   // +1 so cap() flags truncation
+    const program = refs.length > 1
+      ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
+      : `SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
+    return this.cap(await this.runRaw(program, this.collectCap()));
   }
 
   // Convenience: resolve a hostname LIVE (enumerate the fleet + match in TS, short-name ⇄ FQDN
