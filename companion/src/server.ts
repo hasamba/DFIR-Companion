@@ -113,8 +113,9 @@ import {
 } from "./analysis/customerExposure.js";
 import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
-import { VelociraptorClient, buildVelociraptorClient, type HuntTarget, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
+import { VelociraptorClient, buildVelociraptorClient, matchClient, type HuntTarget, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
 import { ArtifactBundleStore } from "./analysis/artifactBundleStore.js";
+import { VelociraptorClientStore } from "./analysis/velociraptorClientStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
 import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
@@ -276,6 +277,10 @@ export interface AppOptions {
   // Velociraptor API: a configured client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) lets the
   // dashboard run the generated hunt VQL against the server and show the rows inline.
   velociraptorClient?: VelociraptorClient;
+  // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map). A single-endpoint
+  // collection resolves the host against this file instead of a brittle live `clients(search=...)`
+  // lookup; refreshed at startup, on demand (Settings), and lazily on a collect miss.
+  velociraptorClientStore?: VelociraptorClientStore;
   // Triage bundles (global, shared across cases): named selections of Velociraptor CLIENT artifacts
   // the analyst runs as a hunt. Per-case veloHuntStore tracks the in-flight/last bundle hunt so the
   // dashboard can show its status + countdown; onVeloHunt broadcasts a change to the case's clients.
@@ -1163,9 +1168,47 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Snapshot the enrolled fleet into the persisted client inventory (issue #70). Best-effort; returns
+  // the count. No-op (count 0) when the API or store isn't configured.
+  async function refreshVeloClients(): Promise<number> {
+    const client = options.velociraptorClient;
+    const store = options.velociraptorClientStore;
+    if (!client || !store) return 0;
+    const clients = await client.listClients();
+    await store.save(clients, new Date().toISOString());
+    logLine(`[velociraptor] client inventory refreshed — ${clients.length} enrolled client(s)`);
+    return clients.length;
+  }
+
+  // Read the persisted client inventory (host ↔ client_id map). Empty when never refreshed.
+  app.get("/velociraptor/clients", async (_req: Request, res: Response) => {
+    if (!options.velociraptorClientStore) return res.status(200).json({ updatedAt: "", clients: [] });
+    try {
+      return res.status(200).json(await options.velociraptorClientStore.load());
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Refresh the client inventory now (Settings → Velociraptor "Refresh client list"). 501 when the
+  // API / store isn't configured; 502 on a query failure.
+  app.post("/velociraptor/clients/refresh", async (_req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.velociraptorClientStore) return res.status(501).json({ error: "client inventory store not configured" });
+    try {
+      const count = await refreshVeloClients();
+      const inv = await options.velociraptorClientStore.load();
+      return res.status(200).json({ count, updatedAt: inv.updatedAt, clients: inv.clients });
+    } catch (err) {
+      logLine(`[velociraptor] client refresh ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
   // Launch the VQL as a single-endpoint COLLECTION on ONE host (issue #70 — the playbook-hunt deploy
-  // path for a task tied to exactly one endpoint). Resolves the hostname to a client_id and runs
-  // collect_client on it; returns the flow + a GUI deep link. 501 when the Velociraptor API is off.
+  // path for a task tied to exactly one endpoint). Resolves the host → client_id from the persisted
+  // INVENTORY (refreshing it once on a miss), then runs collect_client on that client; returns the
+  // flow + a GUI deep link. 501 when the Velociraptor API is off; 502 when no client matches the host.
   app.post("/velociraptor/collect-host", async (req: Request, res: Response) => {
     if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     const hostname = typeof req.body?.hostname === "string" ? req.body.hostname.trim() : "";
@@ -1175,7 +1218,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!vql) return res.status(400).json({ error: "vql is required" });
     try {
       logLine(`[velociraptor] collect on host ${hostname}: ${description.slice(0, 80)}`);
-      const result = await options.velociraptorClient.collectFromHost(hostname, vql, description);
+      const store = options.velociraptorClientStore;
+      let result;
+      if (store) {
+        // Resolve from the inventory file; if the host isn't there yet, refresh once and retry (self-healing).
+        let rec = matchClient((await store.load()).clients, hostname);
+        if (!rec) { await refreshVeloClients(); rec = matchClient((await store.load()).clients, hostname); }
+        if (!rec) return res.status(502).json({ error: `No enrolled Velociraptor client matches host "${hostname}" — refresh the client list (Settings → Velociraptor) or run a fleet hunt instead` });
+        result = await options.velociraptorClient.collectOnClient(rec.clientId, vql, description, hostname);
+      } else {
+        result = await options.velociraptorClient.collectFromHost(hostname, vql, description);
+      }
       logLine(`[velociraptor] collection launched -> flow ${result.flowId} on ${result.clientId} (${result.hostname})`);
       return res.status(200).json(result);
     } catch (err) {
@@ -4824,6 +4877,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // Deep-link notifications back to the dashboard. Override the host/port guess with DFIR_PUBLIC_URL.
   const dashboardBaseUrl = (process.env.DFIR_PUBLIC_URL || `http://${host}:${port}`).replace(/\/+$/, "");
   const veloHuntStore = new VeloHuntStore(store);
+  // Velociraptor API client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) + the persisted client inventory
+  // (host ↔ client_id map, #70) in its own subdir beside cases/ (Windows drive-root-safe, like bundles/nsrl).
+  const velociraptorClient = buildVelociraptorClient();
+  const velociraptorClientStore = new VelociraptorClientStore(join(dirname(casesRoot), "velociraptor", "clients.json"));
   const hub = new LiveHub();
   const reportMetaStore = new ReportMetaStore(store);
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
@@ -4921,7 +4978,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     enrichHealthTtlMs: Number(process.env.DFIR_ENRICH_HEALTH_TTL_MS) || undefined,
     enrichHealthPollMs: process.env.DFIR_ENRICH_HEALTH_POLL_MS === "0" ? 0 : (Number(process.env.DFIR_ENRICH_HEALTH_POLL_MS) || 60_000),
     irisClient: buildIrisClient(),
-    velociraptorClient: buildVelociraptorClient(),
+    velociraptorClient,
+    velociraptorClientStore,
     artifactBundleStore,
     iocWhitelistStore,
     nsrlStore,
@@ -5018,6 +5076,17 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     const shownHost = host === "0.0.0.0" ? "127.0.0.1" : host;
     logLine(`DFIR companion on http://${shownHost}:${port} (dashboard at /dashboard)`);
   });
+
+  // Fire-and-forget: snapshot the enrolled Velociraptor fleet into the client inventory at startup
+  // (#70), so a single-endpoint collection can resolve a host → client_id from the file. Best-effort —
+  // a refresh failure (API down, role missing) just leaves the inventory stale; the collect route
+  // refreshes lazily on a miss, and Settings → Velociraptor has a manual refresh.
+  if (velociraptorClient) {
+    void velociraptorClient.listClients()
+      .then((clients) => velociraptorClientStore.save(clients, new Date().toISOString()))
+      .then((inv) => logLine(`[velociraptor] client inventory: ${inv.clients.length} enrolled client(s)`))
+      .catch((e) => logLine(`[velociraptor] startup client inventory refresh failed (run Settings → Velociraptor → Refresh client list): ${(e as Error).message}`));
+  }
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.
   server.on("error", (err: NodeJS.ErrnoException) => {

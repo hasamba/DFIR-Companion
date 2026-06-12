@@ -1440,6 +1440,11 @@
         <div id="veloDisabledNote" style="display:none;font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px;background:var(--c-1b2030);border:1px solid var(--c-2a3146);border-radius:6px;padding:8px 10px">
           Velociraptor API not configured — you can still build and edit bundles, but <strong>running a hunt</strong> needs the <strong>API config path</strong> set on the <strong>Integrations</strong> tab (then restart the server).
         </div>
+        <!-- Client inventory (#70): the host ↔ client_id map a single-endpoint collection resolves against. -->
+        <div id="veloClientsCard" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;background:var(--c-161b28);border:1px solid var(--c-2a3146);border-radius:6px">
+          <button id="veloRefreshClientsBtn" type="button" title="Snapshot every enrolled Velociraptor client (hostname / FQDN ↔ client id). A single-endpoint playbook collection resolves the host from this inventory instead of a live lookup.">↻ Refresh client list</button>
+          <span id="veloClientsMsg" style="font-size:12px;color:var(--c-9aa4b2)">—</span>
+        </div>
         <div id="veloJobCard" style="display:none;margin:0 0 12px"></div>
         <div id="veloBundleList" style="margin-bottom:14px">—</div>
 
@@ -4056,6 +4061,46 @@
       renderVeloSelected();
       loadVeloBundles();
       loadVeloHuntJobs(caseId);
+      loadVeloClients();
+    }
+
+    // Client inventory (#70): the persisted host ↔ client_id map a single-endpoint collection resolves
+    // against. Refreshed at startup + lazily on a collect miss; this shows its size + a manual refresh.
+    function veloClientsAge(updatedAt) {
+      if (!updatedAt) return "never refreshed";
+      const ms = Date.now() - new Date(updatedAt).getTime();
+      if (!isFinite(ms) || ms < 0) return "just now";
+      const m = Math.floor(ms / 60000);
+      if (m < 1) return "just now"; if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60); if (h < 24) return h + "h ago";
+      return Math.floor(h / 24) + "d ago";
+    }
+    function renderVeloClients(inv) {
+      const msg = document.getElementById("veloClientsMsg");
+      if (!msg) return;
+      const n = (inv.clients || []).length;
+      msg.textContent = n
+        ? `${n} enrolled client${n === 1 ? "" : "s"} · updated ${veloClientsAge(inv.updatedAt)}`
+        : (veloEnabled ? "no clients cached yet — click Refresh to snapshot the fleet" : "Velociraptor API not configured");
+    }
+    function loadVeloClients() {
+      fetch("/velociraptor/clients").then(r => r.ok ? r.json() : { updatedAt: "", clients: [] })
+        .then(renderVeloClients).catch(() => {});
+    }
+    function doRefreshVeloClients() {
+      const btn = document.getElementById("veloRefreshClientsBtn");
+      const msg = document.getElementById("veloClientsMsg");
+      if (!veloEnabled) { if (msg) msg.textContent = "Velociraptor API not configured (set the API config path on the Integrations tab, then restart)"; return; }
+      if (btn) btn.disabled = true;
+      if (msg) msg.textContent = "querying the Velociraptor server…";
+      fetch("/velociraptor/clients/refresh", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { if (msg) msg.textContent = "error: " + (j.error || "refresh failed") + " — restart the companion server if this 404s"; return; }
+          renderVeloClients({ updatedAt: j.updatedAt, clients: j.clients || [] });
+        })
+        .catch(e => { if (msg) msg.textContent = "error: " + e.message; })
+        .finally(() => { if (btn) btn.disabled = false; });
     }
 
     function renderVeloBundles(bundles) {
@@ -4357,6 +4402,7 @@
     // One-time wiring for the static builder controls (the script runs after the DOM is parsed).
     (function wireVeloTriage() {
       const browse = document.getElementById("veloBrowseBtn"); if (browse) browse.onclick = veloBrowseArtifacts;
+      const refreshClients = document.getElementById("veloRefreshClientsBtn"); if (refreshClients) refreshClients.onclick = doRefreshVeloClients;
       const addM = document.getElementById("veloAddManualBtn"); if (addM) addM.onclick = veloAddManual;
       const save = document.getElementById("veloSaveBundleBtn"); if (save) save.onclick = veloSaveBundle;
       const neu = document.getElementById("veloNewBundleBtn"); if (neu) neu.onclick = () => { veloClearBuilder(); const m = document.getElementById("veloBuilderMsg"); if (m) m.textContent = ""; };

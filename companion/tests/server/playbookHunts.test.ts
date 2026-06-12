@@ -26,11 +26,13 @@ const veloCfg: VelociraptorApiConfig = {
   guiUrl: "https://velo.example/",
 };
 
-// A runner for collect-host: resolve the client (FROM clients) then launch the collection flow.
+// A runner for collect-host: list the fleet (FROM clients) then launch the collection flow. The app
+// in these tests wires the velociraptorClient WITHOUT the inventory store, so the route falls back to
+// collectFromHost (live listClients + match + collectOnClient).
 const collectRunner: VqlRunner = async (statements) => {
   const p = statements[0];
   if (p.includes("collect_client(")) return { rows: [{ Flow: { flow_id: "F.123" } }], raw: "" };
-  if (p.includes("FROM clients(")) return { rows: [{ ClientId: "C.web01", OsInfo: { hostname: "web01" }, LastSeen: 1 }], raw: "" };
+  if (p.includes("FROM clients(")) return { rows: [{ client_id: "C.web01", os_info: { hostname: "web01" } }], raw: "" };
   return { rows: [], raw: "" };
 };
 
