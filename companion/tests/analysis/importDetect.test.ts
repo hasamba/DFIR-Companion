@@ -79,6 +79,21 @@ describe("detectImportKind — JSON formats", () => {
   it("cybertriage: claimed ahead of the SIEM message catch-all", () => {
     expect(detectImportKind("tl.json", j([{ epoch_timestamp: 1769593923, message: "/x", scoreDescription: "Yara pattern detected", timestamp_desc: "Process Created" }]))).toBe("cybertriage");
   });
+  it("memory: Volatility 3 pslist array (__children + ImageFileName)", () => {
+    expect(detectImportKind("pslist.json", j([{ __children: [], PID: 4, PPID: 0, ImageFileName: "System", CreateTime: "t" }]))).toBe("memory");
+  });
+  it("memory: Volatility 3 netscan (LocalAddr + ForeignAddr)", () => {
+    expect(detectImportKind("netscan.json", j([{ __children: [], Proto: "TCPv4", LocalAddr: "10.0.0.1", ForeignAddr: "8.8.8.8", State: "ESTABLISHED", PID: 4 }]))).toBe("memory");
+  });
+  it("memory: Volatility 3 malfind (Protection + Tag)", () => {
+    expect(detectImportKind("malfind.json", j([{ __children: [], PID: 4, Process: "x.exe", Protection: "PAGE_EXECUTE_READWRITE", Tag: "VadS" }]))).toBe("memory");
+  });
+  it("memory: combined { plugin: rows } map — claimed ahead of the Velociraptor artifact-map", () => {
+    expect(detectImportKind("vol.json", j({ "windows.pslist.PsList": [{ PID: 4, ImageFileName: "System" }] }))).toBe("memory");
+  });
+  it("memory: Rekall JSON statement list", () => {
+    expect(detectImportKind("rekall.json", j([["m", { tool_name: "rekall", plugin: { name: "pslist" } }], ["t", [], {}], ["r", { _EPROCESS: { name: "System" }, ppid: 0 }]]))).toBe("memory");
+  });
 });
 
 describe("detectImportKind — CSV formats", () => {
