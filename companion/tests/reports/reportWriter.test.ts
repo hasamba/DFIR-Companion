@@ -123,6 +123,37 @@ describe("ReportWriter", () => {
     expect(xml).not.toContain("client admin maintenance window");      // legit event excluded
   }, 30_000);   // docx generation is CPU-heavy; give it headroom under full-suite parallel load
 
+  it("builds a mobile summary with the case name and scope/legitimate filtering applied", async () => {
+    const state = emptyState("c1");
+    state.lastSummary = "mobile recap";
+    state.findings.push({ id: "f1", severity: "Critical", title: "Ransomware deployed", description: "d",
+      relatedIocs: [], sourceScreenshots: [], mitreTechniques: ["T1486"], firstSeen: "t0", lastUpdated: "t1", status: "open" });
+    state.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "attacker beacon callout", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "client admin maintenance window", severity: "Low",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    await stateStore.save(state);
+
+    const legitimate = new LegitimateStore(caseStore);
+    await legitimate.save("c1", [
+      { id: markerId("event", "e2"), kind: "event", ref: "e2", note: "client's maintenance",
+        markedAt: "2026-05-28T10:00:00Z", label: "client admin maintenance window" },
+    ]);
+
+    const writer = new ReportWriter(caseStore, stateStore, undefined, legitimate);
+    const s = await writer.mobileSummary("c1");
+
+    expect(s.caseId).toBe("c1");
+    expect(s.caseName).toBe("n");               // pulled from case.json (createCase name "n")
+    expect(s.summary).toBe("mobile recap");
+    expect(s.severityCounts.Critical).toBe(1);
+    expect(s.counts.events).toBe(1);            // legit event e2 filtered out
+    expect(s.events.items.map((e) => e.id)).toEqual(["e1"]);
+    expect(s.events.items.map((e) => e.description)).not.toContain("client admin maintenance window");
+  });
+
   it("builds an ATT&CK Navigator layer, excluding techniques only from legitimate events", async () => {
     const state = emptyState("c1");
     state.findings.push({ id: "f1", severity: "Critical", title: "Ransomware deployed", description: "d",
