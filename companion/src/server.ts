@@ -50,6 +50,12 @@ import { parseMemory } from "./analysis/memoryImport.js";
 import type { MemoryImportOptions } from "./analysis/memoryImport.js";
 import { parseEmail } from "./analysis/emailImport.js";
 import type { EmailImportOptions } from "./analysis/emailImport.js";
+import { parseAuditdLog } from "./analysis/auditdImport.js";
+import type { AuditdImportOptions } from "./analysis/auditdImport.js";
+import { parseJournald } from "./analysis/journaldImport.js";
+import type { JournaldImportOptions } from "./analysis/journaldImport.js";
+import { parseSysdig } from "./analysis/sysdigImport.js";
+import type { SysdigImportOptions } from "./analysis/sysdigImport.js";
 import { detectImportKind, type ImportKind } from "./analysis/importDetect.js";
 import { getEnvForSettings, updateEnv as updateEnvFile } from "./settings/envManager.js";
 import { parseMinSeverity } from "./analysis/severityFloor.js";
@@ -1126,6 +1132,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "sandbox": return pipeline.importSandbox(caseId, text, base);
       case "memory": return pipeline.importMemory(caseId, text, base);
       case "email": return pipeline.importEmail(caseId, text, base);
+      case "auditd": return pipeline.importAuditd(caseId, text, base);
+      case "journald": return pipeline.importJournald(caseId, text, base);
+      case "sysdig": return pipeline.importSysdig(caseId, text, base);
       case "csv": return pipeline.analyzeCsv(caseId, text, base);
       case "log": return pipeline.analyzeLog(caseId, text, base);
       default: return Promise.reject(new Error(`unhandled import kind: ${kind as string}`));
@@ -2218,7 +2227,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
     const kind = detectImportKind(originalName, text);
     if (kind === "unknown") {
-      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / CSV / log)" });
+      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / CSV / log)" });
     }
     if ((kind === "csv" || kind === "log") && !hasAiProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
@@ -3217,6 +3226,153 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `Email import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a Linux auditd log (raw audit.log / `ausearch` record format, or an `aureport` table).
+  // Evidence-first; mapped DETERMINISTICALLY (no AI call): records grouped by serial, per-type
+  // severity/MITRE, read at the audit() epoch.
+  app.post("/cases/:id/import-auditd", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.log === "string" ? req.body.log : "";
+    const originalName = String(req.body?.filename ?? "audit.log");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const minSeverity = parseMinSeverity(req.body?.minSeverity);
+    const auditdOpts: AuditdImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      const preview = parseAuditdLog(text, auditdOpts);
+      if (preview.format === "empty") return res.status(400).json({ error: "no parseable auditd records found (expected raw audit.log / ausearch 'type=… msg=audit(…)' lines or an aureport table)" });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "audit.log");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, records: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} auditd event(s)` });
+      void options.pipeline.importAuditd(caseId, text, {
+        label: storedName,
+        idPrefix: `ad${seq}`,
+        importedAt,
+        auditd: auditdOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `auditd import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a systemd-journald structured log (`journalctl -o json` / `-o json-pretty`). Evidence-first;
+  // mapped DETERMINISTICALLY (no AI call): severity from PRIORITY + tradecraft bumps, read at the
+  // entry's own µs-epoch time.
+  app.post("/cases/:id/import-journald", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.json === "string" ? req.body.json : "";
+    const originalName = String(req.body?.filename ?? "journal.json");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const minSeverity = parseMinSeverity(req.body?.minSeverity);
+    const journaldOpts: JournaldImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      const preview = parseJournald(text, journaldOpts);
+      if (preview.format === "empty") return res.status(400).json({ error: "no parseable journald entries found (expected `journalctl -o json` / `-o json-pretty` output)" });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "journal.json");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, entries: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} journald event(s)` });
+      void options.pipeline.importJournald(caseId, text, {
+        label: storedName,
+        idPrefix: `jd${seq}`,
+        importedAt,
+        journald: journaldOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `journald import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a sysdig / Falco export (Falco alert JSON and/or sysdig `-j` event JSON). Evidence-first;
+  // mapped DETERMINISTICALLY (no AI call): Falco rule hits → detections (verdict-first), raw sysdig
+  // syscall events → Info evidence, read at each event's own time.
+  app.post("/cases/:id/import-sysdig", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.json === "string" ? req.body.json : "";
+    const originalName = String(req.body?.filename ?? "falco.json");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const minSeverity = parseMinSeverity(req.body?.minSeverity);
+    const sysdigOpts: SysdigImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      const preview = parseSysdig(text, sysdigOpts);
+      if (preview.format === "empty") return res.status(400).json({ error: "no parseable sysdig/Falco records found (expected Falco alert JSON or sysdig `-j` event JSON; a binary .scap must be exported to JSON first)" });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "falco.json");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, records: preview.total, alerts: preview.alerts, groups: preview.groups, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} sysdig/Falco event(s)` });
+      void options.pipeline.importSysdig(caseId, text, {
+        label: storedName,
+        idPrefix: `sd${seq}`,
+        importedAt,
+        sysdig: sysdigOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `sysdig import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
