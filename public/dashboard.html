@@ -267,6 +267,9 @@
     .report-links { font-size: 12px; }
     .report-links a { color: #6aa9ff; text-decoration: none; }
     .report-links a:hover { text-decoration: underline; }
+    #mobileLink { font-size: 12px; color: #6aa9ff; text-decoration: none; padding: 4px 8px;
+      border: 1px solid #2a3340; border-radius: 6px; white-space: nowrap; }
+    #mobileLink:hover { color: #ffd93b; border-color: #ffd93b; }
     #aiStatus { font-size: 12px; padding: 3px 8px; border-radius: 10px; }
     .ai-unknown { background: #2a2f3a; color: #9aa4b2; }
     .ai-off { background: #2a2f3a; color: #9aa4b2; }
@@ -549,6 +552,7 @@
       <option value="">Push to…</option>
     </select>
     <span id="reportLinks" class="report-links"></span>
+    <a id="mobileLink" href="/mobile" target="_blank" rel="noopener" data-tip="Open the read-only mobile companion (phone/tablet view) — timeline, findings, IOCs, status">📱 Mobile</a>
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
     <button id="toggleSearchBar" type="button" aria-label="Filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Filter events, findings and IOCs by text and time range (press /)">Filter</button>
     <span id="status">disconnected</span>

@@ -1,0 +1,31 @@
+{
+  "name": "DFIR Companion — Mobile",
+  "short_name": "DFIR Mobile",
+  "description": "Read-only mobile view of your DFIR Companion cases: timeline, findings, IOCs, and status for quick glances during incident response.",
+  "id": "/mobile",
+  "start_url": "/mobile",
+  "scope": "/mobile",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/DFIR_Companion_favicon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/DFIR_Companion_favicon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
