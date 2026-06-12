@@ -2051,29 +2051,29 @@
       .pb-toolbar .pb-hunt:hover{background:var(--c-37a35b)}
       .pb-toolbar .pb-hunt:disabled{opacity:.6;cursor:default}
       .pb-hunt-msg{font-size:11px;color:var(--c-9aa4b2)}
-      #pbHuntSuggest{margin-top:12px}
-      #pbHuntSuggest .pbh-empty{color:var(--c-9aa4b2);font-size:12px}
-      #pbHuntSuggest .pbh-caveat{color:var(--c-ffb454);font-size:12px;margin-bottom:8px}
-      #pbHuntSuggest .pbh-list{display:flex;flex-direction:column;gap:10px}
-      #pbHuntSuggest .pbh-card{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-2f8f4e);border-radius:6px;padding:8px 10px}
-      #pbHuntSuggest .pbh-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-      #pbHuntSuggest .pbh-title{color:var(--c-d6deea);font-weight:bold}
-      #pbHuntSuggest .pbh-task{color:var(--c-8a94a6);font-size:11px}
-      #pbHuntSuggest .pbh-sev{border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
-      #pbHuntSuggest .pbh-mode{border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap;border:1px solid}
-      #pbHuntSuggest .pbh-mode-collection{background:var(--c-5a3a14);color:var(--c-ffb454);border-color:var(--c-ffb454)}
-      #pbHuntSuggest .pbh-mode-hunt{background:var(--c-1f3a52);color:var(--c-6fb3e0);border-color:var(--c-6fb3e0)}
-      #pbHuntSuggest .pbh-rationale{color:var(--c-c9d1db);font-size:12px;margin:6px 0}
-      #pbHuntSuggest .pbh-techs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
-      #pbHuntSuggest .pbh-tech{background:var(--c-0f1620);color:var(--c-6aa9ff);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
-      #pbHuntSuggest .pbh-tech:hover{text-decoration:underline}
-      #pbHuntSuggest textarea.pbh-vql{width:100%;box-sizing:border-box;min-height:80px;resize:vertical;background:var(--c-0f1115);color:var(--c-d6deea);border:1px solid var(--c-2a2f3a);border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;padding:8px;margin-top:4px}
-      #pbHuntSuggest .pbh-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
-      #pbHuntSuggest .pbh-copy{background:var(--c-2d6cdf);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
-      #pbHuntSuggest .pbh-copy.copied{background:var(--c-2f8f4e)}
-      #pbHuntSuggest .pbh-deploy{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
-      #pbHuntSuggest .pbh-deploy:disabled{opacity:.6;cursor:default}
-      #pbHuntSuggest .pbh-res{margin-top:6px}
+      /* AI-suggested Velociraptor hunts, rendered INLINE under their playbook task (#70). */
+      #sec-playbook .pbh-card{margin-top:8px;background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-2f8f4e);border-radius:6px}
+      #sec-playbook .pbh-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 9px;cursor:pointer;user-select:none}
+      #sec-playbook .pbh-caret{color:var(--c-8a94a6);font-size:11px;width:10px}
+      #sec-playbook .pbh-flag{color:var(--c-2f8f4e);font-size:11px;font-weight:bold;white-space:nowrap}
+      #sec-playbook .pbh-title{color:var(--c-d6deea);font-weight:bold;font-size:12px;flex:1;min-width:120px}
+      #sec-playbook .pbh-sev{border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
+      #sec-playbook .pbh-mode{border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap;border:1px solid}
+      #sec-playbook .pbh-mode-collection{background:var(--c-5a3a14);color:var(--c-ffb454);border-color:var(--c-ffb454)}
+      #sec-playbook .pbh-mode-hunt{background:var(--c-1f3a52);color:var(--c-6fb3e0);border-color:var(--c-6fb3e0)}
+      #sec-playbook .pbh-body{padding:0 9px 8px 9px}
+      #sec-playbook .pbh-rationale{color:var(--c-c9d1db);font-size:12px;margin:6px 0}
+      #sec-playbook .pbh-techs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+      #sec-playbook .pbh-tech{background:var(--c-0f1620);color:var(--c-6aa9ff);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
+      #sec-playbook .pbh-tech:hover{text-decoration:underline}
+      #sec-playbook textarea.pbh-vql{width:100%;box-sizing:border-box;min-height:80px;resize:vertical;background:var(--c-0f1115);color:var(--c-d6deea);border:1px solid var(--c-2a2f3a);border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;padding:8px;margin-top:4px}
+      #sec-playbook .pbh-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+      #sec-playbook .pbh-copy{background:var(--c-2d6cdf);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #sec-playbook .pbh-copy.copied{background:var(--c-2f8f4e)}
+      #sec-playbook .pbh-deploy{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #sec-playbook .pbh-deploy:disabled{opacity:.6;cursor:default}
+      #sec-playbook .pbh-res{margin-top:6px}
+      #sec-playbook .pbh-caveat{color:var(--c-ffb454);font-size:11px;margin:8px 0 0}
     </style>
     <section id="sec-playbook" style="grid-column: 1 / -1" class="collapsed">
       <h2>Playbook <span id="pbBadge" class="pb-badge"></span></h2>
@@ -2087,7 +2087,6 @@
         <div class="pb-progress" title="Completion"><div id="pbProgressBar"></div></div>
       </div>
       <div id="pbList" style="margin-top:12px">—</div>
-      <div id="pbHuntSuggest"></div>
       <div class="pb-add-form">
         <input id="pbTitle" placeholder="Add a custom task…" />
         <select id="pbPriority" title="Priority">
@@ -3213,6 +3212,8 @@
     // preserved), so loading the panel always reflects the latest synthesis.
     let playbookTasks = [];
     let pbOpenOnly = false;
+    let pbHuntFlat = [];          // AI-suggested Velociraptor hunts (#70), in severity order; each carries taskId
+    let pbHuntCollapsed = {};     // suggestion index -> collapsed? (default false = expanded)
     const PB_STATUS = [["todo", "To do"], ["in_progress", "In progress"], ["done", "Done"], ["skipped", "Skipped"]];
     const pbCaseId = () => document.getElementById("caseId").value.trim();
 
@@ -3267,9 +3268,11 @@
             `<input class="pb-assignee" placeholder="assignee" value="${escAttr(t.assignee || "")}" onchange="pbPatch('${escAttr(t.id)}',{assignee:this.value})" />` +
             `<input class="pb-due" type="date" value="${escAttr(t.dueDate || "")}" onchange="pbPatch('${escAttr(t.id)}',{dueDate:this.value})" title="Due date" />` +
           `</div>` +
+          renderTaskHunts(t.id) +
         `</div>`;
       }).join("");
       if (canDrag) pbWireDrag(el);
+      pbWireHuntSuggestions(el);
     }
 
     // Drag-and-drop reorder (mirrors the section-reorder pattern). On drop, persist the new
@@ -3277,7 +3280,10 @@
     function pbWireDrag(container) {
       let dragSrc = null;
       container.querySelectorAll(".pb-task").forEach(row => {
-        row.addEventListener("dragstart", e => { dragSrc = row; e.dataTransfer.effectAllowed = "move"; });
+        row.addEventListener("dragstart", e => {
+          if (e.target.closest(".pbh-card")) { e.preventDefault(); return; }   // don't drag the task when interacting with its hunt suggestion
+          dragSrc = row; e.dataTransfer.effectAllowed = "move";
+        });
         row.addEventListener("dragover", e => {
           e.preventDefault(); e.dataTransfer.dropEffect = "move";
           if (row !== dragSrc) {
@@ -3364,13 +3370,15 @@
 
     // ── Suggested Velociraptor hunts for the playbook (#70) ───────────────────────────────
     // AI-proposed Velociraptor hunt per ENDPOINT-related playbook task. On-demand (an AI call): the
-    // analyst clicks "Suggest Velociraptor hunts", reviews each task's VQL + the deploy mode the
-    // server picked (🌐 fleet hunt vs 🎯 collection on one host), optionally edits the VQL, then
-    // one-click deploys — a fleet hunt via launchHuntInto() (POST /velociraptor/hunt) or a single-
-    // endpoint collection via collectHostInto() (POST /velociraptor/collect-host). Ephemeral.
+    // analyst clicks "Suggest Velociraptor hunts" and each suggestion renders INLINE under its own
+    // task as a COLLAPSIBLE card showing the deploy mode the server picked (🌐 fleet hunt vs 🎯
+    // collection on one host) + the editable VQL. One-click deploys — a fleet hunt via launchHuntInto()
+    // (POST /velociraptor/hunt) or a single-endpoint collection via collectHostInto()
+    // (POST /velociraptor/collect-host). Ephemeral; the suggestions live in pbHuntFlat and are
+    // re-rendered by renderPlaybook() so they survive task-list re-renders.
     function resetPlaybookHuntSuggest() {
-      const el = document.getElementById("pbHuntSuggest");
-      if (el) el.innerHTML = "";
+      pbHuntFlat = [];
+      pbHuntCollapsed = {};
       const msg = document.getElementById("pbHuntMsg");
       if (msg) msg.textContent = "";
     }
@@ -3380,36 +3388,35 @@
       if (!caseId) return;
       const btn = document.getElementById("pbHuntBtn");
       const msg = document.getElementById("pbHuntMsg");
-      const el = document.getElementById("pbHuntSuggest");
       if (btn) btn.disabled = true;
-      if (msg) msg.textContent = "thinking… (one AI call over the playbook)";
+      if (msg) { msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "thinking… (one AI call over the playbook)"; }
       fetch(`/cases/${caseId}/playbook/suggest-hunts`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) {
-            if (msg) msg.textContent = "";
-            if (el) el.innerHTML = `<div class="pbh-empty" style="color:var(--c-ff9f43)">error: ${esc(j.error || "could not generate hunts")} — restart the companion server if this 404s</div>`;
+            if (msg) { msg.style.color = "var(--c-ff9f43)"; msg.textContent = "error: " + (j.error || "could not generate hunts") + " — restart the companion server if this 404s"; }
             return;
           }
-          renderPlaybookHuntSuggest(j.suggestions || []);
-          if (msg) msg.textContent = (j.suggestions || []).length ? `${j.suggestions.length} suggestion(s)` : "";
+          const sugs = j.suggestions || [];
+          pbHuntFlat = [...sugs].sort((a, b) => (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9));
+          pbHuntCollapsed = {};
+          renderPlaybook();   // re-render the task list with the suggestions inlined under their tasks
+          if (msg) {
+            msg.style.color = "var(--c-9aa4b2)";
+            msg.textContent = pbHuntFlat.length ? `${pbHuntFlat.length} suggestion(s) — shown under their tasks` : "no endpoint-related tasks to hunt for (sync the playbook or add evidence)";
+          }
         })
-        .catch((e) => { if (msg) msg.textContent = ""; if (el) el.innerHTML = `<div class="pbh-empty" style="color:var(--c-ff9f43)">error: ${esc(e.message)}</div>`; })
+        .catch((e) => { if (msg) { msg.style.color = "var(--c-ff9f43)"; msg.textContent = "error: " + e.message; } })
         .finally(() => { if (btn) btn.disabled = false; });
     }
 
-    function renderPlaybookHuntSuggest(suggestions) {
-      const el = document.getElementById("pbHuntSuggest");
-      if (!el) return;
-      if (!suggestions.length) {
-        el.innerHTML = `<div class="pbh-empty">No endpoint hunts proposed — the AI found no endpoint-related tasks to hunt for. Sync the playbook (or add evidence/findings) and try again.</div>`;
-        return;
-      }
-      const taskTitle = {};
-      (playbookTasks || []).forEach((t) => { taskTitle[t.id] = t.title; });
-      const ordered = [...suggestions].sort((a, b) => (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9));
-      const caveat = `<div class="pbh-caveat">⚠ AI-generated VQL — review each query before deploying. A 🌐 fleet hunt runs across ALL enrolled endpoints; a 🎯 collection runs on the one named host.${veloEnabled ? "" : " The Velociraptor API is not configured, so Deploy is disabled — copy the VQL to run it yourself."}</div>`;
-      const cards = ordered.map((s, idx) => {
+    // The collapsible suggestion card(s) for one playbook task — empty string when the task has none.
+    // Keyed by the suggestion's index in pbHuntFlat so ids stay stable across renderPlaybook() calls.
+    function renderTaskHunts(taskId) {
+      const items = [];
+      pbHuntFlat.forEach((s, idx) => { if (s.taskId === taskId) items.push({ s, idx }); });
+      if (!items.length) return "";
+      return items.map(({ s, idx }) => {
         const sev = s.severity || "Medium";
         const sevColor = VHS_SEV_COLOR[sev] || "#9aa4b2";
         const sevBadge = `<span class="pbh-sev" style="background:${sevColor}22;color:${sevColor};border:1px solid ${sevColor}55">${esc(sev)}</span>`;
@@ -3417,8 +3424,7 @@
         const modeBadge = isCollection
           ? `<span class="pbh-mode pbh-mode-collection">🎯 collection on ${esc(s.targetHost)}</span>`
           : `<span class="pbh-mode pbh-mode-hunt">🌐 fleet hunt</span>`;
-        const tt = taskTitle[s.taskId];
-        const taskRef = tt ? `<div class="pbh-task">↳ task: ${esc(tt)}</div>` : "";
+        const collapsed = !!pbHuntCollapsed[idx];
         const techs = (s.mitreTechniques || []).map((t) => {
           const u = attackUrl(t);
           return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="pbh-tech">${esc(t)}</a>` : `<span class="pbh-tech">${esc(t)}</span>`;
@@ -3429,27 +3435,53 @@
         const deployBtn = veloEnabled
           ? `<button class="pbh-deploy" data-idx="${idx}" title="${deployTitle}">${deployLabel}</button>`
           : `<button class="pbh-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">${deployLabel}</button>`;
-        return `<div class="pbh-card">`
-          + `<div class="pbh-head"><span class="pbh-title">${esc(s.title)}</span>${sevBadge}${modeBadge}</div>`
-          + taskRef
-          + rationale
-          + (techs ? `<div class="pbh-techs">${techs}</div>` : "")
-          + `<textarea class="pbh-vql" id="pbhQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
-          + `<div class="pbh-actions"><button class="pbh-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}</div>`
-          + `<div class="pbh-res" id="pbhRes${idx}"></div>`
-          + `</div>`;
+        const veloNote = veloEnabled ? "" : `<div class="pbh-caveat">⚠ Velociraptor API not configured — Deploy is disabled; copy the VQL to run it yourself.</div>`;
+        return `<div class="pbh-card" data-idx="${idx}">`
+          + `<div class="pbh-head pbh-toggle">`
+            + `<span class="pbh-caret">${collapsed ? "▸" : "▾"}</span>`
+            + `<span class="pbh-flag">✨ Velociraptor</span>`
+            + modeBadge + sevBadge
+            + `<span class="pbh-title">${esc(s.title)}</span>`
+          + `</div>`
+          + `<div class="pbh-body" ${collapsed ? 'style="display:none"' : ""}>`
+            + rationale
+            + (techs ? `<div class="pbh-techs">${techs}</div>` : "")
+            + `<textarea class="pbh-vql" id="pbhQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
+            + `<div class="pbh-actions"><button class="pbh-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}</div>`
+            + veloNote
+            + `<div class="pbh-res" id="pbhRes${idx}"></div>`
+          + `</div>`
+        + `</div>`;
       }).join("");
-      el.innerHTML = caveat + `<div class="pbh-list">${cards}</div>`;
-      el.querySelectorAll(".pbh-copy").forEach((b) => b.onclick = () => {
+    }
+
+    // Wire the inline suggestion cards' collapse toggle + copy/deploy handlers after each renderPlaybook().
+    function pbWireHuntSuggestions(container) {
+      container.querySelectorAll(".pbh-toggle").forEach((h) => h.onclick = (e) => {
+        e.stopPropagation();
+        const card = h.closest(".pbh-card");
+        if (!card) return;
+        const idx = card.dataset.idx;
+        const body = card.querySelector(".pbh-body");
+        const caret = h.querySelector(".pbh-caret");
+        const nowCollapsed = body.style.display !== "none";
+        body.style.display = nowCollapsed ? "none" : "";
+        if (caret) caret.textContent = nowCollapsed ? "▸" : "▾";
+        pbHuntCollapsed[idx] = nowCollapsed;
+      });
+      container.querySelectorAll(".pbh-copy").forEach((b) => b.onclick = (e) => {
+        e.stopPropagation();
         const q = document.getElementById("pbhQ" + b.dataset.idx);
         navigator.clipboard.writeText(q ? q.value : "").then(() => {
           b.textContent = "Copied ✓"; b.classList.add("copied");
           setTimeout(() => { b.textContent = "Copy VQL"; b.classList.remove("copied"); }, 1500);
         }).catch(() => { b.textContent = "copy failed"; });
       });
-      el.querySelectorAll(".pbh-deploy:not([disabled])").forEach((b) => b.onclick = () => {
+      container.querySelectorAll(".pbh-deploy:not([disabled])").forEach((b) => b.onclick = (e) => {
+        e.stopPropagation();
         const idx = b.dataset.idx;
-        const s = ordered[idx];
+        const s = pbHuntFlat[idx];
+        if (!s) return;
         const q = document.getElementById("pbhQ" + idx);
         const vql = q ? q.value : "";
         const desc = s.title || "DFIR playbook hunt";
