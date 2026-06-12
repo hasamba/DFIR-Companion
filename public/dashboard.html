@@ -647,7 +647,7 @@
     #reportMeta .rm-hint { color: var(--c-9aa4b2); font-size: 12px; margin: 0 0 10px; }
     #reportMeta .rm-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 12px; margin-bottom: 8px; }
     #reportMeta label { display: block; font-size: 12px; color: var(--c-9aa4b2); margin-bottom: 8px; }
-    #reportMeta input, #reportMeta textarea { width: 100%; box-sizing: border-box; margin-top: 3px;
+    #reportMeta input, #reportMeta textarea, #reportMeta select { width: 100%; box-sizing: border-box; margin-top: 3px;
       background: var(--c-0f1115); color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 6px;
       font-family: inherit; font-size: 13px; }
     #reportMeta textarea { resize: vertical; }
@@ -1132,6 +1132,7 @@
         <button class="stab" data-stab="integrations">Integrations</button>
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
         <button class="stab" data-stab="whitelist">IOC Whitelist</button>
+        <button class="stab" data-stab="reports">Report Templates</button>
       </div>
 
       <!-- General -->
@@ -1553,6 +1554,59 @@
         </div>
       </div>
 
+      <!-- Report Templates (#60) — global branded report layouts -->
+      <div class="stab-pane" id="stab-reports">
+        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+          Branded report layouts — <strong>accent colour, cover title/subtitle, running header &amp; footer, and which
+          sections appear</strong>. Global (shared across cases); pick one per case in <em>Case Details</em>.
+          Built-ins are editable in place — <em>Reset</em> restores the shipped default.
+        </div>
+        <div class="sfield">
+          <label>Template <span class="sfield-hint" style="display:inline">— pick one to edit, or create a new one</span></label>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <select id="rtPicker" style="flex:1 1 220px"></select>
+            <button id="rtNewBtn" type="button" style="background:#2a2f3a">✚ New</button>
+          </div>
+        </div>
+
+        <div class="rm-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px 12px;margin-bottom:8px">
+          <label>Name <input id="rtName" placeholder="Client Deliverable" /></label>
+          <label>Accent colour
+            <span style="display:flex;gap:6px;align-items:center">
+              <input id="rtAccentPick" type="color" value="#2d6cdf" style="width:42px;padding:0;height:30px" />
+              <input id="rtAccent" placeholder="#2d6cdf" style="flex:1" />
+            </span>
+          </label>
+        </div>
+        <label style="display:block">Description <input id="rtDescription" placeholder="What this layout is for" /></label>
+        <div class="rm-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px 12px;margin:8px 0">
+          <label>Cover title <input id="rtCoverTitle" placeholder="Incident Investigation Report" /></label>
+          <label>Cover subtitle <input id="rtCoverSubtitle" placeholder="{{organization}}" /></label>
+          <label>Running header <input id="rtHeaderText" placeholder="{{companyName}} — Confidential" /></label>
+          <label>Footer / banner <input id="rtFooterText" placeholder="{{restrictions}}" /></label>
+        </div>
+        <div style="display:flex;gap:16px;margin:4px 0 6px">
+          <label class="rm-check" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="rtShowLogo" checked style="width:auto" /> Show company logo</label>
+          <label class="rm-check" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="rtShowCompanyName" checked style="width:auto" /> Show company name</label>
+        </div>
+        <div style="font-size:11px;color:#7e8aa0;margin-bottom:8px">
+          Placeholders (filled from Case Details): <code>{{organization}}</code> <code>{{companyName}}</code>
+          <code>{{incidentId}}</code> <code>{{restrictions}}</code> <code>{{investigators}}</code>
+          <code>{{date}}</code> <code>{{caseId}}</code> · conditionals: <code>{{#if incidentId}}…{{/if}}</code>
+        </div>
+
+        <div class="sfield">
+          <label>Sections <span class="sfield-hint" style="display:inline">— check to include · ▲▼ to reorder</span></label>
+          <div id="rtSections" style="max-height:230px;overflow:auto;border:1px solid #2a2f3a;border-radius:6px;padding:4px"></div>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+          <button id="rtSaveBtn" type="button">Save template</button>
+          <button id="rtDeleteBtn" type="button" style="background:#5a2a2a">Delete</button>
+          <span id="rtMsg" class="manual-msg"></span>
+        </div>
+      </div>
+
       <div class="settings-footer">
         <button id="settingsSaveBtn">Save</button>
         <button id="settingsCloseBtn" style="background:var(--c-2a2f3a);">Close</button>
@@ -1908,6 +1962,9 @@
       <h2>Case Details (for the generated report)</h2>
       <div id="reportMeta">
         <p class="rm-hint">Human-authored sections of the incident report (AnttiKurittu template). Saved per case and merged into <code>report.md</code> when you click <em>Generate Report</em>. Leave a field blank to use the auto-derived value or a "to be completed" placeholder.</p>
+        <label>Report template <span class="sfield-hint" style="display:inline">— branding &amp; section layout for this case's report (manage in Settings → Report Templates)</span>
+          <select id="rm-reportTemplate"></select>
+        </label>
         <div class="rm-grid">
           <label>Company name (optional — your firm, shown on the report) <input id="rm-companyName" placeholder="Acme DFIR" /></label>
           <label>Organization (the investigated org) <input id="rm-organization" /></label>
@@ -5901,6 +5958,7 @@
       loadLegitimate(caseId);
       loadScope(caseId);
       loadReportMeta(caseId);
+      loadCaseTemplatePicker(caseId);
       loadAssetGraph(caseId);
       loadAssetOverrides(caseId);
       loadEvidenceGraph(caseId);
@@ -7389,6 +7447,15 @@
       } catch { /* network/404 — server likely stale */ }
     });
     // IOC whitelist controls
+    // Report-template editor wiring (#60)
+    document.getElementById("rtPicker").addEventListener("change", e => rtFillEditor(e.target.value));
+    document.getElementById("rtNewBtn").addEventListener("click", () => { document.getElementById("rtPicker").value = ""; rtFillEditor(""); document.getElementById("rtName").focus(); });
+    document.getElementById("rtSaveBtn").addEventListener("click", rtSave);
+    document.getElementById("rtDeleteBtn").addEventListener("click", rtDelete);
+    document.getElementById("rtAccentPick").addEventListener("input", e => { document.getElementById("rtAccent").value = e.target.value; });
+    document.getElementById("rtAccent").addEventListener("change", e => { try { document.getElementById("rtAccentPick").value = e.target.value.trim(); } catch (err) {} });
+    document.getElementById("rm-reportTemplate").addEventListener("change", saveCaseTemplate);
+
     document.getElementById("wlAddBtn").addEventListener("click", wlAddRule);
     document.getElementById("wlPattern").addEventListener("keydown", e => { if (e.key === "Enter") wlAddRule(); });
     document.getElementById("wlImportBtn").addEventListener("click", wlImport);
@@ -7416,8 +7483,162 @@
         document.querySelectorAll(".stab").forEach(b => b.classList.toggle("active", b === btn));
         document.querySelectorAll(".stab-pane").forEach(p => p.classList.toggle("active", p.id === "stab-" + tab));
         if (tab === "whitelist") loadWhitelist();
+        if (tab === "reports") loadReportTemplates();
       });
     });
+
+    // --- Report Templates (#60) — global branded report layouts, Settings → Report Templates ----
+    // Section keys + labels mirror REPORT_SECTION_DEFS in reportTemplate.ts (the server is the source
+    // of truth; this is just the editor UI). The order here is the canonical default order.
+    const RT_SECTIONS = [
+      ["titlePage", "Title / cover page"],
+      ["reportMetadata", "1 · Report metadata"],
+      ["executiveSummary", "2 · Executive summary"],
+      ["businessImpact", "2.1 · Business Impact Analysis"],
+      ["investigationLimitations", "2.2 · Investigation limitations"],
+      ["investigationGoals", "2.3 · Investigation goals & targets"],
+      ["glossary", "2.4 · Glossary of terms"],
+      ["timeline", "3 · Timeline of events"],
+      ["investigation", "4 · Investigation"],
+      ["conclusions", "5 · Conclusions & recommendations"],
+      ["playbook", "Response Playbook"],
+      ["notebook", "Analyst Notebook"],
+    ];
+    const RT_LABELS = Object.fromEntries(RT_SECTIONS);
+    let rtTemplates = [];          // last fetched list of templates
+    let rtCurrentId = "";          // id of the template being edited ("" = new/unsaved)
+    let rtEditSections = [];       // [{ key, enabled }] for the editor, ordered
+
+    function loadReportTemplates(selectId) {
+      return fetch("/report-templates").then(r => r.ok ? r.json() : []).then(list => {
+        rtTemplates = Array.isArray(list) ? list : [];
+        const picker = document.getElementById("rtPicker");
+        picker.innerHTML = rtTemplates.map(t =>
+          `<option value="${escAttr(t.id)}">${esc(t.name || t.id)}${t.builtIn ? (t.customized ? " (built-in, edited)" : " (built-in)") : ""}</option>`
+        ).join("") + `<option value="">✚ New custom template…</option>`;
+        const pick = selectId !== undefined ? selectId : (rtTemplates.some(t => t.id === rtCurrentId) ? rtCurrentId : (rtTemplates[0] ? rtTemplates[0].id : ""));
+        picker.value = pick;
+        rtFillEditor(pick);
+      }).catch(() => {});
+    }
+
+    function rtFindTemplate(id) { return rtTemplates.find(t => t.id === id); }
+
+    // Populate the editor form from a template (or blank defaults for a new one).
+    function rtFillEditor(id) {
+      const t = rtFindTemplate(id);
+      rtCurrentId = t ? t.id : "";
+      const v = (elId, val) => { document.getElementById(elId).value = val == null ? "" : val; };
+      v("rtName", t ? t.name : "");
+      v("rtDescription", t ? t.description : "");
+      const accent = (t && t.accentColor) || "#2d6cdf";
+      v("rtAccent", accent);
+      try { document.getElementById("rtAccentPick").value = accent; } catch (e) {}
+      v("rtCoverTitle", t ? t.coverTitle : "Incident Investigation Report");
+      v("rtCoverSubtitle", t ? t.coverSubtitle : "");
+      v("rtHeaderText", t ? t.headerText : "");
+      v("rtFooterText", t ? t.footerText : "");
+      document.getElementById("rtShowLogo").checked = t ? t.showLogo !== false : true;
+      document.getElementById("rtShowCompanyName").checked = t ? t.showCompanyName !== false : true;
+      // Sections: start from the template's order (full coverage guaranteed server-side) or the default.
+      const src = (t && Array.isArray(t.sections) && t.sections.length) ? t.sections : RT_SECTIONS.map(([key]) => ({ key, enabled: true }));
+      rtEditSections = src.filter(s => RT_LABELS[s.key]).map(s => ({ key: s.key, enabled: s.enabled !== false }));
+      // Append any missing canonical key (enabled), mirroring normalizeSections.
+      for (const [key] of RT_SECTIONS) if (!rtEditSections.some(s => s.key === key)) rtEditSections.push({ key, enabled: true });
+      const del = document.getElementById("rtDeleteBtn");
+      del.textContent = t && t.builtIn ? "Reset to default" : "Delete";
+      del.style.display = t ? "" : "none";
+      document.getElementById("rtSaveBtn").textContent = t && t.builtIn ? "Save (override built-in)" : "Save template";
+      document.getElementById("rtMsg").textContent = "";
+      rtRenderSections();
+    }
+
+    function rtRenderSections() {
+      const el = document.getElementById("rtSections");
+      el.innerHTML = rtEditSections.map((s, i) =>
+        `<div style="display:flex;align-items:center;gap:8px;padding:3px 4px;border-bottom:1px solid #1a1f28;font-size:12px">`
+        + `<input type="checkbox" class="rt-sec-en" data-i="${i}" ${s.enabled ? "checked" : ""} style="width:auto;margin:0" />`
+        + `<span style="flex:1;${s.enabled ? "" : "color:#7e8aa0"}">${esc(RT_LABELS[s.key] || s.key)}</span>`
+        + `<button type="button" class="rt-sec-up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""} style="background:#2a2f3a;border:none;color:#cbd3df;border-radius:4px;padding:0 7px;cursor:pointer">▲</button>`
+        + `<button type="button" class="rt-sec-down" data-i="${i}" title="Move down" ${i === rtEditSections.length - 1 ? "disabled" : ""} style="background:#2a2f3a;border:none;color:#cbd3df;border-radius:4px;padding:0 7px;cursor:pointer">▼</button>`
+        + `</div>`
+      ).join("");
+      el.querySelectorAll(".rt-sec-en").forEach(cb => cb.addEventListener("change", e => {
+        rtEditSections[+e.target.dataset.i].enabled = e.target.checked; rtRenderSections();
+      }));
+      el.querySelectorAll(".rt-sec-up").forEach(b => b.addEventListener("click", e => rtMoveSection(+e.currentTarget.dataset.i, -1)));
+      el.querySelectorAll(".rt-sec-down").forEach(b => b.addEventListener("click", e => rtMoveSection(+e.currentTarget.dataset.i, 1)));
+    }
+
+    function rtMoveSection(i, dir) {
+      const j = i + dir;
+      if (j < 0 || j >= rtEditSections.length) return;
+      const tmp = rtEditSections[i]; rtEditSections[i] = rtEditSections[j]; rtEditSections[j] = tmp;
+      rtRenderSections();
+    }
+
+    function rtSave() {
+      const name = document.getElementById("rtName").value.trim();
+      const msg = document.getElementById("rtMsg");
+      if (!name) { msg.textContent = "name is required"; return; }
+      const body = {
+        id: rtCurrentId || undefined,
+        name,
+        description: document.getElementById("rtDescription").value.trim(),
+        accentColor: document.getElementById("rtAccent").value.trim(),
+        coverTitle: document.getElementById("rtCoverTitle").value,
+        coverSubtitle: document.getElementById("rtCoverSubtitle").value,
+        headerText: document.getElementById("rtHeaderText").value,
+        footerText: document.getElementById("rtFooterText").value,
+        showLogo: document.getElementById("rtShowLogo").checked,
+        showCompanyName: document.getElementById("rtShowCompanyName").checked,
+        sections: rtEditSections,
+      };
+      msg.textContent = "saving…";
+      fetch("/report-templates", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(saved => { msg.textContent = "saved ✓"; setTimeout(() => msg.textContent = "", 2000); loadReportTemplates(saved.id); refreshCaseTemplatePicker(); })
+        .catch(e => msg.textContent = "save failed: " + e.message + " — restart the companion server if this 404s");
+    }
+
+    function rtDelete() {
+      if (!rtCurrentId) return;
+      const t = rtFindTemplate(rtCurrentId);
+      const msg = document.getElementById("rtMsg");
+      const verb = t && t.builtIn ? "Reset this built-in template to its shipped default?" : "Delete this template?";
+      if (!confirm(verb)) return;
+      msg.textContent = "…";
+      fetch("/report-templates/" + encodeURIComponent(rtCurrentId), { method: "DELETE" })
+        .then(r => { if (!r.ok && r.status !== 204) throw new Error("HTTP " + r.status); rtCurrentId = ""; loadReportTemplates(); refreshCaseTemplatePicker(); msg.textContent = ""; })
+        .catch(e => msg.textContent = "failed: " + e.message);
+    }
+
+    // --- Per-case report-template picker (in Case Details) -------------------------------
+    function refreshCaseTemplatePicker() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (caseId) loadCaseTemplatePicker(caseId);
+    }
+    function loadCaseTemplatePicker(caseId) {
+      const sel = document.getElementById("rm-reportTemplate");
+      if (!sel) return;
+      Promise.all([
+        fetch("/report-templates").then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`/cases/${encodeURIComponent(caseId)}/report-template`).then(r => r.ok ? r.json() : { templateId: "standard" }).catch(() => ({ templateId: "standard" })),
+      ]).then(([list, ctrl]) => {
+        const templates = Array.isArray(list) ? list : [];
+        sel.innerHTML = templates.map(t => `<option value="${escAttr(t.id)}">${esc(t.name || t.id)}</option>`).join("");
+        // If the saved selection was since deleted, show the default (the report already falls back to it).
+        const want = ctrl.templateId || "standard";
+        sel.value = templates.some(t => t.id === want) ? want : "standard";
+      });
+    }
+    function saveCaseTemplate() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const templateId = document.getElementById("rm-reportTemplate").value;
+      fetch(`/cases/${encodeURIComponent(caseId)}/report-template`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ templateId }) })
+        .catch(() => {});
+    }
 
     // --- IOC Whitelist (Phase 2 of #35) — global known-good patterns, Settings → IOC Whitelist ----
     function renderWhitelist(rules) {
