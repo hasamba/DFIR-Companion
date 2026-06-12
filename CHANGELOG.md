@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Telegram notifications** — Telegram bot channel for findings/playbook/milestone notifications; configure via bot token + chat ID in Settings → Notifications (closes #75).
+
 ## [0.19.0] - 2026-06-12
 
 ### Added
