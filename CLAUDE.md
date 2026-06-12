@@ -127,8 +127,17 @@ domains / originating IP (`X-Originating-IP` or earliest external `Received` hop
 MITRE T1566 (+`.001` attachment, +`.002` link). The dependency-free `parseMimeEmail` hand-rolls MIME (header
 unfolding, RFC 2047 encoded-words, multipart walk, base64/quoted-printable bodies) — no `mailparser`. `.msg` is
 BEST-EFFORT: the import pipeline is text-only, so the binary OLE container is scraped for its embedded RFC 822
-transport-headers stream + URLs (export `.eml` for full fidelity); reuses `siemImport`'s `addIoc`/`cleanIp`).
-The last fourteen
+transport-headers stream + URLs (export `.eml` for full fidelity); reuses `siemImport`'s `addIoc`/`cleanIp`),
+and **memory forensics** (`importMemory` → `memoryImport.ts` — **Volatility 3** JSON renderer (an array of row
+objects, the `pstree` tree nested under `__children`; also JSONL + a combined `{ "<plugin>": [rows] }` map) and
+**Rekall** JSON (`[directive, payload]` statement list — best-effort, its `_EPROCESS` cells are object-laden). Each
+plugin table is identified by its **columns** (not a re-implementation of the tool) and mapped per category:
+pslist/psscan/pstree → process-tree events (parent→child links, `CreateTime`), netscan/netstat → connection events
+(+ foreign IP/port IOCs, external ESTABLISHED→Low), **malfind → High injected-code (T1055)**, cmdline → command-line
+events (bumped on LOLBin/encoded tradecraft via the exported `isSuspiciousCmd`), svcscan/modules/driverscan →
+service/driver evidence; dlllist/handles are IOC-only/dropped to stay signal-rich. Tagged **Volatility**/**Rekall**;
+reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`/`genericIocs` and reads the artifact's own time).
+The last fifteen
 are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
@@ -189,7 +198,13 @@ actors above ones sharing only the broad technique, while breadth (`overlapCount
 hypothesis fuel, NOT attribution (every hint carries the group's total technique count so a diffuse 4-of-150
 reads differently from a focused 4-of-12, and the caveat is shown everywhere). `ReportWriter.adversaryHints` →
 `GET /cases/:id/adversary-hints`, dashboard *Adversary Hints* panel + report §4.6.1; thresholds
-`DFIR_ADVERSARY_MIN_OVERLAP`/`DFIR_ADVERSARY_TOP_N`. Side files in `state/`:
+`DFIR_ADVERSARY_MIN_OVERLAP`/`DFIR_ADVERSARY_TOP_N`. The **mobile companion summary**
+(`analysis/mobileSummary.ts`, pure) is the same shape: a compact, READ-ONLY projection of the (scope/legit-filtered)
+state for the phone PWA — findings worst-first, events most-severe-then-most-recent, IOCs flagged-first with their
+worst threat-intel verdict, plus severity/entity counts; heavy lists capped (`DFIR_MOBILE_MAX_FINDINGS`/`_EVENTS`/`_IOCS`)
+with a pre-cap `total` so the UI shows "N of M". `ReportWriter.mobileSummary` → `GET /cases/:id/mobile-summary`, served
+as the installable PWA at **`/mobile`** (`public/mobile.html` + `manifest.webmanifest` + `sw.js`; routes in `server.ts`
+next to `/dashboard`). Read-only — no editing, no AI. Side files in `state/`:
 `ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (per-source enrichment
 selection — the enabled provider names; **default = local-only** (MISP/YETI), external opt-in),
 `pending_analysis.json`, `report-meta.json` (human-authored report
@@ -207,6 +222,19 @@ save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
 `LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `ImportMetaStore`, `PlaybookStore`, `PlaybookControlStore`. Pure filters/transforms live next to
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`, `diffFindings`, `diffTimeline`, `diffIocs`) and are unit-tested independently of I/O.
+
+**Investigation snapshot (portable case export/import, #56).** `GET /cases/:id/export/snapshot` bundles a
+case into ONE shareable JSON — case meta + the **allowlisted** `state/*.json` files + evidence *references*
+(capture/import audit rows, no bytes) + headline counts — and `POST /snapshots/import` restores it as a NEW
+case on another machine (`{ snapshot, targetCaseId? }`; 409 on id collision, 400 on a non-snapshot). Pure rules
+in `analysis/snapshot.ts` (`buildSnapshot`/`parseSnapshot`/`prepareImport` + `SNAPSHOT_STATE_FILES` allowlist),
+I/O in `analysis/snapshotIo.ts`. The allowlist is the trust boundary, applied on BOTH export and import: it
+carries investigation data + analyst decisions only — **no AI keys** (they live in `.env`, never in case state)
+and **no machine/account config** (`ai-control`, `enrich-control` (external-enrichment opt-in stays off so the
+recipient re-opts-in), `notion`/`clickup-export` ids, `velo-hunt` jobs, the anon maps, `pending_analysis` are
+excluded). **When you add a new per-case store, decide if it belongs in `SNAPSHOT_STATE_FILES`** — investigation
+data/analyst decisions go in; anything machine/account/transient stays out (the allowlist means a new store is
+NOT shared until deliberately added, so nothing leaks by default).
 
 **Threat-intel enrichment** (`enrichment/`): `EnrichmentProvider`s (VirusTotal, Hunting.ch,
 CrowdStrike, AbuseIPDB, MISP, YETI, RockyRaccoon) look up IOCs by kind; `enrichService.ts` routes/

@@ -7,11 +7,15 @@
 // The detected kind is shown back to the analyst, so a mis-route is visible, not silent.
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
+import { isRekallCommandList } from "./memoryImport.js";
 import { parseCsv } from "./csvImport.js";
+import { looksLikeJournald } from "./journaldImport.js";
+import { looksLikeSysdig } from "./sysdigImport.js";
 
 export type ImportKind =
   | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "network"
-  | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "email" | "csv" | "log" | "unknown";
+  | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
+  | "auditd" | "journald" | "sysdig" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -126,8 +130,32 @@ function isSiem(s: Row): boolean {
     !!getCI(s, "log_name") || !!getCI(s, "Channel") || !!getCI(s, "channel") ||
     !!getCI(s, "@timestamp") || !!getCI(s, "message") || !!getCI(s, "_source");
 }
+// Volatility 3 JSON renderer rows: the TreeGrid tags every node with `__children`, and the columns
+// are distinctive (ImageFileName+PID+PPID = pslist/psscan/pstree; LocalAddr+ForeignAddr = netscan;
+// Protection+Tag/Disasm = malfind). Specific enough to claim ahead of the `message`-less SIEM
+// fallback (a memory dump has no @timestamp/message/channel, so isSiem misses it).
+function isVolatility(s: Row): boolean {
+  const hasChildren = Object.prototype.hasOwnProperty.call(s, "__children");
+  if (hasChildren && (getCI(s, "PID") != null || getCI(s, "ImageFileName") != null || getCI(s, "Process") != null)) return true;
+  if (getCI(s, "ImageFileName") != null && getCI(s, "PID") != null && getCI(s, "PPID") != null) return true;
+  if (getCI(s, "LocalAddr") != null && getCI(s, "ForeignAddr") != null) return true;
+  if (getCI(s, "Protection") != null && getCI(s, "PID") != null &&
+      (getCI(s, "Tag") != null || getCI(s, "Disasm") != null || getCI(s, "Hexdump") != null)) return true;
+  return false;
+}
+// A combined Volatility export `{ "windows.pslist.PsList": [rows], … }` — every value an array, a
+// key led by a lowercase OS prefix (Velociraptor artifact maps use a capitalized "Windows.", so the
+// case disambiguates). Checked before the Velociraptor artifact-map signature, which it would match.
+function isVolatilityMap(root: unknown): boolean {
+  if (!isObject(root) || Array.isArray(root)) return false;
+  const entries = Object.entries(root);
+  return entries.length > 0 &&
+    entries.every(([, v]) => Array.isArray(v)) &&
+    entries.some(([k]) => /^(windows|linux|mac)\.[a-z]/.test(k));
+}
 
 function detectJson(root: unknown, sample: Row): ImportKind {
+  if (isVolatilityMap(root)) return "memory";
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";
   if (isGcp(sample)) return "cloud";
@@ -138,6 +166,11 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isHayabusaJson(sample)) return "hayabusa";
   if (isCybertriage(sample)) return "cybertriage";
   if (isNetwork(sample)) return "network";
+  if (isVolatility(sample)) return "memory";
+  // Linux runtime/host sources — before the THOR/SIEM catch-alls. journald entries carry a
+  // `MESSAGE` field that the case-insensitive SIEM `message` check would otherwise claim.
+  if (looksLikeSysdig(sample)) return "sysdig";
+  if (looksLikeJournald(sample)) return "journald";
   if (isThor(sample)) return "thor";
   if (isSiem(sample)) return "siem";
   return "siem"; // any other event-shaped JSON → the SIEM importer's field auto-detection
@@ -228,6 +261,16 @@ function looksLikeVelociraptorFile(filename: string): boolean {
   return /velociraptor/i.test(n) || VR_ARTIFACT.test(n);
 }
 
+// ───────────────────────────── auditd (line-oriented) ─────────────────────────────
+
+// Linux auditd records ("type=SYSCALL msg=audit(1490451217.272:270): …") — the raw audit.log /
+// `ausearch` format. The `type=… msg=audit(secs.millis:serial)` shape is unique to auditd, so one
+// matching line anywhere in the head is enough to claim it ahead of the generic log fallback.
+const RE_AUDITD = /(?:^|\n)\s*type=\w+\s+msg=audit\(\d+\.\d+:\d+\)/;
+function isAuditd(text: string): boolean {
+  return RE_AUDITD.test(text.slice(0, 8000));
+}
+
 // ───────────────────────────── top-level ─────────────────────────────
 
 export function detectImportKind(filename: string, text: string): ImportKind {
@@ -242,6 +285,9 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // JSON / NDJSON.
   if (t[0] === "{" || t[0] === "[") {
     const { root, sample } = jsonSample(t);
+    // Rekall's JSON renderer is a list of [directive, payload] statements (arrays, not objects), so
+    // jsonSample finds no representative object — detect it from the root shape first.
+    if (isRekallCommandList(root)) return "memory";
     if (sample) return vrHint(detectJson(root, sample));
     return "unknown"; // looked like JSON but unparseable / not an object
   }
@@ -251,6 +297,10 @@ export function detectImportKind(filename: string, text: string): ImportKind {
     const { root, sample } = jsonSample(t);
     if (sample) return vrHint(detectJson(root, sample));
   }
+
+  // Linux auditd records (line-oriented `type=… msg=audit(…)`) — checked before the email/CSV/log
+  // fallback; the audit-record shape is unique enough to claim directly.
+  if (isAuditd(t)) return "auditd";
 
   // Email artifact (.eml RFC 822 header block, or a best-effort .msg) — checked before the
   // CSV/log fallback so a header-block email isn't mistaken for a line-oriented log.

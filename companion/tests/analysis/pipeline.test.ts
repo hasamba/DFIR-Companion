@@ -185,6 +185,45 @@ describe("AnalysisPipeline", () => {
     expect(b.pointer).toContain("egress");
   });
 
+  it("suggestHunts proposes fleet-hunts from findings and pivots on the case's real indicators", async () => {
+    const seeded = emptyState("c1");
+    seeded.findings.push({ id: "f1", severity: "Critical", title: "Webshell on WEB01", description: "ASPX webshell in web root",
+      relatedIocs: ["i1"], mitreTechniques: ["T1505.003"], sourceScreenshots: [], firstSeen: "2026-05-20T09:00:00Z", lastUpdated: "2026-05-20T09:00:00Z", status: "open" });
+    seeded.iocs.push({ id: "i1", type: "file", value: "C:\\inetpub\\wwwroot\\shell.aspx", firstSeen: "2026-05-20T09:00:00Z" });
+    await stateStore.save(seeded);
+
+    let sentPrompt = "";
+    const provider = {
+      name: "spy",
+      analyze: async (req: { userPrompt: string; systemPrompt: string }) => {
+        sentPrompt = req.userPrompt;
+        return { rawText: JSON.stringify({ suggestions: [
+          { title: "Hunt ASPX webshells fleet-wide", rationale: "spread check", vql: "SELECT FullPath FROM glob(globs='C:/inetpub/wwwroot/**/*.aspx')", severity: "High", mitreTechniques: ["T1505.003"], relatedFindingIds: ["f1"] },
+          { title: "", rationale: "no title", vql: "SELECT 1 FROM scope()", severity: "Low", mitreTechniques: [], relatedFindingIds: [] }, // dropped by sanitizer
+        ] }) };
+      },
+    };
+    const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+
+    const hunts = await pipeline.suggestHunts("c1");
+    expect(hunts).toHaveLength(1);                              // the title-less one is dropped
+    expect(hunts[0].vql).toContain("glob");
+    expect(hunts[0].relatedFindingIds).toContain("f1");
+    expect(sentPrompt).toContain("Webshell on WEB01");          // finding fed to the model
+    expect(sentPrompt).toContain("shell.aspx");                 // pivotable IOC fed to the model
+  });
+
+  it("suggestHunts returns [] without an AI call on an empty case", async () => {
+    await stateStore.save(emptyState("c1"));
+    let called = false;
+    const provider = { name: "spy", analyze: async () => { called = true; return { rawText: "{}" }; } };
+    const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+
+    const hunts = await pipeline.suggestHunts("c1");
+    expect(hunts).toEqual([]);
+    expect(called).toBe(false);                                // no findings/events → no spend
+  });
+
   it("synthesis preserves analyst-pinned questions even when the model omits them", async () => {
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "x", severity: "High",
