@@ -157,6 +157,19 @@ lateral movement). Surfaced in **Settings → IOC Whitelist** (CRUD + CSV/JSON i
 not a loose sibling of `cases/` — when `DFIR_CASES_ROOT` is a drive-root child (`C:\cases`) the sibling is `C:\`, where
 Windows forbids creating files.
 
+**NSRL known-good hashes (#63).** Same shape as the whitelist, but a known-software **hash set** rather than patterns.
+A GLOBAL store (`NsrlStore`, `nsrl/known-hashes.txt` next to `cases/`) holds the NIST NSRL / RDS hashes as a compact
+newline-delimited, normalized file loaded into an in-memory `Set` (cached, since the set can have millions of entries and
+the per-import sweep loads it each time). The pure logic (`analysis/nsrl.ts` — `normalizeHash` (MD5/SHA-1/SHA-256 only),
+`parseNsrlText` (NSRLFile.txt RDS CSV / hashdeep CSV / plain hash list), `nsrlMatchIocs`/`nsrlMatchEvents`) is unit-tested
+without I/O. A forensic **event** whose `sha256`/`md5` — or an **IOC** of type hash whose value — is in the set is a
+**known-good file, auto-marked LEGITIMATE** (event → `event` marker by id so the raw evidence is preserved + reversible;
+IOC → `ioc` marker), cutting false positives. Applied in the `/import` route's `.then()` BEFORE re-synthesis (alongside
+the whitelist apply) and on demand via `POST /cases/:id/nsrl/apply`. Opt-in: the set starts empty (NSRL is "known", not
+strictly "known-good" — some RDS sets include hacktools; a known hash can still be malicious in context). Surfaced in
+**Settings → NSRL** (paste import / export / clear / apply); large RDS files pre-load at startup from `DFIR_NSRL_FILE`
+(`;`-separated paths, fire-and-forget, idempotent). Same SUBDIR-not-sibling rationale as the whitelist.
+
 **Cross-source correlation runs in `mergeDelta`** (`correlate.ts`): events describing the
 same artifact collapse into one — by exact dup (time+description, so re-imports don't
 double), shared hash, or same path within a time window. The merged event unions `sources`

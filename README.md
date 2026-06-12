@@ -187,6 +187,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Triage tags & comments** — label any entity (`confirmed-malicious`, `false-positive`, …) and attach notes; synced live over WebSocket; survive synthesis.
 - **Bulk actions** — multi-select timeline events or IOCs and star / tag / mark-legitimate / (IOCs) enrich or copy — each one batched write + a single re-synthesis.
 - **IOC whitelist** (Settings) — persistent known-good patterns (CIDR / exact / regex) auto-mark matching IOCs legitimate on import; global, CSV/JSON import-export; opt-in.
+- **NSRL known-good hashes** (Settings) — a NIST NSRL / RDS hash set auto-marks matching forensic events + IOCs legitimate on import (reversible) to cut false positives; paste an `NSRLFile.txt` / hashdeep CSV / hash list or pre-load via `DFIR_NSRL_FILE`; global, opt-in.
 - **IOC corroboration** — a **⊕ N** badge per IOC for how many distinct tools observed it (panel, report, CSV).
 - **IOC flagged-only filter** — one click hides everything except indicators a threat-intel engine rated malicious/suspicious.
 - **Hunt-pivot generator** — one click on any event/IOC emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, and Suricata queries; offline, no AI.
