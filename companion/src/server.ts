@@ -85,7 +85,7 @@ import { diffIocs } from "./analysis/iocsDiff.js";
 import { mergeEnrichedSubset } from "./analysis/iocBulkOps.js";
 import { IocWhitelistStore } from "./analysis/iocWhitelistStore.js";
 import { whitelistMatches, parseWhitelistText, toWhitelistCsv, sanitizeRuleInput } from "./analysis/iocWhitelist.js";
-import { NsrlStore } from "./analysis/nsrlStore.js";
+import { NsrlStore, ingestNsrlFiles, splitNsrlPaths } from "./analysis/nsrlStore.js";
 import { parseNsrlText, nsrlMatchIocs, nsrlMatchEvents } from "./analysis/nsrl.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
@@ -2164,6 +2164,29 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Load known-good hashes from file(s) on the SERVER's filesystem — the in-UI equivalent of
+  // DFIR_NSRL_FILE, for big RDS sets you don't want to paste. Body: { path } (a file path, or several
+  // `;`-separated). Best-effort per file (a bad path is reported, not fatal). Loaded hashes persist in
+  // the store, so unlike the env var this is a one-shot — no restart, and it survives one. Returns
+  // { added, total, files[] }. Localhost-only tool: reading a path the operator typed is intended
+  // (same trust as the env var); the response carries counts + errors only, never file contents.
+  app.post("/nsrl/import-file", async (req: Request, res: Response) => {
+    if (!options.nsrlStore) return res.status(501).json({ error: "NSRL store not configured" });
+    const paths = splitNsrlPaths(typeof req.body?.path === "string" ? req.body.path : "");
+    if (paths.length === 0) return res.status(400).json({ error: "path is required (a file on the server; ; -separated for multiple)" });
+    try {
+      const files = await ingestNsrlFiles(options.nsrlStore, paths);
+      for (const r of files) logLine(r.error ? `[nsrl] could not load ${r.file}: ${r.error}` : `[nsrl] loaded ${r.file} — +${r.added} new (${r.total} total known-good hashes)`);
+      const added = files.reduce((n, r) => n + r.added, 0);
+      const total = await options.nsrlStore.count();
+      // All paths failed → 400 (nothing loaded), like the paste import's no-valid-hashes 400.
+      const allFailed = files.every((r) => r.error);
+      return res.status(allFailed ? 400 : 200).json({ added, total, files });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Wipe the set (e.g. swapping in a different RDS release).
   app.post("/nsrl/clear", async (_req: Request, res: Response) => {
     if (!options.nsrlStore) return res.status(501).json({ error: "NSRL store not configured" });
@@ -4136,20 +4159,18 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // whitelist). Optionally pre-loaded at startup from file(s) named in DFIR_NSRL_FILE (; separated):
   // an NSRLFile.txt RDS export, a hashdeep CSV, or a plain hash-per-line list. Ingest is idempotent.
   const nsrlStore = new NsrlStore(join(dirname(casesRoot), "nsrl", "known-hashes.txt"));
-  const nsrlFiles = (process.env.DFIR_NSRL_FILE ?? "").split(";").map((s) => s.trim()).filter(Boolean);
+  const nsrlFiles = splitNsrlPaths(process.env.DFIR_NSRL_FILE);
   if (nsrlFiles.length > 0) {
-    // Fire-and-forget (startServer is sync): ingest in the background. The set is opt-in and the
-    // auto-apply sweep loads it fresh, so a late finish just means later imports pick it up.
-    void (async () => {
-      for (const f of nsrlFiles) {
-        try {
-          const { added, total } = await nsrlStore.addMany(parseNsrlText(await readFile(f, "utf8")));
-          logLine(`[nsrl] loaded ${f} — +${added} new (${total} total known-good hashes)`);
-        } catch (err) {
-          logLine(`[nsrl] could not load ${f}: ${(err as Error).message}`);
-        }
+    // Fire-and-forget (startServer is sync): ingest in the background via the same helper the
+    // Settings → NSRL "Load from file" route uses. The set is opt-in and the auto-apply sweep loads
+    // it fresh, so a late finish just means later imports pick it up.
+    void ingestNsrlFiles(nsrlStore, nsrlFiles).then((results) => {
+      for (const r of results) {
+        logLine(r.error
+          ? `[nsrl] could not load ${r.file}: ${r.error}`
+          : `[nsrl] loaded ${r.file} — +${r.added} new (${r.total} total known-good hashes)`);
       }
-    })();
+    });
   }
   const veloHuntStore = new VeloHuntStore(store);
   const hub = new LiveHub();
