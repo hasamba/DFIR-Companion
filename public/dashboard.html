@@ -5892,6 +5892,10 @@
           document.getElementById("caseId").value = body.caseId;
           loadCaseList();
           connect();   // attach to the freshly imported case
+        } else if (res.status === 404) {
+          // Route missing → the running companion predates this feature. Loud restart hint (the
+          // server loads its code once at startup), matching the dashboard's stale-server convention.
+          status.textContent = "import failed: this companion is missing the snapshot endpoint — restart the companion server (it loads server code once at startup), then re-import";
         } else {
           status.textContent = "import failed: " + (body.error || ("HTTP " + res.status));
         }
