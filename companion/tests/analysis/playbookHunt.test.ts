@@ -10,6 +10,7 @@ import {
   sanitizePlaybookHuntSuggestions,
   renderPlaybookHuntTasks,
   renderKnownEndpoints,
+  renderAvailableArtifacts,
   hasPlaybookHuntMaterial,
   PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT,
   type RawPlaybookHuntSuggestion,
@@ -262,6 +263,26 @@ describe("renderKnownEndpoints", () => {
   it("joins the hosts, or notes none", () => {
     expect(renderKnownEndpoints(["WEB01", "DC02"])).toBe("WEB01, DC02");
     expect(renderKnownEndpoints([])).toContain("no endpoints observed");
+  });
+});
+
+describe("renderAvailableArtifacts", () => {
+  it("dedupes and notes when empty", () => {
+    expect(renderAvailableArtifacts(["Windows.EventLogs.Evtx", "Windows.EventLogs.Evtx", "Generic.System.Pstree"]))
+      .toBe("Windows.EventLogs.Evtx, Generic.System.Pstree");
+    expect(renderAvailableArtifacts([])).toContain("use raw VQL plugins only");
+  });
+
+  it("ranks Windows/DetectRaptor/Custom first and drops Admin/Server/Demo", () => {
+    const out = renderAvailableArtifacts(["Linux.Sys.X", "Admin.Client.Uninstall", "Windows.System.Pslist", "DetectRaptor.Windows.Detection.MFT", "Custom.DFIR.Y", "Generic.System.Pstree"]);
+    expect(out).not.toContain("Admin.Client.Uninstall");                 // dropped (never an endpoint hunt)
+    expect(out.indexOf("Windows.System.Pslist")).toBeLessThan(out.indexOf("Linux.Sys.X"));        // Windows before Linux
+    expect(out.indexOf("DetectRaptor.Windows.Detection.MFT")).toBeLessThan(out.indexOf("Custom.DFIR.Y")); // detect before custom
+  });
+
+  it("caps after ranking so the high-value artifacts survive", () => {
+    const out = renderAvailableArtifacts(["Linux.A", "Linux.B", "Windows.X"], 1);
+    expect(out).toBe("Windows.X");   // Windows wins the single slot despite coming last in the input
   });
 });
 

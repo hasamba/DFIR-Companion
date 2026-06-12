@@ -213,6 +213,40 @@ export function renderKnownEndpoints(known: readonly string[]): string {
   return known.length ? known.join(", ") : "(no endpoints observed in this case)";
 }
 
+// A server can define hundreds of CLIENT artifacts; the full list (alphabetical, so the `Windows.*`
+// ones sort LAST) would bloat the prompt and a naive cap would drop the most useful ones. Rank by DFIR
+// relevance so a small cap keeps the high-value artifacts. Admin/Server/Demo/Reporting are never
+// endpoint hunts → dropped.
+function artifactRelevanceRank(name: string): number {
+  if (/^(Admin|Server|Demo|Reporting|Notebooks|Github)\./i.test(name)) return 99;   // dropped
+  if (/^Windows\./i.test(name)) return 0;
+  if (/^DetectRaptor\./i.test(name)) return 1;
+  if (/^Custom\./i.test(name)) return 2;
+  if (/^(Generic|Exchange|Elastic)\./i.test(name)) return 3;
+  return 5;   // Linux./MacOS./other — kept, lower priority (most cases are Windows; raw plugins cover the rest)
+}
+
+// Render the Velociraptor server's available CLIENT artifact names for the prompt — the model may
+// reference an `Artifact.<Name>()` ONLY if <Name> is here; anything else won't exist on the server and
+// the hunt/collection fails to compile. Deduped, relevance-ranked, and capped (DFIR_PBHUNT_MAX_ARTIFACTS)
+// so the high-value artifacts survive a small cap and the prompt stays lean.
+export function renderAvailableArtifacts(names: readonly string[], max = 150): string {
+  const cap = Number.isFinite(max) && max > 0 ? Math.floor(max) : 150;
+  const seen = new Set<string>();
+  const ranked: Array<{ name: string; rank: number; i: number }> = [];
+  for (const n of names ?? []) {
+    const v = String(n ?? "").trim();
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    const rank = artifactRelevanceRank(v);
+    if (rank >= 99) continue;   // never an endpoint hunt
+    ranked.push({ name: v, rank, i: ranked.length });
+  }
+  ranked.sort((a, b) => (a.rank - b.rank) || (a.i - b.i));   // by relevance, stable within a rank
+  const out = ranked.slice(0, cap).map((r) => r.name);
+  return out.length ? out.join(", ") : "(artifact list unavailable — use raw VQL plugins only)";
+}
+
 // Whether the case has enough signal to ask the model for playbook hunts: at least one OPEN task,
 // plus some material to write VQL from (a live finding or a forensic event). Returns false on an
 // empty/closed playbook so the route returns [] without spending an AI call.

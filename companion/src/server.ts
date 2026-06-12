@@ -4271,15 +4271,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.playbookStore || !options.stateStore) return res.status(501).json({ error: "playbook not configured" });
     try {
       const tasks = await syncPlaybook(req.params.id);
-      // Refresh the Velociraptor client inventory IN PARALLEL with the AI call (best-effort, no-op when
-      // the API is off) so a client enrolled MID-INVESTIGATION is resolvable the moment the analyst
-      // deploys a collection (#70). Runs concurrently with the longer AI call, so it adds no latency;
-      // a refresh failure never blocks the suggestions (the collect route also refreshes lazily on a miss).
-      const [, suggestions] = await Promise.all([
+      // Concurrently (best-effort, no-op when the API is off): refresh the client inventory so a host
+      // enrolled MID-INVESTIGATION is resolvable at deploy time (#70), AND fetch the server's REAL
+      // CLIENT artifact names so the model only references artifacts that EXIST (a hallucinated
+      // Artifact.<Name> fails to compile). Both finish before the long AI call → no added latency.
+      const [, artifactNames] = await Promise.all([
         refreshVeloClients().catch((e) => { logLine(`[velociraptor] inventory refresh before suggestions failed: ${(e as Error).message}`); return 0; }),
-        options.pipeline.suggestPlaybookHunts(req.params.id, tasks),
+        options.velociraptorClient
+          ? options.velociraptorClient.listClientArtifacts().then((a) => a.map((x) => x.name)).catch(() => [] as string[])
+          : Promise.resolve([] as string[]),
       ]);
-      logLine(`[velociraptor] suggested ${suggestions.length} playbook hunt(s) for ${req.params.id}`);
+      const suggestions = await options.pipeline.suggestPlaybookHunts(req.params.id, tasks, artifactNames);
+      logLine(`[velociraptor] suggested ${suggestions.length} playbook hunt(s) for ${req.params.id} (${artifactNames.length} artifact(s) in scope)`);
       return res.status(200).json({ suggestions });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

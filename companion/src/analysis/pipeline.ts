@@ -62,6 +62,7 @@ import {
   knownEndpoints,
   renderPlaybookHuntTasks,
   renderKnownEndpoints,
+  renderAvailableArtifacts,
   hasPlaybookHuntMaterial,
   PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT,
   type PlaybookHuntSuggestion,
@@ -626,18 +627,18 @@ export const PLAYBOOK_HUNT_PROMPT = [
   "  that one client). If the task spans multiple hosts, or you are unsure which host, set `targetHost`",
   "  to \"\" (the server runs it as a fleet-wide HUNT across all endpoints). Never invent a hostname.",
   "- Each `vql` MUST be a SINGLE, self-contained, CLIENT-side Velociraptor VQL statement —",
-  "  one `SELECT … FROM <plugin>(…) WHERE …`. Use real Velociraptor plugins, e.g. glob(), stat(),",
-  "  pslist(), Artifact.Windows.System.Services, Artifact.Windows.Sys.Users, read_file(), hash(), yara(),",
-  "  Artifact.Windows.Registry.* . Velociraptor glob() uses FORWARD slashes. Do NOT put a blank line",
+  "  one `SELECT … FROM <plugin>(…) WHERE …`. glob() uses FORWARD slashes. Do NOT put a blank line",
   "  inside one query and do NOT make a query only a comment.",
-  "- Use each plugin's REAL argument names. parse_evtx() takes `filename=` (a path or glob), NOT",
-  "  `files=` — e.g. parse_evtx(filename='C:/Windows/System32/winevt/Logs/Security.evtx'). For Windows",
-  "  event-log hunts PREFER Velociraptor's own artifacts (Windows.EventLogs.* / Windows.Detection.*)",
-  "  over hand-writing parse_evtx, and access fields as `System.EventID.Value` / `EventData.<Name>`.",
-  "- PREFER raw VQL plugins — pslist(), netstat(), glob(), stat(), read_file(), hash(), yara() — over",
-  "  `Artifact.<Name>()` references: a hallucinated Artifact.<Name> fails to COMPILE and the collection",
-  "  never starts. Network connections → netstat(); processes → pslist(); files → glob(). Only reference",
-  "  an Artifact.<Name> you are sure exists on the server.",
+  "- STRONGLY PREFER raw VQL plugins — they ALWAYS exist: pslist(), netstat(), glob(), stat(),",
+  "  read_file(), hash(), yara(), parse_evtx(), reg_keys(). Network connections → netstat(); processes →",
+  "  pslist(); files → glob(); event logs → parse_evtx(filename='C:/Windows/System32/winevt/Logs/Security.evtx').",
+  "- You MAY reference an `Artifact.<Name>()` ONLY if <Name> appears EXACTLY in the AVAILABLE VELOCIRAPTOR",
+  "  ARTIFACTS list in the user message below. If <Name> is NOT in that list it does NOT exist on this",
+  "  server and the hunt FAILS TO COMPILE (no flow id) — use a raw plugin instead. NEVER invent an",
+  "  artifact name (e.g. Windows.EventLogs.Sysmon / .SecurityLog are NOT universal — check the list).",
+  "- Use each plugin's REAL argument names: parse_evtx() takes `filename=` (a path/glob), NOT `files=`;",
+  "  handles() takes `pid=`, NOT `process=`. Access EVTX fields as `System.EventID.Value` / `EventData.<Name>`.",
+  "- VQL has NO SQL `JOIN`. To correlate two plugins use foreach(row={ SELECT … FROM a() }, query={ SELECT … FROM b() }).",
   "- For an ABSOLUTE time use timestamp(string='2025-03-14T22:00:00Z'); epoch= takes unix SECONDS (a number).",
   "- Velociraptor VQL has NO duration-suffix literals. Do NOT write `30d`, `7h`, `2w`. Use seconds",
   "  arithmetic: `now() - 30 * 86400` (30 days), `now() - 3600` (1 hour). Wrap in `timestamp(epoch=...)`",
@@ -2034,7 +2035,7 @@ export class AnalysisPipeline {
   // deterministically from the case's observed endpoints: a task tied to exactly one host → a single
   // client COLLECTION on it; otherwise → a fleet HUNT. The playbook `tasks` are passed in by the route
   // (the pipeline has no PlaybookStore). Returns [] without an AI call when there's no endpoint task.
-  async suggestPlaybookHunts(caseId: string, tasks: PlaybookTask[]): Promise<PlaybookHuntSuggestion[]> {
+  async suggestPlaybookHunts(caseId: string, tasks: PlaybookTask[], availableArtifacts: string[] = []): Promise<PlaybookHuntSuggestion[]> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("playbook hunt suggestions");
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasPlaybookHuntMaterial(loaded, tasks)) return [];   // empty/closed playbook → don't spend a call
@@ -2047,6 +2048,9 @@ export class AnalysisPipeline {
     const endpoints = knownEndpoints(loaded);
     const tasksText = renderPlaybookHuntTasks(tasks, endpointsByTaskId);
     const endpointsText = renderKnownEndpoints(endpoints);
+    // The server's REAL CLIENT artifacts (passed in by the route) — the model may reference an
+    // Artifact.<Name> only from this list (otherwise it hallucinates a name that won't compile).
+    const artifactsText = renderAvailableArtifacts(availableArtifacts, Number(process.env.DFIR_PBHUNT_MAX_ARTIFACTS) || 150);
 
     // This call hunts PER TASK (grounded by the tasks + findings + IOCs + endpoints), so it does NOT
     // need the full synthesis timeline — a smaller stratified event sample keeps the signal while
@@ -2062,7 +2066,7 @@ export class AnalysisPipeline {
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getPlaybookHuntPrompt())
-      + estimateTokens(contextBlock + tasksText + endpointsText + findingsText + (loaded.attackerPath || "")) + 300;
+      + estimateTokens(contextBlock + tasksText + endpointsText + artifactsText + findingsText + (loaded.attackerPath || "")) + 300;
     const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
@@ -2070,6 +2074,7 @@ export class AnalysisPipeline {
     const userPrompt =
       contextBlock +
       `KNOWN ENDPOINTS (hosts — pick a targetHost ONLY from these): ${endpointsText}\n\n` +
+      `AVAILABLE VELOCIRAPTOR ARTIFACTS (reference Artifact.<Name> ONLY if <Name> is in this list — else use a raw plugin):\n${artifactsText}\n\n` +
       `PLAYBOOK TASKS:\n${tasksText}\n\n` +
       `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
       `FINDINGS:\n${findingsText}\n\n` +
