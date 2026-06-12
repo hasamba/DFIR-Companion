@@ -8,10 +8,13 @@
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
 import { parseCsv } from "./csvImport.js";
+import { looksLikeJournald } from "./journaldImport.js";
+import { looksLikeSysdig } from "./sysdigImport.js";
 
 export type ImportKind =
   | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "network"
-  | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "email" | "csv" | "log" | "unknown";
+  | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "email"
+  | "auditd" | "journald" | "sysdig" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -138,6 +141,10 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isHayabusaJson(sample)) return "hayabusa";
   if (isCybertriage(sample)) return "cybertriage";
   if (isNetwork(sample)) return "network";
+  // Linux runtime/host sources — before the THOR/SIEM catch-alls. journald entries carry a
+  // `MESSAGE` field that the case-insensitive SIEM `message` check would otherwise claim.
+  if (looksLikeSysdig(sample)) return "sysdig";
+  if (looksLikeJournald(sample)) return "journald";
   if (isThor(sample)) return "thor";
   if (isSiem(sample)) return "siem";
   return "siem"; // any other event-shaped JSON → the SIEM importer's field auto-detection
@@ -228,6 +235,16 @@ function looksLikeVelociraptorFile(filename: string): boolean {
   return /velociraptor/i.test(n) || VR_ARTIFACT.test(n);
 }
 
+// ───────────────────────────── auditd (line-oriented) ─────────────────────────────
+
+// Linux auditd records ("type=SYSCALL msg=audit(1490451217.272:270): …") — the raw audit.log /
+// `ausearch` format. The `type=… msg=audit(secs.millis:serial)` shape is unique to auditd, so one
+// matching line anywhere in the head is enough to claim it ahead of the generic log fallback.
+const RE_AUDITD = /(?:^|\n)\s*type=\w+\s+msg=audit\(\d+\.\d+:\d+\)/;
+function isAuditd(text: string): boolean {
+  return RE_AUDITD.test(text.slice(0, 8000));
+}
+
 // ───────────────────────────── top-level ─────────────────────────────
 
 export function detectImportKind(filename: string, text: string): ImportKind {
@@ -251,6 +268,10 @@ export function detectImportKind(filename: string, text: string): ImportKind {
     const { root, sample } = jsonSample(t);
     if (sample) return vrHint(detectJson(root, sample));
   }
+
+  // Linux auditd records (line-oriented `type=… msg=audit(…)`) — checked before the email/CSV/log
+  // fallback; the audit-record shape is unique enough to claim directly.
+  if (isAuditd(t)) return "auditd";
 
   // Email artifact (.eml RFC 822 header block, or a best-effort .msg) — checked before the
   // CSV/log fallback so a header-block email isn't mistaken for a line-oriented log.

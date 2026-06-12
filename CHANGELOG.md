@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Linux evidence importers** — deterministic auditd (`audit.log`/`ausearch`/`aureport`), journald (`journalctl -o json`), and sysdig/Falco (alert + `-j` event JSON) ingest, auto-detected by the unified Import button (closes #62).
+
 ## [0.18.0] - 2026-06-11
 
 ### Added
