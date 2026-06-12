@@ -41,6 +41,9 @@ import { parseCloudActivity, type CloudActivityImportOptions } from "./cloudActi
 import { parsePlasoCsv, type PlasoImportOptions } from "./plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "./sandboxImport.js";
 import { parseEmail, type EmailImportOptions } from "./emailImport.js";
+import { parseAuditdLog, type AuditdImportOptions } from "./auditdImport.js";
+import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
+import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
@@ -1485,6 +1488,154 @@ export class AnalysisPipeline {
       timelineNote: `Plaso import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         `, ${parsed.iocs.length} IOC(s)`,
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a Linux auditd log (raw audit.log / `ausearch` record format, or an `aureport` table).
+  // Deterministic (no AI call): records sharing a serial collapse into one logical event, mapped
+  // to severity/MITRE by record type (logins, account/group mgmt, sudo, SELinux denials, audit-config
+  // tampering), bumped on a failed auth or a suspicious command. Read at the audit() epoch. Tagged auditd.
+  async importAuditd(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;            // unique per import (e.g. "ad3") so ids never collide
+      importedAt: string;
+      auditd?: AuditdImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseAuditdLog(text, opts.auditd);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["auditd"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `auditd import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        `, ${parsed.iocs.length} IOC(s)` +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a systemd-journald structured log (`journalctl -o json` / `-o json-pretty`). Deterministic
+  // (no AI call): each entry is read at its own time (_SOURCE/__REALTIME µs epoch), severity derived
+  // from PRIORITY then bumped from the message (sshd auth, sudo, useradd, kernel), with IOCs scraped
+  // from _EXE/_COMM and the MESSAGE. Tagged journald.
+  async importJournald(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;            // unique per import (e.g. "jd3") so ids never collide
+      importedAt: string;
+      journald?: JournaldImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseJournald(text, opts.journald);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["journald"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `journald import: ${parsed.kept} event(s) from ${parsed.total} entr(y/ies)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        `, ${parsed.iocs.length} IOC(s)` +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a sysdig / Falco export (Falco alert JSON and/or sysdig `-j` event JSON). Deterministic
+  // (no AI call): Falco rule hits are the DETECTIONS (verdict-first: priority → severity, tags →
+  // MITRE) and surface on the timeline; raw sysdig syscall events are telemetry → Info evidence;
+  // both contribute proc/file/network IOCs. Tagged Falco / sysdig.
+  async importSysdig(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;            // unique per import (e.g. "sd3") so ids never collide
+      importedAt: string;
+      sysdig?: SysdigImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseSysdig(text, opts.sysdig);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["sysdig"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `sysdig/Falco import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+        (parsed.alerts > 0 ? `, ${parsed.alerts} Falco alert(s)` : "") +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        `, ${parsed.iocs.length} IOC(s)` +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
       summary: "",
     };
     const delta = deltaSchema.parse(raw);

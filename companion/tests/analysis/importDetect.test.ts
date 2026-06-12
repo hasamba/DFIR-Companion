@@ -142,6 +142,35 @@ describe("detectImportKind — email", () => {
   });
 });
 
+describe("detectImportKind — Linux evidence sources (#62)", () => {
+  it("auditd: raw audit.log / ausearch record format", () => {
+    const log = 'type=SYSCALL msg=audit(1490451217.272:270): arch=c000003e syscall=59 comm="cat" exe="/usr/bin/cat"\ntype=EXECVE msg=audit(1490451217.272:270): argc=2 a0="cat" a1="/etc/shadow"';
+    expect(detectImportKind("audit.log", log)).toBe("auditd");
+  });
+  it("auditd: with ausearch separators / interpreted header", () => {
+    const log = "----\ntime->Sat Mar 25 13:53:37 2017\ntype=USER_LOGIN msg=audit(1490451217.000:600): pid=1 uid=0 msg='op=login acct=\"root\" res=failed'";
+    expect(detectImportKind("ausearch.txt", log)).toBe("auditd");
+  });
+  it("journald: journalctl -o json (claimed ahead of the SIEM message catch-all)", () => {
+    expect(detectImportKind("journal.json", ndjson(
+      { __REALTIME_TIMESTAMP: "1717200000000000", PRIORITY: "6", MESSAGE: "Failed password for root from 1.2.3.4", SYSLOG_IDENTIFIER: "sshd", _HOSTNAME: "h" },
+    ))).toBe("journald");
+  });
+  it("sysdig: Falco alert JSON", () => {
+    expect(detectImportKind("falco.json", ndjson(
+      { time: "2024-06-01T00:00:00Z", rule: "Terminal shell in container", priority: "Warning", output: "shell spawned", output_fields: {} },
+    ))).toBe("sysdig");
+  });
+  it("sysdig: sysdig -j event JSON (dotted evt.* keys)", () => {
+    expect(detectImportKind("capture.json", ndjson(
+      { "evt.num": 1, "evt.rawtime": 1717200000000000000, "proc.name": "curl", "evt.type": "connect" },
+    ))).toBe("sysdig");
+  });
+  it("not auditd: a plain syslog with no audit records stays 'log'", () => {
+    expect(detectImportKind("auth.log", "Jan  1 00:00:01 host sshd[1]: Failed password for root")).toBe("log");
+  });
+});
+
 describe("detectImportKind — logs & edges", () => {
   it("log: a line-oriented syslog file", () => {
     expect(detectImportKind("auth.log", "Jan  1 00:00:01 host sshd[1]: Failed password for root\nJan  1 00:00:02 host sshd[1]: Failed password for admin")).toBe("log");
