@@ -325,8 +325,8 @@
        collapse to font-size:0 and only the icon remains, so the toolbar fits one line; the
        hover tooltips (data-tip) keep every icon discoverable. */
     #connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
-    #aiToggle::before, #synthesize::before, #importBtn::before, #toggleAll::before,
-    #toggleSearchBar::before {
+    #aiToggle::before, #synthesize::before, #importBtn::before, #importSnapshotBtn::before,
+    #toggleAll::before, #toggleSearchBar::before {
       content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
       margin-right: 6px; background: no-repeat center / contain; }
     #connect::before     { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 15l6-6'/><path d='M11 6l1-1a4 4 0 0 1 6 6l-1 1'/><path d='M13 18l-1 1a4 4 0 0 1-6-6l1-1'/></svg>"); }
@@ -336,6 +336,8 @@
     #aiToggle::before    { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z'/><path d='M18.5 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'/></svg>"); }
     #synthesize::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/></svg>"); }
     #importBtn::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v11'/><path d='M8 10l4 4 4-4'/><path d='M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2'/></svg>"); }
+    /* Import snapshot — an archive box (distinct from the evidence-import down-arrow) for restoring a packaged case. */
+    #importSnapshotBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 8v13H3V8'/><rect x='1' y='3' width='22' height='5' rx='1'/><path d='M10 12h4'/></svg>"); }
     #toggleAll::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M7 9l5-5 5 5'/><path d='M7 15l5 5 5-5'/></svg>"); }
     /* Export, Push and Collapse-all are ALWAYS icon-only — their labels never show, so the wider
        labelled actions get the room; hover tooltips keep them discoverable. The dropdowns can't take
@@ -527,13 +529,15 @@
     <datalist id="caseList"></datalist>
     <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
+    <input id="snapshotImportFile" type="file" accept=".json,application/json" style="display:none" />
+    <button id="importSnapshotBtn" data-tip="Import an investigation snapshot (.json) shared by a teammate — restores the timeline, findings, IOCs, graph state and analyst decisions as a new case on this machine. No AI keys or machine config travel with it.">Import snapshot…</button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" data-tip="Derive findings, MITRE and attack path from the timeline">AI Re-synthesize</button>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.eml,.msg,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,image/png,image/jpeg,image/webp" style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, email .eml/.msg, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import…</button>
-    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch JSONL, JSON state)">
+    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch JSONL, JSON state, or a shareable investigation snapshot)">
       <option value="">Export…</option>
       <option value="report">Generate report (Markdown + HTML)</option>
       <option value="report-pdf">Generate report (PDF)</option>
@@ -542,6 +546,7 @@
       <option value="attack-layer">ATT&amp;CK Navigator layer (JSON)</option>
       <option value="timesketch-jsonl">Timesketch JSONL</option>
       <option value="state-json">Full case state (JSON)</option>
+      <option value="snapshot">Investigation snapshot (shareable JSON)</option>
       <option value="stix">STIX 2.1 bundle (JSON)</option>
       <option value="save-template">Save as Template…</option>
     </select>
@@ -5844,6 +5849,56 @@
     document.getElementById("stCancel").onclick = closeSaveTemplate;
     document.getElementById("saveTemplateOverlay").addEventListener("click", (e) => { if (e.target.id === "saveTemplateOverlay") closeSaveTemplate(); });
     document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
+
+    // ── Import investigation snapshot (issue #56) ──────────────────────────────────
+    // Restore a teammate's shared snapshot (.json) as a NEW case on this machine — no AI keys, no
+    // machine config travel with it. POST the snapshot; on an id collision, prompt for a free id
+    // and retry under it. On success, attach the dashboard to the imported case.
+    document.getElementById("importSnapshotBtn").onclick = () => document.getElementById("snapshotImportFile").click();
+    document.getElementById("snapshotImportFile").onchange = async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";   // allow re-selecting the same file
+      if (!file) return;
+      const status = document.getElementById("status");
+      status.textContent = "reading snapshot…";
+      let snapshot;
+      try {
+        snapshot = JSON.parse(await file.text());
+      } catch (err) {
+        status.textContent = "import failed: not valid JSON";
+        return;
+      }
+      const importInto = async (targetCaseId) => {
+        const body = targetCaseId ? { snapshot, targetCaseId } : { snapshot };
+        return fetch("/snapshots/import", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        });
+      };
+      try {
+        let res = await importInto(undefined);
+        // Resolve id collisions by asking for a new id (up to a few tries), defaulting to "<id>-copy".
+        let guard = 0;
+        while (res.status === 409 && guard++ < 5) {
+          const j = await res.json().catch(() => ({}));
+          const suggested = (j.caseId || (snapshot.case && snapshot.case.caseId) || "imported") + "-copy";
+          const newId = window.prompt(`A case "${j.caseId || ""}" already exists. Import under a different case id:`, suggested);
+          if (!newId) { status.textContent = "import cancelled"; return; }
+          res = await importInto(newId.trim());
+        }
+        const body = await res.json().catch(() => ({}));
+        if (res.status === 201) {
+          const c = body.counts || {};
+          status.textContent = `imported case ${body.caseId} (${c.forensicEvents || 0} events, ${c.findings || 0} findings, ${c.iocs || 0} IOCs)`;
+          document.getElementById("caseId").value = body.caseId;
+          loadCaseList();
+          connect();   // attach to the freshly imported case
+        } else {
+          status.textContent = "import failed: " + (body.error || ("HTTP " + res.status));
+        }
+      } catch (err) {
+        status.textContent = "import failed: " + err.message + " — is the companion running?";
+      }
+    };
     // --- Search bar + time-range filter listeners --------------------------------
     (function () {
       const gs = document.getElementById("globalSearch");
@@ -6095,6 +6150,10 @@
         window.location.href = `/cases/${c}/timeline.jsonl`;
       } else if (action === "state-json") {
         window.open(`/cases/${c}/state`, "_blank", "noopener");
+      } else if (action === "snapshot") {
+        // Portable investigation snapshot (issue #56) — a single shareable JSON (no AI keys, no
+        // machine config) a teammate imports on another machine via "Import snapshot…".
+        window.location.href = `/cases/${c}/export/snapshot`;
       } else if (action === "stix") {
         // On-demand STIX 2.1 bundle (JSON) — import into any TIP (OpenCTI, MISP, Anomali…).
         window.location.href = `/cases/${c}/export/stix`;
