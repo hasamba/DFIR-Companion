@@ -4245,7 +4245,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.playbookStore || !options.stateStore) return res.status(501).json({ error: "playbook not configured" });
     try {
       const tasks = await syncPlaybook(req.params.id);
-      const suggestions = await options.pipeline.suggestPlaybookHunts(req.params.id, tasks);
+      // Refresh the Velociraptor client inventory IN PARALLEL with the AI call (best-effort, no-op when
+      // the API is off) so a client enrolled MID-INVESTIGATION is resolvable the moment the analyst
+      // deploys a collection (#70). Runs concurrently with the longer AI call, so it adds no latency;
+      // a refresh failure never blocks the suggestions (the collect route also refreshes lazily on a miss).
+      const [, suggestions] = await Promise.all([
+        refreshVeloClients().catch((e) => { logLine(`[velociraptor] inventory refresh before suggestions failed: ${(e as Error).message}`); return 0; }),
+        options.pipeline.suggestPlaybookHunts(req.params.id, tasks),
+      ]);
       logLine(`[velociraptor] suggested ${suggestions.length} playbook hunt(s) for ${req.params.id}`);
       return res.status(200).json({ suggestions });
     } catch (err) {

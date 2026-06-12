@@ -11,6 +11,7 @@ import { PlaybookControlStore } from "../../src/analysis/playbookControl.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { VelociraptorClient, type VqlRunner, type VelociraptorApiConfig } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { VelociraptorClientStore } from "../../src/analysis/velociraptorClientStore.js";
 
 // Canned model reply: one endpoint-related hunt for the finding-derived task, scoped to WEB01.
 const cannedPlaybookHunts = JSON.stringify({
@@ -36,7 +37,7 @@ const collectRunner: VqlRunner = async (statements) => {
   return { rows: [], raw: "" };
 };
 
-async function makeApp(opts: { provider?: MockProvider; velociraptorClient?: VelociraptorClient } = {}) {
+async function makeApp(opts: { provider?: MockProvider; velociraptorClient?: VelociraptorClient; velociraptorClientStore?: VelociraptorClientStore } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-pbhunt-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -48,7 +49,8 @@ async function makeApp(opts: { provider?: MockProvider; velociraptorClient?: Vel
   });
   const app = createApp(store, {
     pipeline, stateStore, playbookStore, playbookControlStore,
-    velociraptorClient: opts.velociraptorClient, aiConfigured: Boolean(opts.provider),
+    velociraptorClient: opts.velociraptorClient, velociraptorClientStore: opts.velociraptorClientStore,
+    aiConfigured: Boolean(opts.provider),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: opts.provider ? "mock" : null });
   return { app, stateStore };
@@ -101,6 +103,26 @@ describe("POST /cases/:id/playbook/suggest-hunts", () => {
     await seed(stateStore, true);
     const res = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
     expect(res.status).toBe(501);
+  });
+
+  it("refreshes the Velociraptor client inventory when generating suggestions (clients enrolled mid-investigation)", async () => {
+    const file = join(await mkdtemp(join(tmpdir(), "dfir-pbinv-")), "velociraptor", "clients.json");
+    const inventory = new VelociraptorClientStore(file);
+    // The fleet now has a client that wasn't enrolled when the case started.
+    const runner: VqlRunner = async (s) => s[0].includes("FROM clients(")
+      ? { rows: [{ client_id: "C.web01", os_info: { hostname: "web01", fqdn: "web01.corp.local" } }], raw: "" }
+      : { rows: [], raw: "" };
+    const { app, stateStore } = await makeApp({
+      provider: new MockProvider("mock", cannedPlaybookHunts),
+      velociraptorClient: new VelociraptorClient(veloCfg, runner),
+      velociraptorClientStore: inventory,
+    });
+    await seed(stateStore, true);
+    expect((await inventory.load()).clients).toHaveLength(0);   // empty before
+    const res = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
+    expect(res.status).toBe(200);
+    const after = await inventory.load();                       // refreshed by the suggest call
+    expect(after.clients.map((c) => c.clientId)).toContain("C.web01");
   });
 });
 

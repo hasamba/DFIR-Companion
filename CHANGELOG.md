@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **AI-suggested playbook hunts** — propose a Velociraptor hunt for each endpoint-related Playbook task; a task tied to one host deploys as a single-endpoint collection (`collect_client`), otherwise a fleet hunt; suggestions render inline under each task and collapse (closes #70).
-- **Velociraptor client inventory** — snapshot the enrolled fleet (host/FQDN ↔ client id) into `velociraptor/clients.json` at startup + on demand (Settings → Velociraptor → Refresh client list); single-endpoint collections resolve the host from it (short-name⇄FQDN tolerant), self-healing on a miss (#70).
+- **Velociraptor client inventory** — snapshot the enrolled fleet (host/FQDN ↔ client id) into `velociraptor/clients.json` at startup, on demand (Settings → Velociraptor → Refresh client list), and when playbook hunts are generated (so a client enrolled mid-investigation is resolvable); single-endpoint collections resolve the host from it (short-name⇄FQDN tolerant), self-healing on a miss (#70).
 
 ## [0.19.0] - 2026-06-12
 
