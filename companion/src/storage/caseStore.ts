@@ -79,6 +79,18 @@ export class CaseStore {
     }
   }
 
+  // One case's metadata (case.json), or null when the case doesn't exist / has no valid meta.
+  // Cheaper than listCases() when only a single case's name/investigator is needed (e.g. the
+  // mobile summary stamps the display name).
+  async getCaseMeta(caseId: string): Promise<CaseMeta | null> {
+    try {
+      return JSON.parse(await readFile(this.caseMetaPath(caseId), "utf8")) as CaseMeta;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw err;
+    }
+  }
+
   // All cases that have a readable case.json, newest first. Backs GET /cases so the
   // extension can present a picker of existing cases instead of creating its own.
   async listCases(): Promise<CaseMeta[]> {
