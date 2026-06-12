@@ -30,6 +30,7 @@ const TOOLS: ToolPattern[] = [
   { re: /timesketch/i, name: "Timesketch" },
   { re: /volweb/i, name: "VolWeb" },
   { re: /volatility/i, name: "Volatility" },
+  { re: /rekall/i, name: "Rekall" },
   { re: /autopsy/i, name: "Autopsy" },
   { re: /virustotal|\bvt\b/i, name: "VirusTotal" },
   { re: /hayabusa/i, name: "Hayabusa" },
