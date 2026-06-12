@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -60,7 +60,43 @@ describe("NSRL stats / import / clear / export routes", () => {
     const app = createApp(new CaseStore(await tmp()));
     expect((await request(app).get("/nsrl")).body).toEqual({ count: 0, enabled: false });
     expect((await request(app).post("/nsrl/import").send({ text: MD5 })).status).toBe(501);
+    expect((await request(app).post("/nsrl/import-file").send({ path: "x" })).status).toBe(501);
     expect((await request(app).post("/nsrl/clear")).status).toBe(501);
+  });
+});
+
+describe("POST /nsrl/import-file", () => {
+  it("loads hashes from a file path, reporting per-file results", async () => {
+    const { app } = await harness();
+    const dir = await tmp();
+    const file = join(dir, "rds.txt");
+    await writeFile(file, `${MD5}\n${SHA256}\n`, "utf8");
+
+    const res = await request(app).post("/nsrl/import-file").send({ path: file });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ added: 2, total: 2 });
+    expect(res.body.files).toHaveLength(1);
+    expect(res.body.files[0]).toMatchObject({ file, added: 2 });
+    expect((await request(app).get("/nsrl")).body.count).toBe(2);
+  });
+
+  it("is best-effort per file — one good + one missing path → 200 with mixed results", async () => {
+    const { app } = await harness();
+    const dir = await tmp();
+    const good = join(dir, "good.txt");
+    await writeFile(good, MD5, "utf8");
+    const res = await request(app).post("/nsrl/import-file").send({ path: `${good} ; ${join(dir, "nope.txt")}` });
+    expect(res.status).toBe(200);
+    expect(res.body.added).toBe(1);
+    expect(res.body.files.filter((f: { error?: string }) => f.error)).toHaveLength(1);
+  });
+
+  it("400s when no path is given, or every path fails", async () => {
+    const { app } = await harness();
+    expect((await request(app).post("/nsrl/import-file").send({})).status).toBe(400);
+    const res = await request(app).post("/nsrl/import-file").send({ path: join(await tmp(), "ghost.txt") });
+    expect(res.status).toBe(400);   // all paths failed → nothing loaded
+    expect(res.body.files[0].error).toBeTruthy();
   });
 });
 

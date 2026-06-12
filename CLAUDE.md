@@ -167,8 +167,11 @@ without I/O. A forensic **event** whose `sha256`/`md5` — or an **IOC** of type
 IOC → `ioc` marker), cutting false positives. Applied in the `/import` route's `.then()` BEFORE re-synthesis (alongside
 the whitelist apply) and on demand via `POST /cases/:id/nsrl/apply`. Opt-in: the set starts empty (NSRL is "known", not
 strictly "known-good" — some RDS sets include hacktools; a known hash can still be malicious in context). Surfaced in
-**Settings → NSRL** (paste import / export / clear / apply); large RDS files pre-load at startup from `DFIR_NSRL_FILE`
-(`;`-separated paths, fire-and-forget, idempotent). Same SUBDIR-not-sibling rationale as the whitelist.
+**Settings → NSRL** (paste import / **load by server file path** / export / clear / apply); large RDS files can also pre-load
+at startup from `DFIR_NSRL_FILE` (`;`-separated paths, fire-and-forget, idempotent). The startup pre-load and the
+`POST /nsrl/import-file` route share one best-effort-per-file helper (`ingestNsrlFiles`/`splitNsrlPaths` in `nsrlStore.ts`),
+so both behave identically; loaded hashes persist (no restart needed, and they survive one). Same SUBDIR-not-sibling
+rationale as the whitelist.
 
 **Cross-source correlation runs in `mergeDelta`** (`correlate.ts`): events describing the
 same artifact collapse into one — by exact dup (time+description, so re-imports don't

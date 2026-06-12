@@ -2,7 +2,7 @@ import { readFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { atomicWrite } from "../storage/atomicWrite.js";
-import { normalizeHash } from "./nsrl.js";
+import { normalizeHash, parseNsrlText } from "./nsrl.js";
 
 // Persists the NSRL known-good hash set (issue #63). GLOBAL — shared across cases, like the IOC
 // whitelist / TemplateStore / ArtifactBundleStore: a known-software corpus is environment-level and
@@ -74,4 +74,36 @@ export class NsrlStore {
     const set = await this.load();
     return set.size ? [...set].sort().join("\n") + "\n" : "";
   }
+}
+
+// Split a `;`-separated list of file paths (the DFIR_NSRL_FILE form, also accepted by the
+// load-from-file route). `;` not `,` so a Windows path's drive colon / spaces are safe.
+export function splitNsrlPaths(value: string | undefined): string[] {
+  return (value ?? "").split(";").map((s) => s.trim()).filter(Boolean);
+}
+
+export interface NsrlFileIngestResult {
+  file: string;
+  added: number;     // NEW hashes this file contributed
+  total: number;     // resulting set size after this file
+  error?: string;    // present when the file couldn't be read/parsed (this file skipped)
+}
+
+// Read + ingest NSRL hash file(s) by path into the store, best-effort PER FILE: NSRLFile.txt (RDS
+// CSV), a hashdeep CSV, or a plain hash list. Shared by the DFIR_NSRL_FILE startup pre-load and the
+// Settings → NSRL "Load from file" action, so both behave identically. A file that can't be read or
+// parsed yields an `error` result instead of throwing, so one bad path doesn't abort the rest.
+export async function ingestNsrlFiles(store: NsrlStore, paths: readonly string[]): Promise<NsrlFileIngestResult[]> {
+  const out: NsrlFileIngestResult[] = [];
+  for (const file of paths) {
+    try {
+      const { added, total } = await store.addMany(parseNsrlText(await readFile(file, "utf8")));
+      out.push({ file, added, total });
+    } catch (err) {
+      let total = 0;
+      try { total = await store.count(); } catch { /* keep 0 */ }
+      out.push({ file, added: 0, total, error: (err as Error).message });
+    }
+  }
+  return out;
 }

@@ -1192,9 +1192,19 @@
               <button id="nsrlClearBtn" type="button" style="background:#3a2020;border:1px solid #5a2a2a;color:#ff9f9f">Clear all</button>
               <span id="nsrlMsg" class="manual-msg"></span>
             </div>
-            <div style="margin-top:6px;font-size:11px;color:#7e8aa0">
-              Large RDS sets: set <code>DFIR_NSRL_FILE</code> to the file path(s) (<code>;</code>-separated) to pre-load at server startup.
-            </div>
+          </div>
+        </div>
+
+        <div class="sfield">
+          <label>…or load from a file on the server</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <input id="nsrlFilePath" placeholder="C:\rds\NSRLFile.txt   ( ; -separate multiple )" style="flex:1 1 280px;font-family:monospace" />
+            <button id="nsrlFileBtn" type="button">Load file</button>
+          </div>
+          <span id="nsrlFileMsg" class="manual-msg"></span>
+          <div style="margin-top:6px;font-size:11px;color:#7e8aa0">
+            Reads an NSRLFile.txt / hashdeep CSV / hash list straight off this machine — for big RDS sets you don't want to paste.
+            The in-UI equivalent of the <code>DFIR_NSRL_FILE</code> env var, but on demand: loaded hashes persist, so there's no restart and they survive one.
           </div>
         </div>
 
@@ -6786,6 +6796,8 @@
     document.getElementById("wlApplyBtn").addEventListener("click", wlApplyToCase);
     // NSRL known-good hashes (#63)
     document.getElementById("nsrlImportBtn").addEventListener("click", nsrlImport);
+    document.getElementById("nsrlFileBtn").addEventListener("click", nsrlImportFile);
+    document.getElementById("nsrlFilePath").addEventListener("keydown", e => { if (e.key === "Enter") nsrlImportFile(); });
     document.getElementById("nsrlExportBtn").addEventListener("click", () => window.open("/nsrl/export", "_blank"));
     document.getElementById("nsrlClearBtn").addEventListener("click", nsrlClear);
     document.getElementById("nsrlApplyBtn").addEventListener("click", nsrlApplyToCase);
@@ -6895,6 +6907,21 @@
         .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
         .then(j => { msg.textContent = `imported ${j.added.toLocaleString()} new hash${j.added !== 1 ? "es" : ""} (${j.parsed.toLocaleString()} parsed, ${j.total.toLocaleString()} total)`; document.getElementById("nsrlImportText").value = ""; loadNsrl(); })
         .catch(e => { msg.textContent = e.message; });
+    }
+    function nsrlImportFile() {
+      const path = document.getElementById("nsrlFilePath").value.trim();
+      const msg = document.getElementById("nsrlFileMsg");
+      if (!path) { msg.textContent = "enter a file path on the server"; return; }
+      msg.textContent = "loading…";
+      fetch("/nsrl/import-file", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path }) })
+        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "HTTP " + r.status); return j; })
+        .then(j => {
+          const errs = (j.files || []).filter(f => f.error);
+          msg.textContent = `loaded ${(j.added || 0).toLocaleString()} new hash${j.added !== 1 ? "es" : ""} (${(j.total || 0).toLocaleString()} total)` + (errs.length ? ` · ${errs.length} file(s) failed: ${esc(errs.map(f => f.error).join("; "))}` : "");
+          if (!errs.length) document.getElementById("nsrlFilePath").value = "";
+          loadNsrl();
+        })
+        .catch(e => { msg.textContent = e.message + " — restart the server if the endpoint 404s."; });
     }
     function nsrlClear() {
       if (!confirm("Clear the entire NSRL known-good hash set? This is global (affects all cases).")) return;
