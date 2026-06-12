@@ -1134,6 +1134,7 @@
         <button class="stab" data-stab="whitelist">IOC Whitelist</button>
         <button class="stab" data-stab="nsrl">NSRL</button>
         <button class="stab" data-stab="reports">Report Templates</button>
+        <button class="stab" data-stab="notifications">Notifications</button>
       </div>
 
       <!-- General -->
@@ -1623,6 +1624,73 @@
             <span id="nsrlApplyMsg" class="manual-msg"></span>
           </div>
           <span class="sfield-hint">Scans the loaded case's IOCs + forensic events and marks known-good matches legitimate (already auto-runs on every import).</span>
+        </div>
+      </div>
+
+      <!-- Notifications (issue #58) — Slack / MS Teams / SMTP email channels for critical findings,
+           playbook updates, and investigation milestones. Global, shared across cases. -->
+      <div class="stab-pane" id="stab-notifications">
+        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+          Push <strong>new/escalated findings</strong>, <strong>playbook updates</strong>, and <strong>investigation milestones</strong>
+          to Slack, MS Teams, or email — with a per-channel severity threshold and per-event toggles. Global — shared across all cases.
+        </div>
+        <div style="background:var(--c-211405);border:1px solid var(--c-5a4a1a);border-radius:6px;padding:6px 9px;font-size:12px;color:var(--c-ffce8a);margin-bottom:12px">
+          ⚠ Notifications send case content (finding/task titles) to a third party. Off by default — each channel is opt-in. Don't enable on a sensitive case unless the destination is trusted.
+        </div>
+
+        <div class="sfield">
+          <label>Add a channel</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+            <select id="ntfType" style="flex:0 0 auto">
+              <option value="slack">Slack webhook</option>
+              <option value="teams">MS Teams webhook</option>
+              <option value="email">SMTP email</option>
+            </select>
+            <input id="ntfName" placeholder="channel name (e.g. SOC #alerts)" style="flex:1 1 200px" />
+            <select id="ntfMinSeverity" style="flex:0 0 auto" title="Only events at or above this severity fire (findings/playbook)">
+              <option value="Critical">≥ Critical</option>
+              <option value="High" selected>≥ High</option>
+              <option value="Medium">≥ Medium</option>
+              <option value="Low">≥ Low</option>
+              <option value="Info">≥ Info (all)</option>
+            </select>
+          </div>
+          <!-- Webhook (slack/teams) -->
+          <div id="ntfWebhookRow" style="margin-bottom:6px">
+            <input id="ntfWebhookUrl" placeholder="https://hooks.slack.com/services/…  or  https://outlook.office.com/webhook/…" style="width:100%;box-sizing:border-box" autocomplete="off" />
+          </div>
+          <!-- Email (smtp) -->
+          <div id="ntfSmtpRows" style="display:none">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+              <input id="ntfSmtpHost" placeholder="SMTP host (smtp.example.com)" style="flex:1 1 200px" />
+              <input id="ntfSmtpPort" type="number" placeholder="port (587)" value="587" style="flex:0 0 90px" />
+              <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--c-9aa4b2)"><input id="ntfSmtpSecure" type="checkbox" /> implicit TLS (465)</label>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+              <input id="ntfSmtpUser" placeholder="username (optional)" autocomplete="off" style="flex:1 1 140px" />
+              <input id="ntfSmtpPass" type="password" placeholder="password (optional)" autocomplete="new-password" style="flex:1 1 140px" />
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+              <input id="ntfSmtpFrom" placeholder="from (alerts@example.com)" style="flex:1 1 160px" />
+              <input id="ntfSmtpTo" placeholder="to (comma-separated)" style="flex:1 1 220px" />
+            </div>
+          </div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)">
+            <span>Notify on:</span>
+            <label style="display:flex;align-items:center;gap:4px"><input id="ntfEvtFinding" type="checkbox" checked /> findings</label>
+            <label style="display:flex;align-items:center;gap:4px"><input id="ntfEvtPlaybook" type="checkbox" checked /> playbook</label>
+            <label style="display:flex;align-items:center;gap:4px"><input id="ntfEvtMilestone" type="checkbox" /> milestones</label>
+            <label style="display:flex;align-items:center;gap:4px"><input id="ntfEnabled" type="checkbox" checked /> enabled</label>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button id="ntfAddBtn" type="button">Add channel</button>
+            <span id="ntfMsg" class="manual-msg"></span>
+          </div>
+        </div>
+
+        <div class="sfield">
+          <label>Channels <span id="ntfCount" class="sfield-hint" style="display:inline"></span></label>
+          <div id="ntfList" style="max-height:300px;overflow:auto;border:1px solid var(--c-2a2f3a);border-radius:6px;padding:4px"></div>
         </div>
       </div>
 
@@ -7552,6 +7620,19 @@
         fetch(`/ioc-whitelist/${del.dataset.id}`, { method: "DELETE" }).then(r => { if (r.ok) loadWhitelist(); }).catch(() => {});
       }
     });
+    // Notifications controls
+    document.getElementById("ntfType").addEventListener("change", ntfTypeChanged);
+    document.getElementById("ntfAddBtn").addEventListener("click", ntfAddChannel);
+    document.getElementById("stab-notifications").addEventListener("click", e => {
+      const test = e.target.closest(".ntf-test");
+      if (test) { ntfTest(test.dataset.id); return; }
+      const del = e.target.closest(".ntf-del");
+      if (del) { fetch(`/notifications/${del.dataset.id}`, { method: "DELETE" }).then(r => { if (r.ok) loadNotifications(); }).catch(() => {}); return; }
+    });
+    document.getElementById("stab-notifications").addEventListener("change", e => {
+      const tog = e.target.closest(".ntf-toggle");
+      if (tog) ntfToggle(tog.dataset.id, tog.checked);
+    });
     document.getElementById("settingsOverlay").addEventListener("click", (e) => { if (e.target.id === "settingsOverlay") closeSettingsModal(); });
     document.getElementById("secSelectAll").addEventListener("click", () => {
       document.querySelectorAll("#secChecks .sec-check input[type=checkbox]").forEach(cb => { cb.checked = true; });
@@ -7567,6 +7648,7 @@
         if (tab === "whitelist") loadWhitelist();
         if (tab === "nsrl") loadNsrl();
         if (tab === "reports") loadReportTemplates();
+        if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
       });
     });
 
@@ -7880,6 +7962,119 @@
           if (j.legitimate) renderLegitimate(j.legitimate);
         })
         .catch(e => { msg.textContent = "failed: " + e.message + " — restart the server if the endpoint 404s."; });
+    }
+
+    // --- Notifications (issue #58) — Slack/Teams/SMTP channels, Settings → Notifications ----------
+    let ntfChannels = [];
+    const NTF_TYPE_LABEL = { slack: "Slack", teams: "MS Teams", email: "Email" };
+    function ntfTypeChanged() {
+      const t = document.getElementById("ntfType").value;
+      const email = t === "email";
+      document.getElementById("ntfWebhookRow").style.display = email ? "none" : "";
+      document.getElementById("ntfSmtpRows").style.display = email ? "" : "none";
+      const wh = document.getElementById("ntfWebhookUrl");
+      wh.placeholder = t === "teams"
+        ? "https://outlook.office.com/webhook/…  or Power Automate URL"
+        : "https://hooks.slack.com/services/…";
+    }
+    function ntfChannelToBody(ch) {
+      const body = { type: ch.type, name: ch.name, enabled: ch.enabled, minSeverity: ch.minSeverity, events: ch.events };
+      if (ch.type === "email" && ch.smtp) {
+        body.smtp = { host: ch.smtp.host, port: ch.smtp.port, secure: !!ch.smtp.secure, from: ch.smtp.from, to: ch.smtp.to, username: ch.smtp.username || "", password: "" };
+        if (ch.smtp.rejectUnauthorized !== undefined) body.smtp.rejectUnauthorized = ch.smtp.rejectUnauthorized;
+      } else {
+        body.webhookUrl = ""; // blank → server keeps the saved (redacted) URL
+      }
+      return body;
+    }
+    function ntfTargetSummary(ch) {
+      if (ch.type === "email" && ch.smtp) return `${esc(ch.smtp.host)}:${esc(String(ch.smtp.port))} → ${esc((ch.smtp.to || []).join(", "))}${ch.smtp.hasPassword ? " 🔑" : ""}`;
+      return ch.hasWebhookUrl ? "webhook configured" : "<span style='color:var(--c-ff9f9f)'>no webhook URL</span>";
+    }
+    function ntfEventsSummary(ev) {
+      const on = [];
+      if (ev.critical_finding) on.push("findings");
+      if (ev.playbook_update) on.push("playbook");
+      if (ev.milestone) on.push("milestones");
+      return on.length ? on.join(", ") : "nothing";
+    }
+    function renderNotifications(channels) {
+      ntfChannels = channels || [];
+      const el = document.getElementById("ntfList");
+      const cnt = document.getElementById("ntfCount");
+      if (cnt) cnt.textContent = ntfChannels.length ? `(${ntfChannels.length})` : "";
+      if (!el) return;
+      if (!ntfChannels.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px;padding:4px'>No channels yet — add one above. Notifications are off until you do.</div>"; return; }
+      el.innerHTML = ntfChannels.map(ch => {
+        const dim = ch.enabled ? "" : "opacity:.55;";
+        return `<div style="border-bottom:1px solid var(--c-1a1f28);padding:6px 2px;font-size:12px;${dim}">`
+          + `<div style="display:flex;align-items:center;gap:8px">`
+          + `<span style="color:var(--c-6aa9ff);flex:0 0 auto;font-weight:600">${esc(NTF_TYPE_LABEL[ch.type] || ch.type)}</span>`
+          + `<span style="flex:1;word-break:break-all">${esc(ch.name || "(unnamed)")}</span>`
+          + `<label style="display:flex;align-items:center;gap:4px;color:var(--c-9aa4b2)"><input type="checkbox" class="ntf-toggle" data-id="${escAttr(ch.id)}" ${ch.enabled ? "checked" : ""}/> on</label>`
+          + `<button class="ntf-test" data-id="${escAttr(ch.id)}" type="button" style="background:var(--c-2a2f3a);border:1px solid var(--c-3a4150);color:var(--c-cdd6e4);border-radius:5px;padding:1px 8px;cursor:pointer">Test</button>`
+          + `<button class="ntf-del" data-id="${escAttr(ch.id)}" title="Delete channel" style="background:transparent;border:1px solid var(--c-5a2a2a);color:var(--c-ff9f9f);border-radius:5px;padding:1px 7px;cursor:pointer">✕</button>`
+          + `</div>`
+          + `<div style="color:var(--c-7e8aa0);margin-top:2px">≥ ${esc(ch.minSeverity)} · on: ${esc(ntfEventsSummary(ch.events))} · ${ntfTargetSummary(ch)}</div>`
+          + `</div>`;
+      }).join("");
+    }
+    function loadNotifications() {
+      fetch("/notifications").then(r => r.json()).then(renderNotifications).catch(() => {});
+    }
+    function ntfAddChannel() {
+      const type = document.getElementById("ntfType").value;
+      const msg = document.getElementById("ntfMsg");
+      const body = {
+        type,
+        name: document.getElementById("ntfName").value.trim(),
+        enabled: document.getElementById("ntfEnabled").checked,
+        minSeverity: document.getElementById("ntfMinSeverity").value,
+        events: {
+          critical_finding: document.getElementById("ntfEvtFinding").checked,
+          playbook_update: document.getElementById("ntfEvtPlaybook").checked,
+          milestone: document.getElementById("ntfEvtMilestone").checked,
+        },
+      };
+      if (type === "email") {
+        body.smtp = {
+          host: document.getElementById("ntfSmtpHost").value.trim(),
+          port: Number(document.getElementById("ntfSmtpPort").value) || 587,
+          secure: document.getElementById("ntfSmtpSecure").checked,
+          username: document.getElementById("ntfSmtpUser").value.trim(),
+          password: document.getElementById("ntfSmtpPass").value,
+          from: document.getElementById("ntfSmtpFrom").value.trim(),
+          to: document.getElementById("ntfSmtpTo").value.trim(),
+        };
+      } else {
+        body.webhookUrl = document.getElementById("ntfWebhookUrl").value.trim();
+      }
+      msg.textContent = "adding…";
+      fetch("/notifications", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(() => {
+          msg.textContent = "";
+          document.getElementById("ntfName").value = "";
+          document.getElementById("ntfWebhookUrl").value = "";
+          ["ntfSmtpHost", "ntfSmtpUser", "ntfSmtpPass", "ntfSmtpFrom", "ntfSmtpTo"].forEach(id => { document.getElementById(id).value = ""; });
+          loadNotifications();
+        })
+        .catch(e => { msg.textContent = e.message; });
+    }
+    function ntfTest(id) {
+      const msg = document.getElementById("ntfMsg");
+      msg.textContent = "sending test…";
+      fetch("/notifications/test", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channelId: id }) })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(j => { const r = (j.results || [])[0]; msg.textContent = r && r.ok ? "✓ test sent" : "✗ " + ((r && r.error) || "failed"); })
+        .catch(e => { msg.textContent = e.message; });
+    }
+    function ntfToggle(id, enabled) {
+      const ch = ntfChannels.find(c => c.id === id);
+      if (!ch) return;
+      const body = ntfChannelToBody(ch); body.enabled = enabled;
+      fetch(`/notifications/${id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(r => { if (r.ok) loadNotifications(); }).catch(() => {});
     }
 
     applySectionsVis();

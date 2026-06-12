@@ -1,5 +1,7 @@
 node_modules/
 cases/
+# Notification channel config (issue #58) — holds webhook URLs + SMTP passwords. Never commit.
+notifications/
 # Server + per-case session logs (DFIR_LOG_LEVEL). May contain case identifiers / activity traces.
 logs/
 dist/
