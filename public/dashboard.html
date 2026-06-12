@@ -3535,14 +3535,22 @@
       return fetch("/velociraptor/collect-results", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId, flowId, artifact, sources }) })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
-          if (!ok || j.error) { target.innerHTML = `<div style="color:var(--c-ff9f43)">error: ${esc(j.error || "failed")}</div>`; return 0; }
+          if (!ok || j.error) { target.innerHTML = `<div style="color:var(--c-ff9f43)">error: ${esc(j.error || "failed")}</div>`; return 1; }
+          // The collection launched but FAILED on the endpoint (e.g. a bad VQL plugin/arg) — show it.
+          if ((j.flowState || "").toUpperCase() === "ERROR" || j.flowError) {
+            target.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">⚠ collection failed on the endpoint: ${esc(j.flowError || "error")} — edit the VQL and re-collect.</div>`;
+            return 1;   // terminal — stop auto-polling
+          }
           const n = (j.rows || []).length;
-          target.innerHTML = n
-            ? renderVqlRows(j)
-            : "<span style='color:var(--c-9aa4b2)'>no results yet — the endpoint reports on its next poll. Click ↻ to refresh.</span>";
-          return n;
+          if (n) { target.innerHTML = renderVqlRows(j); return n; }
+          if ((j.flowState || "").toUpperCase() === "FINISHED") {
+            target.innerHTML = "<span style='color:var(--c-9aa4b2)'>collection finished — 0 rows returned.</span>";
+            return 1;   // terminal — stop auto-polling
+          }
+          target.innerHTML = "<span style='color:var(--c-9aa4b2)'>no results yet — the endpoint reports on its next poll. Click ↻ to refresh.</span>";
+          return 0;     // still pending — keep polling
         })
-        .catch((e) => { target.innerHTML = `<div style="color:var(--c-ff9f43)">error: ${esc(e.message)}</div>`; return 0; });
+        .catch((e) => { target.innerHTML = `<div style="color:var(--c-ff9f43)">error: ${esc(e.message)}</div>`; return 1; });
     }
 
     document.getElementById("pbHuntBtn").addEventListener("click", function() { doSuggestPlaybookHunts(); });

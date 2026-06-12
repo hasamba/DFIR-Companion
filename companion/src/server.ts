@@ -1248,7 +1248,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!clientId || !flowId || !artifact) return res.status(400).json({ error: "clientId, flowId and artifact are required" });
     try {
       const result = await options.velociraptorClient.collectionResults(clientId, flowId, artifact, sources);
-      return res.status(200).json(result);
+      // Also report the flow's terminal STATE so the dashboard can surface an endpoint-side failure
+      // (e.g. a bad plugin arg) instead of polling "no results yet". Best-effort — never fail the read.
+      let flowState = "";
+      let flowError = "";
+      try {
+        const st = await options.velociraptorClient.flowStatus(clientId, flowId);
+        flowState = st.state;
+        flowError = st.error;
+      } catch { /* status read is best-effort */ }
+      return res.status(200).json({ ...result, flowState, flowError });
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
     }

@@ -277,6 +277,30 @@ describe("VelociraptorClient.collectionResults", () => {
   });
 });
 
+describe("VelociraptorClient.flowStatus", () => {
+  it("surfaces an endpoint-side ERROR (status message) from the flow", async () => {
+    let program = "";
+    const runner: VqlRunner = async (s) => { program = s[0]; return { rows: [{ state: "ERROR", status: "handles: Unexpected arg process\n", total_collected_rows: 0 }], raw: "" }; };
+    const st = await new VelociraptorClient(cfg, runner).flowStatus("C.abc", "F.flow1");
+    expect(st.state).toBe("ERROR");
+    expect(st.error).toBe("handles: Unexpected arg process");
+    expect(program).toContain("FROM flows(client_id='C.abc') WHERE session_id='F.flow1'");
+  });
+
+  it("reports a FINISHED flow with no error", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ state: "FINISHED", status: "", total_collected_rows: 3 }], raw: "" });
+    const st = await new VelociraptorClient(cfg, runner).flowStatus("C.abc", "F.flow1");
+    expect(st.state).toBe("FINISHED");
+    expect(st.error).toBe("");
+    expect(st.rows).toBe(3);
+  });
+
+  it("returns an empty state when the flow is not found", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    expect(await new VelociraptorClient(cfg, runner).flowStatus("C.abc", "F.flow1")).toEqual({ state: "", error: "", rows: 0 });
+  });
+});
+
 describe("VelociraptorClient.collectFromHost (live resolve)", () => {
   it("enumerates the fleet, matches the host (FQDN ⇄ short name), and collects on that client", async () => {
     // Case asset is an FQDN, but the client enrolled with the SHORT name — the old whole-FQDN search missed it.

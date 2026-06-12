@@ -390,7 +390,7 @@ export class VelociraptorClient {
     const rows = await this.runRaw(program);
     const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};
     const huntId = String(hunt.HuntId ?? hunt.hunt_id ?? "");
-    if (!HUNT_RE.test(huntId)) throw new Error("Velociraptor did not return a hunt id — check the api_client role has COLLECT_CLIENT/ARTIFACT_WRITER");
+    if (!HUNT_RE.test(huntId)) throw new Error("Velociraptor did not launch the hunt (no hunt id). The VQL likely references a non-existent artifact/plugin or has a syntax error so it can't compile — edit the VQL and retry. (Less commonly: the api_client role lacks COLLECT_CLIENT/ARTIFACT_WRITER.)");
     return {
       huntId,
       artifact: name,
@@ -456,6 +456,22 @@ export class VelociraptorClient {
       ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
       : `SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
     return this.cap(await this.runRaw(program, this.collectCap()));
+  }
+
+  // The terminal STATE + error of a collection flow (issue #70). A flow can launch fine (a flow id is
+  // returned) yet FAIL on the endpoint — e.g. the VQL passes an unknown plugin arg ("handles: Unexpected
+  // arg process"). `flows(client_id=)` carries the per-flow `state` (RUNNING/FINISHED/ERROR) and, when
+  // it errored, the message in `status`. So the dashboard can show the real failure instead of polling
+  // "no results yet" forever. Returns `{ state: "" }` when the flow isn't found.
+  async flowStatus(clientId: string, flowId: string): Promise<{ state: string; error: string; rows: number }> {
+    if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
+    if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
+    const program = `SELECT state, status, total_collected_rows FROM flows(client_id='${clientId}') WHERE session_id='${flowId}' LIMIT 1`;
+    const rows = await this.runRaw(program);
+    const r = (rows[0] ?? {}) as { state?: unknown; status?: unknown; total_collected_rows?: unknown };
+    const state = String(r.state ?? "").trim();
+    const error = state.toUpperCase() === "ERROR" ? String(r.status ?? "").trim() : "";
+    return { state, error, rows: Number(r.total_collected_rows ?? 0) || 0 };
   }
 
   // Convenience: resolve a hostname LIVE (enumerate the fleet + match in TS, short-name ⇄ FQDN

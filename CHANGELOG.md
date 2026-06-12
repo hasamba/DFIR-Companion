@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Collection results in the dashboard** — a single-endpoint collection now pulls its rows back inline (Refresh + auto-poll, rendered as a table) like a fleet hunt, instead of only deep-linking to the Velociraptor GUI; `POST /velociraptor/collect-results` (#70).
 
 ### Fixed
-- **Playbook-hunt VQL** — prompt now tells the model the correct plugin argument names (`parse_evtx(filename=…)` not `files=`; prefer `Windows.EventLogs.*` artifacts), avoiding "Field filename is required" errors; the per-call timeline is trimmed (`DFIR_PBHUNT_MAX_EVENTS`, default 120) for a faster/cheaper, less failure-prone request (#70).
+- **Playbook-hunt VQL** — prompt now tells the model the correct plugin argument names (`parse_evtx(filename=…)` not `files=`), to **prefer raw plugins** (`netstat()`/`pslist()`/`glob()`) over hallucinated `Artifact.<Name>()` references (which fail to compile so the hunt/collection never starts), and to use `timestamp(string=…)` for absolute times; the per-call timeline is trimmed (`DFIR_PBHUNT_MAX_EVENTS`, default 120) (#70).
+- **Endpoint-side collection errors surfaced** — when a collection launches but its flow ends in `ERROR` (e.g. a bad plugin arg), the dashboard now shows Velociraptor's error message instead of polling "no results yet" forever; the no-flow-id error for both collections and hunts now points at the VQL (a non-existent artifact/plugin can't compile) rather than blaming the api_client role (#70).
 
 ## [0.19.0] - 2026-06-12
 
