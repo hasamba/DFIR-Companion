@@ -18,6 +18,7 @@ import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../ana
 import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../analysis/swimlane.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
+import { buildMobileSummary, mobileSummaryEnvOptions, type MobileCaseSummary } from "../analysis/mobileSummary.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import { buildStixBundle, type StixBundle } from "./stix.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
@@ -26,6 +27,8 @@ import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js"
 import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
+import { applyAnonDeep, type RedactedReportContents } from "../analysis/redactedExport.js";
+import type { ReportMeta } from "./reportMeta.js";
 
 export interface ReportPaths {
   markdown: string;
@@ -166,6 +169,16 @@ export class ReportWriter {
     return buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
   }
 
+  // Compact, READ-ONLY case summary for the mobile companion PWA (#59): case status, the worst
+  // findings, the most severe/recent timeline events, and the IOC list with verdicts. Derived on
+  // demand with the same scope/legitimate filtering as the report so the phone view agrees with
+  // the desktop dashboard. Per-list caps come from DFIR_MOBILE_MAX_* (defaults in mobileSummary).
+  async mobileSummary(caseId: string): Promise<MobileCaseSummary> {
+    const state = await this.loadFilteredState(caseId);
+    const meta = await this.cases.getCaseMeta(caseId);
+    return buildMobileSummary(state, { ...mobileSummaryEnvOptions(), caseName: meta?.name });
+  }
+
   // Build a STIX 2.1 bundle for the case (same scope/legitimate filtering as the report) — the
   // portable, vendor-neutral export every TIP (OpenCTI, MISP, Anomali…) ingests. The victim
   // identity, producing firm, and incident id come from the human-authored report metadata.
@@ -177,6 +190,28 @@ export class ReportWriter {
       producer: meta.companyName,
       incidentId: meta.incidentId,
     });
+  }
+
+  // Render every report artifact (as strings) from an already-loaded state + its metadata/graph.
+  // Shared by writeAll (persists the REAL report) and redactedReportContents (renders an
+  // anonymized copy in-memory) so both stay byte-for-byte consistent in structure.
+  private renderContents(
+    state: InvestigationState,
+    meta: ReportMeta,
+    exposure: CustomerExposureSummary | undefined,
+    graph: AssetGraph,
+    notebookEntries: NotebookEntry[] | undefined,
+    playbookTasks: PlaybookTask[] | undefined,
+  ): RedactedReportContents {
+    return {
+      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks),
+      html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks),
+      findingsCsv: findingsCsv(state),
+      iocsCsv: iocsCsv(state),
+      timelineCsv: timelineCsv(state),
+      forensicTimelineCsv: forensicTimelineCsv(state),
+      stateJson: JSON.stringify(state, null, 2),
+    };
   }
 
   async writeAll(caseId: string): Promise<ReportPaths> {
@@ -197,13 +232,35 @@ export class ReportWriter {
     const playbookTasks = await this.loadPlaybook(caseId);
     const overrides = this.assetOverrides ? await this.assetOverrides.load(caseId) : emptyOverrides();
     const graph = applyAssetOverrides(buildAssetGraph(state), overrides);
-    await writeFile(paths.markdown, renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks), "utf8");
-    await writeFile(paths.html, renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks), "utf8");
-    await writeFile(paths.findingsCsv, findingsCsv(state), "utf8");
-    await writeFile(paths.iocsCsv, iocsCsv(state), "utf8");
-    await writeFile(paths.timelineCsv, timelineCsv(state), "utf8");
-    await writeFile(paths.forensicTimelineCsv, forensicTimelineCsv(state), "utf8");
-    await writeFile(paths.stateJson, JSON.stringify(state, null, 2), "utf8");
+    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks);
+    await writeFile(paths.markdown, c.markdown, "utf8");
+    await writeFile(paths.html, c.html, "utf8");
+    await writeFile(paths.findingsCsv, c.findingsCsv, "utf8");
+    await writeFile(paths.iocsCsv, c.iocsCsv, "utf8");
+    await writeFile(paths.timelineCsv, c.timelineCsv, "utf8");
+    await writeFile(paths.forensicTimelineCsv, c.forensicTimelineCsv, "utf8");
+    await writeFile(paths.stateJson, c.stateJson, "utf8");
     return paths;
+  }
+
+  // Render the report artifacts from an ANONYMIZED copy of the case (for the redacted export, #54).
+  // `redact` is the anonymizer's apply(): the loaded state, metadata, and asset overrides are
+  // deep-walked so internal indicators become tokens (the same value -> same token, since one
+  // anonymizer instance is used across all artifacts). The asset/IoC graph is derived from the
+  // already-anonymized state so its labels are tokenized too. The on-disk report is never touched.
+  // The investigating firm's logo (a base64 data URI) is left intact — it is branding, not victim PII.
+  async redactedReportContents(caseId: string, redact: (s: string) => string): Promise<RedactedReportContents> {
+    const state = applyAnonDeep(await this.loadFilteredState(caseId), redact);
+    const rawMeta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
+    const meta: ReportMeta = { ...applyAnonDeep(rawMeta, redact), companyLogo: rawMeta.companyLogo };
+    const exposure = applyAnonDeep(await this.loadExposure(caseId), redact);
+    const notebookEntries = applyAnonDeep(await this.loadNotebook(caseId), redact);
+    const playbookTasks = applyAnonDeep(await this.loadPlaybook(caseId), redact);
+    const overrides = applyAnonDeep(
+      this.assetOverrides ? await this.assetOverrides.load(caseId) : emptyOverrides(),
+      redact,
+    );
+    const graph = applyAssetOverrides(buildAssetGraph(state), overrides);
+    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks);
   }
 }
