@@ -40,8 +40,18 @@ import { parseCloudTrail, type AwsImportOptions } from "./awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "./cloudActivityImport.js";
 import { parsePlasoCsv, type PlasoImportOptions } from "./plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "./sandboxImport.js";
+import { parseMemory, type MemoryImportOptions } from "./memoryImport.js";
 import { parseEmail, type EmailImportOptions } from "./emailImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
+import {
+  huntSuggestionsResponseSchema,
+  sanitizeHuntSuggestions,
+  renderHuntFindings,
+  renderHuntIocs,
+  hasHuntMaterial,
+  HUNT_SUGGEST_MAX_DEFAULT,
+  type HuntSuggestion,
+} from "./huntSuggest.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
@@ -433,7 +443,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -524,6 +534,49 @@ export const NARRATIVE_PROMPT = [
   JSON.stringify({ narrativeTimeline: "the flowing story as prose paragraphs (use \\n\\n between paragraphs)" }, null, 2),
 ].join("\n");
 
+// Propose PROACTIVE Velociraptor VQL fleet-hunts from the synthesized findings (issue #57). The
+// model reads the findings / ATT&CK techniques / pivotable IOCs and emits hunts that run on EVERY
+// enrolled endpoint to find the same tradecraft elsewhere. The VQL must be deployable as-is via the
+// CLIENT-artifact hunt path (launchHunt), so the shape constraints here mirror what splitVqlStatements
+// expects: ONE self-contained VQL statement per hunt, no blank-line splits, not comment-only.
+export const HUNT_SUGGEST_PROMPT = [
+  "You are a senior DFIR threat hunter. Given ONE investigation's findings, ATT&CK techniques,",
+  "compromised assets, and indicators below, propose PROACTIVE Velociraptor VQL HUNTS that run",
+  "across the ENTIRE fleet of enrolled endpoints to find the SAME adversary tradecraft on hosts",
+  "that are not yet in scope — lateral spread, the same webshell/persistence/malware pattern,",
+  "the same C2, the same living-off-the-land technique.",
+  "",
+  "Rules:",
+  "- Hunt for the PATTERN across the fleet, do NOT merely restate a single-host finding. If a",
+  "  webshell was found in one web root, hunt every host's web roots; if a malicious service was",
+  "  installed, enumerate that service/registry value everywhere.",
+  "- Pivot ONLY on the case's REAL indicators (the exact hashes, file paths, process names,",
+  "  service names, domains, IPs shown below). Do NOT invent IOCs the case does not contain.",
+  "- Each `vql` MUST be a SINGLE, self-contained, CLIENT-side Velociraptor VQL statement that runs",
+  "  on each endpoint — one `SELECT … FROM <plugin>(…) WHERE …`. Use real Velociraptor plugins,",
+  "  e.g. glob(), stat(), pslist(), Artifact.Windows.System.Services, Artifact.Windows.Sys.Users,",
+  "  read_file(), hash(), yara(), Artifact.Windows.Registry.* . Velociraptor glob() uses FORWARD",
+  "  slashes. Do NOT put a blank line inside one query and do NOT make a query only a comment.",
+  "- Prefer a few HIGH-SIGNAL hunts over many near-duplicates. Skip a finding if there is nothing",
+  "  fleet-wide to hunt for it.",
+  "- For each hunt set: a short `title`; a `rationale` (which finding triggered it, what the query",
+  "  looks for, and how to triage a hit); `severity` (Critical|High|Medium|Low|Info) of the",
+  "  underlying threat; `mitreTechniques` (the finding's technique ids); and `relatedFindingIds`",
+  "  (the finding ids it derives from, using the [ids] shown).",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({
+    suggestions: [{
+      title: "Hunt for ASPX webshells across IIS web roots",
+      rationale: "Finding f3 shows an ASPX webshell on WEB01. Sweep every endpoint's web roots for .aspx files written recently; triage any hit by author/last-write time and contents.",
+      vql: "SELECT FullPath, Mtime, Size FROM glob(globs='C:/inetpub/wwwroot/**/*.aspx') WHERE Mtime > timestamp(epoch=now() - 2592000)",
+      severity: "High",
+      mitreTechniques: ["T1505.003"],
+      relatedFindingIds: ["f3"],
+    }],
+  }, null, 2),
+].join("\n");
+
 export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROMPT);
 export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
@@ -531,6 +584,7 @@ export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS
 export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
 export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUMMARY_PROMPT);
 export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRATIVE_PROMPT);
+export const getHuntSuggestPrompt = (): string => resolvePrompt("HUNTS", HUNT_SUGGEST_PROMPT);
 
 export interface PipelineOptions {
   provider?: AIProvider;
@@ -1549,6 +1603,59 @@ export class AnalysisPipeline {
     return state;
   }
 
+  // Import memory-forensics tool output (Volatility 3 or Rekall). Deterministic (no AI call): each
+  // plugin table is identified by its columns and mapped — pslist/psscan/pstree → process-tree
+  // events (with parent→child links), netscan/netstat → network-connection events (+ foreign IP/
+  // port IOCs), malfind → High injected-code events (ATT&CK T1055), cmdline → command-line events
+  // (bumped on LOLBin/encoded tradecraft), svcscan/modules → service/driver evidence. Tagged
+  // "Volatility" / "Rekall" for cross-source correlation; reads the artifact's own time.
+  async importMemory(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;            // unique per import (e.g. "mem3") so ids never collide
+      importedAt: string;
+      memory?: MemoryImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseMemory(text, { ...opts.memory, filename: opts.label });
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const tool = parsed.tool || "Volatility";
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [tool],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Memory import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s) across ${parsed.tables} plugin(s)` +
+        (parsed.injected > 0 ? `, ${parsed.injected} injected-code hit(s)` : "") +
+        (parsed.connections > 0 ? `, ${parsed.connections} connection(s)` : "") +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        `, ${parsed.iocs.length} IOC(s)`,
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
   // Import an email artifact (.eml RFC 2822, or best-effort .msg). Deterministic (no AI call):
   // ONE forensic event dated at the message's own Date: header, severity DERIVED from the email's
   // SPF/DKIM/DMARC verdict + sender heuristics; URLs, sender/reply-to domains, originating IP and
@@ -1634,6 +1741,52 @@ export class AnalysisPipeline {
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getAskPrompt(), userPrompt, images: [] }, "ask");
       return askSchema.parse(parsed);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // Propose proactive Velociraptor VQL fleet-hunts from the synthesized findings (issue #57).
+  // Single text-only AI call; EPHEMERAL like ask()/executiveSummary() — it does NOT mutate state.
+  // The analyst reviews each hunt's VQL + rationale, then one-click deploys it through the existing
+  // launchHunt flow (POST /velociraptor/hunt). Returns [] without an AI call on an empty case.
+  async suggestHunts(caseId: string): Promise<HuntSuggestion[]> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("hunt suggestions");
+    const loaded = await this.opts.stateStore.load(caseId);
+    if (!hasHuntMaterial(loaded)) return [];   // nothing to pivot on — don't spend a call
+
+    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+
+    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    let events = selectSynthesisEvents(scopedEvents, max);
+    const renderEvent = (e: ForensicEvent) =>
+      `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
+    const findingsText = renderHuntFindings(loaded.findings);
+    const iocText = renderHuntIocs(loaded.iocs);
+    const techText = loaded.mitreTechniques.map((t) => `${t.id} ${t.name}`).join(", ") || "(none)";
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents);
+
+    // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
+    const overhead = estimateTokens(getHuntSuggestPrompt())
+      + estimateTokens(contextBlock + findingsText + iocText + techText + (loaded.attackerPath || "")) + 300;
+    const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
+    if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
+    const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
+
+    const userPrompt =
+      contextBlock +
+      `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
+      `ATT&CK TECHNIQUES: ${techText}\n\n` +
+      `FINDINGS:\n${findingsText}\n\n` +
+      `PIVOTABLE INDICATORS:\n${iocText}\n\n` +
+      `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
+      `Propose the fleet-hunts as JSON.`;
+
+    const limit = Number(process.env.DFIR_HUNT_SUGGEST_MAX) || HUNT_SUGGEST_MAX_DEFAULT;
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "suggest-hunts");
+      const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
+      return sanitizeHuntSuggestions(suggestions, limit);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
