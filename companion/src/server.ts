@@ -124,6 +124,13 @@ import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
 import { pushPlaybookToClickUp } from "./integrations/clickup/clickupPush.js";
+import { NotificationConfigStore } from "./analysis/notificationStore.js";
+import {
+  findingEventsFromDiff, milestoneEvent, parseChannelInput, playbookTaskEvent, redactChannel,
+  type NotificationEvent,
+} from "./analysis/notifications.js";
+import { createNotifier, type Notifier } from "./integrations/notify/notifyDispatch.js";
+import { nodeSmtpConnect } from "./integrations/notify/smtpClient.js";
 import {
   DeHashedExposureProvider,
   HaveIBeenPwnedExposureProvider,
@@ -301,6 +308,15 @@ export interface AppOptions {
   clickupClient?: ClickUpClient;
   clickupExportStore?: ClickUpExportStore;
   clickupOptions?: { defaultListId?: string };
+  // Notifications (issue #58): a GLOBAL channel store (Slack/Teams webhooks + SMTP email) + a
+  // notifier that dispatches NotificationEvents to the channels that want them. Opt-in — the store
+  // starts empty. `notifier` is the dispatcher (loads channels, formats, sends, best-effort);
+  // `notifyEmailEnabled` tells the dashboard whether an SMTP transport is wired (so it can hint).
+  // `dashboardBaseUrl` deep-links notifications back to the case.
+  notificationStore?: NotificationConfigStore;
+  notifier?: Notifier;
+  notifyEmailEnabled?: boolean;
+  dashboardBaseUrl?: string;
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -331,6 +347,18 @@ function toStringArray(v: unknown): string[] {
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const app = express();
   const hasAiProvider = (): boolean => options.aiConfigured ?? Boolean(options.pipeline?.hasAiProvider());
+
+  // Deep link a notification back to the case dashboard (when a public base URL is configured).
+  const caseLink = (caseId: string): string | undefined =>
+    options.dashboardBaseUrl ? `${options.dashboardBaseUrl.replace(/\/+$/, "")}/dashboard?caseId=${encodeURIComponent(caseId)}` : undefined;
+
+  // Fire a notification event to all matching channels. Best-effort, fire-and-forget: a transport
+  // failure NEVER bubbles into the request that triggered it (notifications are a side channel).
+  const dispatchNotify = (event: NotificationEvent): void => {
+    if (!options.notifier) return;
+    const enriched = event.url ? event : { ...event, url: caseLink(event.caseId) };
+    options.notifier.dispatch(enriched).catch((err) => logLine(`[notify] dispatch error: ${(err as Error).message}`));
+  };
 
   // Allow the browser extension (a chrome-extension:// origin) to reach this
   // localhost-only server. Binding is 127.0.0.1, so this is local-machine access.
@@ -380,7 +408,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel() });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel() });
   });
 
   // Read / change the live log verbosity (debug | info | warn | error). The dashboard's
@@ -592,6 +620,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           await options.stateStore.save(state);
         }
       }
+      dispatchNotify(milestoneEvent(caseId, `Investigation opened: ${name}`, [`Investigator: ${investigator ?? "unknown"}`], new Date().toISOString()));
       return res.status(201).json(meta);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -719,6 +748,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       const paths = await options.reportWriter.writeAll(req.params.id);
+      dispatchNotify(milestoneEvent(req.params.id, "Report generated", ["The case report (Markdown + HTML) was (re)generated."], new Date().toISOString()));
       return res.status(200).json(paths);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -1592,6 +1622,78 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     } catch (err) {
       logLine(`[clickup] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Notifications (issue #58) ─────────────────────────────────────────────────────────────
+  // Global channel config: Slack/Teams webhooks + SMTP email, with per-channel severity threshold
+  // and per-event-kind toggles. Opt-in (the store starts empty). Secrets (webhook URLs, SMTP
+  // passwords) are REDACTED in every response — the browser only learns whether each is set.
+
+  app.get("/notifications/status", (_req: Request, res: Response) => {
+    res.status(200).json({ configured: !!options.notificationStore, emailEnabled: !!options.notifyEmailEnabled });
+  });
+
+  app.get("/notifications", async (_req: Request, res: Response) => {
+    if (!options.notificationStore) return res.status(200).json([]);
+    try {
+      return res.status(200).json((await options.notificationStore.load()).map(redactChannel));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/notifications", async (req: Request, res: Response) => {
+    if (!options.notificationStore) return res.status(501).json({ error: "notifications not configured" });
+    const parsed = parseChannelInput(req.body);
+    if (!parsed.ok || !parsed.draft) return res.status(400).json({ error: parsed.error ?? "invalid channel" });
+    try {
+      const channel = await options.notificationStore.add(parsed.draft);
+      logLine(`[notify] channel added: ${channel.type} "${channel.name}" (${channel.id})`);
+      return res.status(201).json(redactChannel(channel));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.put("/notifications/:id", async (req: Request, res: Response) => {
+    if (!options.notificationStore) return res.status(501).json({ error: "notifications not configured" });
+    try {
+      const existing = await options.notificationStore.get(req.params.id);
+      if (!existing) return res.status(404).json({ error: "notification channel not found" });
+      // Pass `existing` so a blank (redacted) webhook URL keeps the saved one.
+      const parsed = parseChannelInput(req.body, existing);
+      if (!parsed.ok || !parsed.draft) return res.status(400).json({ error: parsed.error ?? "invalid channel" });
+      const channel = await options.notificationStore.update(req.params.id, parsed.draft);
+      if (!channel) return res.status(404).json({ error: "notification channel not found" });
+      return res.status(200).json(redactChannel(channel));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/notifications/:id", async (req: Request, res: Response) => {
+    if (!options.notificationStore) return res.status(501).json({ error: "notifications not configured" });
+    try {
+      const removed = await options.notificationStore.remove(req.params.id);
+      if (!removed) return res.status(404).json({ error: "notification channel not found" });
+      return res.status(204).end();
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Send a test notification to one channel ({ channelId }) or all configured channels. Bypasses
+  // the enable/threshold/kind filters so a disabled or high-threshold channel can be verified.
+  app.post("/notifications/test", async (req: Request, res: Response) => {
+    if (!options.notificationStore || !options.notifier) return res.status(501).json({ error: "notifications not configured" });
+    try {
+      const channelId = typeof req.body?.channelId === "string" ? req.body.channelId : undefined;
+      const results = await options.notifier.test(channelId, new Date().toISOString());
+      if (!results.length) return res.status(404).json({ error: "no matching channel to test" });
+      return res.status(200).json({ results });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -3897,6 +3999,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const task = await options.playbookStore.add(req.params.id, input);
       options.onPlaybook?.(req.params.id);
+      dispatchNotify(playbookTaskEvent(req.params.id, task, "added", new Date().toISOString()));
       return res.status(201).json(task);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -3917,6 +4020,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const updated = await options.playbookStore.update(req.params.id, req.params.taskId, patch);
       if (!updated) return res.status(404).json({ error: "playbook task not found" });
       options.onPlaybook?.(req.params.id);
+      // Notify only on a STATUS change (the meaningful playbook signal) — "completed" when it lands
+      // on done, "updated" otherwise. Pure metadata edits (notes/assignee) stay quiet to avoid noise.
+      if (patch.status) {
+        dispatchNotify(playbookTaskEvent(req.params.id, updated, updated.status === "done" ? "completed" : "updated", new Date().toISOString()));
+      }
       return res.status(200).json(updated);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -4205,7 +4313,7 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
 // self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
 // DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
-function tlsFetchFor(name: "MISP" | "YETI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP") {
+function tlsFetchFor(name: "MISP" | "YETI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY") {
   return buildTlsFetch({
     caCertPath: process.env[`DFIR_${name}_CA`],
     insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
@@ -4380,6 +4488,8 @@ export interface RuntimePipelineParams {
   store: CaseStore;
   imageLoader?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["imageLoader"];
   onState?: (state: InvestigationState) => void;
+  // Fired after a real synthesis run with the findings diff + new state (issue #58 notifications).
+  onSynth?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["onSynth"];
   // Provided only when the AI vision provider is external (not local). See ocrRedact.ts.
   ocrRunner?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["ocrRunner"];
   // Shared logger so AI/OCR/anonymization debug traces land in the same session + per-case logs.
@@ -4395,6 +4505,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     scopeStore: new ScopeStore(params.store),
     imageLoader: params.imageLoader ?? makeImageLoader(params.store),
     onState: params.onState,
+    onSynth: params.onSynth,
     anonStore: new AnonControlStore(params.store),
     customEntitiesStore: new CustomEntitiesStore(params.store),
     discoveredStore: new DiscoveredEntitiesStore(params.store),
@@ -4434,6 +4545,18 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // when DFIR_CASES_ROOT is a drive root child (e.g. C:\cases) the sibling is C:\ — and Windows
   // forbids creating files directly in a drive root. A subdir is always creatable + writable.
   const iocWhitelistStore = new IocWhitelistStore(join(dirname(casesRoot), "whitelist", "ioc-whitelist.json"));
+  // Notifications (issue #58): a global channel store (own subdir, Windows drive-root-safe) + a
+  // notifier wired with a TLS-aware fetch (Slack/Teams webhooks, honoring DFIR_NOTIFY_CA/_INSECURE
+  // for self-hosted Mattermost) and the built-in SMTP transport for email channels.
+  const notificationStore = new NotificationConfigStore(join(dirname(casesRoot), "notifications", "config.json"));
+  const notifier = createNotifier({
+    store: notificationStore,
+    fetchFn: tlsFetchFor("NOTIFY") ?? fetch,
+    smtpConnect: nodeSmtpConnect,
+    log: (m) => logLine(m),
+  });
+  // Deep-link notifications back to the dashboard. Override the host/port guess with DFIR_PUBLIC_URL.
+  const dashboardBaseUrl = (process.env.DFIR_PUBLIC_URL || `http://${host}:${port}`).replace(/\/+$/, "");
   const veloHuntStore = new VeloHuntStore(store);
   const hub = new LiveHub();
   const reportMetaStore = new ReportMetaStore(store);
@@ -4457,7 +4580,21 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
   const visionIsLocalForPipeline = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
   const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
-  const wiredPipeline = buildRuntimePipeline({ provider, synthesisProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger });
+  const wiredPipeline = buildRuntimePipeline({
+    provider, synthesisProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger,
+    // After a real synthesis, page the matching channels for each new/escalated finding (#58).
+    // Fully guarded — notifications are a side channel and must NEVER break synthesis.
+    onSynth: (caseId, diff, state) => {
+      try {
+        const url = `${dashboardBaseUrl}/dashboard?caseId=${encodeURIComponent(caseId)}`;
+        for (const ev of findingEventsFromDiff(caseId, diff, state.findings, state.updatedAt)) {
+          notifier.dispatch({ ...ev, url }).catch((err) => logLine(`[notify] dispatch error: ${(err as Error).message}`));
+        }
+      } catch (err) {
+        logLine(`[notify] onSynth error: ${(err as Error).message}`);
+      }
+    },
+  });
 
   // Live synthesis on by default — set DFIR_AI_AUTO_SYNTHESIZE=off to disable.
   const autoSynthesize = (process.env.DFIR_AI_AUTO_SYNTHESIZE ?? "on").toLowerCase() !== "off";
@@ -4537,6 +4674,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     clickupClient: buildClickUpClient(),
     clickupExportStore,
     clickupOptions: clickupOptions(),
+    notificationStore,
+    notifier,
+    notifyEmailEnabled: true,
+    dashboardBaseUrl,
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted

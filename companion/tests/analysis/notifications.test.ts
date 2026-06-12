@@ -1,0 +1,225 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  shouldNotify,
+  findingEventsFromDiff,
+  playbookTaskEvent,
+  milestoneEvent,
+  parseChannelInput,
+  applyChannelPatch,
+  redactChannel,
+  severityForPriority,
+  SEVERITY_RANK,
+  type NotificationChannel,
+  type NotificationEvent,
+} from "../../src/analysis/notifications.js";
+import { NotificationConfigStore } from "../../src/analysis/notificationStore.js";
+import type { Finding } from "../../src/analysis/stateTypes.js";
+import type { FindingsDiff } from "../../src/analysis/findingsDiff.js";
+import type { PlaybookTask } from "../../src/analysis/playbook.js";
+
+const NOW = "2026-06-12T10:00:00.000Z";
+
+function channel(over: Partial<NotificationChannel> = {}): NotificationChannel {
+  return {
+    id: "c1",
+    type: "slack",
+    name: "Slack",
+    enabled: true,
+    minSeverity: "High",
+    events: { critical_finding: true, playbook_update: true, milestone: false },
+    webhookUrl: "https://hooks.slack.com/services/x",
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...over,
+  };
+}
+
+function event(over: Partial<NotificationEvent> = {}): NotificationEvent {
+  return { kind: "critical_finding", caseId: "case-1", title: "t", severity: "High", lines: [], at: NOW, ...over };
+}
+
+function finding(over: Partial<Finding> = {}): Finding {
+  return {
+    id: "f1", severity: "Critical", title: "Cobalt Strike beacon", description: "C2 on DC01",
+    relatedIocs: [], sourceScreenshots: [], mitreTechniques: [], firstSeen: NOW, lastUpdated: NOW, status: "open", ...over,
+  };
+}
+
+describe("shouldNotify", () => {
+  it("requires enabled + the event-kind toggle", () => {
+    expect(shouldNotify(channel({ enabled: false }), event())).toBe(false);
+    expect(shouldNotify(channel({ events: { critical_finding: false, playbook_update: true, milestone: false } }), event())).toBe(false);
+    expect(shouldNotify(channel(), event())).toBe(true);
+  });
+
+  it("applies the severity threshold to findings/playbook", () => {
+    expect(shouldNotify(channel({ minSeverity: "Critical" }), event({ severity: "High" }))).toBe(false);
+    expect(shouldNotify(channel({ minSeverity: "Critical" }), event({ severity: "Critical" }))).toBe(true);
+    expect(shouldNotify(channel({ minSeverity: "Low" }), event({ severity: "Medium" }))).toBe(true);
+  });
+
+  it("milestones bypass the threshold (gated only by the toggle)", () => {
+    const ch = channel({ minSeverity: "Critical", events: { critical_finding: true, playbook_update: true, milestone: true } });
+    expect(shouldNotify(ch, event({ kind: "milestone", severity: "Info" }))).toBe(true);
+    const off = channel({ minSeverity: "Info", events: { critical_finding: true, playbook_update: true, milestone: false } });
+    expect(shouldNotify(off, event({ kind: "milestone", severity: "Info" }))).toBe(false);
+  });
+});
+
+describe("findingEventsFromDiff", () => {
+  it("emits a critical_finding per added finding at its own severity", () => {
+    const diff: FindingsDiff = { added: ["Cobalt Strike beacon"], removed: [], severityChanged: [] };
+    const evs = findingEventsFromDiff("case-1", diff, [finding()], NOW);
+    expect(evs).toHaveLength(1);
+    expect(evs[0].kind).toBe("critical_finding");
+    expect(evs[0].severity).toBe("Critical");
+    expect(evs[0].title).toBe("New finding: Cobalt Strike beacon");
+    expect(evs[0].lines.join(" ")).toContain("C2 on DC01");
+  });
+
+  it("falls back to Info severity when the added title has no matching finding", () => {
+    const diff: FindingsDiff = { added: ["Mystery"], removed: [], severityChanged: [] };
+    const evs = findingEventsFromDiff("case-1", diff, [], NOW);
+    expect(evs[0].severity).toBe("Info");
+  });
+
+  it("emits only ESCALATIONS, not de-escalations", () => {
+    const diff: FindingsDiff = {
+      added: [],
+      removed: [],
+      severityChanged: [
+        { title: "Up", from: "Medium", to: "Critical" },
+        { title: "Down", from: "Critical", to: "Low" },
+      ],
+    };
+    const evs = findingEventsFromDiff("case-1", diff, [], NOW);
+    expect(evs).toHaveLength(1);
+    expect(evs[0].title).toBe("Finding escalated: Up");
+    expect(evs[0].severity).toBe("Critical");
+  });
+});
+
+describe("playbookTaskEvent / milestoneEvent", () => {
+  const task: PlaybookTask = {
+    id: "t1", title: "Isolate DC01", description: "", status: "done", priority: "critical",
+    source: "finding", order: 0, createdAt: NOW, updatedAt: NOW,
+  };
+
+  it("maps task priority → severity for threshold filtering", () => {
+    expect(severityForPriority("critical")).toBe("Critical");
+    expect(severityForPriority("low")).toBe("Low");
+    const ev = playbookTaskEvent("case-1", task, "completed", NOW);
+    expect(ev.kind).toBe("playbook_update");
+    expect(ev.severity).toBe("Critical");
+    expect(ev.title).toContain("completed");
+  });
+
+  it("milestone is Info severity and carries the case", () => {
+    const ev = milestoneEvent("case-1", "Investigation opened", ["Investigator: ana"], NOW);
+    expect(ev.kind).toBe("milestone");
+    expect(ev.severity).toBe("Info");
+    expect(ev.lines).toContain("Case: case-1");
+  });
+});
+
+describe("parseChannelInput", () => {
+  it("requires an http(s) webhook URL for slack/teams", () => {
+    expect(parseChannelInput({ type: "slack", webhookUrl: "not-a-url" }).ok).toBe(false);
+    const ok = parseChannelInput({ type: "teams", webhookUrl: "https://outlook.office.com/webhook/x" });
+    expect(ok.ok).toBe(true);
+    expect(ok.draft?.webhookUrl).toBe("https://outlook.office.com/webhook/x");
+    expect(ok.draft?.minSeverity).toBe("High"); // default
+  });
+
+  it("requires smtp host/from/to for email and splits a recipient string", () => {
+    expect(parseChannelInput({ type: "email", smtp: { host: "mx", port: 587, from: "a@b.c", to: "" } }).ok).toBe(false);
+    const ok = parseChannelInput({ type: "email", smtp: { host: "mx", port: "587", from: "a@b.c", to: "x@y.z, p@q.r" } });
+    expect(ok.ok).toBe(true);
+    expect(ok.draft?.smtp?.to).toEqual(["x@y.z", "p@q.r"]);
+    expect(ok.draft?.smtp?.port).toBe(587);
+  });
+
+  it("rejects an unknown type", () => {
+    expect(parseChannelInput({ type: "sms" }).ok).toBe(false);
+  });
+});
+
+describe("applyChannelPatch (secret preservation) + redactChannel", () => {
+  it("keeps the saved webhook URL when the edit leaves it blank", () => {
+    const existing = channel({ webhookUrl: "https://old" });
+    const draft = parseChannelInput({ type: "slack", webhookUrl: "https://old" }).draft!; // UI resends; but simulate blank:
+    const blankDraft = { ...draft, webhookUrl: "" };
+    const next = applyChannelPatch(existing, blankDraft, "2026-06-12T11:00:00.000Z");
+    expect(next.webhookUrl).toBe("https://old");
+    expect(next.updatedAt).toBe("2026-06-12T11:00:00.000Z");
+  });
+
+  it("keeps the saved SMTP password when blank, replaces transport otherwise", () => {
+    const existing = channel({
+      type: "email", webhookUrl: undefined,
+      smtp: { host: "mx", port: 587, secure: false, from: "a@b.c", to: ["x@y.z"], password: "secret" },
+    });
+    const draft = parseChannelInput({ type: "email", smtp: { host: "mx2", port: 465, secure: true, from: "a@b.c", to: "x@y.z" } }).draft!;
+    const next = applyChannelPatch(existing, draft, NOW);
+    expect(next.smtp?.host).toBe("mx2");
+    expect(next.smtp?.secure).toBe(true);
+    expect(next.smtp?.password).toBe("secret"); // preserved
+    expect(next.webhookUrl).toBeUndefined();
+  });
+
+  it("redacts webhook URL + SMTP password for the client view", () => {
+    const r = redactChannel(channel({ webhookUrl: "https://hooks.slack.com/x" }));
+    expect((r as Record<string, unknown>).webhookUrl).toBeUndefined();
+    expect(r.hasWebhookUrl).toBe(true);
+    const e = redactChannel(channel({ type: "email", webhookUrl: undefined, smtp: { host: "mx", port: 587, secure: false, from: "a", to: ["b"], password: "p" } }));
+    expect(e.smtp?.hasPassword).toBe(true);
+    expect((e.smtp as Record<string, unknown>).password).toBeUndefined();
+  });
+});
+
+describe("SEVERITY_RANK", () => {
+  it("orders Critical highest, Info lowest", () => {
+    expect(SEVERITY_RANK.Critical).toBeGreaterThan(SEVERITY_RANK.High);
+    expect(SEVERITY_RANK.Info).toBeLessThan(SEVERITY_RANK.Low);
+  });
+});
+
+describe("NotificationConfigStore", () => {
+  let store: NotificationConfigStore;
+  beforeEach(async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-notify-"));
+    store = new NotificationConfigStore(join(dir, "notify", "config.json"));
+  });
+
+  it("starts empty (opt-in)", async () => {
+    expect(await store.load()).toEqual([]);
+  });
+
+  it("adds, updates (secret-preserving), gets and removes channels", async () => {
+    const draft = parseChannelInput({ type: "slack", name: "SOC", webhookUrl: "https://hooks/x" }).draft!;
+    const added = await store.add(draft, NOW);
+    expect(added.id).toBeTruthy();
+    expect(added.webhookUrl).toBe("https://hooks/x");
+
+    const blank = parseChannelInput({ type: "slack", name: "SOC renamed", webhookUrl: "https://hooks/x" }).draft!;
+    const updated = await store.update(added.id, { ...blank, webhookUrl: "" }, "2026-06-12T12:00:00.000Z");
+    expect(updated?.name).toBe("SOC renamed");
+    expect(updated?.webhookUrl).toBe("https://hooks/x"); // preserved through the store
+
+    expect((await store.get(added.id))?.name).toBe("SOC renamed");
+    expect(await store.update("nope", blank)).toBeNull();
+    expect(await store.remove(added.id)).toBe(true);
+    expect(await store.load()).toEqual([]);
+  });
+
+  it("drops malformed channels on read", async () => {
+    const draft = parseChannelInput({ type: "teams", webhookUrl: "https://o/x" }).draft!;
+    await store.add(draft, NOW);
+    // A second add with a valid shape, then ensure load returns 2 well-formed entries.
+    await store.add(parseChannelInput({ type: "slack", webhookUrl: "https://s/x" }).draft!, NOW);
+    expect(await store.load()).toHaveLength(2);
+  });
+});
