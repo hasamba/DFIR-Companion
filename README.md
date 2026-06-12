@@ -221,6 +221,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Export to Notion** — push a case into a new or existing Notion page; all content lives in ONE managed block the Companion owns, so your own notes outside it are never touched. `DFIR_NOTION_TOKEN`.
 - **Push to ClickUp** — export the Response Playbook to a ClickUp list as tasks (status/priority/due/assignee); re-push updates the tasks it created. `DFIR_CLICKUP_TOKEN`.
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu template](https://github.com/AnttiKurittu/incident-report-template); technical sections auto-fill (incl. an auto-glossary), human-authored sections (branding, title page, BIA, recommendations…) are filled in the dashboard and persist per case.
+- **Mobile companion** — an installable, **read-only** PWA at **`/mobile`** for quick glances during IR away from the workstation: case picker, status (severity + counts), worst findings, most severe/recent timeline events, and the IOC list with threat-intel verdicts. Same scope/legitimate filtering as the dashboard; no editing or AI. Offline app-shell + last-good cache. (Reach it from a phone/tablet by binding `DFIR_HOST=0.0.0.0` or tunnelling — the server is localhost-only by default.)
 
 ### Ops
 - **Logging to file** — every line tees to the console + a global session log + a per-case audit trail; `DFIR_LOG_LEVEL` (+ live Settings toggle, `DFIR_LOG_DIR`). `debug` traces AI calls, captures, OCR, anonymization, enrichment
