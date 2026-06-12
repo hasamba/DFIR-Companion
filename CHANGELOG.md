@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Redacted case export** — shareable ZIP for external parties: report/CSVs/state tokenized (internal IPs/hosts/users/emails/paths → consistent `ANON_*`), secrets redacted, screenshot EXIF stripped + PII text blurred (OCR); AI keys/config excluded (closes #54).
+
 ## [0.18.0] - 2026-06-11
 
 ### Added
