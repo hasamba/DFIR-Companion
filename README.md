@@ -229,6 +229,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Timesketch export & push** — **Export → Timesketch JSONL** (structured fields kept as searchable columns) or one-click **Push** (find-or-creates the sketch, clean-replaces on re-push). `DFIR_TIMESKETCH_*`.
 - **Export to Notion** — push a case into a new or existing Notion page; all content lives in ONE managed block the Companion owns, so your own notes outside it are never touched. `DFIR_NOTION_TOKEN`.
 - **Push to ClickUp** — export the Response Playbook to a ClickUp list as tasks (status/priority/due/assignee); re-push updates the tasks it created. `DFIR_CLICKUP_TOKEN`.
+- **Notifications** — push **new/escalated findings**, **playbook updates**, and **investigation milestones** to **Slack** / **MS Teams** webhooks or **SMTP email**, with a per-channel severity threshold + per-event toggles. Opt-in (channels start empty); secrets are redacted; managed in **Settings → Notifications** with a one-click test. Optional `DFIR_PUBLIC_URL` deep-links back to the case.
 - **Full incident-report template** — `report.md` follows the [AnttiKurittu template](https://github.com/AnttiKurittu/incident-report-template); technical sections auto-fill (incl. an auto-glossary), human-authored sections (branding, title page, BIA, recommendations…) are filled in the dashboard and persist per case.
 - **Custom report templates** — global branded layouts (accent colour, cover title/subtitle, running header/footer with `{{organization}}`/`{{incidentId}}`-style placeholders, and which sections appear + in what order). Built-ins are editable in place; pick one per case in **Case Details**; the choice flows to the Markdown, HTML, and Word (.docx) exports. Managed in **Settings → Report Templates**.
 - **Mobile companion** — an installable, **read-only** PWA at **`/mobile`** for quick glances during IR away from the workstation: case picker, status (severity + counts), worst findings, most severe/recent timeline events, and the IOC list with threat-intel verdicts. Same scope/legitimate filtering as the dashboard; no editing or AI. Offline app-shell + last-good cache. (Reach it from a phone/tablet by binding `DFIR_HOST=0.0.0.0` or tunnelling — the server is localhost-only by default.)
@@ -537,6 +538,42 @@ uploaded JSON report** (e.g. THOR/Hayabusa via `Generic.Scanner.ThorZIP` — for
 uploaded JSON does; it's auto-detected and routed to the right importer), then synthesizes — or click **Collect
 now** on the live job card to pull early. The in-flight job persists per case (`state/velo-hunt.json`) and
 survives a server restart; results appear on the dashboard timeline/IOCs.
+
+### Notifications (optional)
+
+Push **new/escalated findings**, **playbook updates**, and **investigation milestones** to **Slack** /
+**MS Teams** webhooks or **SMTP email**. There is **no enabling env var** — channels are created in the
+dashboard (**⚙ Settings → Notifications**) and stored next to `cases/` in `notifications/config.json`
+(gitignored; it holds the webhook URLs + SMTP passwords). The list starts empty (opt-in). Each channel has a
+**severity threshold** and **per-event toggles** (findings / playbook / milestones). Use the **Test** button to
+verify a channel end-to-end.
+
+> ⚠ **OPSEC:** notifications send case content (finding/task titles) to a third party. Don't enable on a
+> sensitive case unless the destination is trusted.
+
+**Slack — create an Incoming Webhook** (no manual OAuth scopes; Slack adds `incoming-webhook` automatically):
+
+1. Go to **https://api.slack.com/apps** → **Create New App** → **From scratch**; name it (e.g. `DFIR Companion`) and pick your workspace.
+2. Left sidebar → **Features → Incoming Webhooks** → toggle **Activate Incoming Webhooks** on.
+3. **Add New Webhook to Workspace** → choose the destination channel → **Allow**.
+4. Copy the **Webhook URL** (`https://hooks.slack.com/services/T…/B…/…`).
+5. In the Companion: **Settings → Notifications → Add a channel → Slack webhook**, paste the URL, **Add channel**, then **Test**.
+
+One webhook posts to one channel — add another webhook (and another Companion channel) for each extra channel.
+The URL is a secret (anyone with it can post there), which is why the config file is gitignored and the URL is
+redacted in API responses. *Bot-token scopes like `chat:write` are **not** needed — the Companion posts via the
+incoming webhook, not the Web API.*
+
+**MS Teams** — add an *Incoming Webhook* connector (or a Power Automate "when a webhook request is received" flow)
+to a channel and paste its URL (the Companion sends a MessageCard). **SMTP email** — give the channel a host/port,
+optional username+password, and from/to; opportunistic STARTTLS + AUTH LOGIN are used when offered. For a quick
+local test, point it at [Mailpit](https://github.com/axllent/mailpit) (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_PUBLIC_URL` | `http://<host>:<port>` | Public base URL used to deep-link a notification back to the case (set when reached via a hostname/proxy) |
+| `DFIR_NOTIFY_CA` | — | PEM CA bundle for a self-hosted webhook host (e.g. Mattermost) |
+| `DFIR_NOTIFY_INSECURE` | — | `=1` to skip TLS verification for the webhook host (lab only) |
 
 ### Analysis tuning
 

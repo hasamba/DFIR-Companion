@@ -486,6 +486,32 @@ remember-the-target idea but per TASK: each playbook task's ClickUp id is saved 
 (`updateTask`) instead of duplicating (`createTask`). Like IRIS/Notion the client takes an injectable
 `fetchFn` (no network in tests). The playbook is **synced** (honoring the IR-templates flag) before the push.
 
+**Notifications** (issue #58 — `analysis/notifications.ts` pure core + `analysis/notificationStore.ts` +
+`integrations/notify/*`) push three signal classes — **new/escalated findings**, **playbook updates**,
+**investigation milestones** — to **Slack**/**MS Teams** webhooks + **SMTP email**. The model is pure: a
+`NotificationEvent`, a `NotificationChannel` (type + `minSeverity` threshold + per-kind `events` toggles),
+and the filter `shouldNotify` (enabled ∧ kind-toggle ∧ severity≥threshold; **milestones bypass the
+threshold**). Event builders are deterministic — `findingEventsFromDiff` turns a synthesis `FindingsDiff`
+into one event per ADDED finding (at its own severity) + each ESCALATION (natural dedup: synthesis re-ids
+findings, the diff is by title, so a persisting finding isn't re-announced); `playbookTaskEvent` /
+`milestoneEvent` for the others. Formatters are per-type + pure (`slackFormat` Block Kit, `teamsFormat`
+MessageCard, `emailFormat` + a dependency-free RFC 5322 builder — mirrors the hand-rolled email IMPORT, **no
+`nodemailer`**); senders take injectable transports (`webhookSender` an injectable `fetchFn`; `smtpClient`'s
+dialog — EHLO/STARTTLS/AUTH LOGIN/MAIL-RCPT-DATA/dot-stuffing — runs through an injectable `SmtpConnect` so
+the whole state machine is unit-tested with a scripted fake socket and **never opens a real connection in
+tests**). `notifyDispatch` routes an event to the matching channels best-effort (a send failure is captured
+per-channel, never thrown — notifications are a SIDE channel and must not break the triggering request);
+`createNotifier` loads the store + dispatches. **GLOBAL store** (`notifications/config.json` next to `cases/`
+in its own subdir, Windows drive-root-safe — and **gitignored**, it holds webhook URLs + SMTP passwords);
+**OPSEC: opt-in** — the list starts empty, secrets are **redacted** in every route response (`redactChannel`)
+and preserved on a blank-field edit (`applyChannelPatch` / `parseChannelInput(raw, existing)`). Triggers:
+the pipeline's new `onSynth` hook (fired after a REAL synthesis run with the diff + state) for findings; the
+playbook add/PATCH-status routes; case-create + report-generate for milestones. Routes
+`GET /notifications/status`, `GET/POST/PUT/DELETE /notifications`, `POST /notifications/test`;
+`/health.notificationsEnabled`. Settings → Notifications (CRUD + per-channel test). `DFIR_PUBLIC_URL`
+deep-links back to the case; `DFIR_NOTIFY_CA`/`_INSECURE` for a self-hosted webhook host. Server-only (no
+`scripts/*` pipeline wiring — `onSynth` is optional, so CLI synthesize/reanalyze just omit it).
+
 **Customizable prompts.** The six prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
 consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`,
 which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC>_PROMPT` inline, or `…_PROMPT_FILE` —
