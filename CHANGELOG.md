@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Notifications** — Slack / MS Teams webhooks + SMTP email channels for new/escalated findings, playbook updates, and investigation milestones, with per-channel severity thresholds + event toggles; opt-in, secrets redacted; Settings → Notifications (closes #58).
+
 ## [0.18.0] - 2026-06-11
 
 ### Added

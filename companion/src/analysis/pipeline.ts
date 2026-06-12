@@ -19,7 +19,7 @@ import { applySeverityFloor } from "./severityFloor.js";
 import { parseJsonLoose } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
-import { diffFindings } from "./findingsDiff.js";
+import { diffFindings, type FindingsDiff } from "./findingsDiff.js";
 import type { SynthMetaStore } from "./synthMeta.js";
 import { correlateEvents } from "./correlate.js";
 import { detectTool } from "./toolDetect.js";
@@ -556,6 +556,10 @@ export interface PipelineOptions {
   retries?: number;
   backoffMs?: number;
   onState?: (state: InvestigationState) => void;
+  // Optional: fired after a REAL synthesis run (not a skip) with the findings diff + the new state,
+  // so the server can dispatch notifications (issue #58 — new/escalated findings). Best-effort; the
+  // pipeline never awaits it. Absent → no notifications (used by CLI scripts/tests).
+  onSynth?: (caseId: string, diff: FindingsDiff, state: InvestigationState) => void;
   // Optional: record when synthesis actually ran + what changed in the findings, so the
   // dashboard can show "last synthesized N ago" and a what-changed diff. Absent → not recorded.
   synthMetaStore?: SynthMetaStore;
@@ -1894,7 +1898,11 @@ export class AnalysisPipeline {
     this.lastSynthHash.set(caseId, synthHash);   // remember these inputs so an identical re-run skips the AI call
     // Record what this run changed (diff vs the findings that existed before the AI call) and
     // when it ran — surfaced on the dashboard. Only reached on a real run; skips return early above.
-    await this.opts.synthMetaStore?.record(caseId, diffFindings(loaded.findings, next.findings));
+    const findingsDiff = diffFindings(loaded.findings, next.findings);
+    await this.opts.synthMetaStore?.record(caseId, findingsDiff);
+    // Notify on new/escalated findings (issue #58). Best-effort, fire-and-forget — never blocks or
+    // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.
+    this.opts.onSynth?.(caseId, findingsDiff, next);
     this.opts.onState?.(next);
     return next;
   }

@@ -8,6 +8,11 @@
 /logs/
 logs/
 
+# Notification channel config (issue #58) — holds webhook URLs + SMTP passwords. Written
+# beside the cases root; never commit.
+/notifications/
+notifications/
+
 # Secrets / local config
 **/.env
 
