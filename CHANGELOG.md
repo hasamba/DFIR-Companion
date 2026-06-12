@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dark / light theme** — full-coverage theme toggle in the dashboard header; follows the OS `prefers-color-scheme` by default, manual choice persists in `localStorage` across sessions; every panel, graph and the swimlane canvas themed via CSS variables (closes #53).
 - **Custom report templates** — global branded report layouts (accent colour, cover title/subtitle, running header/footer with `{{placeholder}}` interpolation, and per-section enable/reorder), built-ins editable in place, selected per case; flows to Markdown/HTML/Word (closes #60).
 - **Notifications** — Slack / MS Teams webhooks + SMTP email channels for new/escalated findings, playbook updates, and investigation milestones, with per-channel severity thresholds + event toggles; opt-in, secrets redacted; Settings → Notifications (closes #58).
+- **NSRL known-good hash checking** — auto-marks matching forensic events + IOCs legitimate on import (reversible) to cut false positives. Two backends: a flat hash set (paste / server file / `DFIR_NSRL_FILE`) for custom lists, and **direct query of the full NSRL RDS SQLite database** (`DFIR_NSRL_DB` or connect in-UI) — the real ~160 GB set, never loaded into memory. Keys on sha256/md5; Settings → NSRL (closes #63).
 
 ## [0.18.0] - 2026-06-11
 
