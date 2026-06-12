@@ -12,7 +12,9 @@ import { CustomEntitiesStore, sanitizeCustomEntities } from "./analysis/anonEnti
 import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
 import type { AnonTokenCategory } from "./analysis/anonymize.js";
 import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js";
-import { TesseractOcrRunner } from "./analysis/ocrRedact.js";
+import { TesseractOcrRunner, type OcrRunner } from "./analysis/ocrRedact.js";
+import { resolveRedactedExportOptions, redactedExportFilename } from "./analysis/redactedExport.js";
+import { buildRedactedExport } from "./reports/redactedExportBuilder.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { parseSnapshot } from "./analysis/snapshot.js";
@@ -173,6 +175,10 @@ export interface AppOptions {
   flushIntervalMs?: number;
   stateStore?: StateStore;
   reportWriter?: ReportWriter;
+  // OCR backend for the redacted case export (#54), used to blur PII text in screenshots. Provided
+  // unconditionally in startServer (the export needs it even when the vision model is local); tests
+  // inject a stub. The export route falls back to a fresh TesseractOcrRunner when this is absent.
+  ocrRunner?: OcrRunner;
   // Human-authored report metadata (title page, distribution, BIA, glossary, recommendations…)
   // edited from the dashboard and merged into report.md.
   reportMetaStore?: ReportMetaStore;
@@ -1653,6 +1659,46 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (!value) return res.status(400).json({ error: "value is required" });
       const next = await discoveredEntities.unsuppress(req.params.id, value);
       return res.status(200).json({ suppressed: next.suppressed });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Redacted case package (#54): a shareable ZIP for external parties. Internal IPs / hosts /
+  // usernames / emails / paths in the report (and CSVs / state JSON) are tokenized, secrets are
+  // one-way redacted, screenshot EXIF is stripped, and detectable PII text in screenshots is
+  // blurred (best-effort OCR). AI provider keys + per-case config are NEVER included — the package
+  // is built from a curated allowlist, not a copy of the case folder. Built fresh per request; the
+  // canonical on-disk report (which keeps the REAL values) is never touched. Query flags
+  // (?screenshots=0 / ?blur=0 / ?csvs=0 / ?state=0 / ?report=0) opt parts out.
+  app.get("/cases/:id/export/redacted", async (req: Request, res: Response) => {
+    if (!options.reportWriter || !options.stateStore) {
+      return res.status(501).json({ error: "report writer not configured" });
+    }
+    if (!isValidCaseId(req.params.id)) {
+      return res.status(400).json({ error: "invalid case id" });
+    }
+    try {
+      const exportOptions = resolveRedactedExportOptions(req.query as Record<string, unknown>);
+      const { zip } = await buildRedactedExport(
+        {
+          store,
+          reportWriter: options.reportWriter,
+          stateStore: options.stateStore,
+          customEntities,
+          discoveredEntities,
+          // Victim org domains/emails the analyst entered for the exposure check are PII too —
+          // feed them to the anonymizer so they're tokenized even when absent from the timeline.
+          customerStore: new CustomerStore(store),
+          ocrRunner: options.ocrRunner ?? new TesseractOcrRunner(),
+        },
+        req.params.id,
+        exportOptions,
+      );
+      res.type("application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${redactedExportFilename(req.params.id)}"`);
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(zip);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -4346,6 +4392,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     flushIntervalMs,
     stateStore,
     reportWriter,
+    // The redacted-export route needs OCR even when the vision model is local (the pipeline's
+    // ocrRunner is undefined in that case), so give createApp its own always-available runner.
+    ocrRunner: ocrRunner ?? new TesseractOcrRunner(),
     reportMetaStore,
     commentsStore,
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
