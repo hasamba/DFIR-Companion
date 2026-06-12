@@ -966,6 +966,21 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // AI-suggest proactive Velociraptor VQL fleet-hunts from the case findings (issue #57). Single
+  // text-only AI call, EPHEMERAL (no state change) — the dashboard shows each hunt's VQL + rationale
+  // for review, then deploys the chosen one through POST /velociraptor/hunt (launchHunt). Needs an AI
+  // provider; does NOT need the Velociraptor API (the VQL is useful to copy even when deploy is off).
+  app.post("/cases/:id/velociraptor/suggest-hunts", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
+    try {
+      const suggestions = await options.pipeline.suggestHunts(req.params.id);
+      logLine(`[velociraptor] suggested ${suggestions.length} fleet-hunt(s) for ${req.params.id}`);
+      return res.status(200).json({ suggestions });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Velociraptor triage bundles ───────────────────────────────────────────────────────────
   // On-demand: list collectable CLIENT artifacts → build/save named bundles → run a bundle as a hunt
   // → after a delay, collect results, auto-import (deterministic Velociraptor importer) + synthesize.
