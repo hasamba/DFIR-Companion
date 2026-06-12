@@ -15,6 +15,8 @@ import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js"
 import { TesseractOcrRunner } from "./analysis/ocrRedact.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
+import { parseSnapshot } from "./analysis/snapshot.js";
+import { exportCaseSnapshot, importCaseSnapshot, SnapshotImportConflictError } from "./analysis/snapshotIo.js";
 import { parseCsv } from "./analysis/csvImport.js";
 import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
 import { resolveHuntPlatforms, HUNT_PLATFORMS, type HuntPlatform } from "./analysis/huntPlatforms.js";
@@ -883,6 +885,53 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.send(JSON.stringify(bundle, null, 2));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Export a portable INVESTIGATION SNAPSHOT (issue #56): a single JSON bundle of the case's
+  // timeline, findings, IOCs, asset-graph state, analyst decisions and evidence REFERENCES, with
+  // NO AI keys and no machine-specific config (see analysis/snapshot.ts allowlist). Reads the case
+  // directory directly — works regardless of which optional stores are wired — so a teammate can
+  // import it on another machine and pick up the investigation without re-running analysis.
+  app.get("/cases/:id/export/snapshot", async (req: Request, res: Response) => {
+    try {
+      const snapshot = await exportCaseSnapshot(store, req.params.id);
+      res.type("application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="snapshot-${req.params.id}.json"`);
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(JSON.stringify(snapshot, null, 2));
+    } catch (err) {
+      if ((err as Error).message.includes("does not exist")) {
+        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+      }
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import an investigation snapshot into a NEW case (issue #56). Body is the snapshot JSON, with an
+  // optional `targetCaseId` to import under a different id (resolves a conflict). The snapshot is
+  // validated (format/version/allowlist) before any write; a snapshot can ONLY restore allowlisted
+  // state files, never machine/account config. 409 if the target id already exists (the dashboard
+  // re-prompts), 400 if the payload isn't a valid snapshot.
+  app.post("/snapshots/import", async (req: Request, res: Response) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const targetCaseId = typeof body.targetCaseId === "string" && body.targetCaseId.trim()
+        ? body.targetCaseId.trim()
+        : undefined;
+      // The snapshot may be posted bare, or wrapped as { snapshot: {...}, targetCaseId }.
+      const rawSnapshot = body.snapshot !== undefined ? body.snapshot : body;
+      const snapshot = parseSnapshot(rawSnapshot);
+      const meta = await importCaseSnapshot(store, snapshot, { targetCaseId });
+      return res.status(201).json({ ...meta, counts: snapshot.counts });
+    } catch (err) {
+      if (err instanceof SnapshotImportConflictError) {
+        return res.status(409).json({ error: err.message, caseId: err.caseId });
+      }
+      // parseSnapshot throws plain Errors with a human-readable reason → 400 (bad upload).
+      const msg = (err as Error).message;
+      if (/snapshot|case id/i.test(msg)) return res.status(400).json({ error: msg });
+      return res.status(500).json({ error: msg });
     }
   });
 

@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Investigation snapshot** export/import — one shareable JSON (timeline, findings, IOCs, graph state, analyst decisions, evidence references) restores a case on another machine, with no AI keys or machine config (closes #56).
+
 ## [0.18.0] - 2026-06-11
 
 ### Added
