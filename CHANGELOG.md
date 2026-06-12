@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **NSRL known-good hash checking** — a global NSRL/RDS hash set auto-marks matching forensic events + IOCs legitimate on import (reversible) to cut false positives; paste/file (`DFIR_NSRL_FILE`) load, Settings → NSRL (closes #63).
+
 ## [0.18.0] - 2026-06-11
 
 ### Added

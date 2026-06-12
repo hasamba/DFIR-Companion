@@ -168,6 +168,11 @@ Examples:
 | `POST /ioc-whitelist/import` | `{ text }` — bulk-import rules from pasted **CSV** (header `match,pattern,type,note`) or **JSON**; skips duplicates. |
 | `GET /ioc-whitelist/export?format=csv\|json` | Download the whitelist as CSV or JSON. |
 | `POST /cases/:id/ioc-whitelist/apply` | Apply the whitelist to this case's current IOCs now — marks matches legitimate, re-synthesizes; returns `{ matched, added, legitimate }`. |
+| `GET /nsrl` | **NSRL known-good hash set** stats: `{ count, enabled }` (count of loaded NIST NSRL / RDS hashes). |
+| `POST /nsrl/import` | `{ text }` — import known-good hashes from a pasted **NSRLFile.txt** (RDS CSV), a **hashdeep CSV**, or a **hash-per-line / comma list** (MD5/SHA-1/SHA-256); dedups, returns `{ added, parsed, total }`. |
+| `POST /nsrl/clear` | Wipe the global NSRL set (e.g. to swap RDS releases). |
+| `GET /nsrl/export` | Download the set as a newline-delimited hash list. |
+| `POST /cases/:id/nsrl/apply` | Apply the NSRL set to this case now — marks events/IOCs with a known-good file hash legitimate, re-synthesizes; returns `{ matchedIocs, matchedEvents, added, legitimate }`. Auto-runs on every import; also pre-load big sets at startup via `DFIR_NSRL_FILE`. |
 | `GET /cases/:id/ai-control` | Current AI on/off state: `{ enabled, lastAnalyzedSeq }`. |
 | `POST /cases/:id/ai-control` | `{ enabled }` — turn AI analysis on/off for the case. **Defaults off** (a fresh case captures evidence without running AI). Evidence is always captured; when off, no AI runs. Turning it **on** backfills every screenshot captured while it was off. The dashboard's **AI: ON/OFF** button calls this. |
 | `GET /cases/:id/enrich-control` | Per-source enrichment state: `{ anyConfigured, providers: [{ name, scope, enabled }] }`. `scope` is `local` (your own MISP/YETI — OPSEC-safe) or `external` (third-party SaaS). |
