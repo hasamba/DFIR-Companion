@@ -908,6 +908,7 @@
       <option value="state-json">Full case state (JSON)</option>
       <option value="snapshot">Investigation snapshot (shareable JSON)</option>
       <option value="stix">STIX 2.1 bundle (JSON)</option>
+      <option value="ioc-blocklist">IOC block-list…</option>
       <option value="redacted">Redacted case package (ZIP)…</option>
       <option value="save-template">Save as Template…</option>
     </select>
@@ -1098,6 +1099,39 @@
         <button id="stSave">Save template</button>
         <button id="stCancel" style="background:var(--c-2a2f3a);">Cancel</button>
         <span id="stMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── IOC block-list export (#87) ──────────────────────────────────────── -->
+  <div id="iocBlocklistOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>IOC block-list</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        Export a clean, targeted indicator list for network/firewall teams. Scope and legitimate
+        IOC filters are always applied. Severity is derived from the worst enrichment verdict
+        (no enrichment = Info).</p>
+      <label style="display:block; font-size:12px; margin-bottom:8px;">Minimum severity
+        <select id="blMinSev" style="width:100%; box-sizing:border-box; margin-top:3px; color:var(--c-e8edf5); background:var(--c-2a2f3a); border:1px solid var(--c-3a4050); border-radius:4px; padding:4px 6px;">
+          <option value="Critical">Critical</option>
+          <option value="High">High</option>
+          <option value="Medium" selected>Medium — suspicious + malicious (default)</option>
+          <option value="Low">Low</option>
+          <option value="Info">Info — all IOCs</option>
+        </select>
+      </label>
+      <div style="font-size:12px; color:var(--c-9aa4b2); margin-bottom:5px;">IOC types</div>
+      <label style="display:block; font-size:12px; margin-bottom:4px;"><input type="checkbox" id="blTypeIp" checked /> IP addresses</label>
+      <label style="display:block; font-size:12px; margin-bottom:4px;"><input type="checkbox" id="blTypeDomain" checked /> Domains</label>
+      <label style="display:block; font-size:12px; margin-bottom:4px;"><input type="checkbox" id="blTypeUrl" checked /> URLs</label>
+      <label style="display:block; font-size:12px; margin-bottom:4px;"><input type="checkbox" id="blTypeHash" checked /> Hashes</label>
+      <label style="display:block; font-size:12px; margin-bottom:8px;"><input type="checkbox" id="blTypeEmail" /> Email addresses</label>
+      <label style="display:block; font-size:12px; margin-bottom:10px;"><input type="checkbox" id="blVerdictOnly" /> Verdict-confirmed only (suspicious or malicious enrichment required)</label>
+      <div style="margin-top:4px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button id="blDlTxt">Download TXT</button>
+        <button id="blDlCsv">Download CSV</button>
+        <button id="blDlStix">Download STIX</button>
+        <button id="blCancel" style="background:var(--c-2a2f3a);">Cancel</button>
       </div>
     </div>
   </div>
@@ -6758,6 +6792,27 @@
       }
     }
 
+    // ── IOC block-list export (#87) ──────────────────────────────────────────
+    function openIocBlocklist() { document.getElementById("iocBlocklistOverlay").classList.add("open"); }
+    function closeIocBlocklist() { document.getElementById("iocBlocklistOverlay").classList.remove("open"); }
+    function downloadIocBlocklist(format) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const c = encodeURIComponent(caseId);
+      const minSev = document.getElementById("blMinSev").value;
+      const types = [];
+      if (document.getElementById("blTypeIp").checked) types.push("ip");
+      if (document.getElementById("blTypeDomain").checked) types.push("domain");
+      if (document.getElementById("blTypeUrl").checked) types.push("url");
+      if (document.getElementById("blTypeHash").checked) types.push("hash");
+      if (document.getElementById("blTypeEmail").checked) types.push("email");
+      const verdictOnly = document.getElementById("blVerdictOnly").checked;
+      const params = new URLSearchParams({ format, minSeverity: minSev, types: types.join(",") });
+      if (verdictOnly) params.set("verdictOnly", "true");
+      window.location.href = `/cases/${c}/export/ioc-blocklist?${params}`;
+      closeIocBlocklist();
+    }
+
     // ── Redacted case export (#54) ────────────────────────────────────────────
     function openRedactedExport() {
       document.getElementById("reMsg").textContent = "";
@@ -7131,6 +7186,11 @@
     document.getElementById("stSave").onclick = saveAsTemplate;
     document.getElementById("stCancel").onclick = closeSaveTemplate;
     document.getElementById("saveTemplateOverlay").addEventListener("click", (e) => { if (e.target.id === "saveTemplateOverlay") closeSaveTemplate(); });
+    document.getElementById("blDlTxt").onclick = () => downloadIocBlocklist("txt");
+    document.getElementById("blDlCsv").onclick = () => downloadIocBlocklist("csv");
+    document.getElementById("blDlStix").onclick = () => downloadIocBlocklist("stix");
+    document.getElementById("blCancel").onclick = closeIocBlocklist;
+    document.getElementById("iocBlocklistOverlay").addEventListener("click", (e) => { if (e.target.id === "iocBlocklistOverlay") closeIocBlocklist(); });
     document.getElementById("reDownload").onclick = doRedactedExport;
     document.getElementById("reCancel").onclick = closeRedactedExport;
     document.getElementById("redactedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "redactedExportOverlay") closeRedactedExport(); });
@@ -7447,6 +7507,8 @@
       } else if (action === "stix") {
         // On-demand STIX 2.1 bundle (JSON) — import into any TIP (OpenCTI, MISP, Anomali…).
         window.location.href = `/cases/${c}/export/stix`;
+      } else if (action === "ioc-blocklist") {
+        openIocBlocklist();
       } else if (action === "redacted") {
         openRedactedExport();
       } else if (action === "save-template") {

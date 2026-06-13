@@ -23,6 +23,13 @@ import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysi
 import { buildMobileSummary, mobileSummaryEnvOptions, type MobileCaseSummary } from "../analysis/mobileSummary.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import { buildStixBundle, type StixBundle } from "./stix.js";
+import {
+  buildIocBlocklistTxt,
+  buildIocBlocklistCsv,
+  buildIocBlocklistStix,
+  type IocBlocklistFormat,
+  type IocBlocklistOptions,
+} from "./iocBlocklist.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
@@ -211,6 +218,24 @@ export class ReportWriter {
     const state = await this.loadFilteredState(caseId);
     const meta = await this.cases.getCaseMeta(caseId);
     return buildMobileSummary(state, { ...mobileSummaryEnvOptions(), caseName: meta?.name });
+  }
+
+  // Build a clean IOC block-list for network/firewall teams (same scope/legitimate filtering as
+  // the report). Supports three formats: plain text (one value per line, grouped by type),
+  // minimal CSV (type, value, severity, verdict, description), and STIX-indicators-only
+  // (a stripped-down STIX 2.1 bundle with only `indicator` objects — no identities, report,
+  // or relationship objects). Severity is derived from the worst enrichment verdict.
+  async iocBlocklist(
+    caseId: string,
+    format: IocBlocklistFormat = "txt",
+    opts: IocBlocklistOptions = {},
+  ): Promise<string | StixBundle> {
+    const state = await this.loadFilteredState(caseId);
+    const caseMeta = await this.cases.getCaseMeta(caseId);
+    const resolvedOpts: IocBlocklistOptions = { ...opts, caseName: opts.caseName ?? caseMeta?.name };
+    if (format === "csv") return buildIocBlocklistCsv(state, resolvedOpts);
+    if (format === "stix") return buildIocBlocklistStix(state, resolvedOpts);
+    return buildIocBlocklistTxt(state, resolvedOpts);
   }
 
   // Build a STIX 2.1 bundle for the case (same scope/legitimate filtering as the report) — the
