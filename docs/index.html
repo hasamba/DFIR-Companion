@@ -496,7 +496,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.14.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.19.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -521,7 +521,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.14.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.19.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -672,6 +672,102 @@
           <p>Rename, add, or suppress assets and manually link assets to IOCs. Overrides persist per case, survive re-synthesis. Full audit trail in the asset graph.</p>
           <span class="tag">v0.14 — graph editing</span>
         </div>
+        <div class="feature-card animate">
+          <div class="feature-icon amber">📋</div>
+          <h3>Response Playbook</h3>
+          <p>AI-generated checklist from Critical/High findings + next steps. Optional IR-template expansion. Push to DFIR-IRIS or ClickUp. Tasks get stable short IDs (T001, T002…).</p>
+          <span class="tag">v0.16 — IR workflow</span>
+        </div>
+        <div class="feature-card animate animate-d1">
+          <div class="feature-icon cyan">🦅</div>
+          <h3>Velociraptor Fleet Hunts</h3>
+          <p>Generate VQL hunts from findings with rationale — one-click deploy across all endpoints. Dedicated AI model for VQL. Collection results pulled inline.</p>
+          <span class="tag">v0.19 — AI-suggested hunts</span>
+        </div>
+        <div class="feature-card animate animate-d2">
+          <div class="feature-icon purple">📓</div>
+          <h3>AI Playbook Hunts</h3>
+          <p>Per playbook task, suggest a Velociraptor hunt. Endpoint-tied tasks deploy as single-client collections; others as fleet hunts. Suggestions persist, only new/changed tasks re-generated.</p>
+          <span class="tag">v0.19 — per-task VQL</span>
+        </div>
+        <div class="feature-card animate animate-d3">
+          <div class="feature-icon green">📱</div>
+          <h3>Mobile Companion PWA</h3>
+          <p>Installable read-only PWA — case status, worst findings, recent timeline, IOC verdicts. Quick glances during IR from your phone. Navigate to /mobile.</p>
+          <span class="tag">v0.19 — on-the-go</span>
+        </div>
+        <div class="feature-card animate animate-d4">
+          <div class="feature-icon red">🧠</div>
+          <h3>Memory Forensics Import</h3>
+          <p>Volatility 3 + Rekall importer: process trees, network connections, injected code (T1055), services, modules. Zero AI — pure parsing.</p>
+          <span class="tag">v0.19 — memory analysis</span>
+        </div>
+        <div class="feature-card animate animate-d5">
+          <div class="feature-icon amber">🐧</div>
+          <h3>Linux Evidence Importers</h3>
+          <p>auditd, journald JSON, sysdig/Falco alerts + events — auto-detected by Import button. Full Linux IR alongside Windows.</p>
+          <span class="tag">v0.19 — Linux IR</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon cyan">📧</div>
+          <h3>Email / .eml / .msg Import</h3>
+          <p>Phishing &amp; BEC triage: SPF/DKIM/DMARC checks, spoof heuristics, IOC harvesting. MITRE T1566 mapping.</p>
+          <span class="tag">v0.18 — phishing triage</span>
+        </div>
+        <div class="feature-card animate animate-d1">
+          <div class="feature-icon purple">🎯</div>
+          <h3>Adversary Group Hints</h3>
+          <p>Known ATT&amp;CK groups ranked by technique overlap — sub-technique-aware scoring. Not attribution, but narrows the landscape. Dashboard panel + report.</p>
+          <span class="tag">v0.18 — sub-technique aware</span>
+        </div>
+        <div class="feature-card animate animate-d2">
+          <div class="feature-icon green">📤</div>
+          <h3>STIX 2.1 + ATT&amp;CK Navigator</h3>
+          <p>Export STIX bundles to any TIP. Navigator layer JSON — techniques colored by severity. MISP push + Notion export.</p>
+          <span class="tag">v0.18 — multi-format export</span>
+        </div>
+        <div class="feature-card animate animate-d3">
+          <div class="feature-icon amber">🔒</div>
+          <h3>Redacted Case Export</h3>
+          <p>Shareable ZIP for external parties: IPs/hosts/users tokenized to ANON_*, secrets redacted, screenshot EXIF stripped + PII blurred. No AI keys included.</p>
+          <span class="tag">v0.19 — safe sharing</span>
+        </div>
+        <div class="feature-card animate animate-d4">
+          <div class="feature-icon cyan">💾</div>
+          <h3>Investigation Snapshot</h3>
+          <p>Export/import one JSON — timeline, findings, IOCs, graph, analyst decisions. Restore on another machine. No AI keys or machine config.</p>
+          <span class="tag">v0.19 — cross-machine</span>
+        </div>
+        <div class="feature-card animate animate-d5">
+          <div class="feature-icon purple">🌙</div>
+          <h3>Dark / Light Theme</h3>
+          <p>Full-coverage theme toggle. Follows OS preference by default, manual choice persists. Every panel, graph, canvas themed. Night-mode DFIR.</p>
+          <span class="tag">v0.19 — theme persistence</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon green">🔔</div>
+          <h3>Notifications</h3>
+          <p>Slack / MS Teams webhooks + SMTP email for findings, playbook updates, milestones. Per-channel severity thresholds. Opt-in.</p>
+          <span class="tag">v0.19 — Slack/Teams/Email</span>
+        </div>
+        <div class="feature-card animate animate-d1">
+          <div class="feature-icon amber">🛡️</div>
+          <h3>NSRL Known-Good Hashes</h3>
+          <p>Auto-mark matching events + IOCs legitimate on import. Flat hash set or direct query the full ~160GB NSRL RDS SQLite DB — never loaded into memory.</p>
+          <span class="tag">v0.19 — false positive reduction</span>
+        </div>
+        <div class="feature-card animate animate-d2">
+          <div class="feature-icon cyan">📑</div>
+          <h3>Custom Report Templates</h3>
+          <p>Branded layouts — accent colour, cover, running header/footer with placeholder interpolation. Built-ins editable in place, selected per case.</p>
+          <span class="tag">v0.19 — branded reports</span>
+        </div>
+        <div class="feature-card animate animate-d3">
+          <div class="feature-icon purple">🏊</div>
+          <h3>Timeline Swimlane View</h3>
+          <p>Interactive asset/time chart with selection, scope-to-view, and PNG/SVG export. See which host was active when — at a glance.</p>
+          <span class="tag">v0.17 — visual timeline</span>
+        </div>
       </div>
     </div>
   </section>
@@ -705,6 +801,9 @@
         <div class="source-pill"><span class="icon">📸</span><span class="label">Screenshots (any)</span></div>
         <div class="source-pill"><span class="icon">🎯</span><span class="label">CrowdStrike Falcon</span></div>
         <div class="source-pill"><span class="icon">🦡</span><span class="label">Hunting.ch (abuse.ch)</span></div>
+        <div class="source-pill"><span class="icon">🐧</span><span class="label">auditd / journald / Falco</span></div>
+        <div class="source-pill"><span class="icon">🧠</span><span class="label">Volatility 3 / Rekall</span></div>
+        <div class="source-pill"><span class="icon">📧</span><span class="label">Email / .eml / .msg</span></div>
       </div>
     </div>
   </section>
@@ -777,6 +876,20 @@
           <div class="shield">⚙️</div>
           <h3>AI On/Off Per Case</h3>
           <p>Capture-only mode by default. Turn AI on when ready — it backfills everything captured while off. Deterministic imports still populate timeline.</p>
+        </div>        <div class="security-card animate">
+          <div class="shield">🔒</div>
+          <h3>Redacted Case Export</h3>
+          <p>Share findings externally safely — internal IPs/hosts tokenized, secrets redacted, screenshot EXIF stripped + PII blurred. No AI keys in the ZIP.</p>
+        </div>
+        <div class="security-card animate animate-d1">
+          <div class="shield">🌙</div>
+          <h3>Dark / Light Theme</h3>
+          <p>Full theme coverage — every panel, graph, swimlane canvas. Follows OS preference, persists per-session. Night-shift DFIR without eye strain.</p>
+        </div>
+        <div class="security-card animate animate-d2">
+          <div class="shield">💾</div>
+          <h3>Investigation Snapshot</h3>
+          <p>Export the full case state (no AI keys, no machine config) as one JSON. Import on another machine and continue. Cross-team collaboration without credentials leakage.</p>
         </div>
       </div>
     </div>
