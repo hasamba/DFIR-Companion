@@ -3292,6 +3292,7 @@
         return `<div class="pb-task pb-${escAttr(t.status)}" data-id="${escAttr(t.id)}" ${canDrag ? 'draggable="true"' : ""}>` +
           `<div class="pb-row1">` +
             `<span class="pb-drag ${canDrag ? "" : "pb-drag-off"}" title="Drag to reorder">⠿</span>` +
+            (t.shortId ? `<span class="pb-shortid">${esc(t.shortId)}</span>` : "") +
             `<select class="pb-status" onchange="pbPatch('${escAttr(t.id)}',{status:this.value})">${opts}</select>` +
             `<span class="pb-pri pb-pri-${escAttr(t.priority)}">${esc(t.priority)}</span>` +
             `<span class="pb-title">${esc(t.title)}</span>` +
@@ -3303,7 +3304,6 @@
             `</span>` +
           `</div>` + desc +
           `<div class="pb-row2">` +
-            (t.shortId ? `<span class="pb-shortid">${esc(t.shortId)}</span>` : "") +
             `<input class="pb-assignee" placeholder="assignee" value="${escAttr(t.assignee || "")}" onchange="pbPatch('${escAttr(t.id)}',{assignee:this.value})" />` +
             `<input class="pb-due" type="date" value="${escAttr(t.dueDate || "")}" onchange="pbPatch('${escAttr(t.id)}',{dueDate:this.value})" title="Due date" />` +
           `</div>` +
