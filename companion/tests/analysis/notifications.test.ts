@@ -261,4 +261,17 @@ describe("NotificationConfigStore", () => {
     await store.add(parseChannelInput({ type: "slack", webhookUrl: "https://s/x" }).draft!, NOW);
     expect(await store.load()).toHaveLength(2);
   });
+
+  it("persists and loads Telegram channels with bot token intact", async () => {
+    const draft = parseChannelInput({ type: "telegram", telegram: { botToken: "123:SECRET", chatId: "-1001234567890" } }).draft!;
+    const added = await store.add(draft, NOW);
+    expect(added.telegram?.botToken).toBe("123:SECRET");
+    expect(added.telegram?.chatId).toBe("-1001234567890");
+
+    // Re-load from disk: the telegram field must survive the Zod schema validation pass.
+    const [loaded] = await store.load();
+    expect(loaded.telegram?.botToken).toBe("123:SECRET");
+    expect(loaded.telegram?.chatId).toBe("-1001234567890");
+    expect(loaded.type).toBe("telegram");
+  });
 });

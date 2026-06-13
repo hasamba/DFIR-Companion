@@ -33,6 +33,11 @@ const smtpSchema = z.object({
   rejectUnauthorized: z.boolean().optional(),
 });
 
+const telegramSchema = z.object({
+  botToken: z.string().catch(""),
+  chatId: z.string().catch(""),
+});
+
 const eventsSchema = z.object({
   critical_finding: z.boolean().catch(true),
   playbook_update: z.boolean().catch(true),
@@ -48,6 +53,7 @@ const channelSchema = z.object({
   events: eventsSchema.catch({ critical_finding: true, playbook_update: true, milestone: false } as Record<NotificationEventKind, boolean>),
   webhookUrl: z.string().optional(),
   smtp: smtpSchema.optional(),
+  telegram: telegramSchema.optional(),
   createdAt: z.string().catch(""),
   updatedAt: z.string().catch(""),
 });
