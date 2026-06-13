@@ -29,6 +29,9 @@ const runner: VqlRunner = async (statements) => {
       { name: "Windows.Events.DNSQueries", description: "DNS queries", type: "CLIENT_EVENT" },
     ], raw: "" };
   }
+  if (p.includes("GetClientMonitoringState()")) {
+    return { rows: [{ artifact: "Windows.Events.ProcessCreation" }, { artifact: "Windows.Events.DNSQueries" }], raw: "" };
+  }
   if (p.includes("source(") && p.includes("artifact=")) {
     return { rows: [PROC_ROW], raw: "" };
   }
@@ -87,6 +90,44 @@ describe("Velociraptor live monitors — routes", () => {
     const { app } = await makeApp();
     expect((await request(app).post("/cases/c1/velociraptor/monitors").send({ clientId: "bad", artifact: "Windows.Events.ProcessCreation" })).status).toBe(400);
     expect((await request(app).post("/cases/c1/velociraptor/monitors").send({ clientId: "C.abc", artifact: "bad name!" })).status).toBe(400);
+  });
+
+  it("starts an ALL-clients monitor (allClients:true, no specific endpoint) and ingests across the fleet", async () => {
+    const { app, stateStore } = await makeApp();
+    const start = await request(app).post("/cases/c1/velociraptor/monitors")
+      .send({ allClients: true, artifact: "Windows.Events.ProcessCreation", pollSeconds: 30 });
+    expect(start.status).toBe(202);
+    expect(start.body.monitor.allClients).toBe(true);
+    expect(start.body.monitor.clientId).toBe("*");
+    expect(start.body.monitor.id).toBe("*__Windows.Events.ProcessCreation");
+    expect(start.body.monitor.hostname).toBe("all clients");
+
+    const poll = await request(app).post(`/cases/c1/velociraptor/monitors/${encodeURIComponent(start.body.monitor.id)}/poll`);
+    expect(poll.body.monitor.addedEvents).toBeGreaterThan(0);
+    expect((await stateStore.load("c1")).forensicTimeline.length).toBeGreaterThan(0);
+  });
+
+  it("auto-monitor starts an all-clients monitor for every configured client-event artifact", async () => {
+    const { app } = await makeApp();
+    const auto = await request(app).post("/cases/c1/velociraptor/monitors/auto").send({});
+    expect(auto.status).toBe(202);
+    expect(auto.body.discovered).toEqual(["Windows.Events.ProcessCreation", "Windows.Events.DNSQueries"]);
+    expect(auto.body.started).toHaveLength(2);
+
+    const list = (await request(app).get("/cases/c1/velociraptor/monitors")).body;
+    expect(list.map((m: { id: string }) => m.id).sort()).toEqual(["*__Windows.Events.DNSQueries", "*__Windows.Events.ProcessCreation"]);
+    expect(list.every((m: { allClients: boolean }) => m.allClients === true)).toBe(true);
+  });
+
+  it("auto-monitor 422s with guidance when nothing is configured", async () => {
+    const emptyRunner: VqlRunner = async (statements) => {
+      if (statements[0].includes("GetClientMonitoringState()")) return { rows: [], raw: "" };
+      return { rows: [], raw: "" };
+    };
+    const { app } = await makeApp(emptyRunner);
+    const auto = await request(app).post("/cases/c1/velociraptor/monitors/auto").send({});
+    expect(auto.status).toBe(422);
+    expect(auto.body.error).toMatch(/Client Monitoring/i);
   });
 
   it("poll-now ingests new monitoring rows into the timeline + advances stats", async () => {

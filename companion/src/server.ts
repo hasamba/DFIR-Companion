@@ -121,7 +121,7 @@ import {
 } from "./analysis/customerExposure.js";
 import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
-import { VelociraptorClient, buildVelociraptorClient, matchClient, type HuntTarget, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
+import { VelociraptorClient, buildVelociraptorClient, matchClient, ALL_CLIENTS, type HuntTarget, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
 import { ArtifactBundleStore } from "./analysis/artifactBundleStore.js";
 import { VelociraptorClientStore } from "./analysis/velociraptorClientStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
@@ -1668,6 +1668,31 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (resumed > 0) logLine(`[velo-monitor] resumed ${resumed} live monitor(s) across ${cases.length} case(s)`);
   }
 
+  // Build + persist + schedule one monitor (shared by the manual start route and the auto-monitor
+  // route). `clientId` is a real client (`C....`) or the ALL_CLIENTS sentinel (`*`) for every endpoint.
+  // Idempotent per (clientId, artifact): re-arming keeps the existing cursor so events aren't re-ingested;
+  // a brand-new monitor starts at "now" (no history backfill). Returns the persisted monitor.
+  async function createVeloMonitor(caseId: string, spec: { clientId: string; artifact: string; pollSeconds: number; hostname?: string; minSeverity?: Severity; allClients?: boolean }): Promise<VeloMonitor> {
+    const monStore = options.veloMonitorStore!;
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    const id = monitorId(spec.clientId, spec.artifact);
+    const existing = await monStore.get(caseId, id);
+    const monitor: VeloMonitor = {
+      id, clientId: spec.clientId, artifact: spec.artifact, pollSeconds: spec.pollSeconds,
+      allClients: spec.allClients || undefined,
+      hostname: spec.allClients ? (spec.hostname || "all clients") : spec.hostname,
+      cursor: existing?.cursor && existing.cursor > 0 ? existing.cursor : nowEpoch,
+      status: "active", minSeverity: spec.minSeverity,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+      addedEvents: existing?.addedEvents ?? 0, polls: existing?.polls ?? 0,
+    };
+    await monStore.upsert(caseId, monitor);
+    scheduleVeloMonitor(caseId, monitor);
+    options.onVeloMonitor?.(caseId);
+    logLine(`[velo-monitor] started ${spec.artifact} on ${monitor.hostname || spec.clientId} (every ${spec.pollSeconds}s) for case ${caseId}`);
+    return monitor;
+  }
+
   // Collect a bundle hunt and import it the SAME way a manual import works. Ingests BOTH the result
   // ROWS (the {"Artifact.Name":[rows]} artifact-map the Velociraptor importer consumes) AND any
   // uploaded JSON reports (e.g. THOR/Hayabusa via Generic.Scanner.ThorZIP) — for those the rows don't
@@ -1879,9 +1904,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
     if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
-    const clientId = String(req.body?.clientId ?? "").trim();
+    // `allClients` (or clientId === "*") watches the artifact across EVERY enrolled client in one
+    // monitor — no specific endpoint to pick. Otherwise a real client id is required.
+    const wantsAll = req.body?.allClients === true || String(req.body?.clientId ?? "").trim() === ALL_CLIENTS;
+    const clientId = wantsAll ? ALL_CLIENTS : String(req.body?.clientId ?? "").trim();
     const artifact = String(req.body?.artifact ?? "").trim();
-    if (!/^C\.[A-Za-z0-9]+$/.test(clientId)) return res.status(400).json({ error: "a valid Velociraptor clientId (C....) is required" });
+    if (!wantsAll && !/^C\.[A-Za-z0-9]+$/.test(clientId)) return res.status(400).json({ error: "a valid Velociraptor clientId (C....) is required, or set allClients:true" });
     if (!/^[A-Za-z0-9._]+$/.test(artifact)) return res.status(400).json({ error: "a valid CLIENT_EVENT artifact name is required" });
     try {
       const fallback = Number(options.veloMonitorPollSeconds) || 30;
@@ -1889,22 +1917,38 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const pollSeconds = Math.min(3600, Math.max(5, Number.isFinite(reqPoll) && reqPoll > 0 ? Math.floor(reqPoll) : fallback));
       const hostname = String(req.body?.hostname ?? "").trim() || undefined;
       const minSeverity = parseMinSeverity(req.body?.minSeverity);
-      const nowEpoch = Math.floor(Date.now() / 1000);
-      const id = monitorId(clientId, artifact);
-      const existing = await options.veloMonitorStore.get(caseId, id);
-      const monitor: VeloMonitor = {
-        id, clientId, artifact, pollSeconds, hostname,
-        // Re-arming an existing monitor keeps its cursor (don't re-ingest); a brand-new one starts "now".
-        cursor: existing?.cursor && existing.cursor > 0 ? existing.cursor : nowEpoch,
-        status: "active", minSeverity,
-        createdAt: existing?.createdAt ?? new Date().toISOString(),
-        addedEvents: existing?.addedEvents ?? 0, polls: existing?.polls ?? 0,
-      };
-      await options.veloMonitorStore.upsert(caseId, monitor);
-      scheduleVeloMonitor(caseId, monitor);
-      options.onVeloMonitor?.(caseId);
-      logLine(`[velo-monitor] started ${artifact} on ${hostname || clientId} (every ${pollSeconds}s) for case ${caseId}`);
+      const monitor = await createVeloMonitor(caseId, { clientId, artifact, pollSeconds, hostname, minSeverity, allClients: wantsAll });
       return res.status(202).json({ accepted: true, monitor });
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Auto-monitor every client-event artifact ALREADY enabled in Velociraptor's client monitoring table
+  // (#84 follow-up) — discovers them via GetClientMonitoringState() and starts an ALL-clients monitor
+  // for each (idempotent: an existing monitor for the same artifact is refreshed, not duplicated). 422
+  // with guidance when nothing is configured / the version's proto differs (set the override env var).
+  app.post("/cases/:id/velociraptor/monitors/auto", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
+    try {
+      const discovered = await options.velociraptorClient.listMonitoredArtifacts();
+      if (!discovered.length) {
+        return res.status(422).json({ error: "no client-event artifacts found in Velociraptor's client monitoring table — enable some in Velociraptor → Client Monitoring first (or set DFIR_VELOCIRAPTOR_MONITORED_VQL if your version's monitoring proto differs)", discovered: [] });
+      }
+      const fallback = Number(options.veloMonitorPollSeconds) || 30;
+      const reqPoll = Number(req.body?.pollSeconds);
+      const pollSeconds = Math.min(3600, Math.max(5, Number.isFinite(reqPoll) && reqPoll > 0 ? Math.floor(reqPoll) : fallback));
+      const minSeverity = parseMinSeverity(req.body?.minSeverity);
+      const started: VeloMonitor[] = [];
+      for (const artifact of discovered) {
+        started.push(await createVeloMonitor(caseId, { clientId: ALL_CLIENTS, artifact, pollSeconds, minSeverity, allClients: true }));
+      }
+      logLine(`[velo-monitor] auto-started ${started.length} all-clients monitor(s) from the Velociraptor monitoring table for case ${caseId}`);
+      return res.status(202).json({ accepted: true, discovered, started });
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
     }
