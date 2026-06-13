@@ -19,6 +19,7 @@ import { applySeverityFloor } from "./severityFloor.js";
 import { parseJsonLoose } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
+import { detectTimelineGaps, backfillSilenceGapFindings, gapEnvOptions } from "./gapDetect.js";
 import { diffFindings, type FindingsDiff } from "./findingsDiff.js";
 import type { SynthMetaStore } from "./synthMeta.js";
 import { correlateEvents } from "./correlate.js";
@@ -2353,13 +2354,20 @@ export class AnalysisPipeline {
     // missed. Restricted to the events synthesis actually considered (scopedEvents).
     const eligibleIds = new Set(scopedEvents.map((e) => e.id));
     const backfilled = backfillHighSeverityFindings(linked, eligibleIds, ts);
+    // Log gap analysis (#83): a COMPLETE-silence gap — a window where every source went dark — is the
+    // classic signature of cleared logs / a stopped collector, so escalate it to a finding here too.
+    // Gaps are derived on read (not persisted); only the complete ones earn a persisted finding, and
+    // the finding id is derived from the bounding events so re-synthesis over the same gap is idempotent.
+    const gapOpts = gapEnvOptions();
+    const gaps = detectTimelineGaps(scopedEvents, gapOpts);
+    const gapFilled = backfillSilenceGapFindings(backfilled, gaps, ts, gapOpts.maxFindings);
     // Preserve analyst-pinned questions (synthesis replaces keyQuestions wholesale). Re-read
     // the LATEST state here, not the pre-AI snapshot, so a question added DURING the
     // seconds-long AI call isn't clobbered by this write (read-modify-write race).
     const pinnedNow = (await this.opts.stateStore.load(caseId)).keyQuestions.filter((q) => q.pinned);
     const next = pinnedNow.length
-      ? { ...backfilled, keyQuestions: mergePinnedQuestions(pinnedNow, backfilled.keyQuestions) }
-      : backfilled;
+      ? { ...gapFilled, keyQuestions: mergePinnedQuestions(pinnedNow, gapFilled.keyQuestions) }
+      : gapFilled;
 
     await this.opts.stateStore.save(next);
     this.lastSynthHash.set(caseId, synthHash);   // remember these inputs so an identical re-run skips the AI call

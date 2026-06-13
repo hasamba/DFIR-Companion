@@ -128,6 +128,12 @@ For each case the AI builds and keeps up to date:
   inter-arrival intervals are too regular to be human traffic, the classic C2 callback
   signature. Derived from the network events; severity High for public destinations. A
   hunting lead, not a verdict. Deterministic, no AI call. Dashboard panel + report §4.9.
+- **Log gap analysis** — suspiciously long **silent periods** in the timeline. A gap where
+  *every* source went dark is the classic log-tampering signature (cleared Event Logs, a
+  stopped collector/auditd, deleted logs) — flagged High and escalated to a finding; one tool
+  going quiet while others keep logging is a partial coverage blindspot (Medium). Density-aware
+  (won't flag normal quiet in a sparse timeline) with optional working-hours filtering. A lead,
+  not proof. Deterministic, no AI call. Dashboard *Timeline Gaps* panel + report §3.3.
 - **Adversary hints** — known **MITRE ATT&CK groups** ranked by how much their technique
   set overlaps the case's, as early hypothesis fuel. Offline (a bundled dataset, no
   AI/network); sub-technique-aware, so an **exact** sub-technique match (highlighted) outranks
@@ -614,6 +620,10 @@ The token is stored in `notifications/config.json` (beside `cases/`) and is **ne
 | `DFIR_PHASE_GAP_S` | `300` | Gap between events (s) that starts a new attack phase |
 | `DFIR_BEACON_MIN_COUNT` | `5` | Minimum connection events to a (host → dest:port) channel before it's considered for beacon detection |
 | `DFIR_BEACON_MAX_JITTER_PCT` | `20` | Max interval jitter (stddev as % of mean) for a channel to count as a beacon — lower = stricter |
+| `DFIR_GAP_MIN_MINUTES` | `30` | Hard floor for log gap analysis — a timeline silence shorter than this is never flagged |
+| `DFIR_GAP_DENSITY_FACTOR` | `4` | A gap must also be ≥ this × the timeline's median inter-event interval to flag (suppresses normal quiet in sparse timelines; `0` = floor only) |
+| `DFIR_GAP_ACTIVE_HOURS` | _(unset)_ | Optional working hours `"8-18"` (UTC, supports wrap-around `"22-6"`) — flag only gaps overlapping them; supersedes the density heuristic when set |
+| `DFIR_GAP_MAX_FINDINGS` | `5` | Cap on complete-silence gaps that escalate to a finding (panel/report still show all) — stops a super-timeline case flooding the findings list |
 | `DFIR_DEDUP` | `on` | Skip AI analysis of a screenshot **only when it's byte-identical** to the previous capture (SHA-256 exact match — the screen didn't change). Any difference is analyzed; still stored as evidence either way. Set `off` to analyze **every** screenshot |
 
 Example `.env` (two-tier OpenRouter setup):
