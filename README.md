@@ -178,6 +178,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Plaso** | `psort` CSV (dynamic + l2tcsv) | — (Info events) |
 | **Sandbox reports** | CAPEv2 `report.json`, Falcon Sandbox summary | Sample verdict + behavioural signatures |
 | **Memory forensics** | Volatility 3 (`-r json`) + Rekall: pslist/pstree, netscan, malfind, cmdline, svcscan | malfind injected code → High (T1055); listings → Info/Low evidence |
+| **TheHive** | Case / alert JSON export, observable list (TheHive 5) | TheHive severity 1–4; MITRE from ATT&CK-tagged tags |
 | **Email** | `.eml` (RFC 2822), best-effort `.msg` | SPF/DKIM/DMARC fail → sender spoof heuristics (T1566 Phishing) |
 | **Linux auditd** | raw `audit.log` / `ausearch` records, `aureport` tables | Record-type table (logins, account mgmt, sudo, SELinux, audit tampering) |
 | **systemd journald** | `journalctl -o json` / `-o json-pretty` | syslog PRIORITY + tradecraft bumps (sshd, sudo, useradd) |
