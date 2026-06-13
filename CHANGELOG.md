@@ -18,9 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Collection results in the dashboard** — a single-endpoint collection now pulls its rows back inline (Refresh + auto-poll, rendered as a table) like a fleet hunt, instead of only deep-linking to the Velociraptor GUI; `POST /velociraptor/collect-results` (#70).
 - **Dedicated Velociraptor hunt model** — a separate LLM just for generating Velociraptor VQL hunts (`DFIR_AI_VELO_PROVIDER`/`_MODEL`/`_KEY`/`_BASE_URL`, default `openrouter` / `anthropic/claude-haiku-4.5`), since many models botch VQL; editable in Settings → AI (#70).
 - **Persistent + incremental hunt suggestions** — generated playbook hunts survive a page refresh (`state/playbook-hunts.json`); a suggestion is kept while its task is unchanged and dropped once the task is reworded/deleted. Pressing Generate again only sends NEW or CHANGED tasks to the model, never regenerating hunts that already exist (`force:true` regenerates all) (#70).
-
-### Added
 - **Playbook task short IDs** — each task gets a stable sequential display ID (`T001`, `T002`, …) stored in the task record; shown at the bottom-left of each card in the same blue monospace style as IOC and Finding IDs; existing tasks are back-filled on the next sync.
+- **Telegram notifications** — Telegram bot channel for findings/playbook/milestone notifications; configure via bot token + chat ID in Settings → Notifications (closes #75).
 
 ### Fixed
 - **Playbook delete button for auto-derived tasks** — deleting a next-step or finding task now marks it `skipped` (persists across re-syncs) instead of silently removing it and having syncPlaybook re-add it immediately (closes #78).
