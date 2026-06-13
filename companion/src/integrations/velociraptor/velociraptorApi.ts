@@ -579,22 +579,45 @@ export class VelociraptorClient {
 
   // List the server's artifacts of a given type — CLIENT (collectable, for triage bundles) or
   // CLIENT_EVENT (continuous client monitoring, for the live-monitor picker, #84). Returns metadata
-  // only (no evidence), so the per-query row cap is NOT applied — a server can define hundreds. The
-  // type is constrained to the two literals, so it's injection-safe inside the literal. The match is
-  // CASE-INSENSITIVE via `lowercase(string=type)` — `artifact_definitions()` reports `CLIENT_EVENT`
-  // (uppercase) on some versions, which an anchored case-sensitive compare would miss → empty picker.
+  // only (no evidence), so the per-query row cap is NOT applied. The type is filtered in TYPESCRIPT
+  // (not VQL): `artifact_definitions()` reports the type with inconsistent casing/spacing across
+  // versions (`CLIENT_EVENT` / `client_event` / `Client Event`), and a VQL `=~`/`lowercase()` filter
+  // missed them → empty picker. Fetching all + normalizing the type string in TS is version-proof.
   async listClientArtifacts(type: "client" | "client_event" = "client"): Promise<VeloArtifactInfo[]> {
-    const kind = type === "client_event" ? "client_event" : "client";
-    const program = `SELECT name, description, type FROM artifact_definitions() WHERE lowercase(string=type) = '${kind}' ORDER BY name`;
-    const rows = await this.runRaw(program);
+    const wanted = type === "client_event" ? "client_event" : "client";
+    const rows = await this.runRaw("SELECT name, description, type FROM artifact_definitions() ORDER BY name", this.collectCap());
     const out: VeloArtifactInfo[] = [];
     for (const row of rows) {
-      const r = row as { name?: unknown; description?: unknown };
+      const r = row as { name?: unknown; description?: unknown; type?: unknown };
       const name = String(r.name ?? "").trim();
       if (!name) continue;
+      const t = String(r.type ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+      if (t !== wanted) continue;
       out.push({ name, description: String(r.description ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 300) });
     }
     return out;
+  }
+
+  // Diagnostics for the live-monitor features (#84) when the picker / auto-discovery come back empty
+  // on a real server: the distinct artifact `type` strings + counts (so we can see the real casing),
+  // the raw `GetClientMonitoringState()` rows (the configured monitoring table), and how many CLIENT_EVENT
+  // artifacts matched. Each probe is independent — one failing doesn't abort the others. Localhost only.
+  async diagnostics(): Promise<{ artifactTypes: Record<string, number>; clientEventCount: number; monitoringState: unknown; errors: Record<string, string> }> {
+    const errors: Record<string, string> = {};
+    const artifactTypes: Record<string, number> = {};
+    let clientEventCount = 0;
+    try {
+      const rows = await this.runRaw("SELECT type FROM artifact_definitions()", this.collectCap());
+      for (const row of rows) {
+        const t = String((row as { type?: unknown }).type ?? "").trim();
+        artifactTypes[t || "(empty)"] = (artifactTypes[t || "(empty)"] ?? 0) + 1;
+        if (t.toLowerCase().replace(/[\s-]+/g, "_") === "client_event") clientEventCount++;
+      }
+    } catch (e) { errors.artifactTypes = (e as Error).message; }
+    let monitoringState: unknown = null;
+    try { monitoringState = await this.monitoringStateRaw(); }
+    catch (e) { errors.monitoringState = (e as Error).message; }
+    return { artifactTypes, clientEventCount, monitoringState, errors };
   }
 
   // Run the "configured client-event artifacts" VQL and return the RAW rows — used for diagnostics when

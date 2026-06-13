@@ -23,8 +23,10 @@ const PROC_ROW = {
 
 const runner: VqlRunner = async (statements) => {
   const p = statements[0];
-  if (p.includes("artifact_definitions()") && p.includes("client_event")) {
+  // listClientArtifacts now fetches ALL definitions (no type in the VQL) and filters type in TS.
+  if (p.includes("artifact_definitions()")) {
     return { rows: [
+      { name: "Windows.System.Pslist", description: "Processes", type: "CLIENT" },
       { name: "Windows.Events.ProcessCreation", description: "Process creation events", type: "CLIENT_EVENT" },
       { name: "Windows.Events.DNSQueries", description: "DNS queries", type: "CLIENT_EVENT" },
     ], raw: "" };
@@ -84,6 +86,15 @@ describe("Velociraptor live monitors — routes", () => {
 
     expect((await request(app).delete(`/cases/c1/velociraptor/monitors/${encodeURIComponent(mid)}`)).status).toBe(204);
     expect((await request(app).get("/cases/c1/velociraptor/monitors")).body).toHaveLength(0);
+  });
+
+  it("GET /velociraptor/diag reports artifact type counts + raw monitoring state", async () => {
+    const { app } = await makeApp();
+    const res = await request(app).get("/velociraptor/diag");
+    expect(res.status).toBe(200);
+    expect(res.body.artifactTypes).toMatchObject({ CLIENT: 1, CLIENT_EVENT: 2 });
+    expect(res.body.clientEventCount).toBe(2);
+    expect(Array.isArray(res.body.monitoringState)).toBe(true);
   });
 
   it("validates clientId + artifact", async () => {

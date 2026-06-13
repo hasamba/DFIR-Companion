@@ -1362,6 +1362,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // to the env-based factory; tests inject a stub so no process is spawned.
   const rebuildVelo = options.rebuildVelociraptorClient ?? buildVelociraptorClient;
 
+  // Diagnostics for the live-monitor features when the picker / auto-discovery come back empty on a
+  // real server (#84): the actual artifact `type` strings + counts, and the raw
+  // GetClientMonitoringState() shape. Hit it in a browser (localhost) and share the JSON to pin down a
+  // version's monitoring proto. 501 when the API isn't configured.
+  app.get("/velociraptor/diag", async (_req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    try {
+      return res.status(200).json(await options.velociraptorClient.diagnostics());
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
   // Whether the Velociraptor API is configured + the inventory's freshness (so the dashboard can show
   // connection state without a probe). `configured` reflects the LIVE client (reconnect can flip it).
   app.get("/velociraptor/status", async (_req: Request, res: Response) => {
@@ -1983,13 +1996,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const discovered = await options.velociraptorClient.listMonitoredArtifacts();
       if (!discovered.length) {
-        // Log the RAW monitoring-state shape so the actual proto (which varies by version) is visible
-        // in the server log — that's what to model DFIR_VELOCIRAPTOR_MONITORED_VQL on if needed.
+        // Capture the RAW monitoring-state shape (which varies by version) — logged AND returned in the
+        // response so the analyst can see it in the dashboard and we can model DFIR_VELOCIRAPTOR_MONITORED_VQL.
+        let rawSample = "";
         try {
           const raw = await options.velociraptorClient.monitoringStateRaw();
-          logLine(`[velo-monitor] auto: monitoring table returned no artifacts. Raw GetClientMonitoringState() shape: ${JSON.stringify(raw).slice(0, 1200)}`);
-        } catch (e) { logLine(`[velo-monitor] auto: monitoring-state read failed: ${(e as Error).message}`); }
-        return res.status(422).json({ error: "no client-event artifacts found in Velociraptor's client monitoring table — enable some in Velociraptor → Client Monitoring first, or (if your version's monitoring proto differs) check the companion log for the raw state shape and set DFIR_VELOCIRAPTOR_MONITORED_VQL", discovered: [] });
+          rawSample = JSON.stringify(raw).slice(0, 2000);
+          logLine(`[velo-monitor] auto: monitoring table returned no artifacts. Raw GetClientMonitoringState() shape: ${rawSample}`);
+        } catch (e) { rawSample = `(read failed: ${(e as Error).message})`; logLine(`[velo-monitor] auto: monitoring-state read failed: ${(e as Error).message}`); }
+        return res.status(422).json({ error: "no client-event artifacts found in Velociraptor's client monitoring table — enable some in Velociraptor → Client Monitoring first, or (if your version's monitoring proto differs) open /velociraptor/diag and share the output to set DFIR_VELOCIRAPTOR_MONITORED_VQL", discovered: [], rawSample });
       }
       const fallback = Number(options.veloMonitorPollSeconds) || 30;
       const reqPoll = Number(req.body?.pollSeconds);
