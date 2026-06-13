@@ -15,7 +15,7 @@ import { looksLikeSysdig } from "./sysdigImport.js";
 export type ImportKind =
   | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
-  | "auditd" | "journald" | "sysdig" | "wazuh" | "csv" | "log" | "unknown";
+  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -176,6 +176,21 @@ function isVolatilityMap(root: unknown): boolean {
     entries.some(([k]) => /^(windows|linux|mac)\.[a-z]/.test(k));
 }
 
+// TheHive 5 case/alert export: a record with `_type: "case"` or `_type: "alert"`, OR an array
+// of observable objects (each carrying `dataType` + `data`).
+// Elasticsearch guard: any record with a `_source` field is an ES hit wrapper — not TheHive.
+function looksLikeTheHive(s: Row, root: unknown): boolean {
+  if (getCI(s, "_source") != null) return false; // Elasticsearch hit wrapper
+  const t = str(getCI(s, "_type")).toLowerCase();
+  if (t === "case" || t === "alert") return true;
+  // Observable array: every record has `dataType` + `data` (and no `_type` on the wrapper itself)
+  if (Array.isArray(root)) {
+    const first = root.find(isObject);
+    if (first && getCI(first, "dataType") != null && getCI(first, "data") != null && getCI(first, "_source") == null) return true;
+  }
+  return false;
+}
+
 function detectJson(root: unknown, sample: Row): ImportKind {
   if (isVolatilityMap(root)) return "memory";
   if (isSandbox(sample)) return "sandbox";
@@ -186,6 +201,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isChainsaw(sample)) return "chainsaw";
   if (isVelociraptor(sample, root)) return "velociraptor";
   if (isHayabusaJson(sample)) return "hayabusa";
+  if (looksLikeTheHive(sample, root)) return "thehive";
   if (isCybertriage(sample)) return "cybertriage";
   if (isNetwork(sample)) return "network";
   if (isVolatility(sample)) return "memory";

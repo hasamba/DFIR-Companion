@@ -43,6 +43,7 @@ import { parsePlasoCsv, type PlasoImportOptions } from "./plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "./sandboxImport.js";
 import { parseMemory, type MemoryImportOptions } from "./memoryImport.js";
 import { parseEmail, type EmailImportOptions } from "./emailImport.js";
+import { parseTheHive, type TheHiveImportOptions } from "./theHiveImport.js";
 import { parseAuditdLog, type AuditdImportOptions } from "./auditdImport.js";
 import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
 import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
@@ -1993,6 +1994,53 @@ export class AnalysisPipeline {
       timelineNote: `Email import (${parsed.format}): ${parsed.kept} event(s)` +
         (parsed.subject ? ` — "${parsed.subject.slice(0, 80)}"` : "") +
         `, ${parsed.iocs.length} IOC(s)`,
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a TheHive 5 case, alert, or observable export. Deterministic (no AI call):
+  // case/alert records → forensic events (severity from TheHive's own 1–4 scale, MITRE from
+  // ATT&CK-tagged tags, TLP/PAP labels prepended); observable records → IOCs by dataType.
+  async importTheHive(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;            // unique per import (e.g. "th3") so ids never collide
+      importedAt: string;
+      thehive?: TheHiveImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseTheHive(text, opts.thehive);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["TheHive"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `TheHive import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+        (parsed.observables > 0 ? `, ${parsed.observables} observable(s)` : "") +
+        `, ${parsed.iocCount} IOC(s)`,
       summary: "",
     };
     const delta = deltaSchema.parse(raw);
