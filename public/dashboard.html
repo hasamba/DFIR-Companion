@@ -894,6 +894,7 @@
     <button id="synthesize" data-tip="Derive findings, MITRE and attack path from the timeline">AI Re-synthesize</button>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.eml,.msg,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,image/png,image/jpeg,image/webp" style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
+    <button id="irisImportBtn" type="button" style="display:none" data-tip="Import an EXISTING DFIR-IRIS case — pull its assets, IOCs and timeline into this case (the reverse of Push to IRIS). Shown only when DFIR-IRIS is configured.">Import from IRIS</button>
     <button id="importUndoBtn" type="button" style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
     <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch JSONL, JSON state, or a shareable investigation snapshot)">
@@ -1049,6 +1050,27 @@
         <button id="clickupPushBtn">Push</button>
         <button id="clickupCancel" style="background:var(--c-2a2f3a);">Cancel</button>
         <span id="clickupMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+  <div id="irisImportOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Import from DFIR-IRIS</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        Pull an existing IRIS case's <strong>assets, IOCs and timeline</strong> into this Companion case
+        (the reverse of Push to IRIS). Mapped deterministically — no AI call — then re-synthesized.</p>
+      <label style="display:block; font-size:13px; margin:6px 0">IRIS case
+        <select id="irisCaseSelect" style="width:100%; box-sizing:border-box; padding:5px; margin-top:4px;">
+          <option value="">loading cases…</option>
+        </select>
+      </label>
+      <label style="display:block; font-size:12px; margin:8px 0 0; color:var(--c-9aa4b2)">…or enter a case id directly
+        <input id="irisCaseIdInput" placeholder="e.g. 7" style="width:100%; box-sizing:border-box; padding:5px; margin-top:4px;" />
+      </label>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="irisImportRun">Import</button>
+        <button id="irisImportCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="irisImportMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -7893,7 +7915,9 @@
       pushSelect.appendChild(opt);
       pushSelect.style.display = "";
     }
-    fetch("/iris/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("iris", "Push to DFIR-IRIS"); }).catch(() => {});
+    fetch("/iris/status").then((r) => r.json()).then((s) => {
+      if (s && s.configured) { addPushOption("iris", "Push to DFIR-IRIS"); document.getElementById("irisImportBtn").style.display = ""; }
+    }).catch(() => {});
     fetch("/timesketch/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("timesketch", "Push to Timesketch"); }).catch(() => {});
     fetch("/misp/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("misp", "Push to MISP"); }).catch(() => {});
     // Notion export: a configured token shows the option; a default DB/parent hides the modal's
@@ -8003,6 +8027,55 @@
           closeNotionModal();
         })
         .catch((err) => document.getElementById("notionMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
+        .finally(() => { btn.disabled = false; });
+    };
+
+    // ── Import from DFIR-IRIS modal (issue #88) ───────────────────────────────
+    const irisImportOverlay = document.getElementById("irisImportOverlay");
+    function closeIrisImportModal() { irisImportOverlay.classList.remove("open"); }
+    function openIrisImportModal() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { document.getElementById("status").textContent = "connect to a case first"; return; }
+      const sel = document.getElementById("irisCaseSelect");
+      const msg = document.getElementById("irisImportMsg");
+      msg.textContent = "";
+      document.getElementById("irisCaseIdInput").value = "";
+      sel.innerHTML = '<option value="">loading cases…</option>';
+      irisImportOverlay.classList.add("open");
+      fetch("/iris/cases")
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((j) => {
+          const cases = (j && j.cases) || [];
+          if (!cases.length) { sel.innerHTML = '<option value="">(no cases found — enter an id below)</option>'; return; }
+          sel.innerHTML = '<option value="">— select a case —</option>' +
+            cases.map((c) => `<option value="${escAttr(String(c.caseId))}">${esc(c.caseName)} (#${esc(String(c.caseId))})</option>`).join("");
+        })
+        .catch((err) => { sel.innerHTML = '<option value="">(could not list cases)</option>'; msg.textContent = "list failed: " + err.message; });
+    }
+    document.getElementById("irisImportBtn").onclick = openIrisImportModal;
+    document.getElementById("irisImportCancel").onclick = closeIrisImportModal;
+    irisImportOverlay.addEventListener("click", (e) => { if (e.target === irisImportOverlay) closeIrisImportModal(); });
+    document.getElementById("irisImportRun").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { document.getElementById("irisImportMsg").textContent = "connect to a case first"; return; }
+      const c = encodeURIComponent(caseId);
+      const manualId = document.getElementById("irisCaseIdInput").value.trim();
+      const selected = document.getElementById("irisCaseSelect").value.trim();
+      const body = {};
+      if (manualId) { body.irisCaseId = Number(manualId); if (!Number.isFinite(body.irisCaseId)) { document.getElementById("irisImportMsg").textContent = "case id must be a number"; return; } }
+      else if (selected) body.irisCaseId = Number(selected);
+      else { document.getElementById("irisImportMsg").textContent = "pick a case or enter an id"; return; }
+      const btn = document.getElementById("irisImportRun");
+      btn.disabled = true;
+      document.getElementById("irisImportMsg").textContent = "importing…";
+      fetch(`/cases/${c}/iris-import`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((res) => {
+          document.getElementById("status").textContent =
+            `importing DFIR-IRIS case ${res.caseName || ("#" + res.irisCaseId)}: ${res.timeline} timeline + ${res.assets} asset(s), ${res.iocs} IOC(s) — analyzing…`;
+          closeIrisImportModal();
+        })
+        .catch((err) => document.getElementById("irisImportMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
         .finally(() => { btn.disabled = false; });
     };
 

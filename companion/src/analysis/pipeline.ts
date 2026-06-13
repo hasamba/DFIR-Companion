@@ -44,6 +44,7 @@ import { parseSandboxReport, type SandboxImportOptions } from "./sandboxImport.j
 import { parseMemory, type MemoryImportOptions } from "./memoryImport.js";
 import { parseEmail, type EmailImportOptions } from "./emailImport.js";
 import { parseTheHive, type TheHiveImportOptions } from "./theHiveImport.js";
+import { parseIrisCase, type IrisCaseData, type IrisImportOptions } from "./irisImport.js";
 import { parseAuditdLog, type AuditdImportOptions } from "./auditdImport.js";
 import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
 import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
@@ -2040,6 +2041,54 @@ export class AnalysisPipeline {
       threadsClosed: [],
       timelineNote: `TheHive import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
         (parsed.observables > 0 ? `, ${parsed.observables} observable(s)` : "") +
+        `, ${parsed.iocCount} IOC(s)`,
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import an existing DFIR-IRIS case (issue #88) — the reverse of the IRIS push. Takes the raw
+  // case rows already fetched from the IRIS API (analysis/irisImport.ts parses them deterministically,
+  // NO AI call): timeline → forensic events, IOCs → IOCs, assets → evidence events. All feed the
+  // same forensic timeline via mergeDelta, exactly like the other importers.
+  async importIris(
+    caseId: string,
+    data: IrisCaseData,
+    opts: {
+      label: string;
+      idPrefix: string;            // unique per import (e.g. "iris3") so ids never collide
+      importedAt: string;
+      iris?: IrisImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseIrisCase(data, opts.iris);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["DFIR-IRIS"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `DFIR-IRIS import (${parsed.caseName ?? `case #${parsed.irisCaseId ?? "?"}`}): ` +
+        `${parsed.kept} event(s) from ${parsed.timelineCount} timeline + ${parsed.assetCount} asset(s)` +
         `, ${parsed.iocCount} IOC(s)`,
       summary: "",
     };
