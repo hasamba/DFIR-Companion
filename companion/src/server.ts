@@ -1983,7 +1983,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const discovered = await options.velociraptorClient.listMonitoredArtifacts();
       if (!discovered.length) {
-        return res.status(422).json({ error: "no client-event artifacts found in Velociraptor's client monitoring table — enable some in Velociraptor → Client Monitoring first (or set DFIR_VELOCIRAPTOR_MONITORED_VQL if your version's monitoring proto differs)", discovered: [] });
+        // Log the RAW monitoring-state shape so the actual proto (which varies by version) is visible
+        // in the server log — that's what to model DFIR_VELOCIRAPTOR_MONITORED_VQL on if needed.
+        try {
+          const raw = await options.velociraptorClient.monitoringStateRaw();
+          logLine(`[velo-monitor] auto: monitoring table returned no artifacts. Raw GetClientMonitoringState() shape: ${JSON.stringify(raw).slice(0, 1200)}`);
+        } catch (e) { logLine(`[velo-monitor] auto: monitoring-state read failed: ${(e as Error).message}`); }
+        return res.status(422).json({ error: "no client-event artifacts found in Velociraptor's client monitoring table — enable some in Velociraptor → Client Monitoring first, or (if your version's monitoring proto differs) check the companion log for the raw state shape and set DFIR_VELOCIRAPTOR_MONITORED_VQL", discovered: [] });
       }
       const fallback = Number(options.veloMonitorPollSeconds) || 30;
       const reqPoll = Number(req.body?.pollSeconds);
