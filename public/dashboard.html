@@ -3251,6 +3251,11 @@
         playbookTasks = Array.isArray(d.tasks) ? d.tasks : [];
         const tpl = document.getElementById("pbTemplates");
         if (tpl && d.control) tpl.checked = !!d.control.useTemplates;
+        // Restore persisted AI hunt suggestions (#70) so they survive a refresh; the server already
+        // dropped any whose task changed. Sorted by severity to match the generate-time ordering.
+        pbHuntFlat = Array.isArray(d.huntSuggestions)
+          ? [...d.huntSuggestions].sort((a, b) => (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9))
+          : [];
         renderPlaybook(d.stats);
       }).catch(() => {});
     }

@@ -260,3 +260,63 @@ export function hasPlaybookHuntMaterial(state: InvestigationState, tasks: readon
 // Severity rank for display ordering (Critical first) — exposed for the dashboard so playbook-hunt
 // ordering stays consistent with the rest of the app.
 export const PLAYBOOK_HUNT_SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+
+// ── Persistence + staleness (suggestions survive a page refresh) ─────────────────────────────
+// Suggestions are generated on demand but PERSISTED per case so they don't vanish on reload. A
+// suggestion stays valid only while its TASK is unchanged: we fingerprint the task's text at
+// generation time, and on read drop any suggestion whose task was reworded (synthesis re-wrote it) or
+// deleted — the analyst regenerates those. The fingerprint is intentionally task-only (title +
+// description): a suggestion sticks even as the rest of the case evolves, matching the analyst's
+// mental model of "this hunt is for THIS task".
+
+export interface PersistedPlaybookHunts {
+  generatedAt: string;                       // when the analyst last generated (ISO)
+  suggestions: PlaybookHuntSuggestion[];     // each carries its taskId
+  taskHashes: Record<string, string>;        // taskId → task fingerprint at generation time
+}
+
+export const EMPTY_PERSISTED_HUNTS: PersistedPlaybookHunts = { generatedAt: "", suggestions: [], taskHashes: {} };
+
+// Deterministic FNV-1a fingerprint of the task fields that drive a suggestion (title + description,
+// whitespace-normalized). A change here means the task was edited/reworded → its hunt is stale.
+export function taskFingerprint(task: { title?: string; description?: string }): string {
+  const norm = `${String(task?.title ?? "").replace(/\s+/g, " ").trim()} ${String(task?.description ?? "").replace(/\s+/g, " ").trim()}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < norm.length; i++) {
+    h ^= norm.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16);
+}
+
+// The fingerprint map to persist alongside freshly-generated suggestions — one entry per task that
+// has a suggestion, hashed from the tasks the model actually saw.
+export function buildHuntTaskHashes(suggestions: readonly PlaybookHuntSuggestion[], tasks: readonly PlaybookTask[]): Record<string, string> {
+  const byId = new Map(tasks.map((t) => [t.id, t] as const));
+  const out: Record<string, string> = {};
+  for (const s of suggestions) {
+    const t = byId.get(s.taskId);
+    if (t) out[s.taskId] = taskFingerprint(t);
+  }
+  return out;
+}
+
+// Keep only the persisted suggestions whose task STILL EXISTS and is UNCHANGED since generation; the
+// rest are stale (task reworded or deleted) and dropped. Returns the filtered set + `changed` so the
+// caller can write-back the pruned store. Pure + deterministic.
+export function selectFreshHunts(persisted: PersistedPlaybookHunts | undefined, tasks: readonly PlaybookTask[]): { suggestions: PlaybookHuntSuggestion[]; taskHashes: Record<string, string>; changed: boolean } {
+  const byId = new Map(tasks.map((t) => [t.id, t] as const));
+  const all = persisted?.suggestions ?? [];
+  const storedHashes = persisted?.taskHashes ?? {};
+  const suggestions: PlaybookHuntSuggestion[] = [];
+  const taskHashes: Record<string, string> = {};
+  for (const s of all) {
+    const t = byId.get(s.taskId);
+    if (!t) continue;                                  // task deleted → drop
+    const cur = taskFingerprint(t);
+    if (storedHashes[s.taskId] !== cur) continue;      // task changed → drop (regenerate)
+    suggestions.push(s);
+    taskHashes[s.taskId] = cur;
+  }
+  return { suggestions, taskHashes, changed: suggestions.length !== all.length };
+}

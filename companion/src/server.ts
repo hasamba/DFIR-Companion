@@ -88,6 +88,8 @@ import { TagsStore, type Tag } from "./analysis/tags.js";
 import { NotebookStore, type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "./analysis/notebookStore.js";
 import { PlaybookStore, type NewPlaybookTask, type PlaybookTaskPatch } from "./analysis/playbookStore.js";
 import { PLAYBOOK_STATUSES, playbookStats, type PlaybookStatus, type PlaybookTask } from "./analysis/playbook.js";
+import { PlaybookHuntStore } from "./analysis/playbookHuntStore.js";
+import { buildHuntTaskHashes, selectFreshHunts } from "./analysis/playbookHunt.js";
 import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
 import type { AssetType } from "./analysis/assetGraph.js";
@@ -219,6 +221,9 @@ export interface AppOptions {
   // dashboard clients over the WS to re-fetch when a task changes or a sync runs.
   playbookStore?: PlaybookStore;
   onPlaybook?: (caseId: string) => void;
+  // AI-suggested Velociraptor hunts persisted per case (#70) so they survive a page refresh; a
+  // suggestion is dropped on read once its task is reworded/deleted (state/playbook-hunts.json).
+  playbookHuntStore?: PlaybookHuntStore;
   // Per-case playbook settings (Phase 2): whether Critical/High findings expand into severity-based
   // IR templates. Read when deriving auto-tasks; default off (opt-in per case).
   playbookControlStore?: PlaybookControlStore;
@@ -4214,6 +4219,21 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return options.playbookStore.sync(caseId, state, { useTemplates });
   };
 
+  // Load the persisted hunt suggestions (#70), dropping any whose task was reworded/deleted since
+  // generation, and write the pruned set back so stale ones don't keep returning. Best-effort — a
+  // store hiccup never breaks the playbook read (returns []).
+  const loadFreshHunts = async (caseId: string, tasks: readonly PlaybookTask[]) => {
+    if (!options.playbookHuntStore) return [];
+    try {
+      const persisted = await options.playbookHuntStore.load(caseId);
+      const fresh = selectFreshHunts(persisted, tasks);
+      if (fresh.changed) await options.playbookHuntStore.save(caseId, { generatedAt: persisted.generatedAt, suggestions: fresh.suggestions, taskHashes: fresh.taskHashes });
+      return fresh.suggestions;
+    } catch {
+      return [];
+    }
+  };
+
   app.get("/cases/:id/playbook/control", async (req: Request, res: Response) => {
     if (!options.playbookControlStore) return res.status(200).json({ ...DEFAULT_PLAYBOOK_CONTROL });
     try {
@@ -4241,7 +4261,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       // Auto-sync against current state so the panel reflects the latest next steps/findings.
       const tasks = options.stateStore ? await syncPlaybook(req.params.id) : await options.playbookStore.load(req.params.id);
-      return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id) });
+      // Persisted AI hunt suggestions, filtered to tasks that are UNCHANGED since generation (#70) —
+      // so they survive a page refresh but a reworded/deleted task drops its stale hunt.
+      const huntSuggestions = await loadFreshHunts(req.params.id, tasks);
+      return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id), huntSuggestions });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -4283,6 +4306,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       ]);
       const suggestions = await options.pipeline.suggestPlaybookHunts(req.params.id, tasks, artifactNames);
       logLine(`[velociraptor] suggested ${suggestions.length} playbook hunt(s) for ${req.params.id} (${artifactNames.length} artifact(s) in scope)`);
+      // Persist so the suggestions survive a page refresh; store each task's fingerprint so a later
+      // edit to the task drops its (now stale) hunt on read (#70). Best-effort — never fail the response.
+      if (options.playbookHuntStore) {
+        try {
+          await options.playbookHuntStore.save(req.params.id, { generatedAt: new Date().toISOString(), suggestions, taskHashes: buildHuntTaskHashes(suggestions, tasks) });
+        } catch (e) { logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`); }
+      }
       return res.status(200).json({ suggestions });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -4943,6 +4973,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const tagsStore = new TagsStore(store);
   const notebookStore = new NotebookStore(store);
   const playbookStore = new PlaybookStore(store);
+  const playbookHuntStore = new PlaybookHuntStore(store);
   const playbookControlStore = new PlaybookControlStore(store);
   const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
@@ -5006,6 +5037,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     notebookStore,
     onNotebook: (caseId) => hub.broadcastTo(caseId, { type: "notebook_changed" }),
     playbookStore,
+    playbookHuntStore,
     playbookControlStore,
     onPlaybook: (caseId) => hub.broadcastTo(caseId, { type: "playbook_changed" }),
     assetOverridesStore,

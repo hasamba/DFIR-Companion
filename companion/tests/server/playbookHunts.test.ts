@@ -7,6 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { PlaybookStore } from "../../src/analysis/playbookStore.js";
+import { PlaybookHuntStore } from "../../src/analysis/playbookHuntStore.js";
 import { PlaybookControlStore } from "../../src/analysis/playbookControl.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
@@ -42,13 +43,14 @@ async function makeApp(opts: { provider?: MockProvider; velociraptorProvider?: M
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const playbookStore = new PlaybookStore(store);
+  const playbookHuntStore = new PlaybookHuntStore(store);
   const playbookControlStore = new PlaybookControlStore(store);
   const pipeline = buildRuntimePipeline({
     provider: opts.provider, synthesisProvider: opts.provider, velociraptorProvider: opts.velociraptorProvider, stateStore, store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, {
-    pipeline, stateStore, playbookStore, playbookControlStore,
+    pipeline, stateStore, playbookStore, playbookHuntStore, playbookControlStore,
     velociraptorClient: opts.velociraptorClient, velociraptorClientStore: opts.velociraptorClientStore,
     aiConfigured: Boolean(opts.provider),
   });
@@ -103,6 +105,26 @@ describe("POST /cases/:id/playbook/suggest-hunts", () => {
     await seed(stateStore, true);
     const res = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
     expect(res.status).toBe(501);
+  });
+
+  it("persists suggestions (survive a refresh) and drops them once the task changes", async () => {
+    const { app, stateStore } = await makeApp({ provider: new MockProvider("mock", cannedPlaybookHunts) });
+    await seed(stateStore, true);
+    const gen = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
+    expect(gen.body.suggestions).toHaveLength(1);
+
+    // "page refresh" → GET /playbook returns the persisted suggestion for the unchanged task.
+    const refresh = await request(app).get("/cases/c1/playbook");
+    expect(refresh.body.huntSuggestions).toHaveLength(1);
+    expect(refresh.body.huntSuggestions[0].taskId).toBe("finding:f1");
+
+    // Reword the finding → the derived task's text changes → the suggestion is now stale → dropped.
+    const s = emptyState("c1");
+    s.findings.push({ id: "f1", severity: "Critical", title: "Webshell REWORDED on WEB02", description: "a different description",
+      relatedIocs: [], mitreTechniques: ["T1505.003"], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
+    await stateStore.save(s);
+    const afterEdit = await request(app).get("/cases/c1/playbook");
+    expect(afterEdit.body.huntSuggestions).toHaveLength(0);
   });
 
   it("uses the dedicated Velociraptor provider over the synthesis model when set", async () => {

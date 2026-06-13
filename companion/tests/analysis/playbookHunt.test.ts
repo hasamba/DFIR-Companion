@@ -12,8 +12,12 @@ import {
   renderKnownEndpoints,
   renderAvailableArtifacts,
   hasPlaybookHuntMaterial,
+  taskFingerprint,
+  buildHuntTaskHashes,
+  selectFreshHunts,
   PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT,
   type RawPlaybookHuntSuggestion,
+  type PlaybookHuntSuggestion,
 } from "../../src/analysis/playbookHunt.js";
 
 const NOW = "2026-06-10T00:00:00.000Z";
@@ -306,5 +310,55 @@ describe("hasPlaybookHuntMaterial", () => {
   it("counts a forensic event as material", () => {
     const s = state({ forensicTimeline: [event()] });
     expect(hasPlaybookHuntMaterial(s, [task()])).toBe(true);
+  });
+});
+
+function sug(over: Partial<PlaybookHuntSuggestion> = {}): PlaybookHuntSuggestion {
+  return { taskId: "finding:f1", title: "Hunt", rationale: "", vql: "SELECT * FROM pslist()", severity: "High", mitreTechniques: [], mode: "hunt", ...over };
+}
+
+describe("taskFingerprint", () => {
+  it("is stable for the same text and changes when title/description change", () => {
+    const a = taskFingerprint({ title: "Investigate X", description: "do the thing" });
+    expect(taskFingerprint({ title: "Investigate X", description: "do the thing" })).toBe(a);   // stable
+    expect(taskFingerprint({ title: "  Investigate   X ", description: "do the thing" })).toBe(a); // whitespace-normalized
+    expect(taskFingerprint({ title: "Investigate Y", description: "do the thing" })).not.toBe(a);  // title change
+    expect(taskFingerprint({ title: "Investigate X", description: "do something else" })).not.toBe(a); // desc change
+  });
+});
+
+describe("selectFreshHunts (persistence staleness)", () => {
+  it("keeps a suggestion while its task is UNCHANGED", () => {
+    const t = task({ id: "finding:f1", title: "T", description: "D" });
+    const persisted = { generatedAt: "t0", suggestions: [sug()], taskHashes: buildHuntTaskHashes([sug()], [t]) };
+    const out = selectFreshHunts(persisted, [t]);
+    expect(out.suggestions).toHaveLength(1);
+    expect(out.changed).toBe(false);
+  });
+
+  it("drops a suggestion once its task is reworded", () => {
+    const t = task({ id: "finding:f1", title: "T", description: "D" });
+    const persisted = { generatedAt: "t0", suggestions: [sug()], taskHashes: buildHuntTaskHashes([sug()], [t]) };
+    const edited = task({ id: "finding:f1", title: "T (edited)", description: "D" });
+    const out = selectFreshHunts(persisted, [edited]);
+    expect(out.suggestions).toHaveLength(0);
+    expect(out.changed).toBe(true);
+  });
+
+  it("drops a suggestion whose task was deleted", () => {
+    const t = task({ id: "finding:f1" });
+    const persisted = { generatedAt: "t0", suggestions: [sug()], taskHashes: buildHuntTaskHashes([sug()], [t]) };
+    expect(selectFreshHunts(persisted, []).suggestions).toHaveLength(0);   // task gone
+  });
+
+  it("keeps only the fresh ones in a mixed set", () => {
+    const keep = task({ id: "finding:f1", title: "Keep", description: "k" });
+    const drop = task({ id: "finding:f2", title: "Drop", description: "d" });
+    const suggestions = [sug({ taskId: "finding:f1" }), sug({ taskId: "finding:f2" })];
+    const persisted = { generatedAt: "t0", suggestions, taskHashes: buildHuntTaskHashes(suggestions, [keep, drop]) };
+    const editedDrop = task({ id: "finding:f2", title: "Drop CHANGED", description: "d" });
+    const out = selectFreshHunts(persisted, [keep, editedDrop]);
+    expect(out.suggestions.map((s) => s.taskId)).toEqual(["finding:f1"]);
+    expect(out.changed).toBe(true);
   });
 });
