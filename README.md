@@ -402,6 +402,17 @@ If unset, synthesis reuses the extraction model. Recommended: cheap vision model
 | `DFIR_AI_SYNTH_KEY` | = `DFIR_AI_KEY` | Synthesis API key |
 | `DFIR_AI_SYNTH_BASE_URL` | = `DFIR_AI_BASE_URL` | Synthesis base URL |
 
+### AI — Velociraptor hunt model (optional)
+
+A dedicated model used **only** to generate Velociraptor VQL hunts (the *Suggest Velociraptor hunts* / *Fleet Hunts* features), separate from extraction/synthesis/OCR — many models botch VQL. Also editable in **Settings → AI**.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_AI_VELO_PROVIDER` | `openrouter` | Provider for VQL-hunt generation |
+| `DFIR_AI_VELO_MODEL` | `anthropic/claude-haiku-4.5` | Model id for VQL-hunt generation |
+| `DFIR_AI_VELO_KEY` | = `DFIR_AI_KEY` | API key (reuses the main key when blank) |
+| `DFIR_AI_VELO_BASE_URL` | = `DFIR_AI_BASE_URL` | Base URL override |
+
 ### AI — custom prompts (optional)
 
 Each prompt has two override forms (priority order): `DFIR_AI_<NAME>_PROMPT` (inline text, read at startup) and `DFIR_AI_<NAME>_PROMPT_FILE` (path to file, re-read each call — edit and it applies immediately). `npm run prompts:eject` writes the built-in defaults as a starting point.

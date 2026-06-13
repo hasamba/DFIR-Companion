@@ -37,14 +37,14 @@ const collectRunner: VqlRunner = async (statements) => {
   return { rows: [], raw: "" };
 };
 
-async function makeApp(opts: { provider?: MockProvider; velociraptorClient?: VelociraptorClient; velociraptorClientStore?: VelociraptorClientStore } = {}) {
+async function makeApp(opts: { provider?: MockProvider; velociraptorProvider?: MockProvider; velociraptorClient?: VelociraptorClient; velociraptorClientStore?: VelociraptorClientStore } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-pbhunt-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const playbookStore = new PlaybookStore(store);
   const playbookControlStore = new PlaybookControlStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: opts.provider, synthesisProvider: opts.provider, stateStore, store,
+    provider: opts.provider, synthesisProvider: opts.provider, velociraptorProvider: opts.velociraptorProvider, stateStore, store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, {
@@ -103,6 +103,20 @@ describe("POST /cases/:id/playbook/suggest-hunts", () => {
     await seed(stateStore, true);
     const res = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
     expect(res.status).toBe(501);
+  });
+
+  it("uses the dedicated Velociraptor provider over the synthesis model when set", async () => {
+    const veloReply = JSON.stringify({ suggestions: [
+      { taskId: "finding:f1", endpointRelated: true, title: "FROM VELO MODEL", rationale: "r", vql: "SELECT * FROM pslist()", targetHost: "", severity: "High", mitreTechniques: [] },
+    ] });
+    const { app, stateStore } = await makeApp({
+      provider: new MockProvider("mock", cannedPlaybookHunts),          // synthesis/main model
+      velociraptorProvider: new MockProvider("velo", veloReply),        // dedicated VQL model
+    });
+    await seed(stateStore, true);
+    const res = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.suggestions[0].title).toBe("FROM VELO MODEL");      // the velo model's output, not the synth one
   });
 
   it("refreshes the Velociraptor client inventory when generating suggestions (clients enrolled mid-investigation)", async () => {

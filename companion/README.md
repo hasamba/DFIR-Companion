@@ -37,6 +37,7 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_AI_BASE_URL` | Override the provider's API base URL. Needed for a self-hosted **LiteLLM** proxy or any OpenAI-compatible local endpoint. `litellm` defaults to `http://localhost:4000/v1`. | `http://localhost:4000/v1` |
 | `DFIR_AI_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high`). High tiles screenshots at full resolution for accurate small-text OCR (OpenAI/OpenRouter models). | `high` |
 | `DFIR_AI_SYNTH_PROVIDER` / `DFIR_AI_SYNTH_MODEL` / `DFIR_AI_SYNTH_KEY` | Optional **synthesis** model (findings / MITRE / attacker path). The vars above are the cheap per-screenshot **extraction** model; point a stronger model here for the one text-only synthesis call. Unset → reuses the extraction model. | `google/gemini-2.5-pro` |
+| `DFIR_AI_VELO_PROVIDER` / `DFIR_AI_VELO_MODEL` / `DFIR_AI_VELO_KEY` / `DFIR_AI_VELO_BASE_URL` | Dedicated model for **Velociraptor VQL hunt generation** (`✨ Suggest Velociraptor hunts` + Fleet Hunts) — separate from extraction/synthesis/OCR, since many models botch VQL (#70). Key/base-URL fall back to the main `DFIR_AI_KEY`/`DFIR_AI_BASE_URL`. Also editable in **Settings → AI**. | `openrouter` / `anthropic/claude-haiku-4.5` |
 
 Other AI tunables: `DFIR_AI_TIMEOUT_MS` (per-request timeout, default 180000),
 `DFIR_AI_MAX_TOKENS` (max completion tokens, default 16000 — also stops OpenRouter from

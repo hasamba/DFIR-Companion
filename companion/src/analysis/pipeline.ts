@@ -679,6 +679,10 @@ export interface PipelineOptions {
   // Optional stronger model for the holistic synthesis pass. Per-window extraction
   // can use a cheap model while synthesis (one text-only call) uses a better one.
   synthesisProvider?: AIProvider;
+  // Optional DEDICATED model for Velociraptor VQL hunt generation (#70) — many models botch VQL,
+  // so the analyst can pin a known-good one just for suggestHunts/suggestPlaybookHunts. Falls back
+  // to synthesisProvider, then the main provider.
+  velociraptorProvider?: AIProvider;
   // Client-confirmed legitimate findings/IOCs to exclude from synthesis.
   legitimateStore?: LegitimateStore;
   // Optional investigation time-window — events outside it are excluded.
@@ -1989,7 +1993,7 @@ export class AnalysisPipeline {
   // The analyst reviews each hunt's VQL + rationale, then one-click deploys it through the existing
   // launchHunt flow (POST /velociraptor/hunt). Returns [] without an AI call on an empty case.
   async suggestHunts(caseId: string): Promise<HuntSuggestion[]> {
-    const provider = this.opts.synthesisProvider ?? this.requireProvider("hunt suggestions");
+    const provider = this.opts.velociraptorProvider ?? this.opts.synthesisProvider ?? this.requireProvider("hunt suggestions");
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasHuntMaterial(loaded)) return [];   // nothing to pivot on — don't spend a call
 
@@ -2036,7 +2040,7 @@ export class AnalysisPipeline {
   // client COLLECTION on it; otherwise → a fleet HUNT. The playbook `tasks` are passed in by the route
   // (the pipeline has no PlaybookStore). Returns [] without an AI call when there's no endpoint task.
   async suggestPlaybookHunts(caseId: string, tasks: PlaybookTask[], availableArtifacts: string[] = []): Promise<PlaybookHuntSuggestion[]> {
-    const provider = this.opts.synthesisProvider ?? this.requireProvider("playbook hunt suggestions");
+    const provider = this.opts.velociraptorProvider ?? this.opts.synthesisProvider ?? this.requireProvider("playbook hunt suggestions");
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasPlaybookHuntMaterial(loaded, tasks)) return [];   // empty/closed playbook → don't spend a call
 

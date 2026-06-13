@@ -4630,6 +4630,22 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
   });
 }
 
+// Velociraptor-hunt model (issue #70): a DEDICATED model just for generating Velociraptor VQL hunts
+// (suggestPlaybookHunts + suggestHunts), since many models botch VQL. Defaults to openrouter /
+// anthropic/claude-haiku-latest regardless of the main/synth provider; the key falls back to the main
+// AI key (so it works out of the box when the main provider is openrouter). The pipeline uses this
+// over the synthesis/main provider for hunt generation only.
+export const DEFAULT_VELO_PROVIDER = "openrouter";
+export const DEFAULT_VELO_MODEL = "anthropic/claude-haiku-4.5";   // latest Haiku; a VALID OpenRouter id (claude-haiku-latest 400s there)
+export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
+  return buildProviderFrom({
+    provider: process.env.DFIR_AI_VELO_PROVIDER?.trim() || DEFAULT_VELO_PROVIDER,
+    model: process.env.DFIR_AI_VELO_MODEL?.trim() || DEFAULT_VELO_MODEL,
+    apiKey: process.env.DFIR_AI_VELO_KEY ?? process.env.DFIR_AI_KEY,
+    baseUrl: process.env.DFIR_AI_VELO_BASE_URL ?? process.env.DFIR_AI_BASE_URL,
+  });
+}
+
 // Build the threat-intel enrichment providers from env. Each is added only when its key
 // is present (MalwareBazaar needs DFIR_MB_KEY for its API). Empty array → enrichment off.
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
@@ -4806,6 +4822,8 @@ export function buildCustomerExposureProviders(): CustomerExposureProvider[] {
 export interface RuntimePipelineParams {
   provider?: AnalyzeProvider;
   synthesisProvider?: AnalyzeProvider;
+  // Dedicated model for Velociraptor VQL hunt generation (#70); falls back to synthesis/main.
+  velociraptorProvider?: AnalyzeProvider;
   stateStore: StateStoreImpl;
   store: CaseStore;
   imageLoader?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["imageLoader"];
@@ -4822,6 +4840,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
   return new AnalysisPipelineImpl({
     provider: params.provider,
     synthesisProvider: params.synthesisProvider,
+    velociraptorProvider: params.velociraptorProvider,
     stateStore: params.stateStore,
     legitimateStore: new LegitimateStore(params.store),
     scopeStore: new ScopeStore(params.store),
@@ -4934,13 +4953,14 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
+  const velociraptorProvider = buildVelociraptorProvider();   // dedicated VQL-hunt model (#70)
   // Provide the Tesseract OCR runner only when the vision model is on an external (cloud)
   // provider — if the model is local, screenshots never leave the machine so redaction is
   // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
   const visionIsLocalForPipeline = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
   const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
   const wiredPipeline = buildRuntimePipeline({
-    provider, synthesisProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger,
+    provider, synthesisProvider, velociraptorProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
     // Fully guarded — notifications are a side channel and must NEVER break synthesis.
     onSynth: (caseId, diff, state) => {
