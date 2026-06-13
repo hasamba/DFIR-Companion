@@ -2101,6 +2101,9 @@
       #sec-playbook .pbh-copy.copied{background:var(--c-2f8f4e)}
       #sec-playbook .pbh-deploy{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
       #sec-playbook .pbh-deploy:disabled{opacity:.6;cursor:default}
+      #sec-playbook .pbh-regen{background:transparent;border:1px solid var(--c-2a2f3a);color:var(--c-9aa4b2);border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer;margin-left:auto}
+      #sec-playbook .pbh-regen:hover{color:var(--c-6aa9ff);border-color:var(--c-6aa9ff)}
+      #sec-playbook .pbh-regen:disabled{opacity:.6;cursor:default}
       #sec-playbook .pbh-res{margin-top:6px}
       #sec-playbook .pbh-caveat{color:var(--c-ffb454);font-size:11px;margin:8px 0 0}
     </style>
@@ -3485,7 +3488,7 @@
             + rationale
             + (techs ? `<div class="pbh-techs">${techs}</div>` : "")
             + `<textarea class="pbh-vql" id="pbhQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
-            + `<div class="pbh-actions"><button class="pbh-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}</div>`
+            + `<div class="pbh-actions"><button class="pbh-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}<button class="pbh-regen" data-idx="${idx}" title="Generate a different VQL for this task approaching from a different angle">🔄 Regenerate</button></div>`
             + veloNote
             + `<div class="pbh-res" id="pbhRes${idx}"></div>`
           + `</div>`
@@ -3526,6 +3529,40 @@
         const res = document.getElementById("pbhRes" + idx);
         if (s.mode === "collection" && s.targetHost) collectHostInto(s.targetHost, vql, desc, res, b);
         else launchHuntInto(vql, desc, res, b);
+      });
+      container.querySelectorAll(".pbh-regen").forEach((b) => b.onclick = (e) => {
+        e.stopPropagation();
+        const caseId = pbCaseId();
+        if (!caseId) return;
+        const idx = b.dataset.idx;
+        const s = pbHuntFlat[idx];
+        if (!s) return;
+        const q = document.getElementById("pbhQ" + idx);
+        const excludeVql = q ? q.value : s.vql;
+        const origText = b.textContent;
+        b.textContent = "⏳ thinking…";
+        b.disabled = true;
+        fetch(`/cases/${caseId}/playbook/suggest-hunts`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ taskId: s.taskId, excludeVql }),
+        })
+          .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+          .then(({ ok, j }) => {
+            if (!ok || j.error) {
+              const msg = document.getElementById("pbHuntMsg");
+              if (msg) { msg.style.color = "var(--c-ff9f43)"; msg.textContent = "regen failed: " + (j.error || "unknown error"); }
+              return;
+            }
+            const sugs = j.suggestions || [];
+            pbHuntFlat = [...sugs].sort((a, b) => (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9));
+            renderPlaybook();
+          })
+          .catch((err) => {
+            const msg = document.getElementById("pbHuntMsg");
+            if (msg) { msg.style.color = "var(--c-ff9f43)"; msg.textContent = "regen failed: " + err.message; }
+          })
+          .finally(() => { b.disabled = false; b.textContent = origText; });
       });
     }
 

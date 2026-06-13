@@ -2050,7 +2050,7 @@ export class AnalysisPipeline {
   // deterministically from the case's observed endpoints: a task tied to exactly one host → a single
   // client COLLECTION on it; otherwise → a fleet HUNT. The playbook `tasks` are passed in by the route
   // (the pipeline has no PlaybookStore). Returns [] without an AI call when there's no endpoint task.
-  async suggestPlaybookHunts(caseId: string, tasks: PlaybookTask[], availableArtifacts: string[] = []): Promise<PlaybookHuntSuggestion[]> {
+  async suggestPlaybookHunts(caseId: string, tasks: PlaybookTask[], availableArtifacts: string[] = [], opts?: { excludeVql?: string }): Promise<PlaybookHuntSuggestion[]> {
     const provider = this.opts.velociraptorProvider ?? this.opts.synthesisProvider ?? this.requireProvider("playbook hunt suggestions");
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasPlaybookHuntMaterial(loaded, tasks)) return [];   // empty/closed playbook → don't spend a call
@@ -2086,6 +2086,9 @@ export class AnalysisPipeline {
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
 
+    const excludeNote = opts?.excludeVql
+      ? `ALREADY SUGGESTED (this VQL was already shown to the analyst — generate something DIFFERENT that investigates from a different angle or uses different VQL plugins):\n${opts.excludeVql}\n\n`
+      : "";
     const userPrompt =
       contextBlock +
       `KNOWN ENDPOINTS (hosts — pick a targetHost ONLY from these): ${endpointsText}\n\n` +
@@ -2094,6 +2097,7 @@ export class AnalysisPipeline {
       `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
       `FINDINGS:\n${findingsText}\n\n` +
       `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
+      excludeNote +
       `Propose the per-task hunts as JSON.`;
 
     const limit = Number(process.env.DFIR_PBHUNT_SUGGEST_MAX) || PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT;

@@ -4294,6 +4294,37 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.playbookStore || !options.stateStore) return res.status(501).json({ error: "playbook not configured" });
     try {
       const tasks = await syncPlaybook(req.params.id);
+
+      // SINGLE-TASK REGEN: body carries `{ taskId, excludeVql }` — force-regenerate just that one
+      // task, passing the existing VQL so the model produces something different.
+      const regenTaskId = typeof req.body?.taskId === "string" ? req.body.taskId.trim() : null;
+      if (regenTaskId) {
+        const task = tasks.find((t) => t.id === regenTaskId);
+        if (!task) return res.status(404).json({ error: "task not found" });
+        const excludeVql = typeof req.body?.excludeVql === "string" ? req.body.excludeVql.trim() : undefined;
+        const [, artifactNames] = await Promise.all([
+          refreshVeloClients().catch((e) => { logLine(`[velociraptor] inventory refresh before regen failed: ${(e as Error).message}`); return 0; }),
+          options.velociraptorClient
+            ? options.velociraptorClient.listClientArtifacts().then((a) => a.map((x) => x.name)).catch(() => [] as string[])
+            : Promise.resolve([] as string[]),
+        ]);
+        const newSuggestions = await options.pipeline.suggestPlaybookHunts(req.params.id, [task], artifactNames, { excludeVql });
+        const persisted = options.playbookHuntStore ? await options.playbookHuntStore.load(req.params.id) : { ...EMPTY_PERSISTED_HUNTS };
+        // Replace the old suggestion for this task (if any) and keep everything else.
+        const kept = (persisted.suggestions ?? []).filter((s) => s.taskId !== regenTaskId);
+        const merged: typeof persisted = {
+          generatedAt: new Date().toISOString(),
+          suggestions: [...kept, ...newSuggestions.filter((s) => s.taskId === regenTaskId)],
+          taskHashes: { ...persisted.taskHashes },
+        };
+        logLine(`[velociraptor] playbook hunt regen for task ${regenTaskId} in ${req.params.id}: ${newSuggestions.length} suggestion(s)`);
+        if (options.playbookHuntStore) {
+          try { await options.playbookHuntStore.save(req.params.id, merged); }
+          catch (e) { logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`); }
+        }
+        return res.status(200).json({ suggestions: merged.suggestions, generated: newSuggestions.length, more: false });
+      }
+
       // INCREMENTAL (#70): keep the suggestions whose task is unchanged and only generate for NEW or
       // CHANGED tasks — so adding one task and pressing Generate sends just that task to the model and
       // never re-does the hunts that already exist. `force:true` regenerates everything from scratch.
