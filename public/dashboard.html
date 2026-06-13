@@ -675,7 +675,7 @@
        collapse to font-size:0 and only the icon remains, so the toolbar fits one line; the
        hover tooltips (data-tip) keep every icon discoverable. */
     #connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
-    #aiToggle::before, #synthesize::before, #importBtn::before, #importSnapshotBtn::before,
+    #aiToggle::before, #synthesize::before, #importBtn::before, #importCaseBtn::before,
     #importUndoBtn::before, #importRedoBtn::before,
     #toggleAll::before, #toggleSearchBar::before {
       content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
@@ -687,11 +687,11 @@
     #aiToggle::before    { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z'/><path d='M18.5 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'/></svg>"); }
     #synthesize::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/></svg>"); }
     #importBtn::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v11'/><path d='M8 10l4 4 4-4'/><path d='M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2'/></svg>"); }
+    /* Import case (#88) — an archive box, distinct from the evidence-import down-arrow: this restores a whole packaged case (snapshot or IRIS). */
+    #importCaseBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 8v13H3V8'/><rect x='1' y='3' width='22' height='5' rx='1'/><path d='M10 12h4'/></svg>"); }
     /* Undo / redo the latest import (#76) — curved arrows, distinct from the synthesize refresh circle. */
     #importUndoBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 14 4 9l5-5'/><path d='M4 9h11a5 5 0 0 1 0 10h-4'/></svg>"); }
     #importRedoBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m15 14 5-5-5-5'/><path d='M20 9H9a5 5 0 0 0 0 10h4'/></svg>"); }
-    /* Import snapshot — an archive box (distinct from the evidence-import down-arrow) for restoring a packaged case. */
-    #importSnapshotBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 8v13H3V8'/><rect x='1' y='3' width='22' height='5' rx='1'/><path d='M10 12h4'/></svg>"); }
     #toggleAll::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M7 9l5-5 5 5'/><path d='M7 15l5 5 5-5'/></svg>"); }
     /* Export, Push and Collapse-all are ALWAYS icon-only — their labels never show, so the wider
        labelled actions get the room; hover tooltips keep them discoverable. The dropdowns can't take
@@ -702,8 +702,8 @@
       color: transparent; width: 50px; padding: 7px 21px 7px 25px; }
     /* Undo / redo (#76) join the ALWAYS-icon-only group (like Export/Push) — their labels never show,
        so they add no label width and can't push the toolbar into the collapsed icons-only state. */
-    #toggleAll, #toggleSearchBar, #importUndoBtn, #importRedoBtn { font-size: 0; padding-left: 9px; padding-right: 9px; }
-    #toggleAll::before, #toggleSearchBar::before, #importUndoBtn::before, #importRedoBtn::before { margin-right: 0; }
+    #toggleAll, #toggleSearchBar, #importUndoBtn, #importRedoBtn, #importCaseBtn { font-size: 0; padding-left: 9px; padding-right: 9px; }
+    #toggleAll::before, #toggleSearchBar::before, #importUndoBtn::before, #importRedoBtn::before, #importCaseBtn::before { margin-right: 0; }
     /* Search toggle — magnifier (white stroke, like the other primary action icons). It toggles the
        search/filter row below; while any filter is active it adopts the house "active" teal so a
        collapsed row still signals the view is filtered. */
@@ -887,7 +887,7 @@
     <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
     <input id="snapshotImportFile" type="file" accept=".json,application/json" style="display:none" />
-    <button id="importSnapshotBtn" data-tip="Import an investigation snapshot (.json) shared by a teammate — restores the timeline, findings, IOCs, graph state and analyst decisions as a new case on this machine. No AI keys or machine config travel with it.">Import snapshot</button>
+    <button id="importCaseBtn" type="button" data-tip="Import a whole case — an investigation snapshot (.json) shared by a teammate, or pull an existing DFIR-IRIS case. Opens a chooser; the DFIR-IRIS option appears only when configured.">Import case</button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
@@ -1049,6 +1049,41 @@
         <button id="clickupPushBtn">Push</button>
         <button id="clickupCancel" style="background:var(--c-2a2f3a);">Cancel</button>
         <span id="clickupMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+  <div id="importCaseOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Import case</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 12px">Bring in a whole case from another source.</p>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <button id="importCaseSnapshot" type="button" style="text-align:left;">📦 Investigation snapshot (.json) — a teammate's shared case file</button>
+        <button id="importCaseIris" type="button" style="display:none; text-align:left;">🛰️ From DFIR-IRIS — pull an existing IRIS case</button>
+      </div>
+      <div style="margin-top:12px;">
+        <button id="importCaseCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="importCaseHint" style="margin-left:8px; color:var(--c-52617a); font-size:11px;"></span>
+      </div>
+    </div>
+  </div>
+  <div id="irisImportOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Import from DFIR-IRIS</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        Pull an existing IRIS case's <strong>assets, IOCs and timeline</strong> into this Companion case
+        (the reverse of Push to IRIS). Mapped deterministically — no AI call — then re-synthesized.</p>
+      <label style="display:block; font-size:13px; margin:6px 0">IRIS case
+        <select id="irisCaseSelect" style="width:100%; box-sizing:border-box; padding:5px; margin-top:4px;">
+          <option value="">loading cases…</option>
+        </select>
+      </label>
+      <label style="display:block; font-size:12px; margin:8px 0 0; color:var(--c-9aa4b2)">…or enter a case id directly
+        <input id="irisCaseIdInput" placeholder="e.g. 7" style="width:100%; box-sizing:border-box; padding:5px; margin-top:4px;" />
+      </label>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="irisImportRun">Import</button>
+        <button id="irisImportCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="irisImportMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -1438,6 +1473,10 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_IRIS_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_IRIS_INSECURE" placeholder="false" /></div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+          <button id="irisReconnectBtn" type="button" data-tip="Re-read the IRIS settings from .env, rebuild the client, and test the connection — applies a saved URL/key (or IRIS coming back online) WITHOUT restarting the server. Save settings first.">Test / reconnect</button>
+          <span id="irisReconnectMsg" style="font-size:12px; color:var(--c-9aa4b2);"></span>
         </div>
         <div class="settings-group-head">Timesketch</div>
         <div class="sfield-row">
@@ -7425,11 +7464,21 @@
     document.getElementById("redactedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "redactedExportOverlay") closeRedactedExport(); });
     document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
 
-    // ── Import investigation snapshot (issue #56) ──────────────────────────────────
-    // Restore a teammate's shared snapshot (.json) as a NEW case on this machine — no AI keys, no
-    // machine config travel with it. POST the snapshot; on an id collision, prompt for a free id
-    // and retry under it. On success, attach the dashboard to the imported case.
-    document.getElementById("importSnapshotBtn").onclick = () => document.getElementById("snapshotImportFile").click();
+    // ── Import case (snapshot — issue #56 — or from DFIR-IRIS — issue #88) ──────────
+    // A compact icon button (rarely used) opens a small chooser: an investigation snapshot (.json)
+    // shared by a teammate (restored as a NEW case here — no AI keys / machine config travel with it),
+    // or pull an existing DFIR-IRIS case into the connected case. The IRIS choice is revealed by the
+    // /iris/status probe below (and after a successful reconnect).
+    const importCaseOverlay = document.getElementById("importCaseOverlay");
+    function closeImportCaseModal() { importCaseOverlay.classList.remove("open"); }
+    document.getElementById("importCaseBtn").onclick = () => {
+      document.getElementById("importCaseHint").textContent = "";
+      importCaseOverlay.classList.add("open");
+    };
+    document.getElementById("importCaseCancel").onclick = closeImportCaseModal;
+    importCaseOverlay.addEventListener("click", (e) => { if (e.target === importCaseOverlay) closeImportCaseModal(); });
+    document.getElementById("importCaseSnapshot").onclick = () => { closeImportCaseModal(); document.getElementById("snapshotImportFile").click(); };
+    document.getElementById("importCaseIris").onclick = () => { closeImportCaseModal(); openIrisImportModal(); };
     document.getElementById("snapshotImportFile").onchange = async (e) => {
       const file = e.target.files && e.target.files[0];
       e.target.value = "";   // allow re-selecting the same file
@@ -7893,7 +7942,13 @@
       pushSelect.appendChild(opt);
       pushSelect.style.display = "";
     }
-    fetch("/iris/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("iris", "Push to DFIR-IRIS"); }).catch(() => {});
+    // Reveal the "From DFIR-IRIS" choice in the Import-case chooser (only when IRIS is configured).
+    function addIrisImportOption() {
+      document.getElementById("importCaseIris").style.display = "";
+    }
+    fetch("/iris/status").then((r) => r.json()).then((s) => {
+      if (s && s.configured) { addPushOption("iris", "Push to DFIR-IRIS"); addIrisImportOption(); }
+    }).catch(() => {});
     fetch("/timesketch/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("timesketch", "Push to Timesketch"); }).catch(() => {});
     fetch("/misp/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("misp", "Push to MISP"); }).catch(() => {});
     // Notion export: a configured token shows the option; a default DB/parent hides the modal's
@@ -8004,6 +8059,82 @@
         })
         .catch((err) => document.getElementById("notionMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
         .finally(() => { btn.disabled = false; });
+    };
+
+    // ── Import from DFIR-IRIS modal (issue #88) ───────────────────────────────
+    const irisImportOverlay = document.getElementById("irisImportOverlay");
+    function closeIrisImportModal() { irisImportOverlay.classList.remove("open"); }
+    function openIrisImportModal() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { document.getElementById("status").textContent = "connect to a case first"; return; }
+      const sel = document.getElementById("irisCaseSelect");
+      const msg = document.getElementById("irisImportMsg");
+      msg.textContent = "";
+      document.getElementById("irisCaseIdInput").value = "";
+      sel.innerHTML = '<option value="">loading cases…</option>';
+      irisImportOverlay.classList.add("open");
+      fetch("/iris/cases")
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((j) => {
+          const cases = (j && j.cases) || [];
+          if (!cases.length) { sel.innerHTML = '<option value="">(no cases found — enter an id below)</option>'; return; }
+          sel.innerHTML = '<option value="">— select a case —</option>' +
+            cases.map((c) => `<option value="${escAttr(String(c.caseId))}">${esc(c.caseName)} (#${esc(String(c.caseId))})</option>`).join("");
+        })
+        .catch((err) => { sel.innerHTML = '<option value="">(could not list cases)</option>'; msg.textContent = "list failed: " + err.message; });
+    }
+    // openIrisImportModal is invoked from the "Import case" chooser (importCaseIris button).
+    document.getElementById("irisImportCancel").onclick = closeIrisImportModal;
+    irisImportOverlay.addEventListener("click", (e) => { if (e.target === irisImportOverlay) closeIrisImportModal(); });
+    document.getElementById("irisImportRun").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { document.getElementById("irisImportMsg").textContent = "connect to a case first"; return; }
+      const c = encodeURIComponent(caseId);
+      const manualId = document.getElementById("irisCaseIdInput").value.trim();
+      const selected = document.getElementById("irisCaseSelect").value.trim();
+      const body = {};
+      if (manualId) { body.irisCaseId = Number(manualId); if (!Number.isFinite(body.irisCaseId)) { document.getElementById("irisImportMsg").textContent = "case id must be a number"; return; } }
+      else if (selected) body.irisCaseId = Number(selected);
+      else { document.getElementById("irisImportMsg").textContent = "pick a case or enter an id"; return; }
+      const btn = document.getElementById("irisImportRun");
+      btn.disabled = true;
+      document.getElementById("irisImportMsg").textContent = "importing…";
+      fetch(`/cases/${c}/iris-import`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((res) => {
+          document.getElementById("status").textContent =
+            `importing DFIR-IRIS case ${res.caseName || ("#" + res.irisCaseId)}: ${res.timeline} timeline + ${res.assets} asset(s), ${res.iocs} IOC(s) — analyzing…`;
+          closeIrisImportModal();
+        })
+        .catch((err) => document.getElementById("irisImportMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
+        .finally(() => { btn.disabled = false; });
+    };
+
+    // Settings → DFIR-IRIS "Test / reconnect": re-read .env, rebuild the client, ping. Applies a
+    // saved URL/key (or IRIS coming back online) without the #1-gotcha restart.
+    const irisReconnectBtn = document.getElementById("irisReconnectBtn");
+    if (irisReconnectBtn) irisReconnectBtn.onclick = () => {
+      const msg = document.getElementById("irisReconnectMsg");
+      irisReconnectBtn.disabled = true;
+      msg.style.color = "var(--c-9aa4b2)";
+      msg.textContent = "reconnecting…";
+      fetch("/iris/reconnect", { method: "POST" })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((res) => {
+          if (res.ok) {
+            msg.style.color = "var(--c-4ade80, #4ade80)";
+            msg.textContent = "✓ connected" + (res.baseUrl ? " to " + res.baseUrl : "");
+            addPushOption("iris", "Push to DFIR-IRIS"); addIrisImportOption();   // reveal now-available actions
+          } else if (res.configured) {
+            msg.style.color = "var(--c-f87171, #f87171)";
+            msg.textContent = "✗ configured but unreachable: " + (res.error || "ping failed");
+          } else {
+            msg.style.color = "var(--c-9aa4b2)";
+            msg.textContent = "not configured — set IRIS URL + key above, Save, then reconnect";
+          }
+        })
+        .catch((err) => { msg.style.color = "var(--c-f87171, #f87171)"; msg.textContent = "reconnect failed: " + err.message; })
+        .finally(() => { irisReconnectBtn.disabled = false; });
     };
 
     // ── Push playbook to ClickUp modal ────────────────────────────────────────
