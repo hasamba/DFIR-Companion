@@ -227,7 +227,7 @@ describe("sanitizePlaybookHuntSuggestions", () => {
     expect(out[0].title).toBe("Spaced");
     expect(out[0].mitreTechniques).toEqual(["T1059", "T1003"]);
 
-    const many = Array.from({ length: 20 }, (_, i) => rawSuggestion({ title: `h${i}` }));
+    const many = Array.from({ length: PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT + 10 }, (_, i) => rawSuggestion({ title: `h${i}` }));
     expect(sanitizePlaybookHuntSuggestions(many, epMap, known, 3)).toHaveLength(3);
     expect(sanitizePlaybookHuntSuggestions(many, epMap, known)).toHaveLength(PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT);
   });

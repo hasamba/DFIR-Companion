@@ -3438,8 +3438,9 @@
           if (msg) {
             msg.style.color = "var(--c-9aa4b2)";
             const newN = typeof j.generated === "number" ? j.generated : null;
+            const more = j.more ? " · press again for more" : "";
             msg.textContent = pbHuntFlat.length
-              ? (newN === 0 ? `${pbHuntFlat.length} suggestion(s) — nothing new to generate` : `${newN != null ? newN + " new · " : ""}${pbHuntFlat.length} total — shown under their tasks`)
+              ? (newN === 0 ? `${pbHuntFlat.length} suggestion(s) — nothing new to generate` : `${newN != null ? newN + " new · " : ""}${pbHuntFlat.length} total — shown under their tasks${more}`)
               : "no endpoint-related tasks to hunt for (sync the playbook or add evidence)";
           }
         })

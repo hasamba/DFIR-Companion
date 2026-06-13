@@ -59,7 +59,9 @@ export interface PlaybookHuntSuggestion {
 }
 
 // Default cap on suggestions per generation (override via DFIR_PBHUNT_SUGGEST_MAX).
-export const PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT = 8;
+// One hunt PER endpoint-related task (not near-duplicates like the #57 fleet hunts), so the cap must
+// cover a whole playbook — keep it generous. Override per case with DFIR_PBHUNT_SUGGEST_MAX.
+export const PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT = 30;
 
 const MAX_VQL_LEN = 4000;
 const MAX_TITLE_LEN = 200;

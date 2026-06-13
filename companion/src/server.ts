@@ -89,7 +89,7 @@ import { NotebookStore, type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "./a
 import { PlaybookStore, type NewPlaybookTask, type PlaybookTaskPatch } from "./analysis/playbookStore.js";
 import { PLAYBOOK_STATUSES, playbookStats, type PlaybookStatus, type PlaybookTask } from "./analysis/playbook.js";
 import { PlaybookHuntStore } from "./analysis/playbookHuntStore.js";
-import { selectFreshHunts, pendingHuntTasks, mergePersistedHunts, EMPTY_PERSISTED_HUNTS } from "./analysis/playbookHunt.js";
+import { selectFreshHunts, pendingHuntTasks, mergePersistedHunts, EMPTY_PERSISTED_HUNTS, PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT } from "./analysis/playbookHunt.js";
 import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
 import type { AssetType } from "./analysis/assetGraph.js";
@@ -4316,14 +4316,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const pendingIds = new Set(pending.map((t) => t.id));
       const newSuggestions = (pending.length ? await options.pipeline.suggestPlaybookHunts(req.params.id, pending, artifactNames) : [])
         .filter((s) => pendingIds.has(s.taskId));
-      const merged = mergePersistedHunts(fresh, newSuggestions, pending, new Date().toISOString());
-      logLine(`[velociraptor] playbook hunts for ${req.params.id}: ${newSuggestions.length} new (of ${pending.length} pending task(s)), ${merged.suggestions.length} total`);
+      // Which pending tasks to mark "evaluated" (won't be re-sent): if the model hit the per-generation
+      // cap there may be MORE pending tasks it never got to — stamp only the ones it actually hunted, so
+      // the rest are retried on the next press. Otherwise it saw every pending task → stamp them all
+      // (a non-endpoint task it deliberately skipped won't be re-evaluated).
+      const cap = Number(process.env.DFIR_PBHUNT_SUGGEST_MAX) || PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT;
+      const truncated = newSuggestions.length >= cap;
+      const suggestedIds = new Set(newSuggestions.map((s) => s.taskId));
+      const evaluatedTasks = truncated ? pending.filter((t) => suggestedIds.has(t.id)) : pending;
+      const merged = mergePersistedHunts(fresh, newSuggestions, evaluatedTasks, new Date().toISOString());
+      logLine(`[velociraptor] playbook hunts for ${req.params.id}: ${newSuggestions.length} new (of ${pending.length} pending task(s))${truncated ? " [cap hit — press again for more]" : ""}, ${merged.suggestions.length} total`);
       // Persist so the set survives a refresh + future incremental generates. Best-effort.
       if (options.playbookHuntStore) {
         try { await options.playbookHuntStore.save(req.params.id, merged); }
         catch (e) { logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`); }
       }
-      return res.status(200).json({ suggestions: merged.suggestions, generated: newSuggestions.length });
+      return res.status(200).json({ suggestions: merged.suggestions, generated: newSuggestions.length, more: truncated });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

@@ -535,7 +535,7 @@ velociraptor --config server.config.yaml config api_client --name dfir --role ad
 | `DFIR_VELO_HUNT_WAIT_MIN` | `10` | Default minutes before a **triage bundle** hunt auto-collects (per-run + per-bundle override; clamped 1–1440) |
 | `DFIR_VELOCIRAPTOR_UPLOAD_VQL` | — | Advanced: override the VQL that reads a hunt's uploaded JSON reports (version-sensitive; keep the `__HUNT_ID__` placeholder) |
 | `DFIR_HUNT_SUGGEST_MAX` | `8` | Max number of **AI-suggested fleet hunts** returned per generation (needs an AI provider, not the Velociraptor API) |
-| `DFIR_PBHUNT_SUGGEST_MAX` | `8` | Max number of **AI-suggested playbook hunts** returned per generation (one per endpoint-related task; needs an AI provider) |
+| `DFIR_PBHUNT_SUGGEST_MAX` | `30` | Max number of **AI-suggested playbook hunts** returned per generation (one per endpoint-related task; needs an AI provider) |
 
 **Triage bundles** (**Settings → Velociraptor** tab): *Browse server artifacts* lists the server's collectable
 `CLIENT` artifacts; assemble + save named **bundles** (a single **Best Practice** quick-wins sweep ships by
