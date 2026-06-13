@@ -233,6 +233,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Reports** — Markdown + HTML + one-click **PDF** + CSVs (findings, IOCs, timelines) + JSON state + **Word (.docx)** — all from the **Export** menu.
 - **ATT&CK Navigator layer** — MITRE techniques coloured by worst severity, ready to upload into [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/).
 - **STIX 2.1 bundle** — portable bundle (IOC STIX patterns + ATT&CK attack-patterns + `indicates` relationships) for OpenCTI, MISP, Anomali, etc.
+- **IOC block-list** — **Export → IOC block-list…** produces a clean indicator list for network/firewall teams in TXT (grouped by type), CSV (type/value/severity/verdict/description), or STIX-indicators-only; filters by minimum severity, IOC type, and optionally verdict-confirmed-only.
 - **Investigation snapshot** — **Export → Investigation snapshot (JSON)** bundles the whole case; **Import snapshot…** restores it as a new case on another machine. No AI keys or machine config included.
 - **Redacted case package** — **Export → Redacted case package (ZIP)**: IPs/hosts/users replaced with consistent tokens, PII blurred in screenshots, adversary indicators preserved.
 - **AI executive summary** — ✨ management-facing summary (no ATT&CK ids/hashes/tool names), saved into the report.
