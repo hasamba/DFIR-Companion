@@ -243,7 +243,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **AI executive summary** — ✨ management-facing summary (no ATT&CK ids/hashes/tool names), saved into the report.
 - **Narrative Timeline** — prose story for non-technical stakeholders; generated in synthesis, editable, report §3.2.
 - **Push to DFIR-IRIS** — one click (or `npm run iris:push`) maps assets/IOCs/timeline/tasks; idempotent. `DFIR_IRIS_URL` + `DFIR_IRIS_KEY`.
-- **Import from DFIR-IRIS** — the reverse: pull an existing IRIS case's assets/IOCs/timeline into a case via the **Import case…** menu → *From DFIR-IRIS* (or `npm run iris:import -- <case> <irisCaseIdOrName>`); deterministic, no AI. **Settings → DFIR-IRIS** has a *Test / reconnect* button that applies saved config (or IRIS coming back online) without a server restart.
+- **Import from DFIR-IRIS** — the reverse: pull an existing IRIS case's assets/IOCs/timeline into a case via the **Import case** icon → *From DFIR-IRIS* (or `npm run iris:import -- <case> <irisCaseIdOrName>`); deterministic, no AI. **Settings → DFIR-IRIS** has a *Test / reconnect* button that applies saved config (or IRIS coming back online) without a server restart.
 - **Timesketch push** — **Export → Timesketch JSONL** or one-click **Push** (find-or-creates the sketch). `DFIR_TIMESKETCH_*`.
 - **Export to Notion** — push a case into a managed Notion page block; your own notes outside it are never touched. `DFIR_NOTION_TOKEN`.
 - **Push to ClickUp** — export the Response Playbook as ClickUp tasks; re-push updates in place. `DFIR_CLICKUP_TOKEN`.

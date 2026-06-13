@@ -430,7 +430,7 @@ read methods (`listCases`/`getRawAssets`/`getRawIocs`/`getRawTimeline`), the PUR
 maps them deterministically — timeline→events (severity from `event_color`, MITRE/asset/hash from
 tags+content), IOCs→IOCs (type from the IRIS ioc-type name or value shape), assets→evidence events — and
 `pipeline.importIris` merges via `mergeDelta`; routes `GET /iris/cases` + `POST /cases/:id/iris-import`,
-surfaced in the unified **"Import case…"** dashboard menu (Investigation snapshot or From DFIR-IRIS).
+surfaced via the compact **"Import case"** toolbar icon → chooser (Investigation snapshot or From DFIR-IRIS).
 The IRIS timeline LIST endpoint is `case/timeline/events/list/filter/0` (0 = all events) — NOT the bare
 `/case/timeline/events`, which is single-event-by-id and 404s. The client is held in a **mutable
 closure var** (`let irisClient`) so `POST /iris/reconnect` (Settings → DFIR-IRIS "Test / reconnect")
