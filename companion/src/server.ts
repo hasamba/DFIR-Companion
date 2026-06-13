@@ -302,6 +302,10 @@ export interface AppOptions {
   // Velociraptor API: a configured client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) lets the
   // dashboard run the generated hunt VQL against the server and show the rows inline.
   velociraptorClient?: VelociraptorClient;
+  // Rebuilds the Velociraptor client from current config (used by POST /velociraptor/reconnect so
+  // config saved via Settings, or the Velociraptor server coming back online, applies without a server
+  // restart). Defaults to the env-based buildVelociraptorClient; tests inject a stub (no spawn).
+  rebuildVelociraptorClient?: () => VelociraptorClient | undefined;
   // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map). A single-endpoint
   // collection resolves the host against this file instead of a brittle live `clients(search=...)`
   // lookup; refreshed at startup, on demand (Settings), and lazily on a collect miss.
@@ -1351,6 +1355,48 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     } catch (err) {
       logLine(`[velociraptor] client refresh ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Builds the Velociraptor client from current env (used by POST /velociraptor/reconnect). Defaults
+  // to the env-based factory; tests inject a stub so no process is spawned.
+  const rebuildVelo = options.rebuildVelociraptorClient ?? buildVelociraptorClient;
+
+  // Whether the Velociraptor API is configured + the inventory's freshness (so the dashboard can show
+  // connection state without a probe). `configured` reflects the LIVE client (reconnect can flip it).
+  app.get("/velociraptor/status", async (_req: Request, res: Response) => {
+    let updatedAt = "", clientCount = 0;
+    if (options.velociraptorClientStore) {
+      try { const inv = await options.velociraptorClientStore.load(); updatedAt = inv.updatedAt; clientCount = inv.clients.length; } catch { /* empty */ }
+    }
+    return res.status(200).json({ configured: !!options.velociraptorClient, updatedAt, clients: clientCount });
+  });
+
+  // Re-read DFIR_VELOCIRAPTOR_* from .env (settings saved via the dashboard only write the file),
+  // REBUILD the client, and refresh the client inventory — which doubles as a reachability probe
+  // (`clients()` round-trips to the server). Lets the analyst connect after configuring Velociraptor,
+  // or after the Velociraptor server comes back online, WITHOUT the #1-gotcha restart (the client is
+  // stateless — it spawns the binary per query — but a rebuild also applies newly-saved config and
+  // flips it on if the config path wasn't set at boot). Also re-arms any persisted live monitors that
+  // couldn't be scheduled while the client was absent. Always 200; the body says configured/reachable.
+  app.post("/velociraptor/reconnect", async (_req: Request, res: Response) => {
+    try {
+      await reloadEnvPrefix("DFIR_VELOCIRAPTOR_");
+      options.velociraptorClient = rebuildVelo();
+      if (!options.velociraptorClient) {
+        return res.status(200).json({ configured: false, ok: false, error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+      }
+      try {
+        const count = await refreshVeloClients();
+        const inv = options.velociraptorClientStore ? await options.velociraptorClientStore.load() : { updatedAt: "", clients: [] };
+        void resumeVeloMonitors();   // arm monitors that couldn't start while the client was absent
+        logLine(`[velociraptor] reconnected — ${count} enrolled client(s)`);
+        return res.status(200).json({ configured: true, ok: true, clients: count, updatedAt: inv.updatedAt });
+      } catch (err) {
+        return res.status(200).json({ configured: true, ok: false, error: (err as Error).message });
+      }
+    } catch (err) {
+      return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });
     }
   });
 
@@ -5992,15 +6038,30 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     logLine(`DFIR companion on http://${shownHost}:${port} (dashboard at /dashboard)`);
   });
 
-  // Fire-and-forget: snapshot the enrolled Velociraptor fleet into the client inventory at startup
-  // (#70), so a single-endpoint collection can resolve a host → client_id from the file. Best-effort —
-  // a refresh failure (API down, role missing) just leaves the inventory stale; the collect route
-  // refreshes lazily on a miss, and Settings → Velociraptor has a manual refresh.
+  // Snapshot the enrolled Velociraptor fleet into the client inventory at startup (#70), so a single-
+  // endpoint collection can resolve a host → client_id from the file. RETRY WITH BACKOFF: if the
+  // Velociraptor server is down when the companion boots (a common ordering), keep retrying for a while
+  // so the inventory self-heals once it comes up — the analyst shouldn't have to restart the companion
+  // (Settings → Velociraptor → Reconnect also forces it). Best-effort; timers .unref() so they never
+  // block exit. Live monitors self-heal on their own poll timers, so this only covers the inventory.
   if (velociraptorClient) {
-    void velociraptorClient.listClients()
-      .then((clients) => velociraptorClientStore.save(clients, new Date().toISOString()))
-      .then((inv) => logLine(`[velociraptor] client inventory: ${inv.clients.length} enrolled client(s)`))
-      .catch((e) => logLine(`[velociraptor] startup client inventory refresh failed (run Settings → Velociraptor → Refresh client list): ${(e as Error).message}`));
+    const backoffMs = [0, 30_000, 60_000, 120_000, 300_000, 600_000];   // ~18 min of attempts
+    const attempt = (i: number): void => {
+      velociraptorClient.listClients()
+        .then((clients) => velociraptorClientStore.save(clients, new Date().toISOString()))
+        .then((inv) => logLine(`[velociraptor] client inventory: ${inv.clients.length} enrolled client(s)`))
+        .catch((e) => {
+          const next = i + 1;
+          if (next < backoffMs.length) {
+            logLine(`[velociraptor] startup inventory refresh failed (${(e as Error).message}) — retrying in ${backoffMs[next] / 1000}s`);
+            const t = setTimeout(() => attempt(next), backoffMs[next]);
+            t.unref?.();
+          } else {
+            logLine(`[velociraptor] startup inventory refresh still failing — use Settings → Velociraptor → Reconnect once the server is up`);
+          }
+        });
+    };
+    attempt(0);
   }
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.
