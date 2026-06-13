@@ -9,6 +9,7 @@ import {
 import type { NotificationConfigStore } from "../../analysis/notificationStore.js";
 import { formatSlack } from "./slackFormat.js";
 import { formatTeams } from "./teamsFormat.js";
+import { formatTelegram } from "./telegramFormat.js";
 import { buildRfc822Message, formatEmail } from "./emailFormat.js";
 import { postWebhook } from "./webhookSender.js";
 import { sendSmtp, type SmtpConnect } from "./smtpClient.js";
@@ -60,6 +61,13 @@ async function sendToChannel(
     if (channel.type === "teams") {
       if (!channel.webhookUrl) return { ...base, ok: false, error: "no webhook URL configured" };
       const r = await postWebhook(transport.fetchFn, channel.webhookUrl, formatTeams(event), transport.timeoutMs);
+      return { ...base, ok: r.ok, ...(r.error ? { error: r.error } : {}) };
+    }
+    if (channel.type === "telegram") {
+      if (!channel.telegram?.botToken) return { ...base, ok: false, error: "no bot token configured" };
+      const url = `https://api.telegram.org/bot${channel.telegram.botToken}/sendMessage`;
+      const payload = { chat_id: channel.telegram.chatId, ...formatTelegram(event) };
+      const r = await postWebhook(transport.fetchFn, url, payload, transport.timeoutMs);
       return { ...base, ok: r.ok, ...(r.error ? { error: r.error } : {}) };
     }
     // email

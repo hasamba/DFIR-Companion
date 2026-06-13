@@ -15,7 +15,7 @@ import type { PlaybookTask } from "./playbook.js";
 // enrichment, this is OFF by default — the channel list starts empty and each channel is created
 // + enabled explicitly by the analyst (opt-in). Nothing leaves the box until then.
 
-export const NOTIFICATION_CHANNEL_TYPES = ["slack", "teams", "email"] as const;
+export const NOTIFICATION_CHANNEL_TYPES = ["slack", "teams", "email", "telegram"] as const;
 export type NotificationChannelType = (typeof NOTIFICATION_CHANNEL_TYPES)[number];
 
 // The three signal classes from the issue. The kind is also the per-channel toggle key.
@@ -60,6 +60,12 @@ export interface NotificationEvent {
   url?: string;           // optional deep link back to the dashboard/case
 }
 
+// Telegram bot config. botToken is stored but never echoed back to the browser (the route redacts it).
+export interface TelegramChannelConfig {
+  botToken: string;   // secret — never echoed to the browser
+  chatId: string;     // chat/channel/group ID (e.g., "@channelname" or "-1001234567890")
+}
+
 // SMTP transport config for an email channel. Secrets (password) are stored but never echoed back
 // to the browser (the route redacts them).
 export interface SmtpChannelConfig {
@@ -73,7 +79,8 @@ export interface SmtpChannelConfig {
   rejectUnauthorized?: boolean;  // verify the server cert (default true) — set false for self-signed
 }
 
-// A configured destination. Webhook channels (slack/teams) use `webhookUrl`; email uses `smtp`.
+// A configured destination. Webhook channels (slack/teams) use `webhookUrl`; email uses `smtp`;
+// Telegram uses `telegram`.
 export interface NotificationChannel {
   id: string;
   type: NotificationChannelType;
@@ -83,6 +90,7 @@ export interface NotificationChannel {
   events: Record<NotificationEventKind, boolean>; // which signal classes this channel wants
   webhookUrl?: string;                            // slack / teams incoming-webhook URL
   smtp?: SmtpChannelConfig;                        // email transport
+  telegram?: TelegramChannelConfig;               // telegram bot transport
   createdAt: string;
   updatedAt: string;
 }
@@ -192,6 +200,11 @@ export function testEvent(at: string): NotificationEvent {
 
 // ── Channel input validation + secret-preserving updates ────────────────────────────────────
 
+const telegramInputSchema = z.object({
+  botToken: z.string().optional(),
+  chatId: z.string().min(1),
+});
+
 const smtpInputSchema = z.object({
   host: z.string().min(1),
   port: z.coerce.number().int().min(1).max(65535),
@@ -223,6 +236,7 @@ export const channelInputSchema = z.object({
   events: eventsInputSchema,
   webhookUrl: z.string().optional(),
   smtp: smtpInputSchema.optional(),
+  telegram: telegramInputSchema.optional(),
 });
 
 export type ChannelInput = z.infer<typeof channelInputSchema>;
@@ -235,6 +249,7 @@ export interface ChannelDraft {
   events: Record<NotificationEventKind, boolean>;
   webhookUrl?: string;
   smtp?: SmtpChannelConfig;
+  telegram?: TelegramChannelConfig;
 }
 
 export interface ParsedChannelInput {
@@ -276,6 +291,14 @@ export function parseChannelInput(raw: unknown, existing?: NotificationChannel):
     const url = (v.webhookUrl ?? "").trim() || (sameTypeExisting ?? "");
     if (!/^https?:\/\//i.test(url)) return { ok: false, error: `${v.type} channel requires an http(s) webhook URL` };
     draft.webhookUrl = url;
+  } else if (v.type === "telegram") {
+    // Blank token on update → keep the saved one (same redacted-round-trip pattern as webhookUrl).
+    const sameTypeExisting = existing?.type === "telegram" ? existing.telegram : undefined;
+    const token = (v.telegram?.botToken ?? "").trim() || (sameTypeExisting?.botToken ?? "");
+    if (!token) return { ok: false, error: "telegram channel requires a bot token" };
+    const chatId = (v.telegram?.chatId ?? "").trim();
+    if (!chatId) return { ok: false, error: "telegram channel requires a chat ID" };
+    draft.telegram = { botToken: token, chatId };
   } else {
     if (!v.smtp) return { ok: false, error: "email channel requires smtp { host, port, from, to }" };
     if (!v.smtp.to.length) return { ok: false, error: "email channel requires at least one recipient (to)" };
@@ -294,7 +317,10 @@ export function parseChannelInput(raw: unknown, existing?: NotificationChannel):
 }
 
 function defaultName(type: NotificationChannelType): string {
-  return type === "slack" ? "Slack" : type === "teams" ? "MS Teams" : "Email";
+  if (type === "slack") return "Slack";
+  if (type === "teams") return "MS Teams";
+  if (type === "telegram") return "Telegram";
+  return "Email";
 }
 
 // Apply a parsed draft onto an existing channel for an UPDATE, PRESERVING secrets the UI didn't
@@ -315,6 +341,16 @@ export function applyChannelPatch(existing: NotificationChannel, draft: ChannelD
   if (draft.type === "slack" || draft.type === "teams") {
     next.webhookUrl = draft.webhookUrl || existing.webhookUrl || "";
     delete next.smtp;
+    delete next.telegram;
+  } else if (draft.type === "telegram") {
+    const prev = existing.telegram;
+    next.telegram = {
+      chatId: draft.telegram!.chatId,
+      // Preserve the saved token when the edit left it blank (redacted round-trip).
+      botToken: draft.telegram!.botToken || prev?.botToken || "",
+    };
+    delete next.webhookUrl;
+    delete next.smtp;
   } else if (draft.smtp) {
     const prev = existing.smtp;
     next.smtp = {
@@ -323,23 +359,28 @@ export function applyChannelPatch(existing: NotificationChannel, draft: ChannelD
       password: draft.smtp.password || prev?.password || undefined,
     };
     delete next.webhookUrl;
+    delete next.telegram;
   }
   return next;
 }
 
-// Strip secrets for a client-facing view: webhook URLs and SMTP passwords never leave the server.
-// The browser learns only whether each is set (so the UI can show "configured" + a blank field).
-export interface RedactedChannel extends Omit<NotificationChannel, "webhookUrl" | "smtp"> {
+// Strip secrets for a client-facing view: webhook URLs, SMTP passwords, and Telegram bot tokens
+// never leave the server. The browser learns only whether each is set.
+export interface RedactedChannel extends Omit<NotificationChannel, "webhookUrl" | "smtp" | "telegram"> {
   hasWebhookUrl: boolean;
   smtp?: Omit<SmtpChannelConfig, "password"> & { hasPassword: boolean };
+  telegram?: { chatId: string; hasBotToken: boolean };
 }
 
 export function redactChannel(channel: NotificationChannel): RedactedChannel {
-  const { webhookUrl, smtp, ...rest } = channel;
+  const { webhookUrl, smtp, telegram, ...rest } = channel;
   const out: RedactedChannel = { ...rest, hasWebhookUrl: Boolean(webhookUrl) };
   if (smtp) {
     const { password, ...smtpRest } = smtp;
     out.smtp = { ...smtpRest, hasPassword: Boolean(password) };
+  }
+  if (telegram) {
+    out.telegram = { chatId: telegram.chatId, hasBotToken: Boolean(telegram.botToken) };
   }
   return out;
 }

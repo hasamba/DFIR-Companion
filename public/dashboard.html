@@ -1676,6 +1676,7 @@
               <option value="slack">Slack webhook</option>
               <option value="teams">MS Teams webhook</option>
               <option value="email">SMTP email</option>
+              <option value="telegram">Telegram bot</option>
             </select>
             <input id="ntfName" placeholder="channel name (e.g. SOC #alerts)" style="flex:1 1 200px" />
             <select id="ntfMinSeverity" style="flex:0 0 auto" title="Only events at or above this severity fire (findings/playbook)">
@@ -1689,6 +1690,13 @@
           <!-- Webhook (slack/teams) -->
           <div id="ntfWebhookRow" style="margin-bottom:6px">
             <input id="ntfWebhookUrl" placeholder="https://hooks.slack.com/services/…  or  https://outlook.office.com/webhook/…" style="width:100%;box-sizing:border-box" autocomplete="off" />
+          </div>
+          <!-- Telegram bot -->
+          <div id="ntfTelegramRows" style="display:none;margin-bottom:6px">
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <input id="ntfTgToken" type="password" placeholder="Bot token (123456789:AAF…)" autocomplete="new-password" style="flex:1 1 220px" />
+              <input id="ntfTgChatId" placeholder="Chat ID (@channel or -1001234567890)" style="flex:1 1 200px" />
+            </div>
           </div>
           <!-- Email (smtp) -->
           <div id="ntfSmtpRows" style="display:none">
@@ -8361,22 +8369,28 @@
 
     // --- Notifications (issue #58) — Slack/Teams/SMTP channels, Settings → Notifications ----------
     let ntfChannels = [];
-    const NTF_TYPE_LABEL = { slack: "Slack", teams: "MS Teams", email: "Email" };
+    const NTF_TYPE_LABEL = { slack: "Slack", teams: "MS Teams", email: "Email", telegram: "Telegram" };
     function ntfTypeChanged() {
       const t = document.getElementById("ntfType").value;
       const email = t === "email";
-      document.getElementById("ntfWebhookRow").style.display = email ? "none" : "";
+      const telegram = t === "telegram";
+      document.getElementById("ntfWebhookRow").style.display = (email || telegram) ? "none" : "";
       document.getElementById("ntfSmtpRows").style.display = email ? "" : "none";
-      const wh = document.getElementById("ntfWebhookUrl");
-      wh.placeholder = t === "teams"
-        ? "https://outlook.office.com/webhook/…  or Power Automate URL"
-        : "https://hooks.slack.com/services/…";
+      document.getElementById("ntfTelegramRows").style.display = telegram ? "" : "none";
+      if (!email && !telegram) {
+        const wh = document.getElementById("ntfWebhookUrl");
+        wh.placeholder = t === "teams"
+          ? "https://outlook.office.com/webhook/…  or Power Automate URL"
+          : "https://hooks.slack.com/services/…";
+      }
     }
     function ntfChannelToBody(ch) {
       const body = { type: ch.type, name: ch.name, enabled: ch.enabled, minSeverity: ch.minSeverity, events: ch.events };
       if (ch.type === "email" && ch.smtp) {
         body.smtp = { host: ch.smtp.host, port: ch.smtp.port, secure: !!ch.smtp.secure, from: ch.smtp.from, to: ch.smtp.to, username: ch.smtp.username || "", password: "" };
         if (ch.smtp.rejectUnauthorized !== undefined) body.smtp.rejectUnauthorized = ch.smtp.rejectUnauthorized;
+      } else if (ch.type === "telegram" && ch.telegram) {
+        body.telegram = { botToken: "", chatId: ch.telegram.chatId }; // blank token → server keeps the saved (redacted) value
       } else {
         body.webhookUrl = ""; // blank → server keeps the saved (redacted) URL
       }
@@ -8384,6 +8398,7 @@
     }
     function ntfTargetSummary(ch) {
       if (ch.type === "email" && ch.smtp) return `${esc(ch.smtp.host)}:${esc(String(ch.smtp.port))} → ${esc((ch.smtp.to || []).join(", "))}${ch.smtp.hasPassword ? " 🔑" : ""}`;
+      if (ch.type === "telegram" && ch.telegram) return `${ch.telegram.hasBotToken ? "token configured" : "<span style='color:var(--c-ff9f9f)'>no token</span>"} → chat: ${esc(ch.telegram.chatId || "?")}`;
       return ch.hasWebhookUrl ? "webhook configured" : "<span style='color:var(--c-ff9f9f)'>no webhook URL</span>";
     }
     function ntfEventsSummary(ev) {
@@ -8441,6 +8456,11 @@
           from: document.getElementById("ntfSmtpFrom").value.trim(),
           to: document.getElementById("ntfSmtpTo").value.trim(),
         };
+      } else if (type === "telegram") {
+        body.telegram = {
+          botToken: document.getElementById("ntfTgToken").value,
+          chatId: document.getElementById("ntfTgChatId").value.trim(),
+        };
       } else {
         body.webhookUrl = document.getElementById("ntfWebhookUrl").value.trim();
       }
@@ -8452,6 +8472,7 @@
           document.getElementById("ntfName").value = "";
           document.getElementById("ntfWebhookUrl").value = "";
           ["ntfSmtpHost", "ntfSmtpUser", "ntfSmtpPass", "ntfSmtpFrom", "ntfSmtpTo"].forEach(id => { document.getElementById(id).value = ""; });
+          ["ntfTgToken", "ntfTgChatId"].forEach(id => { document.getElementById(id).value = ""; });
           loadNotifications();
         })
         .catch(e => { msg.textContent = e.message; });
