@@ -1614,7 +1614,12 @@
         <!-- Live CLIENT_EVENT monitoring (#84) -->
         <div id="veloMonitorSection" style="margin-top:18px;border-top:1px solid var(--c-2a3146);padding-top:14px">
           <div class="settings-group-head">🔴 Live Monitoring <span style="color:var(--c-7e8aa0);font-weight:400">(Velociraptor client events)</span></div>
-          <p style="font-size:12px;color:var(--c-9aa4b2);margin:2px 0 10px">Stream a Velociraptor <strong>client-monitoring</strong> artifact (e.g. <code>Windows.Events.ProcessCreation</code>, <code>Windows.Events.DNSQueries</code>) from one endpoint into this case <strong>as events fire</strong>. The companion polls on an interval and imports new rows automatically; the last-seen cursor is saved so a restart never re-ingests old events. Needs the Velociraptor API configured.</p>
+          <p style="font-size:12px;color:var(--c-9aa4b2);margin:2px 0 10px">Stream a Velociraptor <strong>client-monitoring</strong> artifact (e.g. <code>Windows.Events.ProcessCreation</code>, <code>Windows.Events.DNSQueries</code>) into this case <strong>as events fire</strong> — from one endpoint, or across <strong>all enrolled clients</strong> at once. The companion polls on an interval and imports new rows automatically; the last-seen cursor is saved so a restart never re-ingests old events. The artifact must also be enabled in Velociraptor → <em>Client Monitoring</em> for the target client(s). Needs the Velociraptor API configured.</p>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 10px;background:var(--c-161b28);border:1px solid var(--c-2a3146);border-radius:6px">
+            <button id="veloMonAutoBtn" type="button" title="Discover every client-event artifact already enabled in Velociraptor's Client Monitoring table and start an all-clients monitor for each">⚡ Auto-monitor configured events</button>
+            <span style="font-size:12px;color:var(--c-9aa4b2)">Start an <strong>all-clients</strong> monitor for every artifact already enabled in Velociraptor's <em>Client Monitoring</em> table.</span>
+            <span id="veloMonAutoMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+          </div>
           <div id="veloMonitorList" style="margin:0 0 12px"></div>
           <details id="veloMonitorBuilder" style="border:1px solid var(--c-2a3146);border-radius:6px;padding:10px;background:var(--c-161b28)">
             <summary style="cursor:pointer;font-size:13px;color:var(--c-cdd6e4);font-weight:600">Start a new monitor</summary>
@@ -1624,6 +1629,7 @@
                 <select id="veloMonArtifact" style="flex:1;min-width:240px;padding:5px"><option value="">— pick a CLIENT_EVENT artifact —</option></select>
               </div>
               <input id="veloMonArtifactManual" placeholder="…or type an artifact name (e.g. Windows.Events.ProcessCreation)" style="padding:5px" />
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--c-cdd6e4)"><input type="checkbox" id="veloMonAllClients" /> All enrolled clients <span style="color:var(--c-7e8aa0)">(monitor this artifact across the whole fleet — no specific endpoint)</span></label>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
                 <input id="veloMonClient" list="veloMonClientList" placeholder="client id (C.xxxxxxxx)" style="flex:1;min-width:200px;padding:5px" />
                 <datalist id="veloMonClientList"></datalist>
@@ -4537,7 +4543,7 @@
       el.innerHTML = monitors.map(m => {
         const dot = m.status === "active" ? "🔴" : (m.status === "error" ? "⚠" : "⏸");
         const badge = `<span style="color:${colors[m.status] || "#9aa4b2"};font-weight:600">${esc(m.status)}</span>`;
-        const host = esc(m.hostname || m.clientId);
+        const host = m.allClients ? `🌐 <span title="all enrolled clients">all clients</span>` : esc(m.hostname || m.clientId);
         const stats = `${m.addedEvents || 0} event(s) · ${m.polls || 0} poll(s) · last ${veloMonAge(m.lastPolledAt)}`;
         const err = m.status === "error" && m.lastError ? `<div style="font-size:12px;color:var(--c-ff9f43);margin-top:3px">error: ${esc(m.lastError)}</div>` : "";
         const toggle = m.status === "stopped"
@@ -4595,28 +4601,57 @@
         .catch(e => { if (sel) sel.innerHTML = `<option value="">error: ${esc(e.message)}</option>`; })
         .finally(() => { if (btn) btn.disabled = false; });
     }
+    // Grey out the client field when "all enrolled clients" is ticked.
+    function veloMonSyncAllClients() {
+      const all = document.getElementById("veloMonAllClients");
+      const client = document.getElementById("veloMonClient");
+      if (all && client) { client.disabled = all.checked; client.placeholder = all.checked ? "(all enrolled clients)" : "client id (C.xxxxxxxx)"; }
+    }
     function veloMonStart() {
       const caseId = veloCaseId();
       const msg = document.getElementById("veloMonMsg");
       if (!caseId) { if (msg) msg.textContent = "connect to a case first"; return; }
       if (!veloEnabled) { if (msg) msg.textContent = "Velociraptor API not configured"; return; }
       const artifact = (document.getElementById("veloMonArtifactManual").value.trim() || document.getElementById("veloMonArtifact").value.trim());
+      const allClients = document.getElementById("veloMonAllClients").checked;
       const clientId = document.getElementById("veloMonClient").value.trim();
       const pollSeconds = Number(document.getElementById("veloMonPoll").value) || 30;
       const minSeverity = document.getElementById("veloMonMinSev").value;
       if (!artifact) { if (msg) msg.textContent = "pick or type a CLIENT_EVENT artifact"; return; }
-      if (!/^C\.[A-Za-z0-9]+$/.test(clientId)) { if (msg) msg.textContent = "enter a valid client id (C.xxxxxxxx)"; return; }
-      const hostname = (_veloClients.find(c => c.clientId === clientId) || {});
+      if (!allClients && !/^C\.[A-Za-z0-9]+$/.test(clientId)) { if (msg) msg.textContent = "enter a valid client id (C.xxxxxxxx), or tick All enrolled clients"; return; }
+      const host = (_veloClients.find(c => c.clientId === clientId) || {});
+      const body = allClients
+        ? { allClients: true, artifact, pollSeconds, minSeverity }
+        : { clientId, artifact, pollSeconds, minSeverity, hostname: host.hostname || host.fqdn || "" };
       const btn = document.getElementById("veloMonStartBtn");
       if (btn) btn.disabled = true; if (msg) msg.textContent = "starting…";
       fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors`, {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ clientId, artifact, pollSeconds, minSeverity, hostname: hostname.hostname || hostname.fqdn || "" })
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
       }).then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { if (msg) msg.textContent = "error: " + (j.error || "failed"); return; }
           if (msg) msg.textContent = "";
           document.getElementById("veloMonArtifactManual").value = "";
+          loadVeloMonitors(caseId);
+        })
+        .catch(e => { if (msg) msg.textContent = "error: " + e.message + " — restart the companion server if this 404s"; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    // Discover every artifact already enabled in Velociraptor's Client Monitoring table and start an
+    // all-clients monitor for each.
+    function veloMonAuto() {
+      const caseId = veloCaseId();
+      const msg = document.getElementById("veloMonAutoMsg");
+      if (!caseId) { if (msg) msg.textContent = "connect to a case first"; return; }
+      if (!veloEnabled) { if (msg) msg.textContent = "Velociraptor API not configured"; return; }
+      const btn = document.getElementById("veloMonAutoBtn");
+      if (btn) btn.disabled = true; if (msg) msg.textContent = "discovering configured client events…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors/auto`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { if (msg) msg.textContent = "error: " + (j.error || "failed"); return; }
+          const n = (j.started || []).length;
+          if (msg) msg.textContent = `started ${n} all-clients monitor(s): ${(j.discovered || []).join(", ")}`;
           loadVeloMonitors(caseId);
         })
         .catch(e => { if (msg) msg.textContent = "error: " + e.message + " — restart the companion server if this 404s"; })
@@ -4833,6 +4868,8 @@
       const manual = document.getElementById("veloArtifactManual"); if (manual) manual.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); veloAddManual(); } };
       const monBrowse = document.getElementById("veloMonBrowseBtn"); if (monBrowse) monBrowse.onclick = veloMonBrowse;
       const monStart = document.getElementById("veloMonStartBtn"); if (monStart) monStart.onclick = veloMonStart;
+      const monAuto = document.getElementById("veloMonAutoBtn"); if (monAuto) monAuto.onclick = veloMonAuto;
+      const monAll = document.getElementById("veloMonAllClients"); if (monAll) monAll.onchange = veloMonSyncAllClients;
       loadVeloBundles();   // populate the bundle list even before a case is connected
     })();
 
