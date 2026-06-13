@@ -52,6 +52,7 @@ import { parseMemory } from "./analysis/memoryImport.js";
 import type { MemoryImportOptions } from "./analysis/memoryImport.js";
 import { parseEmail } from "./analysis/emailImport.js";
 import type { EmailImportOptions } from "./analysis/emailImport.js";
+import { parseTheHive } from "./analysis/theHiveImport.js";
 import { parseAuditdLog } from "./analysis/auditdImport.js";
 import type { AuditdImportOptions } from "./analysis/auditdImport.js";
 import { parseJournald } from "./analysis/journaldImport.js";
@@ -1447,6 +1448,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "sandbox": return pipeline.importSandbox(caseId, text, base);
       case "memory": return pipeline.importMemory(caseId, text, base);
       case "email": return pipeline.importEmail(caseId, text, base);
+      case "thehive": return pipeline.importTheHive(caseId, text, base);
       case "auditd": return pipeline.importAuditd(caseId, text, base);
       case "journald": return pipeline.importJournald(caseId, text, base);
       case "sysdig": return pipeline.importSysdig(caseId, text, base);
@@ -3870,6 +3872,50 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `Email import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a TheHive 5 case, alert, or observable export. Evidence-first; mapped
+  // DETERMINISTICALLY (no AI call): case/alert records → events, severity from TheHive's 1–4
+  // scale, MITRE from ATT&CK-tagged tags, TLP/PAP prepended; observables → IOCs by dataType.
+  app.post("/cases/:id/import-thehive", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text : "";
+    const originalName = String(req.body?.filename ?? "thehive-export.json");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    try {
+      const preview = parseTheHive(text);
+      if (preview.format === "empty") return res.status(400).json({ error: "no parseable TheHive records found (expected a case/alert JSON export or an observable list)" });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "thehive-export.json";
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, total: preview.total, observables: preview.observables, iocs: preview.iocCount });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing TheHive export (${preview.format})` });
+      void options.pipeline.importTheHive(caseId, text, {
+        label: storedName,
+        idPrefix: `th${seq}`,
+        importedAt,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `TheHive import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
