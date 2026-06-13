@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-06-13
+
 ### Added
 - **Import undo/redo** — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before an import that floods the dashboard, and redo; restores the snapshot verbatim with no AI call. A per-case stack keeps multiple levels (`DFIR_IMPORT_UNDO_DEPTH`, default 10), surfaced as Undo/Redo buttons next to the Import button (closes #76).
 - **AI-suggested playbook hunts** — propose a Velociraptor hunt for each endpoint-related Playbook task; a task tied to one host deploys as a single-endpoint collection (`collect_client`), otherwise a fleet hunt; suggestions render inline under each task and collapse (closes #70).
@@ -277,7 +279,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.16.0...v0.17.0
