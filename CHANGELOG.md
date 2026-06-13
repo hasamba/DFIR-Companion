@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **IOC block-list export** — one-click block-list for network/firewall teams via Export → IOC block-list…; three formats: plain TXT (grouped by type), minimal CSV, and STIX-indicators-only bundle; filters by min severity (default Medium), IOC type, and verdict-confirmed-only; `GET /cases/:id/export/ioc-blocklist` (closes #87).
 - **Log gap analysis** — flag suspiciously long silent periods in the forensic timeline; a gap where **every source went dark** (High, earns a finding) is the classic cleared-logs/stopped-collector signature, a single tool going quiet while others log is partial (Medium). Density-aware so naturally-sparse timelines aren't noisy; optional `DFIR_GAP_ACTIVE_HOURS`. Derived on read, no AI; dashboard *Timeline Gaps* panel + report §3.3; thresholds `DFIR_GAP_MIN_MINUTES`/`DFIR_GAP_DENSITY_FACTOR` (closes #83).
 - **Beacon / C2 detection** — flag outbound connection channels (host → dest:port) whose inter-arrival intervals are too regular to be human traffic; robust **median/MAD** period estimate so a missed beacon or operator burst doesn't hide a real channel. Derived from the network timeline, severity High for public destinations, a hunting lead not a verdict. Dashboard *Beacon Candidates* panel + report §4.9; thresholds `DFIR_BEACON_MIN_COUNT`/`DFIR_BEACON_MAX_JITTER_PCT` (closes #82).
 
