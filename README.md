@@ -145,6 +145,7 @@ For each case the AI builds and keeps up to date:
 - **Case management in the dashboard** — **+ New case** is the one place cases are born; captures to an unknown case are rejected. Five built-in **templates** pre-load incident-type investigation questions + import/hunt hints (save your own too).
 - **Import screenshots** — multi-select PNG/JPEG/WebP from any tool, through the same ingest path as the extension.
 - **One Import button** — drop any artifact file; the server auto-detects the format and routes it. Optional minimum-severity floor at the gate.
+- **Import undo/redo** — an import that floods the dashboard can be rolled back to the pre-import timeline + IOCs (and redone); a per-case stack keeps multiple levels (`DFIR_IMPORT_UNDO_DEPTH`).
 - **Evidence-first** — written to disk + append-only audit log before any analysis; exact-hash (SHA-256) duplicate detection (`DFIR_DEDUP=off` to disable).
 - **Localhost only** — binds `127.0.0.1` (CORS + Private-Network-Access so the extension origin can reach it).
 

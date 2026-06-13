@@ -102,4 +102,13 @@ export class ImportMetaStore {
     await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
     return meta;
   }
+
+  // Reset the record to "no import" — used when an import is UNDONE (#76), so the dashboard's
+  // "📥 last import - +N new events" banner and the per-row NEW highlights no longer describe a
+  // change that has been rolled back. Writes EMPTY rather than deleting the file (no ENOENT race).
+  async clear(caseId: string): Promise<ImportMeta> {
+    const meta: ImportMeta = { ...EMPTY };
+    await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
+    return meta;
+  }
 }
