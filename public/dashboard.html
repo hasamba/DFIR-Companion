@@ -675,7 +675,7 @@
        collapse to font-size:0 and only the icon remains, so the toolbar fits one line; the
        hover tooltips (data-tip) keep every icon discoverable. */
     #connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
-    #aiToggle::before, #synthesize::before, #importBtn::before,
+    #aiToggle::before, #synthesize::before, #importBtn::before, #importCaseBtn::before,
     #importUndoBtn::before, #importRedoBtn::before,
     #toggleAll::before, #toggleSearchBar::before {
       content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
@@ -687,6 +687,8 @@
     #aiToggle::before    { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z'/><path d='M18.5 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'/></svg>"); }
     #synthesize::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/></svg>"); }
     #importBtn::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v11'/><path d='M8 10l4 4 4-4'/><path d='M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2'/></svg>"); }
+    /* Import case (#88) — an archive box, distinct from the evidence-import down-arrow: this restores a whole packaged case (snapshot or IRIS). */
+    #importCaseBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 8v13H3V8'/><rect x='1' y='3' width='22' height='5' rx='1'/><path d='M10 12h4'/></svg>"); }
     /* Undo / redo the latest import (#76) — curved arrows, distinct from the synthesize refresh circle. */
     #importUndoBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 14 4 9l5-5'/><path d='M4 9h11a5 5 0 0 1 0 10h-4'/></svg>"); }
     #importRedoBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m15 14 5-5-5-5'/><path d='M20 9H9a5 5 0 0 0 0 10h4'/></svg>"); }
@@ -700,8 +702,8 @@
       color: transparent; width: 50px; padding: 7px 21px 7px 25px; }
     /* Undo / redo (#76) join the ALWAYS-icon-only group (like Export/Push) — their labels never show,
        so they add no label width and can't push the toolbar into the collapsed icons-only state. */
-    #toggleAll, #toggleSearchBar, #importUndoBtn, #importRedoBtn { font-size: 0; padding-left: 9px; padding-right: 9px; }
-    #toggleAll::before, #toggleSearchBar::before, #importUndoBtn::before, #importRedoBtn::before { margin-right: 0; }
+    #toggleAll, #toggleSearchBar, #importUndoBtn, #importRedoBtn, #importCaseBtn { font-size: 0; padding-left: 9px; padding-right: 9px; }
+    #toggleAll::before, #toggleSearchBar::before, #importUndoBtn::before, #importRedoBtn::before, #importCaseBtn::before { margin-right: 0; }
     /* Search toggle — magnifier (white stroke, like the other primary action icons). It toggles the
        search/filter row below; while any filter is active it adopts the house "active" teal so a
        collapsed row still signals the view is filtered. */
@@ -885,10 +887,7 @@
     <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
     <input id="snapshotImportFile" type="file" accept=".json,application/json" style="display:none" />
-    <select id="importCaseSelect" class="toolbar-select" data-tip="Import a whole case — an investigation snapshot (.json) shared by a teammate, or pull an existing DFIR-IRIS case. The IRIS option appears only when DFIR-IRIS is configured.">
-      <option value="">Import case…</option>
-      <option value="snapshot">Investigation snapshot (.json)</option>
-    </select>
+    <button id="importCaseBtn" type="button" data-tip="Import a whole case — an investigation snapshot (.json) shared by a teammate, or pull an existing DFIR-IRIS case. Opens a chooser; the DFIR-IRIS option appears only when configured.">Import case</button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
@@ -1050,6 +1049,20 @@
         <button id="clickupPushBtn">Push</button>
         <button id="clickupCancel" style="background:var(--c-2a2f3a);">Cancel</button>
         <span id="clickupMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+  <div id="importCaseOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Import case</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 12px">Bring in a whole case from another source.</p>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <button id="importCaseSnapshot" type="button" style="text-align:left;">📦 Investigation snapshot (.json) — a teammate's shared case file</button>
+        <button id="importCaseIris" type="button" style="display:none; text-align:left;">🛰️ From DFIR-IRIS — pull an existing IRIS case</button>
+      </div>
+      <div style="margin-top:12px;">
+        <button id="importCaseCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="importCaseHint" style="margin-left:8px; color:var(--c-52617a); font-size:11px;"></span>
       </div>
     </div>
   </div>
@@ -7452,16 +7465,20 @@
     document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
 
     // ── Import case (snapshot — issue #56 — or from DFIR-IRIS — issue #88) ──────────
-    // ONE "Import case…" dropdown: an investigation snapshot (.json) shared by a teammate (restored
-    // as a NEW case here — no AI keys / machine config travel with it), or pull an existing DFIR-IRIS
-    // case into the connected case. The IRIS option is added by the /iris/status probe below.
-    document.getElementById("importCaseSelect").onchange = (e) => {
-      const sel = e.target;
-      const val = sel.value;
-      sel.value = "";   // reset to the "Import case…" placeholder
-      if (val === "snapshot") document.getElementById("snapshotImportFile").click();
-      else if (val === "iris") openIrisImportModal();
+    // A compact icon button (rarely used) opens a small chooser: an investigation snapshot (.json)
+    // shared by a teammate (restored as a NEW case here — no AI keys / machine config travel with it),
+    // or pull an existing DFIR-IRIS case into the connected case. The IRIS choice is revealed by the
+    // /iris/status probe below (and after a successful reconnect).
+    const importCaseOverlay = document.getElementById("importCaseOverlay");
+    function closeImportCaseModal() { importCaseOverlay.classList.remove("open"); }
+    document.getElementById("importCaseBtn").onclick = () => {
+      document.getElementById("importCaseHint").textContent = "";
+      importCaseOverlay.classList.add("open");
     };
+    document.getElementById("importCaseCancel").onclick = closeImportCaseModal;
+    importCaseOverlay.addEventListener("click", (e) => { if (e.target === importCaseOverlay) closeImportCaseModal(); });
+    document.getElementById("importCaseSnapshot").onclick = () => { closeImportCaseModal(); document.getElementById("snapshotImportFile").click(); };
+    document.getElementById("importCaseIris").onclick = () => { closeImportCaseModal(); openIrisImportModal(); };
     document.getElementById("snapshotImportFile").onchange = async (e) => {
       const file = e.target.files && e.target.files[0];
       e.target.value = "";   // allow re-selecting the same file
@@ -7925,13 +7942,9 @@
       pushSelect.appendChild(opt);
       pushSelect.style.display = "";
     }
-    // Add the "From DFIR-IRIS" option to the Import-case dropdown (only when IRIS is configured).
+    // Reveal the "From DFIR-IRIS" choice in the Import-case chooser (only when IRIS is configured).
     function addIrisImportOption() {
-      const sel = document.getElementById("importCaseSelect");
-      if ([...sel.options].some((o) => o.value === "iris")) return;
-      const opt = document.createElement("option");
-      opt.value = "iris"; opt.textContent = "From DFIR-IRIS…";
-      sel.appendChild(opt);
+      document.getElementById("importCaseIris").style.display = "";
     }
     fetch("/iris/status").then((r) => r.json()).then((s) => {
       if (s && s.configured) { addPushOption("iris", "Push to DFIR-IRIS"); addIrisImportOption(); }
@@ -8070,7 +8083,7 @@
         })
         .catch((err) => { sel.innerHTML = '<option value="">(could not list cases)</option>'; msg.textContent = "list failed: " + err.message; });
     }
-    // openIrisImportModal is invoked from the "Import case…" dropdown (see importCaseSelect.onchange).
+    // openIrisImportModal is invoked from the "Import case" chooser (importCaseIris button).
     document.getElementById("irisImportCancel").onclick = closeIrisImportModal;
     irisImportOverlay.addEventListener("click", (e) => { if (e.target === irisImportOverlay) closeIrisImportModal(); });
     document.getElementById("irisImportRun").onclick = () => {
