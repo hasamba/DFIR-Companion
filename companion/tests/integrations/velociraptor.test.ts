@@ -406,15 +406,29 @@ describe("VelociraptorClient.huntResults", () => {
 });
 
 describe("VelociraptorClient.listClientArtifacts", () => {
-  it("queries client artifact_definitions and returns name+description without the row cap", async () => {
+  it("queries artifact_definitions and returns name+description without the row cap", async () => {
     let program = "";
     const rows = Array.from({ length: 10 }, (_, i) => ({ name: `Windows.Test.A${i}`, description: `d${i}`, type: "CLIENT" }));
     const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows, raw: "" }; };
     const out = await new VelociraptorClient(cfg, runner).listClientArtifacts();   // cfg.maxRows = 3
     expect(program).toContain("artifact_definitions()");
-    expect(program.toLowerCase()).toContain("client");
     expect(out).toHaveLength(10);   // metadata, NOT capped at maxRows
     expect(out[0]).toEqual({ name: "Windows.Test.A0", description: "d0" });
+  });
+
+  it("filters the type in TS — version-tolerant of casing/spacing (CLIENT_EVENT / Client Event / client-event)", async () => {
+    const rows = [
+      { name: "Windows.System.Pslist", description: "p", type: "CLIENT" },
+      { name: "Windows.Events.ProcessCreation", description: "e1", type: "CLIENT_EVENT" },
+      { name: "Windows.Events.DNSQueries", description: "e2", type: "Client Event" },   // spaced
+      { name: "Windows.Events.ServiceCreation", description: "e3", type: "client-event" }, // hyphen
+      { name: "Server.Foo", description: "s", type: "SERVER_EVENT" },
+    ];
+    const runner: VqlRunner = async () => ({ rows, raw: "" });
+    const client = new VelociraptorClient(cfg, runner);
+    expect((await client.listClientArtifacts("client_event")).map((a) => a.name))
+      .toEqual(["Windows.Events.ProcessCreation", "Windows.Events.DNSQueries", "Windows.Events.ServiceCreation"]);
+    expect((await client.listClientArtifacts("client")).map((a) => a.name)).toEqual(["Windows.System.Pslist"]);
   });
 });
 
