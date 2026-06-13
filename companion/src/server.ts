@@ -877,6 +877,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Timeline gaps (#83): suspiciously long silent periods in the forensic timeline — a complete gap
+  // (every source dark) is the classic log-tampering signature, a partial gap a single-tool coverage
+  // blindspot. Derived on demand, no AI, same scope/legitimate filtering as the report. Powers the
+  // dashboard Timeline Gaps panel; thresholds DFIR_GAP_MIN_MINUTES / _DENSITY_FACTOR / _ACTIVE_HOURS.
+  app.get("/cases/:id/timeline-gaps", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.timelineGaps(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Per-IOC corroboration: { iocId: [tools that observed it] }, derived on demand by matching each
   // IOC value against the forensic events' sources (same scope/legitimate filtering as the report).
   // Powers the dashboard's "⊕ N sources" badge on IOCs (#35 Phase 3).

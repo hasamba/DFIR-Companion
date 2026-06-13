@@ -1848,6 +1848,7 @@
       <div id="forensicTimeline">—</div></section>
     <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
     <section id="sec-phases" style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
+    <section id="sec-gaps" style="grid-column: 1 / -1"><h2>Timeline Gaps<span class="ev-sub">suspicious silent periods — a complete gap (all sources dark) is the classic log-tampering signature (derived, no AI); a lead, not proof</span></h2><div id="timelineGaps">—</div></section>
     <section id="sec-swimlane" style="grid-column: 1 / -1">
       <h2>Timeline Swimlane<span class="ev-sub" id="swimlaneSub">visual chart — Y-axis: assets · X-axis: time · color: severity (derived, no AI)</span></h2>
       <div class="swimlane-hint">💡 <strong>Click</strong> a dot for details and to flash its row in the Forensic Timeline · <strong>Shift-click</strong> a dot (or <strong>Shift-drag</strong> a box) to select events, then <strong>⚑ Mark Legitimate</strong></div>
@@ -5416,6 +5417,53 @@
         `</tr></thead><tbody>${rows}</tbody></table></div>`;
     }
 
+    // ── Timeline Gaps (#83) ───────────────────────────────────────────────────────────────
+    // Suspiciously long silent periods in the forensic timeline. A COMPLETE gap (every source dark)
+    // is the classic signature of cleared logs / a stopped collector → High; a PARTIAL gap is one tool
+    // going quiet while others keep logging → Medium. Derived server-side (GET /cases/:id/timeline-gaps)
+    // from the in-scope timeline; re-derived (debounced) on each state change, like the phases panel.
+    // A lead, NOT proof of tampering.
+    let timelineGapsData = [];
+    let timelineGapsTimer = null;
+    function loadTimelineGaps(caseId) {
+      fetch(`/cases/${caseId}/timeline-gaps`).then(r => r.json()).then(g => {
+        timelineGapsData = Array.isArray(g) ? g : [];
+        renderTimelineGaps();
+      }).catch(() => {});
+    }
+    function scheduleTimelineGapsReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(timelineGapsTimer);
+      timelineGapsTimer = setTimeout(() => loadTimelineGaps(caseId), 800);
+    }
+    function renderTimelineGaps() {
+      const el = document.getElementById("timelineGaps");
+      if (!el) return;
+      if (!timelineGapsData.length) { el.innerHTML = "<span style='color:var(--c-9aa4b2)'>No suspicious silent periods detected in the forensic timeline.</span>"; return; }
+      const rows = timelineGapsData.map(g => {
+        const sevColor = KC_SEV_COLOR[g.severity] || "var(--c-2a2f3a)";
+        const kind = g.complete
+          ? "<span title='Every source went silent — the classic log-tampering signature' style='color:var(--c-ff5c5c);font-weight:bold'>complete silence</span>"
+          : "<span title='One tool went quiet while others kept logging — a coverage blindspot' style='color:var(--c-9aa4b2)'>partial</span>";
+        const silent = (g.silentSources && g.silentSources.length) ? g.silentSources.map(esc).join(", ") : "all sources";
+        const active = (g.activeSources && g.activeSources.length) ? g.activeSources.map(esc).join(", ") : "<span style='color:var(--c-9aa4b2)'>—</span>";
+        return `<tr>` +
+          `<td><span class="sev-${esc(g.severity)}" style="color:${sevColor};font-weight:bold">${esc(g.severity)}</span></td>` +
+          `<td>${kind}</td>` +
+          `<td title="${escAttr((g.startTimestamp || "") + " → " + (g.endTimestamp || ""))}"><strong>${esc(g.durationLabel)}</strong></td>` +
+          `<td style="color:var(--c-9aa4b2);font-size:11px">${esc(g.startTimestamp || "")} → ${esc(g.endTimestamp || "")}</td>` +
+          `<td>${silent}</td>` +
+          `<td>${active}</td>` +
+          `</tr>`;
+      }).join("");
+      el.innerHTML =
+        `<div style="color:var(--c-9aa4b2);font-size:11px;margin-bottom:6px">A coverage gap is a lead, not proof — an analyst may have collected logs for a limited window, or activity genuinely paused. A gap where every source went silent is the classic signature of cleared logs or a stopped collector; confirm against the collection scope and host clocks.</div>` +
+        `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
+        `<th>Severity</th><th>Type</th><th>Duration</th><th>When</th><th>Silent sources</th><th>Still active</th>` +
+        `</tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+
     // ── Adversary Hints (#46) ─────────────────────────────────────────────────────────────
     // Known ATT&CK groups ranked by technique overlap with the case — offline hypothesis fuel,
     // NOT attribution. Derived server-side (GET /cases/:id/adversary-hints) from the bundled MITRE
@@ -6548,6 +6596,7 @@
       loadAssetOverrides(caseId);
       loadEvidenceGraph(caseId);
       loadPhases(caseId);
+      loadTimelineGaps(caseId);
       loadBeacons(caseId);
       loadAdversaryHints(caseId);
       loadSwimlane(caseId);
@@ -6602,7 +6651,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleBeaconsReload(); scheduleAdversaryHintsReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAdversaryHintsReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "capture_ingest") {
           // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
@@ -7819,6 +7868,7 @@
       { id: "sec-timeline",     label: "Forensic Timeline" },
       { id: "sec-kill-chain",   label: "Kill Chain" },
       { id: "sec-phases",       label: "Attack Phases" },
+      { id: "sec-gaps",         label: "Timeline Gaps" },
       { id: "sec-swimlane",     label: "Timeline Swimlane" },
       { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
       { id: "sec-evidence",     label: "Evidence Chain" },
