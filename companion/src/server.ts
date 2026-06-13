@@ -88,6 +88,8 @@ import { TagsStore, type Tag } from "./analysis/tags.js";
 import { NotebookStore, type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "./analysis/notebookStore.js";
 import { PlaybookStore, type NewPlaybookTask, type PlaybookTaskPatch } from "./analysis/playbookStore.js";
 import { PLAYBOOK_STATUSES, playbookStats, type PlaybookStatus, type PlaybookTask } from "./analysis/playbook.js";
+import { PlaybookHuntStore } from "./analysis/playbookHuntStore.js";
+import { selectFreshHunts, pendingHuntTasks, mergePersistedHunts, EMPTY_PERSISTED_HUNTS, PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT } from "./analysis/playbookHunt.js";
 import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
 import type { AssetType } from "./analysis/assetGraph.js";
@@ -113,8 +115,9 @@ import {
 } from "./analysis/customerExposure.js";
 import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
-import { VelociraptorClient, buildVelociraptorClient, type HuntTarget, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
+import { VelociraptorClient, buildVelociraptorClient, matchClient, type HuntTarget, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
 import { ArtifactBundleStore } from "./analysis/artifactBundleStore.js";
+import { VelociraptorClientStore } from "./analysis/velociraptorClientStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
 import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
@@ -218,6 +221,9 @@ export interface AppOptions {
   // dashboard clients over the WS to re-fetch when a task changes or a sync runs.
   playbookStore?: PlaybookStore;
   onPlaybook?: (caseId: string) => void;
+  // AI-suggested Velociraptor hunts persisted per case (#70) so they survive a page refresh; a
+  // suggestion is dropped on read once its task is reworded/deleted (state/playbook-hunts.json).
+  playbookHuntStore?: PlaybookHuntStore;
   // Per-case playbook settings (Phase 2): whether Critical/High findings expand into severity-based
   // IR templates. Read when deriving auto-tasks; default off (opt-in per case).
   playbookControlStore?: PlaybookControlStore;
@@ -276,6 +282,10 @@ export interface AppOptions {
   // Velociraptor API: a configured client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) lets the
   // dashboard run the generated hunt VQL against the server and show the rows inline.
   velociraptorClient?: VelociraptorClient;
+  // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map). A single-endpoint
+  // collection resolves the host against this file instead of a brittle live `clients(search=...)`
+  // lookup; refreshed at startup, on demand (Settings), and lazily on a collect miss.
+  velociraptorClientStore?: VelociraptorClientStore;
   // Triage bundles (global, shared across cases): named selections of Velociraptor CLIENT artifacts
   // the analyst runs as a hunt. Per-case veloHuntStore tracks the in-flight/last bundle hunt so the
   // dashboard can show its status + countdown; onVeloHunt broadcasts a change to the case's clients.
@@ -1158,6 +1168,101 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const result = await options.velociraptorClient.huntResults(huntId, artifact, sources);
       return res.status(200).json(result);
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Snapshot the enrolled fleet into the persisted client inventory (issue #70). Best-effort; returns
+  // the count. No-op (count 0) when the API or store isn't configured.
+  async function refreshVeloClients(): Promise<number> {
+    const client = options.velociraptorClient;
+    const store = options.velociraptorClientStore;
+    if (!client || !store) return 0;
+    const clients = await client.listClients();
+    await store.save(clients, new Date().toISOString());
+    logLine(`[velociraptor] client inventory refreshed — ${clients.length} enrolled client(s)`);
+    return clients.length;
+  }
+
+  // Read the persisted client inventory (host ↔ client_id map). Empty when never refreshed.
+  app.get("/velociraptor/clients", async (_req: Request, res: Response) => {
+    if (!options.velociraptorClientStore) return res.status(200).json({ updatedAt: "", clients: [] });
+    try {
+      return res.status(200).json(await options.velociraptorClientStore.load());
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Refresh the client inventory now (Settings → Velociraptor "Refresh client list"). 501 when the
+  // API / store isn't configured; 502 on a query failure.
+  app.post("/velociraptor/clients/refresh", async (_req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.velociraptorClientStore) return res.status(501).json({ error: "client inventory store not configured" });
+    try {
+      const count = await refreshVeloClients();
+      const inv = await options.velociraptorClientStore.load();
+      return res.status(200).json({ count, updatedAt: inv.updatedAt, clients: inv.clients });
+    } catch (err) {
+      logLine(`[velociraptor] client refresh ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Launch the VQL as a single-endpoint COLLECTION on ONE host (issue #70 — the playbook-hunt deploy
+  // path for a task tied to exactly one endpoint). Resolves the host → client_id from the persisted
+  // INVENTORY (refreshing it once on a miss), then runs collect_client on that client; returns the
+  // flow + a GUI deep link. 501 when the Velociraptor API is off; 502 when no client matches the host.
+  app.post("/velociraptor/collect-host", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const hostname = typeof req.body?.hostname === "string" ? req.body.hostname.trim() : "";
+    const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
+    const description = typeof req.body?.description === "string" ? req.body.description : "";
+    if (!hostname) return res.status(400).json({ error: "hostname is required" });
+    if (!vql) return res.status(400).json({ error: "vql is required" });
+    try {
+      logLine(`[velociraptor] collect on host ${hostname}: ${description.slice(0, 80)}`);
+      const store = options.velociraptorClientStore;
+      let result;
+      if (store) {
+        // Resolve from the inventory file; if the host isn't there yet, refresh once and retry (self-healing).
+        let rec = matchClient((await store.load()).clients, hostname);
+        if (!rec) { await refreshVeloClients(); rec = matchClient((await store.load()).clients, hostname); }
+        if (!rec) return res.status(502).json({ error: `No enrolled Velociraptor client matches host "${hostname}" — refresh the client list (Settings → Velociraptor) or run a fleet hunt instead` });
+        result = await options.velociraptorClient.collectOnClient(rec.clientId, vql, description, hostname);
+      } else {
+        result = await options.velociraptorClient.collectFromHost(hostname, vql, description);
+      }
+      logLine(`[velociraptor] collection launched -> flow ${result.flowId} on ${result.clientId} (${result.hostname})`);
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[velociraptor] collect ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Read a single COLLECTION flow's result rows so the dashboard can show them inline + auto-poll (the
+  // per-flow analog of /velociraptor/hunt-results). Body `{ clientId, flowId, artifact, sources }`.
+  app.post("/velociraptor/collect-results", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const clientId = typeof req.body?.clientId === "string" ? req.body.clientId.trim() : "";
+    const flowId = typeof req.body?.flowId === "string" ? req.body.flowId.trim() : "";
+    const artifact = typeof req.body?.artifact === "string" ? req.body.artifact.trim() : "";
+    const sources = Array.isArray(req.body?.sources) ? req.body.sources.filter((s: unknown): s is string => typeof s === "string") : [];
+    if (!clientId || !flowId || !artifact) return res.status(400).json({ error: "clientId, flowId and artifact are required" });
+    try {
+      const result = await options.velociraptorClient.collectionResults(clientId, flowId, artifact, sources);
+      // Also report the flow's terminal STATE so the dashboard can surface an endpoint-side failure
+      // (e.g. a bad plugin arg) instead of polling "no results yet". Best-effort — never fail the read.
+      let flowState = "";
+      let flowError = "";
+      try {
+        const st = await options.velociraptorClient.flowStatus(clientId, flowId);
+        flowState = st.state;
+        flowError = st.error;
+      } catch { /* status read is best-effort */ }
+      return res.status(200).json({ ...result, flowState, flowError });
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
     }
@@ -4114,6 +4219,21 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return options.playbookStore.sync(caseId, state, { useTemplates });
   };
 
+  // Load the persisted hunt suggestions (#70), dropping any whose task was reworded/deleted since
+  // generation, and write the pruned set back so stale ones don't keep returning. Best-effort — a
+  // store hiccup never breaks the playbook read (returns []).
+  const loadFreshHunts = async (caseId: string, tasks: readonly PlaybookTask[]) => {
+    if (!options.playbookHuntStore) return [];
+    try {
+      const persisted = await options.playbookHuntStore.load(caseId);
+      const fresh = selectFreshHunts(persisted, tasks);
+      if (fresh.changed) await options.playbookHuntStore.save(caseId, { generatedAt: persisted.generatedAt, suggestions: fresh.suggestions, taskHashes: fresh.taskHashes });
+      return fresh.suggestions;
+    } catch {
+      return [];
+    }
+  };
+
   app.get("/cases/:id/playbook/control", async (req: Request, res: Response) => {
     if (!options.playbookControlStore) return res.status(200).json({ ...DEFAULT_PLAYBOOK_CONTROL });
     try {
@@ -4141,7 +4261,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       // Auto-sync against current state so the panel reflects the latest next steps/findings.
       const tasks = options.stateStore ? await syncPlaybook(req.params.id) : await options.playbookStore.load(req.params.id);
-      return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id) });
+      // Persisted AI hunt suggestions, filtered to tasks that are UNCHANGED since generation (#70) —
+      // so they survive a page refresh but a reworded/deleted task drops its stale hunt.
+      const huntSuggestions = await loadFreshHunts(req.params.id, tasks);
+      return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id), huntSuggestions });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -4155,6 +4278,91 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const tasks = await syncPlaybook(req.params.id);
       options.onPlaybook?.(req.params.id);
       return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // AI-suggest a Velociraptor hunt for each ENDPOINT-related playbook task (issue #70). Single
+  // text-only AI call, EPHEMERAL (no state change) — the dashboard shows each task's VQL + rationale
+  // for review, then deploys it as a fleet HUNT (POST /velociraptor/hunt) or, for a task tied to one
+  // endpoint, a single-client COLLECTION (POST /velociraptor/collect-host). Needs an AI provider +
+  // the playbook store; does NOT need the Velociraptor API (the VQL is useful to copy even when off).
+  // Registered BEFORE /:taskId so "suggest-hunts" is not captured as a task id.
+  app.post("/cases/:id/playbook/suggest-hunts", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
+    if (!options.playbookStore || !options.stateStore) return res.status(501).json({ error: "playbook not configured" });
+    try {
+      const tasks = await syncPlaybook(req.params.id);
+
+      // SINGLE-TASK REGEN: body carries `{ taskId, excludeVql }` — force-regenerate just that one
+      // task, passing the existing VQL so the model produces something different.
+      const regenTaskId = typeof req.body?.taskId === "string" ? req.body.taskId.trim() : null;
+      if (regenTaskId) {
+        const task = tasks.find((t) => t.id === regenTaskId);
+        if (!task) return res.status(404).json({ error: "task not found" });
+        const excludeVql = typeof req.body?.excludeVql === "string" ? req.body.excludeVql.trim() : undefined;
+        const [, artifactNames] = await Promise.all([
+          refreshVeloClients().catch((e) => { logLine(`[velociraptor] inventory refresh before regen failed: ${(e as Error).message}`); return 0; }),
+          options.velociraptorClient
+            ? options.velociraptorClient.listClientArtifacts().then((a) => a.map((x) => x.name)).catch(() => [] as string[])
+            : Promise.resolve([] as string[]),
+        ]);
+        const newSuggestions = await options.pipeline.suggestPlaybookHunts(req.params.id, [task], artifactNames, { excludeVql });
+        const persisted = options.playbookHuntStore ? await options.playbookHuntStore.load(req.params.id) : { ...EMPTY_PERSISTED_HUNTS };
+        // Replace the old suggestion for this task (if any) and keep everything else.
+        const kept = (persisted.suggestions ?? []).filter((s) => s.taskId !== regenTaskId);
+        const merged: typeof persisted = {
+          generatedAt: new Date().toISOString(),
+          suggestions: [...kept, ...newSuggestions.filter((s) => s.taskId === regenTaskId)],
+          taskHashes: { ...persisted.taskHashes },
+        };
+        logLine(`[velociraptor] playbook hunt regen for task ${regenTaskId} in ${req.params.id}: ${newSuggestions.length} suggestion(s)`);
+        if (options.playbookHuntStore) {
+          try { await options.playbookHuntStore.save(req.params.id, merged); }
+          catch (e) { logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`); }
+        }
+        return res.status(200).json({ suggestions: merged.suggestions, generated: newSuggestions.length, more: false });
+      }
+
+      // INCREMENTAL (#70): keep the suggestions whose task is unchanged and only generate for NEW or
+      // CHANGED tasks — so adding one task and pressing Generate sends just that task to the model and
+      // never re-does the hunts that already exist. `force:true` regenerates everything from scratch.
+      const force = req.body?.force === true;
+      const persisted = options.playbookHuntStore ? await options.playbookHuntStore.load(req.params.id) : { ...EMPTY_PERSISTED_HUNTS };
+      const fresh = force ? { suggestions: [], taskHashes: {} } : selectFreshHunts(persisted, tasks);
+      const pending = pendingHuntTasks(tasks, fresh.taskHashes);
+      // Concurrently (best-effort, no-op when the API is off): refresh the client inventory so a host
+      // enrolled MID-INVESTIGATION is resolvable at deploy time, AND fetch the server's REAL CLIENT
+      // artifact names so the model only references artifacts that EXIST. Skip the artifact fetch when
+      // nothing is pending (no AI call needed). Both finish before the AI call → no added latency.
+      const [, artifactNames] = await Promise.all([
+        refreshVeloClients().catch((e) => { logLine(`[velociraptor] inventory refresh before suggestions failed: ${(e as Error).message}`); return 0; }),
+        pending.length && options.velociraptorClient
+          ? options.velociraptorClient.listClientArtifacts().then((a) => a.map((x) => x.name)).catch(() => [] as string[])
+          : Promise.resolve([] as string[]),
+      ]);
+      // Keep only suggestions FOR the pending tasks — so a model that echoes a wrong taskId can't
+      // duplicate or clobber a kept (covered) suggestion. fresh + new then have disjoint task ids.
+      const pendingIds = new Set(pending.map((t) => t.id));
+      const newSuggestions = (pending.length ? await options.pipeline.suggestPlaybookHunts(req.params.id, pending, artifactNames) : [])
+        .filter((s) => pendingIds.has(s.taskId));
+      // Which pending tasks to mark "evaluated" (won't be re-sent): if the model hit the per-generation
+      // cap there may be MORE pending tasks it never got to — stamp only the ones it actually hunted, so
+      // the rest are retried on the next press. Otherwise it saw every pending task → stamp them all
+      // (a non-endpoint task it deliberately skipped won't be re-evaluated).
+      const cap = Number(process.env.DFIR_PBHUNT_SUGGEST_MAX) || PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT;
+      const truncated = newSuggestions.length >= cap;
+      const suggestedIds = new Set(newSuggestions.map((s) => s.taskId));
+      const evaluatedTasks = truncated ? pending.filter((t) => suggestedIds.has(t.id)) : pending;
+      const merged = mergePersistedHunts(fresh, newSuggestions, evaluatedTasks, new Date().toISOString());
+      logLine(`[velociraptor] playbook hunts for ${req.params.id}: ${newSuggestions.length} new (of ${pending.length} pending task(s))${truncated ? " [cap hit — press again for more]" : ""}, ${merged.suggestions.length} total`);
+      // Persist so the set survives a refresh + future incremental generates. Best-effort.
+      if (options.playbookHuntStore) {
+        try { await options.playbookHuntStore.save(req.params.id, merged); }
+        catch (e) { logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`); }
+      }
+      return res.status(200).json({ suggestions: merged.suggestions, generated: newSuggestions.length, more: truncated });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -4501,6 +4709,22 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
   });
 }
 
+// Velociraptor-hunt model (issue #70): a DEDICATED model just for generating Velociraptor VQL hunts
+// (suggestPlaybookHunts + suggestHunts), since many models botch VQL. Defaults to openrouter /
+// anthropic/claude-haiku-latest regardless of the main/synth provider; the key falls back to the main
+// AI key (so it works out of the box when the main provider is openrouter). The pipeline uses this
+// over the synthesis/main provider for hunt generation only.
+export const DEFAULT_VELO_PROVIDER = "openrouter";
+export const DEFAULT_VELO_MODEL = "anthropic/claude-haiku-4.5";   // latest Haiku; a VALID OpenRouter id (claude-haiku-latest 400s there)
+export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
+  return buildProviderFrom({
+    provider: process.env.DFIR_AI_VELO_PROVIDER?.trim() || DEFAULT_VELO_PROVIDER,
+    model: process.env.DFIR_AI_VELO_MODEL?.trim() || DEFAULT_VELO_MODEL,
+    apiKey: process.env.DFIR_AI_VELO_KEY ?? process.env.DFIR_AI_KEY,
+    baseUrl: process.env.DFIR_AI_VELO_BASE_URL ?? process.env.DFIR_AI_BASE_URL,
+  });
+}
+
 // Build the threat-intel enrichment providers from env. Each is added only when its key
 // is present (MalwareBazaar needs DFIR_MB_KEY for its API). Empty array → enrichment off.
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
@@ -4677,6 +4901,8 @@ export function buildCustomerExposureProviders(): CustomerExposureProvider[] {
 export interface RuntimePipelineParams {
   provider?: AnalyzeProvider;
   synthesisProvider?: AnalyzeProvider;
+  // Dedicated model for Velociraptor VQL hunt generation (#70); falls back to synthesis/main.
+  velociraptorProvider?: AnalyzeProvider;
   stateStore: StateStoreImpl;
   store: CaseStore;
   imageLoader?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["imageLoader"];
@@ -4693,6 +4919,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
   return new AnalysisPipelineImpl({
     provider: params.provider,
     synthesisProvider: params.synthesisProvider,
+    velociraptorProvider: params.velociraptorProvider,
     stateStore: params.stateStore,
     legitimateStore: new LegitimateStore(params.store),
     scopeStore: new ScopeStore(params.store),
@@ -4784,6 +5011,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // Deep-link notifications back to the dashboard. Override the host/port guess with DFIR_PUBLIC_URL.
   const dashboardBaseUrl = (process.env.DFIR_PUBLIC_URL || `http://${host}:${port}`).replace(/\/+$/, "");
   const veloHuntStore = new VeloHuntStore(store);
+  // Velociraptor API client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) + the persisted client inventory
+  // (host ↔ client_id map, #70) in its own subdir beside cases/ (Windows drive-root-safe, like bundles/nsrl).
+  const velociraptorClient = buildVelociraptorClient();
+  const velociraptorClientStore = new VelociraptorClientStore(join(dirname(casesRoot), "velociraptor", "clients.json"));
   const hub = new LiveHub();
   const reportMetaStore = new ReportMetaStore(store);
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
@@ -4791,6 +5022,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const tagsStore = new TagsStore(store);
   const notebookStore = new NotebookStore(store);
   const playbookStore = new PlaybookStore(store);
+  const playbookHuntStore = new PlaybookHuntStore(store);
   const playbookControlStore = new PlaybookControlStore(store);
   const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
@@ -4801,13 +5033,14 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
+  const velociraptorProvider = buildVelociraptorProvider();   // dedicated VQL-hunt model (#70)
   // Provide the Tesseract OCR runner only when the vision model is on an external (cloud)
   // provider — if the model is local, screenshots never leave the machine so redaction is
   // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
   const visionIsLocalForPipeline = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
   const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
   const wiredPipeline = buildRuntimePipeline({
-    provider, synthesisProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger,
+    provider, synthesisProvider, velociraptorProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
     // Fully guarded — notifications are a side channel and must NEVER break synthesis.
     onSynth: (caseId, diff, state) => {
@@ -4853,6 +5086,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     notebookStore,
     onNotebook: (caseId) => hub.broadcastTo(caseId, { type: "notebook_changed" }),
     playbookStore,
+    playbookHuntStore,
     playbookControlStore,
     onPlaybook: (caseId) => hub.broadcastTo(caseId, { type: "playbook_changed" }),
     assetOverridesStore,
@@ -4881,7 +5115,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     enrichHealthTtlMs: Number(process.env.DFIR_ENRICH_HEALTH_TTL_MS) || undefined,
     enrichHealthPollMs: process.env.DFIR_ENRICH_HEALTH_POLL_MS === "0" ? 0 : (Number(process.env.DFIR_ENRICH_HEALTH_POLL_MS) || 60_000),
     irisClient: buildIrisClient(),
-    velociraptorClient: buildVelociraptorClient(),
+    velociraptorClient,
+    velociraptorClientStore,
     artifactBundleStore,
     iocWhitelistStore,
     nsrlStore,
@@ -4978,6 +5213,17 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     const shownHost = host === "0.0.0.0" ? "127.0.0.1" : host;
     logLine(`DFIR companion on http://${shownHost}:${port} (dashboard at /dashboard)`);
   });
+
+  // Fire-and-forget: snapshot the enrolled Velociraptor fleet into the client inventory at startup
+  // (#70), so a single-endpoint collection can resolve a host → client_id from the file. Best-effort —
+  // a refresh failure (API down, role missing) just leaves the inventory stale; the collect route
+  // refreshes lazily on a miss, and Settings → Velociraptor has a manual refresh.
+  if (velociraptorClient) {
+    void velociraptorClient.listClients()
+      .then((clients) => velociraptorClientStore.save(clients, new Date().toISOString()))
+      .then((inv) => logLine(`[velociraptor] client inventory: ${inv.clients.length} enrolled client(s)`))
+      .catch((e) => logLine(`[velociraptor] startup client inventory refresh failed (run Settings → Velociraptor → Refresh client list): ${(e as Error).message}`));
+  }
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.
   server.on("error", (err: NodeJS.ErrnoException) => {

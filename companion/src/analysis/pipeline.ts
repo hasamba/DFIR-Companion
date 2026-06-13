@@ -55,6 +55,19 @@ import {
   HUNT_SUGGEST_MAX_DEFAULT,
   type HuntSuggestion,
 } from "./huntSuggest.js";
+import {
+  playbookHuntResponseSchema,
+  sanitizePlaybookHuntSuggestions,
+  buildTaskEndpointsMap,
+  knownEndpoints,
+  renderPlaybookHuntTasks,
+  renderKnownEndpoints,
+  renderAvailableArtifacts,
+  hasPlaybookHuntMaterial,
+  PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT,
+  type PlaybookHuntSuggestion,
+} from "./playbookHunt.js";
+import type { PlaybookTask } from "./playbook.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
@@ -446,7 +459,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -560,6 +573,21 @@ export const HUNT_SUGGEST_PROMPT = [
   "  e.g. glob(), stat(), pslist(), Artifact.Windows.System.Services, Artifact.Windows.Sys.Users,",
   "  read_file(), hash(), yara(), Artifact.Windows.Registry.* . Velociraptor glob() uses FORWARD",
   "  slashes. Do NOT put a blank line inside one query and do NOT make a query only a comment.",
+  "- Use each plugin's REAL argument names. parse_evtx() takes `filename=` (a path or glob), NOT",
+  "  `files=` — e.g. parse_evtx(filename='C:/Windows/System32/winevt/Logs/Security.evtx'). For Windows",
+  "  event-log hunts PREFER Velociraptor's own artifacts (Windows.EventLogs.* / Windows.Detection.*)",
+  "  over hand-writing parse_evtx, and access fields as `System.EventID.Value` / `EventData.<Name>`.",
+  "- read_file() takes `filenames=` (a LIST), NOT `filename=` (scalar). To read one file:",
+  "  `SELECT Data FROM read_file(filenames=['C:/path/file.txt'])`. To read files found by glob,",
+  "  call it inline in the SELECT (no JOIN needed):",
+  "  `SELECT FullPath, read_file(filenames=[FullPath])[0].Data AS Content FROM glob(globs='...')`.",
+  "- VQL has NO SQL `JOIN`. Use inline function calls (e.g. read_file above) or",
+  "  `foreach(row={SELECT … FROM a()}, query={SELECT … FROM b()})` to correlate two plugins.",
+  "- PREFER raw VQL plugins — pslist(), netstat(), glob(), stat(), read_file(), hash(), yara() — over",
+  "  `Artifact.<Name>()` references: a hallucinated Artifact.<Name> fails to COMPILE and the hunt never",
+  "  starts. Network connections → netstat(); processes → pslist(); files → glob(). Only reference an",
+  "  Artifact.<Name> you are sure exists on the server.",
+  "- For an ABSOLUTE time use timestamp(string='2025-03-14T22:00:00Z'); epoch= takes unix SECONDS (a number).",
   "- Velociraptor VQL has NO duration-suffix literals. Do NOT write `30d`, `7h`, `2w` etc.",
   "  Use seconds arithmetic instead: `now() - 30 * 86400` (30 days), `now() - 7 * 86400` (7 days),",
   "  `now() - 3600` (1 hour). Wrap in `timestamp(epoch=...)` when comparing against a timestamp",
@@ -584,6 +612,69 @@ export const HUNT_SUGGEST_PROMPT = [
   }, null, 2),
 ].join("\n");
 
+// Issue #70 — AI-suggested Velociraptor hunts for the case's PLAYBOOK tasks. For each ENDPOINT-related
+// task the model writes one CLIENT-side VQL hunt + echoes the single host it's scoped to (chosen ONLY
+// from the provided known-endpoints list). The server decides hunt-vs-collection deterministically
+// from the observed endpoints, so the model just needs to flag endpoint-relatedness and name the host.
+export const PLAYBOOK_HUNT_PROMPT = [
+  "You are a senior DFIR threat hunter. Below is ONE investigation's Response PLAYBOOK (the analyst's",
+  "actionable checklist), the case's known ENDPOINTS, findings, ATT&CK techniques, and forensic timeline.",
+  "For each playbook task that is ABOUT ENDPOINTS (collecting from, examining, containing, or hunting on",
+  "hosts — e.g. pull event logs, enumerate persistence, find a process/file, scope lateral movement),",
+  "propose ONE Velociraptor VQL hunt that gathers the evidence the task needs.",
+  "",
+  "Rules:",
+  "- Only emit a suggestion for a task that is genuinely endpoint-related. Set `endpointRelated` true for",
+  "  those and SKIP the rest (notify legal, rotate cloud creds, draft a report, block a domain at the",
+  "  firewall, etc. are NOT endpoint tasks). It is fine to return fewer suggestions than tasks.",
+  "- `taskId` MUST be the exact id (the [bracketed] value) of the task the suggestion is for.",
+  "- `targetHost`: if the task is about exactly ONE specific endpoint, set this to that host — but ONLY a",
+  "  hostname that appears in the KNOWN ENDPOINTS list below (the server runs it as a COLLECTION on just",
+  "  that one client). If the task spans multiple hosts, or you are unsure which host, set `targetHost`",
+  "  to \"\" (the server runs it as a fleet-wide HUNT across all endpoints). Never invent a hostname.",
+  "- Each `vql` MUST be a SINGLE, self-contained, CLIENT-side Velociraptor VQL statement —",
+  "  one `SELECT … FROM <plugin>(…) WHERE …`. glob() uses FORWARD slashes. Do NOT put a blank line",
+  "  inside one query and do NOT make a query only a comment.",
+  "- STRONGLY PREFER raw VQL plugins — they ALWAYS exist: pslist(), netstat(), glob(), stat(),",
+  "  read_file(), hash(), yara(), parse_evtx(), reg_keys(). Network connections → netstat(); processes →",
+  "  pslist(); files → glob(); event logs → parse_evtx(filename='C:/Windows/System32/winevt/Logs/Security.evtx').",
+  "- You MAY reference an `Artifact.<Name>()` ONLY if <Name> appears EXACTLY in the AVAILABLE VELOCIRAPTOR",
+  "  ARTIFACTS list in the user message below. If <Name> is NOT in that list it does NOT exist on this",
+  "  server and the hunt FAILS TO COMPILE (no flow id) — use a raw plugin instead. NEVER invent an",
+  "  artifact name (e.g. Windows.EventLogs.Sysmon / .SecurityLog are NOT universal — check the list).",
+  "- Use each plugin's REAL argument names: parse_evtx() takes `filename=` (a path/glob), NOT `files=`;",
+  "  handles() takes `pid=`, NOT `process=`; read_file() takes `filenames=` (a LIST), NOT `filename=`.",
+  "  Access EVTX fields as `System.EventID.Value` / `EventData.<Name>`. To read one file:",
+  "  `SELECT Data FROM read_file(filenames=['C:/path/file.txt'])`. To read files found by glob,",
+  "  call it inline in the SELECT (no JOIN needed):",
+  "  `SELECT FullPath, read_file(filenames=[FullPath])[0].Data AS Content FROM glob(globs='...')`.",
+  "- VQL has NO SQL `JOIN`. Use inline function calls (e.g. read_file above) or",
+  "  `foreach(row={SELECT … FROM a()}, query={SELECT … FROM b()})` to correlate two plugins.",
+  "- For an ABSOLUTE time use timestamp(string='2025-03-14T22:00:00Z'); epoch= takes unix SECONDS (a number).",
+  "- Velociraptor VQL has NO duration-suffix literals. Do NOT write `30d`, `7h`, `2w`. Use seconds",
+  "  arithmetic: `now() - 30 * 86400` (30 days), `now() - 3600` (1 hour). Wrap in `timestamp(epoch=...)`",
+  "  when comparing a timestamp column, e.g. `WHERE Mtime > timestamp(epoch=now() - 30 * 86400)`.",
+  "- Pivot on the case's REAL indicators (the exact hashes, file paths, process/service names, domains,",
+  "  IPs shown) — do NOT invent IOCs the case does not contain.",
+  "- For each: a short `title`; a `rationale` (which task it serves, what the query looks for, how to",
+  "  triage a hit); `severity` (Critical|High|Medium|Low|Info) of the underlying threat; and",
+  "  `mitreTechniques` (relevant technique ids).",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({
+    suggestions: [{
+      taskId: "finding:f3",
+      endpointRelated: true,
+      title: "Enumerate the malicious service on WEB01",
+      rationale: "Task asks to investigate the service-persistence finding on WEB01. Collect the host's services and flag the one whose ImagePath matches the dropped binary; triage by start type and account.",
+      vql: "SELECT Name, DisplayName, PathName, StartMode FROM Artifact.Windows.System.Services() WHERE PathName =~ 'evil\\\\.exe'",
+      targetHost: "WEB01",
+      severity: "High",
+      mitreTechniques: ["T1543.003"],
+    }],
+  }, null, 2),
+].join("\n");
+
 export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROMPT);
 export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
@@ -592,12 +683,17 @@ export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
 export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUMMARY_PROMPT);
 export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRATIVE_PROMPT);
 export const getHuntSuggestPrompt = (): string => resolvePrompt("HUNTS", HUNT_SUGGEST_PROMPT);
+export const getPlaybookHuntPrompt = (): string => resolvePrompt("PBHUNTS", PLAYBOOK_HUNT_PROMPT);
 
 export interface PipelineOptions {
   provider?: AIProvider;
   // Optional stronger model for the holistic synthesis pass. Per-window extraction
   // can use a cheap model while synthesis (one text-only call) uses a better one.
   synthesisProvider?: AIProvider;
+  // Optional DEDICATED model for Velociraptor VQL hunt generation (#70) — many models botch VQL,
+  // so the analyst can pin a known-good one just for suggestHunts/suggestPlaybookHunts. Falls back
+  // to synthesisProvider, then the main provider.
+  velociraptorProvider?: AIProvider;
   // Client-confirmed legitimate findings/IOCs to exclude from synthesis.
   legitimateStore?: LegitimateStore;
   // Optional investigation time-window — events outside it are excluded.
@@ -1908,7 +2004,7 @@ export class AnalysisPipeline {
   // The analyst reviews each hunt's VQL + rationale, then one-click deploys it through the existing
   // launchHunt flow (POST /velociraptor/hunt). Returns [] without an AI call on an empty case.
   async suggestHunts(caseId: string): Promise<HuntSuggestion[]> {
-    const provider = this.opts.synthesisProvider ?? this.requireProvider("hunt suggestions");
+    const provider = this.opts.velociraptorProvider ?? this.opts.synthesisProvider ?? this.requireProvider("hunt suggestions");
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasHuntMaterial(loaded)) return [];   // nothing to pivot on — don't spend a call
 
@@ -1946,6 +2042,69 @@ export class AnalysisPipeline {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "suggest-hunts");
       const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
       return sanitizeHuntSuggestions(suggestions, limit);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // Propose a Velociraptor hunt for each ENDPOINT-related PLAYBOOK task (issue #70). Single text-only
+  // AI call; EPHEMERAL like suggestHunts() — it does NOT mutate state. The deploy MODE is decided here
+  // deterministically from the case's observed endpoints: a task tied to exactly one host → a single
+  // client COLLECTION on it; otherwise → a fleet HUNT. The playbook `tasks` are passed in by the route
+  // (the pipeline has no PlaybookStore). Returns [] without an AI call when there's no endpoint task.
+  async suggestPlaybookHunts(caseId: string, tasks: PlaybookTask[], availableArtifacts: string[] = [], opts?: { excludeVql?: string }): Promise<PlaybookHuntSuggestion[]> {
+    const provider = this.opts.velociraptorProvider ?? this.opts.synthesisProvider ?? this.requireProvider("playbook hunt suggestions");
+    const loaded = await this.opts.stateStore.load(caseId);
+    if (!hasPlaybookHuntMaterial(loaded, tasks)) return [];   // empty/closed playbook → don't spend a call
+
+    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+
+    const endpointsByTaskId = buildTaskEndpointsMap(loaded, tasks);
+    const endpoints = knownEndpoints(loaded);
+    const tasksText = renderPlaybookHuntTasks(tasks, endpointsByTaskId);
+    const endpointsText = renderKnownEndpoints(endpoints);
+    // The server's REAL CLIENT artifacts (passed in by the route) — the model may reference an
+    // Artifact.<Name> only from this list (otherwise it hallucinates a name that won't compile).
+    const artifactsText = renderAvailableArtifacts(availableArtifacts, Number(process.env.DFIR_PBHUNT_MAX_ARTIFACTS) || 150);
+
+    // This call hunts PER TASK (grounded by the tasks + findings + IOCs + endpoints), so it does NOT
+    // need the full synthesis timeline — a smaller stratified event sample keeps the signal while
+    // cutting the prompt (the timeline dominates it). A leaner prompt is faster + cheaper and shrinks
+    // the window for a transient provider transport failure on a long generation. Tune via
+    // DFIR_PBHUNT_MAX_EVENTS (default 120, well below synthesis's 300).
+    const max = Number(process.env.DFIR_PBHUNT_MAX_EVENTS) || 120;
+    let events = selectSynthesisEvents(scopedEvents, max);
+    const renderEvent = (e: ForensicEvent) =>
+      `[${e.timestamp || "(undated)"}] [${e.severity}]${e.asset ? ` <${e.asset}>` : ""} ${e.description.slice(0, 240)}`;
+    const findingsText = renderHuntFindings(loaded.findings);
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents);
+
+    // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
+    const overhead = estimateTokens(getPlaybookHuntPrompt())
+      + estimateTokens(contextBlock + tasksText + endpointsText + artifactsText + findingsText + (loaded.attackerPath || "")) + 300;
+    const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
+    if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
+    const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
+
+    const excludeNote = opts?.excludeVql
+      ? `ALREADY SUGGESTED (this VQL was already shown to the analyst — generate something DIFFERENT that investigates from a different angle or uses different VQL plugins):\n${opts.excludeVql}\n\n`
+      : "";
+    const userPrompt =
+      contextBlock +
+      `KNOWN ENDPOINTS (hosts — pick a targetHost ONLY from these): ${endpointsText}\n\n` +
+      `AVAILABLE VELOCIRAPTOR ARTIFACTS (reference Artifact.<Name> ONLY if <Name> is in this list — else use a raw plugin):\n${artifactsText}\n\n` +
+      `PLAYBOOK TASKS:\n${tasksText}\n\n` +
+      `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
+      `FINDINGS:\n${findingsText}\n\n` +
+      `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
+      excludeNote +
+      `Propose the per-task hunts as JSON.`;
+
+    const limit = Number(process.env.DFIR_PBHUNT_SUGGEST_MAX) || PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT;
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getPlaybookHuntPrompt(), userPrompt, images: [] }, "suggest-playbook-hunts");
+      const { suggestions } = playbookHuntResponseSchema.parse(parsed);
+      return sanitizePlaybookHuntSuggestions(suggestions, endpointsByTaskId, endpoints, limit);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 

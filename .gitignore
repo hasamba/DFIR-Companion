@@ -13,6 +13,10 @@ logs/
 /notifications/
 notifications/
 
+# Velociraptor client inventory (issue #70) — holds the fleet's real hostnames/FQDNs/IPs.
+# ANCHORED only (a bare `velociraptor/` would also match the src/integrations/velociraptor/ source dir).
+/velociraptor/
+
 # Secrets / local config
 **/.env
 
