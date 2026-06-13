@@ -49,6 +49,7 @@ export const SNAPSHOT_EXCLUDED_STATE_FILES = [
   "anon-control.json",      // anonymization config — local to how this machine tokenizes for AI
   "anon-entities.json",
   "anon-discovered.json",
+  "import-undo-stack.json", // #76 import undo/redo snapshots — machine-local convenience, large, transient
 ] as const;
 
 const ALLOWED = new Set<string>(SNAPSHOT_STATE_FILES);

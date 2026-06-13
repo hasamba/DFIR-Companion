@@ -66,6 +66,16 @@ describe("ImportMetaStore", () => {
     expect(meta.iocsDiff).toEqual(NO_IOCS);
   });
 
+  it("clear() resets the record to empty (used when an import is undone, #76)", async () => {
+    await store.record("c1", { kind: "thor", file: "a", diff: DIFF, iocsDiff: IOCS }, "2026-06-06T12:00:00.000Z");
+    await store.clear("c1");
+    expect(await store.load("c1")).toEqual({
+      lastImportedAt: "", lastImportKind: "", lastImportFile: "",
+      addedCount: 0, removedCount: 0, lastDiff: null,
+      iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
+    });
+  });
+
   it("caps the stored detail lists but keeps the true totals in the counts", async () => {
     const many: TimelineDiff = {
       added: Array.from({ length: 800 }, (_, i) => ({ timestamp: `2026-01-01T00:00:${String(i % 60).padStart(2, "0")}Z`, description: `evt ${i}`, severity: "Info" as const })),

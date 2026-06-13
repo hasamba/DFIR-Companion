@@ -98,6 +98,7 @@ import { ImportMetaStore } from "./analysis/importMeta.js";
 import { TemplateStore, buildInitialQuestions, buildInitialNextSteps } from "./analysis/templateStore.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
+import { ImportUndoStore, pushCheckpoint, applyUndo, applyRedo, summarizeUndoStack } from "./analysis/importUndo.js";
 import { mergeEnrichedSubset } from "./analysis/iocBulkOps.js";
 import { IocWhitelistStore } from "./analysis/iocWhitelistStore.js";
 import { whitelistMatches, parseWhitelistText, toWhitelistCsv, sanitizeRuleInput } from "./analysis/iocWhitelist.js";
@@ -246,6 +247,11 @@ export interface AppOptions {
   // route writes it after the importer completes; onImportMeta pings dashboard clients to re-fetch.
   importMetaStore?: ImportMetaStore;
   onImportMeta?: (caseId: string) => void;
+  // Import undo/redo (#76): before each import the pre-import forensic timeline + IOCs are snapshotted
+  // onto a per-case stack so the analyst can roll back an import that floods the dashboard (and redo).
+  // onImportUndo pings dashboard clients to re-fetch the undo-stack state (button enable/labels).
+  importUndoStore?: ImportUndoStore;
+  onImportUndo?: (caseId: string) => void;
   // Called when an AI analysis window starts / finishes / fails, so the
   // server can push a live "AI status" indicator to dashboard clients.
   onAiStatus?: (caseId: string, event: AiStatusEvent) => void;
@@ -1412,11 +1418,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       options.onVeloHunt?.(caseId);
       const minSeverity = job.minSeverity;
 
-      // Snapshot BEFORE any import so we record one combined import-meta diff for the whole collection.
-      let timelineBefore: ForensicEvent[] = [];
-      let iocsBefore: IOC[] = [];
+      // Snapshot the full state BEFORE any import so we record one combined import-meta diff for the
+      // whole collection AND can push a single pre-collection undo checkpoint (#76).
+      let stateBefore: InvestigationState | null = null;
       if (options.stateStore) {
-        try { const s = await options.stateStore.load(caseId); timelineBefore = s.forensicTimeline; iocsBefore = s.iocs; } catch { /* keep [] */ }
+        try { stateBefore = await options.stateStore.load(caseId); } catch { /* keep null */ }
       }
 
       let importedAny = false;
@@ -1459,15 +1465,21 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // 3) One combined import-meta diff (so the dashboard's "📥 last import / +N" banner lights up).
       let addedEvents = 0;
       let addedIocs = 0;
-      if (importedAny && options.importMetaStore && options.stateStore) {
+      if (importedAny && options.stateStore && stateBefore) {
         try {
           const s = await options.stateStore.load(caseId);
-          const diff = diffTimeline(timelineBefore, s.forensicTimeline);
-          const iocsDiff = diffIocs(iocsBefore, s.iocs);
+          const diff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
+          const iocsDiff = diffIocs(stateBefore.iocs, s.iocs);
           addedEvents = diff.added.length;
           addedIocs = iocsDiff.added.length;
-          await options.importMetaStore.record(caseId, { kind: "velociraptor", file: lastFile ?? `velo-hunt_${job.huntId}.json`, diff, iocsDiff });
-          options.onImportMeta?.(caseId);
+          if (options.importMetaStore) {
+            await options.importMetaStore.record(caseId, { kind: "velociraptor", file: lastFile ?? `velo-hunt_${job.huntId}.json`, diff, iocsDiff });
+            options.onImportMeta?.(caseId);
+          }
+          // #76: snapshot the pre-collect state for undo when the hunt actually added data.
+          if (diff.added.length || diff.removed.length || iocsDiff.added.length || iocsDiff.removed.length) {
+            await pushImportCheckpoint(caseId, stateBefore, `velociraptor (${lastFile ?? `hunt ${job.huntId}`})`);
+          }
         } catch { /* non-fatal */ }
       }
 
@@ -2215,6 +2227,31 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     })();
   }
 
+  // #76: snapshot the PRE-import investigation state (findings + IOCs + timeline + MITRE + attacker
+  // path — everything the import and its synthesis change) onto the per-case undo stack so the whole
+  // import can be rolled back. Best-effort — undo is a convenience and must NEVER break the import.
+  // Callers gate on whether the import actually changed anything (no checkpoint for a no-op re-import).
+  async function pushImportCheckpoint(caseId: string, beforeState: InvestigationState, label: string): Promise<void> {
+    if (!options.importUndoStore) return;
+    try {
+      const stack = await options.importUndoStore.load(caseId);
+      const next = pushCheckpoint(stack, { label, at: new Date().toISOString(), state: beforeState }, options.importUndoStore.depth());
+      await options.importUndoStore.save(caseId, next);
+      options.onImportUndo?.(caseId);
+    } catch { /* non-fatal */ }
+  }
+
+  // #76: restore a full investigation state from an undo/redo checkpoint, verbatim — findings, IOCs,
+  // timeline, MITRE, attacker path, the lot (no AI re-synthesis; the snapshot already holds the exact
+  // prior conclusions). Keeps the case id, stamps updatedAt. Returns the saved state so the caller
+  // can broadcast it (null when no state store is wired — routes gate on this).
+  async function restoreImportState(caseId: string, snapState: InvestigationState): Promise<InvestigationState | null> {
+    if (!options.stateStore) return null;
+    const next: InvestigationState = { ...snapState, caseId, updatedAt: new Date().toISOString() };
+    await options.stateStore.save(next);
+    return next;
+  }
+
   app.get("/cases/:id/legitimate", async (req: Request, res: Response) => {
     try {
       return res.status(200).json(await legitimate.load(req.params.id));
@@ -2794,12 +2831,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
       const run = (): Promise<unknown> => dispatchImport(kind, caseId, text, base);
 
-      // Snapshot the forensic timeline + IOCs BEFORE the import so the .then() below can record what
-      // this import added (the "last import" diff the dashboard shows above the timeline and IOCs).
-      let timelineBefore: ForensicEvent[] = [];
-      let iocsBefore: IOC[] = [];
-      if (options.importMetaStore && options.stateStore) {
-        try { const s = await options.stateStore.load(caseId); timelineBefore = s.forensicTimeline; iocsBefore = s.iocs; } catch { /* keep [] */ }
+      // Snapshot the FULL investigation state BEFORE the import so the .then() below can (a) diff what
+      // this import added (the "last import" banner) and (b) push a pre-import undo checkpoint (#76 —
+      // the whole state, so undo also takes back the findings/MITRE the post-import synthesis derives).
+      let stateBefore: InvestigationState | null = null;
+      if (options.stateStore) {
+        try { stateBefore = await options.stateStore.load(caseId); } catch { /* keep null */ }
       }
 
       run()
@@ -2807,15 +2844,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
           // Record what this import added to the forensic timeline + IOCs, BEFORE resynthesis (which
           // preserves both). Best-effort: a meta failure must not break the import.
-          if (options.importMetaStore && options.stateStore) {
+          if (options.stateStore && stateBefore) {
             try {
               const s = await options.stateStore.load(caseId);
-              await options.importMetaStore.record(caseId, {
-                kind, file: storedName,
-                diff: diffTimeline(timelineBefore, s.forensicTimeline),
-                iocsDiff: diffIocs(iocsBefore, s.iocs),
-              });
-              options.onImportMeta?.(caseId);
+              const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
+              const iDiff = diffIocs(stateBefore.iocs, s.iocs);
+              if (options.importMetaStore) {
+                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff });
+                options.onImportMeta?.(caseId);
+              }
+              // #76: snapshot the pre-import state for undo — but only when the import actually changed
+              // something (skip a no-op re-import so undo doesn't pile up dead levels).
+              if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
+                await pushImportCheckpoint(caseId, stateBefore, `${kind} (${storedName})`);
+              }
             } catch { /* non-fatal */ }
           }
           // Phase 2 (#35): auto-mark IOCs that match the global whitelist as legitimate BEFORE
@@ -4090,6 +4132,63 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // #76 Import undo/redo. Imports can flood the dashboard; these let the analyst roll the forensic
+  // timeline + IOCs back to the pre-import snapshot (and redo). The synthesis-derived conclusions are
+  // re-derived from the restored timeline by resynthesizeInBackground, exactly as on import.
+
+  // Current undo/redo state (button enable + labels). Lightweight summary, not the raw snapshots.
+  app.get("/cases/:id/import/undo-stack", async (req: Request, res: Response) => {
+    if (!options.importUndoStore) return res.status(501).json({ error: "import undo not configured" });
+    try {
+      const stack = await options.importUndoStore.load(req.params.id);
+      return res.status(200).json(summarizeUndoStack(stack, options.importUndoStore.depth()));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Undo the latest import: restore the full pre-import state (findings/IOCs/timeline/MITRE/attacker
+  // path), push the current state to redo. No AI re-synthesis — the snapshot is the exact prior state.
+  app.post("/cases/:id/import/undo", async (req: Request, res: Response) => {
+    if (!options.importUndoStore || !options.stateStore) return res.status(501).json({ error: "import undo not configured" });
+    const caseId = req.params.id;
+    try {
+      const stack = await options.importUndoStore.load(caseId);
+      const state = await options.stateStore.load(caseId);
+      const result = applyUndo(stack, state);
+      if (!result) return res.status(400).json({ error: "nothing to undo" });
+      const next = await restoreImportState(caseId, result.restore);
+      await options.importUndoStore.save(caseId, result.stack);
+      // The "last import" banner / NEW row highlights describe a change that has now been rolled back.
+      if (options.importMetaStore) { try { await options.importMetaStore.clear(caseId); options.onImportMeta?.(caseId); } catch { /* non-fatal */ } }
+      options.onImportUndo?.(caseId);
+      if (next) options.onState?.(next);
+      return res.status(200).json(summarizeUndoStack(result.stack, options.importUndoStore.depth()));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Redo the most-recently-undone import: re-apply its full state.
+  app.post("/cases/:id/import/redo", async (req: Request, res: Response) => {
+    if (!options.importUndoStore || !options.stateStore) return res.status(501).json({ error: "import undo not configured" });
+    const caseId = req.params.id;
+    try {
+      const stack = await options.importUndoStore.load(caseId);
+      const state = await options.stateStore.load(caseId);
+      const result = applyRedo(stack, state);
+      if (!result) return res.status(400).json({ error: "nothing to redo" });
+      const next = await restoreImportState(caseId, result.restore);
+      await options.importUndoStore.save(caseId, result.stack);
+      if (options.importMetaStore) { try { await options.importMetaStore.clear(caseId); options.onImportMeta?.(caseId); } catch { /* non-fatal */ } }
+      options.onImportUndo?.(caseId);
+      if (next) options.onState?.(next);
+      return res.status(200).json(summarizeUndoStack(result.stack, options.importUndoStore.depth()));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Add an analyst question to the case's open key questions (e.g. from Ask, when unknown).
   // It's pinned, so synthesis preserves it and answers it once the evidence supports it.
   app.post("/cases/:id/questions", async (req: Request, res: Response) => {
@@ -5027,6 +5126,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
   const importMetaStore = new ImportMetaStore(store);
+  // #76: import undo/redo. Depth is the number of import levels kept (each = a full timeline+IOC copy).
+  const importUndoStore = new ImportUndoStore(store, Number(process.env.DFIR_IMPORT_UNDO_DEPTH) || undefined);
   const notionExportStore = new NotionExportStore(store);
   const clickupExportStore = new ClickUpExportStore(store);
   const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore);
@@ -5096,6 +5197,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     synthMetaStore,
     importMetaStore,
     onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
+    importUndoStore,
+    onImportUndo: (caseId) => hub.broadcastTo(caseId, { type: "import_undo_changed" }),
     autoSynthesize,
     autoSynthesizeDebounceMs,
     onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
