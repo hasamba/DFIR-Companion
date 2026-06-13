@@ -221,20 +221,22 @@ export class IrisClient {
   }
 
   // Best-effort listing of existing events for dedupe. Tolerant of envelope shape; callers
-  // should catch errors and proceed (older IRIS may not expose a plain list endpoint).
+  // should catch errors and proceed. The list endpoint is `…/events/list/filter/<asset>` (0 =
+  // no asset filter = ALL events) — `/case/timeline/events/<id>` is single-event-by-id, so the
+  // bare `/case/timeline/events` 404s.
   async listEvents(cid: number): Promise<IrisEventRef[]> {
     const data = await this.request<{ timeline?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
-      "GET", "/case/timeline/events", { cid },
+      "GET", "/case/timeline/events/list/filter/0", { cid },
     );
     const rows = Array.isArray(data) ? data : data.timeline ?? [];
     return rows.map((r) => ({ id: Number(r.event_id), title: String(r.event_title ?? ""), date: String(r.event_date ?? "") }));
   }
 
   // Full timeline rows (title + content + date/tz + colour + tags) for the IMPORT path —
-  // listEvents() narrows to id+title+date for dedupe.
+  // listEvents() narrows to id+title+date for dedupe. Same endpoint (filter/0 = all events).
   async getRawTimeline(cid: number): Promise<Array<Record<string, unknown>>> {
     const data = await this.request<{ timeline?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
-      "GET", "/case/timeline/events", { cid },
+      "GET", "/case/timeline/events/list/filter/0", { cid },
     );
     return Array.isArray(data) ? data : data.timeline ?? [];
   }

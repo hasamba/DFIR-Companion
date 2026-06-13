@@ -63,7 +63,7 @@ import type { SysdigImportOptions } from "./analysis/sysdigImport.js";
 import { parseWazuhAlerts } from "./analysis/wazuhImport.js";
 import type { WazuhImportOptions } from "./analysis/wazuhImport.js";
 import { detectImportKind, type ImportKind } from "./analysis/importDetect.js";
-import { getEnvForSettings, updateEnv as updateEnvFile } from "./settings/envManager.js";
+import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix } from "./settings/envManager.js";
 import { parseMinSeverity } from "./analysis/severityFloor.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
@@ -295,6 +295,10 @@ export interface AppOptions {
   // (customer/classification ids, base URL for the case link).
   irisClient?: IrisClient;
   irisOptions?: IrisPushOptions;
+  // Rebuilds the IRIS client from current config (used by POST /iris/reconnect so config saved
+  // via Settings, or IRIS coming back online, applies without a server restart). Defaults to the
+  // env-based buildIrisClient; tests inject a stub (no network).
+  rebuildIrisClient?: () => IrisClient | undefined;
   // Velociraptor API: a configured client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) lets the
   // dashboard run the generated hunt VQL against the server and show the rows inline.
   velociraptorClient?: VelociraptorClient;
@@ -1220,17 +1224,42 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // Whether a DFIR-IRIS push target is configured (so the dashboard can show/hide the button).
+  // The active DFIR-IRIS client. Mutable: POST /iris/reconnect can rebuild it at runtime (config
+  // saved via Settings, or IRIS coming back online) without a server restart. Starts from options.
+  let irisClient = options.irisClient;
+  const rebuildIris = options.rebuildIrisClient ?? buildIrisClient;
+
+  // Whether a DFIR-IRIS push/import target is configured (so the dashboard can show/hide the buttons).
   app.get("/iris/status", (_req: Request, res: Response) => {
-    res.status(200).json({ configured: !!options.irisClient, baseUrl: options.irisOptions?.baseUrl });
+    res.status(200).json({ configured: !!irisClient, baseUrl: process.env.DFIR_IRIS_URL || options.irisOptions?.baseUrl });
+  });
+
+  // Re-read DFIR_IRIS_* from .env (settings saved via the dashboard only write the file), rebuild
+  // the client, and ping to verify connectivity. Lets the analyst connect after configuring IRIS —
+  // or after IRIS comes back online — without the #1-gotcha restart. Always 200; the body says
+  // whether it's configured and reachable.
+  app.post("/iris/reconnect", async (_req: Request, res: Response) => {
+    try {
+      await reloadEnvPrefix("DFIR_IRIS_");
+      irisClient = rebuildIris();
+      if (!irisClient) return res.status(200).json({ configured: false, ok: false, error: "DFIR_IRIS_URL and DFIR_IRIS_KEY are not set" });
+      try {
+        await irisClient.ping();
+        return res.status(200).json({ configured: true, ok: true, baseUrl: process.env.DFIR_IRIS_URL });
+      } catch (err) {
+        return res.status(200).json({ configured: true, ok: false, baseUrl: process.env.DFIR_IRIS_URL, error: (err as Error).message });
+      }
+    } catch (err) {
+      return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });
+    }
   });
 
   // List the cases on the configured DFIR-IRIS instance — powers the "Import from IRIS" picker
   // (issue #88). 501 when not configured. Errors map to 502 (the remote IRIS is unreachable).
   app.get("/iris/cases", async (_req: Request, res: Response) => {
-    if (!options.irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
+    if (!irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
     try {
-      const cases = await options.irisClient.listCases();
+      const cases = await irisClient.listCases();
       return res.status(200).json({ cases });
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
@@ -2008,7 +2037,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Push a case to DFIR-IRIS: find-or-create the case by name, then push assets→assets,
   // IOCs→IOCs, forensic timeline→timeline, executive summary→case summary, everything else→notes.
   app.post("/cases/:id/push/iris", async (req: Request, res: Response) => {
-    if (!options.irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
+    if (!irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     try {
@@ -2018,7 +2047,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const playbookTasks = options.playbookStore ? await syncPlaybook(caseId) : undefined;
       logLine(`[iris] ${caseId} push START`);
       const result = await pushCaseToIris(
-        options.irisClient,
+        irisClient,
         { caseName: caseId, state, meta, playbookTasks: playbookTasks?.length ? playbookTasks : undefined },
         options.irisOptions,
       );
@@ -2039,7 +2068,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // into the forensic timeline + IOCs and re-synthesize. The fetched payload is the imported
   // "file" so the case keeps a faithful import audit row.
   app.post("/cases/:id/iris-import", async (req: Request, res: Response) => {
-    if (!options.irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
+    if (!irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
     const irisCaseId = Number(req.body?.irisCaseId);
@@ -2050,7 +2079,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
     try {
       logLine(`[iris] ${caseId} import START (iris case ${irisCaseName || `#${irisCaseId}`})`);
-      const data = await fetchIrisCase(options.irisClient, {
+      const data = await fetchIrisCase(irisClient, {
         irisCaseId: Number.isFinite(irisCaseId) ? irisCaseId : undefined,
         caseName: irisCaseName || undefined,
       });
