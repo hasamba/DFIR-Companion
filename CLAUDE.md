@@ -465,6 +465,26 @@ SAME path as the `/import` route (evidence-first persist → `importVelociraptor
 `POST /cases/:id/velociraptor/run-bundle` + `…/hunt-jobs` (list) + `…/collect` (`{huntId}`); `onVeloHunt` WS-broadcasts `velo_hunt_changed`.
 Server-only (no `scripts/*` pipeline wiring). When you add hunt-condition options, keep the label/name sanitization
 in `velociraptorApi.ts` (no VQL-string injection — names match `ARTIFACT_RE`, labels stripped to a safe charset).
+
+**Real-time push ingest + Velociraptor live monitoring (#84).** Two ways to stream alerts into a case as they
+happen, both routed through the SAME `importDetect` → import → diff → re-synthesize pipeline as the Import button,
+factored into a shared `ingestStreamed` helper in `createApp` (persist → `dispatchImport` (awaited) → import-meta
+diff *only on a non-empty diff* → whitelist/NSRL → background synthesis; NO undo checkpoint — streaming would flood
+the stack). (1) **`POST /cases/:id/push`** (`analysis/pushAuth.ts` + `pushPayload.ts`, pure): an external tool POSTs
+any importDetect-routable payload (`{source,events}`, artifact-map, raw text…) with an `X-DFIR-Key` token; **OFF
+until a token is configured** (`DFIR_PUSH_TOKEN` global and/or a per-case `PushTokenStore`, `state/push-token.json`),
+403 disabled / 401 bad key (constant-time compare), 202-and-async. (2) **Velociraptor CLIENT_EVENT monitors**
+(`integrations/velociraptor/monitorPoller.ts` pure poll loop + `VeloMonitorStore`, `state/velo-monitor.json`):
+per-monitor self-rescheduling `setTimeout` poller (in the `createApp` closure, like `veloHuntTimers`) reads a
+client-monitoring artifact's new rows via `client.monitorResults` (`source(client_id=,artifact=,start_time=,end_time=)`,
+overridable `DFIR_VELOCIRAPTOR_MONITOR_VQL`), wraps them as a `{ [artifact]: rows }` artifact-map, and feeds
+`ingestStreamed` as kind `velociraptor`. The **cursor (last-seen epoch) is persisted per monitor** so a restart
+resumes without re-ingesting (`resumeVeloMonitors()` re-arms at `createApp` time); a poll error does NOT advance the
+cursor (retried next tick). `DFIR_VELO_MONITOR_POLL_S` default 30. Routes `…/velociraptor/monitors[/:mid][/stop|start|poll]`
++ `GET /velociraptor/event-artifacts`; `onVeloMonitor`/`onPushToken` WS-broadcast `velo_monitor_changed`/`push_token_changed`;
+dashboard 🔴 LIVE badge + Settings → Velociraptor → Live Monitoring + Settings → Integrations → Push ingest. Both
+stores are **machine/transient — deliberately NOT in `SNAPSHOT_STATE_FILES`** (a push token is a secret; a monitor
+cursor is machine state). Server-only (no `scripts/*` wiring).
 **Notion** (`integrations/notion/` — `notionClient` + pure `notionBlocks` renderer + `pushCaseToNotion`
 orchestrator + `NotionExportStore`) exports a case into a Notion page (`DFIR_NOTION_TOKEN`; route
 `POST /cases/:id/push/notion`, `/notion/status`, `/health.notionEnabled`). The crux: the Companion

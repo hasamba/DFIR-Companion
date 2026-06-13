@@ -124,6 +124,11 @@ import { VelociraptorClient, buildVelociraptorClient, matchClient, type HuntTarg
 import { ArtifactBundleStore } from "./analysis/artifactBundleStore.js";
 import { VelociraptorClientStore } from "./analysis/velociraptorClientStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
+import { VeloMonitorStore, monitorId, type VeloMonitor } from "./analysis/veloMonitorStore.js";
+import { pollMonitorOnce, monitorArtifactMap, type PollDeps } from "./integrations/velociraptor/monitorPoller.js";
+import { PushTokenStore, generatePushToken } from "./analysis/pushTokenStore.js";
+import { resolvePushAuth } from "./analysis/pushAuth.js";
+import { extractPushPayload } from "./analysis/pushPayload.js";
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
 import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
 import { pushCaseToTimesketch, type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
@@ -302,6 +307,18 @@ export interface AppOptions {
   artifactBundleStore?: ArtifactBundleStore;
   veloHuntStore?: VeloHuntStore;
   onVeloHunt?: (caseId: string) => void;
+  // Live Velociraptor CLIENT_EVENT monitors (#84): per-case pollers that stream a client monitoring
+  // artifact's new rows into the push/import pipeline. The store persists each monitor + its cursor so
+  // a restart resumes without re-ingesting; onVeloMonitor broadcasts a change to the case's clients.
+  veloMonitorStore?: VeloMonitorStore;
+  onVeloMonitor?: (caseId: string) => void;
+  // Poll interval (seconds) for live monitors when the request doesn't specify one (DFIR_VELO_MONITOR_POLL_S).
+  veloMonitorPollSeconds?: number;
+  // Generic push ingest (#84): the global shared secret (DFIR_PUSH_TOKEN) external tools present in
+  // X-DFIR-Key, and the per-case token store (generated in Settings). Either authorizes a push.
+  pushToken?: string;
+  pushTokenStore?: PushTokenStore;
+  onPushToken?: (caseId: string) => void;
   // IOC whitelist (global, shared across cases): known-good patterns (CIDR ranges, hashes, regexes)
   // that auto-mark matching IOCs LEGITIMATE on import. Opt-in (the store starts empty).
   iocWhitelistStore?: IocWhitelistStore;
@@ -424,6 +441,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // beyond a few hundred MB approach V8's max string length; for those, split the export.
   const maxBodyMb = Number(process.env.DFIR_MAX_BODY_MB) || 256;
   app.use(express.json({ limit: `${maxBodyMb}mb` }));
+  // Also accept text/plain + NDJSON bodies so the generic push endpoint (#84) can take a raw blob
+  // (a Velociraptor monitor dump, an NDJSON alert stream) without forcing every caller to wrap it in
+  // a JSON envelope. JSON bodies still parse via express.json above; this only catches non-JSON types.
+  app.use(express.text({ limit: `${maxBodyMb}mb`, type: ["text/*", "application/x-ndjson", "application/jsonl"] }));
 
   // Turn body-parser failures into actionable JSON (instead of Express's default HTML page):
   // an over-limit upload → 413 with how to raise the cap; malformed JSON → 400. Placed right
@@ -441,7 +462,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel() });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel() });
   });
 
   // Read / change the live log verbosity (debug | info | warn | error). The dashboard's
@@ -1473,6 +1494,138 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return { storedName, importedAt, seq };
   }
 
+  // Shared streamed-ingest path for the generic push endpoint (#84) and the Velociraptor client-event
+  // poller: persist the blob as evidence, run the detected importer, record the import-meta diff (when
+  // it added anything), auto-legitimate via whitelist/NSRL, then re-synthesize. It mirrors the /import
+  // route's chain but is tuned for HIGH-FREQUENCY streaming: it AWAITS the deterministic import (so the
+  // caller can report +N events), backgrounds only the AI synthesis, records import-meta only on a
+  // non-empty diff (a quiet poll must not reset the dashboard's NEW highlights), and skips the undo
+  // checkpoint (per-poll snapshots would flood the undo stack). Resolves with the diff counts; the push
+  // route fires-and-forgets, the poller awaits to update the monitor's running stats.
+  async function ingestStreamed(
+    caseId: string, kind: ImportKind, text: string, originalName: string, minSeverity?: Severity,
+  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
+    const pipeline = options.pipeline;
+    if (!pipeline) throw new Error("AI pipeline not configured");
+    const { storedName, importedAt, seq } = await persistEvidence(caseId, originalName, text);
+
+    // CSV/log are themselves an LLM call → respect the per-case AI toggle exactly like /import: with
+    // AI OFF the evidence is saved but not sent to the model. Deterministic importers proceed.
+    const aiDependent = kind === "csv" || kind === "log";
+    if (aiDependent && !(await getControl(caseId)).enabled) {
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)` });
+      return { storedName, addedEvents: 0, addedIocs: 0, analyzed: false };
+    }
+
+    const onProgress = (done: number, total: number): void => options.onAiStatus?.(caseId, {
+      status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}`,
+    });
+    options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}` });
+
+    let stateBefore: InvestigationState | null = null;
+    if (options.stateStore) { try { stateBefore = await options.stateStore.load(caseId); } catch { /* keep null */ } }
+
+    await dispatchImport(kind, caseId, text, { label: storedName, idPrefix: `${seq}`, importedAt, onProgress, minSeverity });
+    options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+
+    let addedEvents = 0, addedIocs = 0;
+    if (options.stateStore && stateBefore) {
+      try {
+        const s = await options.stateStore.load(caseId);
+        const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
+        const iDiff = diffIocs(stateBefore.iocs, s.iocs);
+        addedEvents = tDiff.added.length; addedIocs = iDiff.added.length;
+        if ((addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) && options.importMetaStore) {
+          await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff });
+          options.onImportMeta?.(caseId);
+        }
+      } catch { /* non-fatal */ }
+    }
+    // Auto-mark known-good IOCs/hashes legitimate (whitelist + NSRL) BEFORE re-synthesis, like /import.
+    try { const wl = await applyWhitelistToCase(caseId); if (wl.added > 0) logLine(`[whitelist] ${caseId} auto-marked ${wl.added} pushed IOC(s) legitimate`); } catch { /* non-fatal */ }
+    try { const ns = await applyNsrlToCase(caseId); if (ns.added > 0) logLine(`[nsrl] ${caseId} auto-marked ${ns.added} pushed known-good item(s) legitimate`); } catch { /* non-fatal */ }
+    resynthesizeInBackground(caseId);
+    return { storedName, addedEvents, addedIocs, analyzed: true };
+  }
+
+  // ── Live Velociraptor CLIENT_EVENT monitors (#84) ─────────────────────────────────────────────
+  // Per-monitor self-rescheduling timers (setTimeout, not setInterval, so a slow poll can't overlap
+  // itself). Keyed `caseId monitorId`. Lost on restart, then re-armed from the persisted store by
+  // resumeVeloMonitors(). .unref() so a pending poll never blocks process exit.
+  const veloMonitorTimers = new Map<string, NodeJS.Timeout>();
+  const monitorKey = (caseId: string, id: string): string => `${caseId} ${id}`;
+
+  // The ingest step a poll hands its rows to: wrap them as a Velociraptor artifact-map and run the
+  // shared streamed-ingest path; return how many forensic events it added (for the running stat).
+  async function ingestMonitorRows(caseId: string, monitor: VeloMonitor, rows: unknown[]): Promise<number> {
+    const json = monitorArtifactMap(monitor.artifact, rows);
+    const shortHost = (monitor.hostname || monitor.clientId).split(".")[0].replace(/[^\w.\-]+/g, "_").slice(0, 40);
+    const filename = `velo-monitor_${monitor.artifact}_${shortHost}.json`;
+    const r = await ingestStreamed(caseId, "velociraptor", json, filename, monitor.minSeverity);
+    return r.addedEvents;
+  }
+
+  // One poll cycle for a monitor: load it, poll (pure pollMonitorOnce), persist the updated monitor,
+  // broadcast, and reschedule the next tick (unless it was removed/stopped). Never throws.
+  async function pollVeloMonitor(caseId: string, id: string): Promise<void> {
+    const monStore = options.veloMonitorStore;
+    const client = options.velociraptorClient;
+    if (!monStore || !client) { veloMonitorTimers.delete(monitorKey(caseId, id)); return; }
+    let monitor: VeloMonitor | null = null;
+    try { monitor = await monStore.get(caseId, id); } catch { /* treat as gone */ }
+    if (!monitor || monitor.status === "stopped") { veloMonitorTimers.delete(monitorKey(caseId, id)); return; }
+
+    const deps: PollDeps = {
+      read: async (clientId, artifact, start, end) => (await client.monitorResults(clientId, artifact, start, end)).rows,
+      ingest: (m, rows) => ingestMonitorRows(caseId, m, rows),
+      now: () => Math.floor(Date.now() / 1000),
+      defaultLookbackSeconds: monitor.pollSeconds,
+      log: logLine,
+    };
+    const updated = await pollMonitorOnce(monitor, deps);
+    try { await monStore.upsert(caseId, updated); } catch { /* best-effort */ }
+    options.onVeloMonitor?.(caseId);
+    // Reschedule only if it's still meant to run (a concurrent stop/delete clears the timer below).
+    if (veloMonitorTimers.has(monitorKey(caseId, id))) scheduleVeloMonitor(caseId, updated);
+  }
+
+  // Arm (or re-arm) a monitor's timer for one poll interval out. Clears any existing timer first so
+  // start is idempotent. Clamped 5s..1h so a bad value can't busy-loop or stall forever.
+  function scheduleVeloMonitor(caseId: string, monitor: VeloMonitor): void {
+    const key = monitorKey(caseId, monitor.id);
+    const existing = veloMonitorTimers.get(key);
+    if (existing) clearTimeout(existing);
+    const seconds = Math.min(3600, Math.max(5, Math.floor(monitor.pollSeconds) || 30));
+    const timer = setTimeout(() => { void pollVeloMonitor(caseId, monitor.id); }, seconds * 1000);
+    timer.unref?.();
+    veloMonitorTimers.set(key, timer);
+  }
+
+  function stopVeloMonitorTimer(caseId: string, id: string): void {
+    const key = monitorKey(caseId, id);
+    const timer = veloMonitorTimers.get(key);
+    if (timer) clearTimeout(timer);
+    veloMonitorTimers.delete(key);
+  }
+
+  // Re-arm timers for every active monitor across all cases (called once at startup so monitoring
+  // survives the #1-gotcha restart). Best-effort — a single bad case must not abort the sweep.
+  async function resumeVeloMonitors(): Promise<void> {
+    const monStore = options.veloMonitorStore;
+    if (!monStore || !options.velociraptorClient) return;
+    let cases: { caseId: string }[] = [];
+    try { cases = await store.listCases(); } catch { return; }
+    let resumed = 0;
+    for (const c of cases) {
+      try {
+        for (const m of await monStore.list(c.caseId)) {
+          if (m.status !== "stopped") { scheduleVeloMonitor(c.caseId, m); resumed++; }
+        }
+      } catch { /* skip this case */ }
+    }
+    if (resumed > 0) logLine(`[velo-monitor] resumed ${resumed} live monitor(s) across ${cases.length} case(s)`);
+  }
+
   // Collect a bundle hunt and import it the SAME way a manual import works. Ingests BOTH the result
   // ROWS (the {"Artifact.Name":[rows]} artifact-map the Velociraptor importer consumes) AND any
   // uploaded JSON reports (e.g. THOR/Hayabusa via Generic.Scanner.ThorZIP) — for those the rows don't
@@ -1650,6 +1803,193 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!job) return res.status(404).json({ error: wantedHuntId ? `no Velociraptor hunt ${wantedHuntId} for this case` : "no Velociraptor hunt to collect for this case" });
     res.status(202).json({ accepted: true, huntId: job.huntId });
     void importVeloHuntResults(caseId, job.huntId);
+  });
+
+  // ── Live Velociraptor CLIENT_EVENT monitoring (#84) ───────────────────────────────────────────
+
+  // List the server's CLIENT_EVENT (continuous monitoring) artifacts for the Monitor-mode picker.
+  app.get("/velociraptor/event-artifacts", async (_req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    try {
+      return res.status(200).json({ artifacts: await options.velociraptorClient.listClientArtifacts("client_event") });
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // All live monitors for a case (with status + running stats). [] when monitoring isn't configured.
+  app.get("/cases/:id/velociraptor/monitors", async (req: Request, res: Response) => {
+    if (!options.veloMonitorStore) return res.status(200).json([]);
+    try {
+      return res.status(200).json(await options.veloMonitorStore.list(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Start a live monitor: poll a CLIENT_EVENT artifact on one client and stream new rows into the case.
+  // Body `{ clientId, artifact, pollSeconds?, hostname?, minSeverity? }`. Idempotent per (client,
+  // artifact) — re-adding the same pair updates it in place. The cursor starts at "now" so only events
+  // that arrive AFTER the monitor is created are ingested (no history backfill).
+  app.post("/cases/:id/velociraptor/monitors", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
+    const clientId = String(req.body?.clientId ?? "").trim();
+    const artifact = String(req.body?.artifact ?? "").trim();
+    if (!/^C\.[A-Za-z0-9]+$/.test(clientId)) return res.status(400).json({ error: "a valid Velociraptor clientId (C....) is required" });
+    if (!/^[A-Za-z0-9._]+$/.test(artifact)) return res.status(400).json({ error: "a valid CLIENT_EVENT artifact name is required" });
+    try {
+      const fallback = Number(options.veloMonitorPollSeconds) || 30;
+      const reqPoll = Number(req.body?.pollSeconds);
+      const pollSeconds = Math.min(3600, Math.max(5, Number.isFinite(reqPoll) && reqPoll > 0 ? Math.floor(reqPoll) : fallback));
+      const hostname = String(req.body?.hostname ?? "").trim() || undefined;
+      const minSeverity = parseMinSeverity(req.body?.minSeverity);
+      const nowEpoch = Math.floor(Date.now() / 1000);
+      const id = monitorId(clientId, artifact);
+      const existing = await options.veloMonitorStore.get(caseId, id);
+      const monitor: VeloMonitor = {
+        id, clientId, artifact, pollSeconds, hostname,
+        // Re-arming an existing monitor keeps its cursor (don't re-ingest); a brand-new one starts "now".
+        cursor: existing?.cursor && existing.cursor > 0 ? existing.cursor : nowEpoch,
+        status: "active", minSeverity,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+        addedEvents: existing?.addedEvents ?? 0, polls: existing?.polls ?? 0,
+      };
+      await options.veloMonitorStore.upsert(caseId, monitor);
+      scheduleVeloMonitor(caseId, monitor);
+      options.onVeloMonitor?.(caseId);
+      logLine(`[velo-monitor] started ${artifact} on ${hostname || clientId} (every ${pollSeconds}s) for case ${caseId}`);
+      return res.status(202).json({ accepted: true, monitor });
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Stop a monitor (clears its timer + marks it stopped, but keeps the row so it can be resumed).
+  app.post("/cases/:id/velociraptor/monitors/:mid/stop", async (req: Request, res: Response) => {
+    if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
+    const caseId = req.params.id, id = req.params.mid;
+    const monitor = await options.veloMonitorStore.get(caseId, id);
+    if (!monitor) return res.status(404).json({ error: "monitor not found" });
+    stopVeloMonitorTimer(caseId, id);
+    await options.veloMonitorStore.upsert(caseId, { ...monitor, status: "stopped" });
+    options.onVeloMonitor?.(caseId);
+    return res.status(200).json({ ok: true });
+  });
+
+  // Resume a stopped monitor (re-arms its timer; keeps the persisted cursor so no re-ingest).
+  app.post("/cases/:id/velociraptor/monitors/:mid/start", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
+    const caseId = req.params.id, id = req.params.mid;
+    const monitor = await options.veloMonitorStore.get(caseId, id);
+    if (!monitor) return res.status(404).json({ error: "monitor not found" });
+    const resumed = { ...monitor, status: "active" as const, lastError: undefined };
+    await options.veloMonitorStore.upsert(caseId, resumed);
+    scheduleVeloMonitor(caseId, resumed);
+    options.onVeloMonitor?.(caseId);
+    return res.status(200).json({ ok: true });
+  });
+
+  // Poll a monitor NOW (don't wait for its timer) — a "check now" for the analyst. Runs one poll cycle
+  // (which also re-arms an active monitor's timer) and returns the updated monitor.
+  app.post("/cases/:id/velociraptor/monitors/:mid/poll", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
+    const caseId = req.params.id, id = req.params.mid;
+    const monitor = await options.veloMonitorStore.get(caseId, id);
+    if (!monitor) return res.status(404).json({ error: "monitor not found" });
+    await pollVeloMonitor(caseId, id);
+    return res.status(200).json({ ok: true, monitor: await options.veloMonitorStore.get(caseId, id) });
+  });
+
+  // Delete a monitor entirely (stop + remove the row).
+  app.delete("/cases/:id/velociraptor/monitors/:mid", async (req: Request, res: Response) => {
+    if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
+    const caseId = req.params.id, id = req.params.mid;
+    stopVeloMonitorTimer(caseId, id);
+    await options.veloMonitorStore.remove(caseId, id);
+    options.onVeloMonitor?.(caseId);
+    return res.status(204).end();
+  });
+
+  // ── Generic push ingest (#84) ─────────────────────────────────────────────────────────────────
+  // An external tool (SIEM webhook, Velociraptor client-event poller, custom script) POSTs an alert
+  // payload here with an X-DFIR-Key token. The body is any importDetect-routable shape (artifact-map,
+  // SIEM alert, Hayabusa line, { source, events }, raw text…). Runs the SAME import → diff →
+  // re-synthesize pipeline as the file Import button; responds 202 immediately, imports in background.
+  app.post("/cases/:id/push", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    // Auth: global DFIR_PUSH_TOKEN and/or a per-case token. 403 when push is unconfigured, 401 on a bad key.
+    let caseToken: string | undefined;
+    if (options.pushTokenStore) { try { caseToken = (await options.pushTokenStore.get(caseId))?.token; } catch { /* none */ } }
+    const bearer = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
+    const presented = String(req.get("x-dfir-key") || bearer || "");
+    const auth = resolvePushAuth({ globalToken: options.pushToken, caseToken, presented });
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
+
+    const { text, source, filename } = extractPushPayload(req.body);
+    if (!text.trim()) return res.status(400).json({ error: "empty push payload" });
+    const kind = detectImportKind(filename, text);
+    if (kind === "unknown") return res.status(400).json({ error: "could not detect the payload type — not recognized as any supported import shape" });
+    if ((kind === "csv" || kind === "log") && !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
+
+    const minSeverity = parseMinSeverity(req.body?.minSeverity);
+    logLine(`[push] case ${caseId}: received "${source}" → ${kind}`);
+    res.status(202).json({ accepted: true, kind, source });
+    // Import in the background; the 202 already went out.
+    ingestStreamed(caseId, kind, text, filename, minSeverity)
+      .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: `push import failed: ${(err as Error).message}` }));
+  });
+
+  // Per-case push token management (#84). GET returns the case token's existence (NOT the secret on a
+  // plain GET — it's shown once on generate) plus whether a global token covers every case and the
+  // push URL. POST generates/rotates one; DELETE clears it.
+  app.get("/cases/:id/push-token", async (req: Request, res: Response) => {
+    const caseId = req.params.id;
+    const globalConfigured = !!(options.pushToken && options.pushToken.trim());
+    let rec: { token: string; createdAt: string } | null = null;
+    if (options.pushTokenStore) { try { rec = await options.pushTokenStore.get(caseId); } catch { /* none */ } }
+    const base = (options.dashboardBaseUrl || "").replace(/\/+$/, "");
+    return res.status(200).json({
+      configured: !!rec,
+      token: rec?.token ?? "",          // shown so Settings can display the active token + curl example
+      createdAt: rec?.createdAt ?? "",
+      globalConfigured,
+      storeAvailable: !!options.pushTokenStore,
+      pushUrl: `${base}/cases/${encodeURIComponent(caseId)}/push`,
+    });
+  });
+
+  app.post("/cases/:id/push-token/generate", async (req: Request, res: Response) => {
+    if (!options.pushTokenStore) return res.status(501).json({ error: "push token store not configured" });
+    const caseId = req.params.id;
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
+    try {
+      const token = generatePushToken();
+      const rec = await options.pushTokenStore.set(caseId, token, new Date().toISOString());
+      options.onPushToken?.(caseId);
+      return res.status(201).json({ token: rec.token, createdAt: rec.createdAt });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/cases/:id/push-token", async (req: Request, res: Response) => {
+    if (!options.pushTokenStore) return res.status(501).json({ error: "push token store not configured" });
+    try {
+      await options.pushTokenStore.clear(req.params.id);
+      options.onPushToken?.(req.params.id);
+      return res.status(204).end();
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // Push a case to DFIR-IRIS: find-or-create the case by name, then push assets→assets,
@@ -4894,6 +5234,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Re-arm any persisted live Velociraptor monitors so streaming survives a restart (#84). Fire-and-
+  // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
+  // tests and embeddings that don't use monitoring.
+  void resumeVeloMonitors();
+
   return app;
 }
 
@@ -5280,6 +5625,13 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // Deep-link notifications back to the dashboard. Override the host/port guess with DFIR_PUBLIC_URL.
   const dashboardBaseUrl = (process.env.DFIR_PUBLIC_URL || `http://${host}:${port}`).replace(/\/+$/, "");
   const veloHuntStore = new VeloHuntStore(store);
+  // Live Velociraptor CLIENT_EVENT monitors + generic push ingest (#84). The monitor store persists
+  // each poller's cursor (resumed on restart); the push token store holds per-case secrets, and
+  // DFIR_PUSH_TOKEN is the global one. Push is OFF until a token is configured (see pushAuth.ts).
+  const veloMonitorStore = new VeloMonitorStore(store);
+  const pushTokenStore = new PushTokenStore(store);
+  const pushToken = process.env.DFIR_PUSH_TOKEN?.trim() || undefined;
+  const veloMonitorPollSeconds = Number(process.env.DFIR_VELO_MONITOR_POLL_S) || 30;
   // Velociraptor API client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) + the persisted client inventory
   // (host ↔ client_id map, #70) in its own subdir beside cases/ (Windows drive-root-safe, like bundles/nsrl).
   const velociraptorClient = buildVelociraptorClient();
@@ -5398,6 +5750,12 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     nsrlDbEnvManaged,
     veloHuntStore,
     onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),
+    veloMonitorStore,
+    onVeloMonitor: (caseId) => hub.broadcastTo(caseId, { type: "velo_monitor_changed" }),
+    veloMonitorPollSeconds,
+    pushToken,
+    pushTokenStore,
+    onPushToken: (caseId) => hub.broadcastTo(caseId, { type: "push_token_changed" }),
     // Trim the dashboard's hunt-query modal to the tools this team runs (default: all).
     huntPlatforms: resolveHuntPlatforms(process.env.DFIR_HUNT_PLATFORMS),
     irisOptions: irisPushOptions(),
