@@ -22,6 +22,7 @@ const STEP_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 
 export const playbookTaskSchema = z.object({
   id: z.string(),
+  shortId: z.string().optional(),         // display ID like T001, T002 — assigned once, never changed
   title: z.string(),
   description: z.string().catch(""),
   status: z.enum(PLAYBOOK_STATUSES).catch("todo" as PlaybookStatus),
@@ -201,6 +202,18 @@ function isPristineAuto(t: PlaybookTask): boolean {
   return t.source !== "custom" && !!t.sourceKey && t.status === "todo" && !t.assignee && !t.dueDate && !t.notes;
 }
 
+// Return the next sequential display ID (T001, T002, …) from the current task list.
+export function nextShortId(tasks: readonly { shortId?: string }[]): string {
+  let max = 0;
+  for (const t of tasks) {
+    if (t.shortId?.startsWith("T")) {
+      const n = parseInt(t.shortId.slice(1), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  }
+  return `T${String(max + 1).padStart(3, "0")}`;
+}
+
 // Merge freshly-derived seeds into the existing stored tasks. An auto-task is keyed by
 // its sourceKey (which is also its id). For a seed that already exists we REFRESH the
 // title/description/priority/finding-link (synthesis may have reworded it) but PRESERVE
@@ -214,6 +227,14 @@ export function mergePlaybook(existing: PlaybookTask[], seeds: DerivedTaskSeed[]
   const byId = new Map(result.map((t) => [t.id, t] as const));
   let changed = false;
   let maxOrder = result.reduce((m, t) => Math.max(m, t.order), -1);
+
+  // Migration: assign shortId to any existing tasks that pre-date this field.
+  for (const t of result) {
+    if (!t.shortId) {
+      t.shortId = nextShortId(result.filter((r) => r !== t));
+      changed = true;
+    }
+  }
 
   for (const seed of seeds) {
     const id = seed.sourceKey;
@@ -236,6 +257,7 @@ export function mergePlaybook(existing: PlaybookTask[], seeds: DerivedTaskSeed[]
       maxOrder += 1;
       const task: PlaybookTask = {
         id,
+        shortId: nextShortId(result),
         title: seed.title,
         description: seed.description,
         status: "todo",

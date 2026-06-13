@@ -12,6 +12,7 @@ import {
   playbookSchema,
   derivePlaybookTasks,
   mergePlaybook,
+  nextShortId,
   sortPlaybookTasks,
 } from "./playbook.js";
 
@@ -79,6 +80,7 @@ export class PlaybookStore {
     const now = new Date().toISOString();
     const task: PlaybookTask = {
       id: `custom:${randomUUID()}`,
+      shortId: nextShortId(tasks),
       title: String(input.title).trim(),
       description: String(input.description ?? "").trim(),
       status: normalizeStatus(input.status) ?? "todo",

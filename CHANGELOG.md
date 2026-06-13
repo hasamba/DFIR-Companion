@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dedicated Velociraptor hunt model** — a separate LLM just for generating Velociraptor VQL hunts (`DFIR_AI_VELO_PROVIDER`/`_MODEL`/`_KEY`/`_BASE_URL`, default `openrouter` / `anthropic/claude-haiku-4.5`), since many models botch VQL; editable in Settings → AI (#70).
 - **Persistent + incremental hunt suggestions** — generated playbook hunts survive a page refresh (`state/playbook-hunts.json`); a suggestion is kept while its task is unchanged and dropped once the task is reworded/deleted. Pressing Generate again only sends NEW or CHANGED tasks to the model, never regenerating hunts that already exist (`force:true` regenerates all) (#70).
 
+### Added
+- **Playbook task short IDs** — each task gets a stable sequential display ID (`T001`, `T002`, …) stored in the task record; shown at the bottom-left of each card in the same blue monospace style as IOC and Finding IDs; existing tasks are back-filled on the next sync.
+
 ### Fixed
 - **Playbook delete button for auto-derived tasks** — deleting a next-step or finding task now marks it `skipped` (persists across re-syncs) instead of silently removing it and having syncPlaybook re-add it immediately (closes #78).
 - **Playbook-hunt VQL grounded in the server's real artifacts** — the prompt now lists the Velociraptor server's actual CLIENT artifact names (fetched per generation) and forbids referencing any `Artifact.<Name>` not in that list, so the model stops inventing artifacts (e.g. `Windows.EventLogs.Sysmon`) that don't exist and fail to compile. Also: correct plugin args (`parse_evtx(filename=…)`, `handles(pid=…)`), prefer raw plugins, no SQL `JOIN` (use `foreach`), `timestamp(string=…)` for absolute times; per-call timeline trimmed (`DFIR_PBHUNT_MAX_EVENTS`/`DFIR_PBHUNT_MAX_ARTIFACTS`) (#70).
