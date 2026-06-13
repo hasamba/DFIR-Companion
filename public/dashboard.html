@@ -700,8 +700,10 @@
     #exportSelect, #pushSelect { background-repeat: no-repeat, no-repeat;
       background-position: left 9px center, right 8px center; background-size: 15px 15px, 11px 11px;
       color: transparent; width: 50px; padding: 7px 21px 7px 25px; }
-    #toggleAll, #toggleSearchBar { font-size: 0; padding-left: 9px; padding-right: 9px; }
-    #toggleAll::before, #toggleSearchBar::before { margin-right: 0; }
+    /* Undo / redo (#76) join the ALWAYS-icon-only group (like Export/Push) — their labels never show,
+       so they add no label width and can't push the toolbar into the collapsed icons-only state. */
+    #toggleAll, #toggleSearchBar, #importUndoBtn, #importRedoBtn { font-size: 0; padding-left: 9px; padding-right: 9px; }
+    #toggleAll::before, #toggleSearchBar::before, #importUndoBtn::before, #importRedoBtn::before { margin-right: 0; }
     /* Search toggle — magnifier (white stroke, like the other primary action icons). It toggles the
        search/filter row below; while any filter is active it adopts the house "active" teal so a
        collapsed row still signals the view is filtered. */
