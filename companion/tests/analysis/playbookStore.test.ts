@@ -51,11 +51,24 @@ describe("PlaybookStore", () => {
     expect(r!.status).toBe("todo");
   });
 
-  it("returns null updating a missing task; remove reports existence", async () => {
+  it("removes a custom task and returns false for a missing id", async () => {
     expect(await store.update("c1", "nope", { status: "done" })).toBeNull();
     const t = await store.add("c1", { title: "x" });
     expect(await store.remove("c1", t.id)).toBe(true);
+    expect(await store.load("c1")).toHaveLength(0);
     expect(await store.remove("c1", t.id)).toBe(false);
+  });
+
+  it("remove on an auto-derived task marks it skipped (not removed) so sync cannot re-add it as todo", async () => {
+    const state = stateWith({ nextSteps: [{ id: "ns1", priority: "high", action: "Pull logs", rationale: "r", pointer: "host" }] });
+    await store.sync("c1", state);
+    expect(await store.remove("c1", "next_step:ns1")).toBe(true);
+    const tasks = await store.load("c1");
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ id: "next_step:ns1", status: "skipped" });
+    // Sync with same state must preserve the skipped status, not reset to todo.
+    const synced = await store.sync("c1", state);
+    expect(synced.find((t) => t.id === "next_step:ns1")).toMatchObject({ status: "skipped" });
   });
 
   it("reorders by a supplied id sequence", async () => {

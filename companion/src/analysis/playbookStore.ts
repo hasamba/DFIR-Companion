@@ -128,9 +128,19 @@ export class PlaybookStore {
 
   async remove(caseId: string, taskId: string): Promise<boolean> {
     const tasks = await this.load(caseId);
-    const next = tasks.filter((t) => t.id !== taskId);
-    if (next.length === tasks.length) return false;
-    await this.save(caseId, next);
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return false;
+    // Auto-derived tasks (next_step/finding) are re-added by syncPlaybook as long as their
+    // source still exists. Mark them skipped instead so the analyst's intent persists across
+    // re-syncs; the "Open only" filter hides them. Custom tasks are removed outright.
+    if (task.source !== "custom") {
+      const next = tasks.map((t) =>
+        t.id === taskId ? { ...t, status: "skipped" as PlaybookStatus, updatedAt: new Date().toISOString() } : t,
+      );
+      await this.save(caseId, next);
+    } else {
+      await this.save(caseId, tasks.filter((t) => t.id !== taskId));
+    }
     return true;
   }
 

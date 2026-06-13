@@ -1708,6 +1708,17 @@ describe("playbook routes (issue #36)", () => {
     expect(events.length).toBeGreaterThan(0);                          // WS broadcast fired
   });
 
+  it("DELETE on an auto-derived task marks it skipped so it survives re-sync", async () => {
+    const { app } = await freshPlaybookApp({ nextSteps: [NEXT_STEP] });
+    await request(app).get("/cases/c1/playbook");                        // prime the derived task
+    const del = await request(app).delete("/cases/c1/playbook/next_step:ns1");
+    expect(del.status).toBe(204);
+    const after = await request(app).get("/cases/c1/playbook");
+    const task = after.body.tasks.find((t: { id: string }) => t.id === "next_step:ns1");
+    expect(task).toBeDefined();
+    expect(task.status).toBe("skipped");
+  });
+
   it("rejects an empty title (400) and a missing task (404)", async () => {
     const { app } = await freshPlaybookApp({});
     expect((await request(app).post("/cases/c1/playbook").send({ title: "  " })).status).toBe(400);
