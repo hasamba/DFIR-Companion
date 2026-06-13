@@ -186,6 +186,35 @@ describe("detectImportKind — Linux evidence sources (#62)", () => {
   });
 });
 
+describe("detectImportKind — Wazuh", () => {
+  it("wazuh: JSON array of alerts (rule.level + rule.description + agent)", () => {
+    expect(detectImportKind("alerts.json", j([{
+      timestamp: "2024-01-15T10:30:00.000+0000",
+      rule: { level: 10, description: "Authentication failure", id: "5503", groups: ["authentication"] },
+      agent: { id: "001", name: "web-server-01" },
+    }]))).toBe("wazuh");
+  });
+  it("wazuh: NDJSON alerts", () => {
+    expect(detectImportKind("wazuh-alerts.json", ndjson({
+      timestamp: "2024-01-15T10:30:00.000+0000",
+      rule: { level: 7, description: "Suspicious activity", id: "9999" },
+      agent: { id: "002", name: "linux-host" },
+    }))).toBe("wazuh");
+  });
+  it("wazuh: API export envelope { data: { affected_items: [...] } }", () => {
+    expect(detectImportKind("export.json", j({
+      data: {
+        affected_items: [{
+          timestamp: "2024-01-15T10:30:00.000+0000",
+          rule: { level: 12, description: "Malware detected", id: "87105" },
+          agent: { id: "003", name: "endpoint-01" },
+        }],
+        total_affected_items: 1,
+      },
+    }))).toBe("wazuh");
+  });
+});
+
 describe("detectImportKind — logs & edges", () => {
   it("log: a line-oriented syslog file", () => {
     expect(detectImportKind("auth.log", "Jan  1 00:00:01 host sshd[1]: Failed password for root\nJan  1 00:00:02 host sshd[1]: Failed password for admin")).toBe("log");

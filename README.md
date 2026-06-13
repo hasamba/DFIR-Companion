@@ -182,6 +182,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Linux auditd** | raw `audit.log` / `ausearch` records, `aureport` tables | Record-type table (logins, account mgmt, sudo, SELinux, audit tampering) |
 | **systemd journald** | `journalctl -o json` / `-o json-pretty` | syslog PRIORITY + tradecraft bumps (sshd, sudo, useradd) |
 | **sysdig / Falco** | Falco alert JSON, sysdig `-j` event JSON | Falco rule priority; raw syscalls → Info telemetry |
+| **Wazuh** | `alerts.json` / NDJSON, or API export (`GET /security/events`) | `rule.level` (≥13 Critical, ≥10 High, ≥7 Medium) |
 | **CSV** | Velociraptor / EDR exports | — |
 | **Generic logs** | Firewall, syslog, VPN; repetitive lines → counted patterns | AI-triaged |
 
