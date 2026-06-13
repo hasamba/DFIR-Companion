@@ -1972,6 +1972,8 @@
         </div>
       </div>
     </section>
+
+    <section id="sec-beacons" style="grid-column: 1 / -1"><h2>Beacon Candidates<span class="ev-sub">periodic outbound channels — too regular to be human traffic (derived, no AI); a hunting lead, not a verdict</span></h2><div id="beacons">—</div></section>
     <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
@@ -5371,6 +5373,49 @@
       renderPhases();
     });
 
+    // ── Beacon Candidates (#82) ───────────────────────────────────────────────────────────
+    // Periodic outbound channels (source → dest:port) whose inter-arrival jitter is low enough to
+    // look like a C2 callback. Derived server-side (GET /cases/:id/beacon-candidates) from the
+    // network events; a hunting lead, NOT a verdict. Worst-first (external + most regular on top).
+    let beaconsData = [];
+    let beaconsTimer = null;
+    function loadBeacons(caseId) {
+      fetch(`/cases/${caseId}/beacon-candidates`).then(r => r.json()).then(b => {
+        beaconsData = Array.isArray(b) ? b : [];
+        renderBeacons();
+      }).catch(() => {});
+    }
+    function scheduleBeaconsReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(beaconsTimer);
+      beaconsTimer = setTimeout(() => loadBeacons(caseId), 800);
+    }
+    function renderBeacons() {
+      const el = document.getElementById("beacons");
+      if (!el) return;
+      if (!beaconsData.length) { el.innerHTML = "<span style='color:var(--c-9aa4b2)'>No periodic outbound channels detected in the network events.</span>"; return; }
+      const rows = beaconsData.map(b => {
+        const dest = (b.destPort !== undefined && b.destPort !== null) ? `${esc(b.destIp)}:${esc(b.destPort)}` : esc(b.destIp);
+        const when = (b.firstSeen !== b.lastSeen) ? `${esc(b.firstSeen)} → ${esc(b.lastSeen)}` : esc(b.firstSeen || "(undated)");
+        const sevColor = KC_SEV_COLOR[b.severity] || "var(--c-2a2f3a)";
+        return `<tr>` +
+          `<td><span class="sev-${esc(b.severity)}" style="color:${sevColor};font-weight:bold">${esc(b.severity)}</span>${b.external ? " <span style='color:var(--c-9aa4b2);font-size:10px'>ext</span>" : ""}</td>` +
+          `<td>${esc(b.source)}</td>` +
+          `<td><code>${dest}</code></td>` +
+          `<td title="mean inter-arrival interval">~${esc(b.intervalSeconds)}s</td>` +
+          `<td title="interval jitter (stddev as % of mean) — lower is more beacon-like">±${esc(b.jitterSeconds)}s (${esc(b.jitterPct)}%)</td>` +
+          `<td>${esc(b.eventCount)}</td>` +
+          `<td style="color:var(--c-9aa4b2);font-size:11px">${when}</td>` +
+          `</tr>`;
+      }).join("");
+      el.innerHTML =
+        `<div style="color:var(--c-9aa4b2);font-size:11px;margin-bottom:6px">Periodic traffic is a hunting lead, not a verdict — legitimate software also polls on a timer. Confirm the destination reputation and the owning process.</div>` +
+        `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
+        `<th>Severity</th><th>Source</th><th>Destination</th><th>Interval</th><th>Jitter</th><th>Events</th><th>When</th>` +
+        `</tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+
     // ── Adversary Hints (#46) ─────────────────────────────────────────────────────────────
     // Known ATT&CK groups ranked by technique overlap with the case — offline hypothesis fuel,
     // NOT attribution. Derived server-side (GET /cases/:id/adversary-hints) from the bundled MITRE
@@ -6503,6 +6548,7 @@
       loadAssetOverrides(caseId);
       loadEvidenceGraph(caseId);
       loadPhases(caseId);
+      loadBeacons(caseId);
       loadAdversaryHints(caseId);
       loadSwimlane(caseId);
       loadIocSources(caseId);
@@ -6556,7 +6602,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleAdversaryHintsReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleBeaconsReload(); scheduleAdversaryHintsReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "capture_ingest") {
           // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
@@ -7776,6 +7822,7 @@
       { id: "sec-swimlane",     label: "Timeline Swimlane" },
       { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
       { id: "sec-evidence",     label: "Evidence Chain" },
+      { id: "sec-beacons",      label: "Beacon Candidates" },
       { id: "sec-iocs",         label: "IOCs" },
       { id: "sec-exposure",     label: "Customer Exposure" },
       { id: "sec-questions",    label: "Key Investigative Questions" },
