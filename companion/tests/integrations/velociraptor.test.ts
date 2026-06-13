@@ -4,6 +4,7 @@ import {
   sanitizeVqlDurations,
   splitVqlStatements,
   VelociraptorClient,
+  extractMonitoredArtifacts,
   loadVelociraptorConfig,
   buildVelociraptorClient,
   matchClient,
@@ -649,5 +650,47 @@ describe("VelociraptorClient.listMonitoredArtifacts", () => {
   it("returns [] (no throw) when nothing is configured", async () => {
     const runner: VqlRunner = async () => ({ rows: [], raw: "" });
     expect(await new VelociraptorClient(cfg, runner).listMonitoredArtifacts()).toEqual([]);
+  });
+
+  it("walks a real GetClientMonitoringState() proto row (the default VQL shape)", async () => {
+    // One row, the whole ClientEventTable proto under `State` — artifacts.artifacts + specs + label_events.
+    const runner: VqlRunner = async () => ({ rows: [{ State: {
+      artifacts: {
+        artifacts: ["Generic.Client.Stats", "Windows.Events.ProcessCreation"],
+        specs: [{ artifact: "Generic.Client.Stats" }, { artifact: "Windows.Events.DNSQueries" }],
+      },
+      label_events: [
+        { label: "servers", artifacts: { artifacts: ["Windows.Events.ServiceCreation"] } },
+      ],
+    } }], raw: "" });
+    const out = await new VelociraptorClient(cfg, runner).listMonitoredArtifacts();
+    expect(out).toEqual([
+      "Generic.Client.Stats",
+      "Windows.Events.ProcessCreation",
+      "Windows.Events.DNSQueries",
+      "Windows.Events.ServiceCreation",
+    ]);
+  });
+});
+
+describe("extractMonitoredArtifacts", () => {
+  it("handles the bare (unwrapped) ClientEventTable proto", () => {
+    expect(extractMonitoredArtifacts([{ artifacts: { artifacts: ["A.B", "C.D"] } }])).toEqual(["A.B", "C.D"]);
+  });
+  it("tolerates PascalCase proto fields", () => {
+    expect(extractMonitoredArtifacts([{ State: { Artifacts: { Artifacts: ["A.B"], Specs: [{ Artifact: "C.D" }] } } }])).toEqual(["A.B", "C.D"]);
+  });
+  it("handles override shapes (bare strings / { artifact })", () => {
+    expect(extractMonitoredArtifacts(["A.B", { artifact: "C.D" }, { Name: "E.F" }])).toEqual(["A.B", "C.D", "E.F"]);
+  });
+  it("dedupes across the global table and label tables, dropping invalid names", () => {
+    expect(extractMonitoredArtifacts([{ State: {
+      artifacts: { artifacts: ["A.B", "bad name!", "A.B"] },
+      label_events: [{ artifacts: { artifacts: ["A.B", "C.D"] } }],
+    } }])).toEqual(["A.B", "C.D"]);
+  });
+  it("returns [] for empty / junk input", () => {
+    expect(extractMonitoredArtifacts([])).toEqual([]);
+    expect(extractMonitoredArtifacts([null, 5, { nope: 1 }])).toEqual([]);
   });
 });

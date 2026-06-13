@@ -4296,6 +4296,7 @@
     let veloEditingId = null;          // id of the bundle being edited (null = building a new one)
     let _veloClients = [];             // last-loaded client inventory (host ↔ client id), for the monitor datalist
     let _veloEventArtifacts = [];      // last-loaded CLIENT_EVENT artifact list (monitor picker)
+    let _veloMonAutoBrowsed = false;   // one-shot: auto-populate the event-artifact picker when Velociraptor is on
 
     function veloCaseId() { const el = document.getElementById("caseId"); return el ? el.value.trim() : ""; }
 
@@ -4303,6 +4304,8 @@
       const note = document.getElementById("veloDisabledNote");
       if (note) note.style.display = veloEnabled ? "none" : "block";
       if (_veloBundles) renderVeloBundles(_veloBundles);   // re-render so Run buttons reflect state
+      // As soon as Velociraptor is known-on, pre-load the CLIENT_EVENT picker (once) so it's not empty.
+      if (veloEnabled && !_veloMonAutoBrowsed) { _veloMonAutoBrowsed = true; veloMonBrowse(); }
     }
 
     function loadVeloBundles() {
@@ -4381,6 +4384,7 @@
           if (!j.ok) { if (msg) msg.textContent = "⚠ configured but unreachable: " + (j.error || "the Velociraptor server is not responding"); return; }
           if (msg) msg.textContent = `✓ connected — ${j.clients || 0} enrolled client(s)`;
           loadVeloClients();
+          _veloMonAutoBrowsed = false;   // re-populate the event-artifact picker against the (re)connected server
           loadVeloMonitors(veloCaseId());
         })
         .catch(e => { if (msg) msg.textContent = "error: " + e.message; })
@@ -4534,6 +4538,9 @@
 
     // ── Live CLIENT_EVENT monitoring (#84) ────────────────────────────────────────────────────
     function loadVeloMonitors(caseId) {
+      // Populate the CLIENT_EVENT picker once when Velociraptor is on, so the dropdown isn't empty
+      // and the analyst doesn't have to click "Browse" first (it can still be re-browsed manually).
+      if (veloEnabled && !_veloMonAutoBrowsed) { _veloMonAutoBrowsed = true; veloMonBrowse(); }
       if (!caseId) { renderVeloMonitors([]); return; }
       fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors`).then(r => r.ok ? r.json() : []).then(j => renderVeloMonitors(Array.isArray(j) ? j : [])).catch(() => {});
     }
@@ -4620,7 +4627,10 @@
         .then(({ ok, j }) => {
           if (!ok || j.error) { if (sel) sel.innerHTML = `<option value="">error: ${esc(j.error || "failed")}</option>`; return; }
           _veloEventArtifacts = j.artifacts || [];
-          if (sel) sel.innerHTML = `<option value="">— pick a CLIENT_EVENT artifact —</option>` + _veloEventArtifacts.map(a => `<option value="${escAttr(a.name)}" title="${escAttr(a.description || "")}">${esc(a.name)}</option>`).join("");
+          if (sel) {
+            const head = _veloEventArtifacts.length ? `— pick a CLIENT_EVENT artifact (${_veloEventArtifacts.length}) —` : `— none found — type a name below instead —`;
+            sel.innerHTML = `<option value="">${esc(head)}</option>` + _veloEventArtifacts.map(a => `<option value="${escAttr(a.name)}" title="${escAttr(a.description || "")}">${esc(a.name)}</option>`).join("");
+          }
         })
         .catch(e => { if (sel) sel.innerHTML = `<option value="">error: ${esc(e.message)}</option>`; })
         .finally(() => { if (btn) btn.disabled = false; });

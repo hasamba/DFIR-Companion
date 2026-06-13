@@ -226,13 +226,55 @@ const DEFAULT_MONITOR_ALL_VQL =
   "SELECT * FROM foreach(row={ SELECT client_id FROM clients() }, " +
   "query={ SELECT *, client_id AS ClientId FROM source(client_id=client_id, artifact='__ARTIFACT__', start_time=__START__, end_time=__END__) }) LIMIT __LIMIT__";
 
-// Default VQL to list the client-event artifacts ALREADY enabled in Velociraptor's client monitoring
-// table (#84 follow-up — "listen to whatever is already configured"). `GetClientMonitoringState()`
-// returns the monitoring proto; `.artifacts.artifacts` is the list of artifact names for the all-clients
-// table. Version-sensitive → override with DFIR_VELOCIRAPTOR_MONITORED_VQL (return an `artifact` column).
+// Default VQL to read Velociraptor's client-event monitoring table (#84 follow-up — "listen to
+// whatever is already configured"). We return the WHOLE `GetClientMonitoringState()` proto as one row
+// and walk it in TypeScript (`extractMonitoredArtifacts`) — far more robust than proto-path-walking in
+// VQL, which is brittle across versions (the proto nests `artifacts.artifacts` + `artifacts.specs` +
+// per-label `label_events`, and protojson casing varies). Override with DFIR_VELOCIRAPTOR_MONITORED_VQL
+// to return either the raw state (one `State` column) or simple `{ artifact }` rows — both are handled.
 const DEFAULT_MONITORED_VQL =
-  "LET st = SELECT GetClientMonitoringState() AS S FROM scope()\n" +
-  "SELECT _value AS artifact FROM foreach(row=st[0].S.artifacts.artifacts)";
+  "SELECT GetClientMonitoringState() AS State FROM scope()";
+
+// Pure: pull the configured client-event artifact NAMES out of whatever `listMonitoredArtifacts`' VQL
+// returned. Handles (a) the raw `GetClientMonitoringState()` proto (wrapped in `State`/`state`, or bare)
+// — walking `artifacts.artifacts` (repeated name) + `artifacts.specs[].artifact` + each
+// `label_events[].artifacts.…`, tolerant of PascalCase/camelCase — and (b) a custom override returning
+// bare strings or `{ artifact | Name | name }` rows. De-duplicated, validated, order-preserving.
+export function extractMonitoredArtifacts(rows: readonly unknown[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (v: unknown): void => {
+    const name = String(v ?? "").trim();
+    if (name && ARTIFACT_RE.test(name) && !seen.has(name)) { seen.add(name); out.push(name); }
+  };
+  const ci = (o: Record<string, unknown>, ...keys: string[]): unknown => {
+    for (const k of keys) if (o[k] != null) return o[k];
+    return undefined;
+  };
+  const walkTable = (tbl: unknown): void => {
+    if (!tbl || typeof tbl !== "object") return;
+    const t = tbl as Record<string, unknown>;
+    const arts = ci(t, "artifacts", "Artifacts");
+    if (arts && typeof arts === "object") {
+      const a = arts as Record<string, unknown>;
+      const names = ci(a, "artifacts", "Artifacts");
+      if (Array.isArray(names)) names.forEach(add);
+      const specs = ci(a, "specs", "Specs");
+      if (Array.isArray(specs)) for (const s of specs) if (s && typeof s === "object") add(ci(s as Record<string, unknown>, "artifact", "Artifact"));
+    }
+    const labels = ci(t, "label_events", "labelEvents", "LabelEvents");
+    if (Array.isArray(labels)) labels.forEach(walkTable);
+  };
+  for (const row of rows) {
+    if (typeof row === "string") { add(row); continue; }
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const simple = ci(r, "artifact", "Name", "name");           // override `{ artifact }` shape
+    if (typeof simple === "string") add(simple);
+    walkTable(ci(r, "State", "state") ?? r);                    // raw GetClientMonitoringState() proto
+  }
+  return out;
+}
 
 export const ALL_CLIENTS = "*";             // sentinel client id meaning "every enrolled client"
 const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;     // valid Velociraptor artifact / source name
@@ -538,10 +580,12 @@ export class VelociraptorClient {
   // List the server's artifacts of a given type — CLIENT (collectable, for triage bundles) or
   // CLIENT_EVENT (continuous client monitoring, for the live-monitor picker, #84). Returns metadata
   // only (no evidence), so the per-query row cap is NOT applied — a server can define hundreds. The
-  // type is constrained to the two literals, so it's injection-safe inside the regex.
+  // type is constrained to the two literals, so it's injection-safe inside the literal. The match is
+  // CASE-INSENSITIVE via `lowercase(string=type)` — `artifact_definitions()` reports `CLIENT_EVENT`
+  // (uppercase) on some versions, which an anchored case-sensitive compare would miss → empty picker.
   async listClientArtifacts(type: "client" | "client_event" = "client"): Promise<VeloArtifactInfo[]> {
     const kind = type === "client_event" ? "client_event" : "client";
-    const program = `SELECT name, description, type FROM artifact_definitions() WHERE type =~ '^${kind}$' ORDER BY name`;
+    const program = `SELECT name, description, type FROM artifact_definitions() WHERE lowercase(string=type) = '${kind}' ORDER BY name`;
     const rows = await this.runRaw(program);
     const out: VeloArtifactInfo[] = [];
     for (const row of rows) {
@@ -551,6 +595,14 @@ export class VelociraptorClient {
       out.push({ name, description: String(r.description ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 300) });
     }
     return out;
+  }
+
+  // Run the "configured client-event artifacts" VQL and return the RAW rows — used for diagnostics when
+  // the monitoring-table read comes back empty, so the analyst's server log shows the actual proto
+  // shape (and what to put in DFIR_VELOCIRAPTOR_MONITORED_VQL). Never throws past runRaw.
+  async monitoringStateRaw(): Promise<unknown[]> {
+    const program = this.config.monitoredVql && this.config.monitoredVql.trim() ? this.config.monitoredVql : DEFAULT_MONITORED_VQL;
+    return this.runRaw(program);
   }
 
   // Read a CLIENT_EVENT (monitoring) artifact's rows over [startEpoch, endEpoch] (epoch seconds) — the
@@ -585,19 +637,7 @@ export class VelociraptorClient {
   // version where the proto differs or to include label-scoped tables). Returns de-duplicated artifact
   // names; empty list (not a throw) when nothing is configured, so the caller can degrade gracefully.
   async listMonitoredArtifacts(): Promise<string[]> {
-    const program = this.config.monitoredVql && this.config.monitoredVql.trim() ? this.config.monitoredVql : DEFAULT_MONITORED_VQL;
-    const rows = await this.runRaw(program);
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const row of rows) {
-      // Tolerate a few shapes: { artifact }, { Name }, { name }, or a bare string row.
-      const r = (row ?? {}) as { artifact?: unknown; Name?: unknown; name?: unknown };
-      const name = String(
-        typeof row === "string" ? row : (r.artifact ?? r.Name ?? r.name ?? ""),
-      ).trim();
-      if (name && ARTIFACT_RE.test(name) && !seen.has(name)) { seen.add(name); out.push(name); }
-    }
-    return out;
+    return extractMonitoredArtifacts(await this.monitoringStateRaw());
   }
 
   // Launch a HUNT that collects a CHOSEN SET of existing artifacts (a saved bundle) across the fleet,
