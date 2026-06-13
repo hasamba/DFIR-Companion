@@ -225,4 +225,21 @@ describe("detectImportKind — logs & edges", () => {
   it("unknown: malformed JSON", () => {
     expect(detectImportKind("x.json", "{ not valid json ")).toBe("unknown");
   });
+  it("thehive: single case object", () => {
+    expect(detectImportKind("case.json", j({ _type: "case", title: "Incident", severity: 3 }))).toBe("thehive");
+  });
+  it("thehive: array of alerts", () => {
+    expect(detectImportKind("alerts.json", j([{ _type: "alert", title: "TOR login", severity: 2 }]))).toBe("thehive");
+  });
+  it("thehive: search result container { data: [...] }", () => {
+    expect(detectImportKind("search.json", j({ data: [{ _type: "case", title: "x", severity: 1 }] }))).toBe("thehive");
+  });
+  it("thehive: observable array (dataType+data, ioc:true)", () => {
+    expect(detectImportKind("obs.json", j([{ dataType: "ip", data: "1.2.3.4", ioc: true }]))).toBe("thehive");
+  });
+  it("NOT thehive: Elasticsearch hit wrapper with _source is skipped", () => {
+    // An ES hit carrying a TheHive-like `_type` must NOT be detected as thehive.
+    const esHit = { _type: "case", _source: { title: "x" }, _index: "thehive_cases", _id: "abc123" };
+    expect(detectImportKind("es.json", j([esHit]))).not.toBe("thehive");
+  });
 });
