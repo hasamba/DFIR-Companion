@@ -2061,7 +2061,7 @@
       .pb-pri-medium{background:var(--c-1f3a52);color:var(--c-6fb3e0)}
       .pb-pri-low{background:var(--c-23304a);color:var(--c-8aa0c0)}
       .pb-src{font-size:10px;color:var(--c-52617a)}
-      .pb-id{font-size:10px;font-family:monospace;color:var(--c-3d4d66);user-select:all}
+      .pb-shortid{font-size:11px;font-family:monospace;color:var(--c-6aa9ff);user-select:all;flex-shrink:0}
       .pb-finding-link{font-size:10px;color:var(--c-6fb3e0);text-decoration:none}
       .pb-finding-link:hover{text-decoration:underline}
       .pb-move{display:flex;gap:3px;margin-left:auto}
@@ -3296,7 +3296,6 @@
             `<span class="pb-pri pb-pri-${escAttr(t.priority)}">${esc(t.priority)}</span>` +
             `<span class="pb-title">${esc(t.title)}</span>` +
             `<span class="pb-src">${src}</span>${findingLink}` +
-            `<span class="pb-id">${esc(t.id)}</span>` +
             `<span class="pb-move">` +
               `<button onclick="pbMove('${escAttr(t.id)}',-1)" title="Move up">▲</button>` +
               `<button onclick="pbMove('${escAttr(t.id)}',1)" title="Move down">▼</button>` +
@@ -3304,6 +3303,7 @@
             `</span>` +
           `</div>` + desc +
           `<div class="pb-row2">` +
+            (t.shortId ? `<span class="pb-shortid">${esc(t.shortId)}</span>` : "") +
             `<input class="pb-assignee" placeholder="assignee" value="${escAttr(t.assignee || "")}" onchange="pbPatch('${escAttr(t.id)}',{assignee:this.value})" />` +
             `<input class="pb-due" type="date" value="${escAttr(t.dueDate || "")}" onchange="pbPatch('${escAttr(t.id)}',{dueDate:this.value})" title="Due date" />` +
           `</div>` +
