@@ -6,6 +6,7 @@ import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
+import { detectTimelineGaps, gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDetect.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
@@ -261,6 +262,31 @@ function attackPhases(state: InvestigationState, lines: string[]): void {
       `${p.inferredTechniques.map(attackTechniqueMd).join(", ")} |`,
     );
   });
+  lines.push("");
+}
+
+// 3.3 — timeline coverage: suspiciously long silent periods in the forensic timeline. A COMPLETE gap
+// (every source dark) is the classic signature of cleared logs / a stopped collector; a PARTIAL gap is
+// a single-tool coverage blindspot. Deterministic, no AI — a lead, not proof of tampering. Thresholds:
+// DFIR_GAP_MIN_MINUTES / DFIR_GAP_DENSITY_FACTOR / DFIR_GAP_ACTIVE_HOURS.
+function timelineCoverage(state: InvestigationState, lines: string[]): void {
+  lines.push("### 3.3 Timeline coverage", "");
+  lines.push(`_${GAP_CAVEAT}_`, "");
+  const gaps = detectTimelineGaps(state.forensicTimeline, gapEnvOptions());
+  if (gaps.length === 0) {
+    lines.push("_No suspicious silent periods detected in the forensic timeline._", "");
+    return;
+  }
+  lines.push("| Severity | Gap | Duration | Silent sources | Still active |", "| --- | --- | --- | --- | --- |");
+  for (const g of gaps) {
+    const kind = g.complete ? "complete silence" : "partial";
+    const silent = g.silentSources.length ? g.silentSources.join(", ") : "all sources";
+    const active = g.activeSources.length ? g.activeSources.join(", ") : "—";
+    lines.push(
+      `| ${g.severity} (${kind}) | ${cellMd(`${g.startTimestamp} → ${g.endTimestamp}`)} | ${cellMd(g.durationLabel)} | ` +
+      `${cellMd(silent)} | ${cellMd(active)} |`,
+    );
+  }
   lines.push("");
 }
 
@@ -621,6 +647,7 @@ export function renderMarkdownReport(
       incidentTimeline(state, lines);
       narrativeTimeline(state, lines);
       attackPhases(state, lines);
+      timelineCoverage(state, lines);
     },
     investigation: () => investigation(state, lines, exposure, assetGraph),
     conclusions: () => conclusions(state, meta, lines),

@@ -47,6 +47,25 @@ describe("renderMarkdownReport", () => {
     expect(md).toMatch(/https:\/\/attack\.mitre\.org\/groups\/G\d{4}\//);
   });
 
+  it("renders a complete-silence timeline gap in the §3.3 coverage section", () => {
+    const state = emptyState("c1");
+    // Dense one-minute cadence, then a 2-hour blackout, then activity resumes — one source.
+    let ms = Date.parse("2026-05-28T08:00:00.000Z");
+    for (let i = 0; i < 8; i++) {
+      state.forensicTimeline.push({ id: `a${i}`, timestamp: new Date(ms).toISOString(), description: "logon",
+        severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sources: ["EventLog"] });
+      ms += 60_000;
+    }
+    state.forensicTimeline.push({ id: "b0", timestamp: "2026-05-28T10:07:00.000Z", description: "logon",
+      severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sources: ["EventLog"] });
+
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("### 3.3 Timeline coverage");
+    expect(md).toContain("complete silence");
+    expect(md).toContain("lead, not proof"); // the caveat
+    expect(md).toContain("| Severity | Gap | Duration | Silent sources | Still active |");
+  });
+
   it("shows a placeholder for adversary hints when the case has no techniques", () => {
     const md = renderMarkdownReport(emptyState("c9"));
     expect(md).toContain("#### 4.6.1 Adversary group hints");
@@ -70,6 +89,7 @@ describe("renderMarkdownReport", () => {
       "## 3 Timeline of events",
       "### 3.1 Incident timeline",
       "### 3.2 Narrative timeline",
+      "### 3.3 Timeline coverage",
       "## 4 Investigation",
       "## 5 Conclusions and recommendations",
     ]) {
