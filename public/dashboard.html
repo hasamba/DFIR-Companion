@@ -1562,10 +1562,11 @@
       <div class="stab-pane" id="stab-velociraptor">
         <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Build named bundles of Velociraptor CLIENT artifacts, then run one as a hunt — results (and any uploaded JSON report, e.g. THOR/Hayabusa) are auto-collected after a delay, imported, and synthesized into the case. Bundles are shared across cases; running a bundle uses the case you're connected to. Results appear on the dashboard.</p>
         <div id="veloDisabledNote" style="display:none;font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px;background:var(--c-1b2030);border:1px solid var(--c-2a3146);border-radius:6px;padding:8px 10px">
-          Velociraptor API not configured — you can still build and edit bundles, but <strong>running a hunt</strong> needs the <strong>API config path</strong> set on the <strong>Integrations</strong> tab (then restart the server).
+          Velociraptor API not configured — you can still build and edit bundles, but <strong>running a hunt</strong> needs the <strong>API config path</strong> set on the <strong>Integrations</strong> tab. After setting it (or once the Velociraptor server is up), click <strong>Reconnect</strong> below — no server restart needed.
         </div>
         <!-- Client inventory (#70): the host ↔ client_id map a single-endpoint collection resolves against. -->
         <div id="veloClientsCard" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;background:var(--c-161b28);border:1px solid var(--c-2a3146);border-radius:6px">
+          <button id="veloReconnectBtn" type="button" title="Re-read the Velociraptor config from .env, rebuild the connection, and refresh the client list. Use this after configuring Velociraptor or when the Velociraptor server was down at startup — no companion restart needed.">🔌 Reconnect</button>
           <button id="veloRefreshClientsBtn" type="button" title="Snapshot every enrolled Velociraptor client (hostname / FQDN ↔ client id). A single-endpoint playbook collection resolves the host from this inventory instead of a live lookup.">↻ Refresh client list</button>
           <span id="veloClientsMsg" style="font-size:12px;color:var(--c-9aa4b2)">—</span>
         </div>
@@ -4350,14 +4351,37 @@
     function doRefreshVeloClients() {
       const btn = document.getElementById("veloRefreshClientsBtn");
       const msg = document.getElementById("veloClientsMsg");
-      if (!veloEnabled) { if (msg) msg.textContent = "Velociraptor API not configured (set the API config path on the Integrations tab, then restart)"; return; }
+      if (!veloEnabled) { if (msg) msg.textContent = "Velociraptor API not configured — click Reconnect (after setting the API config path on Integrations)"; return; }
       if (btn) btn.disabled = true;
       if (msg) msg.textContent = "querying the Velociraptor server…";
       fetch("/velociraptor/clients/refresh", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
         .then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
-          if (!ok || j.error) { if (msg) msg.textContent = "error: " + (j.error || "refresh failed") + " — restart the companion server if this 404s"; return; }
+          if (!ok || j.error) { if (msg) msg.textContent = "error: " + (j.error || "refresh failed") + " — try Reconnect if the server was down"; return; }
           renderVeloClients({ updatedAt: j.updatedAt, clients: j.clients || [] });
+        })
+        .catch(e => { if (msg) msg.textContent = "error: " + e.message; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    // Re-read .env, rebuild the Velociraptor client, and refresh the inventory (the reachability probe).
+    // Works even when the API wasn't configured at boot or the server was down — no companion restart.
+    function doVeloReconnect() {
+      const btn = document.getElementById("veloReconnectBtn");
+      const msg = document.getElementById("veloClientsMsg");
+      if (btn) btn.disabled = true;
+      if (msg) msg.textContent = "reconnecting to the Velociraptor server…";
+      fetch("/velociraptor/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok) { if (msg) msg.textContent = "error: " + (j.error || "reconnect failed") + " — restart the companion server if this 404s"; return; }
+          // Reflect the (possibly newly) configured client across the velo UI without a page reload.
+          veloEnabled = !!j.configured;
+          applyVeloEnabled();
+          if (!j.configured) { if (msg) msg.textContent = "Velociraptor API not configured — set the API config path on the Integrations tab, Save, then Reconnect"; return; }
+          if (!j.ok) { if (msg) msg.textContent = "⚠ configured but unreachable: " + (j.error || "the Velociraptor server is not responding"); return; }
+          if (msg) msg.textContent = `✓ connected — ${j.clients || 0} enrolled client(s)`;
+          loadVeloClients();
+          loadVeloMonitors(veloCaseId());
         })
         .catch(e => { if (msg) msg.textContent = "error: " + e.message; })
         .finally(() => { if (btn) btn.disabled = false; });
@@ -4861,6 +4885,7 @@
     (function wireVeloTriage() {
       const browse = document.getElementById("veloBrowseBtn"); if (browse) browse.onclick = veloBrowseArtifacts;
       const refreshClients = document.getElementById("veloRefreshClientsBtn"); if (refreshClients) refreshClients.onclick = doRefreshVeloClients;
+      const reconnect = document.getElementById("veloReconnectBtn"); if (reconnect) reconnect.onclick = doVeloReconnect;
       const addM = document.getElementById("veloAddManualBtn"); if (addM) addM.onclick = veloAddManual;
       const save = document.getElementById("veloSaveBundleBtn"); if (save) save.onclick = veloSaveBundle;
       const neu = document.getElementById("veloNewBundleBtn"); if (neu) neu.onclick = () => { veloClearBuilder(); const m = document.getElementById("veloBuilderMsg"); if (m) m.textContent = ""; };

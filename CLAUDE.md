@@ -438,7 +438,13 @@ can re-read `DFIR_IRIS_*` from `.env` (`reloadEnvPrefix`), rebuild via the injec
 and ping — applying config or IRIS coming back online WITHOUT the #1-gotcha restart), Timesketch, and
 **Velociraptor API** (`velociraptorClient` →
 `integrations/velociraptor/velociraptorApi.ts`; drives the `velociraptor` binary's `--api_config`
-through an **injectable runner** — tests never spawn). The dashboard's "Run hunt (all clients)"
+through an **injectable runner** — tests never spawn). Like IRIS, it has a **reconnect**: `POST
+/velociraptor/reconnect` (Settings → Velociraptor → Reconnect) `reloadEnvPrefix("DFIR_VELOCIRAPTOR_")` →
+rebuild via the injectable `rebuildVelociraptorClient` (reassigns `options.velociraptorClient`, which every
+route reads at call time) → refresh the inventory (doubles as the reachability probe) → re-arm monitors —
+applying newly-saved config or the server coming back online WITHOUT the #1-gotcha restart. The startup
+inventory refresh **retries with backoff** for the same reason (Velociraptor down at boot self-heals). The
+dashboard's "Run hunt (all clients)"
 button does NOT run server-side: `launchHunt()` packages the pivot VQL as a **CLIENT artifact**
 (`artifact_set`) and launches a **hunt** across all endpoints (`hunt`); `huntResults()` reads rows
 back addressed as `artifact/source`. Routes `POST /velociraptor/hunt` + `/velociraptor/hunt-results`
