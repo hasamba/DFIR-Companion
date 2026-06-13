@@ -312,6 +312,36 @@ describe("renderMarkdownReport", () => {
     expect(md).toContain("credential material present");
   });
 
+  it("renders the §4.9 beacon candidates section — placeholder when none, a row for a periodic channel", () => {
+    const empty = emptyState("c1");
+    const mdEmpty = renderMarkdownReport(empty);
+    expect(mdEmpty).toContain("### 4.9 Beacon candidates");
+    expect(mdEmpty).toContain("_No periodic outbound channels detected in the network events._");
+
+    const beaconing = emptyState("c1");
+    const start = Date.parse("2026-05-28T00:00:00.000Z");
+    for (let i = 0; i < 6; i++) {
+      beaconing.forensicTimeline.push({
+        id: `n${i}`,
+        timestamp: new Date(start + i * 60_000).toISOString(),
+        description: "WIN-01 → 185.10.20.30",
+        severity: "Info",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "WIN-01",
+        dstIp: "185.10.20.30",
+        port: 443,
+        action: "network_send",
+      });
+    }
+    const md = renderMarkdownReport(beaconing);
+    expect(md).toContain("### 4.9 Beacon candidates");
+    expect(md).toContain("185.10.20.30:443");
+    expect(md).toContain("WIN-01");
+    expect(md).not.toContain("_No periodic outbound channels detected");
+  });
+
   it("renders the narrative timeline section from state when populated, placeholder when empty", () => {
     const empty = emptyState("c1");
     const mdEmpty = renderMarkdownReport(empty);

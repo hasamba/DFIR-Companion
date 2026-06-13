@@ -15,6 +15,7 @@ import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
+import { detectBeacons, beaconEnvOptions, type BeaconCandidate } from "../analysis/beaconDetect.js";
 import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../analysis/swimlane.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
@@ -159,6 +160,14 @@ export class ReportWriter {
     const state = await this.loadFilteredState(caseId);
     const gapSeconds = Number(process.env.DFIR_PHASE_GAP_S) || DEFAULT_GAP_SECONDS;
     return buildAttackPhases(state.forensicTimeline, { gapSeconds });
+  }
+
+  // Beacon / C2 candidates (#82): outbound connection channels whose inter-arrival intervals are too
+  // regular to be human traffic, derived on demand with the same scope/legitimate filtering as the
+  // report. Thresholds from DFIR_BEACON_MIN_COUNT / DFIR_BEACON_MAX_JITTER_PCT. No AI call.
+  async beaconCandidates(caseId: string): Promise<BeaconCandidate[]> {
+    const state = await this.loadFilteredState(caseId);
+    return detectBeacons(state.forensicTimeline, beaconEnvOptions());
   }
 
   // Swimlane data for the visual timeline chart — events grouped into lanes by the chosen

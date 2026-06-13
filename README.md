@@ -124,6 +124,10 @@ For each case the AI builds and keeps up to date:
 - **Attack phases** — the timeline grouped into temporal **bursts** (activity clustered
   by time gap), each labelled with its dominant ATT&CK tactic — the *when did each stage
   happen* view, complementary to the categorical kill chain. Deterministic, no AI call.
+- **Beacon / C2 detection** — outbound connection channels (host → dest:port) whose
+  inter-arrival intervals are too regular to be human traffic, the classic C2 callback
+  signature. Derived from the network events; severity High for public destinations. A
+  hunting lead, not a verdict. Deterministic, no AI call. Dashboard panel + report §4.9.
 - **Adversary hints** — known **MITRE ATT&CK groups** ranked by how much their technique
   set overlaps the case's, as early hypothesis fuel. Offline (a bundled dataset, no
   AI/network); sub-technique-aware, so an **exact** sub-technique match (highlighted) outranks
@@ -608,6 +612,8 @@ The token is stored in `notifications/config.json` (beside `cases/`) and is **ne
 | `DFIR_HUNT_PLATFORMS` | all | Comma-separated platform allowlist for hunt-pivot cards: `velociraptor`, `defender`, `elastic`, `splunk`, `sigma`, `yara`, `suricata` |
 | `DFIR_CORRELATE_WINDOW_S` | `2` | Time window (s) for same-path cross-source event merge |
 | `DFIR_PHASE_GAP_S` | `300` | Gap between events (s) that starts a new attack phase |
+| `DFIR_BEACON_MIN_COUNT` | `5` | Minimum connection events to a (host → dest:port) channel before it's considered for beacon detection |
+| `DFIR_BEACON_MAX_JITTER_PCT` | `20` | Max interval jitter (stddev as % of mean) for a channel to count as a beacon — lower = stricter |
 | `DFIR_DEDUP` | `on` | Skip AI analysis of a screenshot **only when it's byte-identical** to the previous capture (SHA-256 exact match — the screen didn't change). Any difference is analyzed; still stored as evidence either way. Set `off` to analyze **every** screenshot |
 
 Example `.env` (two-tier OpenRouter setup):

@@ -865,6 +865,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Beacon / C2 candidates (#82): outbound connection channels whose inter-arrival intervals are too
+  // regular to be human traffic, derived on demand from the forensic timeline's network events (same
+  // scope/legitimate filtering as the report). Hunting leads, not verdicts. Powers the dashboard panel.
+  app.get("/cases/:id/beacon-candidates", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.beaconCandidates(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Per-IOC corroboration: { iocId: [tools that observed it] }, derived on demand by matching each
   // IOC value against the forensic events' sources (same scope/legitimate filtering as the report).
   // Powers the dashboard's "⊕ N sources" badge on IOCs (#35 Phase 3).

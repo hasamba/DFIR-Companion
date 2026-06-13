@@ -5,6 +5,7 @@ import { deriveGlossary } from "./glossary.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
+import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
@@ -419,6 +420,34 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
   }
 
   chainOfEvidence(state, lines);
+  beaconCandidates(state, lines);
+}
+
+// 4.9 Beacon candidates — outbound connection channels (source host → destination IP:port) whose
+// inter-arrival intervals are too regular to be human traffic, the classic C2 callback signature.
+// Derived from the forensic timeline's network events; a hunting lead, NOT a verdict (legitimate
+// software also polls on a timer). Thresholds: DFIR_BEACON_MIN_COUNT / DFIR_BEACON_MAX_JITTER_PCT.
+function beaconCandidates(state: InvestigationState, lines: string[]): void {
+  lines.push("### 4.9 Beacon candidates", "");
+  lines.push(`_${BEACON_CAVEAT}_`, "");
+  const beacons = detectBeacons(state.forensicTimeline, beaconEnvOptions());
+  if (beacons.length === 0) {
+    lines.push("_No periodic outbound channels detected in the network events._", "");
+    return;
+  }
+  lines.push(
+    "| Severity | Source | Destination | Interval | Jitter | Events | When |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+  );
+  for (const b of beacons) {
+    const dest = b.destPort !== undefined ? `${b.destIp}:${b.destPort}` : b.destIp;
+    const when = b.firstSeen !== b.lastSeen ? `${b.firstSeen} → ${b.lastSeen}` : b.firstSeen;
+    lines.push(
+      `| ${b.severity}${b.external ? " (external)" : ""} | ${cellMd(b.source)} | ${cellMd(dest)} | ` +
+        `~${b.intervalSeconds}s | ±${b.jitterSeconds}s (${b.jitterPct}%) | ${b.eventCount} | ${cellMd(when)} |`,
+    );
+  }
+  lines.push("");
 }
 
 // 4.8 Chain of evidence — the causal view derived from the forensic timeline: which process
