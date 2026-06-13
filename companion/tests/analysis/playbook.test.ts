@@ -114,7 +114,8 @@ describe("mergePlaybook", () => {
     };
     const seeds = derivePlaybookTasks({ ...emptyState("c1"), nextSteps: [nextStep()] });
     const { tasks } = mergePlaybook([custom], seeds, NOW);
-    expect(tasks.find((t) => t.id === "custom:1")).toEqual(custom);
+    // The custom fields are left intact; merge only backfills a sequential shortId (T001 first).
+    expect(tasks.find((t) => t.id === "custom:1")).toEqual({ ...custom, shortId: "T001" });
     expect(tasks).toHaveLength(2);
   });
 });
