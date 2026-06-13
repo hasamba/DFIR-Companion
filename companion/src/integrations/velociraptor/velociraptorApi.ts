@@ -176,6 +176,17 @@ export interface ArtifactHuntLaunchResult {
   guiUrl?: string;
 }
 
+// Result of launching a single-endpoint COLLECTION (issue #70 — collect_client on ONE host).
+// Distinct from a hunt (which fans out across the fleet): the VQL runs only on the resolved client.
+export interface CollectLaunchResult {
+  clientId: string;     // the Velociraptor client the collection runs on
+  flowId: string;       // the launched flow id (F.…)
+  hostname: string;     // the host the analyst asked for (echoed back)
+  artifact: string;     // the Custom.* artifact built from the VQL
+  sources: string[];    // its source names (one per pivot statement) — to read results back via collectionResults
+  guiUrl?: string;      // deep link to the flow in the Velociraptor GUI (when DFIR_VELOCIRAPTOR_GUI_URL set)
+}
+
 // A file UPLOADED by a hunt's collections (not a result row). Some artifacts (offline collectors,
 // THOR/Hayabusa wrappers like Generic.Scanner.ThorZIP) put their real triage data in an uploaded
 // JSON file rather than result rows — that JSON is what we ingest.
@@ -197,6 +208,50 @@ const DEFAULT_UPLOAD_VQL =
 
 const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;     // valid Velociraptor artifact / source name
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/;        // valid hunt id
+const FLOW_RE = /^F\.[A-Za-z0-9]+$/;        // valid collection flow id (collect_client)
+const CLIENT_RE = /^C\.[A-Za-z0-9]+$/;      // valid Velociraptor client id
+
+// One enrolled endpoint as the Companion records it in the persisted client INVENTORY (issue #70).
+export interface VeloClientRecord {
+  clientId: string;
+  hostname: string;
+  fqdn: string;
+  lastSeen?: string;
+}
+
+// Normalize one `clients()` row → a record (or null if it has no usable client id). Casing-tolerant:
+// `client_id`/`ClientId`, and `os_info.hostname`/`os_info.Hostname` (+ `fqdn`/`Fqdn`) differ across
+// Velociraptor versions and depending on whether the VQL aliases the columns.
+export function normalizeClientRow(row: unknown): VeloClientRecord | null {
+  const r = (row ?? {}) as { client_id?: unknown; ClientId?: unknown; os_info?: Record<string, unknown>; OsInfo?: Record<string, unknown>; last_seen_at?: unknown; LastSeen?: unknown };
+  const clientId = String(r.client_id ?? r.ClientId ?? "");
+  if (!CLIENT_RE.test(clientId)) return null;
+  const os = (r.os_info ?? r.OsInfo ?? {}) as Record<string, unknown>;
+  const hostname = String(os.hostname ?? os.Hostname ?? "").trim();
+  const fqdn = String(os.fqdn ?? os.Fqdn ?? "").trim();
+  const last = r.last_seen_at ?? r.LastSeen;
+  return { clientId, hostname, fqdn, ...(last != null && last !== "" ? { lastSeen: String(last) } : {}) };
+}
+
+// Pure: the best client record for a target host, from the inventory. Robust to the two real-world
+// mismatches that make a naive `clients(search='host:<fqdn>')` miss: the client enrolled with its
+// SHORT name while the case asset is an FQDN (or vice-versa). Exact full match (hostname or FQDN) wins
+// over a first-label match; case-insensitive. Returns undefined when nothing matches.
+export function matchClient(records: readonly VeloClientRecord[], host: string): VeloClientRecord | undefined {
+  const target = String(host || "").trim().toLowerCase();
+  if (!target) return undefined;
+  const targetShort = target.split(".")[0];
+  const valid = (records ?? []).filter((r) => r && CLIENT_RE.test(r.clientId));
+  // Pass 1: exact full match on hostname or FQDN (the safest disambiguation).
+  for (const r of valid) if (r.hostname.toLowerCase() === target || r.fqdn.toLowerCase() === target) return r;
+  // Pass 2: first-label match either way ("WIN11" ↔ "WIN11.windomain.local").
+  for (const r of valid) {
+    const hn = r.hostname.toLowerCase(), fq = r.fqdn.toLowerCase();
+    if (hn && (hn === targetShort || hn.split(".")[0] === targetShort)) return r;
+    if (fq && (fq === targetShort || fq.split(".")[0] === targetShort)) return r;
+  }
+  return undefined;
+}
 
 // Slug for a generated artifact name: alphanumerics from the description, capped.
 function slugify(s: string): string {
@@ -285,6 +340,15 @@ export class VelociraptorClient {
     return `${base}/app/index.html?org_id=${org}#/hunts/${huntId}`;
   }
 
+  // Deep link to a single client's COLLECTION (flow) in the GUI. Same `?org_id=` before `#` invariant
+  // as huntGuiUrl — the SPA reads the org from the query and the flow from the hash route.
+  private collectGuiUrl(clientId: string, flowId: string): string | undefined {
+    if (!this.config.guiUrl) return undefined;
+    const base = this.config.guiUrl.replace(/\/+$/, "");
+    const org = encodeURIComponent(this.config.guiOrg?.trim() || "root");
+    return `${base}/app/index.html?org_id=${org}#/collected/${clientId}/${flowId}`;
+  }
+
   // Run a single VQL program verbatim (no statement-splitting) — for internal orchestration VQL.
   // maxOutputBytes can be raised for bulk collection reads (forensic data is large).
   private async runRaw(program: string, maxOutputBytes: number = this.config.maxOutputBytes): Promise<unknown[]> {
@@ -326,7 +390,7 @@ export class VelociraptorClient {
     const rows = await this.runRaw(program);
     const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};
     const huntId = String(hunt.HuntId ?? hunt.hunt_id ?? "");
-    if (!HUNT_RE.test(huntId)) throw new Error("Velociraptor did not return a hunt id — check the api_client role has COLLECT_CLIENT/ARTIFACT_WRITER");
+    if (!HUNT_RE.test(huntId)) throw new Error("Velociraptor did not launch the hunt (no hunt id). The VQL likely references a non-existent artifact/plugin or has a syntax error so it can't compile — edit the VQL and retry. (Less commonly: the api_client role lacks COLLECT_CLIENT/ARTIFACT_WRITER.)");
     return {
       huntId,
       artifact: name,
@@ -334,6 +398,92 @@ export class VelociraptorClient {
       state: String(hunt.state ?? hunt.State ?? "RUNNING"),
       guiUrl: this.huntGuiUrl(huntId),
     };
+  }
+
+  // Snapshot the whole enrolled fleet — client_id + hostname + fqdn per client — so the Companion can
+  // persist an INVENTORY and resolve a host → client_id from that file (robust + fast) instead of a
+  // brittle live `clients(search=...)` lookup whose index tokenizes the hostname on dots. Metadata
+  // only, so the per-query row cap is NOT applied (use the larger collect cap; a server can have many).
+  async listClients(): Promise<VeloClientRecord[]> {
+    const rows = await this.runRaw("SELECT client_id, os_info, last_seen_at FROM clients() LIMIT 100000", this.collectCap());
+    const out: VeloClientRecord[] = [];
+    for (const row of rows) {
+      const rec = normalizeClientRow(row);
+      if (rec) out.push(rec);
+    }
+    return out;
+  }
+
+  // Launch the VQL as a COLLECTION on a known client_id (issue #70) — the inventory already resolved
+  // the host → client_id, so this just packages the pivot(s) as a CLIENT artifact and `collect_client`
+  // on that one client. clientId is CLIENT_RE-validated, so it's safe inside the VQL literal. The
+  // resulting flow is reviewed in the Velociraptor GUI via the returned deep link.
+  async collectOnClient(clientId: string, vql: string, description: string, hostname = ""): Promise<CollectLaunchResult> {
+    if (!CLIENT_RE.test(clientId)) throw new Error(`invalid Velociraptor client id "${clientId}"`);
+    const statements = splitVqlStatements(sanitizeVqlDurations(vql));
+    if (statements.length === 0) throw new Error("No runnable VQL found (the query is empty or only comments)");
+    const name = "Custom.Collect.Companion." + slugify(description);
+    const sources = statements.map((_, i) => `Pivot${i}`);
+    const yaml = buildHuntArtifact(name, statements, sources, description);
+    const program =
+      `LET def = '''${yaml}'''\n` +
+      `LET _set <= artifact_set(definition=def)\n` +
+      `SELECT collect_client(client_id='${clientId}', artifacts=['${name}']) AS Flow FROM scope()`;
+    const rows = await this.runRaw(program);
+    const flow = (rows[0] as { Flow?: Record<string, unknown> })?.Flow ?? {};
+    const flowId = String(flow.flow_id ?? flow.FlowId ?? flow.session_id ?? "");
+    // collect_client returns a null flow when the custom artifact can't COMPILE — almost always the VQL
+    // references a non-existent Artifact.<Name>/plugin or has a syntax error (the simple cases launch
+    // fine, so it's rarely a permissions issue). Point the analyst at the VQL first.
+    if (!FLOW_RE.test(flowId)) throw new Error("Velociraptor did not launch the collection (no flow id). The VQL likely references a non-existent artifact/plugin or has a syntax error so it can't compile — edit the VQL and retry. (Less commonly: the api_client role lacks COLLECT_CLIENT/ARTIFACT_WRITER.)");
+    return { clientId, flowId, hostname: hostname || clientId, artifact: name, sources, guiUrl: this.collectGuiUrl(clientId, flowId) };
+  }
+
+  // Read a single COLLECTION flow's result rows (issue #70) — the per-flow analog of huntResults(),
+  // so the dashboard can show a collection's results inline (and auto-poll) instead of only deep-linking
+  // to the GUI. Reads each named source via `source(client_id=, flow_id=, artifact='Custom.X/Pivot0')`
+  // (same `artifact/source` addressing huntResults uses). All ids are validated to stay safe in the literals.
+  async collectionResults(clientId: string, flowId: string, artifact: string, sources: string[] = [], where?: string): Promise<VelociraptorRunResult> {
+    if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
+    if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
+    if (!ARTIFACT_RE.test(artifact)) throw new Error("invalid artifact name");
+    const safe = sources.filter((s) => ARTIFACT_RE.test(s));
+    const refs = safe.length ? safe.map((s) => `${artifact}/${s}`) : [artifact];
+    const w = sanitizeWhere(where);
+    const whereClause = w ? ` WHERE (${w})` : "";
+    const limit = this.config.maxRows + 1;   // +1 so cap() flags truncation
+    const program = refs.length > 1
+      ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
+      : `SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
+    return this.cap(await this.runRaw(program, this.collectCap()));
+  }
+
+  // The terminal STATE + error of a collection flow (issue #70). A flow can launch fine (a flow id is
+  // returned) yet FAIL on the endpoint — e.g. the VQL passes an unknown plugin arg ("handles: Unexpected
+  // arg process"). `flows(client_id=)` carries the per-flow `state` (RUNNING/FINISHED/ERROR) and, when
+  // it errored, the message in `status`. So the dashboard can show the real failure instead of polling
+  // "no results yet" forever. Returns `{ state: "" }` when the flow isn't found.
+  async flowStatus(clientId: string, flowId: string): Promise<{ state: string; error: string; rows: number }> {
+    if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
+    if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
+    const program = `SELECT state, status, total_collected_rows FROM flows(client_id='${clientId}') WHERE session_id='${flowId}' LIMIT 1`;
+    const rows = await this.runRaw(program);
+    const r = (rows[0] ?? {}) as { state?: unknown; status?: unknown; total_collected_rows?: unknown };
+    const state = String(r.state ?? "").trim();
+    const error = state.toUpperCase() === "ERROR" ? String(r.status ?? "").trim() : "";
+    return { state, error, rows: Number(r.total_collected_rows ?? 0) || 0 };
+  }
+
+  // Convenience: resolve a hostname LIVE (enumerate the fleet + match in TS, short-name ⇄ FQDN
+  // tolerant) then collect on it. The server's collect route prefers the persisted inventory; this is
+  // the no-inventory / programmatic / CLI path. The hostname is matched in TS — never embedded in VQL.
+  async collectFromHost(hostname: string, vql: string, description: string): Promise<CollectLaunchResult> {
+    const host = String(hostname ?? "").trim();
+    if (!host) throw new Error("a target hostname is required for a single-endpoint collection");
+    if (splitVqlStatements(sanitizeVqlDurations(vql)).length === 0) throw new Error("No runnable VQL found (the query is empty or only comments)");
+    const rec = matchClient(await this.listClients(), host);
+    if (!rec) throw new Error(`No enrolled Velociraptor client matches host "${host}" — refresh the client list or run a fleet hunt instead`);
+    return this.collectOnClient(rec.clientId, vql, description, host);
   }
 
   // Read a hunt's collected results across its sources (combining all endpoints' rows). Validates the

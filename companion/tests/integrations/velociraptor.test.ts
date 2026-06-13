@@ -6,6 +6,9 @@ import {
   VelociraptorClient,
   loadVelociraptorConfig,
   buildVelociraptorClient,
+  matchClient,
+  normalizeClientRow,
+  type VeloClientRecord,
   type VelociraptorApiConfig,
   type VqlRunner,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
@@ -170,6 +173,201 @@ describe("VelociraptorClient.launchHunt", () => {
   it("throws when no hunt id comes back", async () => {
     const runner: VqlRunner = async () => ({ rows: [{ Hunt: {} }], raw: "" });
     await expect(new VelociraptorClient(cfg, runner).launchHunt("SELECT 1", "x")).rejects.toThrow(/hunt id/);
+  });
+});
+
+// A runner for the collect flow: branches on the inventory query (FROM clients) vs the collect program
+// (collect_client). `clientRows` are returned for listClients(); the collect program returns a flow.
+function collectRunner(clientRows: unknown[], flow: Record<string, unknown> = { flow_id: "F.flow1" }) {
+  const programs: string[] = [];
+  const runner: VqlRunner = async (statements) => {
+    const p = statements[0];
+    programs.push(p);
+    if (p.includes("collect_client(")) return { rows: [{ Flow: flow }], raw: "" };
+    if (p.includes("FROM clients(")) return { rows: clientRows, raw: "" };
+    return { rows: [], raw: "" };
+  };
+  return { runner, programs };
+}
+
+describe("VelociraptorClient.listClients", () => {
+  it("normalizes clients() rows into inventory records", async () => {
+    const runner: VqlRunner = async () => ({ rows: [
+      { client_id: "C.win11", os_info: { hostname: "WIN11", fqdn: "WIN11.windomain.local" }, last_seen_at: "2026-06-01" },
+      { client_id: "C.kali", os_info: { hostname: "kaliPurple", fqdn: "kaliPurple.windomain.local" } },
+      { client_id: "bogus", os_info: { hostname: "x" } },   // invalid id → dropped
+    ], raw: "" });
+    const out = await new VelociraptorClient(cfg, runner).listClients();
+    expect(out).toEqual([
+      { clientId: "C.win11", hostname: "WIN11", fqdn: "WIN11.windomain.local", lastSeen: "2026-06-01" },
+      { clientId: "C.kali", hostname: "kaliPurple", fqdn: "kaliPurple.windomain.local" },
+    ]);
+  });
+});
+
+describe("VelociraptorClient.collectOnClient", () => {
+  it("packages the VQL as a CLIENT artifact and collect_clients the given client id", async () => {
+    const { runner, programs } = collectRunner([]);
+    const res = await new VelociraptorClient({ ...cfg, guiUrl: "https://velo.example/" }, runner)
+      .collectOnClient("C.abc", "-- persistence\nSELECT Name FROM Artifact.Windows.System.Services()", "services on WIN11", "WIN11.windomain.local");
+    expect(res.clientId).toBe("C.abc");
+    expect(res.flowId).toBe("F.flow1");
+    expect(res.hostname).toBe("WIN11.windomain.local");
+    expect(res.artifact).toBe("Custom.Collect.Companion.services_on_WIN11");
+    expect(res.guiUrl).toBe("https://velo.example/app/index.html?org_id=root#/collected/C.abc/F.flow1");
+    expect(res.sources).toEqual(["Pivot0"]);   // for reading results back via collectionResults
+    const prog = programs.find((p) => p.includes("collect_client(")) || "";
+    expect(prog).toContain("type: CLIENT");
+    expect(prog).toContain("collect_client(client_id='C.abc', artifacts=['Custom.Collect.Companion.services_on_WIN11'])");
+    expect(prog).not.toContain("-- persistence");   // comments stripped from the artifact source
+  });
+
+  it("reads the flow id leniently (FlowId / session_id fallbacks)", async () => {
+    const a = collectRunner([], { FlowId: "F.aa" });
+    expect((await new VelociraptorClient(cfg, a.runner).collectOnClient("C.1", "SELECT 1", "x")).flowId).toBe("F.aa");
+    const b = collectRunner([], { session_id: "F.bb" });
+    expect((await new VelociraptorClient(cfg, b.runner).collectOnClient("C.1", "SELECT 1", "x")).flowId).toBe("F.bb");
+  });
+
+  it("defaults the echoed hostname to the client id when none is given", async () => {
+    const { runner } = collectRunner([]);
+    expect((await new VelociraptorClient(cfg, runner).collectOnClient("C.1", "SELECT 1", "x")).hostname).toBe("C.1");
+  });
+
+  it("rejects an invalid client id", async () => {
+    const { runner } = collectRunner([]);
+    await expect(new VelociraptorClient(cfg, runner).collectOnClient("not-an-id", "SELECT 1", "x")).rejects.toThrow(/invalid Velociraptor client id/);
+  });
+
+  it("throws when the collection flow id is missing/invalid", async () => {
+    const { runner } = collectRunner([], {});
+    await expect(new VelociraptorClient(cfg, runner).collectOnClient("C.1", "SELECT 1", "x")).rejects.toThrow(/flow id/);
+  });
+
+  it("throws when the VQL is empty or only comments", async () => {
+    const { runner } = collectRunner([]);
+    await expect(new VelociraptorClient(cfg, runner).collectOnClient("C.1", "-- only a comment", "x")).rejects.toThrow(/No runnable VQL/);
+  });
+});
+
+describe("VelociraptorClient.collectionResults", () => {
+  it("reads a flow's rows via source(client_id, flow_id, artifact/source)", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Name: "PSEXESVC", Pid: 42 }], raw: "" }; };
+    const res = await new VelociraptorClient(cfg, runner).collectionResults("C.abc", "F.flow1", "Custom.Collect.Companion.x", ["Pivot0"]);
+    expect(res.rows).toHaveLength(1);
+    expect(program).toContain("source(client_id='C.abc', flow_id='F.flow1', artifact='Custom.Collect.Companion.x/Pivot0')");
+  });
+
+  it("chains multiple sources", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).collectionResults("C.abc", "F.flow1", "Custom.Collect.Companion.x", ["Pivot0", "Pivot1"]);
+    expect(program).toContain("chain(");
+    expect(program).toContain("artifact='Custom.Collect.Companion.x/Pivot0'");
+    expect(program).toContain("artifact='Custom.Collect.Companion.x/Pivot1'");
+  });
+
+  it("validates the client / flow / artifact ids", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    const c = new VelociraptorClient(cfg, runner);
+    await expect(c.collectionResults("bad", "F.1", "Custom.X")).rejects.toThrow(/client id/);
+    await expect(c.collectionResults("C.1", "bad", "Custom.X")).rejects.toThrow(/flow id/);
+    await expect(c.collectionResults("C.1", "F.1", "bad name")).rejects.toThrow(/artifact name/);
+  });
+});
+
+describe("VelociraptorClient.flowStatus", () => {
+  it("surfaces an endpoint-side ERROR (status message) from the flow", async () => {
+    let program = "";
+    const runner: VqlRunner = async (s) => { program = s[0]; return { rows: [{ state: "ERROR", status: "handles: Unexpected arg process\n", total_collected_rows: 0 }], raw: "" }; };
+    const st = await new VelociraptorClient(cfg, runner).flowStatus("C.abc", "F.flow1");
+    expect(st.state).toBe("ERROR");
+    expect(st.error).toBe("handles: Unexpected arg process");
+    expect(program).toContain("FROM flows(client_id='C.abc') WHERE session_id='F.flow1'");
+  });
+
+  it("reports a FINISHED flow with no error", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ state: "FINISHED", status: "", total_collected_rows: 3 }], raw: "" });
+    const st = await new VelociraptorClient(cfg, runner).flowStatus("C.abc", "F.flow1");
+    expect(st.state).toBe("FINISHED");
+    expect(st.error).toBe("");
+    expect(st.rows).toBe(3);
+  });
+
+  it("returns an empty state when the flow is not found", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    expect(await new VelociraptorClient(cfg, runner).flowStatus("C.abc", "F.flow1")).toEqual({ state: "", error: "", rows: 0 });
+  });
+});
+
+describe("VelociraptorClient.collectFromHost (live resolve)", () => {
+  it("enumerates the fleet, matches the host (FQDN ⇄ short name), and collects on that client", async () => {
+    // Case asset is an FQDN, but the client enrolled with the SHORT name — the old whole-FQDN search missed it.
+    const { runner, programs } = collectRunner([{ client_id: "C.abc", os_info: { hostname: "win11" } }]);
+    const res = await new VelociraptorClient(cfg, runner)
+      .collectFromHost("WIN11.windomain.local", "SELECT Name FROM Artifact.Windows.System.Services()", "services on WIN11");
+    expect(res.clientId).toBe("C.abc");
+    expect(res.hostname).toBe("WIN11.windomain.local");
+    // The resolve query enumerates clients() (no brittle host search); the host is matched in TS, never embedded.
+    expect(programs[0]).toContain("FROM clients()");
+    expect(programs[0]).not.toContain("search=");
+    const collectProg = programs.find((p) => p.includes("collect_client(")) || "";
+    expect(collectProg).toContain("collect_client(client_id='C.abc'");
+  });
+
+  it("throws when no client matches the host", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).collectFromHost("GHOST", "SELECT 1", "x"))
+      .rejects.toThrow(/No enrolled Velociraptor client matches host "GHOST"/);
+  });
+
+  it("throws when the VQL is empty or only comments (before resolving)", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).collectFromHost("h", "-- only a comment", "x")).rejects.toThrow(/No runnable VQL/);
+  });
+});
+
+describe("normalizeClientRow", () => {
+  it("reads client_id + os_info casing-tolerantly", () => {
+    expect(normalizeClientRow({ client_id: "C.a", os_info: { hostname: "h", fqdn: "h.d.local" }, last_seen_at: "t" }))
+      .toEqual({ clientId: "C.a", hostname: "h", fqdn: "h.d.local", lastSeen: "t" });
+    expect(normalizeClientRow({ ClientId: "C.b", OsInfo: { Hostname: "H", Fqdn: "H.D" } }))
+      .toEqual({ clientId: "C.b", hostname: "H", fqdn: "H.D" });
+  });
+
+  it("returns null for a row with no valid client id", () => {
+    expect(normalizeClientRow({ client_id: "nope", os_info: { hostname: "h" } })).toBeNull();
+    expect(normalizeClientRow({})).toBeNull();
+  });
+});
+
+describe("matchClient", () => {
+  const recs: VeloClientRecord[] = [
+    { clientId: "C.win11", hostname: "WIN11", fqdn: "WIN11.windomain.local" },
+    { clientId: "C.web", hostname: "web01", fqdn: "web01.corp.local" },
+  ];
+
+  it("matches a short-name-enrolled client against an FQDN target (the #70 bug)", () => {
+    expect(matchClient(recs, "WIN11.windomain.local")?.clientId).toBe("C.win11");
+  });
+
+  it("matches an FQDN-enrolled client against a short-name target", () => {
+    expect(matchClient([{ clientId: "C.x", hostname: "", fqdn: "win11.windomain.local" }], "WIN11")?.clientId).toBe("C.x");
+  });
+
+  it("prefers an exact full match over a first-label match", () => {
+    const two: VeloClientRecord[] = [
+      { clientId: "C.short", hostname: "web01", fqdn: "" },              // short-label match
+      { clientId: "C.full", hostname: "", fqdn: "web01.corp.local" },   // exact FQDN match
+    ];
+    expect(matchClient(two, "web01.corp.local")?.clientId).toBe("C.full");
+  });
+
+  it("skips malformed ids and returns undefined when nothing matches", () => {
+    expect(matchClient([{ clientId: "bad", hostname: "pc1", fqdn: "" }], "pc1")).toBeUndefined();
+    expect(matchClient(recs, "unknown-host")).toBeUndefined();
+    expect(matchClient([], "pc1")).toBeUndefined();
   });
 });
 
