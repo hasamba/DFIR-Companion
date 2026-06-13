@@ -3423,7 +3423,7 @@
       const btn = document.getElementById("pbHuntBtn");
       const msg = document.getElementById("pbHuntMsg");
       if (btn) btn.disabled = true;
-      if (msg) { msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "thinking… (one AI call over the playbook)"; }
+      if (msg) { msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "thinking… (only new / changed tasks are sent)"; }
       fetch(`/cases/${caseId}/playbook/suggest-hunts`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
@@ -3437,7 +3437,10 @@
           renderPlaybook();   // re-render the task list with the suggestions inlined under their tasks
           if (msg) {
             msg.style.color = "var(--c-9aa4b2)";
-            msg.textContent = pbHuntFlat.length ? `${pbHuntFlat.length} suggestion(s) — shown under their tasks` : "no endpoint-related tasks to hunt for (sync the playbook or add evidence)";
+            const newN = typeof j.generated === "number" ? j.generated : null;
+            msg.textContent = pbHuntFlat.length
+              ? (newN === 0 ? `${pbHuntFlat.length} suggestion(s) — nothing new to generate` : `${newN != null ? newN + " new · " : ""}${pbHuntFlat.length} total — shown under their tasks`)
+              : "no endpoint-related tasks to hunt for (sync the playbook or add evidence)";
           }
         })
         .catch((e) => { if (msg) { msg.style.color = "var(--c-ff9f43)"; msg.textContent = "error: " + e.message; } })

@@ -89,7 +89,7 @@ import { NotebookStore, type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "./a
 import { PlaybookStore, type NewPlaybookTask, type PlaybookTaskPatch } from "./analysis/playbookStore.js";
 import { PLAYBOOK_STATUSES, playbookStats, type PlaybookStatus, type PlaybookTask } from "./analysis/playbook.js";
 import { PlaybookHuntStore } from "./analysis/playbookHuntStore.js";
-import { buildHuntTaskHashes, selectFreshHunts } from "./analysis/playbookHunt.js";
+import { selectFreshHunts, pendingHuntTasks, mergePersistedHunts, EMPTY_PERSISTED_HUNTS } from "./analysis/playbookHunt.js";
 import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
 import type { AssetType } from "./analysis/assetGraph.js";
@@ -4294,26 +4294,36 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.playbookStore || !options.stateStore) return res.status(501).json({ error: "playbook not configured" });
     try {
       const tasks = await syncPlaybook(req.params.id);
+      // INCREMENTAL (#70): keep the suggestions whose task is unchanged and only generate for NEW or
+      // CHANGED tasks — so adding one task and pressing Generate sends just that task to the model and
+      // never re-does the hunts that already exist. `force:true` regenerates everything from scratch.
+      const force = req.body?.force === true;
+      const persisted = options.playbookHuntStore ? await options.playbookHuntStore.load(req.params.id) : { ...EMPTY_PERSISTED_HUNTS };
+      const fresh = force ? { suggestions: [], taskHashes: {} } : selectFreshHunts(persisted, tasks);
+      const pending = pendingHuntTasks(tasks, fresh.taskHashes);
       // Concurrently (best-effort, no-op when the API is off): refresh the client inventory so a host
-      // enrolled MID-INVESTIGATION is resolvable at deploy time (#70), AND fetch the server's REAL
-      // CLIENT artifact names so the model only references artifacts that EXIST (a hallucinated
-      // Artifact.<Name> fails to compile). Both finish before the long AI call → no added latency.
+      // enrolled MID-INVESTIGATION is resolvable at deploy time, AND fetch the server's REAL CLIENT
+      // artifact names so the model only references artifacts that EXIST. Skip the artifact fetch when
+      // nothing is pending (no AI call needed). Both finish before the AI call → no added latency.
       const [, artifactNames] = await Promise.all([
         refreshVeloClients().catch((e) => { logLine(`[velociraptor] inventory refresh before suggestions failed: ${(e as Error).message}`); return 0; }),
-        options.velociraptorClient
+        pending.length && options.velociraptorClient
           ? options.velociraptorClient.listClientArtifacts().then((a) => a.map((x) => x.name)).catch(() => [] as string[])
           : Promise.resolve([] as string[]),
       ]);
-      const suggestions = await options.pipeline.suggestPlaybookHunts(req.params.id, tasks, artifactNames);
-      logLine(`[velociraptor] suggested ${suggestions.length} playbook hunt(s) for ${req.params.id} (${artifactNames.length} artifact(s) in scope)`);
-      // Persist so the suggestions survive a page refresh; store each task's fingerprint so a later
-      // edit to the task drops its (now stale) hunt on read (#70). Best-effort — never fail the response.
+      // Keep only suggestions FOR the pending tasks — so a model that echoes a wrong taskId can't
+      // duplicate or clobber a kept (covered) suggestion. fresh + new then have disjoint task ids.
+      const pendingIds = new Set(pending.map((t) => t.id));
+      const newSuggestions = (pending.length ? await options.pipeline.suggestPlaybookHunts(req.params.id, pending, artifactNames) : [])
+        .filter((s) => pendingIds.has(s.taskId));
+      const merged = mergePersistedHunts(fresh, newSuggestions, pending, new Date().toISOString());
+      logLine(`[velociraptor] playbook hunts for ${req.params.id}: ${newSuggestions.length} new (of ${pending.length} pending task(s)), ${merged.suggestions.length} total`);
+      // Persist so the set survives a refresh + future incremental generates. Best-effort.
       if (options.playbookHuntStore) {
-        try {
-          await options.playbookHuntStore.save(req.params.id, { generatedAt: new Date().toISOString(), suggestions, taskHashes: buildHuntTaskHashes(suggestions, tasks) });
-        } catch (e) { logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`); }
+        try { await options.playbookHuntStore.save(req.params.id, merged); }
+        catch (e) { logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`); }
       }
-      return res.status(200).json({ suggestions });
+      return res.status(200).json({ suggestions: merged.suggestions, generated: newSuggestions.length });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

@@ -127,6 +127,35 @@ describe("POST /cases/:id/playbook/suggest-hunts", () => {
     expect(afterEdit.body.huntSuggestions).toHaveLength(0);
   });
 
+  it("generates INCREMENTALLY — re-pressing generates nothing new, but a changed task is regenerated", async () => {
+    const { app, stateStore } = await makeApp({ provider: new MockProvider("mock", cannedPlaybookHunts) });
+    await seed(stateStore, true);
+    // First generate covers finding:f1.
+    const first = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
+    expect(first.body.generated).toBe(1);
+    expect(first.body.suggestions).toHaveLength(1);
+    // Press again with NO changes → nothing new generated, the existing suggestion is kept.
+    const again = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
+    expect(again.body.generated).toBe(0);
+    expect(again.body.suggestions).toHaveLength(1);
+    // Reword the finding → its task changes → that one is regenerated on the next press.
+    const s = emptyState("c1");
+    s.findings.push({ id: "f1", severity: "Critical", title: "Webshell REWORDED", description: "new text",
+      relatedIocs: [], mitreTechniques: ["T1505.003"], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
+    await stateStore.save(s);
+    const afterEdit = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
+    expect(afterEdit.body.generated).toBe(1);          // the changed task WAS regenerated
+    expect(afterEdit.body.suggestions).toHaveLength(1);
+  });
+
+  it("force:true regenerates everything", async () => {
+    const { app, stateStore } = await makeApp({ provider: new MockProvider("mock", cannedPlaybookHunts) });
+    await seed(stateStore, true);
+    await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
+    const forced = await request(app).post("/cases/c1/playbook/suggest-hunts").send({ force: true });
+    expect(forced.body.generated).toBe(1);   // ignored the covered set, regenerated
+  });
+
   it("uses the dedicated Velociraptor provider over the synthesis model when set", async () => {
     const veloReply = JSON.stringify({ suggestions: [
       { taskId: "finding:f1", endpointRelated: true, title: "FROM VELO MODEL", rationale: "r", vql: "SELECT * FROM pslist()", targetHost: "", severity: "High", mitreTechniques: [] },

@@ -301,22 +301,46 @@ export function buildHuntTaskHashes(suggestions: readonly PlaybookHuntSuggestion
   return out;
 }
 
-// Keep only the persisted suggestions whose task STILL EXISTS and is UNCHANGED since generation; the
-// rest are stale (task reworded or deleted) and dropped. Returns the filtered set + `changed` so the
-// caller can write-back the pruned store. Pure + deterministic.
+// Keep the persisted suggestions whose task STILL EXISTS and is UNCHANGED since generation; the rest
+// are stale (task reworded or deleted) and dropped. `taskHashes` carries the fingerprint of EVERY
+// evaluated task that is still unchanged — including ones the AI evaluated but produced no hunt for
+// (non-endpoint tasks) — so a later generate can SKIP them (incremental, never re-doing covered work).
+// Returns the filtered set + `changed` so the caller can write-back the pruned store. Pure.
 export function selectFreshHunts(persisted: PersistedPlaybookHunts | undefined, tasks: readonly PlaybookTask[]): { suggestions: PlaybookHuntSuggestion[]; taskHashes: Record<string, string>; changed: boolean } {
   const byId = new Map(tasks.map((t) => [t.id, t] as const));
-  const all = persisted?.suggestions ?? [];
+  const allSug = persisted?.suggestions ?? [];
   const storedHashes = persisted?.taskHashes ?? {};
   const suggestions: PlaybookHuntSuggestion[] = [];
-  const taskHashes: Record<string, string> = {};
-  for (const s of all) {
+  for (const s of allSug) {
     const t = byId.get(s.taskId);
-    if (!t) continue;                                  // task deleted → drop
-    const cur = taskFingerprint(t);
-    if (storedHashes[s.taskId] !== cur) continue;      // task changed → drop (regenerate)
-    suggestions.push(s);
-    taskHashes[s.taskId] = cur;
+    if (t && storedHashes[s.taskId] === taskFingerprint(t)) suggestions.push(s);   // task unchanged → keep
   }
-  return { suggestions, taskHashes, changed: suggestions.length !== all.length };
+  const taskHashes: Record<string, string> = {};
+  for (const [taskId, hash] of Object.entries(storedHashes)) {
+    const t = byId.get(taskId);
+    if (t && taskFingerprint(t) === hash) taskHashes[taskId] = hash;               // evaluated + unchanged → keep marker
+  }
+  const changed = suggestions.length !== allSug.length || Object.keys(taskHashes).length !== Object.keys(storedHashes).length;
+  return { suggestions, taskHashes, changed };
+}
+
+// Which OPEN tasks still need a hunt generated: NEW tasks (never evaluated) or CHANGED tasks (their
+// fingerprint differs from when last evaluated). Tasks already evaluated and unchanged are skipped, so
+// pressing Generate after adding one task only sends THAT task to the model and never regenerates the
+// hunts that already exist. Pure.
+export function pendingHuntTasks(tasks: readonly PlaybookTask[], evaluatedHashes: Record<string, string>): PlaybookTask[] {
+  return (tasks ?? []).filter((t) => isOpenTask(t) && evaluatedHashes[t.id] !== taskFingerprint(t));
+}
+
+// Merge freshly-generated suggestions with the kept (unchanged) ones, and stamp the fingerprint of
+// every task evaluated THIS round (the pending ones) so the next generate skips them. Pure.
+export function mergePersistedHunts(
+  fresh: { suggestions: PlaybookHuntSuggestion[]; taskHashes: Record<string, string> },
+  newSuggestions: readonly PlaybookHuntSuggestion[],
+  pendingTasks: readonly PlaybookTask[],
+  generatedAt: string,
+): PersistedPlaybookHunts {
+  const taskHashes = { ...fresh.taskHashes };
+  for (const t of pendingTasks) taskHashes[t.id] = taskFingerprint(t);
+  return { generatedAt, suggestions: [...fresh.suggestions, ...newSuggestions], taskHashes };
 }

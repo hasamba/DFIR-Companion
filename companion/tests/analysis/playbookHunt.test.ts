@@ -15,6 +15,8 @@ import {
   taskFingerprint,
   buildHuntTaskHashes,
   selectFreshHunts,
+  pendingHuntTasks,
+  mergePersistedHunts,
   PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT,
   type RawPlaybookHuntSuggestion,
   type PlaybookHuntSuggestion,
@@ -360,5 +362,47 @@ describe("selectFreshHunts (persistence staleness)", () => {
     const out = selectFreshHunts(persisted, [keep, editedDrop]);
     expect(out.suggestions.map((s) => s.taskId)).toEqual(["finding:f1"]);
     expect(out.changed).toBe(true);
+  });
+
+  it("preserves the evaluated marker for an unchanged task that produced NO suggestion (so it isn't re-evaluated)", () => {
+    const endpointTask = task({ id: "finding:f1", title: "Has hunt", description: "x" });
+    const skippedTask = task({ id: "next_step:n1", title: "Notify legal", description: "no hunt" });   // evaluated, no suggestion
+    const persisted = {
+      generatedAt: "t0",
+      suggestions: [sug({ taskId: "finding:f1" })],
+      taskHashes: { "finding:f1": taskFingerprint(endpointTask), "next_step:n1": taskFingerprint(skippedTask) },
+    };
+    const out = selectFreshHunts(persisted, [endpointTask, skippedTask]);
+    expect(out.suggestions).toHaveLength(1);
+    expect(out.taskHashes["next_step:n1"]).toBeDefined();   // skipped task still marked evaluated
+    expect(out.changed).toBe(false);
+  });
+});
+
+describe("pendingHuntTasks (incremental generation)", () => {
+  it("returns only NEW and CHANGED open tasks; skips already-evaluated unchanged ones", () => {
+    const covered = task({ id: "finding:f1", title: "Covered", description: "c" });
+    const changed = task({ id: "finding:f2", title: "Now different", description: "d" });
+    const fresh = task({ id: "finding:f3", title: "Brand new", description: "n" });
+    const done = task({ id: "finding:f4", title: "Done", description: "x", status: "done" });
+    // f1 + f2 were evaluated before; f2's stored hash is for its OLD text, f1's matches.
+    const evaluatedHashes: Record<string, string> = {
+      "finding:f1": taskFingerprint(covered),
+      "finding:f2": taskFingerprint(task({ id: "finding:f2", title: "Old text", description: "d" })),
+    };
+    const pending = pendingHuntTasks([covered, changed, fresh, done], evaluatedHashes);
+    expect(pending.map((t) => t.id)).toEqual(["finding:f2", "finding:f3"]);   // changed + new only; covered + done excluded
+  });
+});
+
+describe("mergePersistedHunts", () => {
+  it("appends new suggestions and stamps the evaluated tasks' fingerprints", () => {
+    const fresh = { suggestions: [sug({ taskId: "finding:f1" })], taskHashes: { "finding:f1": "h1" } };
+    const newTask = task({ id: "finding:f3", title: "New", description: "n" });
+    const out = mergePersistedHunts(fresh, [sug({ taskId: "finding:f3" })], [newTask], "now");
+    expect(out.suggestions.map((s) => s.taskId)).toEqual(["finding:f1", "finding:f3"]);
+    expect(out.taskHashes["finding:f1"]).toBe("h1");                       // kept
+    expect(out.taskHashes["finding:f3"]).toBe(taskFingerprint(newTask));   // newly evaluated
+    expect(out.generatedAt).toBe("now");
   });
 });
