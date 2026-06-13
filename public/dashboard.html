@@ -2061,6 +2061,7 @@
       .pb-pri-medium{background:var(--c-1f3a52);color:var(--c-6fb3e0)}
       .pb-pri-low{background:var(--c-23304a);color:var(--c-8aa0c0)}
       .pb-src{font-size:10px;color:var(--c-52617a)}
+      .pb-id{font-size:10px;font-family:monospace;color:var(--c-3d4d66);user-select:all}
       .pb-finding-link{font-size:10px;color:var(--c-6fb3e0);text-decoration:none}
       .pb-finding-link:hover{text-decoration:underline}
       .pb-move{display:flex;gap:3px;margin-left:auto}
@@ -3295,6 +3296,7 @@
             `<span class="pb-pri pb-pri-${escAttr(t.priority)}">${esc(t.priority)}</span>` +
             `<span class="pb-title">${esc(t.title)}</span>` +
             `<span class="pb-src">${src}</span>${findingLink}` +
+            `<span class="pb-id">${esc(t.id)}</span>` +
             `<span class="pb-move">` +
               `<button onclick="pbMove('${escAttr(t.id)}',-1)" title="Move up">▲</button>` +
               `<button onclick="pbMove('${escAttr(t.id)}',1)" title="Move down">▼</button>` +
