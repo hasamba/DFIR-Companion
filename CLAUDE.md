@@ -430,7 +430,13 @@ read methods (`listCases`/`getRawAssets`/`getRawIocs`/`getRawTimeline`), the PUR
 maps them deterministically — timeline→events (severity from `event_color`, MITRE/asset/hash from
 tags+content), IOCs→IOCs (type from the IRIS ioc-type name or value shape), assets→evidence events — and
 `pipeline.importIris` merges via `mergeDelta`; routes `GET /iris/cases` + `POST /cases/:id/iris-import`,
-dashboard "Import from IRIS" picker), Timesketch, and **Velociraptor API** (`velociraptorClient` →
+surfaced in the unified **"Import case…"** dashboard menu (Investigation snapshot or From DFIR-IRIS).
+The IRIS timeline LIST endpoint is `case/timeline/events/list/filter/0` (0 = all events) — NOT the bare
+`/case/timeline/events`, which is single-event-by-id and 404s. The client is held in a **mutable
+closure var** (`let irisClient`) so `POST /iris/reconnect` (Settings → DFIR-IRIS "Test / reconnect")
+can re-read `DFIR_IRIS_*` from `.env` (`reloadEnvPrefix`), rebuild via the injectable `rebuildIrisClient`,
+and ping — applying config or IRIS coming back online WITHOUT the #1-gotcha restart), Timesketch, and
+**Velociraptor API** (`velociraptorClient` →
 `integrations/velociraptor/velociraptorApi.ts`; drives the `velociraptor` binary's `--api_config`
 through an **injectable runner** — tests never spawn). The dashboard's "Run hunt (all clients)"
 button does NOT run server-side: `launchHunt()` packages the pivot VQL as a **CLIENT artifact**

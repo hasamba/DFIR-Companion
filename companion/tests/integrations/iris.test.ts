@@ -332,3 +332,45 @@ describe("fetchIrisCase", () => {
     await expect(fetchIrisCase(m, {})).rejects.toBeInstanceOf(IrisImportError);
   });
 });
+
+// ---- IrisClient HTTP layer (locks the REST endpoint paths) -----------------
+
+import { IrisClient } from "../../src/integrations/iris/irisClient.js";
+
+function fakeFetch(payload: unknown, urls: string[]): typeof fetch {
+  return (async (url: string) => {
+    urls.push(String(url));
+    return {
+      status: 200, ok: true,
+      json: async () => ({ status: "success", data: payload }),
+    } as Response;
+  }) as unknown as typeof fetch;
+}
+
+describe("IrisClient read endpoints", () => {
+  it("lists the timeline via /case/timeline/events/list/filter/0 (NOT the bare /events, which 404s)", async () => {
+    const urls: string[] = [];
+    const client = new IrisClient({ baseUrl: "https://iris.test", apiKey: "k", fetchFn: fakeFetch({ timeline: [{ event_id: 1 }] }, urls) });
+    const rows = await client.getRawTimeline(7);
+    expect(rows).toHaveLength(1);
+    expect(urls[0]).toBe("https://iris.test/case/timeline/events/list/filter/0?cid=7");
+  });
+
+  it("listEvents uses the same filter/0 endpoint", async () => {
+    const urls: string[] = [];
+    const client = new IrisClient({ baseUrl: "https://iris.test", apiKey: "k", fetchFn: fakeFetch({ timeline: [{ event_id: 9, event_title: "t", event_date: "d" }] }, urls) });
+    await client.listEvents(7);
+    expect(urls[0]).toContain("/case/timeline/events/list/filter/0");
+  });
+
+  it("lists cases / assets / iocs at their documented paths", async () => {
+    const urls: string[] = [];
+    const client = new IrisClient({ baseUrl: "https://iris.test", apiKey: "k", fetchFn: fakeFetch({ cases: [{ case_id: 3, case_name: "x" }] }, urls) });
+    await client.listCases();
+    await client.getRawAssets(7);
+    await client.getRawIocs(7);
+    expect(urls[0]).toContain("/manage/cases/list");
+    expect(urls[1]).toBe("https://iris.test/case/assets/list?cid=7");
+    expect(urls[2]).toBe("https://iris.test/case/ioc/list?cid=7");
+  });
+});

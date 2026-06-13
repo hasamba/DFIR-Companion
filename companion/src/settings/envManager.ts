@@ -27,6 +27,21 @@ function parseLines(raw: string): Record<string, string> {
   return result;
 }
 
+/**
+ * Re-read the .env file and apply every key starting with `prefix` into `process.env`, so a
+ * runtime "reconnect" can pick up settings saved via POST /settings/env WITHOUT a full restart
+ * (updateEnv only writes the file). Scoped to one prefix (e.g. "DFIR_IRIS_") to avoid disturbing
+ * unrelated live config. Returns the keys applied.
+ */
+export async function reloadEnvPrefix(prefix: string): Promise<string[]> {
+  const raw = parseLines(await readRaw());
+  const applied: string[] = [];
+  for (const [k, v] of Object.entries(raw)) {
+    if (k.startsWith(prefix)) { process.env[k] = v; applied.push(k); }
+  }
+  return applied;
+}
+
 /** Return all .env values; secrets are replaced with the sentinel string. */
 export async function getEnvForSettings(): Promise<Record<string, string>> {
   const raw = parseLines(await readRaw());

@@ -27,7 +27,7 @@ function mockIris(over: Partial<Record<string, unknown>> = {}): IrisClient {
   return base as unknown as IrisClient;
 }
 
-async function makeApp(opts: { irisClient?: IrisClient } = {}) {
+async function makeApp(opts: { irisClient?: IrisClient; rebuildIrisClient?: () => IrisClient | undefined } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-iris-import-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -35,7 +35,7 @@ async function makeApp(opts: { irisClient?: IrisClient } = {}) {
     provider: undefined, synthesisProvider: undefined, stateStore, store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
-  const app = createApp(store, { pipeline, stateStore, irisClient: opts.irisClient });
+  const app = createApp(store, { pipeline, stateStore, irisClient: opts.irisClient, rebuildIrisClient: opts.rebuildIrisClient });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore };
 }
@@ -98,5 +98,37 @@ describe("DFIR-IRIS import routes (issue #88)", () => {
     const { app } = await makeApp({ irisClient: mockIris() });
     const res = await request(app).post("/cases/c1/iris-import").send({ irisCaseName: "Nope" });
     expect(res.status).toBe(502);
+  });
+
+  it("POST /iris/reconnect reports not-configured when the rebuild yields no client", async () => {
+    const { app } = await makeApp({ rebuildIrisClient: () => undefined });
+    const res = await request(app).post("/iris/reconnect");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ configured: false, ok: false });
+  });
+
+  it("POST /iris/reconnect pings the rebuilt client and reports ok", async () => {
+    const { app } = await makeApp({ rebuildIrisClient: () => mockIris() });
+    const res = await request(app).post("/iris/reconnect");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ configured: true, ok: true });
+  });
+
+  it("POST /iris/reconnect reports a reachability failure (configured but ping throws)", async () => {
+    const down = mockIris({ async ping() { throw new Error("ECONNREFUSED"); } });
+    const { app } = await makeApp({ rebuildIrisClient: () => down });
+    const res = await request(app).post("/iris/reconnect");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ configured: true, ok: false });
+    expect(res.body.error).toMatch(/ECONNREFUSED/);
+  });
+
+  it("a successful reconnect swaps in the client so /iris/cases then works", async () => {
+    const { app } = await makeApp({ rebuildIrisClient: () => mockIris() });   // no client at startup
+    expect((await request(app).get("/iris/cases")).status).toBe(501);
+    await request(app).post("/iris/reconnect");
+    const res = await request(app).get("/iris/cases");
+    expect(res.status).toBe(200);
+    expect(res.body.cases).toHaveLength(1);
   });
 });
