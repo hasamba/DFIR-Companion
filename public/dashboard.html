@@ -888,6 +888,8 @@
     <button id="synthesize" data-tip="Derive findings, MITRE and attack path from the timeline">AI Re-synthesize</button>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.eml,.msg,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,image/png,image/jpeg,image/webp" style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
+    <button id="importUndoBtn" type="button" style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">↶ Undo import</button>
+    <button id="importRedoBtn" type="button" style="display:none" disabled data-tip="Redo the most-recently-undone import.">↷ Redo</button>
     <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch JSONL, JSON state, or a shareable investigation snapshot)">
 
       <option value="">Export…</option>
@@ -1827,11 +1829,6 @@
           <button id="addEventBtn">Add event</button>
           <span id="addEventMsg" class="manual-msg"></span>
         </form>
-      </div>
-      <div id="importUndoBar" style="display:none;align-items:center;gap:8px;margin:0 0 8px;font-size:12px;color:var(--c-9aa4b2)">
-        <button id="importUndoBtn" type="button" disabled title="Undo the latest import — restore the forensic timeline + IOCs to before it (then re-synthesize)">↶ Undo import</button>
-        <button id="importRedoBtn" type="button" disabled title="Redo the most-recently-undone import">↷ Redo</button>
-        <span id="importUndoMsg"></span>
       </div>
       <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="forensicTimeline">—</div></section>
@@ -4723,52 +4720,51 @@
     }
 
     // --- Import undo / redo (#76) -------------------------------------------------------------
-    // Imports can flood the dashboard; this rolls the forensic timeline + IOCs back to the state
-    // before the latest import (and redo). The bar's buttons enable/label from the undo-stack summary.
+    // Imports can flood the dashboard; this rolls the WHOLE case (findings, IOCs, timeline, MITRE,
+    // attacker path) back to exactly before the latest import (and redo). The Undo/Redo buttons live
+    // in the top toolbar next to Import; they enable/label from the undo-stack summary.
     function loadUndoStack(caseId) {
       fetch(`/cases/${caseId}/import/undo-stack`).then(r => r.ok ? r.json() : null).then(renderUndoStack).catch(() => {});
     }
     function renderUndoStack(s) {
-      const bar = document.getElementById("importUndoBar");
       const undoBtn = document.getElementById("importUndoBtn");
       const redoBtn = document.getElementById("importRedoBtn");
-      if (!bar || !undoBtn || !redoBtn) return;
-      // Hide the bar only when the endpoint is unavailable (older server / not restarted yet). Once
-      // it responds, the bar is ALWAYS shown so the capability is discoverable; the buttons disable
-      // (with a hint) when there's nothing to undo/redo yet.
-      if (!s) { bar.style.display = "none"; return; }
+      if (!undoBtn || !redoBtn) return;
+      // Hide the buttons only when the endpoint is unavailable (older server / not restarted yet).
+      // Once it responds they're ALWAYS shown so the capability is discoverable, disabled (with a
+      // hint) until there's something to undo/redo.
+      if (!s) { undoBtn.style.display = "none"; redoBtn.style.display = "none"; return; }
       const canUndo = !!s.canUndo, canRedo = !!s.canRedo;
-      bar.style.display = "flex";
+      undoBtn.style.display = "";
+      redoBtn.style.display = "";
       undoBtn.disabled = !canUndo;
       redoBtn.disabled = !canRedo;
       undoBtn.textContent = canUndo && s.nextUndo ? `↶ Undo import (${s.nextUndo.label})` : "↶ Undo import";
       redoBtn.textContent = canRedo && s.nextRedo ? `↷ Redo (${s.nextRedo.label})` : "↷ Redo";
       undoBtn.title = canUndo && s.nextUndo
-        ? `Restore the forensic timeline + IOCs to before "${s.nextUndo.label}" (${s.nextUndo.events} events, ${s.nextUndo.iocs} IOCs), then re-synthesize`
+        ? `Roll the whole case back to before "${s.nextUndo.label}" — restores ${s.nextUndo.events} events, ${s.nextUndo.iocs} IOCs, ${s.nextUndo.findings} findings`
         : "Nothing to undo yet — run an import first";
       redoBtn.title = canRedo && s.nextRedo ? `Re-apply "${s.nextRedo.label}"` : "Nothing to redo";
-      const hint = document.getElementById("importUndoMsg");
-      if (hint && !hint.textContent) hint.textContent = (!canUndo && !canRedo) ? "no import to undo yet" : "";
     }
     function doImportUndoRedo(which) {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
-      const msg = document.getElementById("importUndoMsg");
       const undoBtn = document.getElementById("importUndoBtn");
       const redoBtn = document.getElementById("importRedoBtn");
       undoBtn.disabled = true; redoBtn.disabled = true;
-      if (msg) msg.textContent = which === "undo" ? "undoing…" : "redoing…";
+      const active = which === "undo" ? undoBtn : redoBtn;
+      const prev = active.textContent;
+      active.textContent = which === "undo" ? "undoing…" : "redoing…";
       fetch(`/cases/${caseId}/import/${which}`, { method: "POST" })
         .then(r => { if (!r.ok) return r.json().then(j => { throw new Error(j.error || ("HTTP " + r.status)); }); return r.json(); })
         .then(s => {
-          renderUndoStack(s);
-          if (msg) msg.textContent = which === "undo" ? "import undone — re-synthesizing…" : "import redone — re-synthesizing…";
-          // The state broadcast (and a synthesis pass) refresh the timeline/IOCs; also pull now so the
-          // change shows immediately without waiting for the WS round-trip.
+          // The restore is instant + verbatim (no AI). Pull fresh state so findings/IOCs/timeline
+          // all update at once; the server also broadcasts it over the WS.
           fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
           loadImportMeta(caseId);
+          renderUndoStack(s);
         })
-        .catch(e => { if (msg) msg.textContent = "failed: " + e.message + " — restart the companion server if this 404s"; loadUndoStack(caseId); });
+        .catch(e => { active.textContent = prev; alert(`${which} failed: ${e.message}\n(restart the companion server if this 404s)`); loadUndoStack(caseId); });
     }
 
     // --- Ask the LLM about this case ----------------------------------------------
