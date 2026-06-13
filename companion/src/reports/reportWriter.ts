@@ -16,6 +16,7 @@ import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, type BeaconCandidate } from "../analysis/beaconDetect.js";
+import { detectTimelineGaps, gapEnvOptions, type TimelineGap } from "../analysis/gapDetect.js";
 import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../analysis/swimlane.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
@@ -168,6 +169,15 @@ export class ReportWriter {
   async beaconCandidates(caseId: string): Promise<BeaconCandidate[]> {
     const state = await this.loadFilteredState(caseId);
     return detectBeacons(state.forensicTimeline, beaconEnvOptions());
+  }
+
+  // Timeline gaps (#83): suspiciously long silent periods in the forensic timeline — a complete gap
+  // (every source dark) is the classic log-tampering signature, a partial gap is a single-tool
+  // coverage blindspot. Derived on demand with the same scope/legitimate filtering as the report.
+  // Thresholds from DFIR_GAP_MIN_MINUTES / DFIR_GAP_DENSITY_FACTOR / DFIR_GAP_ACTIVE_HOURS. No AI call.
+  async timelineGaps(caseId: string): Promise<TimelineGap[]> {
+    const state = await this.loadFilteredState(caseId);
+    return detectTimelineGaps(state.forensicTimeline, gapEnvOptions());
   }
 
   // Swimlane data for the visual timeline chart — events grouped into lanes by the chosen
