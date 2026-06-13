@@ -15,7 +15,7 @@ import { looksLikeSysdig } from "./sysdigImport.js";
 export type ImportKind =
   | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
-  | "auditd" | "journald" | "sysdig" | "csv" | "log" | "unknown";
+  | "auditd" | "journald" | "sysdig" | "wazuh" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -122,6 +122,28 @@ function isCybertriage(s: Row): boolean {
     (getCI(s, "timestamp_desc") != null || getCI(s, "timestamp_description") != null) &&
     (getCI(s, "message") != null || getCI(s, "score") != null || getCI(s, "scoreDescription") != null);
 }
+function isWazuh(s: Row, root: unknown): boolean {
+  // Wazuh alert: requires rule.level + rule.description + agent.name.
+  // Also matches the API export envelope { data: { affected_items: [alert, ...] } }.
+  const checkRecord = (r: Row): boolean => {
+    const rule = getCI(r, "rule");
+    if (!isObject(rule)) return false;
+    return getCI(rule, "level") != null && !!getCI(rule, "description") && !!getCI(r, "agent");
+  };
+  if (checkRecord(s)) return true;
+  // API export envelope: { data: { affected_items: [{ rule, agent, ... }] } }
+  if (isObject(root)) {
+    const data = getCI(root, "data");
+    if (isObject(data)) {
+      const items = getCI(data, "affected_items");
+      if (Array.isArray(items)) {
+        const first = items.find(isObject);
+        if (first && checkRecord(first)) return true;
+      }
+    }
+  }
+  return false;
+}
 function isThor(s: Row): boolean {
   return !!getCI(s, "module") && !!getCI(s, "message") && !!getCI(s, "level");
 }
@@ -167,6 +189,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isCybertriage(sample)) return "cybertriage";
   if (isNetwork(sample)) return "network";
   if (isVolatility(sample)) return "memory";
+  if (isWazuh(sample, root)) return "wazuh";
   // Linux runtime/host sources — before the THOR/SIEM catch-alls. journald entries carry a
   // `MESSAGE` field that the case-insensitive SIEM `message` check would otherwise claim.
   if (looksLikeSysdig(sample)) return "sysdig";
