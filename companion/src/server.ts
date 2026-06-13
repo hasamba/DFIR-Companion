@@ -58,6 +58,8 @@ import { parseJournald } from "./analysis/journaldImport.js";
 import type { JournaldImportOptions } from "./analysis/journaldImport.js";
 import { parseSysdig } from "./analysis/sysdigImport.js";
 import type { SysdigImportOptions } from "./analysis/sysdigImport.js";
+import { parseWazuhAlerts } from "./analysis/wazuhImport.js";
+import type { WazuhImportOptions } from "./analysis/wazuhImport.js";
 import { detectImportKind, type ImportKind } from "./analysis/importDetect.js";
 import { getEnvForSettings, updateEnv as updateEnvFile } from "./settings/envManager.js";
 import { parseMinSeverity } from "./analysis/severityFloor.js";
@@ -1448,6 +1450,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "auditd": return pipeline.importAuditd(caseId, text, base);
       case "journald": return pipeline.importJournald(caseId, text, base);
       case "sysdig": return pipeline.importSysdig(caseId, text, base);
+      case "wazuh": return pipeline.importWazuh(caseId, text, base);
       case "csv": return pipeline.analyzeCsv(caseId, text, base);
       case "log": return pipeline.analyzeLog(caseId, text, base);
       default: return Promise.reject(new Error(`unhandled import kind: ${kind as string}`));
@@ -4014,6 +4017,55 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
           detail: `sysdig import — ${done}/${total}`,
+        }),
+      })
+        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
+        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import Wazuh SIEM/EDR alert exports (alerts.json / NDJSON / API export envelope).
+  // Evidence-first; mapped DETERMINISTICALLY (no AI call): rule.level drives severity,
+  // rule.mitre.technique → MITRE, agent.name → asset, data fields → IOCs.
+  app.post("/cases/:id/import-wazuh", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text
+      : typeof req.body?.json === "string" ? req.body.json : "";
+    const originalName = String(req.body?.filename ?? "wazuh-alerts.json");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const minSeverity = parseMinSeverity(req.body?.minSeverity);
+    const wazuhOpts: WazuhImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
+
+    try {
+      const preview = parseWazuhAlerts(text, wazuhOpts);
+      if (preview.format === "empty" && preview.kept === 0) return res.status(400).json({ error: "no parseable Wazuh alerts found (expected an array or NDJSON of Wazuh alert objects with rule.level, rule.description, and agent fields, or a Wazuh API export { data: { affected_items: [...] } })" });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "wazuh-alerts.json");
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, records: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} Wazuh alert(s)` });
+      void options.pipeline.importWazuh(caseId, text, {
+        label: storedName,
+        idPrefix: `wz${seq}`,
+        importedAt,
+        wazuh: wazuhOpts,
+        onProgress: (done, total) => options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
+          detail: `Wazuh import — ${done}/${total}`,
         }),
       })
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
