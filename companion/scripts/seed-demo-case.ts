@@ -1100,6 +1100,37 @@ async function main(): Promise<void> {
         asset: "WKSTN-JSMITH",
         sources: ["THOR"],
       },
+      // Periodic Cobalt Strike beacon check-ins (T1071.001) — WKSTN-JSMITH → 185.220.101.47:443
+      // roughly every 60 min with a few seconds of jitter, the classic C2 callback cadence. Each
+      // check-in is low-signal on its own (Low severity); the REGULARITY across the series is the
+      // signal, which the Beacon Candidates detector surfaces (#82). Together with e006 these form a
+      // single (source → dest:port) channel the detector flags High (external/public destination).
+      ...[
+        { h: 10, m: 51, s: 4 },
+        { h: 11, m: 51, s: 22 },
+        { h: 12, m: 50, s: 58 },
+        { h: 13, m: 51, s: 11 },
+        { h: 14, m: 51, s: 33 },
+        { h: 15, m: 52, s: 2 },
+        { h: 16, m: 51, s: 49 },
+        { h: 17, m: 51, s: 8 },
+        { h: 18, m: 51, s: 27 },
+        { h: 19, m: 51, s: 15 },
+      ].map((t, i) => ({
+        id: `e${String(32 + i).padStart(3, "0")}`,
+        timestamp: ts(15, t.h, t.m, t.s),
+        description: `Cobalt Strike beacon check-in: HTTPS GET to 185.220.101.47:443 (cobaltkit.xyz), ~4 KB response. Routine periodic callback (sleep≈60m, JA3 matches CobaltStrike default).`,
+        severity: "Low" as const,
+        mitreTechniques: ["T1071.001"],
+        relatedFindingIds: ["f001"],
+        sourceScreenshots: [],
+        asset: "WKSTN-JSMITH",
+        sources: ["Suricata"],
+        srcIp: "10.10.10.45",
+        dstIp: "185.220.101.47",
+        port: 443,
+        action: "network_send" as const,
+      })),
     ],
 
     timeline: [
