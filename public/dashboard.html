@@ -921,6 +921,7 @@
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
     <span id="captureCount" style="font-weight:bold;"><span class="cc-label">Screenshots:</span> <span id="captureCountNum">0</span></span>
+    <span id="veloMonitorBadge" title="Live Velociraptor monitoring active — click to manage in Settings → Velociraptor" style="display:none;cursor:pointer;font-weight:bold;color:#ff5a5a;"></span>
     </div>
     <button id="themeToggle" type="button" title="Toggle light / dark theme" aria-label="Toggle light or dark theme" aria-pressed="false"><svg class="ti-moon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg class="ti-sun" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
     <button id="settingsBtn" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.07 7.07 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 3h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 9.47a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41H14c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.09-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
@@ -1494,6 +1495,27 @@
           <div class="sfield"><label>Max output — collect (bytes)<span class="sfield-hint">DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT</span></label><input id="env-DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT" placeholder="268435456" /></div>
           <div class="sfield"><label>Upload VQL override<span class="sfield-hint">DFIR_VELOCIRAPTOR_UPLOAD_VQL — version-specific; blank = default</span></label><input id="env-DFIR_VELOCIRAPTOR_UPLOAD_VQL" placeholder="(optional)" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Live monitor poll (sec)<span class="sfield-hint">DFIR_VELO_MONITOR_POLL_S — default 30 (CLIENT_EVENT poller)</span></label><input id="env-DFIR_VELO_MONITOR_POLL_S" placeholder="30" /></div>
+          <div class="sfield"><label>Monitor read VQL override<span class="sfield-hint">DFIR_VELOCIRAPTOR_MONITOR_VQL — version-specific; blank = default source()</span></label><input id="env-DFIR_VELOCIRAPTOR_MONITOR_VQL" placeholder="(optional)" /></div>
+        </div>
+
+        <!-- Push ingest (#84) -->
+        <div class="settings-group-head">Push ingest (webhook)</div>
+        <p style="font-size:12px;color:var(--c-9aa4b2);margin:2px 0 8px">Let external tools (a SIEM webhook, a Velociraptor client-event poller, a custom script) POST alerts straight into the connected case. The server auto-detects the payload type (same engine as the Import button) and runs the import → synthesize pipeline. Auth is a token in the <code>X-DFIR-Key</code> header — a <strong>global</strong> one (below) and/or a <strong>per-case</strong> one (generated here). Push is OFF until a token is configured.</p>
+        <div class="sfield-row">
+          <div class="sfield"><label>Global push token<span class="sfield-hint">DFIR_PUSH_TOKEN — one secret for every case (optional)</span></label><input id="env-DFIR_PUSH_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div id="pushTokenPanel" style="background:var(--c-161b28);border:1px solid var(--c-2a3146);border-radius:6px;padding:10px;margin-top:6px">
+          <div id="pushTokenInfo" style="font-size:12px;color:var(--c-9aa4b2)">Connect to a case to manage its push token.</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+            <button id="pushTokenGenBtn" type="button" title="Generate (or rotate) a per-case push token">Generate per-case token</button>
+            <button id="pushTokenClearBtn" type="button" style="background:var(--c-2a2f3a)" title="Remove the per-case token (a global token, if set, still works)">Clear</button>
+            <span id="pushTokenMsg" class="manual-msg"></span>
+          </div>
+          <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:8px">Example — POST a Velociraptor monitoring batch / SIEM alert:</div>
+          <pre id="pushCurl" style="white-space:pre-wrap;word-break:break-all;background:var(--c-11151f);border:1px solid var(--c-2a3146);border-radius:6px;padding:8px;font-size:11px;color:var(--c-cdd6e4);margin:4px 0 0">connect to a case to see the curl example</pre>
+        </div>
 
       </div>
 
@@ -1549,6 +1571,33 @@
             </div>
           </div>
         </details>
+
+        <!-- Live CLIENT_EVENT monitoring (#84) -->
+        <div id="veloMonitorSection" style="margin-top:18px;border-top:1px solid var(--c-2a3146);padding-top:14px">
+          <div class="settings-group-head">🔴 Live Monitoring <span style="color:var(--c-7e8aa0);font-weight:400">(Velociraptor client events)</span></div>
+          <p style="font-size:12px;color:var(--c-9aa4b2);margin:2px 0 10px">Stream a Velociraptor <strong>client-monitoring</strong> artifact (e.g. <code>Windows.Events.ProcessCreation</code>, <code>Windows.Events.DNSQueries</code>) from one endpoint into this case <strong>as events fire</strong>. The companion polls on an interval and imports new rows automatically; the last-seen cursor is saved so a restart never re-ingests old events. Needs the Velociraptor API configured.</p>
+          <div id="veloMonitorList" style="margin:0 0 12px"></div>
+          <details id="veloMonitorBuilder" style="border:1px solid var(--c-2a3146);border-radius:6px;padding:10px;background:var(--c-161b28)">
+            <summary style="cursor:pointer;font-size:13px;color:var(--c-cdd6e4);font-weight:600">Start a new monitor</summary>
+            <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <button id="veloMonBrowseBtn" type="button" title="Query the Velociraptor server for its CLIENT_EVENT (continuous monitoring) artifacts">Browse event artifacts…</button>
+                <select id="veloMonArtifact" style="flex:1;min-width:240px;padding:5px"><option value="">— pick a CLIENT_EVENT artifact —</option></select>
+              </div>
+              <input id="veloMonArtifactManual" placeholder="…or type an artifact name (e.g. Windows.Events.ProcessCreation)" style="padding:5px" />
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <input id="veloMonClient" list="veloMonClientList" placeholder="client id (C.xxxxxxxx)" style="flex:1;min-width:200px;padding:5px" />
+                <datalist id="veloMonClientList"></datalist>
+                <input id="veloMonPoll" type="number" min="5" max="3600" placeholder="poll (sec)" value="30" title="Poll interval in seconds (5–3600)" style="width:120px;padding:5px" />
+                <select id="veloMonMinSev" title="Optional minimum-severity floor on the imported events" style="width:140px;padding:5px">
+                  <option value="">all severities</option><option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
+                </select>
+                <button id="veloMonStartBtn" type="button">▶ Start monitor</button>
+              </div>
+              <span id="veloMonMsg" class="manual-msg"></span>
+            </div>
+          </details>
+        </div>
       </div>
 
       <!-- IOC Whitelist (Phase 2 of #35) -->
@@ -4199,6 +4248,8 @@
     let veloCountdownTimer = null;     // interval updating the running-job countdown
     let _veloBundles = null;           // last-loaded bundle list
     let veloEditingId = null;          // id of the bundle being edited (null = building a new one)
+    let _veloClients = [];             // last-loaded client inventory (host ↔ client id), for the monitor datalist
+    let _veloEventArtifacts = [];      // last-loaded CLIENT_EVENT artifact list (monitor picker)
 
     function veloCaseId() { const el = document.getElementById("caseId"); return el ? el.value.trim() : ""; }
 
@@ -4221,6 +4272,7 @@
       loadVeloBundles();
       loadVeloHuntJobs(caseId);
       loadVeloClients();
+      loadVeloMonitors(caseId);
     }
 
     // Client inventory (#70): the persisted host ↔ client_id map a single-endpoint collection resolves
@@ -4235,9 +4287,13 @@
       return Math.floor(h / 24) + "d ago";
     }
     function renderVeloClients(inv) {
+      _veloClients = inv.clients || [];
+      // Feed the live-monitor client datalist (hostname/fqdn → client id) so the analyst can pick a host.
+      const dl = document.getElementById("veloMonClientList");
+      if (dl) dl.innerHTML = _veloClients.map(c => `<option value="${escAttr(c.clientId)}">${escAttr((c.hostname || c.fqdn || "") + " — " + c.clientId)}</option>`).join("");
       const msg = document.getElementById("veloClientsMsg");
       if (!msg) return;
-      const n = (inv.clients || []).length;
+      const n = _veloClients.length;
       msg.textContent = n
         ? `${n} enrolled client${n === 1 ? "" : "s"} · updated ${veloClientsAge(inv.updatedAt)}`
         : (veloEnabled ? "no clients cached yet — click Refresh to snapshot the fleet" : "Velociraptor API not configured");
@@ -4407,6 +4463,175 @@
         .catch(e => console.warn("collect error", e));
     }
 
+    // ── Live CLIENT_EVENT monitoring (#84) ────────────────────────────────────────────────────
+    function loadVeloMonitors(caseId) {
+      if (!caseId) { renderVeloMonitors([]); return; }
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors`).then(r => r.ok ? r.json() : []).then(j => renderVeloMonitors(Array.isArray(j) ? j : [])).catch(() => {});
+    }
+    function veloMonAge(iso) {
+      if (!iso) return "never";
+      const ms = Date.now() - new Date(iso).getTime();
+      if (!isFinite(ms) || ms < 0) return "just now";
+      const s = Math.floor(ms / 1000); if (s < 60) return s + "s ago";
+      const m = Math.floor(s / 60); if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60); if (h < 24) return h + "h ago";
+      return Math.floor(h / 24) + "d ago";
+    }
+    // Update the toolbar "🔴 LIVE n" badge from the monitor list.
+    function renderVeloMonitorBadge(monitors) {
+      const badge = document.getElementById("veloMonitorBadge");
+      if (!badge) return;
+      const active = monitors.filter(m => m.status === "active").length;
+      const errored = monitors.filter(m => m.status === "error").length;
+      if (!active && !errored) { badge.style.display = "none"; badge.textContent = ""; return; }
+      badge.style.display = "";
+      badge.style.color = errored && !active ? "#ff9f43" : "#ff5a5a";
+      badge.textContent = `🔴 LIVE ${active}${errored ? ` · ⚠ ${errored}` : ""}`;
+      badge.onclick = () => { const b = document.getElementById("settingsBtn"); if (b) b.click(); const t = document.querySelector('.stab[data-stab="velociraptor"]'); if (t) t.click(); };
+    }
+    function renderVeloMonitors(monitors) {
+      renderVeloMonitorBadge(monitors);
+      const el = document.getElementById("veloMonitorList");
+      if (!el) return;
+      if (!monitors.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No live monitors — start one below to stream a client-monitoring artifact into this case.</div>"; return; }
+      const colors = { active: "#4cd964", stopped: "#9aa4b2", error: "#ff9f43" };
+      el.innerHTML = monitors.map(m => {
+        const dot = m.status === "active" ? "🔴" : (m.status === "error" ? "⚠" : "⏸");
+        const badge = `<span style="color:${colors[m.status] || "#9aa4b2"};font-weight:600">${esc(m.status)}</span>`;
+        const host = esc(m.hostname || m.clientId);
+        const stats = `${m.addedEvents || 0} event(s) · ${m.polls || 0} poll(s) · last ${veloMonAge(m.lastPolledAt)}`;
+        const err = m.status === "error" && m.lastError ? `<div style="font-size:12px;color:var(--c-ff9f43);margin-top:3px">error: ${esc(m.lastError)}</div>` : "";
+        const toggle = m.status === "stopped"
+          ? `<button class="vmon-start" data-id="${escAttr(m.id)}" title="Resume this monitor">▶ Resume</button>`
+          : `<button class="vmon-stop" data-id="${escAttr(m.id)}" title="Stop polling (keeps the cursor)">⏸ Stop</button>`;
+        return `<div class="synth-meta" style="margin:0 0 8px;padding:8px 10px;border:1px solid var(--c-2a3146);border-radius:6px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <div>${dot} <strong>${esc(m.artifact)}</strong> · ${host} · ${badge} · every ${esc(m.pollSeconds)}s</div>
+            <div style="display:flex;gap:6px">
+              <button class="vmon-poll" data-id="${escAttr(m.id)}" title="Poll now (don't wait for the timer)">Poll now</button>
+              ${toggle}
+              <button class="vmon-del" data-id="${escAttr(m.id)}" title="Delete this monitor">✕</button>
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--c-9aa4b2);margin-top:4px">${esc(stats)}</div>${err}
+        </div>`;
+      }).join("");
+      el.querySelectorAll(".vmon-stop").forEach(b => b.onclick = () => veloMonAction(b.dataset.id, "stop", b));
+      el.querySelectorAll(".vmon-start").forEach(b => b.onclick = () => veloMonAction(b.dataset.id, "start", b));
+      el.querySelectorAll(".vmon-poll").forEach(b => b.onclick = () => veloMonAction(b.dataset.id, "poll", b));
+      el.querySelectorAll(".vmon-del").forEach(b => b.onclick = () => veloMonDelete(b.dataset.id, b));
+    }
+    function veloMonAction(id, action, btn) {
+      const caseId = veloCaseId();
+      if (!caseId) return;
+      const method = action === "stop" || action === "start" || action === "poll" ? "POST" : "POST";
+      if (btn) btn.disabled = true;
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors/${encodeURIComponent(id)}/${action}`, { method })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })).catch(() => ({ ok: r.ok, j: {} })))
+        .then(({ ok, j }) => { if (!ok) console.warn("monitor " + action + " failed", j); loadVeloMonitors(caseId); })
+        .catch(e => console.warn("monitor " + action + " error", e))
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    function veloMonDelete(id, btn) {
+      const caseId = veloCaseId();
+      if (!caseId) return;
+      if (btn) btn.disabled = true;
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors/${encodeURIComponent(id)}`, { method: "DELETE" })
+        .then(() => loadVeloMonitors(caseId))
+        .catch(e => console.warn("monitor delete error", e))
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    function veloMonBrowse() {
+      const sel = document.getElementById("veloMonArtifact");
+      const btn = document.getElementById("veloMonBrowseBtn");
+      if (!veloEnabled) { const m = document.getElementById("veloMonMsg"); if (m) m.textContent = "Velociraptor API not configured (set the API config path on Integrations, then restart)."; return; }
+      if (btn) btn.disabled = true;
+      if (sel) sel.innerHTML = `<option value="">loading…</option>`;
+      fetch("/velociraptor/event-artifacts").then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { if (sel) sel.innerHTML = `<option value="">error: ${esc(j.error || "failed")}</option>`; return; }
+          _veloEventArtifacts = j.artifacts || [];
+          if (sel) sel.innerHTML = `<option value="">— pick a CLIENT_EVENT artifact —</option>` + _veloEventArtifacts.map(a => `<option value="${escAttr(a.name)}" title="${escAttr(a.description || "")}">${esc(a.name)}</option>`).join("");
+        })
+        .catch(e => { if (sel) sel.innerHTML = `<option value="">error: ${esc(e.message)}</option>`; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    function veloMonStart() {
+      const caseId = veloCaseId();
+      const msg = document.getElementById("veloMonMsg");
+      if (!caseId) { if (msg) msg.textContent = "connect to a case first"; return; }
+      if (!veloEnabled) { if (msg) msg.textContent = "Velociraptor API not configured"; return; }
+      const artifact = (document.getElementById("veloMonArtifactManual").value.trim() || document.getElementById("veloMonArtifact").value.trim());
+      const clientId = document.getElementById("veloMonClient").value.trim();
+      const pollSeconds = Number(document.getElementById("veloMonPoll").value) || 30;
+      const minSeverity = document.getElementById("veloMonMinSev").value;
+      if (!artifact) { if (msg) msg.textContent = "pick or type a CLIENT_EVENT artifact"; return; }
+      if (!/^C\.[A-Za-z0-9]+$/.test(clientId)) { if (msg) msg.textContent = "enter a valid client id (C.xxxxxxxx)"; return; }
+      const hostname = (_veloClients.find(c => c.clientId === clientId) || {});
+      const btn = document.getElementById("veloMonStartBtn");
+      if (btn) btn.disabled = true; if (msg) msg.textContent = "starting…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId, artifact, pollSeconds, minSeverity, hostname: hostname.hostname || hostname.fqdn || "" })
+      }).then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { if (msg) msg.textContent = "error: " + (j.error || "failed"); return; }
+          if (msg) msg.textContent = "";
+          document.getElementById("veloMonArtifactManual").value = "";
+          loadVeloMonitors(caseId);
+        })
+        .catch(e => { if (msg) msg.textContent = "error: " + e.message + " — restart the companion server if this 404s"; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+
+    // ── Push ingest token (#84) ───────────────────────────────────────────────────────────────
+    let _pushTokenInfo = null;   // last-loaded { configured, token, globalConfigured, pushUrl, … }
+    function loadPushToken(caseId) {
+      if (!caseId) { renderPushToken(null); return; }
+      fetch(`/cases/${encodeURIComponent(caseId)}/push-token`).then(r => r.ok ? r.json() : null).then(renderPushToken).catch(() => renderPushToken(null));
+    }
+    function renderPushToken(info) {
+      _pushTokenInfo = info;
+      const elInfo = document.getElementById("pushTokenInfo");
+      const curl = document.getElementById("pushCurl");
+      if (!elInfo || !curl) return;
+      if (!info) { elInfo.textContent = "Connect to a case to manage its push token."; curl.textContent = "connect to a case to see the curl example"; return; }
+      const parts = [];
+      if (info.globalConfigured) parts.push("a <strong>global</strong> token (DFIR_PUSH_TOKEN) is set — it covers every case");
+      parts.push(info.configured ? `a <strong>per-case</strong> token is set (created ${info.createdAt ? esc(info.createdAt) : "—"})` : "no per-case token");
+      if (!info.globalConfigured && !info.configured) parts.push("⚠ push is <strong>disabled</strong> until you set one");
+      elInfo.innerHTML = parts.join(" · ");
+      // Prefer the per-case token in the example; else show the global placeholder.
+      const token = info.token || (info.globalConfigured ? "$DFIR_PUSH_TOKEN" : "<your-token>");
+      const url = info.pushUrl || "";
+      curl.textContent = `curl -X POST ${url} \\\n  -H "X-DFIR-Key: ${token}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"source":"my-tool","events":[ { /* a SIEM alert, Velociraptor rows, etc. */ } ]}'`;
+    }
+    function pushTokenGenerate() {
+      const caseId = veloCaseId();
+      const msg = document.getElementById("pushTokenMsg");
+      if (!caseId) { if (msg) msg.textContent = "connect to a case first"; return; }
+      const btn = document.getElementById("pushTokenGenBtn"); if (btn) btn.disabled = true;
+      fetch(`/cases/${encodeURIComponent(caseId)}/push-token/generate`, { method: "POST" })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => { if (!ok || j.error) { if (msg) msg.textContent = "error: " + (j.error || "failed"); return; } if (msg) msg.textContent = "token generated"; loadPushToken(caseId); })
+        .catch(e => { if (msg) msg.textContent = "error: " + e.message; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    function pushTokenClear() {
+      const caseId = veloCaseId();
+      const msg = document.getElementById("pushTokenMsg");
+      if (!caseId) return;
+      const btn = document.getElementById("pushTokenClearBtn"); if (btn) btn.disabled = true;
+      fetch(`/cases/${encodeURIComponent(caseId)}/push-token`, { method: "DELETE" })
+        .then(() => { if (msg) msg.textContent = "cleared"; loadPushToken(caseId); })
+        .catch(e => { if (msg) msg.textContent = "error: " + e.message; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    (function wirePushToken() {
+      const gen = document.getElementById("pushTokenGenBtn"); if (gen) gen.onclick = pushTokenGenerate;
+      const clr = document.getElementById("pushTokenClearBtn"); if (clr) clr.onclick = pushTokenClear;
+    })();
+
     function veloBrowseArtifacts() {
       const picker = document.getElementById("veloArtifactPicker");
       const btn = document.getElementById("veloBrowseBtn");
@@ -4567,6 +4792,8 @@
       const neu = document.getElementById("veloNewBundleBtn"); if (neu) neu.onclick = () => { veloClearBuilder(); const m = document.getElementById("veloBuilderMsg"); if (m) m.textContent = ""; };
       const search = document.getElementById("veloArtifactSearch"); if (search) search.oninput = renderVeloPicker;
       const manual = document.getElementById("veloArtifactManual"); if (manual) manual.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); veloAddManual(); } };
+      const monBrowse = document.getElementById("veloMonBrowseBtn"); if (monBrowse) monBrowse.onclick = veloMonBrowse;
+      const monStart = document.getElementById("veloMonStartBtn"); if (monStart) monStart.onclick = veloMonStart;
       loadVeloBundles();   // populate the bundle list even before a case is connected
     })();
 
@@ -6701,6 +6928,8 @@
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
         else if (msg.type === "import_undo_changed") loadUndoStack(caseId);
         else if (msg.type === "velo_hunt_changed") loadVeloHuntJobs(caseId);
+        else if (msg.type === "velo_monitor_changed") loadVeloMonitors(caseId);
+        else if (msg.type === "push_token_changed") loadPushToken(caseId);
         else if (msg.type === "legitimate_changed") loadLegitimate(caseId);
         else if (msg.type === "scope_changed") {
           scope = { start: msg.start ?? null, end: msg.end ?? null };
@@ -8116,10 +8345,13 @@
       document.querySelectorAll(".stab").forEach((b, i) => b.classList.toggle("active", i === 0));
       document.querySelectorAll(".stab-pane").forEach((p, i) => p.classList.toggle("active", i === 0));
       document.getElementById("settingsSaveMsg").textContent = "";
-      // Refresh the Velociraptor triage panel (bundles + current hunt job) so it's current when opened.
+      // Refresh the Velociraptor triage panel (bundles + current hunt job + live monitors) so it's current when opened.
       veloClearBuilder();
       loadVeloBundles();
       loadVeloHuntJobs(veloCaseId());
+      loadVeloClients();
+      loadVeloMonitors(veloCaseId());
+      loadPushToken(veloCaseId());
       document.getElementById("settingsOverlay").classList.add("open");
     }
 

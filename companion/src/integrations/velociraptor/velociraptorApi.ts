@@ -23,6 +23,7 @@ export interface VelociraptorApiConfig {
   guiUrl?: string;         // optional Velociraptor GUI base URL, for deep-linking to a launched hunt
   guiOrg?: string;         // Velociraptor org for the deep link (?org_id=…); default "root" (the GUI requires it)
   uploadVql?: string;      // optional override for the hunt-uploads VQL (DFIR_VELOCIRAPTOR_UPLOAD_VQL); __HUNT_ID__ placeholder
+  monitorVql?: string;     // optional override for the client-event read VQL (DFIR_VELOCIRAPTOR_MONITOR_VQL); see DEFAULT_MONITOR_VQL
 }
 
 export interface VqlRunResult {
@@ -205,6 +206,14 @@ const DEFAULT_UPLOAD_VQL =
   "LET flows = SELECT Flow.client_id AS ClientId, Flow.session_id AS FlowId FROM hunt_flows(hunt_id='__HUNT_ID__')\n" +
   "LET ups = SELECT * FROM foreach(row=flows, query={ SELECT ClientId, vfs_path AS Path, file_size AS Size, _Components AS Components FROM uploads(client_id=ClientId, flow_id=FlowId) })\n" +
   "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '(?i)\\.json$' AND Size < __MAX_BYTES__ AND Content";
+
+// Default VQL to read a CLIENT_EVENT (monitoring) artifact's rows for one client over a time window
+// (#84). Velociraptor's `source()` plugin reads a client's monitoring result set when given an event
+// artifact + client_id + start_time/end_time (epoch seconds). __CLIENT_ID__/__ARTIFACT__ are validated
+// before substitution; __START__/__END__ are integers; __LIMIT__ bounds the rows. Override per
+// Velociraptor version with DFIR_VELOCIRAPTOR_MONITOR_VQL (keep the placeholders + a row-per-event shape).
+const DEFAULT_MONITOR_VQL =
+  "SELECT * FROM source(client_id='__CLIENT_ID__', artifact='__ARTIFACT__', start_time=__START__, end_time=__END__) LIMIT __LIMIT__";
 
 const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;     // valid Velociraptor artifact / source name
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/;        // valid hunt id
@@ -506,11 +515,13 @@ export class VelociraptorClient {
     return this.cap(await this.runRaw(program, this.collectCap()));
   }
 
-  // List the server's COLLECTABLE client artifacts (type CLIENT, not CLIENT_EVENT monitoring) so the
-  // dashboard can build triage bundles from real artifact names. Returns metadata only (no evidence),
-  // so the per-query row cap is NOT applied — a server can define hundreds.
-  async listClientArtifacts(): Promise<VeloArtifactInfo[]> {
-    const program = "SELECT name, description, type FROM artifact_definitions() WHERE type =~ '^client$' ORDER BY name";
+  // List the server's artifacts of a given type — CLIENT (collectable, for triage bundles) or
+  // CLIENT_EVENT (continuous client monitoring, for the live-monitor picker, #84). Returns metadata
+  // only (no evidence), so the per-query row cap is NOT applied — a server can define hundreds. The
+  // type is constrained to the two literals, so it's injection-safe inside the regex.
+  async listClientArtifacts(type: "client" | "client_event" = "client"): Promise<VeloArtifactInfo[]> {
+    const kind = type === "client_event" ? "client_event" : "client";
+    const program = `SELECT name, description, type FROM artifact_definitions() WHERE type =~ '^${kind}$' ORDER BY name`;
     const rows = await this.runRaw(program);
     const out: VeloArtifactInfo[] = [];
     for (const row of rows) {
@@ -520,6 +531,27 @@ export class VelociraptorClient {
       out.push({ name, description: String(r.description ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 300) });
     }
     return out;
+  }
+
+  // Read a CLIENT_EVENT (monitoring) artifact's rows for ONE client over [startEpoch, endEpoch] (epoch
+  // seconds) — the live-monitor poller's read step (#84). Like collectionResults/huntResults, all
+  // interpolated values are validated/bounded so they're safe inside the VQL literals: the client id +
+  // artifact name match their charset regexes and the times are coerced to non-negative integers.
+  // Uses the larger collect cap (monitoring bursts can be large) and the row cap.
+  async monitorResults(clientId: string, artifact: string, startEpoch: number, endEpoch: number): Promise<VelociraptorRunResult> {
+    if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
+    if (!ARTIFACT_RE.test(artifact)) throw new Error("invalid artifact name");
+    const start = Math.max(0, Math.floor(Number(startEpoch) || 0));
+    const end = Math.max(start, Math.floor(Number(endEpoch) || 0));
+    const limit = this.config.maxRows + 1;   // +1 so cap() flags truncation
+    const template = this.config.monitorVql && this.config.monitorVql.trim() ? this.config.monitorVql : DEFAULT_MONITOR_VQL;
+    const program = template
+      .split("__CLIENT_ID__").join(clientId)
+      .split("__ARTIFACT__").join(artifact)
+      .split("__START__").join(String(start))
+      .split("__END__").join(String(end))
+      .split("__LIMIT__").join(String(limit));
+    return this.cap(await this.runRaw(program, this.collectCap()));
   }
 
   // Launch a HUNT that collects a CHOSEN SET of existing artifacts (a saved bundle) across the fleet,
@@ -630,6 +662,7 @@ export function loadVelociraptorConfig(env: NodeJS.ProcessEnv = process.env): Ve
     guiUrl: env.DFIR_VELOCIRAPTOR_GUI_URL?.trim() || undefined,
     guiOrg: env.DFIR_VELOCIRAPTOR_ORG?.trim() || "root",
     uploadVql: env.DFIR_VELOCIRAPTOR_UPLOAD_VQL?.trim() || undefined,
+    monitorVql: env.DFIR_VELOCIRAPTOR_MONITOR_VQL?.trim() || undefined,
   };
 }
 
