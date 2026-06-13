@@ -53,6 +53,7 @@ import type { MemoryImportOptions } from "./analysis/memoryImport.js";
 import { parseEmail } from "./analysis/emailImport.js";
 import type { EmailImportOptions } from "./analysis/emailImport.js";
 import { parseTheHive } from "./analysis/theHiveImport.js";
+import { fetchIrisCase } from "./integrations/iris/irisImportFetch.js";
 import { parseAuditdLog } from "./analysis/auditdImport.js";
 import type { AuditdImportOptions } from "./analysis/auditdImport.js";
 import { parseJournald } from "./analysis/journaldImport.js";
@@ -1224,6 +1225,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     res.status(200).json({ configured: !!options.irisClient, baseUrl: options.irisOptions?.baseUrl });
   });
 
+  // List the cases on the configured DFIR-IRIS instance — powers the "Import from IRIS" picker
+  // (issue #88). 501 when not configured. Errors map to 502 (the remote IRIS is unreachable).
+  app.get("/iris/cases", async (_req: Request, res: Response) => {
+    if (!options.irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
+    try {
+      const cases = await options.irisClient.listCases();
+      return res.status(200).json({ cases });
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
   // Run a VQL query against the configured Velociraptor server (via its API) and return the rows.
   // Powers the hunt-pivot modal's "Run in Velociraptor" button. 501 when not configured. The VQL is
   // analyst-authored (from the generated pivots) — localhost only, opt-in via DFIR_VELOCIRAPTOR_*.
@@ -2016,6 +2029,67 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[iris] ${caseId} push ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import an EXISTING DFIR-IRIS case into this Companion case (issue #88) — the reverse of the
+  // push. Pull the IRIS case's assets/IOCs/timeline (by IRIS case id or exact name), persist the
+  // fetched payload as an evidence-first audit file, then map it DETERMINISTICALLY (no AI call)
+  // into the forensic timeline + IOCs and re-synthesize. The fetched payload is the imported
+  // "file" so the case keeps a faithful import audit row.
+  app.post("/cases/:id/iris-import", async (req: Request, res: Response) => {
+    if (!options.irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const irisCaseId = Number(req.body?.irisCaseId);
+    const irisCaseName = typeof req.body?.irisCaseName === "string" ? req.body.irisCaseName.trim() : "";
+    if (!Number.isFinite(irisCaseId) && !irisCaseName) {
+      return res.status(400).json({ error: "irisCaseId or irisCaseName is required" });
+    }
+
+    try {
+      logLine(`[iris] ${caseId} import START (iris case ${irisCaseName || `#${irisCaseId}`})`);
+      const data = await fetchIrisCase(options.irisClient, {
+        irisCaseId: Number.isFinite(irisCaseId) ? irisCaseId : undefined,
+        caseName: irisCaseName || undefined,
+      });
+      if (data.assets.length === 0 && data.iocs.length === 0 && data.timeline.length === 0) {
+        return res.status(400).json({ error: "the IRIS case has no assets, IOCs or timeline events to import" });
+      }
+
+      const payload = JSON.stringify(data, null, 2);
+      const seq = await store.nextImportSeq(caseId);
+      const safeBase = (data.caseName || `iris-case-${data.irisCaseId}`).replace(/[^\w.\-]+/g, "_").slice(0, 60) || "iris-case";
+      const storedName = `${String(seq).padStart(4, "0")}_${safeBase}.json`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, payload);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName: `DFIR-IRIS case ${data.caseName ?? `#${data.irisCaseId}`}`,
+        rows: data.timeline.length + data.assets.length, bytes: Buffer.byteLength(payload, "utf8"),
+      });
+
+      res.status(202).json({
+        accepted: true, file: storedName,
+        irisCaseId: data.irisCaseId, caseName: data.caseName,
+        timeline: data.timeline.length, assets: data.assets.length, iocs: data.iocs.length,
+      });
+
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing DFIR-IRIS case ${data.caseName ?? `#${data.irisCaseId}`}` });
+      void options.pipeline.importIris(caseId, data, { label: storedName, idPrefix: `iris${seq}`, importedAt })
+        .then(() => {
+          logLine(`[iris] ${caseId} import DONE (iris case ${data.caseName ?? `#${data.irisCaseId}`})`);
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) => {
+          logLine(`[iris] ${caseId} import ERROR: ${(err as Error).message}`);
+          options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+        });
+      return;
+    } catch (err) {
+      logLine(`[iris] ${caseId} import ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
     }
   });

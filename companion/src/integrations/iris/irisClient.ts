@@ -118,6 +118,17 @@ export class IrisClient {
     return { caseId: id, caseName: body.case_name };
   }
 
+  // List all cases (used by the IMPORT picker — issue #88). Tolerant of envelope shape.
+  async listCases(): Promise<IrisCaseRef[]> {
+    const data = await this.request<{ cases?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
+      "GET", "/manage/cases/list",
+    );
+    const rows = Array.isArray(data) ? data : data.cases ?? [];
+    return rows
+      .map((c) => ({ caseId: Number(c.case_id), caseName: String(c.case_name ?? `case #${c.case_id}`) }))
+      .filter((c) => Number.isFinite(c.caseId));
+  }
+
   // The collaborative case summary (distinct from case_description metadata). Replaces the
   // whole summary — intended for seeding an exported case.
   async setSummary(caseId: number, markdown: string): Promise<void> {
@@ -171,6 +182,14 @@ export class IrisClient {
     return Number(data.asset_id);
   }
 
+  // Full asset rows (every field) for the IMPORT path — listAssets() narrows to id+name.
+  async getRawAssets(cid: number): Promise<Array<Record<string, unknown>>> {
+    const data = await this.request<{ assets?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
+      "GET", "/case/assets/list", { cid },
+    );
+    return Array.isArray(data) ? data : data.assets ?? [];
+  }
+
   // ---- iocs ----------------------------------------------------------------
 
   async listIocs(cid: number): Promise<IrisIocRef[]> {
@@ -184,6 +203,14 @@ export class IrisClient {
   async addIoc(cid: number, body: IrisIocBody): Promise<number> {
     const data = await this.request<Record<string, unknown>>("POST", "/case/ioc/add", { cid, body: { ...body, cid } });
     return Number(data.ioc_id);
+  }
+
+  // Full IOC rows (value + type + tags) for the IMPORT path — listIocs() narrows to id+value.
+  async getRawIocs(cid: number): Promise<Array<Record<string, unknown>>> {
+    const data = await this.request<{ ioc?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
+      "GET", "/case/ioc/list", { cid },
+    );
+    return Array.isArray(data) ? data : data.ioc ?? [];
   }
 
   // ---- timeline ------------------------------------------------------------
@@ -201,6 +228,15 @@ export class IrisClient {
     );
     const rows = Array.isArray(data) ? data : data.timeline ?? [];
     return rows.map((r) => ({ id: Number(r.event_id), title: String(r.event_title ?? ""), date: String(r.event_date ?? "") }));
+  }
+
+  // Full timeline rows (title + content + date/tz + colour + tags) for the IMPORT path —
+  // listEvents() narrows to id+title+date for dedupe.
+  async getRawTimeline(cid: number): Promise<Array<Record<string, unknown>>> {
+    const data = await this.request<{ timeline?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
+      "GET", "/case/timeline/events", { cid },
+    );
+    return Array.isArray(data) ? data : data.timeline ?? [];
   }
 
   // ---- tasks ---------------------------------------------------------------

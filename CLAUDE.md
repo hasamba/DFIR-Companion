@@ -418,12 +418,19 @@ only when their domain is a customer domain AND the email isn't itself an IOC. T
 `npm run prompts:eject -- [dir]` (write the 6 default prompts to files for customizing) ·
 `npm run yeti -- <indicator>` (CLI YETI lookup) ·
 `npm run iris:push -- <case>` (push the case to a configured DFIR-IRIS instance) ·
+`npm run iris:import -- <case> <irisCaseIdOrName>` (import an existing DFIR-IRIS case into the case) ·
 `npm run timesketch:push -- <case>` (push the case's forensic timeline to a configured Timesketch instance) ·
 `npm run notion:push -- <case> --page <urlOrId> | --new [--database <id>]` (export the case into a Notion page).
 
 **External integrations** (`integrations/`) follow the IRIS pattern — a client built from env at
 startup (`undefined` when unconfigured), passed into `createApp`, gated routes return 501 when absent:
-DFIR-IRIS (`irisClient`), Timesketch, and **Velociraptor API** (`velociraptorClient` →
+DFIR-IRIS (`irisClient` — push via `irisPush.ts`/`irisMap.ts`; **import is the reverse** (#88):
+`integrations/iris/irisImportFetch.ts` pulls a case's assets/IOCs/timeline rows through the client's
+read methods (`listCases`/`getRawAssets`/`getRawIocs`/`getRawTimeline`), the PURE `analysis/irisImport.ts`
+maps them deterministically — timeline→events (severity from `event_color`, MITRE/asset/hash from
+tags+content), IOCs→IOCs (type from the IRIS ioc-type name or value shape), assets→evidence events — and
+`pipeline.importIris` merges via `mergeDelta`; routes `GET /iris/cases` + `POST /cases/:id/iris-import`,
+dashboard "Import from IRIS" picker), Timesketch, and **Velociraptor API** (`velociraptorClient` →
 `integrations/velociraptor/velociraptorApi.ts`; drives the `velociraptor` binary's `--api_config`
 through an **injectable runner** — tests never spawn). The dashboard's "Run hunt (all clients)"
 button does NOT run server-side: `launchHunt()` packages the pivot VQL as a **CLIENT artifact**
