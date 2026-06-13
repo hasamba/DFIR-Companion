@@ -19,6 +19,7 @@
     "prompts:eject": "tsx scripts/eject-prompts.ts",
     "yeti": "tsx scripts/yeti-lookup.ts",
     "iris:push": "tsx scripts/push-iris.ts",
+    "iris:import": "tsx scripts/import-iris.ts",
     "timesketch:push": "tsx scripts/push-timesketch.ts",
     "misp:push": "tsx scripts/push-misp.ts",
     "notion:push": "tsx scripts/push-notion.ts",

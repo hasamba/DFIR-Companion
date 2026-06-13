@@ -273,3 +273,104 @@ describe("pushCaseToIris", () => {
     expect(res.tasks.added).toBe(0);
   });
 });
+
+// ---- import fetch orchestrator (issue #88) ---------------------------------
+
+import { fetchIrisCase, IrisImportError, type IrisImportClientLike } from "../../src/integrations/iris/irisImportFetch.js";
+
+class MockImportIris implements IrisImportClientLike {
+  pinged = false;
+  cases: IrisCaseRef[] = [{ caseId: 7, caseName: "Ransomware FS01" }];
+  assets: Array<Record<string, unknown>> = [{ asset_id: 1, asset_name: "DC01" }];
+  iocs: Array<Record<string, unknown>> = [{ ioc_id: 1, ioc_value: "8.8.8.8", ioc_type: "ip-dst" }];
+  timeline: Array<Record<string, unknown>> = [{ event_id: 1, event_title: "logon", event_date: "2026-06-04T10:00:00" }];
+  requestedCid?: number;
+  listCasesCalled = false;
+
+  async ping() { this.pinged = true; }
+  async findCaseByName(name: string) { return this.cases.find((c) => c.caseName === name) ?? null; }
+  async listCases() { this.listCasesCalled = true; return this.cases; }
+  async getRawAssets(cid: number) { this.requestedCid = cid; return this.assets; }
+  async getRawIocs(_cid: number) { return this.iocs; }
+  async getRawTimeline(_cid: number) { return this.timeline; }
+}
+
+describe("fetchIrisCase", () => {
+  it("resolves a case by name and fetches the three evidence sections", async () => {
+    const m = new MockImportIris();
+    const data = await fetchIrisCase(m, { caseName: "Ransomware FS01" });
+    expect(m.pinged).toBe(true);
+    expect(data.irisCaseId).toBe(7);
+    expect(data.caseName).toBe("Ransomware FS01");
+    expect(m.requestedCid).toBe(7);
+    expect(data.assets).toHaveLength(1);
+    expect(data.iocs).toHaveLength(1);
+    expect(data.timeline).toHaveLength(1);
+  });
+
+  it("resolves a display name from the case list when given a numeric cid", async () => {
+    const m = new MockImportIris();
+    const data = await fetchIrisCase(m, { irisCaseId: 7 });
+    expect(m.listCasesCalled).toBe(true);
+    expect(data.caseName).toBe("Ransomware FS01");
+    expect(data.irisCaseId).toBe(7);
+  });
+
+  it("falls back to a synthetic name when the cid is not in the case list", async () => {
+    const m = new MockImportIris();
+    const data = await fetchIrisCase(m, { irisCaseId: 99 });
+    expect(data.caseName).toBe("IRIS case #99");
+  });
+
+  it("throws when the named case does not exist", async () => {
+    const m = new MockImportIris();
+    await expect(fetchIrisCase(m, { caseName: "Nope" })).rejects.toBeInstanceOf(IrisImportError);
+  });
+
+  it("throws when neither a case id nor a name is given", async () => {
+    const m = new MockImportIris();
+    await expect(fetchIrisCase(m, {})).rejects.toBeInstanceOf(IrisImportError);
+  });
+});
+
+// ---- IrisClient HTTP layer (locks the REST endpoint paths) -----------------
+
+import { IrisClient } from "../../src/integrations/iris/irisClient.js";
+
+function fakeFetch(payload: unknown, urls: string[]): typeof fetch {
+  return (async (url: string) => {
+    urls.push(String(url));
+    return {
+      status: 200, ok: true,
+      json: async () => ({ status: "success", data: payload }),
+    } as Response;
+  }) as unknown as typeof fetch;
+}
+
+describe("IrisClient read endpoints", () => {
+  it("lists the timeline via /case/timeline/events/list/filter/0 (NOT the bare /events, which 404s)", async () => {
+    const urls: string[] = [];
+    const client = new IrisClient({ baseUrl: "https://iris.test", apiKey: "k", fetchFn: fakeFetch({ timeline: [{ event_id: 1 }] }, urls) });
+    const rows = await client.getRawTimeline(7);
+    expect(rows).toHaveLength(1);
+    expect(urls[0]).toBe("https://iris.test/case/timeline/events/list/filter/0?cid=7");
+  });
+
+  it("listEvents uses the same filter/0 endpoint", async () => {
+    const urls: string[] = [];
+    const client = new IrisClient({ baseUrl: "https://iris.test", apiKey: "k", fetchFn: fakeFetch({ timeline: [{ event_id: 9, event_title: "t", event_date: "d" }] }, urls) });
+    await client.listEvents(7);
+    expect(urls[0]).toContain("/case/timeline/events/list/filter/0");
+  });
+
+  it("lists cases / assets / iocs at their documented paths", async () => {
+    const urls: string[] = [];
+    const client = new IrisClient({ baseUrl: "https://iris.test", apiKey: "k", fetchFn: fakeFetch({ cases: [{ case_id: 3, case_name: "x" }] }, urls) });
+    await client.listCases();
+    await client.getRawAssets(7);
+    await client.getRawIocs(7);
+    expect(urls[0]).toContain("/manage/cases/list");
+    expect(urls[1]).toBe("https://iris.test/case/assets/list?cid=7");
+    expect(urls[2]).toBe("https://iris.test/case/ioc/list?cid=7");
+  });
+});
