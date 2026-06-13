@@ -4733,18 +4733,22 @@
       const undoBtn = document.getElementById("importUndoBtn");
       const redoBtn = document.getElementById("importRedoBtn");
       if (!bar || !undoBtn || !redoBtn) return;
+      // Hide the bar only when the endpoint is unavailable (older server / not restarted yet). Once
+      // it responds, the bar is ALWAYS shown so the capability is discoverable; the buttons disable
+      // (with a hint) when there's nothing to undo/redo yet.
       if (!s) { bar.style.display = "none"; return; }
       const canUndo = !!s.canUndo, canRedo = !!s.canRedo;
-      // Only show the bar once there's something to undo/redo, so it stays out of the way otherwise.
-      bar.style.display = (canUndo || canRedo) ? "flex" : "none";
+      bar.style.display = "flex";
       undoBtn.disabled = !canUndo;
       redoBtn.disabled = !canRedo;
       undoBtn.textContent = canUndo && s.nextUndo ? `↶ Undo import (${s.nextUndo.label})` : "↶ Undo import";
       redoBtn.textContent = canRedo && s.nextRedo ? `↷ Redo (${s.nextRedo.label})` : "↷ Redo";
       undoBtn.title = canUndo && s.nextUndo
         ? `Restore the forensic timeline + IOCs to before "${s.nextUndo.label}" (${s.nextUndo.events} events, ${s.nextUndo.iocs} IOCs), then re-synthesize`
-        : "Nothing to undo";
+        : "Nothing to undo yet — run an import first";
       redoBtn.title = canRedo && s.nextRedo ? `Re-apply "${s.nextRedo.label}"` : "Nothing to redo";
+      const hint = document.getElementById("importUndoMsg");
+      if (hint && !hint.textContent) hint.textContent = (!canUndo && !canRedo) ? "no import to undo yet" : "";
     }
     function doImportUndoRedo(which) {
       const caseId = document.getElementById("caseId").value.trim();
