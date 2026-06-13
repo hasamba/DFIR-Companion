@@ -1828,6 +1828,11 @@
           <span id="addEventMsg" class="manual-msg"></span>
         </form>
       </div>
+      <div id="importUndoBar" style="display:none;align-items:center;gap:8px;margin:0 0 8px;font-size:12px;color:var(--c-9aa4b2)">
+        <button id="importUndoBtn" type="button" disabled title="Undo the latest import — restore the forensic timeline + IOCs to before it (then re-synthesize)">↶ Undo import</button>
+        <button id="importRedoBtn" type="button" disabled title="Redo the most-recently-undone import">↷ Redo</button>
+        <span id="importUndoMsg"></span>
+      </div>
       <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="forensicTimeline">—</div></section>
     <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
@@ -4569,6 +4574,8 @@
         .finally(() => { btn.disabled = false; });
     }
     document.getElementById("genNarrativeBtn").addEventListener("click", (e) => { e.stopPropagation(); genNarrative(); });
+    document.getElementById("importUndoBtn").addEventListener("click", () => doImportUndoRedo("undo"));
+    document.getElementById("importRedoBtn").addEventListener("click", () => doImportUndoRedo("redo"));
     document.getElementById("editNarrativeBtn").addEventListener("click", (e) => {
       e.stopPropagation();
       const view = document.getElementById("narrativeView");
@@ -4713,6 +4720,51 @@
         detail = `<details><summary>what this import added to the IOCs</summary>${items}${more}</details>`;
       }
       el.innerHTML = `<div class="sm-line"><span>📥 Last import <strong>${esc(relTime(m.lastImportedAt))}</strong></span><span>${summary}</span></div>${detail}`;
+    }
+
+    // --- Import undo / redo (#76) -------------------------------------------------------------
+    // Imports can flood the dashboard; this rolls the forensic timeline + IOCs back to the state
+    // before the latest import (and redo). The bar's buttons enable/label from the undo-stack summary.
+    function loadUndoStack(caseId) {
+      fetch(`/cases/${caseId}/import/undo-stack`).then(r => r.ok ? r.json() : null).then(renderUndoStack).catch(() => {});
+    }
+    function renderUndoStack(s) {
+      const bar = document.getElementById("importUndoBar");
+      const undoBtn = document.getElementById("importUndoBtn");
+      const redoBtn = document.getElementById("importRedoBtn");
+      if (!bar || !undoBtn || !redoBtn) return;
+      if (!s) { bar.style.display = "none"; return; }
+      const canUndo = !!s.canUndo, canRedo = !!s.canRedo;
+      // Only show the bar once there's something to undo/redo, so it stays out of the way otherwise.
+      bar.style.display = (canUndo || canRedo) ? "flex" : "none";
+      undoBtn.disabled = !canUndo;
+      redoBtn.disabled = !canRedo;
+      undoBtn.textContent = canUndo && s.nextUndo ? `↶ Undo import (${s.nextUndo.label})` : "↶ Undo import";
+      redoBtn.textContent = canRedo && s.nextRedo ? `↷ Redo (${s.nextRedo.label})` : "↷ Redo";
+      undoBtn.title = canUndo && s.nextUndo
+        ? `Restore the forensic timeline + IOCs to before "${s.nextUndo.label}" (${s.nextUndo.events} events, ${s.nextUndo.iocs} IOCs), then re-synthesize`
+        : "Nothing to undo";
+      redoBtn.title = canRedo && s.nextRedo ? `Re-apply "${s.nextRedo.label}"` : "Nothing to redo";
+    }
+    function doImportUndoRedo(which) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const msg = document.getElementById("importUndoMsg");
+      const undoBtn = document.getElementById("importUndoBtn");
+      const redoBtn = document.getElementById("importRedoBtn");
+      undoBtn.disabled = true; redoBtn.disabled = true;
+      if (msg) msg.textContent = which === "undo" ? "undoing…" : "redoing…";
+      fetch(`/cases/${caseId}/import/${which}`, { method: "POST" })
+        .then(r => { if (!r.ok) return r.json().then(j => { throw new Error(j.error || ("HTTP " + r.status)); }); return r.json(); })
+        .then(s => {
+          renderUndoStack(s);
+          if (msg) msg.textContent = which === "undo" ? "import undone — re-synthesizing…" : "import redone — re-synthesizing…";
+          // The state broadcast (and a synthesis pass) refresh the timeline/IOCs; also pull now so the
+          // change shows immediately without waiting for the WS round-trip.
+          fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
+          loadImportMeta(caseId);
+        })
+        .catch(e => { if (msg) msg.textContent = "failed: " + e.message + " — restart the companion server if this 404s"; loadUndoStack(caseId); });
     }
 
     // --- Ask the LLM about this case ----------------------------------------------
@@ -6459,6 +6511,7 @@
       setSearchBarOpen(false, false); _updateSearchToggleIndicator();
       loadSynthMeta(caseId);
       loadImportMeta(caseId);
+      loadUndoStack(caseId);
       loadCustomerExposure(caseId);
       loadVeloTriage(caseId);
       resetVeloHuntSuggest();   // clear AI-suggested fleet hunts; analyst regenerates per case on demand
@@ -6498,6 +6551,7 @@
         else if (msg.type === "playbook_changed") loadPlaybook(caseId);
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
+        else if (msg.type === "import_undo_changed") loadUndoStack(caseId);
         else if (msg.type === "velo_hunt_changed") loadVeloHuntJobs(caseId);
         else if (msg.type === "legitimate_changed") loadLegitimate(caseId);
         else if (msg.type === "scope_changed") {
