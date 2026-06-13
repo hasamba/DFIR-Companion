@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Beacon / C2 detection** — flag outbound connection channels (host → dest:port) whose inter-arrival intervals are too regular to be human traffic; robust **median/MAD** period estimate so a missed beacon or operator burst doesn't hide a real channel. Derived from the network timeline, severity High for public destinations, a hunting lead not a verdict. Dashboard *Beacon Candidates* panel + report §4.9; thresholds `DFIR_BEACON_MIN_COUNT`/`DFIR_BEACON_MAX_JITTER_PCT` (closes #82).
 
+### Fixed
+- **`seed-demo` now honours `DFIR_CASES_ROOT`** — the seed script didn't load `.env` (every other script does), so it wrote the demo to `companion/cases` while the server read from the configured root, and the dashboard showed no case.
+
 ## [0.20.0] - 2026-06-13
 
 ### Added

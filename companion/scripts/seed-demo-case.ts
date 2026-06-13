@@ -7,9 +7,14 @@
 //   npm run seed-demo
 //   npm run seed-demo -- --force            overwrite if already exists
 //   npm run seed-demo -- --case-id demo2    use a different id
+import { config as loadDotenv } from "dotenv";
 import { writeFile, mkdir, appendFile, stat } from "node:fs/promises";
 import { join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// Load .env so DFIR_CASES_ROOT matches the server — otherwise the demo lands in companion/cases
+// while the server reads from the configured root, and the dashboard shows no case.
+loadDotenv();
 
 const CASE_ID_DEFAULT = "demo";
 
