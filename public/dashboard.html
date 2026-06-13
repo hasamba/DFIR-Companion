@@ -4743,12 +4743,17 @@
       redoBtn.style.display = "";
       undoBtn.disabled = !canUndo;
       redoBtn.disabled = !canRedo;
-      undoBtn.textContent = canUndo && s.nextUndo ? `Undo import (${s.nextUndo.label})` : "Undo import";
-      redoBtn.textContent = canRedo && s.nextRedo ? `Redo (${s.nextRedo.label})` : "Redo";
-      undoBtn.title = canUndo && s.nextUndo
-        ? `Roll the whole case back to before "${s.nextUndo.label}" — restores ${s.nextUndo.events} events, ${s.nextUndo.iocs} IOCs, ${s.nextUndo.findings} findings`
+      // Keep the LABELS short + fixed — the import name can be long, and a long toolbar label makes
+      // fitToolbar() wrap the row and collapse everything to icons (even on a wide screen). The
+      // specific import + counts go in the hover tooltip instead.
+      undoBtn.textContent = "Undo import";
+      redoBtn.textContent = "Redo";
+      const undoTip = canUndo && s.nextUndo
+        ? `Undo the last import — roll the whole case back to before "${s.nextUndo.label}" (restores ${s.nextUndo.events} events, ${s.nextUndo.iocs} IOCs, ${s.nextUndo.findings} findings)`
         : "Nothing to undo yet — run an import first";
-      redoBtn.title = canRedo && s.nextRedo ? `Re-apply "${s.nextRedo.label}"` : "Nothing to redo";
+      const redoTip = canRedo && s.nextRedo ? `Redo — re-apply "${s.nextRedo.label}"` : "Nothing to redo";
+      undoBtn.title = undoTip; undoBtn.dataset.tip = undoTip;
+      redoBtn.title = redoTip; redoBtn.dataset.tip = redoTip;
     }
     function doImportUndoRedo(which) {
       const caseId = document.getElementById("caseId").value.trim();
