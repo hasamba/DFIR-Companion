@@ -77,6 +77,21 @@ describe("detectBeacons", () => {
     expect(b.firstSeen).toBe("2026-05-20T00:00:00.000Z");
   });
 
+  it("stays robust to a few off-cadence check-ins (median/MAD, not mean/stddev)", () => {
+    // A clean hourly beacon, then one connection a full day later (operator burst / missed beacons).
+    // Mean/stddev would be wrecked by the outlier; median/MAD shrugs it off and still flags it.
+    const hourly = beaconEvents("h", "WKSTN-1", "185.220.101.47", 443, "2026-05-15T10:00:00Z", 3600, 10);
+    const outlier = ev("late", "2026-05-16T09:30:00Z", {
+      asset: "WKSTN-1", dstIp: "185.220.101.47", port: 443, action: "network_send",
+    });
+    const beacons = detectBeacons([...hourly, outlier]);
+    expect(beacons).toHaveLength(1);
+    expect(beacons[0].eventCount).toBe(11);
+    expect(beacons[0].intervalSeconds).toBe(3600); // median period unaffected by the outlier
+    expect(beacons[0].jitterPct).toBeLessThanOrEqual(20);
+    expect(beacons[0].severity).toBe("High");
+  });
+
   it("tolerates small jitter under the threshold but rejects irregular traffic", () => {
     // ~5% jitter around a 60s beacon → kept.
     const regular = beaconEvents(
@@ -157,7 +172,7 @@ describe("detectBeacons", () => {
     expect(detectBeacons(none)[0].source).toBe("(unknown)");
   });
 
-  it("does not flag many events fired at the same instant (zero mean interval)", () => {
+  it("does not flag many events fired at the same instant (zero median interval)", () => {
     const sameTime = Array.from({ length: 6 }, (_, i) =>
       ev(`z${i}`, "2026-05-20T00:00:00Z", { asset: "host1", dstIp: "185.10.20.30", port: 443 }),
     );
