@@ -212,29 +212,28 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **OPSEC boundary** — only analyst-entered customer domains are queried; adversary/IOC domains are never sent; raw passwords never persisted
 
 ### Dashboard & reports
-- **Live dashboard** over WebSocket — collapsible, drag-to-reorder sections (persisted), scope bar, clickable evidence links, and badges (`×N`, `⊕ N`, `AUTO`, verdicts, `⚠ unusual parent`).
-- **Dark / light theme** — a header toggle (🌙/☀️) flips the whole UI; follows your OS preference by default and remembers a manual choice across sessions. Full coverage — every panel, graph, and the swimlane canvas.
-- **Forensic timeline rows** show the affected **🖥 host** and **clickable finding links** (jump + flash the finding); the report timeline (§3.1) has a matching Host column.
-- **Manual add** — record an event or IOC the AI missed (tagged `manual`, re-synthesized, survives re-analysis).
-- **MITRE techniques link to [attack.mitre.org](https://attack.mitre.org/)** everywhere (sub-techniques included).
-- **Compromised assets + asset ↔ IoC graph** — which IoC touched each asset; interactive graph with Host/Account/Service toggles, layouts, zoom, fullscreen, and drag-to-pin. Also a report section.
-- **Evidence Chain graph** — the *how it happened* causal view: process trees + lateral movement (same hash/account across hosts) stitched into one cross-host attack graph, every edge auditable (confidence + rule + backing events). Deterministic; dashboard panel + report §4.8.
-- **Timeline Swimlane** — interactive assets/severity/tactic × time chart; click-a-dot detail (jumps to the timeline row), Shift-select → mark-legitimate, scope-to-view, fullscreen, PNG export; a static SVG is embedded in the report.
-- **Reports** — Markdown + HTML (standalone, print-friendly) + one-click **PDF** (browser *Save as PDF*, offline) + CSVs (findings, IOCs, timelines) + full JSON state + **Word (.docx)** — all from the dashboard **Export** menu.
-- **ATT&CK Navigator layer** — **Export → ATT&CK Navigator layer (JSON)**: the case's MITRE techniques colored by worst observed severity (findings + forensic timeline), ready to upload into the [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/). Deterministic, offline.
-- **STIX 2.1 bundle** — **Export → STIX 2.1 bundle (JSON)**: a portable, vendor-neutral bundle — report, one indicator per IOC (STIX patterns + threat-intel verdict), ATT&CK attack-patterns, malware families, victim/producer identities, and `indicates` relationships — for any threat-intel platform (OpenCTI, MISP, Anomali, ThreatConnect). Deterministic UUIDv5 ids (stable re-exports), offline, no STIX library.
-- **Investigation snapshot** — **Export → Investigation snapshot (shareable JSON)** bundles the whole case (forensic timeline, findings, IOCs + enrichments, asset↔IoC graph state, and analyst decisions — scope, legitimate markers, comments, tags, notebook, playbook, report metadata — plus evidence *references*) into one file; **Import snapshot…** restores it as a new case on another machine, so a teammate picks up the investigation without re-running analysis. Carries **no AI keys and no machine-specific config** (an allowlist excludes enrichment opt-in, integration target ids, in-flight hunts and transient state). Offline, deterministic.
-- **Redacted case package** — **Export → Redacted case package (ZIP)**: a shareable bundle for external parties. Internal IPs / hosts / usernames / emails / paths in the report, CSVs and state JSON are replaced with consistent tokens (`ANON_HOST_1`…), secrets are one-way redacted, and screenshots have their EXIF stripped + detectable PII text blurred (best-effort OCR). Adversary indicators are preserved; AI provider keys and per-case config are never included. Choose which parts to include per export. Offline.
-- **AI executive summary** — ✨ Generate a management-facing summary (no ATT&CK ids/hashes/tool names) and save it into the report.
-- **Narrative Timeline** — prose story of the incident for non-technical stakeholders; generated in synthesis, editable, report §3.2.
-- **Push to DFIR-IRIS** — one click (or `npm run iris:push`) find-or-creates the IRIS case by name and maps assets/IOCs/timeline/summary/tasks/notes; idempotent. `DFIR_IRIS_URL` + `DFIR_IRIS_KEY`.
-- **Timesketch export & push** — **Export → Timesketch JSONL** (structured fields kept as searchable columns) or one-click **Push** (find-or-creates the sketch, clean-replaces on re-push). `DFIR_TIMESKETCH_*`.
-- **Export to Notion** — push a case into a new or existing Notion page; all content lives in ONE managed block the Companion owns, so your own notes outside it are never touched. `DFIR_NOTION_TOKEN`.
-- **Push to ClickUp** — export the Response Playbook to a ClickUp list as tasks (status/priority/due/assignee); re-push updates the tasks it created. `DFIR_CLICKUP_TOKEN`.
-- **Notifications** — push **new/escalated findings**, **playbook updates**, and **investigation milestones** to **Slack** / **MS Teams** webhooks or **SMTP email**, with a per-channel severity threshold + per-event toggles. Opt-in (channels start empty); secrets are redacted; managed in **Settings → Notifications** with a one-click test. Optional `DFIR_PUBLIC_URL` deep-links back to the case.
-- **Full incident-report template** — `report.md` follows the [AnttiKurittu template](https://github.com/AnttiKurittu/incident-report-template); technical sections auto-fill (incl. an auto-glossary), human-authored sections (branding, title page, BIA, recommendations…) are filled in the dashboard and persist per case.
-- **Custom report templates** — global branded layouts (accent colour, cover title/subtitle, running header/footer with `{{organization}}`/`{{incidentId}}`-style placeholders, and which sections appear + in what order). Built-ins are editable in place; pick one per case in **Case Details**; the choice flows to the Markdown, HTML, and Word (.docx) exports. Managed in **Settings → Report Templates**.
-- **Mobile companion** — an installable, **read-only** PWA at **`/mobile`** for quick glances during IR away from the workstation: case picker, status (severity + counts), worst findings, most severe/recent timeline events, and the IOC list with threat-intel verdicts. Same scope/legitimate filtering as the dashboard; no editing or AI. Offline app-shell + last-good cache. (Reach it from a phone/tablet by binding `DFIR_HOST=0.0.0.0` or tunnelling — the server is localhost-only by default.)
+- **Live dashboard** over WebSocket — collapsible, drag-to-reorder sections, scope bar, clickable evidence links, and severity/corroboration badges.
+- **Dark / light theme** — header toggle (🌙/☀️); follows OS preference, remembers manual choice.
+- **Forensic timeline rows** — affected host + clickable finding links (jump + flash); report timeline (§3.1) has a matching Host column.
+- **Manual add** — record an event or IOC the AI missed (tagged `manual`, survives re-analysis).
+- **MITRE techniques** link to [attack.mitre.org](https://attack.mitre.org/) everywhere.
+- **Asset ↔ IoC graph** — which IoC touched which asset; interactive with Host/Account/Service toggles, zoom, fullscreen. Also a report section.
+- **Evidence Chain graph** — process trees + lateral movement stitched into a cross-host attack graph, every edge auditable. Dashboard panel + report §4.8.
+- **Timeline Swimlane** — severity/tactic × time chart; click-a-dot detail, Shift-select → mark-legitimate, PNG export; static SVG in the report.
+- **Reports** — Markdown + HTML + one-click **PDF** + CSVs (findings, IOCs, timelines) + JSON state + **Word (.docx)** — all from the **Export** menu.
+- **ATT&CK Navigator layer** — MITRE techniques coloured by worst severity, ready to upload into [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/).
+- **STIX 2.1 bundle** — portable bundle (IOC STIX patterns + ATT&CK attack-patterns + `indicates` relationships) for OpenCTI, MISP, Anomali, etc.
+- **Investigation snapshot** — **Export → Investigation snapshot (JSON)** bundles the whole case; **Import snapshot…** restores it as a new case on another machine. No AI keys or machine config included.
+- **Redacted case package** — **Export → Redacted case package (ZIP)**: IPs/hosts/users replaced with consistent tokens, PII blurred in screenshots, adversary indicators preserved.
+- **AI executive summary** — ✨ management-facing summary (no ATT&CK ids/hashes/tool names), saved into the report.
+- **Narrative Timeline** — prose story for non-technical stakeholders; generated in synthesis, editable, report §3.2.
+- **Push to DFIR-IRIS** — one click (or `npm run iris:push`) maps assets/IOCs/timeline/tasks; idempotent. `DFIR_IRIS_URL` + `DFIR_IRIS_KEY`.
+- **Timesketch push** — **Export → Timesketch JSONL** or one-click **Push** (find-or-creates the sketch). `DFIR_TIMESKETCH_*`.
+- **Export to Notion** — push a case into a managed Notion page block; your own notes outside it are never touched. `DFIR_NOTION_TOKEN`.
+- **Push to ClickUp** — export the Response Playbook as ClickUp tasks; re-push updates in place. `DFIR_CLICKUP_TOKEN`.
+- **Notifications** — findings / playbook / milestones to **Slack** / **MS Teams** / **Telegram** / **SMTP**; per-channel threshold + toggles. Opt-in; managed in **Settings → Notifications**.
+- **Report templates** — global branded layouts (accent colour, header/footer, section order). Built-ins editable in place; pick one per case. Managed in **Settings → Report Templates**.
+- **Mobile companion** — read-only PWA at **`/mobile`**: findings, timeline, IOCs with threat-intel verdicts. Offline app-shell.
 
 ### Ops
 - **Logging to file** — every line tees to the console + a global session log + a per-case audit trail; `DFIR_LOG_LEVEL` (+ live Settings toggle, `DFIR_LOG_DIR`). `debug` traces AI calls, captures, OCR, anonymization, enrichment
@@ -583,6 +582,18 @@ incoming webhook, not the Web API.*
 to a channel and paste its URL (the Companion sends a MessageCard). **SMTP email** — give the channel a host/port,
 optional username+password, and from/to; opportunistic STARTTLS + AUTH LOGIN are used when offered. For a quick
 local test, point it at [Mailpit](https://github.com/axllent/mailpit) (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`).
+
+**Telegram** — uses a Bot API token + a chat/channel/group ID (no env vars needed):
+
+1. Open a chat with [@BotFather](https://t.me/BotFather), run `/newbot`, and copy the token (`123456789:AAF…`).
+2. Get your chat ID:
+   - *Private chat with yourself* — send `/start` to your bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates`; the `chat.id` is a positive integer.
+   - *Group* — add the bot, send any message, open `getUpdates`; `chat.id` is a negative integer.
+   - *Public channel* — use the username directly: `@mychannel`.
+   - *Private channel* — add the bot as an **administrator**; forward a post to `@getidsbot` to get the numeric ID (usually `-100…`).
+3. In the Companion: **Settings → Notifications → Add a channel → Telegram bot**, paste the token and chat ID, then click **Test**.
+
+The token is stored in `notifications/config.json` (beside `cases/`) and is **never echoed back to the browser**.
 
 | Variable | Default | Meaning |
 |---|---|---|
