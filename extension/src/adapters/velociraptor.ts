@@ -35,19 +35,24 @@ export const velociraptorAdapter: Adapter = {
       rows = asArray(getPath(body, "items"));
     }
     if (!rows) return null;
-    // The GUI renders its own internal tables (notebook selector, hunt list) through the SAME
-    // GetTable API, so they get intercepted too. Skip the notebook-selector list — it's metadata,
-    // not artifact results, and would otherwise shadow the table the analyst is actually reading.
-    if (isNotebookList(rows)) return null;
+    // The GUI drives its own internal tables (notebook selector, column value-count facets) through
+    // the SAME GetTable API, so they get intercepted too and would shadow the results grid the
+    // analyst is actually reading. Skip them — they're UI chrome / stats, not artifact evidence.
+    if (isInternalTable(rows)) return null;
     return rows;
   },
 
   tableSelector: "table",
 };
 
-// The notebook-selector list — { NotebookId, Name, Collaborators, … } per row — is Velociraptor's
-// own UI chrome, never artifact evidence.
-function isNotebookList(rows: unknown[]): boolean {
+// Recognize Velociraptor's GUI-internal GetTable responses (never artifact evidence):
+//   • notebook-selector list — { NotebookId, Name, Collaborators, … } per row
+//   • column value-count facet — { value, idx, c } (distinct value, first-row index, count); the
+//     dropdown the GUI fetches to render a column's filter/stats menu
+function isInternalTable(rows: unknown[]): boolean {
   const first = rows.find((r) => isObject(r)) as Record<string, unknown> | undefined;
-  return !!first && ("NotebookId" in first || "Collaborators" in first);
+  if (!first) return false;
+  if ("NotebookId" in first || "Collaborators" in first) return true;
+  if ("value" in first && "c" in first && Object.keys(first).length <= 3) return true;
+  return false;
 }

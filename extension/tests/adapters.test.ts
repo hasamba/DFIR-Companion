@@ -99,14 +99,23 @@ describe("velociraptor.extractRows", () => {
     expect(velociraptorAdapter.extractRows("u", [{ x: 1 }])).toEqual([{ x: 1 }]);
   });
 
-  it("skips the notebook-selector list (UI chrome, not artifact results)", () => {
-    // Velociraptor renders its notebook list through GetTable too — it must not shadow the cell table.
-    const fromGetTable = {
+  it("skips GUI-internal tables (notebook selector + column value-count facet)", () => {
+    // Velociraptor renders these through GetTable too — they must not shadow the results grid.
+    const notebookList = {
       columns: ["NotebookId", "Name", "Collaborators"],
       rows: [{ json: '["N.ABC","hayabusa",null]' }, { json: '["N.DEF","Notebook",null]' }],
     };
-    expect(velociraptorAdapter.extractRows("/api/v1/GetTable", fromGetTable)).toBeNull();
+    expect(velociraptorAdapter.extractRows("/api/v1/GetTable", notebookList)).toBeNull();
     expect(velociraptorAdapter.extractRows("u", [{ NotebookId: "N.ABC", Name: "x" }])).toBeNull();
+    // Column value-count facet: { value, idx, c }.
+    expect(velociraptorAdapter.extractRows("u", [
+      { value: "Windows Defender Threat Detected", idx: 0, c: 4 },
+      { value: "Proc Access (Sysmon Alert)", idx: 78, c: 1775 },
+    ])).toBeNull();
+    // A real artifact row that merely has a "value" column among many others is NOT skipped.
+    expect(velociraptorAdapter.extractRows("u", [
+      { EventTime: "2026-06-03T08:06:56Z", Computer: "WIN11", value: "x", Message: "m" },
+    ])).toEqual([{ EventTime: "2026-06-03T08:06:56Z", Computer: "WIN11", value: "x", Message: "m" }]);
   });
 
   it("returns null on an unrecognized shape", () => {
