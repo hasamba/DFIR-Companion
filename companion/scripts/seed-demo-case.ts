@@ -93,6 +93,28 @@ async function main(): Promise<void> {
       "(encrypt.exe) was deployed on May 19 but blocked by the EDR on all three targets. " +
       "No evidence of ransomware execution was found. Incident containment actions are in progress.",
 
+    narrativeTimeline:
+      "On the morning of May 15 2026, a threat actor began probing GlobalTech's internet-facing web " +
+      "server, exploiting two unpatched vulnerabilities to gain an initial foothold. Less than an hour " +
+      "later, an employee in the finance department opened what appeared to be a routine vendor invoice " +
+      "emailed that morning. The attachment was malicious: opening it quietly launched hidden software " +
+      "that reached out to the attacker's server on the internet and installed a remote-control program " +
+      "on the employee's computer.\n\n" +
+      "Over the next day the attacker used that foothold to move deeper into the network. They stole the " +
+      "passwords of several powerful administrator accounts directly from the domain controller's memory, " +
+      "then used those credentials to spread to the file server and a second server. Shortly after seizing " +
+      "administrative control, the attacker deliberately erased the security logs on the domain controller " +
+      "and switched off the company's security monitoring software — going dark for roughly sixteen hours " +
+      "to hide what they did next.\n\n" +
+      "On May 17 the attacker gathered sensitive files from the finance share, compressed them into a " +
+      "password-protected archive, and the following night attempted to smuggle the data out. A first " +
+      "attempt was blocked by the firewall, but a second route succeeded and roughly 847 MB of finance " +
+      "data left the network before the connection was cut off.\n\n" +
+      "Finally, on May 19, the attacker tried to deploy ransomware across three servers to encrypt the " +
+      "company's files. The endpoint security software detected and stopped the ransomware within seconds " +
+      "on every machine, so no files were encrypted. The investigation is ongoing, with containment and " +
+      "credential-reset actions underway; the stolen finance data remains the principal residual risk.",
+
     attackerPath:
       "1. **Initial Access (T1566.001)** — May 15 09:14: Spear-phishing email delivered to " +
       "jsmith@globaltech.com with malicious Excel attachment 'Q1-2026-Invoice.xlsm'.\n" +
@@ -291,6 +313,33 @@ async function main(): Promise<void> {
         sourceScreenshots: [],
         mitreTechniques: ["T1190"],
         firstSeen: ts(15, 8, 30),
+        lastUpdated: ts(22, 8, 0),
+        status: "confirmed",
+      },
+      // f010 — anti-forensics: the attacker cleared the Windows event logs and tampered with the EDR
+      // on DC01 right after dumping domain admin credentials, producing a ~16h coverage blackout. This
+      // is the classic log-tampering signature the Timeline Gaps analysis (#83) flags, and the gap the
+      // Hypothesize-gaps feature (#96) reasons about — its surrounding events (credential dump before,
+      // data staging after) let the AI infer what the silence concealed, with shadow-artifact
+      // collections (USN/SRUM/Prefetch/Amcache) proposed to reconstruct it.
+      {
+        id: "f010",
+        severity: "High",
+        confidence: 91,
+        title: "Anti-Forensics — Windows Event Logs Cleared and EDR Tampering on DC01",
+        description:
+          "Immediately after dumping domain administrator credentials, the attacker destroyed forensic " +
+          "evidence on DC01: 'wevtutil cl Security' and 'wevtutil cl System' cleared the event logs " +
+          "(EventID 1102 recorded as the final entry), and the CrowdStrike Falcon sensor was stopped / " +
+          "real-time protection disabled. DC01 then produced NO telemetry for roughly 16 hours (May 16 " +
+          "10:13 → May 17 02:15), a complete coverage blackout during the window the finance data was " +
+          "staged. The silence is bracketed by credential theft before and data staging after — a " +
+          "deliberate gap to conceal post-compromise activity. Reconstruct the blackout from shadow " +
+          "artifacts the OS keeps independently of the cleared logs (USN journal, SRUM, Prefetch, Amcache).",
+        relatedIocs: ["ioc013"],
+        sourceScreenshots: [],
+        mitreTechniques: ["T1070.001", "T1562.001"],
+        firstSeen: ts(16, 10, 12),
         lastUpdated: ts(22, 8, 0),
         status: "confirmed",
       },
@@ -560,6 +609,8 @@ async function main(): Promise<void> {
       { id: "T1069.002", name: "Domain Groups",                        findingIds: ["f008"] },
       { id: "T1486",     name: "Data Encrypted for Impact",            findingIds: ["f007"] },
       { id: "T1190",     name: "Exploit Public-Facing Application",    findingIds: ["f009"] },
+      { id: "T1070.001", name: "Indicator Removal: Clear Windows Event Logs", findingIds: ["f010"] },
+      { id: "T1562.001", name: "Impair Defenses: Disable or Modify Tools",    findingIds: ["f010"] },
     ],
 
     openThreads: [
@@ -974,6 +1025,39 @@ async function main(): Promise<void> {
         dstIp: "10.10.20.40",
         port: 445,
         action: "network_send" as const,
+      },
+      // Anti-forensics (#83/#96) — right after the credential dump and lateral movement the attacker
+      // clears the event logs and tampers with the EDR on DC01, then goes dark for ~16h. e042 (log
+      // clear) is the LAST event before the silence, so it becomes the gap's before-context: the
+      // Timeline Gaps panel flags the complete blackout (May 16 10:13 → May 17 02:15) and the
+      // Hypothesize-gaps feature reasons from this exact event about what the silence concealed.
+      {
+        id: "e042",
+        timestamp: ts(16, 10, 12),
+        description: "DC01 Security and System event logs CLEARED (EventID 1102 — 'the audit log was cleared'). 'wevtutil cl Security' and 'wevtutil cl System' executed under the PSEXESVC SYSTEM context to destroy the 4624/4648/4672/7045 authentication and service-install evidence of the lateral movement and credential dump.",
+        severity: "Critical",
+        mitreTechniques: ["T1070.001"],
+        relatedFindingIds: ["f010"],
+        sourceScreenshots: [],
+        asset: "DC01",
+        sources: ["Chainsaw"],
+        processName: "wevtutil.exe",
+        parentName: "PSEXESVC.exe",
+        action: "execute" as const,
+      },
+      {
+        id: "e043",
+        timestamp: ts(16, 10, 13),
+        description: "CrowdStrike Falcon sensor tampering on DC01: 'sc stop CSFalconService' issued and real-time protection disabled under SYSTEM. EDR telemetry from DC01 stopped at 10:13 and did not resume until the sensor auto-recovered at 02:15 on May 17 — a ~16-hour blackout immediately after credential theft, overlapping the finance-data staging window.",
+        severity: "Critical",
+        mitreTechniques: ["T1562.001"],
+        relatedFindingIds: ["f010"],
+        sourceScreenshots: [],
+        asset: "DC01",
+        sources: ["CrowdStrike Falcon"],
+        processName: "sc.exe",
+        parentName: "PSEXESVC.exe",
+        action: "execute" as const,
       },
       // Day 3 — Data staging
       {
@@ -1393,6 +1477,36 @@ async function main(): Promise<void> {
     },
   ]);
 
+  // ── notebook.json ──────────────────────────────────────────────────────────
+  // Investigator notebook — free-form hypotheses / notes / open questions the analyst jots while
+  // working the case. Populates the dashboard's Investigator Notebook section.
+  await write(join(CASE_DIR, "state", "notebook.json"), [
+    {
+      id: "nb001",
+      timestamp: "2026-05-22T10:35:00.000Z",
+      type: "hypothesis",
+      text: "Working theory: single actor, ALPHV/BlackCat affiliate. Web exploitation of WEB01 (CVE-2021-41773 + Log4Shell) and the phishing email both landed on May 15 within the hour — likely the same operator using two access vectors in parallel to guarantee a foothold.",
+      author: "Demo Analyst",
+      linkedEntityIds: ["f003", "f009"],
+    },
+    {
+      id: "nb002",
+      timestamp: "2026-05-22T11:10:00.000Z",
+      type: "note",
+      text: "DC01 has a ~16h logging blackout on May 16 (10:13 → 02:15) right after the Mimikatz dump — wevtutil cl + Falcon sensor stop. Need to pull USN journal, SRUM, Prefetch and Amcache from DC01 to reconstruct what ran during the gap; the cleared Security.evtx won't have it. (Use the Hypothesize-gaps button to scope this.)",
+      author: "Demo Analyst",
+      linkedEntityIds: ["f010"],
+    },
+    {
+      id: "nb003",
+      timestamp: "2026-05-22T11:45:00.000Z",
+      type: "question",
+      text: "Open question: was the 847 MB exfil the only data movement, or did the attacker also stage data during the DC01 blackout window? SRUM per-app network bytes on DC01 would settle it.",
+      author: "Demo Analyst",
+      linkedEntityIds: ["f005", "f010"],
+    },
+  ]);
+
   // ── report-meta.json ───────────────────────────────────────────────────────
   await write(join(CASE_DIR, "state", "report-meta.json"), {
     companyName: "YourFirm IR",
@@ -1597,13 +1711,16 @@ async function main(): Promise<void> {
   // ── done ───────────────────────────────────────────────────────────────────
   console.log(`\nDemo case "${CASE_ID}" created successfully.`);
   console.log(`  Path: ${CASE_DIR}`);
-  console.log(`  Findings:       ${investigation.findings.length}  (3 Critical, 2 High, 2 Medium, 1 Low, 1 Info)`);
+  console.log(`  Findings:       ${investigation.findings.length}  (4 Critical, 4 High, 2 Medium — incl. anti-forensics log clearing)`);
   console.log(`  IOCs:           ${investigation.iocs.length}  (IPs, domains, hashes, files, processes, URLs, CVE vulnerabilities)`);
-  console.log(`  Forensic events:${investigation.forensicTimeline.length} (Critical→Info, evidence chain, CVE exploitation events)`);
+  console.log(`  Forensic events:${investigation.forensicTimeline.length} (Critical→Info, evidence chain, CVE + anti-forensics events)`);
   console.log(`  MITRE:          ${investigation.mitreTechniques.length} techniques`);
+  console.log(`  Timeline gaps:  1 suspicious ~16h DC01 blackout (cleared logs) for the Hypothesize-gaps demo (#96)`);
   console.log(`  Threads:        ${investigation.openThreads.length}  (2 open, 1 closed)`);
   console.log(`  Key questions:  ${investigation.keyQuestions.length}  (answered/partial/unknown)`);
   console.log(`  Next steps:     ${investigation.nextSteps.length}  (critical→medium)`);
+  console.log(`  Narrative:      seeded (Narrative timeline section)`);
+  console.log(`  Notebook:       3 investigator entries (hypothesis / note / question)`);
   console.log(`  Tags:           17 triage tags across IOCs, events, findings`);
   console.log(`  Comments:       6 analyst comments`);
   console.log(`  Report meta:    fully populated (org, revisions, distribution, sections)`);

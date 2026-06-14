@@ -20,6 +20,19 @@ import { parseJsonLoose } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
 import { detectTimelineGaps, backfillSilenceGapFindings, gapEnvOptions } from "./gapDetect.js";
+import {
+  gapHypothesesResponseSchema,
+  sanitizeGapHypotheses,
+  buildGapHypotheses,
+  surroundingEvents,
+  renderGapsForPrompt,
+  hasGapMaterial,
+  GAP_HYPOTHESIS_MAX_DEFAULT,
+  SURROUNDING_EVENTS_DEFAULT,
+  GAP_HYPOTHESIS_CAVEAT,
+  type GapHypothesesResult,
+} from "./gapHypothesis.js";
+import { SHADOW_ARTIFACTS } from "./shadowArtifacts.js";
 import { diffFindings, type FindingsDiff } from "./findingsDiff.js";
 import type { SynthMetaStore } from "./synthMeta.js";
 import { correlateEvents } from "./correlate.js";
@@ -465,7 +478,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -681,6 +694,53 @@ export const PLAYBOOK_HUNT_PROMPT = [
   }, null, 2),
 ].join("\n");
 
+// Hypothesise attacker actions for TIMELINE GAPS (issue #96). The deterministic gap detector has
+// already flagged suspiciously silent periods; the model reads each gap's bounding context — the
+// events just BEFORE the silence and just AFTER — and infers what the attacker most likely did during
+// the hole (e.g. cleared the log to hide credential dumping, disabled EDR before lateral movement).
+// It is grounded ONLY in the surrounding events; it does NOT invent activity. It also names which
+// SHADOW ARTIFACTS (from the catalog ids in the user message) would best reconstruct each window —
+// the deterministic catalog supplies the actual collection VQL, so the model only ranks relevance.
+export const GAP_HYPOTHESIS_PROMPT = [
+  "You are a senior DFIR analyst reasoning about COVERAGE GAPS in ONE investigation's forensic timeline.",
+  "Each gap below is a stretch where logging went silent — a COMPLETE gap (every source dark) is the",
+  "classic signature of cleared Windows Event Logs, a stopped collector/auditd, or disabled EDR. For",
+  "EACH gap, hypothesise what the attacker most likely did DURING the silence, reasoning from the events",
+  "immediately BEFORE the gap (what they were doing) and immediately AFTER (the state when logging",
+  "resumed).",
+  "",
+  "Rules:",
+  "- Ground every hypothesis ONLY in the surrounding events shown. Do NOT invent specific hosts, files,",
+  "  or accounts the context does not mention. If the surrounding events are too sparse to say anything,",
+  "  give a low confidence and say the gap is unexplained.",
+  "- Prefer the explanation that fits the tradecraft: a complete silence right after initial access often",
+  "  hides discovery/credential-access/defense-evasion (clearing logs to cover the next step); a gap",
+  "  bracketed by a logon and later persistence often hides lateral movement or staging.",
+  "- `gapId` MUST be the exact [gap-N] id shown for the gap the hypothesis is about. Emit at most one",
+  "  hypothesis per gap. It is fine to skip a gap that is plainly benign (e.g. an expected overnight quiet).",
+  "- `hypothesis`: 2-4 sentences naming the most probable attacker activity and WHY it fits the context.",
+  "- `attackerActions`: a few concrete candidate actions that would produce this exact gap.",
+  "- `confidence`: 0-100, honest — sparse context or an equally-likely benign explanation means LOW.",
+  "- `severity`: Critical|High|Medium|Low|Info — how serious the hypothesised activity would be.",
+  "- `mitreTechniques`: ATT&CK ids for the hypothesised actions (e.g. T1070.001 for cleared event logs).",
+  "- `recommendedArtifactIds`: from the SHADOW ARTIFACTS list in the user message, the ids whose data",
+  "  would best confirm THIS hypothesis (e.g. prefetch/amcache/shimcache/bam for execution, usn-journal/",
+  "  mft/lnk-files for file activity, srum for exfiltration). Use ONLY ids from that list.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({
+    hypotheses: [{
+      gapId: "gap-1",
+      hypothesis: "The Security log was cleared immediately after the initial RDP logon and before the service-install seen on resume, consistent with the attacker wiping logs to hide credential access and staging during the silence.",
+      attackerActions: ["Cleared the Windows Security event log (wevtutil cl / EventLog API)", "Dumped LSASS or ran a discovery tool while logging was off"],
+      confidence: 55,
+      severity: "High",
+      mitreTechniques: ["T1070.001", "T1003.001"],
+      recommendedArtifactIds: ["prefetch", "amcache", "usn-journal", "srum"],
+    }],
+  }, null, 2),
+].join("\n");
+
 export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROMPT);
 export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
@@ -690,6 +750,7 @@ export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUM
 export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRATIVE_PROMPT);
 export const getHuntSuggestPrompt = (): string => resolvePrompt("HUNTS", HUNT_SUGGEST_PROMPT);
 export const getPlaybookHuntPrompt = (): string => resolvePrompt("PBHUNTS", PLAYBOOK_HUNT_PROMPT);
+export const getGapHypothesisPrompt = (): string => resolvePrompt("GAPHYP", GAP_HYPOTHESIS_PROMPT);
 
 export interface PipelineOptions {
   provider?: AIProvider;
@@ -2212,6 +2273,50 @@ export class AnalysisPipeline {
       const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
       return sanitizeHuntSuggestions(suggestions, limit);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // Hypothesise what an attacker did during the timeline's SILENT periods (issue #96). Builds on the
+  // deterministic gap detector: detect the suspicious gaps, then make ONE text-only AI call that reads
+  // each gap's bounding events (before/after the silence) and infers the attacker activity that fits.
+  // Each gap is also paired with the DETERMINISTIC shadow-artifact collections (USN journal, SRUM,
+  // Prefetch, Amcache, …) that reconstruct the missing window — so even a gap the model skips still
+  // carries deployable Velociraptor collections. EPHEMERAL like ask()/suggestHunts(): no state change.
+  // Returns an empty result (no AI spend) when the timeline has no flagged gaps.
+  async hypothesizeGaps(caseId: string): Promise<GapHypothesesResult> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("gap hypothesis");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+
+    // Use the SAME gap detection (and thresholds) the panel/report use, so the analyst hypothesises
+    // about exactly the gaps they see flagged.
+    const gaps = detectTimelineGaps(scopedEvents, gapEnvOptions());
+    if (!hasGapMaterial(gaps)) return { hypotheses: [], caveat: GAP_HYPOTHESIS_CAVEAT };
+
+    const cap = Number(process.env.DFIR_GAP_HYPOTHESIS_MAX) || GAP_HYPOTHESIS_MAX_DEFAULT;
+    const focusGaps = gaps.slice(0, Math.max(1, Math.floor(cap)));   // worst-first → keep the most suspicious
+    const around = Number(process.env.DFIR_GAP_HYPOTHESIS_CONTEXT) || SURROUNDING_EVENTS_DEFAULT;
+    const surroundByGapId = new Map(focusGaps.map((g) => [g.id, surroundingEvents(g, scopedEvents, around)]));
+    const validGapIds = new Set(focusGaps.map((g) => g.id));
+
+    const gapsText = renderGapsForPrompt(focusGaps, surroundByGapId);
+    // The shadow-artifact catalog the model ranks against (id → what it reconstructs). The catalog
+    // supplies the actual collection VQL deterministically; the model only picks the relevant ids.
+    const artifactsText = SHADOW_ARTIFACTS.map((a) => `- ${a.id}: ${a.name} — ${a.reconstructs}`).join("\n");
+    const userPrompt =
+      `SHADOW ARTIFACTS (reference recommendedArtifactIds ONLY from these ids):\n${artifactsText}\n\n` +
+      `TIMELINE GAPS (${focusGaps.length} of ${gaps.length} flagged; worst-first) with their surrounding events:\n\n` +
+      `${gapsText}\n\n` +
+      `Hypothesise the attacker activity for each gap as JSON.`;
+
+    const aiHypotheses = await withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getGapHypothesisPrompt(), userPrompt, images: [] }, "hypothesize-gaps");
+      const { hypotheses } = gapHypothesesResponseSchema.parse(parsed);
+      return sanitizeGapHypotheses(hypotheses, validGapIds, focusGaps.length);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+
+    return buildGapHypotheses(aiHypotheses, focusGaps, surroundByGapId);
   }
 
   // Propose a Velociraptor hunt for each ENDPOINT-related PLAYBOOK task (issue #70). Single text-only

@@ -6,7 +6,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   SYSTEM_PROMPT, CSV_SYSTEM_PROMPT, LOG_SYSTEM_PROMPT, SYNTHESIS_PROMPT, ASK_PROMPT, EXEC_SUMMARY_PROMPT,
-  HUNT_SUGGEST_PROMPT, PLAYBOOK_HUNT_PROMPT,
+  HUNT_SUGGEST_PROMPT, PLAYBOOK_HUNT_PROMPT, GAP_HYPOTHESIS_PROMPT,
 } from "../src/analysis/pipeline.js";
 
 const dir = resolve(process.argv[2] || "./prompts");
@@ -21,6 +21,7 @@ const files: Array<[string, string, string]> = [
   ["exec-summary.txt", EXEC_SUMMARY_PROMPT, "DFIR_AI_EXEC_PROMPT_FILE"],
   ["hunts.txt", HUNT_SUGGEST_PROMPT, "DFIR_AI_HUNTS_PROMPT_FILE"],
   ["pbhunts.txt", PLAYBOOK_HUNT_PROMPT, "DFIR_AI_PBHUNTS_PROMPT_FILE"],
+  ["gap-hypothesis.txt", GAP_HYPOTHESIS_PROMPT, "DFIR_AI_GAPHYP_PROMPT_FILE"],
 ];
 
 for (const [name, text] of files) {
