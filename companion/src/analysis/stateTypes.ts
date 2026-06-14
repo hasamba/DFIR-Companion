@@ -86,6 +86,13 @@ export interface ForensicEvent {
   srcIp?: string;    // source IP for network connections
   dstIp?: string;    // destination IP for network connections
   port?: number;     // destination port
+  // Deobfuscated command line (issue #97). Set by the deterministic deobfuscation pass when the
+  // event's description contains a base64-encoded or otherwise obfuscated command.
+  deobfuscated?: {
+    decoded: string;   // the decoded/deobfuscated payload
+    method: string;    // how it was decoded: "powershell-enc" | "base64"
+    iocs: string[];    // canonical IOC ids (i###) extracted from the decoded content
+  };
 }
 
 // Result of validating a parent→child process relationship against behavioral intel

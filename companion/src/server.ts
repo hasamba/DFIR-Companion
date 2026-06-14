@@ -111,6 +111,7 @@ import { NsrlStore, ingestNsrlFiles, splitNsrlPaths } from "./analysis/nsrlStore
 import { parseNsrlText, nsrlMatchIocs, nsrlMatchEvents } from "./analysis/nsrl.js";
 import { KevStore } from "./analysis/kevStore.js";
 import { NsrlDb, loadNsrlDbPath, saveNsrlDbPath, removeNsrlDbPath } from "./analysis/nsrlDb.js";
+import { applyDeobfuscation } from "./analysis/applyDeobfuscation.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
 import { CustomerStore, parseList, sanitizeTargets } from "./analysis/customerStore.js";
@@ -1649,6 +1650,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     // Auto-mark known-good IOCs/hashes legitimate (whitelist + NSRL) BEFORE re-synthesis, like /import.
     try { const wl = await applyWhitelistToCase(caseId); if (wl.added > 0) logLine(`[whitelist] ${caseId} auto-marked ${wl.added} pushed IOC(s) legitimate`); } catch { /* non-fatal */ }
     try { const ns = await applyNsrlToCase(caseId); if (ns.added > 0) logLine(`[nsrl] ${caseId} auto-marked ${ns.added} pushed known-good item(s) legitimate`); } catch { /* non-fatal */ }
+    try { const deob = await applyDeobfuscationToCase(caseId); if (deob.deobfuscated > 0) logLine(`[deobfuscate] ${caseId} decoded ${deob.deobfuscated} pushed event(s), +${deob.newIocs} new IOC(s)`); } catch { /* non-fatal */ }
     resynthesizeInBackground(caseId);
     return { storedName, addedEvents, addedIocs, analyzed: true };
   }
@@ -3120,6 +3122,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return { matched: matches.length, added };
   }
 
+  // Apply the deobfuscation pass to a case: scan the forensic timeline for obfuscated command
+  // lines (PowerShell -enc, base64 blobs), decode them, extract hidden IOCs, and persist.
+  // Pure read-modify-write on state.json (no re-synthesis here — the caller decides).
+  // Returns how many events were decoded and how many new IOCs were extracted.
+  async function applyDeobfuscationToCase(caseId: string): Promise<{ deobfuscated: number; newIocs: number }> {
+    if (!options.stateStore) return { deobfuscated: 0, newIocs: 0 };
+    const state = await options.stateStore.load(caseId);
+    const result = applyDeobfuscation(state);
+    if (result.deobfuscated === 0 && result.newIocs === 0) return { deobfuscated: 0, newIocs: 0 };
+    await options.stateStore.save(result.state);
+    options.onState?.(result.state);
+    return { deobfuscated: result.deobfuscated, newIocs: result.newIocs };
+  }
+
   app.get("/ioc-whitelist", async (_req: Request, res: Response) => {
     if (!options.iocWhitelistStore) return res.status(200).json([]);
     try {
@@ -3373,6 +3389,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // On-demand deobfuscation (#97): scan the case's forensic timeline for obfuscated command
+  // lines, decode them, extract hidden IOCs, and re-synthesize so findings reflect the decoded
+  // content. Idempotent: already-decoded events are skipped.
+  app.post("/cases/:id/deobfuscate", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const result = await applyDeobfuscationToCase(caseId);
+      if (result.deobfuscated > 0) resynthesizeInBackground(caseId);
+      logLine(`[deobfuscate] ${caseId} apply — decoded ${result.deobfuscated} event(s), +${result.newIocs} new IOC(s)`);
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // CISA KEV catalog routes (issue #99). The catalog is global (like NSRL/whitelist).
   // GET /kev — stats for the Settings → KEV panel.
   // POST /kev/import-url — fetch the CISA feed from a URL (body: { url }).
@@ -3570,6 +3602,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           try {
             const ns = await applyNsrlToCase(caseId);
             if (ns.added > 0) logLine(`[nsrl] ${caseId} auto-marked ${ns.added} imported known-good item(s) legitimate`);
+          } catch { /* non-fatal */ }
+          // #97: decode obfuscated command lines (PowerShell -enc, base64) and extract hidden IOCs.
+          try {
+            const deob = await applyDeobfuscationToCase(caseId);
+            if (deob.deobfuscated > 0) logLine(`[deobfuscate] ${caseId} decoded ${deob.deobfuscated} event(s), +${deob.newIocs} new IOC(s)`);
           } catch { /* non-fatal */ }
           resynthesizeInBackground(caseId);
         })
