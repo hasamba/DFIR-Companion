@@ -929,6 +929,23 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // AI hypothesis generation for timeline gaps (#96): for each flagged silent period, hypothesise the
+  // attacker activity that fits the surrounding events, and pair each gap with the deterministic
+  // SHADOW-ARTIFACT collections (USN journal, SRUM, Prefetch, Amcache, …) that reconstruct the missing
+  // window. Single text-only AI call, EPHEMERAL (no state change) — the dashboard shows the hypotheses +
+  // collections for review, then deploys a chosen shadow-artifact collection via POST /velociraptor/hunt.
+  // Needs an AI provider; does NOT need the Velociraptor API (the VQL is useful to copy even when off).
+  app.post("/cases/:id/timeline-gaps/hypothesize", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for gap hypotheses" });
+    try {
+      const result = await options.pipeline.hypothesizeGaps(req.params.id);
+      logLine(`[gaps] hypothesised ${result.hypotheses.length} timeline gap(s) for ${req.params.id}`);
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Per-IOC corroboration: { iocId: [tools that observed it] }, derived on demand by matching each
   // IOC value against the forensic events' sources (same scope/legitimate filtering as the report).
   // Powers the dashboard's "⊕ N sources" badge on IOCs (#35 Phase 3).

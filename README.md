@@ -135,6 +135,12 @@ For each case the AI builds and keeps up to date:
   going quiet while others keep logging is a partial coverage blindspot (Medium). Density-aware
   (won't flag normal quiet in a sparse timeline) with optional working-hours filtering. A lead,
   not proof. Deterministic, no AI call. Dashboard *Timeline Gaps* panel + report §3.3.
+- **Gap hypotheses & shadow-artifact hunting** — one click hypothesises (via AI) what the
+  attacker did during each flagged silent window, reasoning from the events that bracket the
+  gap, and pairs every gap with a deterministic catalog of **shadow artifacts** the OS keeps
+  independently of the tampered log — USN Journal, SRUM, Prefetch, Amcache, ShimCache, BAM,
+  MFT, UserAssist, LNK — each a ready-to-deploy **Velociraptor** collection to reconstruct the
+  missing time frame. Ephemeral; a hypothesis is a lead, confirmed by collecting the artifacts.
 - **Adversary hints** — known **MITRE ATT&CK groups** ranked by how much their technique
   set overlaps the case's, as early hypothesis fuel. Offline (a bundled dataset, no
   AI/network); sub-technique-aware, so an **exact** sub-technique match (highlighted) outranks
@@ -447,6 +453,7 @@ Each prompt has two override forms (priority order): `DFIR_AI_<NAME>_PROMPT` (in
 | Narrative timeline | `NARRATIVE` |
 | Suggested fleet hunts | `HUNTS` |
 | Suggested playbook hunts | `PBHUNTS` |
+| Timeline-gap hypotheses | `GAPHYP` |
 
 ### Threat-intel enrichment (optional — off by default)
 
@@ -634,6 +641,8 @@ The token is stored in `notifications/config.json` (beside `cases/`) and is **ne
 | `DFIR_GAP_DENSITY_FACTOR` | `4` | A gap must also be ≥ this × the timeline's median inter-event interval to flag (suppresses normal quiet in sparse timelines; `0` = floor only) |
 | `DFIR_GAP_ACTIVE_HOURS` | _(unset)_ | Optional working hours `"8-18"` (UTC, supports wrap-around `"22-6"`) — flag only gaps overlapping them; supersedes the density heuristic when set |
 | `DFIR_GAP_MAX_FINDINGS` | `5` | Cap on complete-silence gaps that escalate to a finding (panel/report still show all) — stops a super-timeline case flooding the findings list |
+| `DFIR_GAP_HYPOTHESIS_MAX` | `5` | Max gaps the **Hypothesize gaps** AI call reasons about per run (worst-first); each still gets its shadow-artifact collections |
+| `DFIR_GAP_HYPOTHESIS_CONTEXT` | `8` | Events on each side of a gap fed to the hypothesis prompt as before/after context |
 | `DFIR_DEDUP` | `on` | Skip AI analysis of a screenshot **only when it's byte-identical** to the previous capture (SHA-256 exact match — the screen didn't change). Any difference is analyzed; still stored as evidence either way. Set `off` to analyze **every** screenshot |
 
 Example `.env` (two-tier OpenRouter setup):
