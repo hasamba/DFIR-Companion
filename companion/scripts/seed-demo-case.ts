@@ -1598,49 +1598,67 @@ async function main(): Promise<void> {
   });
 
   // ── customer-exposure.json ─────────────────────────────────────────────────
+  // Shape MUST match StoredCustomerExposureResult (provider/targetType/target/breach/…):
+  // HIBP emits ONE row per breach, Shodan ONE row per exposed host. Clean "no breach"
+  // targets produce no rows (the dashboard + report show found results only).
   await write(join(CASE_DIR, "state", "customer-exposure.json"), {
     checkedAt: "2026-05-22T13:00:00.000Z",
+    providers: ["Have I Been Pwned", "Shodan"],
+    targets: {
+      domains: ["globaltech.co.uk", "globaltech.com"],
+      emails: ["ciso@globaltech.com", "jsmith@globaltech.com", "security@globaltech.com"],
+    },
     results: [
+      // jsmith@globaltech.com — 3 breaches, credentials reused (one row each, as HIBP returns)
       {
-        input: "jsmith@globaltech.com",
-        kind: "email",
-        provider: "HIBP",
-        breachNames: ["LinkedIn2021", "Collection1", "Adobe2013"],
-        secretPresent: true,
-        exposedFields: ["email", "password", "username"],
-        summary: "3 breaches — credentials likely reused",
+        provider: "Have I Been Pwned", targetType: "email", target: "jsmith@globaltech.com",
+        email: "jsmith@globaltech.com", breach: "LinkedIn", breachDate: "2021-06-22",
+        exposedData: ["Email addresses", "Passwords"], secretPresent: true,
       },
       {
-        input: "security@globaltech.com",
-        kind: "email",
-        provider: "HIBP",
-        breachNames: ["Dropbox2012"],
-        secretPresent: false,
-        exposedFields: ["email", "username"],
-        summary: "1 breach — no password exposed",
+        provider: "Have I Been Pwned", targetType: "email", target: "jsmith@globaltech.com",
+        email: "jsmith@globaltech.com", breach: "Collection1", breachDate: "2019-01-07",
+        exposedData: ["Email addresses", "Passwords"], secretPresent: true,
       },
       {
-        input: "ciso@globaltech.com",
-        kind: "email",
-        provider: "HIBP",
-        breachNames: [],
-        secretPresent: false,
-        exposedFields: [],
-        summary: "No breaches found",
+        provider: "Have I Been Pwned", targetType: "email", target: "jsmith@globaltech.com",
+        email: "jsmith@globaltech.com", breach: "Adobe", breachDate: "2013-10-04",
+        exposedData: ["Email addresses", "Password hints", "Passwords", "Usernames"], secretPresent: true,
+      },
+      // security@globaltech.com — 1 breach, no password exposed
+      {
+        provider: "Have I Been Pwned", targetType: "email", target: "security@globaltech.com",
+        email: "security@globaltech.com", breach: "Dropbox", breachDate: "2012-07-01",
+        exposedData: ["Email addresses", "Usernames"], secretPresent: false,
+      },
+      // ciso@globaltech.com — no breaches → no row (clean targets are not shown)
+      // globaltech.com — internet-exposed hosts (Shodan), one row per host:port
+      {
+        provider: "Shodan", targetType: "domain", target: "globaltech.com",
+        breach: "203.0.113.10:8080 Apache httpd 2.4.49", breachDate: "2026-05-20T04:12:00Z",
+        exposedData: ["8080/tcp", "Apache httpd 2.4.49", "GlobalTech Industries", "vuln:CVE-2021-41773"],
+        sourceUrl: "https://www.shodan.io/host/203.0.113.10", secretPresent: false,
       },
       {
-        input: "globaltech.com",
-        kind: "domain",
-        provider: "Shodan",
-        exposedServices: [
-          { port: 25,   protocol: "SMTP",  banner: "Postfix smtpd; no TLS required" },
-          { port: 8080, protocol: "HTTP",  banner: "Apache/2.4.49 — CVE-2021-41773 unauthenticated path traversal/RCE (mod_cgi); CVSS 9.8; unpatched" },
-          { port: 8443, protocol: "HTTPS", banner: "Apache Tomcat/9.0.53 + Log4j 2.14.1 — CVE-2021-44228 Log4Shell JNDI RCE; CVSS 10.0; unpatched" },
-          { port: 3389, protocol: "RDP",   banner: "Terminal Services; exposed to internet" },
-        ],
-        summary: "4 exposed services: SMTP (no-TLS), Apache 2.4.49 (CVE-2021-41773 RCE unpatched), Tomcat (CVE-2021-44228 Log4Shell unpatched), RDP (internet-facing)",
+        provider: "Shodan", targetType: "domain", target: "globaltech.com",
+        breach: "203.0.113.10:8443 Apache Tomcat 9.0.53", breachDate: "2026-05-20T04:12:00Z",
+        exposedData: ["8443/tcp", "Apache Tomcat 9.0.53", "GlobalTech Industries", "vuln:CVE-2021-44228"],
+        sourceUrl: "https://www.shodan.io/host/203.0.113.10", secretPresent: false,
+      },
+      {
+        provider: "Shodan", targetType: "domain", target: "globaltech.com",
+        breach: "203.0.113.25:3389 Microsoft Terminal Services", breachDate: "2026-05-19T22:40:00Z",
+        exposedData: ["3389/tcp", "Microsoft Terminal Services", "GlobalTech Industries"],
+        sourceUrl: "https://www.shodan.io/host/203.0.113.25", secretPresent: false,
+      },
+      {
+        provider: "Shodan", targetType: "domain", target: "globaltech.com",
+        breach: "203.0.113.42:25 Postfix smtpd", breachDate: "2026-05-19T18:05:00Z",
+        exposedData: ["25/tcp", "Postfix smtpd", "GlobalTech Industries"],
+        sourceUrl: "https://www.shodan.io/host/203.0.113.42", secretPresent: false,
       },
     ],
+    errors: [],
   });
 
   // ── synth-meta.json ────────────────────────────────────────────────────────
@@ -1724,7 +1742,7 @@ async function main(): Promise<void> {
   console.log(`  Tags:           17 triage tags across IOCs, events, findings`);
   console.log(`  Comments:       6 analyst comments`);
   console.log(`  Report meta:    fully populated (org, revisions, distribution, sections)`);
-  console.log(`  Customer data:  3 email checks + 1 domain Shodan scan`);
+  console.log(`  Customer data:  HIBP breaches for 2 emails + 4 Shodan exposed hosts (1 clean email hidden)`);
   console.log(`\nStart the server and open the dashboard, then connect to case "${CASE_ID}".`);
   console.log(`  npm run dev`);
 }
