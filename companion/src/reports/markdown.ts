@@ -11,7 +11,7 @@ import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
-import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
+import { hasExposureFinding, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
 import { playbookStats, type PlaybookStatus, type PlaybookTask } from "../analysis/playbook.js";
@@ -349,11 +349,14 @@ function customerExposure(exposure: CustomerExposureSummary | undefined, lines: 
   lines.push(`Providers: ${exposure.providers.join(", ") || "none"}`, "");
   lines.push(`Customer domains: ${exposure.targets.domains.join(", ") || "none"}`, "");
   lines.push(`Customer emails: ${exposure.targets.emails.join(", ") || "none"}`, "");
-  if (exposure.results.length === 0) {
-    lines.push("_No customer exposure results returned._", "");
+  // Show only rows where a provider actually found something — clean "checked, no breach"
+  // rows are dropped (the providers/targets lines above already record what was checked).
+  const found = exposure.results.filter(hasExposureFinding);
+  if (found.length === 0) {
+    lines.push("_No customer exposures found._", "");
   } else {
     lines.push("| Provider | Target | Email | Breach/source | Date | Data |", "| --- | --- | --- | --- | --- | --- |");
-    for (const r of exposure.results) {
+    for (const r of found) {
       lines.push(`| ${cellMd(r.provider)} | ${cellMd(`${r.targetType}:${r.target}`)} | ${cellMd(r.email ?? "")} | ${cellMd(r.breach ?? "")} | ${cellMd(r.breachDate ?? "")} | ${cellMd([...(r.exposedData ?? []), ...(r.secretPresent ? ["credential material present"] : [])].join(", "))} |`);
     }
     lines.push("");

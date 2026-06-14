@@ -83,6 +83,17 @@ function safeResult(r: CustomerExposureResult): StoredCustomerExposureResult {
   };
 }
 
+// A result is only worth surfacing when the provider actually FOUND something — a
+// breach/exposed host, exposed data fields, or credential material. "Checked, clean" rows
+// (no breach, no data) are dropped by the dashboard panel + report so the section shows
+// findings only. Real providers never emit empty rows (every hit carries a `breach`), so
+// this is a display guard; the stored summary still records that the check ran.
+export function hasExposureFinding(
+  r: Pick<StoredCustomerExposureResult, "breach" | "exposedData" | "secretPresent">,
+): boolean {
+  return Boolean((r.breach && r.breach.trim()) || (r.exposedData && r.exposedData.length) || r.secretPresent);
+}
+
 export function buildCustomerExposureTargets(
   state: InvestigationState,
   rawTargets: CustomerTargets,

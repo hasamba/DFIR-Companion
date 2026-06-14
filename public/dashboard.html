@@ -6735,8 +6735,12 @@
       const providers = (exposure.providers || []).join(", ") || "none";
       const checked = exposure.checkedAt ? `Last checked ${esc(new Date(exposure.checkedAt).toLocaleString())}` : "Not checked yet";
       const targetLine = `Domains: ${(effective.domains || []).map(esc).join(", ") || "none"} · Emails: ${(effective.emails || []).map(esc).join(", ") || "none"}`;
-      const rows = results.length
-        ? results.map(r => {
+      // Show only rows where a provider actually found something — clean "checked, no breach"
+      // rows are hidden (mirrors hasExposureFinding in customerExposure.ts; the providers/targets
+      // lines above still record what was checked).
+      const found = results.filter(r => (r.breach && String(r.breach).trim()) || (r.exposedData && r.exposedData.length) || r.secretPresent);
+      const rows = found.length
+        ? found.map(r => {
             // The headline (breach / exposed host) links to the provider's report when one exists
             // — e.g. Shodan's https://www.shodan.io/host/<ip>.
             const head = r.breach
@@ -6751,7 +6755,7 @@
               + `${r.secretPresent ? ` · <span class="sev-High">credential material present</span>` : ""}`
               + `${r.exposedData && r.exposedData.length ? ` · <small>${esc(r.exposedData.slice(0, 6).join(", "))}</small>` : ""}</div>`;
           }).join("")
-        : "<div style='color:var(--c-9aa4b2)'>No exposure results stored.</div>";
+        : "<div style='color:var(--c-9aa4b2)'>No exposures found.</div>";
       const errs = errors.length
         ? `<details><summary>${errors.length} provider error${errors.length !== 1 ? "s" : ""}</summary>${errors.map(e => `<div style="color:var(--c-ff9f43)">${esc(e.provider)} ${esc(e.targetType)} ${esc(e.target)}: ${esc(e.error)}</div>`).join("")}</details>`
         : "";

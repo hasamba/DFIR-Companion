@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import {
   buildCustomerExposureTargets,
+  hasExposureFinding,
   summarizeExposure,
   type CustomerExposureProvider,
 } from "../../src/analysis/customerExposure.js";
@@ -57,6 +58,19 @@ describe("buildCustomerExposureTargets", () => {
     const built = buildCustomerExposureTargets(state, { domains: ["example.com"], emails: [] });
 
     expect(built.emails).toEqual(["alice@example.com"]);
+  });
+});
+
+describe("hasExposureFinding", () => {
+  it("keeps rows with a breach, exposed data, or credential material", () => {
+    expect(hasExposureFinding({ breach: "Adobe" })).toBe(true);
+    expect(hasExposureFinding({ exposedData: ["8080/tcp"] })).toBe(true);
+    expect(hasExposureFinding({ secretPresent: true })).toBe(true);
+  });
+
+  it("drops clean rows with no finding (checked, nothing found)", () => {
+    expect(hasExposureFinding({})).toBe(false);
+    expect(hasExposureFinding({ breach: "   ", exposedData: [], secretPresent: false })).toBe(false);
   });
 });
 
