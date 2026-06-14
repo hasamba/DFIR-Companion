@@ -332,6 +332,36 @@ describe("renderMarkdownReport", () => {
     expect(md).toContain("credential material present");
   });
 
+  it("shows only found exposure rows — clean 'checked, no breach' rows are dropped", () => {
+    const md = renderMarkdownReport(emptyState("c1"), undefined, {
+      checkedAt: "2026-06-08T12:00:00Z",
+      providers: ["Have I Been Pwned"],
+      targets: { domains: [], emails: ["alice@example.com", "bob@example.com"] },
+      results: [
+        { provider: "Have I Been Pwned", targetType: "email", target: "alice@example.com", email: "alice@example.com", breach: "Adobe" },
+        { provider: "Have I Been Pwned", targetType: "email", target: "bob@example.com", email: "bob@example.com" }, // clean → dropped
+      ],
+      errors: [],
+    });
+
+    // Assert on the table-row form (`email:<target>`), which only appears in a rendered row —
+    // both addresses also appear in the "Customer emails:" targets line, so a bare contains is ambiguous.
+    expect(md).toContain("email:alice@example.com");
+    expect(md).not.toContain("email:bob@example.com");
+  });
+
+  it("renders 'no exposures found' when every checked target is clean", () => {
+    const md = renderMarkdownReport(emptyState("c1"), undefined, {
+      checkedAt: "2026-06-08T12:00:00Z",
+      providers: ["Have I Been Pwned"],
+      targets: { domains: [], emails: ["clean@example.com"] },
+      results: [{ provider: "Have I Been Pwned", targetType: "email", target: "clean@example.com", email: "clean@example.com" }],
+      errors: [],
+    });
+
+    expect(md).toContain("_No customer exposures found._");
+  });
+
   it("renders the §4.9 beacon candidates section — placeholder when none, a row for a periodic channel", () => {
     const empty = emptyState("c1");
     const mdEmpty = renderMarkdownReport(empty);
