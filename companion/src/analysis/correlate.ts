@@ -21,8 +21,12 @@ const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Lo
 
 const SHA256_RE = /\b[a-f0-9]{64}\b/i;
 const MD5_RE = /\b[a-f0-9]{32}\b/i;
-// Windows ("C:\…") or UNC ("\\host\…") or Unix ("/usr/…") paths.
-const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|\/(?:[\w.\-]+\/)+[\w.\-]+/;
+// Windows ("C:\…") or UNC ("\\host\…") or Unix ("/usr/…") paths. The Unix branch carries a
+// negative lookbehind so it does NOT match a URL path (e.g. the "https://go.microsoft.com/fwlink"
+// in a Windows Defender message): a "/seg/seg" preceded by a word char, "/", or ":" is part of a
+// URL/host, not a filesystem path — matching it falsely correlated unrelated detections that merely
+// shared a vendor URL in their text. (#102)
+const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w.\-]+/;
 
 function eventHashes(e: ForensicEvent): string[] {
   const out = new Set<string>();

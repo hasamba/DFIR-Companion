@@ -48,6 +48,21 @@ describe("correlateEvents", () => {
     expect(merged.sources).toEqual(expect.arrayContaining(["THOR", "CSV import"]));
   });
 
+  it("does NOT treat a URL in the description as a shared file path (#102)", () => {
+    // Two different Defender detections seconds apart, each message carrying the same Microsoft
+    // fwlink URL. The URL must not be read as a filesystem path and collapse them into one.
+    const url = "https://go.microsoft.com/fwlink/?linkid=37020&name=HackTool:Win32";
+    const a = ev({ id: "a", description: `Antivirus Hacktool Detection — ${url}/Passview&threatid=1`, timestamp: "2026-06-03T08:15:40.382Z" });
+    const b = ev({ id: "b", description: `Antivirus Hacktool Detection — ${url}/Mimikatz&threatid=2`, timestamp: "2026-06-03T08:15:40.417Z" });
+    expect(correlateEvents([a, b], { windowSeconds: 2 })).toHaveLength(2);
+  });
+
+  it("still extracts a genuine Unix path from the description for correlation", () => {
+    const a = ev({ id: "a", description: "wrote payload to /usr/local/bin/x", path: undefined, timestamp: "2026-06-03T08:00:00Z", sources: ["THOR"] });
+    const b = ev({ id: "b", description: "exec /usr/local/bin/x", path: undefined, timestamp: "2026-06-03T08:00:01Z", sources: ["Velociraptor"] });
+    expect(correlateEvents([a, b], { windowSeconds: 2 })).toHaveLength(1);
+  });
+
   it("does NOT merge same path when timestamps are outside the window", () => {
     const a = ev({ id: "a", path: "c:\\x.exe", timestamp: "2026-05-26T12:00:00Z" });
     const b = ev({ id: "b", path: "c:\\x.exe", timestamp: "2026-05-26T12:05:00Z" }); // 5 min apart
