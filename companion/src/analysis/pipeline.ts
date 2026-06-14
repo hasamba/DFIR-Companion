@@ -50,6 +50,8 @@ import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
 import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
+import type { KevStore } from "./kevStore.js";
+import type { KevCatalog } from "./kev.js";
 import {
   huntSuggestionsResponseSchema,
   sanitizeHuntSuggestions,
@@ -735,6 +737,10 @@ export interface PipelineOptions {
   // Shared leveled logger. Absent → a console-only logger at DFIR_LOG_LEVEL (used by CLI scripts
   // and tests). The server passes its file-backed logger so AI/OCR/anon traces land in the case log.
   logger?: Logger;
+  // CISA KEV catalog (issue #99): when set, CVEs found in forensic events + IOCs are matched
+  // against the catalog and the hits are prepended to the synthesis context so the AI can flag
+  // actively-exploited CVEs as probable initial-access vectors. Opt-in (store starts empty).
+  kevStore?: KevStore;
 }
 
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
@@ -764,8 +770,22 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number, backoffMs: nu
 
 export class AnalysisPipeline {
   private readonly log: Logger;
+  // Lazily loaded from opts.kevStore so we don't block the constructor on disk I/O.
+  private kevCatalogCache: KevCatalog | undefined;
+
   constructor(private readonly opts: PipelineOptions) {
     this.log = opts.logger ?? createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
+  }
+
+  private async getKevCatalog(): Promise<KevCatalog | undefined> {
+    if (!this.opts.kevStore) return undefined;
+    if (!this.kevCatalogCache) this.kevCatalogCache = await this.opts.kevStore.loadCatalog();
+    return this.kevCatalogCache;
+  }
+
+  // Called by the /kev routes after a catalog update so the next synthesis picks it up.
+  invalidateKevCache(): void {
+    this.kevCatalogCache = undefined;
   }
 
   hasAiProvider(): boolean {
@@ -2123,7 +2143,8 @@ export class AnalysisPipeline {
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
     const findingsText = loaded.findings.slice(0, 150).map((f) => `[${f.id}] [${f.severity}] ${f.title}`).join("\n") || "(none)";
     const questionsText = loaded.keyQuestions.map((q) => `- ${q.question}${q.answer ? ` → ${q.answer}` : " (open)"}`).join("\n") || "(none)";
-    const contextBlock = buildSynthesisContext(loaded, scopedEvents);
+    const kevCatalog = await this.getKevCatalog();
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents, kevCatalog);
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const askOverhead = estimateTokens(getAskPrompt())
@@ -2166,7 +2187,8 @@ export class AnalysisPipeline {
     const findingsText = renderHuntFindings(loaded.findings);
     const iocText = renderHuntIocs(loaded.iocs);
     const techText = loaded.mitreTechniques.map((t) => `${t.id} ${t.name}`).join(", ") || "(none)";
-    const contextBlock = buildSynthesisContext(loaded, scopedEvents);
+    const kevCatalog = await this.getKevCatalog();
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents, kevCatalog);
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getHuntSuggestPrompt())
@@ -2224,7 +2246,8 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.timestamp || "(undated)"}] [${e.severity}]${e.asset ? ` <${e.asset}>` : ""} ${e.description.slice(0, 240)}`;
     const findingsText = renderHuntFindings(loaded.findings);
-    const contextBlock = buildSynthesisContext(loaded, scopedEvents);
+    const kevCatalog = await this.getKevCatalog();
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents, kevCatalog);
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getPlaybookHuntPrompt())
@@ -2270,7 +2293,8 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
     const findingsText = loaded.findings.slice(0, 150).map((f) => `[${f.severity}] ${f.title}`).join("\n") || "(none)";
-    const contextBlock = buildSynthesisContext(loaded, scopedEvents);
+    const kevCatalog = await this.getKevCatalog();
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents, kevCatalog);
 
     const narrativePrompt = getNarrativePrompt();
     const overhead = estimateTokens(narrativePrompt)
@@ -2313,7 +2337,8 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
     const findingsText = loaded.findings.slice(0, 150).map((f) => `[${f.severity}] ${f.title}`).join("\n") || "(none)";
-    const contextBlock = buildSynthesisContext(loaded, scopedEvents);
+    const kevCatalog = await this.getKevCatalog();
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents, kevCatalog);
 
     const overhead = estimateTokens(getExecSummaryPrompt())
       + estimateTokens(contextBlock + (loaded.attackerPath || "") + findingsText) + 300;
@@ -2417,9 +2442,10 @@ export class AnalysisPipeline {
       .map((t) => `[${t.id}] ${t.description}`)
       .join("\n") || "(none open)";
     const legitimateBlock = buildLegitimateContext(markers);
-    // Compact, corroborated context (compromised assets + threat-intel verdicts) so the
-    // model grounds findings/attacker-path in structure instead of inferring blind.
-    const contextBlock = buildSynthesisContext(state, scopedEvents);
+    // Compact, corroborated context (compromised assets + threat-intel verdicts + KEV hits)
+    // so the model grounds findings/attacker-path in structure instead of inferring blind.
+    const kevCatalog = await this.getKevCatalog();
+    const contextBlock = buildSynthesisContext(state, scopedEvents, kevCatalog);
     // Analyst-pinned open questions: tell the model to address each (answer when the evidence
     // now supports it) and keep them. They're re-merged into the output below so they persist.
     const pinnedQuestions = state.keyQuestions.filter((q) => q.pinned);

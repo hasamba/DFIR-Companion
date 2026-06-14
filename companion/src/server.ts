@@ -109,6 +109,7 @@ import { IocWhitelistStore } from "./analysis/iocWhitelistStore.js";
 import { whitelistMatches, parseWhitelistText, toWhitelistCsv, sanitizeRuleInput } from "./analysis/iocWhitelist.js";
 import { NsrlStore, ingestNsrlFiles, splitNsrlPaths } from "./analysis/nsrlStore.js";
 import { parseNsrlText, nsrlMatchIocs, nsrlMatchEvents } from "./analysis/nsrl.js";
+import { KevStore } from "./analysis/kevStore.js";
 import { NsrlDb, loadNsrlDbPath, saveNsrlDbPath, removeNsrlDbPath } from "./analysis/nsrlDb.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import { buildManualEvent, buildManualIoc } from "./analysis/manualEntry.js";
@@ -341,6 +342,9 @@ export interface AppOptions {
   nsrlDb?: NsrlDb;
   nsrlDbConfigFile?: string;
   nsrlDbEnvManaged?: boolean;
+  // CISA KEV catalog (issue #99): CVEs from the forensic timeline / Shodan exposure results that
+  // CISA confirms are actively exploited are flagged in synthesis + the report. Opt-in (starts empty).
+  kevStore?: KevStore;
   // Which hunt-query platforms the dashboard's 🔍 generator offers (DFIR_HUNT_PLATFORMS allowlist).
   // Exposed on /health so the dashboard renders only these cards. Undefined → all platforms.
   huntPlatforms?: HuntPlatform[];
@@ -471,7 +475,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel() });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore });
   });
 
   // Read / change the live log verbosity (debug | info | warn | error). The dashboard's
@@ -3369,6 +3373,70 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // CISA KEV catalog routes (issue #99). The catalog is global (like NSRL/whitelist).
+  // GET /kev — stats for the Settings → KEV panel.
+  // POST /kev/import-url — fetch the CISA feed from a URL (body: { url }).
+  // POST /kev/import-file — load the feed from a server-side file path (body: { path }).
+  // DELETE /kev — wipe the catalog.
+  app.get("/kev", async (_req: Request, res: Response) => {
+    if (!options.kevStore) return res.status(200).json({ count: 0, enabled: false });
+    try {
+      const m = await options.kevStore.meta();
+      return res.status(200).json({ ...m, enabled: m.count > 0 });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Fetch the CISA KEV feed from a URL and ingest it. Body: { url? } (defaults to the CISA feed).
+  // Passes the raw JSON through so meta() can read catalogVersion/dateReleased.
+  app.post("/kev/import-url", async (req: Request, res: Response) => {
+    if (!options.kevStore) return res.status(501).json({ error: "KEV store not configured" });
+    const CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
+    const url = typeof req.body?.url === "string" && req.body.url.trim() ? req.body.url.trim() : CISA_KEV_URL;
+    try {
+      const resp = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+      if (!resp.ok) return res.status(502).json({ error: `fetch failed: HTTP ${resp.status}` });
+      const json: unknown = await resp.json();
+      const { total } = await options.kevStore.ingestRaw(json);
+      if (options.pipeline) options.pipeline.invalidateKevCache();
+      logLine(`[kev] imported ${total} entries from ${url}`);
+      return res.status(200).json({ total, source: url });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Load the CISA KEV feed JSON from a file on the server filesystem. Body: { path }.
+  // Localhost-only tool: reading an operator-specified path is intentional (like NSRL import-file).
+  app.post("/kev/import-file", async (req: Request, res: Response) => {
+    if (!options.kevStore) return res.status(501).json({ error: "KEV store not configured" });
+    const path = typeof req.body?.path === "string" ? req.body.path.trim() : "";
+    if (!path) return res.status(400).json({ error: "path is required (a local copy of the CISA KEV JSON)" });
+    try {
+      const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
+      const { total } = await options.kevStore.ingestRaw(raw);
+      if (options.pipeline) options.pipeline.invalidateKevCache();
+      logLine(`[kev] loaded ${total} entries from file ${path}`);
+      return res.status(200).json({ total, source: path });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Wipe the KEV catalog.
+  app.delete("/kev", async (_req: Request, res: Response) => {
+    if (!options.kevStore) return res.status(501).json({ error: "KEV store not configured" });
+    try {
+      await options.kevStore.clear();
+      if (options.pipeline) options.pipeline.invalidateKevCache();
+      logLine(`[kev] catalog cleared`);
+      return res.status(200).json({ cleared: true, count: 0 });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Investigation time-window. Setting it re-synthesizes so out-of-scope events
   // (and the findings/IOCs derived from them) drop out of the analysis.
   const scopeStore = new ScopeStore(store);
@@ -5741,6 +5809,8 @@ export interface RuntimePipelineParams {
   ocrRunner?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["ocrRunner"];
   // Shared logger so AI/OCR/anonymization debug traces land in the same session + per-case logs.
   logger?: Logger;
+  // CISA KEV catalog (issue #99): passed to the pipeline so synthesis context includes KEV hits.
+  kevStore?: KevStore;
 }
 
 export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
@@ -5762,6 +5832,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     aiControlStore: new AiControlStore(params.store),
     ocrRunner: params.ocrRunner,
     logger: params.logger,
+    kevStore: params.kevStore,
   });
 }
 
@@ -5826,6 +5897,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
       logLine(`[nsrl] could not open RDS DB ${resolvedNsrlDbPath}: ${(err as Error).message}`);
     }
   }
+  // CISA KEV catalog (issue #99) — global, shared across cases, own subdir beside cases/ (same
+  // drive-root rationale as the whitelist/nsrl). No env pre-load: analysts fetch/import it via
+  // Settings → KEV. The pipeline lazy-loads it so an import during a session is picked up.
+  const kevStore = new KevStore(join(dirname(casesRoot), "kev", "catalog.json"));
   // Notifications (issue #58): a global channel store (own subdir, Windows drive-root-safe) + a
   // notifier wired with a TLS-aware fetch (Slack/Teams webhooks, honoring DFIR_NOTIFY_CA/_INSECURE
   // for self-hosted Mattermost) and the built-in SMTP transport for email channels.
@@ -5866,7 +5941,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const importUndoStore = new ImportUndoStore(store, Number(process.env.DFIR_IMPORT_UNDO_DEPTH) || undefined);
   const notionExportStore = new NotionExportStore(store);
   const clickupExportStore = new ClickUpExportStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore);
 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
@@ -5877,7 +5952,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const visionIsLocalForPipeline = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
   const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
   const wiredPipeline = buildRuntimePipeline({
-    provider, synthesisProvider, velociraptorProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger,
+    provider, synthesisProvider, velociraptorProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
     // Fully guarded — notifications are a side channel and must NEVER break synthesis.
     onSynth: (caseId, diff, state) => {
@@ -5962,6 +6037,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     nsrlDb,
     nsrlDbConfigFile,
     nsrlDbEnvManaged,
+    kevStore,
     veloHuntStore,
     onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),
     veloMonitorStore,

