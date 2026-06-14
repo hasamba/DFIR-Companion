@@ -2002,7 +2002,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         try {
           const raw = await options.velociraptorClient.monitoringStateRaw();
           rawSample = JSON.stringify(raw).slice(0, 2000);
-          logLine(`[velo-monitor] auto: monitoring table returned no artifacts. Raw GetClientMonitoringState() shape: ${rawSample}`);
+          logLine(`[velo-monitor] auto: monitoring table returned no artifacts. Raw get_client_monitoring() shape: ${rawSample}`);
         } catch (e) { rawSample = `(read failed: ${(e as Error).message})`; logLine(`[velo-monitor] auto: monitoring-state read failed: ${(e as Error).message}`); }
         return res.status(422).json({ error: "no client-event artifacts found in Velociraptor's client monitoring table — enable some in Velociraptor → Client Monitoring first, or (if your version's monitoring proto differs) open /velociraptor/diag and share the output to set DFIR_VELOCIRAPTOR_MONITORED_VQL", discovered: [], rawSample });
       }

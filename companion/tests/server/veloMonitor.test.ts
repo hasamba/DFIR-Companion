@@ -31,8 +31,9 @@ const runner: VqlRunner = async (statements) => {
       { name: "Windows.Events.DNSQueries", description: "DNS queries", type: "CLIENT_EVENT" },
     ], raw: "" };
   }
-  if (p.includes("GetClientMonitoringState()")) {
-    return { rows: [{ artifact: "Windows.Events.ProcessCreation" }, { artifact: "Windows.Events.DNSQueries" }], raw: "" };
+  if (p.includes("get_client_monitoring()")) {
+    // The real ClientEventTable proto shape (one row under `State`).
+    return { rows: [{ State: { artifacts: { artifacts: ["Windows.Events.ProcessCreation", "Windows.Events.DNSQueries"] } } }], raw: "" };
   }
   if (p.includes("source(") && p.includes("artifact=")) {
     return { rows: [PROC_ROW], raw: "" };

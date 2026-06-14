@@ -497,7 +497,7 @@ until a token is configured** (`DFIR_PUSH_TOKEN` global and/or a per-case `PushT
 per-monitor self-rescheduling `setTimeout` poller (in the `createApp` closure, like `veloHuntTimers`) reads a
 client-monitoring artifact's new rows via `client.monitorResults` — `source(client_id=,artifact=,start_time=,end_time=)`
 for one client, or the **all-clients** variant `foreach(clients())`+`source()` when `clientId` is the `ALL_CLIENTS`
-(`*`) sentinel (`monitor.allClients`). A one-click **auto** route (`…/monitors/auto`) reads `GetClientMonitoringState()`
+(`*`) sentinel (`monitor.allClients`). A one-click **auto** route (`…/monitors/auto`) reads `get_client_monitoring()`
 (`listMonitoredArtifacts`) and starts an all-clients monitor per artifact already enabled in Velociraptor's Client
 Monitoring table (422 when none). All three VQLs are overridable (`DFIR_VELOCIRAPTOR_MONITOR_VQL`/`_MONITOR_ALL_VQL`/`_MONITORED_VQL`).
 It wraps the rows as a `{ [artifact]: rows }` artifact-map and feeds
