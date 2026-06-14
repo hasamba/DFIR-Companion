@@ -17,6 +17,11 @@ notifications/
 # ANCHORED only (a bare `velociraptor/` would also match the src/integrations/velociraptor/ source dir).
 /velociraptor/
 
+# CISA KEV catalog cache (issue #99) — downloaded/imported by the analyst at runtime; never commit.
+# Anchored to companion/ because casesRoot defaults to companion/cases, so dirname(casesRoot)=companion/.
+/kev/
+companion/kev/
+
 # Secrets / local config
 **/.env
 
