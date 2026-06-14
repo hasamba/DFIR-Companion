@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { adapterForUrl, adapterById, ADAPTERS } from "../src/adapters/registry.js";
 import { splunkAdapter } from "../src/adapters/splunk.js";
-import { velociraptorAdapter } from "../src/adapters/velociraptor.js";
+import { velociraptorAdapter, velociraptorSourceLabel } from "../src/adapters/velociraptor.js";
 import { elasticAdapter } from "../src/adapters/elastic.js";
 import { crowdstrikeAdapter } from "../src/adapters/crowdstrike.js";
 
@@ -126,6 +126,27 @@ describe("velociraptor.extractRows", () => {
 
   it("returns null on an unrecognized shape", () => {
     expect(velociraptorAdapter.extractRows("u", { foo: "bar" })).toBeNull();
+  });
+});
+
+describe("velociraptorSourceLabel", () => {
+  it("prefers the GetTable artifact= param (results tab)", () => {
+    expect(velociraptorSourceLabel({ apiUrl: "/api/v1/GetTable?flow_id=F.1&artifact=Windows.Hayabusa.Rules&rows=10" }))
+      .toBe("Windows.Hayabusa.Rules");
+  });
+  it("falls back to a row's _Source (notebook VQL)", () => {
+    expect(velociraptorSourceLabel({ rows: [{ _Source: "Custom.MyHunt", x: 1 }] })).toBe("Custom.MyHunt");
+  });
+  it("reads the combo-box artifact from the page's input values (results tab, no param)", () => {
+    expect(velociraptorSourceLabel({ domInputs: ["Search clients", "10", "DetectRaptor.Windows.Detection.Applications"] }))
+      .toBe("DetectRaptor.Windows.Detection.Applications");
+  });
+  it("uses the notebook id from the page hash", () => {
+    expect(velociraptorSourceLabel({ pageUrl: "https://h:5888/app/index.html?org_id=root#/fullscreen/notebooks/N.D8G0LA8MEASII" }))
+      .toBe("notebook N.D8G0LA8MEASII");
+  });
+  it("returns empty when nothing identifies the source", () => {
+    expect(velociraptorSourceLabel({ domInputs: ["Search clients", "10"], pageUrl: "https://h/#/collected/C.x/F.y/results" })).toBe("");
   });
 });
 

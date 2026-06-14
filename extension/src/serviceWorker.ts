@@ -83,7 +83,9 @@ async function pushArtifact(msg: PushArtifactMessage): Promise<PushArtifactResul
   const rows = Array.isArray(msg.rows) ? msg.rows : [];
   if (!rows.length) return { ok: false, error: "No rows to push." };
 
-  const filename = buildArtifactFilename(msg.adapterId, new Date());
+  // Name the evidence file after the source artifact/notebook when known (nicer audit trail + a
+  // Velociraptor-looking name keeps detectImportKind routing it to the Velociraptor importer).
+  const filename = buildArtifactFilename(msg.sourceLabel?.trim() || msg.adapterId, new Date());
   const client = new CompanionClient(settings.companionUrl);
   const result = await client.postImport(settings.caseId, { json: JSON.stringify(rows), filename });
 

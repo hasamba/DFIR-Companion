@@ -4,7 +4,9 @@
 // injected) → unit-tested.
 
 export function buildArtifactFilename(adapterId: string, date: Date): string {
-  const safeId = (adapterId || "artifact").replace(/[^\w.\-]+/g, "_").slice(0, 40) || "artifact";
+  // Cap generously so a full artifact name (e.g. DetectRaptor.Windows.Detection.Applications) isn't
+  // truncated; the row-level `_Source` carries the untruncated name regardless.
+  const safeId = (adapterId || "artifact").replace(/[^\w.\-]+/g, "_").slice(0, 90) || "artifact";
   // 2026-06-14T10-30-00 — colons aren't filename-safe on Windows.
   const stamp = date.toISOString().replace(/\.\d+Z$/, "").replace(/:/g, "-");
   return `${safeId}-${stamp}.json`;

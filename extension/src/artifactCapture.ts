@@ -67,10 +67,31 @@ function onPageMessage(ev: MessageEvent): void {
     let rows: unknown[] | null = null;
     try { rows = activeAdapter.extractRows(String(d.url ?? ""), parsed); } catch { rows = null; }
     if (rows && rows.length) {
-      latest = { adapterId: activeAdapter.id, rows, sourceUrl: location.href, via: "intercept" };
+      const label = labelRows(rows, String(d.url ?? ""));
+      latest = { adapterId: activeAdapter.id, rows, sourceUrl: location.href, via: "intercept", label };
       renderButton();
     }
   }
+}
+
+// Stamp the artifact/notebook the rows came from onto each row (as `_Source`, which the companion's
+// importer already reads) so every timeline event records its source and the analyst can navigate
+// back. Returns the derived label (also used for the pushed evidence filename). #102
+function labelRows(rows: unknown[], apiUrl: string): string {
+  if (!activeAdapter?.sourceLabel) return "";
+  let label = "";
+  try {
+    const domInputs = Array.from(document.querySelectorAll("input")).map((i) => i.value || "").filter(Boolean);
+    label = activeAdapter.sourceLabel({ apiUrl, pageUrl: location.href, domInputs, rows });
+  } catch { label = ""; }
+  if (label) {
+    for (const r of rows) {
+      if (r && typeof r === "object" && !(r as Record<string, unknown>)._Source) {
+        (r as Record<string, unknown>)._Source = label;
+      }
+    }
+  }
+  return label;
 }
 
 // ── DOM-scrape fallback ────────────────────────────────────────────────────────────────────────
@@ -89,7 +110,8 @@ function scrapeVisibleTable(): CapturedArtifact | null {
   const { headers, rows } = readTableMatrix(best);
   const objs = matrixToRows(headers, rows);
   if (!objs.length) return null;
-  return { adapterId: activeAdapter.id, rows: objs, sourceUrl: location.href, via: "scrape" };
+  const label = labelRows(objs, "");
+  return { adapterId: activeAdapter.id, rows: objs, sourceUrl: location.href, via: "scrape", label };
 }
 
 function readTableMatrix(table: HTMLTableElement): { headers: string[]; rows: string[][] } {
@@ -166,6 +188,7 @@ async function onClick(): Promise<void> {
       adapterId: artifact.adapterId,
       rows: artifact.rows,
       sourceUrl: artifact.sourceUrl,
+      sourceLabel: artifact.label,
     };
     const res = (await chrome.runtime.sendMessage(msg)) as PushArtifactResult | undefined;
     if (res?.ok) {

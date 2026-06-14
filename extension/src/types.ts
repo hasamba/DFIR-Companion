@@ -61,6 +61,7 @@ export interface PushArtifactMessage {
   adapterId: string;
   rows: unknown[];
   sourceUrl: string;
+  sourceLabel?: string;  // artifact / notebook the rows came from (for the evidence filename)
 }
 
 // service worker → content script: the outcome, surfaced on the injected page button.

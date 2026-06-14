@@ -32,6 +32,12 @@ export interface Adapter {
    * scraper picks the largest visible <table> on the page.
    */
   readonly tableSelector?: string;
+  /**
+   * Optional: derive a human "source label" (the artifact / notebook the rows came from) so each
+   * pushed row can record where to navigate back to. Given the intercepted API URL, the page URL,
+   * the page's <input> values (for combo-box selectors), and the rows. Pure. Returns "" when unknown.
+   */
+  sourceLabel?(opts: { apiUrl: string; pageUrl: string; domInputs: readonly string[]; rows: readonly unknown[] }): string;
 }
 
 /** A captured set of rows ready to push to the companion. */
@@ -41,4 +47,6 @@ export interface CapturedArtifact {
   sourceUrl: string;
   /** "intercept" (clean API JSON) or "scrape" (parsed from the visible table). */
   via: "intercept" | "scrape";
+  /** The artifact / notebook the rows came from (also stamped onto each row's `_Source`). */
+  label?: string;
 }

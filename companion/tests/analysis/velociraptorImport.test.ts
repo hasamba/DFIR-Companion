@@ -291,6 +291,18 @@ describe("parseVelociraptorJson — IOC hygiene & extra time keys (#102)", () =>
     expect(r.iocs.some((i) => i.type === "url")).toBe(false);    // no Meta reference URLs
   });
 
+  it("tags every event type with its source artifact (_Source) so it can be traced back", () => {
+    const detection = { _Source: "DetectRaptor.Windows.Detection.LolDrivers", Detection: { Name: "Defence Evasion" }, EntryPath: "c:\\x\\kproc.sys", KeyMTime: "2026-06-06T20:42:51Z" };
+    const generic = { _Source: "Windows.Analysis.EvidenceOfDownload", DownloadedFilePath: "C:\\Users\\v\\a.exe", Mtime: "2026-06-03T08:00:00Z" };
+    const det = parseVelociraptorJson(JSON.stringify([detection])).events[0];
+    const gen = parseVelociraptorJson(JSON.stringify([generic])).events[0];
+    expect(det.description).toContain("[DetectRaptor.Windows.Detection.LolDrivers]"); // appended to a detection
+    expect(gen.description).toContain("Windows.Analysis.EvidenceOfDownload");          // generic already leads with it
+    // The filename fallback (no _Source) is NOT shown as a bracketed artifact tag.
+    const noSource = parseVelociraptorJson(JSON.stringify([{ Detection: { Name: "X" }, EntryPath: "c:\\y.sys" }]), { artifact: "0036_velociraptor-2026.json" }).events[0];
+    expect(noSource.description).not.toContain("[0036_velociraptor");
+  });
+
   it("dates rows via EventTimestamp, KeyMTime, and nested Stat.Mtime", () => {
     const rdp = { _Source: "Custom.RDP", EventTimestamp: "2025-03-14T22:30:42Z", EventID: 4648, Message: "explicit cred logon" };
     const amcache = { _Source: "DetectRaptor.Windows.Detection.Amcache", Detection: { Name: "Defence Evasion" }, KeyMTime: "2026-06-06T20:42:51Z", EntryName: "x.exe" };

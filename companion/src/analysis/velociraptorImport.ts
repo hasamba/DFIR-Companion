@@ -547,6 +547,9 @@ const GENERIC_MSG_KEYS = ["Message", "Details", "message", "Description", "Categ
 // Keys whose values are big/structured (rule regexes, PE internals, raw file content) — useful
 // for IOC scanning but noise in a one-line description, so they're skipped in the key=value fallback.
 const NOISE_KEY = /regex|ignore|imports|exports|sections|resources|directories|versioninformation|dllinfo|hitcontext|\bmeta\b|content|reference|url|license/i;
+// Collection-metadata keys (the artifact id surfaced in the "[artifact]" prefix, the _ts collection
+// time) — skipped in the key=value fallback so they don't duplicate the prefix / add noise.
+const META_KEY = /^(_ts|_Source|_Artifact|ArtifactName)$/i;
 
 function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const { sha256, md5 } = collectRowIocs(row, sink);
@@ -555,7 +558,7 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   const pairs: [string, string][] = [];
   flatten(row, pairs);
   const base = msg ? oneLine(msg)
-    : pairs.filter(([k, v]) => k !== "_ts" && !NOISE_KEY.test(k) && v.length <= 200).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
+    : pairs.filter(([k, v]) => !META_KEY.test(k) && !NOISE_KEY.test(k) && v.length <= 200).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
 
   const sevWord = firstStr(row, ["Severity", "Level", "Risk", "Priority"]).toLowerCase();
   const severity: Severity = SEV_WORDS[sevWord] ?? "Info";
@@ -649,6 +652,14 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     else if (kind === "eventlog") { m = mapEventlog(row, host, iocSink) ?? mapGeneric(row, artifact, host, iocSink); }
     else { m = mapGeneric(row, artifact, host, iocSink); }
     if (m) {
+      // Tag every event with the SOURCE artifact (from the row's _Source/_Artifact — stamped by the
+      // browser push, or carried by an artifact-map import) so the analyst can navigate back to it.
+      // mapGeneric already leads with "[artifact]"; for detection/sigma/yara/eventlog append it. Only
+      // a REAL artifact name (not the filename fallback) is shown, to avoid a noisy "[import.dat]".
+      const realArtifact = artifactName(row);
+      if (realArtifact && !m.description.includes(realArtifact)) {
+        m.description = `${m.description} [${realArtifact}]`.slice(0, 600);
+      }
       // Forensic distinctness: detections sharing a rule title/EID but describing different
       // artifacts (HackTool:Passview vs HackTool:Mimikatz) are SEPARATE events. Fold the message
       // fingerprint into the agg key so they don't collapse on title alone — while truly identical
