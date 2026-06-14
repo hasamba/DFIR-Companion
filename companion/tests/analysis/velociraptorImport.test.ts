@@ -199,6 +199,34 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     expect(r.iocs.some((i) => i.type === "process" && i.value === "dllhost.exe")).toBe(true);
   });
 
+  it("names the triggering file (EntryPath) in an Amcache-style detection verdict", () => {
+    const row = {
+      Detection: { Name: "Defence Evasion", KeywordRegex: "CleanWipe|RULEPAT_MARKER", Criticality: "Medium" },
+      KeyMTime: "2026-06-06T20:42:51Z", EntryName: "kprocesshacker.sys",
+      EntryPath: "c:\\program files\\process hacker 2\\kprocesshacker.sys", SHA1: "a".repeat(40),
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.description).toContain("Defence Evasion");
+    expect(e.description).toContain("kprocesshacker.sys");                 // the file that fired the rule
+    expect(e.description).not.toContain("RULEPAT_MARKER");                 // the KeywordRegex pattern is kept out
+    expect(r.iocs.some((i) => i.type === "file" && i.value.includes("kprocesshacker.sys"))).toBe(true);
+  });
+
+  it("surfaces the matched Content of a PSReadline/ISE detection, not just the rule name", () => {
+    const row = {
+      Detection: { ID: "win_ps_b64", Name: "Powershell large Base64 blob - IN DEVELOPMENT", Regex: "[a-z0-9+/]{44,}", HitString: "Sy1pYktKVUJX" },
+      FileInfo: { OSPath: "C:\\Users\\v\\ise.ps1", Mtime: "2026-06-03T08:40:48Z" },
+      Content: "download elasticagent from https://www.elastic.co/downloads/elastic-agent",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.description).toContain("Powershell large Base64 blob");
+    expect(e.description).toContain("elastic.co/downloads");               // the matched content
+    expect(e.description).not.toMatch(/\[a-z0-9/);                         // the rule Regex must not leak
+    expect(e.severity).toBe("Low");                                        // IN DEVELOPMENT
+  });
+
   it("MFT detection: object verdict with explicit Criticality wins; nested $SI timestamp resolved", () => {
     const row = {
       Detection: { Name: "BAU Cloud Data Transfer", KeywordRegex: "OneDrive\\.exe", Criticality: "Low" },

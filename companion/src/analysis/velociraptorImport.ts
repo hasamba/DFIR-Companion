@@ -473,17 +473,26 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   const { sha256, md5 } = collectRowIocs(row, sink);
   const message = rowMessage(row);
   const salient = salientFromMessage(message); // LOLBIN + command line out of a 4688-style message
-  const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path", "KeyPath"]);
+  // The triggering FILE: include the Amcache/driver/registry path fields (EntryPath/EntryName/
+  // Detection.PathName) so a "Defence Evasion"/"BAU …" verdict names the file that fired it.
+  const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path", "KeyPath", "EntryPath", "EntryName"])
+    || str(getPath(row, "Detection.PathName"));
+  // The matched CONTENT/evidence: the full matched line/Content the analyst needs to read, falling
+  // back to the rule's own HitString (the substring it matched). NOT Detection.Regex/KeywordRegex
+  // (the rule pattern itself, which stays out of the description).
+  const evidence = firstStr(row, ["Line", "Content", "CommandLine", "StringHit", "HitString"])
+    || str(getPath(row, "Detection.HitString")).trim();
   const procRaw = firstStr(row, ["Exe", "Image", "ProcessName", "ProcName", "NewProcessName"]) || parsedNewProcess(message);
   const parentRaw = firstStr(row, ["ParentName", "ParentImage", "ParentProcessName"]);
   const processName = procRaw ? baseName(procRaw) : undefined;
   const parentName = parentRaw ? baseName(parentRaw) : undefined;
   const pipe = firstStr(row, ["PipeName"]);
   if (processName) addIoc(sink, "process", processName);
+  if (path) addIoc(sink, "file", path);
 
   // Subject priority: the rendered event's high-signal fields (the actual LOLBIN/command line) win
-  // over structured process/path, which win over the raw matched line. A flattened DetectRaptor Evtx
-  // row carries its detail only in Message, so without this the verdict would show only boilerplate.
+  // over structured process/path, which win over the matched content/line. A bare verdict with no
+  // subject (just the rule name) is the failure we're avoiding — the analyst needs the WHAT.
   let subject: string;
   if (salient) {
     subject = salient;
@@ -493,8 +502,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     if (pipe) parts.push(`pipe ${pipe}`);
     if (path && !processName) parts.push(path);
     if (parts.length === 0) {
-      const line = firstStr(row, ["Line", "StringHit", "HitString", "CommandLine"]);
-      parts.push(line ? oneLine(line).slice(0, 160) : oneLine(message).slice(0, 200));
+      parts.push(evidence ? oneLine(evidence).slice(0, 200) : oneLine(message).slice(0, 200));
     }
     subject = parts.join(" ");
   }
