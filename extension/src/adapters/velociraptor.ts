@@ -45,13 +45,18 @@ export const velociraptorAdapter: Adapter = {
   tableSelector: "table",
 };
 
-// Recognize Velociraptor's GUI-internal GetTable responses (never artifact evidence):
-//   • notebook-selector list — { NotebookId, Name, Collaborators, … } per row
-//   • column value-count facet — { value, idx, c } (distinct value, first-row index, count); the
-//     dropdown the GUI fetches to render a column's filter/stats menu
+// Recognize Velociraptor's GUI-internal GetTable responses (never artifact evidence) — the GUI
+// renders all of these through the SAME GetTable API as result grids, so they get intercepted and
+// would shadow the results the analyst is viewing:
+//   • flow / collection list — { State, FlowId, Artifacts[], Created, Mb, Rows, _Flow, … } per row
+//     (the "collected artifacts" table that's ALWAYS shown above a flow's results)
+//   • hunt list — { HuntId, … }
+//   • notebook-selector list — { NotebookId, Name, Collaborators, … }
+//   • column value-count facet — { value, idx, c } (the column filter/stats dropdown)
 function isInternalTable(rows: unknown[]): boolean {
   const first = rows.find((r) => isObject(r)) as Record<string, unknown> | undefined;
   if (!first) return false;
+  if ("FlowId" in first || "_Flow" in first || "_ArtifactsWithResults" in first || "HuntId" in first) return true;
   if ("NotebookId" in first || "Collaborators" in first) return true;
   if ("value" in first && "c" in first && Object.keys(first).length <= 3) return true;
   return false;

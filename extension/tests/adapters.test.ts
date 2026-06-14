@@ -116,6 +116,12 @@ describe("velociraptor.extractRows", () => {
     expect(velociraptorAdapter.extractRows("u", [
       { EventTime: "2026-06-03T08:06:56Z", Computer: "WIN11", value: "x", Message: "m" },
     ])).toEqual([{ EventTime: "2026-06-03T08:06:56Z", Computer: "WIN11", value: "x", Message: "m" }]);
+    // Flow / collection list (the "collected artifacts" table always shown above a flow's results).
+    expect(velociraptorAdapter.extractRows("/api/v1/GetTable", {
+      columns: ["State", "FlowId", "Artifacts", "Rows"],
+      rows: [{ json: '["ERROR","F.D8M0V5UIO64QE.H",["Windows.Detection.Malfind"],17345]' }],
+    })).toBeNull();
+    expect(velociraptorAdapter.extractRows("u", [{ HuntId: "H.123", artifacts: ["X"] }])).toBeNull();
   });
 
   it("returns null on an unrecognized shape", () => {
