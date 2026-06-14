@@ -1562,10 +1562,11 @@
       <div class="stab-pane" id="stab-velociraptor">
         <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Build named bundles of Velociraptor CLIENT artifacts, then run one as a hunt — results (and any uploaded JSON report, e.g. THOR/Hayabusa) are auto-collected after a delay, imported, and synthesized into the case. Bundles are shared across cases; running a bundle uses the case you're connected to. Results appear on the dashboard.</p>
         <div id="veloDisabledNote" style="display:none;font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px;background:var(--c-1b2030);border:1px solid var(--c-2a3146);border-radius:6px;padding:8px 10px">
-          Velociraptor API not configured — you can still build and edit bundles, but <strong>running a hunt</strong> needs the <strong>API config path</strong> set on the <strong>Integrations</strong> tab (then restart the server).
+          Velociraptor API not configured — you can still build and edit bundles, but <strong>running a hunt</strong> needs the <strong>API config path</strong> set on the <strong>Integrations</strong> tab. After setting it (or once the Velociraptor server is up), click <strong>Reconnect</strong> below — no server restart needed.
         </div>
         <!-- Client inventory (#70): the host ↔ client_id map a single-endpoint collection resolves against. -->
         <div id="veloClientsCard" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;background:var(--c-161b28);border:1px solid var(--c-2a3146);border-radius:6px">
+          <button id="veloReconnectBtn" type="button" title="Re-read the Velociraptor config from .env, rebuild the connection, and refresh the client list. Use this after configuring Velociraptor or when the Velociraptor server was down at startup — no companion restart needed.">🔌 Reconnect</button>
           <button id="veloRefreshClientsBtn" type="button" title="Snapshot every enrolled Velociraptor client (hostname / FQDN ↔ client id). A single-endpoint playbook collection resolves the host from this inventory instead of a live lookup.">↻ Refresh client list</button>
           <span id="veloClientsMsg" style="font-size:12px;color:var(--c-9aa4b2)">—</span>
         </div>
@@ -1614,7 +1615,12 @@
         <!-- Live CLIENT_EVENT monitoring (#84) -->
         <div id="veloMonitorSection" style="margin-top:18px;border-top:1px solid var(--c-2a3146);padding-top:14px">
           <div class="settings-group-head">🔴 Live Monitoring <span style="color:var(--c-7e8aa0);font-weight:400">(Velociraptor client events)</span></div>
-          <p style="font-size:12px;color:var(--c-9aa4b2);margin:2px 0 10px">Stream a Velociraptor <strong>client-monitoring</strong> artifact (e.g. <code>Windows.Events.ProcessCreation</code>, <code>Windows.Events.DNSQueries</code>) from one endpoint into this case <strong>as events fire</strong>. The companion polls on an interval and imports new rows automatically; the last-seen cursor is saved so a restart never re-ingests old events. Needs the Velociraptor API configured.</p>
+          <p style="font-size:12px;color:var(--c-9aa4b2);margin:2px 0 10px">Stream a Velociraptor <strong>client-monitoring</strong> artifact (e.g. <code>Windows.Events.ProcessCreation</code>, <code>Windows.Events.DNSQueries</code>) into this case <strong>as events fire</strong> — from one endpoint, or across <strong>all enrolled clients</strong> at once. The companion polls on an interval and imports new rows automatically; the last-seen cursor is saved so a restart never re-ingests old events. The artifact must also be enabled in Velociraptor → <em>Client Monitoring</em> for the target client(s). Needs the Velociraptor API configured.</p>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 10px;background:var(--c-161b28);border:1px solid var(--c-2a3146);border-radius:6px">
+            <button id="veloMonAutoBtn" type="button" title="Discover every client-event artifact already enabled in Velociraptor's Client Monitoring table and start an all-clients monitor for each">⚡ Auto-monitor configured events</button>
+            <span style="font-size:12px;color:var(--c-9aa4b2)">Start an <strong>all-clients</strong> monitor for every artifact already enabled in Velociraptor's <em>Client Monitoring</em> table.</span>
+            <span id="veloMonAutoMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+          </div>
           <div id="veloMonitorList" style="margin:0 0 12px"></div>
           <details id="veloMonitorBuilder" style="border:1px solid var(--c-2a3146);border-radius:6px;padding:10px;background:var(--c-161b28)">
             <summary style="cursor:pointer;font-size:13px;color:var(--c-cdd6e4);font-weight:600">Start a new monitor</summary>
@@ -1624,6 +1630,7 @@
                 <select id="veloMonArtifact" style="flex:1;min-width:240px;padding:5px"><option value="">— pick a CLIENT_EVENT artifact —</option></select>
               </div>
               <input id="veloMonArtifactManual" placeholder="…or type an artifact name (e.g. Windows.Events.ProcessCreation)" style="padding:5px" />
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--c-cdd6e4)"><input type="checkbox" id="veloMonAllClients" /> All enrolled clients <span style="color:var(--c-7e8aa0)">(monitor this artifact across the whole fleet — no specific endpoint)</span></label>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
                 <input id="veloMonClient" list="veloMonClientList" placeholder="client id (C.xxxxxxxx)" style="flex:1;min-width:200px;padding:5px" />
                 <datalist id="veloMonClientList"></datalist>
@@ -4289,6 +4296,7 @@
     let veloEditingId = null;          // id of the bundle being edited (null = building a new one)
     let _veloClients = [];             // last-loaded client inventory (host ↔ client id), for the monitor datalist
     let _veloEventArtifacts = [];      // last-loaded CLIENT_EVENT artifact list (monitor picker)
+    let _veloMonAutoBrowsed = false;   // one-shot: auto-populate the event-artifact picker when Velociraptor is on
 
     function veloCaseId() { const el = document.getElementById("caseId"); return el ? el.value.trim() : ""; }
 
@@ -4296,6 +4304,8 @@
       const note = document.getElementById("veloDisabledNote");
       if (note) note.style.display = veloEnabled ? "none" : "block";
       if (_veloBundles) renderVeloBundles(_veloBundles);   // re-render so Run buttons reflect state
+      // As soon as Velociraptor is known-on, pre-load the CLIENT_EVENT picker (once) so it's not empty.
+      if (veloEnabled && !_veloMonAutoBrowsed) { _veloMonAutoBrowsed = true; veloMonBrowse(); }
     }
 
     function loadVeloBundles() {
@@ -4344,14 +4354,38 @@
     function doRefreshVeloClients() {
       const btn = document.getElementById("veloRefreshClientsBtn");
       const msg = document.getElementById("veloClientsMsg");
-      if (!veloEnabled) { if (msg) msg.textContent = "Velociraptor API not configured (set the API config path on the Integrations tab, then restart)"; return; }
+      if (!veloEnabled) { if (msg) msg.textContent = "Velociraptor API not configured — click Reconnect (after setting the API config path on Integrations)"; return; }
       if (btn) btn.disabled = true;
       if (msg) msg.textContent = "querying the Velociraptor server…";
       fetch("/velociraptor/clients/refresh", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
         .then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
-          if (!ok || j.error) { if (msg) msg.textContent = "error: " + (j.error || "refresh failed") + " — restart the companion server if this 404s"; return; }
+          if (!ok || j.error) { if (msg) msg.textContent = "error: " + (j.error || "refresh failed") + " — try Reconnect if the server was down"; return; }
           renderVeloClients({ updatedAt: j.updatedAt, clients: j.clients || [] });
+        })
+        .catch(e => { if (msg) msg.textContent = "error: " + e.message; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    // Re-read .env, rebuild the Velociraptor client, and refresh the inventory (the reachability probe).
+    // Works even when the API wasn't configured at boot or the server was down — no companion restart.
+    function doVeloReconnect() {
+      const btn = document.getElementById("veloReconnectBtn");
+      const msg = document.getElementById("veloClientsMsg");
+      if (btn) btn.disabled = true;
+      if (msg) msg.textContent = "reconnecting to the Velociraptor server…";
+      fetch("/velociraptor/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok) { if (msg) msg.textContent = "error: " + (j.error || "reconnect failed") + " — restart the companion server if this 404s"; return; }
+          // Reflect the (possibly newly) configured client across the velo UI without a page reload.
+          veloEnabled = !!j.configured;
+          applyVeloEnabled();
+          if (!j.configured) { if (msg) msg.textContent = "Velociraptor API not configured — set the API config path on the Integrations tab, Save, then Reconnect"; return; }
+          if (!j.ok) { if (msg) msg.textContent = "⚠ configured but unreachable: " + (j.error || "the Velociraptor server is not responding"); return; }
+          if (msg) msg.textContent = `✓ connected — ${j.clients || 0} enrolled client(s)`;
+          loadVeloClients();
+          _veloMonAutoBrowsed = false;   // re-populate the event-artifact picker against the (re)connected server
+          loadVeloMonitors(veloCaseId());
         })
         .catch(e => { if (msg) msg.textContent = "error: " + e.message; })
         .finally(() => { if (btn) btn.disabled = false; });
@@ -4504,6 +4538,9 @@
 
     // ── Live CLIENT_EVENT monitoring (#84) ────────────────────────────────────────────────────
     function loadVeloMonitors(caseId) {
+      // Populate the CLIENT_EVENT picker once when Velociraptor is on, so the dropdown isn't empty
+      // and the analyst doesn't have to click "Browse" first (it can still be re-browsed manually).
+      if (veloEnabled && !_veloMonAutoBrowsed) { _veloMonAutoBrowsed = true; veloMonBrowse(); }
       if (!caseId) { renderVeloMonitors([]); return; }
       fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors`).then(r => r.ok ? r.json() : []).then(j => renderVeloMonitors(Array.isArray(j) ? j : [])).catch(() => {});
     }
@@ -4537,7 +4574,7 @@
       el.innerHTML = monitors.map(m => {
         const dot = m.status === "active" ? "🔴" : (m.status === "error" ? "⚠" : "⏸");
         const badge = `<span style="color:${colors[m.status] || "#9aa4b2"};font-weight:600">${esc(m.status)}</span>`;
-        const host = esc(m.hostname || m.clientId);
+        const host = m.allClients ? `🌐 <span title="all enrolled clients">all clients</span>` : esc(m.hostname || m.clientId);
         const stats = `${m.addedEvents || 0} event(s) · ${m.polls || 0} poll(s) · last ${veloMonAge(m.lastPolledAt)}`;
         const err = m.status === "error" && m.lastError ? `<div style="font-size:12px;color:var(--c-ff9f43);margin-top:3px">error: ${esc(m.lastError)}</div>` : "";
         const toggle = m.status === "stopped"
@@ -4590,10 +4627,19 @@
         .then(({ ok, j }) => {
           if (!ok || j.error) { if (sel) sel.innerHTML = `<option value="">error: ${esc(j.error || "failed")}</option>`; return; }
           _veloEventArtifacts = j.artifacts || [];
-          if (sel) sel.innerHTML = `<option value="">— pick a CLIENT_EVENT artifact —</option>` + _veloEventArtifacts.map(a => `<option value="${escAttr(a.name)}" title="${escAttr(a.description || "")}">${esc(a.name)}</option>`).join("");
+          if (sel) {
+            const head = _veloEventArtifacts.length ? `— pick a CLIENT_EVENT artifact (${_veloEventArtifacts.length}) —` : `— none found — type a name below instead —`;
+            sel.innerHTML = `<option value="">${esc(head)}</option>` + _veloEventArtifacts.map(a => `<option value="${escAttr(a.name)}" title="${escAttr(a.description || "")}">${esc(a.name)}</option>`).join("");
+          }
         })
         .catch(e => { if (sel) sel.innerHTML = `<option value="">error: ${esc(e.message)}</option>`; })
         .finally(() => { if (btn) btn.disabled = false; });
+    }
+    // Grey out the client field when "all enrolled clients" is ticked.
+    function veloMonSyncAllClients() {
+      const all = document.getElementById("veloMonAllClients");
+      const client = document.getElementById("veloMonClient");
+      if (all && client) { client.disabled = all.checked; client.placeholder = all.checked ? "(all enrolled clients)" : "client id (C.xxxxxxxx)"; }
     }
     function veloMonStart() {
       const caseId = veloCaseId();
@@ -4601,22 +4647,45 @@
       if (!caseId) { if (msg) msg.textContent = "connect to a case first"; return; }
       if (!veloEnabled) { if (msg) msg.textContent = "Velociraptor API not configured"; return; }
       const artifact = (document.getElementById("veloMonArtifactManual").value.trim() || document.getElementById("veloMonArtifact").value.trim());
+      const allClients = document.getElementById("veloMonAllClients").checked;
       const clientId = document.getElementById("veloMonClient").value.trim();
       const pollSeconds = Number(document.getElementById("veloMonPoll").value) || 30;
       const minSeverity = document.getElementById("veloMonMinSev").value;
       if (!artifact) { if (msg) msg.textContent = "pick or type a CLIENT_EVENT artifact"; return; }
-      if (!/^C\.[A-Za-z0-9]+$/.test(clientId)) { if (msg) msg.textContent = "enter a valid client id (C.xxxxxxxx)"; return; }
-      const hostname = (_veloClients.find(c => c.clientId === clientId) || {});
+      if (!allClients && !/^C\.[A-Za-z0-9]+$/.test(clientId)) { if (msg) msg.textContent = "enter a valid client id (C.xxxxxxxx), or tick All enrolled clients"; return; }
+      const host = (_veloClients.find(c => c.clientId === clientId) || {});
+      const body = allClients
+        ? { allClients: true, artifact, pollSeconds, minSeverity }
+        : { clientId, artifact, pollSeconds, minSeverity, hostname: host.hostname || host.fqdn || "" };
       const btn = document.getElementById("veloMonStartBtn");
       if (btn) btn.disabled = true; if (msg) msg.textContent = "starting…";
       fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors`, {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ clientId, artifact, pollSeconds, minSeverity, hostname: hostname.hostname || hostname.fqdn || "" })
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
       }).then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { if (msg) msg.textContent = "error: " + (j.error || "failed"); return; }
           if (msg) msg.textContent = "";
           document.getElementById("veloMonArtifactManual").value = "";
+          loadVeloMonitors(caseId);
+        })
+        .catch(e => { if (msg) msg.textContent = "error: " + e.message + " — restart the companion server if this 404s"; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    // Discover every artifact already enabled in Velociraptor's Client Monitoring table and start an
+    // all-clients monitor for each.
+    function veloMonAuto() {
+      const caseId = veloCaseId();
+      const msg = document.getElementById("veloMonAutoMsg");
+      if (!caseId) { if (msg) msg.textContent = "connect to a case first"; return; }
+      if (!veloEnabled) { if (msg) msg.textContent = "Velociraptor API not configured"; return; }
+      const btn = document.getElementById("veloMonAutoBtn");
+      if (btn) btn.disabled = true; if (msg) msg.textContent = "discovering configured client events…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors/auto`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { if (msg) msg.textContent = "error: " + (j.error || "failed"); return; }
+          const n = (j.started || []).length;
+          if (msg) msg.textContent = `started ${n} all-clients monitor(s): ${(j.discovered || []).join(", ")}`;
           loadVeloMonitors(caseId);
         })
         .catch(e => { if (msg) msg.textContent = "error: " + e.message + " — restart the companion server if this 404s"; })
@@ -4826,6 +4895,7 @@
     (function wireVeloTriage() {
       const browse = document.getElementById("veloBrowseBtn"); if (browse) browse.onclick = veloBrowseArtifacts;
       const refreshClients = document.getElementById("veloRefreshClientsBtn"); if (refreshClients) refreshClients.onclick = doRefreshVeloClients;
+      const reconnect = document.getElementById("veloReconnectBtn"); if (reconnect) reconnect.onclick = doVeloReconnect;
       const addM = document.getElementById("veloAddManualBtn"); if (addM) addM.onclick = veloAddManual;
       const save = document.getElementById("veloSaveBundleBtn"); if (save) save.onclick = veloSaveBundle;
       const neu = document.getElementById("veloNewBundleBtn"); if (neu) neu.onclick = () => { veloClearBuilder(); const m = document.getElementById("veloBuilderMsg"); if (m) m.textContent = ""; };
@@ -4833,6 +4903,8 @@
       const manual = document.getElementById("veloArtifactManual"); if (manual) manual.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); veloAddManual(); } };
       const monBrowse = document.getElementById("veloMonBrowseBtn"); if (monBrowse) monBrowse.onclick = veloMonBrowse;
       const monStart = document.getElementById("veloMonStartBtn"); if (monStart) monStart.onclick = veloMonStart;
+      const monAuto = document.getElementById("veloMonAutoBtn"); if (monAuto) monAuto.onclick = veloMonAuto;
+      const monAll = document.getElementById("veloMonAllClients"); if (monAll) monAll.onchange = veloMonSyncAllClients;
       loadVeloBundles();   // populate the bundle list even before a case is connected
     })();
 

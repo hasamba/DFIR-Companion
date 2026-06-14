@@ -438,7 +438,13 @@ can re-read `DFIR_IRIS_*` from `.env` (`reloadEnvPrefix`), rebuild via the injec
 and ping — applying config or IRIS coming back online WITHOUT the #1-gotcha restart), Timesketch, and
 **Velociraptor API** (`velociraptorClient` →
 `integrations/velociraptor/velociraptorApi.ts`; drives the `velociraptor` binary's `--api_config`
-through an **injectable runner** — tests never spawn). The dashboard's "Run hunt (all clients)"
+through an **injectable runner** — tests never spawn). Like IRIS, it has a **reconnect**: `POST
+/velociraptor/reconnect` (Settings → Velociraptor → Reconnect) `reloadEnvPrefix("DFIR_VELOCIRAPTOR_")` →
+rebuild via the injectable `rebuildVelociraptorClient` (reassigns `options.velociraptorClient`, which every
+route reads at call time) → refresh the inventory (doubles as the reachability probe) → re-arm monitors —
+applying newly-saved config or the server coming back online WITHOUT the #1-gotcha restart. The startup
+inventory refresh **retries with backoff** for the same reason (Velociraptor down at boot self-heals). The
+dashboard's "Run hunt (all clients)"
 button does NOT run server-side: `launchHunt()` packages the pivot VQL as a **CLIENT artifact**
 (`artifact_set`) and launches a **hunt** across all endpoints (`hunt`); `huntResults()` reads rows
 back addressed as `artifact/source`. Routes `POST /velociraptor/hunt` + `/velociraptor/hunt-results`
@@ -489,11 +495,16 @@ until a token is configured** (`DFIR_PUSH_TOKEN` global and/or a per-case `PushT
 403 disabled / 401 bad key (constant-time compare), 202-and-async. (2) **Velociraptor CLIENT_EVENT monitors**
 (`integrations/velociraptor/monitorPoller.ts` pure poll loop + `VeloMonitorStore`, `state/velo-monitor.json`):
 per-monitor self-rescheduling `setTimeout` poller (in the `createApp` closure, like `veloHuntTimers`) reads a
-client-monitoring artifact's new rows via `client.monitorResults` (`source(client_id=,artifact=,start_time=,end_time=)`,
-overridable `DFIR_VELOCIRAPTOR_MONITOR_VQL`), wraps them as a `{ [artifact]: rows }` artifact-map, and feeds
-`ingestStreamed` as kind `velociraptor`. The **cursor (last-seen epoch) is persisted per monitor** so a restart
+client-monitoring artifact's new rows via `client.monitorResults` — `source(client_id=,artifact=,start_time=,end_time=)`
+for one client, or the **all-clients** variant `foreach(clients())`+`source()` when `clientId` is the `ALL_CLIENTS`
+(`*`) sentinel (`monitor.allClients`). A one-click **auto** route (`…/monitors/auto`) reads `get_client_monitoring()`
+(`listMonitoredArtifacts`) and starts an all-clients monitor per artifact already enabled in Velociraptor's Client
+Monitoring table (422 when none). All three VQLs are overridable (`DFIR_VELOCIRAPTOR_MONITOR_VQL`/`_MONITOR_ALL_VQL`/`_MONITORED_VQL`).
+It wraps the rows as a `{ [artifact]: rows }` artifact-map and feeds
+`ingestStreamed` as kind `velociraptor` (monitor creation goes through one shared `createVeloMonitor` helper). The
+**cursor (last-seen epoch) is persisted per monitor** so a restart
 resumes without re-ingesting (`resumeVeloMonitors()` re-arms at `createApp` time); a poll error does NOT advance the
-cursor (retried next tick). `DFIR_VELO_MONITOR_POLL_S` default 30. Routes `…/velociraptor/monitors[/:mid][/stop|start|poll]`
+cursor (retried next tick). `DFIR_VELO_MONITOR_POLL_S` default 30. Routes `…/velociraptor/monitors[/:mid][/stop|start|poll]` + `…/monitors/auto`
 + `GET /velociraptor/event-artifacts`; `onVeloMonitor`/`onPushToken` WS-broadcast `velo_monitor_changed`/`push_token_changed`;
 dashboard 🔴 LIVE badge + Settings → Velociraptor → Live Monitoring + Settings → Integrations → Push ingest. Both
 stores are **machine/transient — deliberately NOT in `SNAPSHOT_STATE_FILES`** (a push token is a secret; a monitor
