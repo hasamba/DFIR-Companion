@@ -183,6 +183,10 @@ Examples:
 | `POST /nsrl/clear` | Wipe the global NSRL set (e.g. to swap RDS releases). |
 | `GET /nsrl/export` | Download the set as a newline-delimited hash list. |
 | `POST /cases/:id/nsrl/apply` | Apply the NSRL set to this case now — marks events/IOCs with a known-good file hash legitimate, re-synthesizes; returns `{ matchedIocs, matchedEvents, added, legitimate }`. Auto-runs on every import; also pre-load big sets at startup via `DFIR_NSRL_FILE`. |
+| `GET /kev` | **CISA KEV catalog** stats: `{ count, enabled, catalogVersion?, dateReleased? }`. |
+| `POST /kev/import-url` | `{ url? }` — fetch the CISA KEV JSON from a URL (defaults to the official CISA feed); stores the catalog and invalidates the synthesis cache. Returns `{ total }`. Requires server outbound internet access. |
+| `POST /kev/import-file` | `{ path }` — load the KEV JSON from a server-local file path (for air-gapped deployments). Returns `{ total }`. |
+| `DELETE /kev` | Clear the KEV catalog from disk. |
 | `GET /cases/:id/ai-control` | Current AI on/off state: `{ enabled, lastAnalyzedSeq }`. |
 | `POST /cases/:id/ai-control` | `{ enabled }` — turn AI analysis on/off for the case. **Defaults off** (a fresh case captures evidence without running AI). Evidence is always captured; when off, no AI runs. Turning it **on** backfills every screenshot captured while it was off. The dashboard's **AI: ON/OFF** button calls this. |
 | `GET /cases/:id/enrich-control` | Per-source enrichment state: `{ anyConfigured, providers: [{ name, scope, enabled }] }`. `scope` is `local` (your own MISP/YETI — OPSEC-safe) or `external` (third-party SaaS). |
@@ -304,6 +308,26 @@ The hash column lives on the `METADATA` base table (`FILE` is a view), which the
 **Opt-in by design:** both backends start empty/disconnected. NSRL is *known*, not strictly
 *known-good* — some RDS sets include hacktools, and a known hash can still be malicious in context
 (DLL side-loading, a renamed LOLBin) — and every match is reversible from *Confirmed Legitimate*.
+
+## CISA KEV integration (#99)
+
+The [CISA Known Exploited Vulnerabilities catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
+lists CVEs that are **actively exploited in the wild** — not just theoretical risks. When the catalog is loaded,
+the Companion scans your forensic timeline event descriptions and IOC values for CVE IDs and cross-references
+them against the catalog. Matches are surfaced in two places:
+
+- **Synthesis context** — KEV-matched CVEs are prepended to every synthesis and `ask` prompt so the AI can flag them
+  as high-probability initial access vectors with exact product + patch information.
+- **Report §4.5.1** — a dedicated CISA KEV correlation table in the Investigation section lists each matched CVE,
+  the vendor/product, CISA's required action, and whether it was used in a ransomware campaign.
+
+**Loading the catalog:** go to **Settings → KEV** and click **Load from CISA feed** (requires server outbound internet),
+or point to a locally-saved copy with **Load from file** (for air-gapped deployments). The catalog is stored in
+`kev/catalog.json` (beside `cases/`); it is global and shared across all cases. Reload it periodically as CISA
+updates the catalog.
+
+**Opt-in by design:** the catalog starts empty. A KEV match is a strong hypothesis (the CVE is actively
+exploited), not proof of exploitation in this specific case — the AI is told this explicitly.
 
 ## Case folder layout
 
