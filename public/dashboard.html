@@ -6839,6 +6839,19 @@
           ? `<br><small>findings: ${e.relatedFindingIds.map(fid => `<a class="finding-jump" data-fid="${escAttr(fid)}" title="Jump to finding ${escAttr(fid)}">${esc(fid)}</a>`).join(", ")}</small>`
           : "";
 
+        const deobBlock = e.deobfuscated ? (() => {
+          const uid = `deob-${escAttr(id)}`;
+          const iocRefs = (e.deobfuscated.iocs || []).length
+            ? `<div style="margin-top:4px;font-size:11px;color:var(--c-9aa4b2)">IOCs: ${e.deobfuscated.iocs.map(i=>`<span style="color:var(--c-6aa9ff)">${esc(i)}</span>`).join(", ")}</div>`
+            : "";
+          return `<br><button onclick="var d=document.getElementById('${uid}');d.hidden=!d.hidden;this.textContent=d.hidden?'[Decoded ▶]':'[Decoded ▼]'" `
+            + `style="background:none;border:1px solid var(--c-2a4a6b);border-radius:3px;color:var(--c-6aa9ff);font-size:11px;padding:1px 5px;cursor:pointer;margin-top:4px">[Decoded ▶]</button>`
+            + `<div id="${uid}" hidden style="margin-top:4px;padding:6px 8px;background:var(--c-0d1117,#0d1117);border-left:2px solid var(--c-2a4a6b);border-radius:2px;font-size:11px;font-family:monospace;white-space:pre-wrap;word-break:break-all;color:var(--c-c9d1d9)">`
+            + esc(e.deobfuscated.decoded)
+            + iocRefs
+            + `</div>`;
+        })() : "";
+
         return `<div class="ev-row${isSelected ? " ev-selected" : ""}${isNew ? " ev-new" : ""}" data-evid="${escAttr(id)}">`
           + `<div class="ev-col-ctrl">`
           + `<input type="checkbox" class="ev-checkbox ev-row-cb" data-evid="${escAttr(id)}" ${isSelected ? "checked" : ""} title="Select event" />`
@@ -6850,6 +6863,7 @@
           + `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:var(--c-ff8a8a)">${esc(e.chainCheck.note)}</small>` : ""}`
           + `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}`
           + findingLinks
+          + deobBlock
           + `${evidenceLinks(caseId, e.sourceScreenshots)}</div>`
           + `</div>`;
       }).join("");

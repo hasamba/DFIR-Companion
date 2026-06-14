@@ -103,6 +103,7 @@ function mergeGroup(events: ForensicEvent[]): ForensicEvent {
     srcIp: primary.srcIp ?? events.find((e) => e.srcIp)?.srcIp,
     dstIp: primary.dstIp ?? events.find((e) => e.dstIp)?.dstIp,
     port: primary.port ?? events.find((e) => e.port !== undefined)?.port,
+    deobfuscated: primary.deobfuscated ?? events.find((e) => e.deobfuscated)?.deobfuscated,
   };
   const lastEnd = ends[ends.length - 1];
   if (lastEnd && lastEnd !== merged.timestamp) merged.endTimestamp = lastEnd;
