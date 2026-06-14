@@ -15,8 +15,9 @@ export type VeloMonitorStatus = "active" | "stopped" | "error";
 
 export interface VeloMonitor {
   id: string;                 // stable id = clientId__artifact, so re-adding the same pair refreshes it
-  clientId: string;           // Velociraptor client id (C....)
-  hostname?: string;          // display name resolved from the inventory (optional)
+  clientId: string;           // Velociraptor client id (C....), or "*" for the all-clients sentinel
+  allClients?: boolean;       // true = watch this artifact across EVERY enrolled client (clientId = "*")
+  hostname?: string;          // display name resolved from the inventory (optional; "all clients" when allClients)
   artifact: string;           // CLIENT_EVENT artifact name (Windows.Events.ProcessCreation, …)
   pollSeconds: number;        // poll interval (clamped at the route)
   cursor: number;             // last-seen event time, epoch SECONDS (0 = start from first poll's window)

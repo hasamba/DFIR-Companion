@@ -23,11 +23,17 @@ const PROC_ROW = {
 
 const runner: VqlRunner = async (statements) => {
   const p = statements[0];
-  if (p.includes("artifact_definitions()") && p.includes("client_event")) {
+  // listClientArtifacts now fetches ALL definitions (no type in the VQL) and filters type in TS.
+  if (p.includes("artifact_definitions()")) {
     return { rows: [
+      { name: "Windows.System.Pslist", description: "Processes", type: "CLIENT" },
       { name: "Windows.Events.ProcessCreation", description: "Process creation events", type: "CLIENT_EVENT" },
       { name: "Windows.Events.DNSQueries", description: "DNS queries", type: "CLIENT_EVENT" },
     ], raw: "" };
+  }
+  if (p.includes("get_client_monitoring()")) {
+    // The real ClientEventTable proto shape (one row under `State`).
+    return { rows: [{ State: { artifacts: { artifacts: ["Windows.Events.ProcessCreation", "Windows.Events.DNSQueries"] } } }], raw: "" };
   }
   if (p.includes("source(") && p.includes("artifact=")) {
     return { rows: [PROC_ROW], raw: "" };
@@ -83,10 +89,57 @@ describe("Velociraptor live monitors — routes", () => {
     expect((await request(app).get("/cases/c1/velociraptor/monitors")).body).toHaveLength(0);
   });
 
+  it("GET /velociraptor/diag reports artifact type counts + raw monitoring state", async () => {
+    const { app } = await makeApp();
+    const res = await request(app).get("/velociraptor/diag");
+    expect(res.status).toBe(200);
+    expect(res.body.artifactTypes).toMatchObject({ CLIENT: 1, CLIENT_EVENT: 2 });
+    expect(res.body.clientEventCount).toBe(2);
+    expect(Array.isArray(res.body.monitoringState)).toBe(true);
+  });
+
   it("validates clientId + artifact", async () => {
     const { app } = await makeApp();
     expect((await request(app).post("/cases/c1/velociraptor/monitors").send({ clientId: "bad", artifact: "Windows.Events.ProcessCreation" })).status).toBe(400);
     expect((await request(app).post("/cases/c1/velociraptor/monitors").send({ clientId: "C.abc", artifact: "bad name!" })).status).toBe(400);
+  });
+
+  it("starts an ALL-clients monitor (allClients:true, no specific endpoint) and ingests across the fleet", async () => {
+    const { app, stateStore } = await makeApp();
+    const start = await request(app).post("/cases/c1/velociraptor/monitors")
+      .send({ allClients: true, artifact: "Windows.Events.ProcessCreation", pollSeconds: 30 });
+    expect(start.status).toBe(202);
+    expect(start.body.monitor.allClients).toBe(true);
+    expect(start.body.monitor.clientId).toBe("*");
+    expect(start.body.monitor.id).toBe("*__Windows.Events.ProcessCreation");
+    expect(start.body.monitor.hostname).toBe("all clients");
+
+    const poll = await request(app).post(`/cases/c1/velociraptor/monitors/${encodeURIComponent(start.body.monitor.id)}/poll`);
+    expect(poll.body.monitor.addedEvents).toBeGreaterThan(0);
+    expect((await stateStore.load("c1")).forensicTimeline.length).toBeGreaterThan(0);
+  });
+
+  it("auto-monitor starts an all-clients monitor for every configured client-event artifact", async () => {
+    const { app } = await makeApp();
+    const auto = await request(app).post("/cases/c1/velociraptor/monitors/auto").send({});
+    expect(auto.status).toBe(202);
+    expect(auto.body.discovered).toEqual(["Windows.Events.ProcessCreation", "Windows.Events.DNSQueries"]);
+    expect(auto.body.started).toHaveLength(2);
+
+    const list = (await request(app).get("/cases/c1/velociraptor/monitors")).body;
+    expect(list.map((m: { id: string }) => m.id).sort()).toEqual(["*__Windows.Events.DNSQueries", "*__Windows.Events.ProcessCreation"]);
+    expect(list.every((m: { allClients: boolean }) => m.allClients === true)).toBe(true);
+  });
+
+  it("auto-monitor 422s with guidance when nothing is configured", async () => {
+    const emptyRunner: VqlRunner = async (statements) => {
+      if (statements[0].includes("GetClientMonitoringState()")) return { rows: [], raw: "" };
+      return { rows: [], raw: "" };
+    };
+    const { app } = await makeApp(emptyRunner);
+    const auto = await request(app).post("/cases/c1/velociraptor/monitors/auto").send({});
+    expect(auto.status).toBe(422);
+    expect(auto.body.error).toMatch(/Client Monitoring/i);
   });
 
   it("poll-now ingests new monitoring rows into the timeline + advances stats", async () => {

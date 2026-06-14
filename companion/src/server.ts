@@ -121,7 +121,7 @@ import {
 } from "./analysis/customerExposure.js";
 import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
-import { VelociraptorClient, buildVelociraptorClient, matchClient, type HuntTarget, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
+import { VelociraptorClient, buildVelociraptorClient, matchClient, ALL_CLIENTS, type HuntTarget, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
 import { ArtifactBundleStore } from "./analysis/artifactBundleStore.js";
 import { VelociraptorClientStore } from "./analysis/velociraptorClientStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
@@ -302,6 +302,10 @@ export interface AppOptions {
   // Velociraptor API: a configured client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) lets the
   // dashboard run the generated hunt VQL against the server and show the rows inline.
   velociraptorClient?: VelociraptorClient;
+  // Rebuilds the Velociraptor client from current config (used by POST /velociraptor/reconnect so
+  // config saved via Settings, or the Velociraptor server coming back online, applies without a server
+  // restart). Defaults to the env-based buildVelociraptorClient; tests inject a stub (no spawn).
+  rebuildVelociraptorClient?: () => VelociraptorClient | undefined;
   // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map). A single-endpoint
   // collection resolves the host against this file instead of a brittle live `clients(search=...)`
   // lookup; refreshed at startup, on demand (Settings), and lazily on a collect miss.
@@ -1354,6 +1358,61 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Builds the Velociraptor client from current env (used by POST /velociraptor/reconnect). Defaults
+  // to the env-based factory; tests inject a stub so no process is spawned.
+  const rebuildVelo = options.rebuildVelociraptorClient ?? buildVelociraptorClient;
+
+  // Diagnostics for the live-monitor features when the picker / auto-discovery come back empty on a
+  // real server (#84): the actual artifact `type` strings + counts, and the raw
+  // GetClientMonitoringState() shape. Hit it in a browser (localhost) and share the JSON to pin down a
+  // version's monitoring proto. 501 when the API isn't configured.
+  app.get("/velociraptor/diag", async (_req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    try {
+      return res.status(200).json(await options.velociraptorClient.diagnostics());
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Whether the Velociraptor API is configured + the inventory's freshness (so the dashboard can show
+  // connection state without a probe). `configured` reflects the LIVE client (reconnect can flip it).
+  app.get("/velociraptor/status", async (_req: Request, res: Response) => {
+    let updatedAt = "", clientCount = 0;
+    if (options.velociraptorClientStore) {
+      try { const inv = await options.velociraptorClientStore.load(); updatedAt = inv.updatedAt; clientCount = inv.clients.length; } catch { /* empty */ }
+    }
+    return res.status(200).json({ configured: !!options.velociraptorClient, updatedAt, clients: clientCount });
+  });
+
+  // Re-read DFIR_VELOCIRAPTOR_* from .env (settings saved via the dashboard only write the file),
+  // REBUILD the client, and refresh the client inventory — which doubles as a reachability probe
+  // (`clients()` round-trips to the server). Lets the analyst connect after configuring Velociraptor,
+  // or after the Velociraptor server comes back online, WITHOUT the #1-gotcha restart (the client is
+  // stateless — it spawns the binary per query — but a rebuild also applies newly-saved config and
+  // flips it on if the config path wasn't set at boot). Also re-arms any persisted live monitors that
+  // couldn't be scheduled while the client was absent. Always 200; the body says configured/reachable.
+  app.post("/velociraptor/reconnect", async (_req: Request, res: Response) => {
+    try {
+      await reloadEnvPrefix("DFIR_VELOCIRAPTOR_");
+      options.velociraptorClient = rebuildVelo();
+      if (!options.velociraptorClient) {
+        return res.status(200).json({ configured: false, ok: false, error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+      }
+      try {
+        const count = await refreshVeloClients();
+        const inv = options.velociraptorClientStore ? await options.velociraptorClientStore.load() : { updatedAt: "", clients: [] };
+        void resumeVeloMonitors();   // arm monitors that couldn't start while the client was absent
+        logLine(`[velociraptor] reconnected — ${count} enrolled client(s)`);
+        return res.status(200).json({ configured: true, ok: true, clients: count, updatedAt: inv.updatedAt });
+      } catch (err) {
+        return res.status(200).json({ configured: true, ok: false, error: (err as Error).message });
+      }
+    } catch (err) {
+      return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });
+    }
+  });
+
   // Launch the VQL as a single-endpoint COLLECTION on ONE host (issue #70 — the playbook-hunt deploy
   // path for a task tied to exactly one endpoint). Resolves the host → client_id from the persisted
   // INVENTORY (refreshing it once on a miss), then runs collect_client on that client; returns the
@@ -1668,6 +1727,31 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (resumed > 0) logLine(`[velo-monitor] resumed ${resumed} live monitor(s) across ${cases.length} case(s)`);
   }
 
+  // Build + persist + schedule one monitor (shared by the manual start route and the auto-monitor
+  // route). `clientId` is a real client (`C....`) or the ALL_CLIENTS sentinel (`*`) for every endpoint.
+  // Idempotent per (clientId, artifact): re-arming keeps the existing cursor so events aren't re-ingested;
+  // a brand-new monitor starts at "now" (no history backfill). Returns the persisted monitor.
+  async function createVeloMonitor(caseId: string, spec: { clientId: string; artifact: string; pollSeconds: number; hostname?: string; minSeverity?: Severity; allClients?: boolean }): Promise<VeloMonitor> {
+    const monStore = options.veloMonitorStore!;
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    const id = monitorId(spec.clientId, spec.artifact);
+    const existing = await monStore.get(caseId, id);
+    const monitor: VeloMonitor = {
+      id, clientId: spec.clientId, artifact: spec.artifact, pollSeconds: spec.pollSeconds,
+      allClients: spec.allClients || undefined,
+      hostname: spec.allClients ? (spec.hostname || "all clients") : spec.hostname,
+      cursor: existing?.cursor && existing.cursor > 0 ? existing.cursor : nowEpoch,
+      status: "active", minSeverity: spec.minSeverity,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+      addedEvents: existing?.addedEvents ?? 0, polls: existing?.polls ?? 0,
+    };
+    await monStore.upsert(caseId, monitor);
+    scheduleVeloMonitor(caseId, monitor);
+    options.onVeloMonitor?.(caseId);
+    logLine(`[velo-monitor] started ${spec.artifact} on ${monitor.hostname || spec.clientId} (every ${spec.pollSeconds}s) for case ${caseId}`);
+    return monitor;
+  }
+
   // Collect a bundle hunt and import it the SAME way a manual import works. Ingests BOTH the result
   // ROWS (the {"Artifact.Name":[rows]} artifact-map the Velociraptor importer consumes) AND any
   // uploaded JSON reports (e.g. THOR/Hayabusa via Generic.Scanner.ThorZIP) — for those the rows don't
@@ -1879,9 +1963,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
     if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
-    const clientId = String(req.body?.clientId ?? "").trim();
+    // `allClients` (or clientId === "*") watches the artifact across EVERY enrolled client in one
+    // monitor — no specific endpoint to pick. Otherwise a real client id is required.
+    const wantsAll = req.body?.allClients === true || String(req.body?.clientId ?? "").trim() === ALL_CLIENTS;
+    const clientId = wantsAll ? ALL_CLIENTS : String(req.body?.clientId ?? "").trim();
     const artifact = String(req.body?.artifact ?? "").trim();
-    if (!/^C\.[A-Za-z0-9]+$/.test(clientId)) return res.status(400).json({ error: "a valid Velociraptor clientId (C....) is required" });
+    if (!wantsAll && !/^C\.[A-Za-z0-9]+$/.test(clientId)) return res.status(400).json({ error: "a valid Velociraptor clientId (C....) is required, or set allClients:true" });
     if (!/^[A-Za-z0-9._]+$/.test(artifact)) return res.status(400).json({ error: "a valid CLIENT_EVENT artifact name is required" });
     try {
       const fallback = Number(options.veloMonitorPollSeconds) || 30;
@@ -1889,22 +1976,46 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const pollSeconds = Math.min(3600, Math.max(5, Number.isFinite(reqPoll) && reqPoll > 0 ? Math.floor(reqPoll) : fallback));
       const hostname = String(req.body?.hostname ?? "").trim() || undefined;
       const minSeverity = parseMinSeverity(req.body?.minSeverity);
-      const nowEpoch = Math.floor(Date.now() / 1000);
-      const id = monitorId(clientId, artifact);
-      const existing = await options.veloMonitorStore.get(caseId, id);
-      const monitor: VeloMonitor = {
-        id, clientId, artifact, pollSeconds, hostname,
-        // Re-arming an existing monitor keeps its cursor (don't re-ingest); a brand-new one starts "now".
-        cursor: existing?.cursor && existing.cursor > 0 ? existing.cursor : nowEpoch,
-        status: "active", minSeverity,
-        createdAt: existing?.createdAt ?? new Date().toISOString(),
-        addedEvents: existing?.addedEvents ?? 0, polls: existing?.polls ?? 0,
-      };
-      await options.veloMonitorStore.upsert(caseId, monitor);
-      scheduleVeloMonitor(caseId, monitor);
-      options.onVeloMonitor?.(caseId);
-      logLine(`[velo-monitor] started ${artifact} on ${hostname || clientId} (every ${pollSeconds}s) for case ${caseId}`);
+      const monitor = await createVeloMonitor(caseId, { clientId, artifact, pollSeconds, hostname, minSeverity, allClients: wantsAll });
       return res.status(202).json({ accepted: true, monitor });
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Auto-monitor every client-event artifact ALREADY enabled in Velociraptor's client monitoring table
+  // (#84 follow-up) — discovers them via GetClientMonitoringState() and starts an ALL-clients monitor
+  // for each (idempotent: an existing monitor for the same artifact is refreshed, not duplicated). 422
+  // with guidance when nothing is configured / the version's proto differs (set the override env var).
+  app.post("/cases/:id/velociraptor/monitors/auto", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
+    try {
+      const discovered = await options.velociraptorClient.listMonitoredArtifacts();
+      if (!discovered.length) {
+        // Capture the RAW monitoring-state shape (which varies by version) — logged AND returned in the
+        // response so the analyst can see it in the dashboard and we can model DFIR_VELOCIRAPTOR_MONITORED_VQL.
+        let rawSample = "";
+        try {
+          const raw = await options.velociraptorClient.monitoringStateRaw();
+          rawSample = JSON.stringify(raw).slice(0, 2000);
+          logLine(`[velo-monitor] auto: monitoring table returned no artifacts. Raw get_client_monitoring() shape: ${rawSample}`);
+        } catch (e) { rawSample = `(read failed: ${(e as Error).message})`; logLine(`[velo-monitor] auto: monitoring-state read failed: ${(e as Error).message}`); }
+        return res.status(422).json({ error: "no client-event artifacts found in Velociraptor's client monitoring table — enable some in Velociraptor → Client Monitoring first, or (if your version's monitoring proto differs) open /velociraptor/diag and share the output to set DFIR_VELOCIRAPTOR_MONITORED_VQL", discovered: [], rawSample });
+      }
+      const fallback = Number(options.veloMonitorPollSeconds) || 30;
+      const reqPoll = Number(req.body?.pollSeconds);
+      const pollSeconds = Math.min(3600, Math.max(5, Number.isFinite(reqPoll) && reqPoll > 0 ? Math.floor(reqPoll) : fallback));
+      const minSeverity = parseMinSeverity(req.body?.minSeverity);
+      const started: VeloMonitor[] = [];
+      for (const artifact of discovered) {
+        started.push(await createVeloMonitor(caseId, { clientId: ALL_CLIENTS, artifact, pollSeconds, minSeverity, allClients: true }));
+      }
+      logLine(`[velo-monitor] auto-started ${started.length} all-clients monitor(s) from the Velociraptor monitoring table for case ${caseId}`);
+      return res.status(202).json({ accepted: true, discovered, started });
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
     }
@@ -5948,15 +6059,30 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     logLine(`DFIR companion on http://${shownHost}:${port} (dashboard at /dashboard)`);
   });
 
-  // Fire-and-forget: snapshot the enrolled Velociraptor fleet into the client inventory at startup
-  // (#70), so a single-endpoint collection can resolve a host → client_id from the file. Best-effort —
-  // a refresh failure (API down, role missing) just leaves the inventory stale; the collect route
-  // refreshes lazily on a miss, and Settings → Velociraptor has a manual refresh.
+  // Snapshot the enrolled Velociraptor fleet into the client inventory at startup (#70), so a single-
+  // endpoint collection can resolve a host → client_id from the file. RETRY WITH BACKOFF: if the
+  // Velociraptor server is down when the companion boots (a common ordering), keep retrying for a while
+  // so the inventory self-heals once it comes up — the analyst shouldn't have to restart the companion
+  // (Settings → Velociraptor → Reconnect also forces it). Best-effort; timers .unref() so they never
+  // block exit. Live monitors self-heal on their own poll timers, so this only covers the inventory.
   if (velociraptorClient) {
-    void velociraptorClient.listClients()
-      .then((clients) => velociraptorClientStore.save(clients, new Date().toISOString()))
-      .then((inv) => logLine(`[velociraptor] client inventory: ${inv.clients.length} enrolled client(s)`))
-      .catch((e) => logLine(`[velociraptor] startup client inventory refresh failed (run Settings → Velociraptor → Refresh client list): ${(e as Error).message}`));
+    const backoffMs = [0, 30_000, 60_000, 120_000, 300_000, 600_000];   // ~18 min of attempts
+    const attempt = (i: number): void => {
+      velociraptorClient.listClients()
+        .then((clients) => velociraptorClientStore.save(clients, new Date().toISOString()))
+        .then((inv) => logLine(`[velociraptor] client inventory: ${inv.clients.length} enrolled client(s)`))
+        .catch((e) => {
+          const next = i + 1;
+          if (next < backoffMs.length) {
+            logLine(`[velociraptor] startup inventory refresh failed (${(e as Error).message}) — retrying in ${backoffMs[next] / 1000}s`);
+            const t = setTimeout(() => attempt(next), backoffMs[next]);
+            t.unref?.();
+          } else {
+            logLine(`[velociraptor] startup inventory refresh still failing — use Settings → Velociraptor → Reconnect once the server is up`);
+          }
+        });
+    };
+    attempt(0);
   }
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.

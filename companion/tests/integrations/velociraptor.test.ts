@@ -4,6 +4,7 @@ import {
   sanitizeVqlDurations,
   splitVqlStatements,
   VelociraptorClient,
+  extractMonitoredArtifacts,
   loadVelociraptorConfig,
   buildVelociraptorClient,
   matchClient,
@@ -405,15 +406,29 @@ describe("VelociraptorClient.huntResults", () => {
 });
 
 describe("VelociraptorClient.listClientArtifacts", () => {
-  it("queries client artifact_definitions and returns name+description without the row cap", async () => {
+  it("queries artifact_definitions and returns name+description without the row cap", async () => {
     let program = "";
     const rows = Array.from({ length: 10 }, (_, i) => ({ name: `Windows.Test.A${i}`, description: `d${i}`, type: "CLIENT" }));
     const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows, raw: "" }; };
     const out = await new VelociraptorClient(cfg, runner).listClientArtifacts();   // cfg.maxRows = 3
     expect(program).toContain("artifact_definitions()");
-    expect(program.toLowerCase()).toContain("client");
     expect(out).toHaveLength(10);   // metadata, NOT capped at maxRows
     expect(out[0]).toEqual({ name: "Windows.Test.A0", description: "d0" });
+  });
+
+  it("filters the type in TS — version-tolerant of casing/spacing (CLIENT_EVENT / Client Event / client-event)", async () => {
+    const rows = [
+      { name: "Windows.System.Pslist", description: "p", type: "CLIENT" },
+      { name: "Windows.Events.ProcessCreation", description: "e1", type: "CLIENT_EVENT" },
+      { name: "Windows.Events.DNSQueries", description: "e2", type: "Client Event" },   // spaced
+      { name: "Windows.Events.ServiceCreation", description: "e3", type: "client-event" }, // hyphen
+      { name: "Server.Foo", description: "s", type: "SERVER_EVENT" },
+    ];
+    const runner: VqlRunner = async () => ({ rows, raw: "" });
+    const client = new VelociraptorClient(cfg, runner);
+    expect((await client.listClientArtifacts("client_event")).map((a) => a.name))
+      .toEqual(["Windows.Events.ProcessCreation", "Windows.Events.DNSQueries", "Windows.Events.ServiceCreation"]);
+    expect((await client.listClientArtifacts("client")).map((a) => a.name)).toEqual(["Windows.System.Pslist"]);
   });
 });
 
@@ -588,5 +603,108 @@ describe("loadVelociraptorConfig / buildVelociraptorClient", () => {
     });
     expect(c).toMatchObject({ binary: "/opt/velociraptor.exe", timeoutMs: 12000, maxRows: 50 });
     expect(buildVelociraptorClient({ DFIR_VELOCIRAPTOR_API_CONFIG: "/x/api.yaml" })).toBeInstanceOf(VelociraptorClient);
+  });
+});
+
+describe("VelociraptorClient.monitorResults", () => {
+  it("reads ONE client's monitoring set via source() with the window", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ _ts: 1500 }], raw: "" }; };
+    const res = await new VelociraptorClient(cfg, runner).monitorResults("C.abc", "Windows.Events.ProcessCreation", 1000, 2000);
+    expect(program).toContain("source(client_id='C.abc'");
+    expect(program).toContain("artifact='Windows.Events.ProcessCreation'");
+    expect(program).toContain("start_time=1000");
+    expect(program).toContain("end_time=2000");
+    expect(res.rows).toHaveLength(1);
+  });
+
+  it("reads ALL clients via the foreach(clients()) VQL when given the '*' sentinel (no client id injected)", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ _ts: 1, ClientId: "C.a" }, { _ts: 2, ClientId: "C.b" }], raw: "" }; };
+    const res = await new VelociraptorClient(cfg, runner).monitorResults("*", "Windows.Events.ProcessCreation", 1000, 2000);
+    expect(program).toContain("clients()");
+    expect(program).toContain("artifact='Windows.Events.ProcessCreation'");
+    expect(program).not.toContain("client_id='*'");   // sentinel never lands in the literal
+    expect(res.rows).toHaveLength(2);
+  });
+
+  it("rejects an invalid (non-sentinel) client id", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).monitorResults("bad", "A.B", 0, 1)).rejects.toThrow(/invalid client id/);
+  });
+
+  it("honors the DFIR_VELOCIRAPTOR_MONITOR_ALL_VQL override", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [], raw: "" }; };
+    await new VelociraptorClient({ ...cfg, monitorAllVql: "CUSTOM __ARTIFACT__ __START__ __END__ __LIMIT__" }, runner)
+      .monitorResults("*", "A.B", 5, 9);
+    expect(program).toBe("CUSTOM A.B 5 9 4");   // maxRows(3)+1
+  });
+});
+
+describe("VelociraptorClient.listMonitoredArtifacts", () => {
+  it("returns de-duplicated artifact names from the monitoring state", async () => {
+    const runner: VqlRunner = async () => ({ rows: [
+      { artifact: "Windows.Events.ProcessCreation" },
+      { artifact: "Windows.Events.DNSQueries" },
+      { artifact: "Windows.Events.ProcessCreation" },   // dup
+      { artifact: "" },                                  // dropped
+      { artifact: "bad name!" },                         // invalid → dropped
+    ], raw: "" });
+    const out = await new VelociraptorClient(cfg, runner).listMonitoredArtifacts();
+    expect(out).toEqual(["Windows.Events.ProcessCreation", "Windows.Events.DNSQueries"]);
+  });
+
+  it("tolerates bare-string and Name-keyed rows", async () => {
+    const runner: VqlRunner = async () => ({ rows: ["Windows.Events.DNSQueries", { Name: "Generic.Client.Stats" }], raw: "" });
+    const out = await new VelociraptorClient(cfg, runner).listMonitoredArtifacts();
+    expect(out).toEqual(["Windows.Events.DNSQueries", "Generic.Client.Stats"]);
+  });
+
+  it("returns [] (no throw) when nothing is configured", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    expect(await new VelociraptorClient(cfg, runner).listMonitoredArtifacts()).toEqual([]);
+  });
+
+  it("walks a real GetClientMonitoringState() proto row (the default VQL shape)", async () => {
+    // One row, the whole ClientEventTable proto under `State` — artifacts.artifacts + specs + label_events.
+    const runner: VqlRunner = async () => ({ rows: [{ State: {
+      artifacts: {
+        artifacts: ["Generic.Client.Stats", "Windows.Events.ProcessCreation"],
+        specs: [{ artifact: "Generic.Client.Stats" }, { artifact: "Windows.Events.DNSQueries" }],
+      },
+      label_events: [
+        { label: "servers", artifacts: { artifacts: ["Windows.Events.ServiceCreation"] } },
+      ],
+    } }], raw: "" });
+    const out = await new VelociraptorClient(cfg, runner).listMonitoredArtifacts();
+    expect(out).toEqual([
+      "Generic.Client.Stats",
+      "Windows.Events.ProcessCreation",
+      "Windows.Events.DNSQueries",
+      "Windows.Events.ServiceCreation",
+    ]);
+  });
+});
+
+describe("extractMonitoredArtifacts", () => {
+  it("handles the bare (unwrapped) ClientEventTable proto", () => {
+    expect(extractMonitoredArtifacts([{ artifacts: { artifacts: ["A.B", "C.D"] } }])).toEqual(["A.B", "C.D"]);
+  });
+  it("tolerates PascalCase proto fields", () => {
+    expect(extractMonitoredArtifacts([{ State: { Artifacts: { Artifacts: ["A.B"], Specs: [{ Artifact: "C.D" }] } } }])).toEqual(["A.B", "C.D"]);
+  });
+  it("handles override shapes (bare strings / { artifact })", () => {
+    expect(extractMonitoredArtifacts(["A.B", { artifact: "C.D" }, { Name: "E.F" }])).toEqual(["A.B", "C.D", "E.F"]);
+  });
+  it("dedupes across the global table and label tables, dropping invalid names", () => {
+    expect(extractMonitoredArtifacts([{ State: {
+      artifacts: { artifacts: ["A.B", "bad name!", "A.B"] },
+      label_events: [{ artifacts: { artifacts: ["A.B", "C.D"] } }],
+    } }])).toEqual(["A.B", "C.D"]);
+  });
+  it("returns [] for empty / junk input", () => {
+    expect(extractMonitoredArtifacts([])).toEqual([]);
+    expect(extractMonitoredArtifacts([null, 5, { nope: 1 }])).toEqual([]);
   });
 });
