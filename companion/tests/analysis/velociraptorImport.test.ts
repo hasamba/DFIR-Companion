@@ -117,6 +117,28 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     expect(e.sources).toEqual(["Velociraptor"]);
   });
 
+  it("GUI-flattened Evtx detection (no Channel/EventData columns): dated, MITRE, Message subject", () => {
+    // The Velociraptor GUI's DetectRaptor.*.Evtx table exposes only EventTime/Computer/Detection.Name/
+    // EventID/Username/Message — no Channel/EventData to overlay — so this takes the non-event verdict
+    // branch. The browser extension un-flattens "Detection.Name" → Detection:{Name} before pushing.
+    const row = {
+      EventTime: "2026-06-03T08:28:58Z",
+      Computer: "WIN11.windomain.local",
+      Detection: { Name: "T1567.002-Execution of Exfiltration Programs" },
+      EventID: 4688,
+      Username: "",
+      Message: "A new process has been created. Creator Subject: Security ID: S-1-5-18 New Process Name: rclone.exe",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.description).toContain("Velociraptor detection: T1567.002-Execution of Exfiltration Programs");
+    expect(e.description).toContain("A new process has been created");  // Message survives as the subject
+    expect(e.timestamp).toContain("2026-06-03T08:28:58");                // EventTime, not undated
+    expect(e.mitreTechniques).toContain("T1567.002");
+    expect(e.asset).toBe("WIN11.windomain.local");
+    expect(e.severity === "Medium" || e.severity === "High").toBe(true);
+  });
+
   it("MFT detection: object verdict with explicit Criticality wins; nested $SI timestamp resolved", () => {
     const row = {
       Detection: { Name: "BAU Cloud Data Transfer", KeywordRegex: "OneDrive\\.exe", Criticality: "Low" },

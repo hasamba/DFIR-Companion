@@ -400,7 +400,10 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   if (processName) subjectParts.push(processName);
   if (pipe) subjectParts.push(`pipe ${pipe}`);
   if (path && !processName) subjectParts.push(path);
-  const line = firstStr(row, ["Line", "StringHit", "HitString", "CommandLine"]);
+  // …else the raw evidence line. `Message` is last: a flattened detection artifact (e.g. the
+  // Velociraptor GUI's DetectRaptor.*.Evtx table, which exposes no Channel/EventData columns to
+  // overlay) carries its detail only in Message, so without this the verdict would have no subject.
+  const line = firstStr(row, ["Line", "StringHit", "HitString", "CommandLine", "Message"]);
   if (line && subjectParts.length === 0) subjectParts.push(oneLine(line).slice(0, 160));
   const subject = subjectParts.join(" ");
 

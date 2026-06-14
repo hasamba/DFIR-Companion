@@ -1,0 +1,8 @@
+{
+  "columns": ["Name", "Pid", "CommandLine"],
+  "rows": [
+    { "cell": ["svchost.exe", "1234", "C:\\Windows\\System32\\svchost.exe -k netsvcs"] },
+    { "cell": ["powershell.exe", "5678", "powershell -enc ZQBjAGgAbwA="] },
+    { "cell": ["cmd.exe", "4321", "cmd /c whoami"] }
+  ]
+}

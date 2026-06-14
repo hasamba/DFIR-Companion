@@ -21,9 +21,10 @@ export function asArray(v: unknown): unknown[] | null {
 }
 
 /**
- * Velociraptor / table-style envelope: { columns: string[], rows: [...] } where each row is either
- * a raw array of cells, a { cell: [...] } wrapper, or already an object. Zip the columns onto each
- * row to produce flat objects. Returns null when the shape doesn't match.
+ * Velociraptor / table-style envelope: { columns: string[], rows: [...] }. Each row's cells arrive
+ * as a raw array, a { cell: [...] } wrapper, OR — the Velociraptor GUI's GetTable format —
+ * { json: "<JSON-encoded array of cell values>" }. Zip the columns onto the cells to produce flat
+ * objects. Returns null when the shape doesn't match.
  */
 export function zipColumnsRows(body: unknown): unknown[] | null {
   if (!isObject(body)) return null;
@@ -32,10 +33,52 @@ export function zipColumnsRows(body: unknown): unknown[] | null {
   if (!Array.isArray(columns) || !Array.isArray(rows)) return null;
   const cols = columns.map((c) => String(c));
   return rows.map((row) => {
-    const cells = Array.isArray(row) ? row : isObject(row) && Array.isArray(row.cell) ? row.cell : null;
+    const cells = rowCells(row);
     if (!cells) return isObject(row) ? row : { value: row };
     const obj: Record<string, unknown> = {};
     cols.forEach((c, i) => { obj[c] = cells[i]; });
     return obj;
   });
+}
+
+// Recover the ordered cell values from one table row across the shapes Velociraptor's API emits.
+function rowCells(row: unknown): unknown[] | null {
+  if (Array.isArray(row)) return row;
+  if (!isObject(row)) return null;
+  if (Array.isArray(row.cell)) return row.cell;
+  // Velociraptor GUI GetTable: each row is { json: "[<cell>, <cell>, …]" } — a JSON-encoded array.
+  if (typeof row.json === "string") {
+    try {
+      const parsed = JSON.parse(row.json);
+      if (Array.isArray(parsed)) return parsed;
+    } catch { /* not a JSON array — fall through */ }
+  }
+  return null;
+}
+
+/**
+ * Expand dotted keys into nested objects: { "Detection.Name": x } → { Detection: { Name: x } }. The
+ * Velociraptor GUI flattens nested VQL columns into dotted names, but the companion's importer reads
+ * them nested (verdict object, System.*, FileInfo.* time keys). On a key collision (a leaf where a
+ * branch is needed, or vice-versa) the original flat key is kept so nothing is silently dropped.
+ */
+export function unflattenDotted(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(row)) {
+    const parts = key.split(".");
+    let cur = out;
+    let ok = true;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const next = cur[parts[i]];
+      if (next === undefined) { const o: Record<string, unknown> = {}; cur[parts[i]] = o; cur = o; }
+      else if (isObject(next)) { cur = next as Record<string, unknown>; }
+      else { ok = false; break; } // collision — don't clobber an existing leaf
+    }
+    if (ok && !(parts[parts.length - 1] in cur && isObject(cur[parts[parts.length - 1]]))) {
+      cur[parts[parts.length - 1]] = val;
+    } else {
+      out[key] = val; // keep the flat key on any collision
+    }
+  }
+  return out;
 }

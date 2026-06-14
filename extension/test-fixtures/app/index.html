@@ -1,0 +1,46 @@
+<!doctype html>
+<!--
+  THROWAWAY manual-test fixture for issue #102 (not part of the build, safe to delete).
+  Served at /app/index.html it matches the VELOCIRAPTOR adapter (path /app/index.html, or :8889).
+
+  Two paths to exercise:
+   • API INTERCEPTION — this page fetch()es ./api/v1/GetTable (a Velociraptor GetTable-shaped JSON
+     sibling file). The MAIN-world hook intercepts it; the button shows "Push 3 Velociraptor rows".
+   • DOM SCRAPE — rename/delete the GetTable file so the fetch 404s; the button then shows
+     "Push Velociraptor table" and clicking it scrapes the <table> below instead.
+
+  Serve from the test-fixtures dir, e.g.:
+     npx http-server extension/test-fixtures -p 8889
+     # then open  http://localhost:8889/app/index.html
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Velociraptor</title></head>
+<body>
+  <h1>Mock Velociraptor console</h1>
+  <p>Run a "query": <button id="run">Fetch GetTable</button> <span id="out"></span></p>
+  <table border="1" cellpadding="4">
+    <thead><tr><th>Name</th><th>Pid</th><th>CommandLine</th></tr></thead>
+    <tbody>
+      <tr><td>svchost.exe</td><td>1234</td><td>C:\Windows\System32\svchost.exe -k netsvcs</td></tr>
+      <tr><td>powershell.exe</td><td>5678</td><td>powershell -enc ZQBjAGgAbwA=</td></tr>
+      <tr><td>cmd.exe</td><td>4321</td><td>cmd /c whoami</td></tr>
+    </tbody>
+  </table>
+
+  <script>
+    // Fetch on load AND on click so you can re-trigger interception.
+    async function runQuery() {
+      const out = document.getElementById("out");
+      try {
+        const res = await fetch("./api/v1/GetTable");
+        const body = await res.json();
+        out.textContent = `fetched ${body.rows?.length ?? 0} rows`;
+      } catch (e) {
+        out.textContent = "GetTable not served — DOM-scrape path active";
+      }
+    }
+    document.getElementById("run").addEventListener("click", runQuery);
+    runQuery();
+  </script>
+</body>
+</html>

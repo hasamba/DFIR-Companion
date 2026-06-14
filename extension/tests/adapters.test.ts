@@ -75,6 +75,26 @@ describe("velociraptor.extractRows", () => {
     expect(velociraptorAdapter.extractRows("u", body)).toEqual([{ A: "1", B: "2" }]);
   });
 
+  it("parses the GUI GetTable { json: '[...]' } cell format and zips it", () => {
+    const body = {
+      columns: ["EventTime", "Computer", "EventID", "Message"],
+      rows: [{ json: '["2026-06-03T07:56:13Z","WIN11.windomain.local",4103,"CommandInvocation(Out-Default)"]' }],
+    };
+    expect(velociraptorAdapter.extractRows("/api/v1/GetTable", body)).toEqual([
+      { EventTime: "2026-06-03T07:56:13Z", Computer: "WIN11.windomain.local", EventID: 4103, Message: "CommandInvocation(Out-Default)" },
+    ]);
+  });
+
+  it("un-flattens dotted GUI column names into nested objects (Detection.Name)", () => {
+    const body = {
+      columns: ["EventTime", "Detection.Name", "EventID"],
+      rows: [{ json: '["2026-06-03T08:28:58Z","T1567.002-Execution of Exfiltration Programs",4688]' }],
+    };
+    expect(velociraptorAdapter.extractRows("/api/v1/GetTable", body)).toEqual([
+      { EventTime: "2026-06-03T08:28:58Z", Detection: { Name: "T1567.002-Execution of Exfiltration Programs" }, EventID: 4688 },
+    ]);
+  });
+
   it("passes a bare array through", () => {
     expect(velociraptorAdapter.extractRows("u", [{ x: 1 }])).toEqual([{ x: 1 }]);
   });
