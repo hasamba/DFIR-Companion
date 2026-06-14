@@ -1,0 +1,118 @@
+import { describe, it, expect } from "vitest";
+import { adapterForUrl, adapterById, ADAPTERS } from "../src/adapters/registry.js";
+import { splunkAdapter } from "../src/adapters/splunk.js";
+import { velociraptorAdapter } from "../src/adapters/velociraptor.js";
+import { elasticAdapter } from "../src/adapters/elastic.js";
+import { crowdstrikeAdapter } from "../src/adapters/crowdstrike.js";
+
+describe("adapterForUrl", () => {
+  it("matches Splunk by host, app path, and :8000", () => {
+    expect(adapterForUrl("https://splunk.corp.local/en-US/app/search/search")?.id).toBe("splunk");
+    expect(adapterForUrl("https://siem.example.com/en-US/app/search/search")?.id).toBe("splunk");
+    expect(adapterForUrl("http://10.0.0.5:8000/en-US/app/search/search")?.id).toBe("splunk");
+  });
+
+  it("matches Velociraptor by host, /app/index.html, and :8889", () => {
+    expect(adapterForUrl("https://velociraptor.corp:8889/app/index.html")?.id).toBe("velociraptor");
+    expect(adapterForUrl("https://ir.example.com/app/index.html#/host")?.id).toBe("velociraptor");
+    expect(adapterForUrl("https://10.0.0.9:8889/api/v1/GetTable")?.id).toBe("velociraptor");
+  });
+
+  it("matches Elastic/Kibana by host, app path, and :5601/:9200", () => {
+    expect(adapterForUrl("https://kibana.corp/app/discover")?.id).toBe("elastic");
+    expect(adapterForUrl("https://logs.example.com/app/security/alerts")?.id).toBe("elastic");
+    expect(adapterForUrl("http://10.0.0.3:5601/app/discover")?.id).toBe("elastic");
+    expect(adapterForUrl("http://10.0.0.3:9200/myindex/_search")?.id).toBe("elastic");
+  });
+
+  it("matches CrowdStrike Falcon by host", () => {
+    expect(adapterForUrl("https://falcon.crowdstrike.com/activity/detections")?.id).toBe("crowdstrike");
+    expect(adapterForUrl("https://falcon.us-2.crowdstrike.com/investigate")?.id).toBe("crowdstrike");
+  });
+
+  it("returns null for unrecognized sites and non-http schemes", () => {
+    expect(adapterForUrl("https://example.com/foo")).toBeNull();
+    expect(adapterForUrl("https://news.ycombinator.com/")).toBeNull();
+    expect(adapterForUrl("chrome://extensions")).toBeNull();
+    expect(adapterForUrl("not a url")).toBeNull();
+  });
+
+  it("adapterById resolves and the registry holds the four tools", () => {
+    expect(ADAPTERS.map((a) => a.id).sort()).toEqual(["crowdstrike", "elastic", "splunk", "velociraptor"]);
+    expect(adapterById("splunk")?.label).toBe("Splunk");
+    expect(adapterById("nope")).toBeNull();
+  });
+});
+
+describe("splunk.extractRows", () => {
+  it("returns the results array from the json envelope", () => {
+    const body = { preview: false, init_offset: 0, results: [{ _time: "t1", host: "h1" }, { _time: "t2", host: "h2" }], fields: [] };
+    expect(splunkAdapter.extractRows("/services/search/v2/jobs/x/results", body)).toEqual(body.results);
+  });
+
+  it("zips the json_rows variant (fields + rows)", () => {
+    const body = { fields: [{ name: "host" }, { name: "count" }], rows: [["h1", "3"], ["h2", "5"]] };
+    expect(splunkAdapter.extractRows("u", body)).toEqual([{ host: "h1", count: "3" }, { host: "h2", count: "5" }]);
+  });
+
+  it("returns null when there are no results", () => {
+    expect(splunkAdapter.extractRows("u", { preview: true, results: [] })).toBeNull();
+    expect(splunkAdapter.extractRows("u", "nope")).toBeNull();
+  });
+});
+
+describe("velociraptor.extractRows", () => {
+  it("zips columns onto { cell: [...] } rows (GetTable shape)", () => {
+    const body = { columns: ["Name", "Pid"], rows: [{ cell: ["svchost.exe", "1234"] }, { cell: ["cmd.exe", "5678"] }] };
+    expect(velociraptorAdapter.extractRows("/api/v1/GetTable", body)).toEqual([
+      { Name: "svchost.exe", Pid: "1234" },
+      { Name: "cmd.exe", Pid: "5678" },
+    ]);
+  });
+
+  it("zips columns onto raw-array rows", () => {
+    const body = { columns: ["A", "B"], rows: [["1", "2"]] };
+    expect(velociraptorAdapter.extractRows("u", body)).toEqual([{ A: "1", B: "2" }]);
+  });
+
+  it("passes a bare array through", () => {
+    expect(velociraptorAdapter.extractRows("u", [{ x: 1 }])).toEqual([{ x: 1 }]);
+  });
+
+  it("returns null on an unrecognized shape", () => {
+    expect(velociraptorAdapter.extractRows("u", { foo: "bar" })).toBeNull();
+  });
+});
+
+describe("elastic.extractRows", () => {
+  it("flattens hits.hits to _source with id/index metadata", () => {
+    const body = { hits: { hits: [{ _id: "1", _index: "logs", _source: { msg: "a" } }] } };
+    expect(elasticAdapter.extractRows("/logs/_search", body)).toEqual([{ _id: "1", _index: "logs", msg: "a" }]);
+  });
+
+  it("unwraps the Kibana bsearch rawResponse wrapper", () => {
+    const body = { result: { rawResponse: { hits: { hits: [{ _id: "9", _source: { a: 1 } }] } } } };
+    expect(elasticAdapter.extractRows("/internal/bsearch", body)).toEqual([{ _id: "9", _index: undefined, a: 1 }]);
+  });
+
+  it("returns null when there are no hits", () => {
+    expect(elasticAdapter.extractRows("u", { hits: { hits: [] } })).toBeNull();
+    expect(elasticAdapter.extractRows("u", { took: 5 })).toBeNull();
+  });
+});
+
+describe("crowdstrike.extractRows", () => {
+  it("returns the events array", () => {
+    const body = { events: [{ id: "e1" }, { id: "e2" }] };
+    expect(crowdstrikeAdapter.extractRows("/loggingapi/x", body)).toEqual(body.events);
+  });
+
+  it("returns resources when they are objects, not an id-list", () => {
+    expect(crowdstrikeAdapter.extractRows("/detects/v2", { resources: [{ detection_id: "d1" }] })).toEqual([{ detection_id: "d1" }]);
+    expect(crowdstrikeAdapter.extractRows("/detects/v1/queries", { resources: ["id1", "id2"] })).toBeNull();
+  });
+
+  it("returns null with no rows", () => {
+    expect(crowdstrikeAdapter.extractRows("u", { meta: {}, errors: [] })).toBeNull();
+  });
+});

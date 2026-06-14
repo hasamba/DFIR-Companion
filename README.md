@@ -175,6 +175,7 @@ For each case the AI builds and keeps up to date:
 
 ### Capture & ingest
 - **MV3 browser extension** — timer + event-driven capture (navigation / tab switch / click), `Ctrl+Shift+S` hotkey, offline queue + auto-sync, per-case Start/Stop. Attaches to an existing case from a dropdown — it never creates one.
+- **One-click artifact push from DFIR consoles** — on Splunk / Velociraptor / Elastic-Kibana / CrowdStrike the extension injects a **Push to DFIR-Companion** button: it intercepts the clean JSON the tool already fetched (MAIN-world `fetch`/`XHR` hook, only on recognized tools) — or scrapes the visible results table as a fallback — and POSTs it to the selected case's unified import route on explicit click. Per-tool site adapters; does nothing on unrecognized sites (closes #102).
 - **Case management in the dashboard** — **+ New case** is the one place cases are born; captures to an unknown case are rejected. Five built-in **templates** pre-load incident-type investigation questions + import/hunt hints (save your own too).
 - **Import screenshots** — multi-select PNG/JPEG/WebP from any tool, through the same ingest path as the extension.
 - **One Import button** — drop any artifact file; the server auto-detects the format and routes it. Optional minimum-severity floor at the gate.

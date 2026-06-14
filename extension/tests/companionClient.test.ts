@@ -34,4 +34,34 @@ describe("CompanionClient", () => {
     const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
     expect(await client.ping()).toBe(false);
   });
+
+  it("postImport posts to /cases/:id/import and reports ok on 202", async () => {
+    const fetchFn = vi.fn(async () => new Response("{}", { status: 202 }));
+    const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
+    const payload = { json: "[{\"a\":1}]", filename: "splunk-2026.json" };
+    expect(await client.postImport("c1", payload)).toEqual({ ok: true, status: 202 });
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe("http://127.0.0.1:4773/cases/c1/import");
+    expect((init as RequestInit).method).toBe("POST");
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual(payload);
+  });
+
+  it("postImport URL-encodes the case id", async () => {
+    const fetchFn = vi.fn(async () => new Response("{}", { status: 202 }));
+    const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
+    await client.postImport("a/b", { json: "[]", filename: "f.json" });
+    expect(fetchFn.mock.calls[0][0]).toBe("http://127.0.0.1:4773/cases/a%2Fb/import");
+  });
+
+  it("postImport reports the non-202 status (e.g. 404 case not found)", async () => {
+    const fetchFn = vi.fn(async () => new Response("{}", { status: 404 }));
+    const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
+    expect(await client.postImport("c1", { json: "[]", filename: "f.json" })).toEqual({ ok: false, status: 404 });
+  });
+
+  it("postImport reports status 0 when fetch throws (offline)", async () => {
+    const fetchFn = vi.fn(async () => { throw new Error("ECONNREFUSED"); });
+    const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
+    expect(await client.postImport("c1", { json: "[]", filename: "f.json" })).toEqual({ ok: false, status: 0 });
+  });
 });
