@@ -227,13 +227,15 @@ const DEFAULT_MONITOR_ALL_VQL =
   "query={ SELECT *, client_id AS ClientId FROM source(client_id=client_id, artifact='__ARTIFACT__', start_time=__START__, end_time=__END__) }) LIMIT __LIMIT__";
 
 // Default VQL to read Velociraptor's client-event monitoring table (#84 follow-up — "listen to
-// whatever is already configured"). We return the WHOLE `GetClientMonitoringState()` proto as one row
-// and walk it in TypeScript (`extractMonitoredArtifacts`) — far more robust than proto-path-walking in
-// VQL, which is brittle across versions (the proto nests `artifacts.artifacts` + `artifacts.specs` +
-// per-label `label_events`, and protojson casing varies). Override with DFIR_VELOCIRAPTOR_MONITORED_VQL
-// to return either the raw state (one `State` column) or simple `{ artifact }` rows — both are handled.
+// whatever is already configured"). The VQL function is `get_client_monitoring()` — NOT
+// `GetClientMonitoringState()`, which is the Go method / gRPC name and returns null as a VQL call. We
+// return the WHOLE `ClientEventTable` proto as one row and walk it in TypeScript
+// (`extractMonitoredArtifacts`) — far more robust than proto-path-walking in VQL, which is brittle
+// across versions (the proto nests `artifacts.artifacts` + `artifacts.specs` + per-label
+// `label_events`, casing varies). Override with DFIR_VELOCIRAPTOR_MONITORED_VQL to return either the
+// raw state (one `State` column) or simple `{ artifact }` rows — both are handled.
 const DEFAULT_MONITORED_VQL =
-  "SELECT GetClientMonitoringState() AS State FROM scope()";
+  "SELECT get_client_monitoring() AS State FROM scope()";
 
 // Pure: pull the configured client-event artifact NAMES out of whatever `listMonitoredArtifacts`' VQL
 // returned. Handles (a) the raw `GetClientMonitoringState()` proto (wrapped in `State`/`state`, or bare)
@@ -600,7 +602,7 @@ export class VelociraptorClient {
 
   // Diagnostics for the live-monitor features (#84) when the picker / auto-discovery come back empty
   // on a real server: the distinct artifact `type` strings + counts (so we can see the real casing),
-  // the raw `GetClientMonitoringState()` rows (the configured monitoring table), and how many CLIENT_EVENT
+  // the raw `get_client_monitoring()` rows (the configured monitoring table), and how many CLIENT_EVENT
   // artifacts matched. Each probe is independent — one failing doesn't abort the others. Localhost only.
   async diagnostics(): Promise<{ artifactTypes: Record<string, number>; clientEventCount: number; monitoringState: unknown; errors: Record<string, string> }> {
     const errors: Record<string, string> = {};
