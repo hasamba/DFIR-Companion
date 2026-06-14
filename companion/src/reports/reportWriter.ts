@@ -41,6 +41,8 @@ import type { ReportTemplateStore } from "./reportTemplateStore.js";
 import type { ReportTemplateControlStore } from "./reportTemplateControl.js";
 import { applyAnonDeep, type RedactedReportContents } from "../analysis/redactedExport.js";
 import type { ReportMeta } from "./reportMeta.js";
+import type { KevStore } from "../analysis/kevStore.js";
+import type { KevCatalog } from "../analysis/kev.js";
 
 export interface ReportPaths {
   markdown: string;
@@ -65,6 +67,7 @@ export class ReportWriter {
     private readonly playbook?: PlaybookStore,
     private readonly reportTemplates?: ReportTemplateStore,
     private readonly reportTemplateControl?: ReportTemplateControlStore,
+    private readonly kevStore?: KevStore,
   ) {}
 
   // Resolve the report template selected for the case (issue #60). Falls back to the default
@@ -117,6 +120,12 @@ export class ReportWriter {
     if (!this.customerExposure) return undefined;
     const exposure = await this.customerExposure.load(caseId);
     return exposure.checkedAt ? exposure : undefined;
+  }
+
+  private async loadKevCatalog(): Promise<KevCatalog | undefined> {
+    if (!this.kevStore) return undefined;
+    const catalog = await this.kevStore.loadCatalog();
+    return catalog.size > 0 ? catalog : undefined;
   }
 
   // Export just the incident (forensic) timeline as CSV, on demand — without writing the
@@ -262,9 +271,10 @@ export class ReportWriter {
     notebookEntries: NotebookEntry[] | undefined,
     playbookTasks: PlaybookTask[] | undefined,
     template: ReportTemplate = defaultReportTemplate(),
+    kevCatalog?: KevCatalog,
   ): RedactedReportContents {
     return {
-      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template),
+      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog),
       html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template),
       findingsCsv: findingsCsv(state),
       iocsCsv: iocsCsv(state),
@@ -293,7 +303,8 @@ export class ReportWriter {
     const template = await this.loadTemplate(caseId);
     const overrides = this.assetOverrides ? await this.assetOverrides.load(caseId) : emptyOverrides();
     const graph = applyAssetOverrides(buildAssetGraph(state), overrides);
-    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template);
+    const kevCatalog = await this.loadKevCatalog();
+    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog);
     await writeFile(paths.markdown, c.markdown, "utf8");
     await writeFile(paths.html, c.html, "utf8");
     await writeFile(paths.findingsCsv, c.findingsCsv, "utf8");
@@ -324,6 +335,7 @@ export class ReportWriter {
     const graph = applyAssetOverrides(buildAssetGraph(state), overrides);
     // The redacted export honors the per-case report template too (branding/section layout).
     const template = await this.loadTemplate(caseId);
-    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template);
+    const kevCatalog = await this.loadKevCatalog();
+    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog);
   }
 }

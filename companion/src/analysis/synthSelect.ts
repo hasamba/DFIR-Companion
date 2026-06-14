@@ -1,6 +1,7 @@
 import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { buildAssetGraph } from "./assetGraph.js";
+import { extractCveIds, matchKevEntries, buildKevDigest, type KevCatalog } from "./kev.js";
 
 const SEV_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 
@@ -42,10 +43,15 @@ export function selectSynthesisEvents(events: ForensicEvent[], max: number): For
 }
 
 // A compact context digest for the synthesis prompt: the compromised assets (host/account
-// and the IoCs seen on each) and third-party threat-intel verdicts. Grounds the model's
-// findings and attacker path in corroborated structure instead of inferring blind. Returns
-// "" when there's nothing to add, so it costs no tokens on a bare case.
-export function buildSynthesisContext(state: InvestigationState, scopedEvents: ForensicEvent[]): string {
+// and the IoCs seen on each), third-party threat-intel verdicts, and — when a KEV catalog is
+// loaded — CVEs from the timeline/IOCs that CISA confirms are actively exploited in the wild
+// (a strong initial-access signal). Returns "" when there's nothing to add, so it costs no
+// tokens on a bare case.
+export function buildSynthesisContext(
+  state: InvestigationState,
+  scopedEvents: ForensicEvent[],
+  kevCatalog?: KevCatalog,
+): string {
   const graph = buildAssetGraph({ ...state, forensicTimeline: scopedEvents });
   const iocVal = new Map(graph.iocs.map((i) => [i.id, i.value] as const));
 
@@ -63,8 +69,21 @@ export function buildSynthesisContext(state: InvestigationState, scopedEvents: F
       return `- ${i.value} = ${e?.verdict}${e?.source ? ` (${e.source}${e.score ? ` ${e.score}` : ""})` : ""}`;
     });
 
+  // KEV correlation: scan the scoped events + IOC values for CVE ids and cross-reference
+  // against the loaded catalog. Only fires when a catalog is provided (opt-in, store starts
+  // empty) so it never costs tokens on unconfigured deployments.
+  let kevBlock = "";
+  if (kevCatalog && kevCatalog.size > 0) {
+    const cveIds = new Set<string>();
+    for (const e of scopedEvents) extractCveIds(e.description).forEach((id) => cveIds.add(id));
+    for (const ioc of state.iocs) extractCveIds(ioc.value).forEach((id) => cveIds.add(id));
+    const kevMatches = matchKevEntries([...cveIds], kevCatalog);
+    kevBlock = buildKevDigest(kevMatches);
+  }
+
   let block = "";
   if (assetLines.length) block += `COMPROMISED ASSETS (host/account ← IoCs seen on it):\n${assetLines.join("\n")}\n\n`;
   if (verdictLines.length) block += `THREAT-INTEL VERDICTS (third-party):\n${verdictLines.join("\n")}\n\n`;
+  if (kevBlock) block += kevBlock;
   return block;
 }
