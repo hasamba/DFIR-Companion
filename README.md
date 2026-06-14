@@ -30,8 +30,24 @@ stays on disk, and the AI provider is yours to choose.
 
 ## Screenshots
 
-> **Demo case: GlobalTech Industries — BEC & Ransomware Precursor.**
-> Seed it locally with `npm run seed-demo` then open `http://127.0.0.1:4773/dashboard`.
+> **Demo case: GlobalTech Industries — BEC & Ransomware Precursor, May 2026.**
+>
+> A fully pre-populated case you can explore without importing any real evidence — findings, IOCs,
+> MITRE techniques, analyst tags/comments, customer exposure data, and report metadata are all
+> pre-seeded so every dashboard panel has something to show.
+>
+> **Load it in one click** — click the **Demo case** button in the dashboard toolbar. It works
+> with the portable Windows EXE too (no Node or `npm` required). The button confirms before
+> overwriting if the case already exists.
+>
+> **Or seed from the CLI** (dev / Docker):
+> ```
+> cd companion && npm run seed-demo              # creates case id "demo"
+> npm run seed-demo -- --force                  # overwrite an existing demo case
+> npm run seed-demo -- --case-id globaltech     # use a custom id
+> ```
+>
+> Then open `http://127.0.0.1:4773/dashboard` and connect to the case.
 
 ---
 
@@ -265,7 +281,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Portable Windows EXE** — zip attached to every GitHub Release; unzip + double-click, no Node install required
 - **Docker / Docker Compose** — `docker compose up`; evidence on a host volume, no bundled AI backend
 - **Customizable AI prompts** — override any of the 6 prompts via env var or file; edits apply without restart (`npm run prompts:eject` to dump defaults)
-- **Demo case** — `npm run seed-demo` seeds a fully-populated GlobalTech Industries scenario for local exploration
+- **Demo case** — click **Demo case** in the dashboard toolbar (works in the portable EXE) or run `npm run seed-demo` to seed a fully-populated GlobalTech Industries scenario for local exploration
 - **CLI scripts** — `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline` (see below)
 
 ## Repository layout
