@@ -139,6 +139,41 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     expect(e.severity === "Medium" || e.severity === "High").toBe(true);
   });
 
+  it("Windows.Sigma.Base rows with the same Title but different Details stay SEPARATE events", () => {
+    // The Velociraptor Sigma artifact puts the message in `Details`; 8 HackTool detections share the
+    // rule Title "Antivirus Hacktool Detection" but name different tools — each is its own event.
+    const mk = (ts: string, tool: string, id: number) => ({
+      _Source: "Windows.Sigma.Base",
+      Timestamp: ts, Computer: "WIN11.windomain.local",
+      Channel: "Microsoft-Windows-Windows Defender/Operational", EID: 1011, Level: "high",
+      Title: "Antivirus Hacktool Detection", RecordID: id,
+      Details: `Microsoft Defender Antivirus removed an item from quarantine. name=HackTool:Win32/${tool}&threatid=${id}`,
+    });
+    const rows = [
+      mk("2026-06-03T08:15:40.382Z", "Passview", 2147597639),
+      mk("2026-06-03T08:15:40.393Z", "Wirekeyview", 2147657007),
+      mk("2026-06-03T08:15:40.417Z", "Mimikatz", 2147686744),
+    ];
+    const r = parseVelociraptorJson(JSON.stringify(rows));
+    expect(r.events).toHaveLength(3);                                  // NOT collapsed into one ×3
+    const blob = r.events.map((e) => e.description).join("\n");
+    expect(blob).toContain("Passview");
+    expect(blob).toContain("Mimikatz");
+    expect(r.events.every((e) => /Antivirus Hacktool Detection/.test(e.description))).toBe(true);
+    expect(r.events.every((e) => e.timestamp.startsWith("2026-06-03T08:15:40"))).toBe(true);
+  });
+
+  it("identical Sigma rows differing only in a volatile id DO still collapse", () => {
+    const mk = (pid: number) => ({
+      _Source: "Windows.Sigma.Base", Timestamp: "2026-06-03T08:15:40Z", Computer: "WIN11",
+      Channel: "Security", EID: 4688, Level: "high", Title: "Suspicious Process",
+      Details: `Process created. pid=${pid} name=evil.exe`,
+    });
+    const r = parseVelociraptorJson(JSON.stringify([mk(101), mk(202), mk(303)]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(3);
+  });
+
   it("MFT detection: object verdict with explicit Criticality wins; nested $SI timestamp resolved", () => {
     const row = {
       Detection: { Name: "BAU Cloud Data Transfer", KeywordRegex: "OneDrive\\.exe", Criticality: "Low" },

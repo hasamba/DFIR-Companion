@@ -97,6 +97,38 @@ function flatStr(v: unknown): string {
   return String(v);
 }
 
+// The human-readable message for a row. Velociraptor Sigma/Hayabusa rows put it in `Details`; the
+// parsed event (when present) carries its own `Message`. Used for the description AND for keeping
+// distinct detections distinct (see msgFingerprint).
+function rowMessage(row: Row): string {
+  const m = firstStr(row, ["Message", "Details", "message"]);
+  if (m) return m;
+  const ev = getCI(row, "_Event");
+  return isObject(ev) ? str(getCI(ev, "Message")) : "";
+}
+
+// A stable djb2 hash → base36, for folding message content into an aggregation key compactly.
+function hashStr(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (((h << 5) + h) + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+// Fingerprint a message for aggregation: normalize away VOLATILE bits (GUIDs, any digits — PIDs,
+// thread/record ids, counters) but keep the words, then hash the WHOLE thing. So two detections
+// that differ only in a PID collapse, while two that name different tools (HackTool:Passview vs
+// HackTool:Mimikatz) stay separate — the message, not just the rule title, decides identity. The
+// hash (not a prefix) means a distinguishing token anywhere in a long, boilerplate-heavy message
+// still separates the events.
+function msgFingerprint(msg: string): string {
+  const norm = oneLine(msg).toLowerCase()
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "")
+    .replace(/\d+/g, "")
+    .replace(/[^a-z]+/g, " ")
+    .trim();
+  return norm ? hashStr(norm) : "";
+}
+
 // ───────────────────────────── detection verdicts ─────────────────────────────
 
 // Many Velociraptor "*.Detection.*" artifacts (DetectRaptor et al.) carry their VERDICT in a
@@ -236,7 +268,7 @@ function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
 }
 
 // The free-text fields that carry a detection's evidence (and its embedded IOCs).
-const EVIDENCE_TEXT_KEYS = ["Line", "Content", "CommandLine", "HitString", "StringHit", "Message"];
+const EVIDENCE_TEXT_KEYS = ["Line", "Content", "CommandLine", "HitString", "StringHit", "Message", "Details"];
 function scrapeEvidence(row: Row, sink: Map<string, SiemIoc>): void {
   for (const k of EVIDENCE_TEXT_KEYS) scrapeText(str(getCI(row, k)), sink);
 }
@@ -353,11 +385,17 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
     if (!win.timestamp) win.timestamp = pickTime(row);
     return win;
   }
-  // No parsed event underneath — keep the verdict alone.
+  // No parsed event underneath (e.g. a Windows.Sigma.Base row whose event sits in `Details`/`_Event`)
+  // — lead with the verdict, then the message so the analyst sees WHAT fired, not just the rule name.
   collectRowIocs(row, sink);
+  scrapeEvidence(row, sink);
+  const message = rowMessage(row);
+  let description = `Velociraptor Sigma: ${title}`;
+  if (message) description += ` — ${oneLine(message).slice(0, 400)}`;
+  if (host) description += ` @ ${host}`;
   return {
     timestamp: pickTime(row),
-    description: `Velociraptor Sigma: ${title}${host ? ` @ ${host}` : ""}`.slice(0, 600),
+    description: description.slice(0, 600),
     severity: sev ?? "Medium",
     mitre: tags,
     aggKey: `vr-sigma|${title.toLowerCase()}|${host.toLowerCase()}`.slice(0, 400),
@@ -443,7 +481,7 @@ function mapEventlog(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   return win;
 }
 
-const GENERIC_MSG_KEYS = ["Message", "message", "Description", "Category", "DisplayName", "Line", "Stdout", "CommandLine", "PipeName", "KeyPath", "OSPath", "FullPath", "Name"];
+const GENERIC_MSG_KEYS = ["Message", "Details", "message", "Description", "Category", "DisplayName", "Line", "Stdout", "CommandLine", "PipeName", "KeyPath", "OSPath", "FullPath", "Name"];
 // Keys whose values are big/structured (rule regexes, PE internals, raw file content) — useful
 // for IOC scanning but noise in a one-line description, so they're skipped in the key=value fallback.
 const NOISE_KEY = /regex|ignore|imports|exports|sections|resources|directories|versioninformation|dllinfo|hitcontext|\bmeta\b|content|reference|url|license/i;
@@ -548,7 +586,15 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     else if (kind === "detection") { m = mapDetection(row, artifact, host, iocSink); detections++; }
     else if (kind === "eventlog") { m = mapEventlog(row, host, iocSink) ?? mapGeneric(row, artifact, host, iocSink); }
     else { m = mapGeneric(row, artifact, host, iocSink); }
-    if (m) mapped.push(m);
+    if (m) {
+      // Forensic distinctness: detections sharing a rule title/EID but describing different
+      // artifacts (HackTool:Passview vs HackTool:Mimikatz) are SEPARATE events. Fold the message
+      // fingerprint into the agg key so they don't collapse on title alone — while truly identical
+      // repeats (differing only in volatile ids) still merge. See msgFingerprint.
+      const fp = msgFingerprint(rowMessage(row));
+      if (fp) m.aggKey = `${m.aggKey}|m:${fp}`.slice(0, 440);
+      mapped.push(m);
+    }
   }
 
   const { events, groups } = aggregateEvents(mapped, {
