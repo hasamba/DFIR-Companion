@@ -556,8 +556,9 @@ playbook add/PATCH-status routes; case-create + report-generate for milestones. 
 deep-links back to the case; `DFIR_NOTIFY_CA`/`_INSECURE` for a self-hosted webhook host. Server-only (no
 `scripts/*` pipeline wiring — `onSynth` is optional, so CLI synthesize/reanalyze just omit it).
 
-**Customizable prompts.** The six prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
-consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`,
-which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC>_PROMPT` inline, or `…_PROMPT_FILE` —
+**Customizable prompts.** The prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
+consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`/`getNarrativePrompt()`/`getHuntSuggestPrompt()`/`getPlaybookHuntPrompt()`/`getGapHypothesisPrompt()`,
+which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC|NARRATIVE|HUNTS|PBHUNTS|GAPHYP>_PROMPT` inline, or `…_PROMPT_FILE` —
 re-read each call, so file edits apply with no restart; bad file → warn + fall back to default).
 When you change a prompt's wording, keep the example JSON shape it dictates in sync with `responseSchema.ts`.
+When you add a prompt, also add its `<NAME>` token to `resolvePrompt`'s union type.
