@@ -144,6 +144,7 @@ import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
 import { pushPlaybookToClickUp } from "./integrations/clickup/clickupPush.js";
 import { NotificationConfigStore } from "./analysis/notificationStore.js";
+import { seedDemoCase } from "./analysis/seedDemoCase.js";
 import {
   findingEventsFromDiff, milestoneEvent, parseChannelInput, playbookTaskEvent, redactChannel,
   type NotificationEvent,
@@ -691,6 +692,23 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       dispatchNotify(milestoneEvent(caseId, `Investigation opened: ${name}`, [`Investigator: ${investigator ?? "unknown"}`], new Date().toISOString()));
       return res.status(201).json(meta);
     } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Seed the built-in demo case ("GlobalTech Industries — BEC & Ransomware Precursor").
+  // Accepts optional { caseId?: string, force?: boolean } in the body.
+  // Returns 409 when the case already exists and force is not set; 201 on success.
+  // Available in both the dev server and the portable EXE so users don't need tsx/Node installed.
+  app.post("/cases/seed-demo", async (req: Request, res: Response) => {
+    try {
+      const caseId = typeof req.body?.caseId === "string" ? req.body.caseId : undefined;
+      const force  = req.body?.force === true;
+      const result = await seedDemoCase(store.casesRoot, { caseId, force });
+      return res.status(201).json(result);
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code === "EEXIST") return res.status(409).json({ error: e.message });
       return res.status(500).json({ error: (err as Error).message });
     }
   });

@@ -17,6 +17,8 @@ export function isValidCaseId(caseId: string): boolean {
 export class CaseStore {
   constructor(private readonly root: string) {}
 
+  get casesRoot(): string { return this.root; }
+
   caseDir(caseId: string): string {
     return join(this.root, caseId);
   }

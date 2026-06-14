@@ -893,6 +893,7 @@
     <datalist id="caseList"></datalist>
     <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
+    <button id="seedDemoBtn" data-tip="Load a pre-populated demo case (GlobalTech BEC &amp; Ransomware Precursor) to explore all dashboard features without importing real evidence">Demo case</button>
     <input id="snapshotImportFile" type="file" accept=".json,application/json" style="display:none" />
     <button id="importCaseBtn" type="button" data-tip="Import a whole case — an investigation snapshot (.json) shared by a teammate, or pull an existing DFIR-IRIS case. Opens a chooser; the DFIR-IRIS option appears only when configured.">Import case</button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
@@ -7541,6 +7542,34 @@
       }
     }
 
+    async function loadDemoCase() {
+      const btn = document.getElementById("seedDemoBtn");
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Loading…";
+      try {
+        let res = await fetch("/cases/seed-demo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+        if (res.status === 409) {
+          if (!confirm("Demo case already exists. Overwrite it?")) { btn.disabled = false; btn.textContent = orig; return; }
+          res = await fetch("/cases/seed-demo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: true }) });
+        }
+        if (!res.ok) {
+          const b = await res.json().catch(() => ({}));
+          alert("Demo case error: " + (b.error || "HTTP " + res.status));
+        } else {
+          const { caseId } = await res.json();
+          document.getElementById("caseId").value = caseId;
+          loadCaseList();
+          connect();
+        }
+      } catch (err) {
+        alert("Demo case error: " + err.message + " — is the companion running?");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    }
+
     document.querySelectorAll(".asset-type-toggle").forEach(cb => cb.onchange = () => {
       if (cb.checked) assetTypesEnabled.add(cb.value); else assetTypesEnabled.delete(cb.value);
       assetFocus = null; renderAssetGraph();
@@ -7794,6 +7823,7 @@
       el.addEventListener("blur", () => { if (!el.value.trim()) el.value = prev; });
     })();
     document.getElementById("newCaseBtn").onclick = openNewCase;
+    document.getElementById("seedDemoBtn").onclick = loadDemoCase;
     document.getElementById("ncCreate").onclick = createNewCase;
     document.getElementById("ncCancel").onclick = closeNewCase;
     document.getElementById("ncTemplate").onchange = onTemplateSelectChange;
