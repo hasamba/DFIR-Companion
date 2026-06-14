@@ -132,7 +132,7 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     const r = parseVelociraptorJson(JSON.stringify([row]));
     const e = r.events[0];
     expect(e.description).toContain("Velociraptor detection: T1567.002-Execution of Exfiltration Programs");
-    expect(e.description).toContain("A new process has been created");  // Message survives as the subject
+    expect(e.description).toContain("rclone.exe");  // the actual process surfaced, not boilerplate
     expect(e.timestamp).toContain("2026-06-03T08:28:58");                // EventTime, not undated
     expect(e.mitreTechniques).toContain("T1567.002");
     expect(e.asset).toBe("WIN11.windomain.local");
@@ -172,6 +172,31 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     const r = parseVelociraptorJson(JSON.stringify([mk(101), mk(202), mk(303)]));
     expect(r.events).toHaveLength(1);
     expect(r.events[0].count).toBe(3);
+  });
+
+  it("surfaces the LOLBIN (New Process Name + Command Line) from a rendered 4688 message", () => {
+    // DetectRaptor "Use of 32-bit LOLBINs": EID 4688 shipped as free-text Message, no EventData. The
+    // binary that ran is the New Process Name/Command Line, buried past the Creator/Target boilerplate.
+    const row = {
+      EventTime: "2026-06-03T07:56:16Z", Computer: "WIN11.windomain.local",
+      Detection: { Name: "T1567.002-Use of 32-bit LOLBINs" }, EventID: 4688,
+      Message: [
+        "A new process has been created.", "",
+        "Creator Subject:", "\tSecurity ID:\t\tS-1-5-18", "\tAccount Name:\t\tWIN11$", "",
+        "Target Subject:", "\tSecurity ID:\t\tS-1-0-0", "\tAccount Name:\t\t-", "",
+        "Process Information:",
+        "\tNew Process Name:\tC:\\Windows\\SysWOW64\\dllhost.exe!S!",
+        "\tProcess Command Line:\t\"C:\\Windows\\SysWOW64\\DllHost.exe\" /Processid:{5250E46F-BB09-D602}!S!",
+      ].join("\n"),
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.description).toContain("Use of 32-bit LOLBINs");
+    expect(e.description).toContain("dllhost.exe");                 // the LOLBIN binary, surfaced
+    expect(e.description).toContain("/Processid:");                 // its command line, surfaced
+    expect(e.description).not.toContain("Token Elevation Type");    // boilerplate not leading
+    expect(e.timestamp).toContain("2026-06-03T07:56:16");
+    expect(r.iocs.some((i) => i.type === "process" && i.value === "dllhost.exe")).toBe(true);
   });
 
   it("MFT detection: object verdict with explicit Criticality wins; nested $SI timestamp resolved", () => {

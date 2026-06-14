@@ -107,6 +107,40 @@ function rowMessage(row: Row): string {
   return isObject(ev) ? str(getCI(ev, "Message")) : "";
 }
 
+// High-signal labels in a RENDERED Windows event message (4688 process creation, Sysmon, service
+// install, etc.). When an artifact ships the event as free text — no structured EventData to map —
+// these carry the actual evidence (the LOLBIN binary + its command line), which the boilerplate
+// header ("Creator Subject… Target Subject…") buries past the description cut-off. Surfacing them
+// makes e.g. "Use of 32-bit LOLBINs" name the binary that ran, not just the rule. (#102)
+const MSG_FIELD_LABELS = [
+  "New Process Name", "Process Command Line", "CommandLine", "Command Line",
+  "Image", "Application Name", "TargetFilename", "Service File Name", "ServiceFileName", "ScriptBlockText",
+];
+// Velociraptor renders some fields with a trailing "!S!" sentinel — strip it for readability.
+function cleanFieldValue(v: string): string {
+  return v.trim().replace(/!S!\s*$/, "").trim();
+}
+function fieldFromMessage(msg: string, label: string): string {
+  const re = new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:[ \\t]*([^\\r\\n]+)`, "i");
+  const m = re.exec(msg);
+  return m ? cleanFieldValue(m[1]) : "";
+}
+function salientFromMessage(msg: string): string {
+  if (!msg || !msg.includes(":")) return "";
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const label of MSG_FIELD_LABELS) {
+    const v = fieldFromMessage(msg, label);
+    if (v && v !== "-" && !seen.has(v)) { seen.add(v); out.push(`${label}: ${v}`); }
+  }
+  return out.join(" ¦ ").slice(0, 400);
+}
+// The created/executed process named in a rendered event message (the LOLBIN), for the structured
+// processName field + IOC when the row carries no structured process column.
+function parsedNewProcess(msg: string): string {
+  return fieldFromMessage(msg, "New Process Name") || fieldFromMessage(msg, "Image");
+}
+
 // A stable djb2 hash → base36, for folding message content into an aggregation key compactly.
 function hashStr(s: string): string {
   let h = 5381;
@@ -390,8 +424,9 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   collectRowIocs(row, sink);
   scrapeEvidence(row, sink);
   const message = rowMessage(row);
+  const detail = salientFromMessage(message) || (message ? oneLine(message).slice(0, 400) : "");
   let description = `Velociraptor Sigma: ${title}`;
-  if (message) description += ` — ${oneLine(message).slice(0, 400)}`;
+  if (detail) description += ` — ${detail}`;
   if (host) description += ` @ ${host}`;
   return {
     timestamp: pickTime(row),
@@ -424,26 +459,36 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     return win;
   }
 
-  // Non-event detection (file / registry / named-pipe / history-line hit).
+  // Non-event detection (file / registry / named-pipe / history-line hit, or a flattened EVTX
+  // detection whose event sits only in the rendered Message).
   const { sha256, md5 } = collectRowIocs(row, sink);
+  const message = rowMessage(row);
+  const salient = salientFromMessage(message); // LOLBIN + command line out of a 4688-style message
   const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path", "KeyPath"]);
-  const procRaw = firstStr(row, ["Exe", "Image", "ProcessName", "ProcName", "NewProcessName"]);
+  const procRaw = firstStr(row, ["Exe", "Image", "ProcessName", "ProcName", "NewProcessName"]) || parsedNewProcess(message);
   const parentRaw = firstStr(row, ["ParentName", "ParentImage", "ParentProcessName"]);
   const processName = procRaw ? baseName(procRaw) : undefined;
   const parentName = parentRaw ? baseName(parentRaw) : undefined;
   const pipe = firstStr(row, ["PipeName"]);
   if (processName) addIoc(sink, "process", processName);
 
-  const subjectParts: string[] = [];
-  if (processName) subjectParts.push(processName);
-  if (pipe) subjectParts.push(`pipe ${pipe}`);
-  if (path && !processName) subjectParts.push(path);
-  // …else the raw evidence line. `Message` is last: a flattened detection artifact (e.g. the
-  // Velociraptor GUI's DetectRaptor.*.Evtx table, which exposes no Channel/EventData columns to
-  // overlay) carries its detail only in Message, so without this the verdict would have no subject.
-  const line = firstStr(row, ["Line", "StringHit", "HitString", "CommandLine", "Message"]);
-  if (line && subjectParts.length === 0) subjectParts.push(oneLine(line).slice(0, 160));
-  const subject = subjectParts.join(" ");
+  // Subject priority: the rendered event's high-signal fields (the actual LOLBIN/command line) win
+  // over structured process/path, which win over the raw matched line. A flattened DetectRaptor Evtx
+  // row carries its detail only in Message, so without this the verdict would show only boilerplate.
+  let subject: string;
+  if (salient) {
+    subject = salient;
+  } else {
+    const parts: string[] = [];
+    if (processName) parts.push(processName);
+    if (pipe) parts.push(`pipe ${pipe}`);
+    if (path && !processName) parts.push(path);
+    if (parts.length === 0) {
+      const line = firstStr(row, ["Line", "StringHit", "HitString", "CommandLine"]);
+      parts.push(line ? oneLine(line).slice(0, 160) : oneLine(message).slice(0, 200));
+    }
+    subject = parts.join(" ");
+  }
 
   let description = `Velociraptor detection: ${v.title}`;
   if (subject) description += ` — ${subject}`;
