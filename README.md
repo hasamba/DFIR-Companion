@@ -116,9 +116,9 @@ to the indicators that touched each — Host / Account toggles, fullscreen, drag
 For each case the AI builds and keeps up to date:
 
 - **Forensic timeline** — real incident events with their *true* timestamps read from
-  the artifacts (process create, logon, network connection, file MAC times…). Sort by
-  date (chronological, default) or severity, and filter by severity. Distinct from the
-  capture/analysis log.
+  the artifacts (process create, logon, network connection, file MAC times…). Per-column
+  ▲/▼ arrows sort by date (oldest/newest) or severity (most/least severe); severity
+  checkboxes filter. Distinct from the capture/analysis log.
 - **Findings** — granular, per-technique analytic conclusions, each with severity and
   MITRE ATT&CK mapping.
 - **IOCs**, **MITRE ATT&CK** coverage, and an **attacker-path** narrative (kill chain).

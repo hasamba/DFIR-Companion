@@ -413,9 +413,13 @@
     .sev-legend .sev-dot { width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
     .sev-legend .sev-filter { width: 11px; height: 11px; margin: 0; cursor: pointer; accent-color: currentColor; flex-shrink: 0; }
     .sev-legend .sev-item:has(.sev-filter:not(:checked)) { opacity: 0.35; text-decoration: line-through; }
-    /* "Sort by" control in the Forensic Timeline header (#104) — muted, matches #timelineCount. */
-    .tl-sort { font-size: 12px; font-weight: normal; color: var(--c-9aa4b2); letter-spacing: 0; text-transform: none; margin: 0 4px; cursor: default; display: inline-flex; align-items: center; gap: 4px; }
-    .tl-sort select { font-size: 12px; padding: 1px 4px; background: var(--c-1c2330, #1c2330); color: var(--c-cdd9e5, #cdd9e5); border: 1px solid var(--c-2f3741, #2f3741); border-radius: 4px; cursor: pointer; }
+    /* Per-column sort arrows in the Forensic Timeline header (#104): ▲ asc / ▼ desc, on the
+       Timestamp column (by date) and the Message column (by severity). The active direction lights up. */
+    .tl-sortarrows { display: inline-flex; flex-direction: column; vertical-align: middle; margin-left: 4px; line-height: 0.8; }
+    .tl-arrow { background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer; font-size: 8px; line-height: 0.8; color: var(--c-3a4050); }
+    .tl-arrow:hover { color: var(--c-9aa4b2); }
+    .tl-arrow.active { color: var(--c-6aa9ff); }
+    .tl-sevsort-label { font-size: 10px; color: var(--c-6b7280); text-transform: uppercase; letter-spacing: 0.3px; margin-left: 8px; }
     #timelineCount { font-size: 12px; font-weight: normal; color: var(--c-9aa4b2); margin: 0 6px; letter-spacing: 0; text-transform: none; }
     .finding { border-left: 3px solid var(--c-2a2f3a); padding: 6px 10px; margin-bottom: 8px; }
     .conf-badge { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-left: 4px; vertical-align: middle; }
@@ -2009,7 +2013,7 @@
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2>Narrative Timeline<button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
     <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings</h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div><div id="findings">—</div></section>
-    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><label class="tl-sort" title="Sort the forensic timeline by event time (chronological) or by severity (most severe first)" onclick="event.stopPropagation()">Sort <select id="timelineSort"><option value="date">Date</option><option value="severity">Severity</option></select></label><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
+    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkLegitBtn" title="Mark all selected events as legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div style="font-size:11px; color:var(--c-9aa4b2); margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
@@ -2443,8 +2447,15 @@
     let lastState = null;                    // last raw state from server, for re-render on scope change
     let legitMarkers = [];                    // confirmed-legitimate markers; events here are hidden from the timeline
     let lastFt = [];                          // last scoped+legit-filtered forensic timeline, for severity re-filter without re-fetching
-    // Forensic-timeline sort order (#104): "date" = server's chronological order (default) | "severity" = most severe first. Persisted across reloads.
-    let timelineSort = (() => { try { return localStorage.getItem("dfir_timeline_sort") || "date"; } catch { return "date"; } })();
+    // Forensic-timeline sort order (#104): { key: "date" | "severity", dir: "asc" | "desc" }.
+    // date asc = oldest first (default/chronological), date desc = newest first;
+    // severity desc = most-severe first, severity asc = least-severe first. Persisted "key:dir".
+    let timelineSort = (() => {
+      try {
+        const [key, dir] = (localStorage.getItem("dfir_timeline_sort") || "date:asc").split(":");
+        return { key: key === "severity" ? "severity" : "date", dir: dir === "desc" ? "desc" : "asc" };
+      } catch { return { key: "date", dir: "asc" }; }
+    })();
     let searchTerm = "";                      // active text search (lower-cased; empty = no filter)
     let filterFrom = null;                    // timeline view lower bound (ISO UTC string or null)
     let filterTo = null;                      // timeline view upper bound (ISO UTC string or null)
@@ -6775,18 +6786,39 @@
       updateIocBulkBar();
     }
 
-    // Order the (already filtered) timeline rows per the "Sort" control (#104): chronological
-    // (default — the server keeps state.forensicTimeline in event-time order) or by severity
-    // (most severe first, chronological tie-break). Pure: returns a new array for "severity",
-    // and the input untouched for "date" so the default render stays identical to before.
+    // Order the (already filtered) timeline rows per the per-column sort arrows (#104). Pure —
+    // returns a new array. Undated events always sink to the bottom (both directions). Date sort:
+    // asc = oldest first (default), desc = newest first. Severity sort: desc = most-severe first,
+    // asc = least-severe first; ties broken chronologically.
     function sortTimelineEvents(events) {
-      if (timelineSort === "severity") {
+      const { key, dir } = timelineSort;
+      const t = e => e.timestamp || "";
+      const byTime = (a, b) => {
+        const ta = t(a), tb = t(b);
+        if (!ta || !tb) return (ta ? 0 : 1) - (tb ? 0 : 1);   // undated → last, regardless of dir
+        return ta.localeCompare(tb);
+      };
+      if (key === "severity") {
         const rank = s => { const i = SEV.indexOf(s); return i === -1 ? SEV.length : i; };
-        return [...events].sort((a, b) =>
-          rank(a.severity) - rank(b.severity)
-          || String(a.timestamp || "").localeCompare(String(b.timestamp || "")));
+        const bySev = (a, b) => rank(a.severity) - rank(b.severity);   // ascending rank = most-severe first
+        return [...events].sort((a, b) => (dir === "desc" ? bySev(a, b) : -bySev(a, b)) || byTime(a, b));
       }
-      return events;   // "date": keep the server's chronological order
+      return [...events].sort((a, b) => {
+        const c = byTime(a, b);
+        return (dir === "desc" && t(a) && t(b)) ? -c : c;          // flip only dated rows so undated stay last
+      });
+    }
+
+    // The ▲ (asc) / ▼ (desc) sort buttons for one column, with the active direction highlighted.
+    function sortArrows(key) {
+      const active = timelineSort.key === key;
+      const titles = key === "date"
+        ? { asc: "Sort by date — oldest first", desc: "Sort by date — newest first" }
+        : { asc: "Sort by severity — least severe first", desc: "Sort by severity — most severe first" };
+      const btn = dir => `<button type="button" class="tl-arrow${active && timelineSort.dir === dir ? " active" : ""}"`
+        + ` data-sortkey="${key}" data-sortdir="${dir}" title="${escAttr(titles[dir])}" aria-label="${escAttr(titles[dir])}">`
+        + `${dir === "asc" ? "▲" : "▼"}</button>`;
+      return `<span class="tl-sortarrows">${btn("asc")}${btn("desc")}</span>`;
     }
 
     // Render the forensic timeline from a pre-scoped+legit-filtered list.
@@ -6825,8 +6857,8 @@
 
       const headerRow = `<div class="ev-header-row">`
         + `<div class="ev-header-ctrl"><input type="checkbox" class="ev-checkbox" id="evSelectAll" ${allSelected ? "checked" : ""} title="Select / deselect all visible events" /></div>`
-        + `<div class="ev-header-time">Timestamp (UTC)</div>`
-        + `<div style="flex:1">Message</div>`
+        + `<div class="ev-header-time">Timestamp (UTC)${sortArrows("date")}</div>`
+        + `<div style="flex:1">Message<span class="tl-sevsort-label">severity</span>${sortArrows("severity")}</div>`
         + `</div>`;
 
       const rows = visible.map(e => {
@@ -6900,17 +6932,15 @@
       if (e.target.classList.contains('sev-filter')) renderTimelineEvents(lastFt);
     });
 
-    // Re-order the timeline when the "Sort" control changes; persist the choice (#104).
-    (() => {
-      const sortSel = document.getElementById('timelineSort');
-      if (!sortSel) return;
-      sortSel.value = timelineSort;   // reflect the persisted choice on load
-      sortSel.addEventListener('change', function() {
-        timelineSort = this.value;
-        try { localStorage.setItem('dfir_timeline_sort', timelineSort); } catch {}
-        renderTimelineEvents(lastFt);
-      });
-    })();
+    // Re-order the timeline when a column sort arrow (▲/▼) is clicked; persist the choice (#104).
+    // The header is re-rendered on each render(), so delegate off the persistent #forensicTimeline.
+    document.getElementById('forensicTimeline').addEventListener('click', function(e) {
+      const arrow = e.target.closest && e.target.closest('.tl-arrow');
+      if (!arrow) return;
+      timelineSort = { key: arrow.getAttribute('data-sortkey'), dir: arrow.getAttribute('data-sortdir') };
+      try { localStorage.setItem('dfir_timeline_sort', timelineSort.key + ':' + timelineSort.dir); } catch {}
+      renderTimelineEvents(lastFt);
+    });
 
     // Re-render findings when the confidence filter changes (no server round-trip).
     document.getElementById("confFilter").addEventListener("input", function() {
