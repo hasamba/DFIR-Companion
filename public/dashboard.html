@@ -1208,6 +1208,7 @@
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
         <button class="stab" data-stab="whitelist">IOC Whitelist</button>
         <button class="stab" data-stab="nsrl">NSRL</button>
+        <button class="stab" data-stab="kev">KEV</button>
         <button class="stab" data-stab="reports">Report Templates</button>
         <button class="stab" data-stab="notifications">Notifications</button>
       </div>
@@ -1784,6 +1785,52 @@
             <span id="nsrlApplyMsg" class="manual-msg"></span>
           </div>
           <span class="sfield-hint">Scans the loaded case's IOCs + forensic events and marks known-good matches legitimate (already auto-runs on every import).</span>
+        </div>
+      </div>
+
+      <!-- CISA KEV catalog (#99) — cross-reference CVEs against known-exploited vulnerabilities -->
+      <div class="stab-pane" id="stab-kev">
+        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+          The <strong>CISA Known Exploited Vulnerabilities (KEV) catalog</strong> lists CVEs that are actively exploited in the wild.
+          When loaded, the Companion cross-references CVE IDs found in your forensic timeline and IOCs against the catalog
+          and surfaces any matches as high-probability initial access vectors in synthesis context and in report §4.5.1.
+          Global — shared across all cases. Opt-in: starts empty.
+        </div>
+        <div style="background:var(--c-211405);border:1px solid var(--c-5a4a1a);border-radius:6px;padding:6px 9px;font-size:12px;color:var(--c-ffce8a);margin-bottom:12px">
+          ⚠ KEV cross-referencing only fires when CVE IDs appear in your evidence. Load the catalog here; the Companion does the rest automatically during synthesis.
+        </div>
+
+        <div class="sfield">
+          <label>Catalog status <span id="kevCount" class="sfield-hint" style="display:inline"></span></label>
+          <div id="kevStatus" style="font-size:12px;color:#9aa4b2;padding:2px 0">Loading…</div>
+        </div>
+
+        <div class="sfield">
+          <label>Load from CISA</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
+            <button id="kevImportUrlBtn" type="button">Load from CISA feed</button>
+            <span id="kevUrlMsg" class="manual-msg"></span>
+          </div>
+          <span class="sfield-hint">Fetches the latest catalog directly from <code>cisa.gov</code> — requires server outbound internet access.</span>
+        </div>
+
+        <div class="sfield">
+          <label>Load from server file</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
+            <input id="kevFilePath" placeholder="C:\dfir\known_exploited_vulnerabilities.json" style="flex:1 1 320px;font-family:monospace" />
+            <button id="kevFileBtn" type="button">Load file</button>
+          </div>
+          <span id="kevFileMsg" class="manual-msg"></span>
+          <span class="sfield-hint">For air-gapped deployments — point to a locally-saved copy of the CISA KEV JSON.</span>
+        </div>
+
+        <div class="sfield">
+          <label>Actions</label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="kevClearBtn" type="button" style="background:#3a2020;border:1px solid #5a2a2a;color:#ff9f9f">Clear catalog</button>
+            <span id="kevClearMsg" class="manual-msg"></span>
+          </div>
+          <span class="sfield-hint">Removes the catalog from disk. The catalog is global — clearing it affects all cases.</span>
         </div>
       </div>
 
@@ -8609,6 +8656,11 @@
     document.getElementById("nsrlDbConnectBtn").addEventListener("click", nsrlDbConnect);
     document.getElementById("nsrlDbDisconnectBtn").addEventListener("click", nsrlDbDisconnect);
     document.getElementById("nsrlDbPath").addEventListener("keydown", e => { if (e.key === "Enter") nsrlDbConnect(); });
+    // CISA KEV catalog (#99)
+    document.getElementById("kevImportUrlBtn").addEventListener("click", kevImportUrl);
+    document.getElementById("kevFileBtn").addEventListener("click", kevImportFile);
+    document.getElementById("kevFilePath").addEventListener("keydown", e => { if (e.key === "Enter") kevImportFile(); });
+    document.getElementById("kevClearBtn").addEventListener("click", kevClear);
     document.getElementById("stab-whitelist").addEventListener("click", e => {
       const q = e.target.closest(".wl-quick");
       if (q) { document.getElementById("wlMatch").value = q.dataset.m; document.getElementById("wlPattern").value = q.dataset.p; document.getElementById("wlType").value = q.dataset.t || ""; return; }
@@ -8644,6 +8696,7 @@
         document.querySelectorAll(".stab-pane").forEach(p => p.classList.toggle("active", p.id === "stab-" + tab));
         if (tab === "whitelist") loadWhitelist();
         if (tab === "nsrl") loadNsrl();
+        if (tab === "kev") loadKev();
         if (tab === "reports") loadReportTemplates();
         if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
       });
@@ -8959,6 +9012,50 @@
           if (j.legitimate) renderLegitimate(j.legitimate);
         })
         .catch(e => { msg.textContent = "failed: " + e.message + " — restart the server if the endpoint 404s."; });
+    }
+
+    // --- CISA KEV catalog (#99) — global CVE cross-reference, Settings → KEV ---------------------
+    function loadKev() {
+      const status = document.getElementById("kevStatus");
+      const cnt = document.getElementById("kevCount");
+      fetch("/kev").then(r => r.json()).then(j => {
+        if (j.count > 0) {
+          const ver = j.catalogVersion ? ` · version ${j.catalogVersion}` : "";
+          const rel = j.dateReleased ? ` · released ${j.dateReleased.slice(0, 10)}` : "";
+          cnt.textContent = `(${j.count.toLocaleString()} CVEs)`;
+          status.textContent = `Catalog loaded${ver}${rel}.`;
+        } else {
+          cnt.textContent = "";
+          status.textContent = "No catalog loaded yet — click \"Load from CISA feed\" or point to a local file.";
+        }
+      }).catch(() => { if (status) status.textContent = "Could not fetch KEV status — restart the server if this 404s."; });
+    }
+    function kevImportUrl() {
+      const msg = document.getElementById("kevUrlMsg");
+      msg.textContent = "fetching from CISA…";
+      fetch("/kev/import-url", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(j => { msg.textContent = `loaded ${j.total.toLocaleString()} CVEs`; loadKev(); })
+        .catch(e => { msg.textContent = "failed: " + e.message + " — check server outbound connectivity or use a local file."; });
+    }
+    function kevImportFile() {
+      const path = document.getElementById("kevFilePath").value.trim();
+      const msg = document.getElementById("kevFileMsg");
+      if (!path) { msg.textContent = "enter a file path first"; return; }
+      msg.textContent = "loading…";
+      fetch("/kev/import-file", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path }) })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(j => { msg.textContent = `loaded ${j.total.toLocaleString()} CVEs`; document.getElementById("kevFilePath").value = ""; loadKev(); })
+        .catch(e => { msg.textContent = "failed: " + e.message; });
+    }
+    function kevClear() {
+      if (!confirm("Clear the CISA KEV catalog? This is global (affects all cases).")) return;
+      const msg = document.getElementById("kevClearMsg");
+      msg.textContent = "clearing…";
+      fetch("/kev", { method: "DELETE" })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(() => { msg.textContent = "cleared"; loadKev(); })
+        .catch(e => { msg.textContent = "failed: " + e.message; });
     }
 
     // --- Notifications (issue #58) — Slack/Teams/SMTP channels, Settings → Notifications ----------

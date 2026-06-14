@@ -12,6 +12,7 @@ import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
+import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
 import { playbookStats, type PlaybookStatus, type PlaybookTask } from "../analysis/playbook.js";
 import {
@@ -364,7 +365,49 @@ function customerExposure(exposure: CustomerExposureSummary | undefined, lines: 
   }
 }
 
-function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary, prebuiltGraph?: AssetGraph): void {
+// Scan the forensic timeline events and Shodan exposure CVEs against the KEV catalog.
+// Returns CVE ids found in the case data that CISA confirms are actively exploited.
+function gatherCaseCveIds(state: InvestigationState, exposure?: CustomerExposureSummary): string[] {
+  const ids = new Set<string>();
+  for (const e of state.forensicTimeline) extractCveIds(e.description).forEach((id) => ids.add(id));
+  for (const ioc of state.iocs) extractCveIds(ioc.value).forEach((id) => ids.add(id));
+  // Shodan exposure: CVEs come through as "vuln:CVE-xxxx-xxxx" in exposedData.
+  if (exposure) {
+    for (const r of exposure.results) {
+      for (const d of r.exposedData ?? []) extractCveIds(d).forEach((id) => ids.add(id));
+    }
+  }
+  return [...ids];
+}
+
+function kevCorrelation(state: InvestigationState, exposure: CustomerExposureSummary | undefined, catalog: KevCatalog, lines: string[]): void {
+  lines.push("### 4.5.1 CISA KEV correlation", "");
+  if (!catalog.size) {
+    lines.push("_KEV catalog not loaded — go to Settings → KEV to load the CISA Known Exploited Vulnerabilities feed._", "");
+    return;
+  }
+  const cveIds = gatherCaseCveIds(state, exposure);
+  const matches = matchKevEntries(cveIds, catalog);
+  if (matches.length === 0) {
+    lines.push("_No CVEs found in this case match the CISA Known Exploited Vulnerabilities catalog._", "");
+    return;
+  }
+  lines.push(
+    `**${matches.length} CVE(s) in this case match the CISA KEV catalog — actively exploited in the wild.**`,
+    "",
+    "| CVE | Vendor / Product | Vulnerability | Date added | Ransomware | Remediation |",
+    "| --- | --- | --- | --- | --- | --- |",
+  );
+  for (const e of matches) {
+    const ransomware = e.knownRansomwareCampaignUse === "Known" ? "**Yes**" : "No";
+    lines.push(
+      `| ${cellMd(e.cveID)} | ${cellMd(`${e.vendorProject} ${e.product}`)} | ${cellMd(e.vulnerabilityName)} | ${cellMd(e.dateAdded)} | ${ransomware} | ${cellMd(e.requiredAction)} |`,
+    );
+  }
+  lines.push("");
+}
+
+function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary, prebuiltGraph?: AssetGraph, kevCatalog?: KevCatalog): void {
   lines.push("## 4 Investigation", "");
 
   lines.push("### 4.1 Attack path", "");
@@ -419,6 +462,7 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
   }
 
   customerExposure(exposure, lines);
+  if (kevCatalog) kevCorrelation(state, exposure, kevCatalog, lines);
 
   lines.push("### 4.6 MITRE ATT&CK", "");
   if (state.mitreTechniques.length === 0) {
@@ -615,6 +659,7 @@ export function renderMarkdownReport(
   notebookEntries?: NotebookEntry[],
   playbookTasks?: PlaybookTask[],
   template: ReportTemplate = defaultReportTemplate(),
+  kevCatalog?: KevCatalog,
 ): string {
   const lines: string[] = [];
   const ctx = buildBrandingContext(state, meta);
@@ -649,7 +694,7 @@ export function renderMarkdownReport(
       attackPhases(state, lines);
       timelineCoverage(state, lines);
     },
-    investigation: () => investigation(state, lines, exposure, assetGraph),
+    investigation: () => investigation(state, lines, exposure, assetGraph, kevCatalog),
     conclusions: () => conclusions(state, meta, lines),
     playbook: () => {
       if (playbookTasks && playbookTasks.length > 0) playbookSection(playbookTasks, lines);
