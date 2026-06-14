@@ -99,6 +99,16 @@ describe("velociraptor.extractRows", () => {
     expect(velociraptorAdapter.extractRows("u", [{ x: 1 }])).toEqual([{ x: 1 }]);
   });
 
+  it("skips the notebook-selector list (UI chrome, not artifact results)", () => {
+    // Velociraptor renders its notebook list through GetTable too — it must not shadow the cell table.
+    const fromGetTable = {
+      columns: ["NotebookId", "Name", "Collaborators"],
+      rows: [{ json: '["N.ABC","hayabusa",null]' }, { json: '["N.DEF","Notebook",null]' }],
+    };
+    expect(velociraptorAdapter.extractRows("/api/v1/GetTable", fromGetTable)).toBeNull();
+    expect(velociraptorAdapter.extractRows("u", [{ NotebookId: "N.ABC", Name: "x" }])).toBeNull();
+  });
+
   it("returns null on an unrecognized shape", () => {
     expect(velociraptorAdapter.extractRows("u", { foo: "bar" })).toBeNull();
   });

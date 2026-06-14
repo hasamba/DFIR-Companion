@@ -23,15 +23,31 @@ export const velociraptorAdapter: Adapter = {
   ],
 
   extractRows(_url: string, body: unknown): unknown[] | null {
+    let rows: unknown[] | null = null;
     const zipped = zipColumnsRows(body);
-    // Un-flatten the GUI's dotted column names (Detection.Name → Detection: { Name }) so the
-    // companion's importer reads the detection verdict + nested time/host keys.
-    if (zipped && zipped.length) return zipped.map((r) => (isObject(r) ? unflattenDotted(r) : r));
-    // Some endpoints return an array directly, or { items: [...] }.
-    if (Array.isArray(body)) return body.length ? body : null;
-    if (isObject(body)) return asArray(getPath(body, "items"));
-    return null;
+    if (zipped && zipped.length) {
+      // Un-flatten the GUI's dotted column names (Detection.Name → Detection: { Name }) so the
+      // companion's importer reads the detection verdict + nested time/host keys.
+      rows = zipped.map((r) => (isObject(r) ? unflattenDotted(r) : r));
+    } else if (Array.isArray(body)) {
+      rows = body.length ? body : null; // some endpoints return an array directly
+    } else if (isObject(body)) {
+      rows = asArray(getPath(body, "items"));
+    }
+    if (!rows) return null;
+    // The GUI renders its own internal tables (notebook selector, hunt list) through the SAME
+    // GetTable API, so they get intercepted too. Skip the notebook-selector list — it's metadata,
+    // not artifact results, and would otherwise shadow the table the analyst is actually reading.
+    if (isNotebookList(rows)) return null;
+    return rows;
   },
 
   tableSelector: "table",
 };
+
+// The notebook-selector list — { NotebookId, Name, Collaborators, … } per row — is Velociraptor's
+// own UI chrome, never artifact evidence.
+function isNotebookList(rows: unknown[]): boolean {
+  const first = rows.find((r) => isObject(r)) as Record<string, unknown> | undefined;
+  return !!first && ("NotebookId" in first || "Collaborators" in first);
+}
