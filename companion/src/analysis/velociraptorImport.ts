@@ -227,11 +227,13 @@ function vrTime(v: unknown): string {
 // nested forensic containers (MFT $SI/$FN, file-info, hit-context) and registry/app keys so the
 // detection artifacts that bury their time one level down still get a real timestamp.
 const TIME_KEYS = [
-  "System.TimeCreated.SystemTime", "System.TimeCreated", "EventTime", "Mtime", "Btime",
-  "Ctime", "Created", "CreationTime", "LastWriteTime", "KeyLastWriteTimestamp", "TimeGenerated",
+  "System.TimeCreated.SystemTime", "System.TimeCreated", "EventTime", "EventTimestamp", "Mtime", "Btime",
+  "Ctime", "Created", "CreationTime", "LastWriteTime", "KeyLastWriteTimestamp", "KeyMTime", "TimeGenerated",
   "Timestamp", "timestamp", "time", "StartTime",
   "SITimestamps.LastModified0x10", "SITimestamps.Created0x10", "FNTimestamps.Created0x30",
-  "FileInfo.Mtime", "FileInfo.Ctime", "FileInfo.Btime", "HitContext.Mtime",
+  // Nested file-stat blocks: FileInfo.* (DetectRaptor PSReadline), Stat.* (the Generic PSReadline /
+  // QuickWins shape), so history-line + Amcache/LolDrivers (KeyMTime) rows land dated, not at epoch 0.
+  "FileInfo.Mtime", "FileInfo.Ctime", "FileInfo.Btime", "Stat.Mtime", "Stat.Ctime", "Stat.Btime", "HitContext.Mtime",
   "_ts",
 ];
 function pickTime(row: Row): string {
@@ -370,7 +372,14 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
   const rule = getCI(row, "Rule");
   const ruleName = typeof rule === "string" && rule.trim() ? rule.trim()
     : str(getPath(row, "Rule.id")) || str(getPath(row, "Rule.Name")) || firstStr(row, ["RuleName", "Namespace"]) || "match";
-  const { sha256, md5 } = collectRowIocs(row, sink);
+  // A YARA hit's only OBSERVED indicator is the matched file (+ its hash / owning process). The rule's
+  // Meta (reference/source_url/author/sample hashes), Strings, and the binary HitContext are detection
+  // LOGIC — flattening the whole row (collectRowIocs) scrapes the rule's GitHub links and match-context
+  // bytes as bogus IOCs (a pagefile scan produced 700+ junk hashes / 360+ junk URLs). Extract
+  // selectively: structured file hash only. (#102)
+  const { sha256, md5 } = vrHashes(row);
+  if (sha256) addIoc(sink, "hash", sha256);
+  else if (md5) addIoc(sink, "hash", md5);
 
   const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path"]);
   const procName = firstStr(row, ["Exe", "ProcessName", "ImageName"]);

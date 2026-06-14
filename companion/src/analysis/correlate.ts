@@ -67,6 +67,18 @@ function worse(a: Severity, b: Severity): Severity {
   return SEV_RANK[a] <= SEV_RANK[b] ? a : b;
 }
 
+// Path+time correlation (step 2) exists for CROSS-tool corroboration — the same file reported by two
+// tools. It must NOT collapse many distinct rows from ONE tool that merely share a container path
+// (e.g. every PSReadline command shares the history-file OSPath; every registry hit shares a hive).
+// So a path merge requires the two events to add corroboration: one carries a source the other lacks.
+// Unknown-source events keep the old behavior (back-compat). Hash/exact-dup merges are unaffected.
+function corroborates(a: ForensicEvent, b: ForensicEvent): boolean {
+  const sa = (a.sources ?? []).filter((s) => s && s !== "unknown source");
+  const sb = (b.sources ?? []).filter((s) => s && s !== "unknown source");
+  if (!sa.length || !sb.length) return true;
+  return sa.some((s) => !sb.includes(s)) || sb.some((s) => !sa.includes(s));
+}
+
 // A legacy "[corroborated by N sources: …]" suffix an earlier build appended to the
 // description. Stripped so it (a) never pollutes the text and (b) doesn't change the
 // dedup key — appending to the description used to break exact-duplicate re-matching.
@@ -173,6 +185,7 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
     for (let k = 1; k < dated.length; k++) {
       const a = dated[k - 1], b = dated[k];
       if (!a.structured && !b.structured) continue; // both free-text → too weak to merge
+      if (!corroborates(events[a.i], events[b.i])) continue; // same tool sharing a container path → keep distinct
       // Undated events on the same path correlate too (no time to disprove); dated ones
       // must be within the window.
       if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= windowMs) dsu.union(a.i, b.i);

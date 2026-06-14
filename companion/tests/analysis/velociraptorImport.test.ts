@@ -246,6 +246,33 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
   });
 });
 
+describe("parseVelociraptorJson — IOC hygiene & extra time keys (#102)", () => {
+  it("a YARA hit extracts only the matched file — NOT the rule's Meta references / HitContext bytes", () => {
+    const row = {
+      _Source: "DetectRaptor.Generic.Detection.YaraFile",
+      OSPath: "C:\\pagefile.sys", Mtime: "2026-06-12T11:12:41Z",
+      Rule: "SUSP_Download_Temp_Rundll",
+      Tags: ["POWERSHELL", "DOWNLOAD"],
+      Meta: { author: "X", reference: "https://github.com/SIFalcon/Detection", source_url: "https://github.com/x/y.yar", hash: "a".repeat(64) },
+      HitContext: "deadbeef" + "b".repeat(64) + " http://rule-example.test/sample",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.iocs.filter((i) => i.type === "file")).toHaveLength(1);
+    expect(r.iocs.some((i) => i.type === "file" && i.value.includes("pagefile.sys"))).toBe(true);
+    expect(r.iocs.some((i) => i.type === "hash")).toBe(false);   // no Meta/HitContext hashes
+    expect(r.iocs.some((i) => i.type === "url")).toBe(false);    // no Meta reference URLs
+  });
+
+  it("dates rows via EventTimestamp, KeyMTime, and nested Stat.Mtime", () => {
+    const rdp = { _Source: "Custom.RDP", EventTimestamp: "2025-03-14T22:30:42Z", EventID: 4648, Message: "explicit cred logon" };
+    const amcache = { _Source: "DetectRaptor.Windows.Detection.Amcache", Detection: { Name: "Defence Evasion" }, KeyMTime: "2026-06-06T20:42:51Z", EntryName: "x.exe" };
+    const psr = { _Source: "Windows.System.Powershell.PSReadline", Line: "whoami /all", Stat: { Mtime: "2026-06-03T08:40:48Z" } };
+    expect(parseVelociraptorJson(JSON.stringify([rdp])).events[0].timestamp).toContain("2025-03-14T22:30:42");
+    expect(parseVelociraptorJson(JSON.stringify([amcache])).events[0].timestamp).toContain("2026-06-06T20:42:51");
+    expect(parseVelociraptorJson(JSON.stringify([psr])).events[0].timestamp).toContain("2026-06-03T08:40:48");
+  });
+});
+
 describe("parseVelociraptorJson — eventlog & generic rows", () => {
   it("maps a parsed-evtx row per-EID, normalizing the {Value} EventID", () => {
     const r = parseVelociraptorJson(JSON.stringify([eventlogRow()]));
