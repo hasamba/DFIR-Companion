@@ -39,9 +39,14 @@ function eventHashes(e: ForensicEvent): string[] {
   return [...out];
 }
 
-function eventPath(e: ForensicEvent): string | undefined {
-  const p = e.path ?? PATH_RE.exec(e.description)?.[0];
-  return p ? p.trim().toLowerCase() : undefined;
+// A normalized file path for correlation, plus whether it came from a STRUCTURED field (`e.path`)
+// or was scraped from the description. Free-text paths are weak — a process executable (e.g.
+// powershell.exe) or a vendor URL recurs across unrelated detections — so they correlate ONLY
+// against a structured path, never another free-text one (see the structured gate in step 2). (#102)
+function eventPath(e: ForensicEvent): { path: string; structured: boolean } | undefined {
+  if (e.path && e.path.trim()) return { path: e.path.trim().toLowerCase(), structured: true };
+  const m = PATH_RE.exec(e.description)?.[0];
+  return m ? { path: m.trim().toLowerCase(), structured: false } : undefined;
 }
 
 function epoch(ts: string): number | undefined {
@@ -152,18 +157,22 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
     }
   });
 
-  // 2) Same normalized path with timestamps within the window → union.
-  const byPath = new Map<string, number[]>();
+  // 2) Same normalized path with timestamps within the window → union — but only when at least one
+  //    side carries the path as a STRUCTURED field. Two free-text path mentions are too weak (a
+  //    shared process exe or vendor URL would falsely merge distinct same-tool detections, #102);
+  //    a structured path matching a text path still corroborates (AI-extracted event ↔ import).
+  const byPath = new Map<string, { i: number; structured: boolean }[]>();
   events.forEach((e, i) => {
     const p = eventPath(e);
-    if (p) (byPath.get(p) ?? byPath.set(p, []).get(p)!).push(i);
+    if (p) (byPath.get(p.path) ?? byPath.set(p.path, []).get(p.path)!).push({ i, structured: p.structured });
   });
-  for (const idxs of byPath.values()) {
-    if (idxs.length < 2) continue;
-    const dated = idxs.map((i) => ({ i, t: epoch(events[i].timestamp) }))
+  for (const entries of byPath.values()) {
+    if (entries.length < 2) continue;
+    const dated = entries.map((x) => ({ i: x.i, structured: x.structured, t: epoch(events[x.i].timestamp) }))
       .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
     for (let k = 1; k < dated.length; k++) {
       const a = dated[k - 1], b = dated[k];
+      if (!a.structured && !b.structured) continue; // both free-text → too weak to merge
       // Undated events on the same path correlate too (no time to disprove); dated ones
       // must be within the window.
       if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= windowMs) dsu.union(a.i, b.i);

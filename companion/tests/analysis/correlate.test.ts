@@ -57,10 +57,19 @@ describe("correlateEvents", () => {
     expect(correlateEvents([a, b], { windowSeconds: 2 })).toHaveLength(2);
   });
 
-  it("still extracts a genuine Unix path from the description for correlation", () => {
-    const a = ev({ id: "a", description: "wrote payload to /usr/local/bin/x", path: undefined, timestamp: "2026-06-03T08:00:00Z", sources: ["THOR"] });
-    const b = ev({ id: "b", description: "exec /usr/local/bin/x", path: undefined, timestamp: "2026-06-03T08:00:01Z", sources: ["Velociraptor"] });
-    expect(correlateEvents([a, b], { windowSeconds: 2 })).toHaveLength(1);
+  it("correlates a description path against a STRUCTURED path (AI event ↔ import)", () => {
+    const ai = ev({ id: "a", description: "wrote payload to /usr/local/bin/x", path: undefined, timestamp: "2026-06-03T08:00:00Z", sources: ["screenshot"] });
+    const imp = ev({ id: "b", description: "THOR finding", path: "/usr/local/bin/x", timestamp: "2026-06-03T08:00:01Z", sources: ["THOR"] });
+    expect(correlateEvents([ai, imp], { windowSeconds: 2 })).toHaveLength(1);
+  });
+
+  it("does NOT merge two FREE-TEXT path mentions (a shared process exe is too weak) (#102)", () => {
+    // Distinct Sysmon Proc-Access detections seconds apart that merely share SrcProc powershell.exe
+    // in their text must stay separate — neither carries a structured path.
+    const exe = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+    const a = ev({ id: "a", description: `Proc Access — SrcProc: ${exe} TgtProc: ${exe} Access: 5136`, path: undefined, timestamp: "2026-06-03T08:41:40.537Z", sources: ["Velociraptor"] });
+    const b = ev({ id: "b", description: `Proc Access — SrcProc: ${exe} TgtProc: ${exe} Access: 2097151`, path: undefined, timestamp: "2026-06-03T08:41:40.549Z", sources: ["Velociraptor"] });
+    expect(correlateEvents([a, b], { windowSeconds: 2 })).toHaveLength(2);
   });
 
   it("does NOT merge same path when timestamps are outside the window", () => {
