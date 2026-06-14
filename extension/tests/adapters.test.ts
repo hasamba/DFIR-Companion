@@ -148,6 +148,13 @@ describe("velociraptorSourceLabel", () => {
   it("returns empty when nothing identifies the source", () => {
     expect(velociraptorSourceLabel({ domInputs: ["Search clients", "10"], pageUrl: "https://h/#/collected/C.x/F.y/results" })).toBe("");
   });
+
+  it("is wired onto the adapter (adapter.sourceLabel is used by the content script)", () => {
+    expect(typeof velociraptorAdapter.sourceLabel).toBe("function");
+    expect(velociraptorAdapter.sourceLabel!({
+      apiUrl: "", pageUrl: "https://h/app/index.html?org_id=root#/notebooks/N.ABC", domInputs: [], rows: [],
+    })).toBe("notebook N.ABC");
+  });
 });
 
 describe("elastic.extractRows", () => {

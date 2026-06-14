@@ -43,6 +43,8 @@ export const velociraptorAdapter: Adapter = {
   },
 
   tableSelector: "table",
+
+  sourceLabel: velociraptorSourceLabel,
 };
 
 // A Velociraptor artifact name: ≥3 dot-separated identifier segments (Windows.Hayabusa.Rules,
