@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-06-15
+
 ### Fixed
 - **Extension push button on remote / modern Kibana** — the Elastic adapter now reads the **async-search strategy** envelope (`/internal/search/ese` → hits under `response.hits.hits`, the ES `_async_search` body), which recent Kibana Discover uses; the hook intercepted the response but `extractRows` didn't recognise the shape, so the button stayed gray / "No results". Also handles the other shapes `/internal/bsearch` emits — single JSON, streamed NDJSON, and **bfetch compression** (remote/Cloud, each line `base64(deflate(JSON))`, decompressed in-browser via `DecompressionStream`) — and re-injects the floating button after React re-renders the page body (`MutationObserver`) so it survives a refresh on SPA consoles.
 - **Pushed Elastic rows from `_source`-disabled indices** — when an index has `_source` off (common for high-volume timeline data), Kibana returns docvalue `fields` (each value an array) instead of `_source`; the adapter now flattens those into scalar rows, so the import sees real fields (`@timestamp`, `desc`, …) instead of a raw hit. The generic SIEM mapper now reads `desc` as the description and summarizes **salient** fields (detections, rule hits, command lines) instead of dumping Elasticsearch metadata (`_index`/`_version`/`_ignored`) — fixing "undated" events with no meaningful description.
@@ -324,7 +326,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.18.0...v0.19.0
