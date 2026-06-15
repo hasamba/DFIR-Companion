@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Extension push button on modern Kibana** — the MAIN-world hook now parses streamed NDJSON response bodies (Kibana's batched `/internal/bsearch` sends one `{result:{rawResponse:…}}` object per line, so the old single-`JSON.parse` produced zero rows and the button stayed gray / "No results"); rows now accumulate across every NDJSON object. Also re-injects the floating push button after React re-renders the page body (a `MutationObserver`), so it survives a page refresh on SPA consoles.
+
 ### Added
 - **MemProcFS timeline_all.csv importer** — deterministic parser for the full-system kernel timeline (Time,Type,Action,PID,Value32,Value64,Text,Pad); ShTask CRE/DEL → Medium/T1053.005|T1070, Net TCP → Low/T1071, WEB DOWNLOAD → Low/T1105, PROC → Info; NTFS CRE with exec extensions → file IOCs; 254k REG + THREAD rows dropped; auto-detected by the unified Import button.
 - **MemProcFS findevil importer** — deterministic parser for the `findevil` finding-report table; maps finding types to severity + ATT&CK (YR_HACKTOOL → Critical/T1588.002, PEB_MASQ → High/T1036.005, PE_PATCHED → High/T1055, THREAD SYSTEM_IMPERSONATION → High/T1134, etc.); groups bulk PRIVATE_RWX/PRIVATE_RX pages by process; harvests driver/module/patched-DLL paths as file IOCs; auto-detected by the unified Import button.

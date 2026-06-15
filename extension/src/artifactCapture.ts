@@ -17,6 +17,7 @@
 import { adapterForUrl } from "./adapters/registry.js";
 import type { Adapter, CapturedArtifact } from "./adapters/types.js";
 import { matrixToRows } from "./adapters/domTable.js";
+import { parseResponseBodies } from "./adapters/extractUtils.js";
 import { DFIR_CAPTURE_MSG, DFIR_CONFIG_MSG, DFIR_READY_MSG } from "./adapters/bridge.js";
 import type { EnsureHookMessage, PushArtifactMessage, PushArtifactResult } from "./types.js";
 
@@ -25,6 +26,9 @@ const BTN_ID = "dfir-companion-push-btn";
 let activeAdapter: Adapter | null = null;
 let latest: CapturedArtifact | null = null;
 let busy = false;
+// Cached case id — kept in sync so the MutationObserver below can re-inject the button
+// synchronously without an async storage read.
+let currentCaseId = "";
 
 export async function initArtifactCapture(): Promise<void> {
   activeAdapter = adapterForUrl(location.href);
@@ -38,14 +42,23 @@ export async function initArtifactCapture(): Promise<void> {
   // Only show the push button when a case is selected — so the button stays hidden when the
   // analyst is not actively investigating and hasn't connected the extension to a case.
   const stored = await chrome.storage.local.get("settings");
-  const initialCaseId = (stored.settings as { caseId?: string } | undefined)?.caseId ?? "";
-  if (initialCaseId) ensureButton();
+  currentCaseId = (stored.settings as { caseId?: string } | undefined)?.caseId ?? "";
+  if (currentCaseId) ensureButton();
+
+  // Kibana (and other DFIR consoles) are React SPAs — their initial render can replace the
+  // document body's children, removing the injected button. Watch for direct-child removal and
+  // re-inject whenever the button disappears while a case is selected.
+  const bodyTarget = document.body ?? document.documentElement;
+  const bodyObserver = new MutationObserver(() => {
+    if (currentCaseId && !document.getElementById(BTN_ID)) ensureButton();
+  });
+  bodyObserver.observe(bodyTarget, { childList: true });
 
   // Dynamically show/hide when the analyst connects or disconnects from a case via the popup.
   chrome.storage.onChanged.addListener((changes) => {
     if (!changes.settings) return;
-    const newCaseId = (changes.settings.newValue as { caseId?: string } | undefined)?.caseId ?? "";
-    if (newCaseId) {
+    currentCaseId = (changes.settings.newValue as { caseId?: string } | undefined)?.caseId ?? "";
+    if (currentCaseId) {
       ensureButton();
     } else {
       document.getElementById(BTN_ID)?.remove();
@@ -78,12 +91,19 @@ function onPageMessage(ev: MessageEvent): void {
   if (d.source === DFIR_READY_MSG) { sendConfig(); return; }
 
   if (d.source === DFIR_CAPTURE_MSG && typeof d.body === "string") {
-    let parsed: unknown;
-    try { parsed = JSON.parse(d.body); } catch { return; } // non-JSON body — ignore
-    let rows: unknown[] | null = null;
-    try { rows = activeAdapter.extractRows(String(d.url ?? ""), parsed); } catch { rows = null; }
-    if (rows && rows.length) {
-      const label = labelRows(rows, String(d.url ?? ""));
+    // The body may be a single JSON document OR streamed NDJSON (Kibana's batched /internal/bsearch
+    // sends one result object per line) — parse all of them and accumulate rows across each.
+    const bodies = parseResponseBodies(d.body);
+    if (!bodies.length) return; // no JSON at all — ignore
+    const url = String(d.url ?? "");
+    const rows: unknown[] = [];
+    for (const parsed of bodies) {
+      let part: unknown[] | null = null;
+      try { part = activeAdapter.extractRows(url, parsed); } catch { part = null; }
+      if (part && part.length) rows.push(...part);
+    }
+    if (rows.length) {
+      const label = labelRows(rows, url);
       latest = { adapterId: activeAdapter.id, rows, sourceUrl: location.href, via: "intercept", label };
       renderButton();
     }

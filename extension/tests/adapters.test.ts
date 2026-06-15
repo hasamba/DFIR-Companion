@@ -4,6 +4,7 @@ import { splunkAdapter } from "../src/adapters/splunk.js";
 import { velociraptorAdapter, velociraptorSourceLabel } from "../src/adapters/velociraptor.js";
 import { elasticAdapter } from "../src/adapters/elastic.js";
 import { crowdstrikeAdapter } from "../src/adapters/crowdstrike.js";
+import { parseResponseBodies } from "../src/adapters/extractUtils.js";
 
 describe("adapterForUrl", () => {
   it("matches Splunk by host, app path, and :8000", () => {
@@ -188,6 +189,39 @@ describe("elastic.extractRows", () => {
   it("returns null when there are no hits", () => {
     expect(elasticAdapter.extractRows("u", { hits: { hits: [] } })).toBeNull();
     expect(elasticAdapter.extractRows("u", { took: 5 })).toBeNull();
+  });
+});
+
+describe("parseResponseBodies", () => {
+  it("parses a single JSON document", () => {
+    expect(parseResponseBodies('{"a":1}')).toEqual([{ a: 1 }]);
+    expect(parseResponseBodies('[1,2,3]')).toEqual([[1, 2, 3]]);
+  });
+
+  it("parses streamed NDJSON (one object per line — Kibana bsearch)", () => {
+    const ndjson = '{"id":0,"result":{"rawResponse":{"hits":{"hits":[{"_id":"1","_source":{"a":1}}]}}}}\n'
+      + '{"id":1,"result":{"rawResponse":{"hits":{"hits":[{"_id":"2","_source":{"a":2}}]}}}}';
+    const bodies = parseResponseBodies(ndjson);
+    expect(bodies).toHaveLength(2);
+    expect((bodies[0] as { id: number }).id).toBe(0);
+    expect((bodies[1] as { id: number }).id).toBe(1);
+  });
+
+  it("skips blank and non-JSON lines, returns [] for empty input", () => {
+    expect(parseResponseBodies("")).toEqual([]);
+    expect(parseResponseBodies("   \n  ")).toEqual([]);
+    expect(parseResponseBodies('not json\n{"a":1}\n\nalso not json')).toEqual([{ a: 1 }]);
+  });
+
+  it("end-to-end: NDJSON bsearch bodies accumulate rows through elastic.extractRows", () => {
+    // Mirrors what the content script does: parse the captured body, then run extractRows per object.
+    const ndjson = '{"id":0,"result":{"rawResponse":{"hits":{"hits":[{"_id":"1","_index":"logs","_source":{"msg":"a"}}]}}}}\n'
+      + '{"id":1,"result":{"rawResponse":{"hits":{"hits":[{"_id":"2","_index":"logs","_source":{"msg":"b"}}]}}}}';
+    const rows = parseResponseBodies(ndjson).flatMap((b) => elasticAdapter.extractRows("/internal/bsearch", b) ?? []);
+    expect(rows).toEqual([
+      { _id: "1", _index: "logs", msg: "a" },
+      { _id: "2", _index: "logs", msg: "b" },
+    ]);
   });
 });
 

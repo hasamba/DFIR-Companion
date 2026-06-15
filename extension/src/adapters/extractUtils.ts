@@ -21,6 +21,27 @@ export function asArray(v: unknown): unknown[] | null {
 }
 
 /**
+ * Parse a captured response body string into one or more JSON values. Most tool APIs return a
+ * single JSON document, but some stream NDJSON — one JSON object per line. Kibana's batched
+ * `/internal/bsearch` is the important case: it streams `{"id":N,"result":{rawResponse:{…}}}`
+ * per line, so a single `JSON.parse` of the whole body throws and the rows are lost. We try the
+ * single-document fast path first, then fall back to parsing each non-empty line, returning every
+ * value that parsed so the caller can run extractRows across all of them.
+ */
+export function parseResponseBodies(text: string): unknown[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  try { return [JSON.parse(trimmed)]; } catch { /* not a single document — try NDJSON */ }
+  const out: unknown[] = [];
+  for (const line of trimmed.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s) continue;
+    try { out.push(JSON.parse(s)); } catch { /* skip a non-JSON line */ }
+  }
+  return out;
+}
+
+/**
  * Velociraptor / table-style envelope: { columns: string[], rows: [...] }. Each row's cells arrive
  * as a raw array, a { cell: [...] } wrapper, OR — the Velociraptor GUI's GetTable format —
  * { json: "<JSON-encoded array of cell values>" }. Zip the columns onto the cells to produce flat
