@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-06-15
+
 ### Added
 - **GraphRAG for "Ask the case"** — the Ask prompt is now grounded with the deterministic evidence-chain graph (process spawns, file lineage, lateral movement, network flows) serialized as causal edges with backing event ids, so multi-hop questions ("trace the path from the phishing email to the Domain Controller") are answered by following real graph relationships instead of the flat timeline; edge count capped by `DFIR_ASK_GRAPH_MAX_EDGES` (default 120, highest-severity first), pure + no extra AI call (closes #98).
 - **Memory-forensics "Next-Step" agent** — when a case has Volatility 3 / Rekall output imported, one AI call reads the memory evidence (process tree, `malfind`, connections, command lines), spots anomalies (e.g. `svchost.exe` without a `services.exe` parent, injection, suspicious connections), and proposes the exact next Volatility command to run (`vol -f <image> windows.malfind --pid 1234`); a **✨ Suggest next steps** button in a *Memory Next Steps* panel shown only when memory evidence exists, ephemeral, `POST /cases/:id/memory/next-steps` (closes #101).
@@ -312,6 +314,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
 [Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.20.0...HEAD
+[0.21.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.17.0...v0.18.0
