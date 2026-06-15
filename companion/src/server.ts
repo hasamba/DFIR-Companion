@@ -271,6 +271,10 @@ export interface AppOptions {
   // Called for every ingested capture (duplicate or not). Lets the server broadcast a cross-case
   // signal so a dashboard can warn when captures are arriving for a DIFFERENT case than it's viewing.
   onCapture?: (caseId: string) => void;
+  // Called for every accepted artifact import / push. Same purpose as onCapture but for imported
+  // evidence (the extension's "Push to DFIR-Companion") — broadcast to ALL dashboards so one viewing
+  // a different case warns that artifacts are arriving for another case (parity with screenshots).
+  onImport?: (caseId: string) => void;
   // When true, run the synthesis pass automatically (debounced) after capture
   // windows are analyzed, so the live dashboard shows findings/attacker path.
   autoSynthesize?: boolean;
@@ -1660,6 +1664,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
+    options.onImport?.(caseId); // cross-case signal (parity with /import + captures) for push/monitor ingest
     const { storedName, importedAt, seq } = await persistEvidence(caseId, originalName, text);
 
     // CSV/log are themselves an LLM call → respect the per-case AI toggle exactly like /import: with
@@ -3568,6 +3573,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if ((kind === "csv" || kind === "log") && !hasAiProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
     }
+
+    // Cross-case signal: tell every dashboard an artifact import landed for THIS case, so one viewing
+    // a different case warns "artifacts are arriving for another case" — parity with screenshots. The
+    // extension's "Push to DFIR-Companion" hits this route, so this covers the extension-drift trap.
+    options.onImport?.(caseId);
 
     // Optional minimum-severity floor (the old per-format "which minimum severity?" prompt,
     // restored for the single Import button). Gate-aware: imports that don't grade severity
@@ -6100,6 +6110,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // Broadcast to ALL dashboards so one viewing a different case can warn that captures are
     // arriving here (the capture extension is pointed at a case the analyst isn't looking at).
     onCapture: (caseId) => hub.broadcastAll({ type: "capture_ingest", caseId }),
+    onImport: (caseId) => hub.broadcastAll({ type: "import_ingest", caseId }),
     onState: (s) => hub.broadcast(s),
     enrichmentProviders: buildEnrichmentProviders(),
     enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,

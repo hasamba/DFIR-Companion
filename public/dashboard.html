@@ -7196,11 +7196,11 @@
     let foreignCaptureCase = null;     // the other case captures are arriving for
     let foreignCaptureTimer = null;    // auto-clears the banner if foreign captures stop
     let mismatchDismissed = "";        // a foreign case the user dismissed — stay quiet until it changes
-    function showCaseMismatch(otherCase, myCase) {
+    function showCaseMismatch(otherCase, myCase, what) {
       if (!otherCase || otherCase === myCase || otherCase === mismatchDismissed) return;
       foreignCaptureCase = otherCase;
       document.getElementById("caseMismatchText").innerHTML =
-        `⚠ Screenshots are arriving for case <strong>${esc(otherCase)}</strong>, but you're viewing <strong>${esc(myCase)}</strong> — your capture extension is pointed at a different case.`;
+        `⚠ ${esc(what || "Evidence")} are arriving for case <strong>${esc(otherCase)}</strong>, but you're viewing <strong>${esc(myCase)}</strong> — your capture extension is pointed at a different case.`;
       document.getElementById("caseMismatchSwitch").textContent = `Switch to ${otherCase}`;
       document.getElementById("caseMismatchBanner").hidden = false;
       if (foreignCaptureTimer) clearTimeout(foreignCaptureTimer);
@@ -7292,7 +7292,7 @@
       // Check-on-connect: if screenshots recently arrived for a DIFFERENT case, warn right away
       // (the live WS event only fires on the next capture, which may be a while off).
       fetch("/captures/recent").then(r => r.ok ? r.json() : null).then(d => {
-        if (d && d.caseId && d.caseId !== caseId && d.ageMs < 120000) showCaseMismatch(d.caseId, caseId);
+        if (d && d.caseId && d.caseId !== caseId && d.ageMs < 120000) showCaseMismatch(d.caseId, caseId, "Screenshots");
       }).catch(() => {});
 
       ws = new WebSocket(`ws://${location.host}/ws?caseId=${encodeURIComponent(caseId)}`);
@@ -7305,7 +7305,13 @@
         else if (msg.type === "capture_ingest") {
           // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
           // otherwise the extension is feeding a different case than we're viewing — warn.
-          if (msg.caseId && msg.caseId !== caseId) showCaseMismatch(msg.caseId, caseId);
+          if (msg.caseId && msg.caseId !== caseId) showCaseMismatch(msg.caseId, caseId, "Screenshots");
+          else hideCaseMismatch();
+        }
+        else if (msg.type === "import_ingest") {
+          // Same trap for pushed artifacts (extension "Push to DFIR-Companion" → /import): warn when
+          // they're landing in a case other than the one we're viewing.
+          if (msg.caseId && msg.caseId !== caseId) showCaseMismatch(msg.caseId, caseId, "Artifacts");
           else hideCaseMismatch();
         }
         else if (msg.type === "comments_changed") loadComments(caseId);
