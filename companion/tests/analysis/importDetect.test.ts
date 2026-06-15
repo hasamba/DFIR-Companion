@@ -38,6 +38,14 @@ describe("detectImportKind — JSON formats", () => {
   it("velociraptor: artifact map", () => {
     expect(detectImportKind("vr.json", j({ "Windows.Detection.Yara.Glob": [{ Rule: "x" }] }))).toBe("velociraptor");
   });
+  it("velociraptor: Elastic-indexed push (artifact_* index / flattened Detection.* keys)", () => {
+    expect(detectImportKind("elastic.json", j([{ _index: "artifact_detectraptor_windows_detection_mft", "@timestamp": "t", "Detection.StringHit": "PsExec.exe", "Artifact.keyword": "X" }]))).toBe("velociraptor");
+    // No artifact_ index, but flattened Detection.* keys still mark it Velociraptor.
+    expect(detectImportKind("e.json", j([{ _index: "logs-foo", "Detection.StringHit": "x", "Artifact.keyword": "Y" }]))).toBe("velociraptor");
+  });
+  it("NOT velociraptor: a non-artifact Elastic index (MemProcFS mp_timeline) stays SIEM", () => {
+    expect(detectImportKind("mp.json", j([{ _index: "mp_timeline", "@timestamp": "t", desc: "x", action: "MOD", type: "REG" }]))).toBe("siem");
+  });
   it("hayabusa: json-timeline", () => {
     expect(detectImportKind("hb.json", j([{ Timestamp: "t", RuleTitle: "x", Level: "high" }]))).toBe("hayabusa");
   });
@@ -98,6 +106,27 @@ describe("detectImportKind — JSON formats", () => {
     const txt = "Volatility 3 Framework 2.28.0\n\nPID\tProcess\tProtection\tTag\n7352\tSearchHost.exe\tPAGE_EXECUTE_READWRITE\tVadS\t";
     expect(detectImportKind("malfind.txt", txt)).toBe("memory");
   });
+  it("memory: MemProcFS findevil report (space-separated finding table)", () => {
+    const findevil = [
+      "   #    PID Process        Type            Address          Description",
+      "-----------------------------------------------------------------------",
+      "0000   8684 Velociraptor.e HIGH_ENTROPY    000000c001c00000 Entropy:[8.00]",
+      "0004   6416 svchost.exe    YR_HACKTOOL     0000022a7a0b804e Windows_Hacktool_SharpDump_7c17d8b1 [0]",
+    ].join("\n");
+    expect(detectImportKind("findevil.txt", findevil)).toBe("memory");
+  });
+  it("memory: MemProcFS timeline_all.csv (Time,Type,Action,PID,Value32,Value64,Text,Pad)", () => {
+    const csv = 'Time,Type,Action,PID,Value32,Value64,Text,Pad\n"2026-06-03 08:57:15",NTFS,MOD,0,0x0,0x233820000,\\1\\Windows\\foo.etl,"  "';
+    expect(detectImportKind("timeline_all.csv", csv)).toBe("memory");
+  });
+  it("memory: MemProcFS findevil.csv (PID,ProcessName,Type,Address,Description)", () => {
+    const csv = 'PID,ProcessName,Type,Address,Description\n6416,svchost.exe,YR_HACKTOOL,0x22a7a0b804e,"Windows_Hacktool_SharpDump_7c17d8b1 [0]"';
+    expect(detectImportKind("findevil.csv", csv)).toBe("memory");
+  });
+  it("memory: MemProcFS yara.csv (MatchIndex,...,MemoryType,MemoryTag,...,ProcessName,...)", () => {
+    const csv = 'MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0\n0,"","","Elastic Security","","Virtual Memory (VAD)","HEAP-00",22a7a000000,"",6416,svchost.exe,\\path,cmd,SYSTEM,"2026-06-03 08:31:44",1,abc,22a7a0b804e';
+    expect(detectImportKind("yara.csv", csv)).toBe("memory");
+  });
 });
 
 describe("detectImportKind — CSV formats", () => {
@@ -121,6 +150,14 @@ describe("detectImportKind — CSV formats", () => {
   });
   it("cybertriage: timeline CSV header", () => {
     expect(detectImportKind("tl.csv", "event_timestamp,epoch_timestamp,message,timestamp_description,item_type,threat_level\n2026-01-28T01:52:03,1769593923,/x,File Modified,File,None")).toBe("cybertriage");
+  });
+  it("velociraptor: Elastic Discover CSV export of DetectRaptor data", () => {
+    const header = '"@timestamp",Artifact,"Artifact.keyword","Detection.Name","Detection.StringHit",_index,_Source';
+    const row = '"May 7, 2026 @ 16:31:04.000",DetectRaptor.Windows.Detection.Amcache,DetectRaptor.Windows.Detection.Amcache,"Execution - PsExec",PsExec.exe,artifact_detectraptor_windows_detection_amcache,"-"';
+    expect(detectImportKind("Untitled Discover session.csv", `${header}\n${row}`)).toBe("velociraptor");
+  });
+  it("csv: a generic Elastic CSV without Velociraptor columns stays the AI CSV importer", () => {
+    expect(detectImportKind("e.csv", '"@timestamp",message,_index\nt,hi,logs-app')).toBe("csv");
   });
   it("csv: a generic comma table → AI CSV importer", () => {
     expect(detectImportKind("data.csv", "colA,colB,colC\n1,2,3\n4,5,6")).toBe("csv");

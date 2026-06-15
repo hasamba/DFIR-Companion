@@ -353,7 +353,26 @@ export function normalizeTime(s: string): string {
   if (!t) return "";
   const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d+)?Z?$/.exec(t);
   if (m && !/[+-]\d{2}:?\d{2}$|Z$/.test(t)) return `${m[1]}T${m[2]}${m[3] ?? ""}Z`;
+  const kib = parseKibanaDate(t);
+  if (kib) return kib;
   return toUtcIso(t);
+}
+
+// Kibana's Discover / CSV-export display format, e.g. "May 7, 2026 @ 16:31:04.000". Carries no
+// timezone, so — consistent with this codebase's naive-time convention — we read it as UTC. (Kibana
+// renders in the browser TZ unless `dateFormat:tz` is UTC; without offset info that's unrecoverable.)
+const KIBANA_DATE = /^([A-Z][a-z]{2}) (\d{1,2}), (\d{4}) @ (\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/;
+const KIBANA_MONTHS: Record<string, string> = {
+  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+};
+function parseKibanaDate(t: string): string {
+  const m = KIBANA_DATE.exec(t);
+  if (!m) return "";
+  const mon = KIBANA_MONTHS[m[1]];
+  if (!mon) return "";
+  const ms = (m[7] ?? "").padEnd(3, "0");
+  return `${m[3]}-${mon}-${m[2].padStart(2, "0")}T${m[4]}:${m[5]}:${m[6]}.${ms || "000"}Z`;
 }
 
 const TIME_KEYS = [
@@ -607,7 +626,7 @@ function pickGenericSeverity(rec: Row): Severity {
 }
 
 const GENERIC_MSG_KEYS = [
-  "message", "Message", "description", "Description", "event.action", "action",
+  "message", "Message", "description", "Description", "desc", "Desc", "event.action", "action",
   "rule.name", "ruleName", "signature", "signature_name", "name", "alert_name",
   "title", "event.original", "_raw", "raw", "summary",
 ];
@@ -649,6 +668,24 @@ export function genericIocs(pairs: [string, string][], iocSink: Map<string, Siem
   }
 }
 
+// Document/transport metadata that carries no investigative signal — excluded from the fallback
+// field dump so the description leads with real content (e.g. Elasticsearch hit metadata).
+const META_KEYS = new Set([
+  "_id", "_index", "_type", "_score", "_version", "_ignored", "_routing", "_seq_no",
+  "_primary_term", "sort", "clientid", "flowid", "highlight",
+]);
+// Field names worth surfacing first when there's no standard message field (detections, rule hits,
+// command lines, paths, …). Matched against flattened (possibly dotted) key names.
+const SALIENT_RE = /(name|message|detection|rule|signature|title|desc|stringhit|scriptblock|command|cmdline|action|alert|artifact|reference|keyword|path|process|original|user|account)/i;
+
+// Build a one-line summary from a record's fields when it has no recognized message field: drop
+// metadata noise, prefer salient fields, and fall back to the first handful of the rest.
+function summarizePairs(pairs: [string, string][]): string {
+  const meaningful = pairs.filter(([k]) => !k.startsWith("_") && !META_KEYS.has(k.toLowerCase()));
+  const salient = meaningful.filter(([k]) => SALIENT_RE.test(k));
+  return (salient.length ? salient : meaningful).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
+}
+
 export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent {
   const vendor = detectVendor(rec);
   const msg = firstStr(rec, GENERIC_MSG_KEYS);
@@ -656,7 +693,7 @@ export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>
   flatten(rec, pairs);
   genericIocs(pairs, iocSink);
 
-  const base = msg ? oneLine(msg) : pairs.slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
+  const base = msg ? oneLine(msg) : summarizePairs(pairs);
   let description = `${vendor ?? "SIEM event"}: ${base}`.slice(0, 600);
   if (host && !description.toLowerCase().includes(host.toLowerCase())) description = `${description} @ ${host}`.slice(0, 600);
 

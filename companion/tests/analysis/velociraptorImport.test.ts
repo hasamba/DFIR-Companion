@@ -74,6 +74,76 @@ describe("parseVelociraptorJson — detection rows", () => {
   });
 });
 
+// Velociraptor data indexed into Elasticsearch, then pushed from Kibana by the extension: rows
+// arrive reshaped (dotted keys, `.keyword` multi-fields, the artifact in the `artifact_<name>` index,
+// ES doc metadata). normalizeElasticRow should reverse that so the native mappers fire.
+describe("parseVelociraptorJson — Elastic-indexed Velociraptor (Kibana push)", () => {
+  it("MFT keyword hit → keyword-escalated High detection, dated, [artifact]-tagged, Velociraptor source", () => {
+    const row = {
+      _id: "x1", _index: "artifact_detectraptor_windows_detection_mft", _version: 1,
+      "@timestamp": "2026-05-07T16:03:56.000Z",
+      "Detection.StringHit": "PsExec.exe",
+      "Detection.KeywordRegex": "psexec\\.exe$|psexec64\\.exe$|remcom\\.exe$",
+      "Artifact.keyword": "DetectRaptor.Windows.Detection.MFT",
+      "SITimestamps.LastRecordChange0x10": "2026-01-28T09:47:39.493Z",
+      FlowId: "F.D7U8JESNJITC2",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.detections).toBe(1);
+    const e = r.events[0];
+    expect(e.severity).toBe("High"); // "psexec" keyword
+    expect(e.description).toContain("PsExec.exe");
+    expect(e.description).toContain("[DetectRaptor.Windows.Detection.MFT]");
+    expect(e.description).not.toContain("_index");
+    expect(e.timestamp).toContain("2026-01-28"); // the artifact's own MFT time, not @timestamp
+    expect(e.sources).toEqual(["Velociraptor"]);
+  });
+
+  it("EVTX scriptblock row → dated generic event with the Message, Velociraptor source", () => {
+    const row = {
+      _id: "y1", _index: "artifact_detectraptor_windows_detection_evtx", _version: 1,
+      "@timestamp": "2026-05-07T16:31:04.000Z",
+      "Detection.Regex": "psexec",
+      "EventData.ScriptBlockText": "Creating Scriptblock text (1 of 1): # Copyright 2008, Microsoft Corporation.",
+      Message: "Creating Scriptblock text (1 of 1): # Copyright 2008, Microsoft Corporation.",
+      "Artifact.keyword": "DetectRaptor.Windows.Detection.Evtx",
+    };
+    const e = parseVelociraptorJson(JSON.stringify([row])).events[0];
+    expect(e.description).toContain("Creating Scriptblock");
+    expect(e.description).toContain("DetectRaptor.Windows.Detection.Evtx");
+    expect(e.timestamp).toContain("2026-05-07"); // @timestamp fallback
+    expect(e.sources).toEqual(["Velociraptor"]);
+  });
+
+  it("parses an Elastic Discover CSV export (dotted/.keyword headers, Kibana dates, '-' nulls)", () => {
+    const csv = [
+      '"@timestamp",Artifact,"Artifact.keyword","Detection.Criticality","Detection.Name","Detection.StringHit",EntryPath,"EntryPath.keyword",_index,_Source',
+      '"May 7, 2026 @ 16:31:04.000",DetectRaptor.Windows.Detection.Amcache,DetectRaptor.Windows.Detection.Amcache,Medium,"Execution - PsExec",PsExec.exe,"c:\\tools\\psexec.exe","c:\\tools\\psexec.exe",artifact_detectraptor_windows_detection_amcache,"-"',
+    ].join("\n");
+    const r = parseVelociraptorJson(csv);
+    expect(r.format).toBe("csv");
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e.severity).toBe("Medium"); // honors Detection.Criticality over the psexec keyword
+    expect(e.description).toContain("Execution - PsExec");
+    expect(e.description).toContain("[DetectRaptor.Windows.Detection.Amcache]");
+    expect(e.description).not.toContain("-1"); // "-" cells dropped, not rendered
+    expect(e.timestamp).toContain("2026-05-07T16:31:04"); // Kibana "@" date → ISO
+    expect(e.sources).toEqual(["Velociraptor"]);
+  });
+
+  it("synthesizes the artifact source from the index name when no Artifact field is present", () => {
+    const row = {
+      _index: "artifact_custom_windows_detection_amcache", "@timestamp": "2026-05-07T16:31:04.000Z",
+      "Detection.StringHit": "mimikatz.exe", EntryPath: "c:\\tools\\mimikatz.exe",
+    };
+    const e = parseVelociraptorJson(JSON.stringify([row])).events[0];
+    expect(e.severity).toBe("High"); // mimikatz keyword
+    expect(e.description).toContain("custom_windows_detection_amcache"); // index-derived source
+    expect(e.sources).toEqual(["Velociraptor"]);
+  });
+});
+
 // DetectRaptor-style "*.Detection.*" artifacts carry the verdict in a `Detection`/`RuleName`
 // field rather than a Sigma/YARA `Rule`. These rows have no `_Source`.
 describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
