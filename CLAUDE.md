@@ -129,7 +129,10 @@ unfolding, RFC 2047 encoded-words, multipart walk, base64/quoted-printable bodie
 BEST-EFFORT: the import pipeline is text-only, so the binary OLE container is scraped for its embedded RFC 822
 transport-headers stream + URLs (export `.eml` for full fidelity); reuses `siemImport`'s `addIoc`/`cleanIp`),
 and **memory forensics** (`importMemory` → `memoryImport.ts` — **Volatility 3** JSON renderer (an array of row
-objects, the `pstree` tree nested under `__children`; also JSONL + a combined `{ "<plugin>": [rows] }` map) and
+objects, the `pstree` tree nested under `__children`; also JSONL + a combined `{ "<plugin>": [rows] }` map + the
+**default TEXT/grid renderer** `vol <plugin>` with no `-r json` — banner + TAB-separated header + rows, parsed by
+`parseVolatilityText`/`looksLikeVolatilityText` into the SAME header-keyed rows as the JSON path so the classifier
++ mappers are reused; malfind/pstree hexdump+disasm continuation lines are skipped) and
 **Rekall** JSON (`[directive, payload]` statement list — best-effort, its `_EPROCESS` cells are object-laden). Each
 plugin table is identified by its **columns** (not a re-implementation of the tool) and mapped per category:
 pslist/psscan/pstree → process-tree events (parent→child links, `CreateTime`), netscan/netstat → connection events
