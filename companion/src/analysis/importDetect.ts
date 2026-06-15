@@ -87,6 +87,11 @@ function isChainsaw(s: Row): boolean {
 }
 function isVelociraptor(s: Row, root: unknown): boolean {
   if (!!getCI(s, "_Source") || !!getCI(s, "Artifact") || !!getCI(s, "_Artifact")) return true;
+  // Velociraptor data indexed into Elasticsearch (pushed from Kibana): the upload artifact names the
+  // index `artifact_<name>`, and nested VQL columns are flattened to dotted keys with `.keyword`
+  // multi-fields (Artifact.keyword, Detection.StringHit, EventData.ScriptBlockText, …).
+  if (/^artifact[_-]/i.test(str(getCI(s, "_index")))) return true;
+  if (Object.keys(s).some((k) => k === "Artifact" || /^(?:Artifact|Detection|_Event)\./.test(k))) return true;
   const rule = getCI(s, "Rule");
   if (typeof rule === "string" && (!!getCI(s, "Strings") || !!getCI(s, "Meta") || !!getCI(s, "Namespace"))) return true;
   if (isObject(getCI(s, "System")) && !!getCI(s, "EventData")) return true; // VR parsed-evtx (no Event wrapper)

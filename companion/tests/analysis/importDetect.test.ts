@@ -38,6 +38,14 @@ describe("detectImportKind — JSON formats", () => {
   it("velociraptor: artifact map", () => {
     expect(detectImportKind("vr.json", j({ "Windows.Detection.Yara.Glob": [{ Rule: "x" }] }))).toBe("velociraptor");
   });
+  it("velociraptor: Elastic-indexed push (artifact_* index / flattened Detection.* keys)", () => {
+    expect(detectImportKind("elastic.json", j([{ _index: "artifact_detectraptor_windows_detection_mft", "@timestamp": "t", "Detection.StringHit": "PsExec.exe", "Artifact.keyword": "X" }]))).toBe("velociraptor");
+    // No artifact_ index, but flattened Detection.* keys still mark it Velociraptor.
+    expect(detectImportKind("e.json", j([{ _index: "logs-foo", "Detection.StringHit": "x", "Artifact.keyword": "Y" }]))).toBe("velociraptor");
+  });
+  it("NOT velociraptor: a non-artifact Elastic index (MemProcFS mp_timeline) stays SIEM", () => {
+    expect(detectImportKind("mp.json", j([{ _index: "mp_timeline", "@timestamp": "t", desc: "x", action: "MOD", type: "REG" }]))).toBe("siem");
+  });
   it("hayabusa: json-timeline", () => {
     expect(detectImportKind("hb.json", j([{ Timestamp: "t", RuleTitle: "x", Level: "high" }]))).toBe("hayabusa");
   });
