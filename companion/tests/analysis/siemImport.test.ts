@@ -211,10 +211,45 @@ describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
     expect(vals).toContain("ip:203.0.113.9");
   });
 
+  it("parses Kibana display-format timestamps (\"May 7, 2026 @ 16:31:04.000\") to UTC ISO", () => {
+    const rec = { "@timestamp": "May 7, 2026 @ 16:31:04.000", host: "h", message: "x" };
+    const e = parseSiemExport(JSON.stringify([rec])).events[0];
+    expect(e.timestamp).toBe("2026-05-07T16:31:04.000Z");
+  });
+
   it("maps a numeric risk score to a severity band", () => {
     const rec = { timestamp: "2026-01-01T00:00:00Z", host: "h", risk_score: 95, name: "Beacon" };
     const r = parseSiemExport(JSON.stringify([rec]));
     expect(r.events[0].severity).toBe("Critical");
+  });
+
+  it("uses `desc` as the description and `@timestamp` for time (Elastic mp_timeline push)", () => {
+    // The flat shape the extension's Elastic adapter produces after unwrapping docvalue `fields`.
+    const rec = {
+      _id: "M_cWzJ4", _index: "mp_timeline", _version: 1, _ignored: "desc.keyword",
+      "@timestamp": "2026-06-03T08:42:12.000Z",
+      desc: "HKU\\S-1-5-21\\Software\\Trigona\\Wallpaper", action: "MOD", type: "REG",
+    };
+    const e = parseSiemExport(JSON.stringify([rec])).events[0];
+    expect(e.timestamp).toBe("2026-06-03T08:42:12.000Z");
+    expect(e.description).toContain("Trigona");
+    expect(e.description).not.toContain("_index");
+    expect(e.description).not.toContain("_ignored");
+  });
+
+  it("summarizes salient fields (not ES metadata) when there's no message field (DetectRaptor MFT)", () => {
+    const rec = {
+      _id: "x1", _index: "artifact_detectraptor_windows_detection_mft", _version: 1,
+      "@timestamp": "2026-01-28T09:47:39.493Z",
+      "Detection.StringHit": "PsExec.exe",
+      "Detection.KeywordRegex": "psexec\\.exe$|psexec64\\.exe$|remcom\\.exe$",
+      "Artifact.keyword": "DetectRaptor.Windows.Detection.MFT", "FlowId": "F.D7U8JESNJITC2",
+    };
+    const e = parseSiemExport(JSON.stringify([rec])).events[0];
+    expect(e.timestamp).toBe("2026-01-28T09:47:39.493Z");
+    expect(e.description).toContain("PsExec.exe");
+    expect(e.description).not.toContain("_id=");
+    expect(e.description).not.toContain("_version");
   });
 });
 

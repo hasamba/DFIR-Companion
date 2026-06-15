@@ -22,6 +22,7 @@
 // [rows], … }. All events are tagged "Velociraptor" for cross-source correlation.
 
 import type { Severity } from "./stateTypes.js";
+import { parseCsv } from "./csvImport.js";
 import {
   extractRecords,
   mapWindows,
@@ -46,6 +47,62 @@ import {
 } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
+
+// ───────────────────────── Elastic-indexed Velociraptor normalization ─────────────────────────
+//
+// When Velociraptor uploads to Elasticsearch and the analyst pushes the Kibana search back, the rows
+// arrive RESHAPED by ES, not in native VQL form: nested columns are flattened to dotted keys
+// (`Detection.StringHit`), text fields gain `.keyword`/`.text` multi-fields, the artifact name lives
+// in the `artifact_<name>` index, and ES doc metadata (`_id`/`_index`/`_version`) rides along. This
+// reverses that so the classifier/mappers below see the native nested shape. It is GATED (only runs
+// when a row has dotted keys or an `artifact_` index), so native Velociraptor JSON is untouched.
+
+// Expand dotted keys into nested objects: { "Detection.StringHit": x } → { Detection: { StringHit: x } }.
+// Collision-safe: a flat key is kept as-is when a needed branch already holds a leaf (or vice-versa).
+function unflattenDotted(row: Row): Row {
+  const out: Row = {};
+  for (const [key, val] of Object.entries(row)) {
+    if (!key.includes(".")) {
+      if (!(key in out) || !isObject(out[key])) out[key] = val; // don't clobber an existing nested branch
+      continue;
+    }
+    const parts = key.split(".");
+    let cur: Row = out;
+    let ok = true;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const next = cur[parts[i]];
+      if (next === undefined) { const o: Row = {}; cur[parts[i]] = o; cur = o; }
+      else if (isObject(next)) { cur = next as Row; }
+      else { ok = false; break; } // collision — a leaf sits where a branch is needed
+    }
+    const leaf = parts[parts.length - 1];
+    if (ok && !(leaf in cur && isObject(cur[leaf]))) cur[leaf] = val;
+    else out[key] = val; // keep the flat key on any collision
+  }
+  return out;
+}
+
+function normalizeElasticRow(row: Row): Row {
+  const idx = str(getCI(row, "_index"));
+  const hasDotted = Object.keys(row).some((k) => k.includes("."));
+  if (!hasDotted && !/^artifact[_-]/i.test(idx)) return row; // native Velociraptor row — leave it alone
+
+  // 1) Collapse Elasticsearch multi-field suffixes: "Artifact.keyword" → "Artifact" (unless the bare
+  //    field is already present).
+  const collapsed: Row = {};
+  for (const [k, v] of Object.entries(row)) {
+    const bare = k.replace(/\.(keyword|text|raw)$/i, "");
+    if (bare !== k) { if (!(bare in collapsed) && !(bare in row)) collapsed[bare] = v; }
+    else collapsed[k] = v;
+  }
+  // 2) Un-flatten the remaining dotted keys to nested objects.
+  const nested = unflattenDotted(collapsed);
+  // 3) Synthesize the artifact source from the ES index name when the row carries no artifact field.
+  if (!getCI(nested, "_Source") && !getCI(nested, "Artifact") && /^artifact[_-]/i.test(idx)) {
+    nested._Source = idx.replace(/^artifact[_-]/i, "");
+  }
+  return nested;
+}
 
 export interface VelociraptorImportOptions {
   aggregate?: boolean;
@@ -180,6 +237,10 @@ function rowVerdict(row: Row): Verdict | null {
   else if (isObject(d)) {
     title = str(getCI(d, "Name") ?? getCI(d, "Title") ?? getCI(d, "Rule") ?? getCI(d, "ID")).trim();
     critWord = str(getCI(d, "Criticality") ?? getCI(d, "Severity") ?? getCI(d, "Level")).trim().toLowerCase();
+    // DetectRaptor "keyword scan" detections (e.g. .Detection.MFT) carry the matched string in
+    // StringHit/HitString rather than a rule Name — use it as the verdict subject so the row is
+    // treated as a detection (severity escalates on a malware/tool keyword) instead of generic noise.
+    if (!title) title = str(getCI(d, "StringHit") ?? getCI(d, "HitString") ?? getCI(d, "Hit")).trim();
   }
   if (!title) title = firstStr(row, ["RuleName", "RuleID"]).trim();
   if (!title) return null;
@@ -230,10 +291,11 @@ const TIME_KEYS = [
   "System.TimeCreated.SystemTime", "System.TimeCreated", "EventTime", "EventTimestamp", "Mtime", "Btime",
   "Ctime", "Created", "CreationTime", "LastWriteTime", "KeyLastWriteTimestamp", "KeyMTime", "TimeGenerated",
   "Timestamp", "timestamp", "time", "StartTime",
-  "SITimestamps.LastModified0x10", "SITimestamps.Created0x10", "FNTimestamps.Created0x30",
+  "SITimestamps.LastModified0x10", "SITimestamps.LastRecordChange0x10", "SITimestamps.Created0x10", "FNTimestamps.Created0x30",
   // Nested file-stat blocks: FileInfo.* (DetectRaptor PSReadline), Stat.* (the Generic PSReadline /
   // QuickWins shape), so history-line + Amcache/LolDrivers (KeyMTime) rows land dated, not at epoch 0.
   "FileInfo.Mtime", "FileInfo.Ctime", "FileInfo.Btime", "Stat.Mtime", "Stat.Ctime", "Stat.Btime", "HitContext.Mtime",
+  "@timestamp", // Elasticsearch-indexed rows (Kibana push) carry the event time here
   "_ts",
 ];
 function pickTime(row: Row): string {
@@ -595,9 +657,33 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
 
 // Returns the flat row list. Handles a Velociraptor multi-artifact map { "Artifact": [rows] }
 // (tagging each row's _Source), else delegates to the shared extractor (array/jsonl/wrapped).
+// Parse a CSV export (Elastic Discover "Download CSV") into flat row objects keyed by header,
+// dropping Kibana's "-" empty-cell placeholder. Returns null when it doesn't look tabular.
+function csvToRows(text: string): { rows: Row[]; format: string } | null {
+  const { headers, rows } = parseCsv(text);
+  if (headers.length < 2 || rows.length === 0) return null;
+  const out: Row[] = rows.map((cells) => {
+    const o: Row = {};
+    headers.forEach((h, i) => {
+      const v = cells[i];
+      if (v != null && v !== "" && v !== "-") o[h] = v;
+    });
+    return o;
+  });
+  return { rows: out, format: "csv" };
+}
+
 function extractRows(text: string): { rows: Row[]; format: string } {
   const trimmed = text.trim();
   if (!trimmed) return { rows: [], format: "empty" };
+
+  // CSV export from Elastic Discover (Velociraptor data indexed into Elastic) — not JSON/NDJSON.
+  // Each row becomes a flat object keyed by header; "-" (Kibana's empty-cell placeholder) is dropped.
+  // normalizeElasticRow (in the per-row loop) then un-flattens the dotted/.keyword columns.
+  if (trimmed[0] !== "{" && trimmed[0] !== "[") {
+    const csv = csvToRows(trimmed);
+    if (csv) return csv;
+  }
 
   let root: unknown = null;
   try { root = JSON.parse(trimmed); } catch { /* NDJSON path below */ }
@@ -639,7 +725,8 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
 
   const fallbackArtifact = (opts.artifact ?? "").trim();
 
-  for (const row of rows) {
+  for (const rawRow of rows) {
+    const row = normalizeElasticRow(rawRow); // reshape an ES-indexed push back to native form (gated)
     const artifact = artifactName(row) || fallbackArtifact;
     const host = pickHost(row);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);

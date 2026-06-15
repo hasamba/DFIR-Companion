@@ -4,6 +4,8 @@ import { splunkAdapter } from "../src/adapters/splunk.js";
 import { velociraptorAdapter, velociraptorSourceLabel } from "../src/adapters/velociraptor.js";
 import { elasticAdapter } from "../src/adapters/elastic.js";
 import { crowdstrikeAdapter } from "../src/adapters/crowdstrike.js";
+import { parseResponseBodies, decodeCapturedBodies } from "../src/adapters/extractUtils.js";
+import { deflateSync, gzipSync } from "node:zlib";
 
 describe("adapterForUrl", () => {
   it("matches Splunk by host, app path, and :8000", () => {
@@ -185,9 +187,133 @@ describe("elastic.extractRows", () => {
     expect(elasticAdapter.extractRows("/internal/bsearch", body)).toEqual([{ _id: "9", _index: undefined, a: 1 }]);
   });
 
+  it("unwraps the async-search strategy envelope (/internal/search/ese → response.hits.hits)", () => {
+    // The exact shape Kibana's ese strategy returns: the ES _async_search body under `response`.
+    const body = {
+      id: "FmxTeDA…==", is_partial: false, is_running: false,
+      start_time_in_millis: 1781543631529, completion_time_in_millis: 1781543631603,
+      response: {
+        took: 74, timed_out: false, _shards: { total: 27, successful: 27, skipped: 0, failed: 0 },
+        hits: { total: { value: 39 }, hits: [{ _id: "d1", _index: "velociraptor", _source: { "Detection.Name": "Execution - PsExec" } }] },
+      },
+    };
+    expect(elasticAdapter.extractRows("/internal/search/ese", body)).toEqual([
+      { _id: "d1", _index: "velociraptor", "Detection.Name": "Execution - PsExec" },
+    ]);
+  });
+
+  it("flattens docvalue `fields` when _source is disabled (each value a single-element array)", () => {
+    // mp_timeline-style hit: index has _source off, so Kibana returns `fields` arrays, not _source.
+    const body = {
+      response: {
+        hits: {
+          hits: [{
+            _id: "M_cWzJ4", _index: "mp_timeline",
+            fields: {
+              date: ["2026-06-03T08:42:12.000Z"],
+              desc: ["HKU\\S-1-5-21\\Software\\Trigona\\Wallpaper"],
+              action: ["MOD"], type: ["REG"], ver: ["5.16"], num: [0],
+              tags: ["a", "b"], // genuine multi-value stays an array
+            },
+          }],
+        },
+      },
+    };
+    expect(elasticAdapter.extractRows("/internal/search/ese", body)).toEqual([{
+      _id: "M_cWzJ4", _index: "mp_timeline",
+      date: "2026-06-03T08:42:12.000Z",
+      desc: "HKU\\S-1-5-21\\Software\\Trigona\\Wallpaper",
+      action: "MOD", type: "REG", ver: "5.16", num: 0, tags: ["a", "b"],
+    }]);
+  });
+
+  it("prefers _source over fields, and falls back to fields only when _source is empty/absent", () => {
+    const withSource = { hits: { hits: [{ _id: "1", _source: { a: 1 }, fields: { a: [9] } }] } };
+    expect(elasticAdapter.extractRows("u", withSource)).toEqual([{ _id: "1", _index: undefined, a: 1 }]);
+    const emptySource = { hits: { hits: [{ _id: "2", _source: {}, fields: { a: [7] } }] } };
+    expect(elasticAdapter.extractRows("u", emptySource)).toEqual([{ _id: "2", _index: undefined, a: 7 }]);
+  });
+
   it("returns null when there are no hits", () => {
     expect(elasticAdapter.extractRows("u", { hits: { hits: [] } })).toBeNull();
     expect(elasticAdapter.extractRows("u", { took: 5 })).toBeNull();
+  });
+});
+
+describe("parseResponseBodies", () => {
+  it("parses a single JSON document", () => {
+    expect(parseResponseBodies('{"a":1}')).toEqual([{ a: 1 }]);
+    expect(parseResponseBodies('[1,2,3]')).toEqual([[1, 2, 3]]);
+  });
+
+  it("parses streamed NDJSON (one object per line — Kibana bsearch)", () => {
+    const ndjson = '{"id":0,"result":{"rawResponse":{"hits":{"hits":[{"_id":"1","_source":{"a":1}}]}}}}\n'
+      + '{"id":1,"result":{"rawResponse":{"hits":{"hits":[{"_id":"2","_source":{"a":2}}]}}}}';
+    const bodies = parseResponseBodies(ndjson);
+    expect(bodies).toHaveLength(2);
+    expect((bodies[0] as { id: number }).id).toBe(0);
+    expect((bodies[1] as { id: number }).id).toBe(1);
+  });
+
+  it("skips blank and non-JSON lines, returns [] for empty input", () => {
+    expect(parseResponseBodies("")).toEqual([]);
+    expect(parseResponseBodies("   \n  ")).toEqual([]);
+    expect(parseResponseBodies('not json\n{"a":1}\n\nalso not json')).toEqual([{ a: 1 }]);
+  });
+
+  it("end-to-end: NDJSON bsearch bodies accumulate rows through elastic.extractRows", () => {
+    // Mirrors what the content script does: parse the captured body, then run extractRows per object.
+    const ndjson = '{"id":0,"result":{"rawResponse":{"hits":{"hits":[{"_id":"1","_index":"logs","_source":{"msg":"a"}}]}}}}\n'
+      + '{"id":1,"result":{"rawResponse":{"hits":{"hits":[{"_id":"2","_index":"logs","_source":{"msg":"b"}}]}}}}';
+    const rows = parseResponseBodies(ndjson).flatMap((b) => elasticAdapter.extractRows("/internal/bsearch", b) ?? []);
+    expect(rows).toEqual([
+      { _id: "1", _index: "logs", msg: "a" },
+      { _id: "2", _index: "logs", msg: "b" },
+    ]);
+  });
+});
+
+describe("decodeCapturedBodies (compressed bfetch — remote/Cloud Kibana)", () => {
+  const item = (id: number, src: Record<string, unknown>) => ({
+    id, result: { rawResponse: { hits: { hits: [{ _id: String(id), _source: src }] } } },
+  });
+
+  it("passes plain JSON and NDJSON straight through", async () => {
+    expect(await decodeCapturedBodies('{"a":1}')).toEqual([{ a: 1 }]);
+    const nd = JSON.stringify(item(0, { a: 1 })) + "\n" + JSON.stringify(item(1, { a: 2 }));
+    expect(await decodeCapturedBodies(nd)).toHaveLength(2);
+  });
+
+  it("decodes a zlib-deflate base64 NDJSON stream (each line is base64(deflate(JSON)))", async () => {
+    const line0 = deflateSync(Buffer.from(JSON.stringify(item(0, { msg: "a" })))).toString("base64");
+    const line1 = deflateSync(Buffer.from(JSON.stringify(item(1, { msg: "b" })))).toString("base64");
+    const bodies = await decodeCapturedBodies(line0 + "\n" + line1);
+    const rows = bodies.flatMap((b) => elasticAdapter.extractRows("/internal/bsearch", b) ?? []);
+    expect(rows).toEqual([
+      { _id: "0", _index: undefined, msg: "a" },
+      { _id: "1", _index: undefined, msg: "b" },
+    ]);
+  });
+
+  it("decodes the { id, result: '<base64>' } compressed-wrapper variant", async () => {
+    const inner = { rawResponse: { hits: { hits: [{ _id: "9", _source: { z: 1 } }] } } };
+    const wrapper = JSON.stringify({ id: 0, result: deflateSync(Buffer.from(JSON.stringify(inner))).toString("base64") });
+    const bodies = await decodeCapturedBodies(wrapper);
+    const rows = bodies.flatMap((b) => elasticAdapter.extractRows("/internal/bsearch", b) ?? []);
+    expect(rows).toEqual([{ _id: "9", _index: undefined, z: 1 }]);
+  });
+
+  it("also handles gzip-compressed lines", async () => {
+    const line = gzipSync(Buffer.from(JSON.stringify(item(0, { g: 1 })))).toString("base64");
+    const rows = (await decodeCapturedBodies(line)).flatMap((b) => elasticAdapter.extractRows("u", b) ?? []);
+    expect(rows).toEqual([{ _id: "0", _index: undefined, g: 1 }]);
+  });
+
+  it("returns [] for empty input and skips undecodable lines", async () => {
+    expect(await decodeCapturedBodies("")).toEqual([]);
+    expect(await decodeCapturedBodies("   ")).toEqual([]);
+    // A short non-base64, non-JSON line is skipped, not thrown.
+    expect(await decodeCapturedBodies("garbage!!")).toEqual([]);
   });
 });
 

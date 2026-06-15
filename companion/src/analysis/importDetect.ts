@@ -7,7 +7,7 @@
 // The detected kind is shown back to the analyst, so a mis-route is visible, not silent.
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
-import { isRekallCommandList, looksLikeVolatilityText } from "./memoryImport.js";
+import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { parseCsv } from "./csvImport.js";
 import { looksLikeJournald } from "./journaldImport.js";
 import { looksLikeSysdig } from "./sysdigImport.js";
@@ -87,6 +87,11 @@ function isChainsaw(s: Row): boolean {
 }
 function isVelociraptor(s: Row, root: unknown): boolean {
   if (!!getCI(s, "_Source") || !!getCI(s, "Artifact") || !!getCI(s, "_Artifact")) return true;
+  // Velociraptor data indexed into Elasticsearch (pushed from Kibana): the upload artifact names the
+  // index `artifact_<name>`, and nested VQL columns are flattened to dotted keys with `.keyword`
+  // multi-fields (Artifact.keyword, Detection.StringHit, EventData.ScriptBlockText, …).
+  if (/^artifact[_-]/i.test(str(getCI(s, "_index")))) return true;
+  if (Object.keys(s).some((k) => k === "Artifact" || /^(?:Artifact|Detection|_Event)\./.test(k))) return true;
   const rule = getCI(s, "Rule");
   if (typeof rule === "string" && (!!getCI(s, "Strings") || !!getCI(s, "Meta") || !!getCI(s, "Namespace"))) return true;
   if (isObject(getCI(s, "System")) && !!getCI(s, "EventData")) return true; // VR parsed-evtx (no Event wrapper)
@@ -233,6 +238,28 @@ function cybertriageCsvSig(h: Set<string>): boolean {
   // Cyber Triage timeline CSV header: event_timestamp,epoch_timestamp,message,timestamp_description,item_type,threat_level
   return h.has("event_timestamp") && h.has("epoch_timestamp") && h.has("timestamp_description");
 }
+function memprocfsTimelineCsvSig(h: Set<string>): boolean {
+  // timeline_all.csv: Time,Type,Action,PID,Value32,Value64,Text,Pad
+  return h.has("value32") && h.has("value64") && h.has("time") && h.has("action") && h.has("type");
+}
+function memprocfsFindevilCsvSig(h: Set<string>): boolean {
+  // findevil.csv: PID,ProcessName,Type,Address,Description — MemProcFS finding report as CSV.
+  return h.has("pid") && h.has("processname") && h.has("type") && h.has("address") && h.has("description")
+    && !h.has("matchindex"); // guard against YARA CSV which also has these columns
+}
+function memprocfsYaraCsvSig(h: Set<string>): boolean {
+  // yara.csv: MatchIndex,…,MemoryType,MemoryTag,MemoryBaseAddress,…,ProcessName,…
+  return h.has("matchindex") && h.has("memorytype") && h.has("memorytag") && h.has("processname") && h.has("memorybaseaddress");
+}
+// Velociraptor/DetectRaptor data exported from Elastic Discover as CSV: dotted columns + `.keyword`
+// multi-fields, the artifact in `_index`/`_Source`/`Artifact`. Requires an Elastic marker AND a
+// Velociraptor-specific column so an arbitrary Elastic CSV (e.g. MemProcFS mp_timeline) isn't claimed.
+function velociraptorElasticCsvSig(h: Set<string>): boolean {
+  const elastic = h.has("_index") || h.has("_source") || h.has("_source.keyword");
+  const velo = h.has("artifact") || h.has("artifact.keyword") ||
+    h.has("detection.name") || h.has("detection.name.keyword") || h.has("detection.stringhit");
+  return elastic && velo;
+}
 function kapeSig(h: Set<string>): boolean {
   return has(h, "executablename", "runcount") || has(h, "fullpath", "sha1") || has(h, "fullpath", "filekeylastwritetimestamp") ||
     (h.has("path") && h.has("lastmodifiedtimeutc")) || has(h, "updatereasons", "updatetimestamp") ||
@@ -251,6 +278,10 @@ function detectCsv(text: string): ImportKind {
   if (plasoSig(h)) return "plaso";
   if (hayabusaCsvSig(h)) return "hayabusa";
   if (kapeSig(h)) return "kape";
+  if (memprocfsTimelineCsvSig(h)) return "memory";
+  if (memprocfsYaraCsvSig(h)) return "memory";
+  if (memprocfsFindevilCsvSig(h)) return "memory";
+  if (velociraptorElasticCsvSig(h)) return "velociraptor";
   // A comma-delimited table with data rows → the generic (AI) CSV importer.
   if (headers.length >= 2 && rows.length > 0) return "csv";
   return "log";
@@ -344,6 +375,10 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // Email artifact (.eml RFC 822 header block, or a best-effort .msg) — checked before the
   // CSV/log fallback so a header-block email isn't mistaken for a line-oriented log.
   if (isEmail(filename, t)) return "email";
+
+  // MemProcFS `findevil` report — a space-separated finding table (# PID Process Type Address Desc).
+  // Checked before Volatility text (both are text tables, but findevil has no tabs and a distinct header).
+  if (looksLikeMemprocfsFindevil(t)) return "memory";
 
   // Volatility 3 TEXT/grid renderer (the default `vol <plugin>` output, no -r json) — a banner +
   // TAB-separated table. Checked before the CSV/log fallback (it's tab-, not comma-separated, and
