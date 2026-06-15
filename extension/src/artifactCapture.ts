@@ -81,7 +81,11 @@ function labelRows(rows: unknown[], apiUrl: string): string {
   if (!activeAdapter?.sourceLabel) return "";
   let label = "";
   try {
-    const domInputs = Array.from(document.querySelectorAll("input")).map((i) => i.value || "").filter(Boolean);
+    // The Velociraptor results-tab artifact selector is a <select>; collect those first (the chosen
+    // option is the artifact being viewed), then <input> values, so the selector wins.
+    const selects = Array.from(document.querySelectorAll("select")).map((s) => s.value || "");
+    const inputs = Array.from(document.querySelectorAll("input")).map((i) => i.value || "");
+    const domInputs = [...selects, ...inputs].filter(Boolean);
     label = activeAdapter.sourceLabel({ apiUrl, pageUrl: location.href, domInputs, rows });
   } catch { label = ""; }
   if (label) {

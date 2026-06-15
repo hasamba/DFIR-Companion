@@ -137,9 +137,15 @@ describe("velociraptorSourceLabel", () => {
   it("falls back to a row's _Source (notebook VQL)", () => {
     expect(velociraptorSourceLabel({ rows: [{ _Source: "Custom.MyHunt", x: 1 }] })).toBe("Custom.MyHunt");
   });
-  it("reads the combo-box artifact from the page's input values (results tab, no param)", () => {
+  it("reads the combo-box artifact from the page's <select>/<input> values (results tab, no param)", () => {
     expect(velociraptorSourceLabel({ domInputs: ["Search clients", "10", "DetectRaptor.Windows.Detection.Applications"] }))
       .toBe("DetectRaptor.Windows.Detection.Applications");
+  });
+  it("accepts artifact names containing a / source separator", () => {
+    expect(velociraptorSourceLabel({ domInputs: ["Windows.Network.NetstatEnriched/Netstat"] }))
+      .toBe("Windows.Network.NetstatEnriched/Netstat");
+    expect(velociraptorSourceLabel({ domInputs: ["Custom.DFIR.RDPLateralMovementDetection/ExplicitCredentialLogons"] }))
+      .toBe("Custom.DFIR.RDPLateralMovementDetection/ExplicitCredentialLogons");
   });
   it("uses the notebook id from the page hash", () => {
     expect(velociraptorSourceLabel({ pageUrl: "https://h:5888/app/index.html?org_id=root#/fullscreen/notebooks/N.D8G0LA8MEASII" }))

@@ -47,9 +47,10 @@ export const velociraptorAdapter: Adapter = {
   sourceLabel: velociraptorSourceLabel,
 };
 
-// A Velociraptor artifact name: ≥3 dot-separated identifier segments (Windows.Hayabusa.Rules,
-// DetectRaptor.Windows.Detection.Applications). Specific enough not to match a search box or a count.
-const ARTIFACT_RE = /^[A-Za-z][\w]*(?:\.[A-Za-z][\w]*){2,}$/;
+// A Velociraptor artifact name: ≥3 identifier segments joined by "." or "/" (the source separator) —
+// Windows.Hayabusa.Rules, DetectRaptor.Windows.Detection.Applications,
+// Windows.Network.NetstatEnriched/Netstat. Specific enough not to match a search box or a count.
+const ARTIFACT_RE = /^[A-Za-z][\w]*(?:[./][A-Za-z][\w]*){2,}$/;
 
 // Best-effort SOURCE LABEL for a captured table, so each pushed row can record the artifact/notebook
 // it came from and the analyst can navigate back. The results tab picks the artifact in a combo box
