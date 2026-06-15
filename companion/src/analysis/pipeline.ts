@@ -35,6 +35,17 @@ import {
 import { SHADOW_ARTIFACTS } from "./shadowArtifacts.js";
 import { diffFindings, type FindingsDiff } from "./findingsDiff.js";
 import type { SynthMetaStore } from "./synthMeta.js";
+import type { SecondOpinionStore } from "./secondOpinionStore.js";
+import {
+  RECONCILE_PROMPT,
+  buildSecondOpinion,
+  buildReconcilePrompt,
+  reconcileResponseSchema,
+  mergeReconcileVerdicts,
+  applyAcceptedSecondOpinion,
+  setDeltaStatus,
+  type SecondOpinion,
+} from "./secondOpinion.js";
 import { correlateEvents } from "./correlate.js";
 import { detectTool } from "./toolDetect.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
@@ -508,7 +519,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -930,6 +941,7 @@ export const getPlaybookHuntPrompt = (): string => resolvePrompt("PBHUNTS", PLAY
 export const getGapHypothesisPrompt = (): string => resolvePrompt("GAPHYP", GAP_HYPOTHESIS_PROMPT);
 export const getMemoryNextStepPrompt = (): string => resolvePrompt("MEMNEXT", MEMORY_NEXTSTEP_PROMPT);
 export const getQueryTranslatePrompt = (): string => resolvePrompt("QUERYXLATE", QUERY_TRANSLATE_PROMPT);
+export const getReconcilePrompt = (): string => resolvePrompt("RECONCILE", RECONCILE_PROMPT);
 
 export interface PipelineOptions {
   provider?: AIProvider;
@@ -981,6 +993,17 @@ export interface PipelineOptions {
   // against the catalog and the hits are prepended to the synthesis context so the AI can flag
   // actively-exploited CVEs as probable initial-access vectors. Opt-in (store starts empty).
   kevStore?: KevStore;
+  // Second LLM opinion (issue #116): a DIFFERENT model that independently re-synthesizes the case
+  // for a QA cross-check. When set, secondOpinion() runs Pass 1 (independent synthesis through this
+  // provider) + Pass 2 (reconcile). Absent → the feature is disabled (route returns 501).
+  secondOpinionProvider?: AIProvider;
+  // Persists the last second-opinion run (deltas + analyst accept/reject). Also read by synthesize()
+  // so analyst-accepted deltas are re-applied after the wholesale findings rewrite (durability).
+  secondOpinionStore?: SecondOpinionStore;
+  // Human-readable model labels for the second-opinion comparison header (e.g. "claude-opus-4-8"
+  // vs "gpt-4o"). Fall back to the provider name when absent.
+  synthesisModelLabel?: string;
+  secondOpinionModelLabel?: string;
 }
 
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
@@ -2720,8 +2743,12 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
-  async synthesize(caseId: string, opts: { force?: boolean } = {}): Promise<InvestigationState> {
-    const synthProvider = this.opts.synthesisProvider ?? this.requireProvider("synthesis");
+  // `dryRun` produces the synthesized conclusions WITHOUT persisting them or firing any side effect
+  // (no save, no synth-meta, no notifications, no accepted-delta re-apply) — used by the second
+  // opinion (issue #116) to compute model B's analysis non-destructively. `provider` overrides the
+  // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
+  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider } = {}): Promise<InvestigationState> {
+    const synthProvider = opts.provider ?? this.opts.synthesisProvider ?? this.requireProvider("synthesis");
     const loaded = await this.opts.stateStore.load(caseId);
     if (loaded.forensicTimeline.length === 0) return loaded;
 
@@ -2790,7 +2817,7 @@ export class AnalysisPipeline {
       sc: scope, lg: markers.map((m) => m.id),
       nb: notebookBlock,
     })).digest("hex");
-    if (!opts.force && this.lastSynthHash.get(caseId) === synthHash) return loaded;
+    if (!opts.force && !opts.dryRun && this.lastSynthHash.get(caseId) === synthHash) return loaded;
 
     const scopeNote = hasScope(scope)
       ? `INVESTIGATION SCOPE: only consider activity from ${scope.start ?? "the beginning"} to ${scope.end ?? "now"}. ` +
@@ -2898,9 +2925,20 @@ export class AnalysisPipeline {
     // the LATEST state here, not the pre-AI snapshot, so a question added DURING the
     // seconds-long AI call isn't clobbered by this write (read-modify-write race).
     const pinnedNow = (await this.opts.stateStore.load(caseId)).keyQuestions.filter((q) => q.pinned);
-    const next = pinnedNow.length
+    let next = pinnedNow.length
       ? { ...gapFilled, keyQuestions: mergePinnedQuestions(pinnedNow, gapFilled.keyQuestions) }
       : gapFilled;
+
+    // Dry run (second-opinion Pass 1): return model B's conclusions WITHOUT persisting or any side
+    // effect — and WITHOUT folding in accepted deltas, so B stays an independent opinion.
+    if (opts.dryRun) return next;
+
+    // Durability (issue #116): re-apply any analyst-ACCEPTED second-opinion deltas after the
+    // wholesale findings rewrite, so a confirmed model-B finding/severity/technique is never lost
+    // on re-synthesis. Pure + idempotent; a no-op when the store or record is absent/empty.
+    if (this.opts.secondOpinionStore) {
+      next = applyAcceptedSecondOpinion(next, await this.opts.secondOpinionStore.load(caseId));
+    }
 
     await this.opts.stateStore.save(next);
     this.lastSynthHash.set(caseId, synthHash);   // remember these inputs so an identical re-run skips the AI call
@@ -2913,5 +2951,69 @@ export class AnalysisPipeline {
     this.opts.onSynth?.(caseId, findingsDiff, next);
     this.opts.onState?.(next);
     return next;
+  }
+
+  // Second LLM opinion (issue #116). On-demand QA cross-check: a DIFFERENT model independently
+  // re-synthesizes the case (Pass 1, non-destructive `dryRun`), then a reconcile pass (Pass 2)
+  // annotates each disagreement (B-only / A-only finding, severity, ATT&CK technique) with a
+  // rationale + recommendation. Returns the saved record; never mutates the case state — the
+  // analyst adjudicates per delta via applySecondOpinion(). Throws (→ route 501/500) when the
+  // second-opinion model isn't configured.
+  async secondOpinion(caseId: string): Promise<SecondOpinion> {
+    const provider = this.opts.secondOpinionProvider;
+    if (!provider) throw new Error("second-opinion model not configured (set DFIR_AI_SECOND_OPINION_MODEL)");
+    if (!this.opts.secondOpinionStore) throw new Error("second-opinion store not configured");
+    const a = await this.opts.stateStore.load(caseId);
+    if (a.forensicTimeline.length === 0) throw new Error("nothing to review — import evidence and synthesize the case first");
+
+    // Pass 1 — independent synthesis with model B over the SAME inputs (same prompt/context), but
+    // routed through a different model and NOT persisted (dryRun). This is model B's analysis.
+    const b = await this.synthesize(caseId, { dryRun: true, force: true, provider });
+
+    const modelA = this.opts.synthesisModelLabel ?? (this.opts.synthesisProvider ?? this.opts.provider)?.name ?? "model A";
+    const modelB = this.opts.secondOpinionModelLabel ?? provider.name;
+    let record = buildSecondOpinion({ a, b, modelA, modelB, now: () => new Date().toISOString() });
+
+    // Pass 2 — reconcile: annotate each disagreement with a rationale + recommendation. Best-effort:
+    // if the reconcile call fails, keep the deterministic deltas (no rationale) rather than failing.
+    if (record.deltas.length > 0) {
+      const userPrompt = buildReconcilePrompt(a, b, record.deltas);
+      const retries = this.opts.retries ?? 3;
+      const backoffMs = this.opts.backoffMs ?? 500;
+      try {
+        const parsed = await withRetry(async () => {
+          const raw = await this.analyzeRestored(caseId, a, provider, { systemPrompt: getReconcilePrompt(), userPrompt, images: [] }, "second-opinion-reconcile");
+          return reconcileResponseSchema.parse(raw);
+        }, retries, backoffMs);
+        record = mergeReconcileVerdicts(record, parsed);
+      } catch (err) {
+        this.log.warn(`[second-opinion] reconcile pass failed: ${(err as Error).message}`, { caseId });
+      }
+    }
+
+    await this.opts.secondOpinionStore.save(caseId, record);
+    return record;
+  }
+
+  // Accept or reject ONE second-opinion delta. The analyst's decision is recorded on the delta, and
+  // ALL currently-accepted deltas are (re-)applied onto the live case state (idempotent) — so an
+  // accept adds/edits the finding/severity/technique now and survives the next synthesis (the same
+  // re-apply runs in synthesize()). A reject just records the decision; state is unchanged.
+  async applySecondOpinion(caseId: string, deltaId: string, accept: boolean): Promise<{ record: SecondOpinion; state: InvestigationState }> {
+    if (!this.opts.secondOpinionStore) throw new Error("second-opinion store not configured");
+    const current = await this.opts.secondOpinionStore.load(caseId);
+    if (!current) throw new Error("no second opinion to act on — run a second opinion first");
+    if (!current.deltas.some((d) => d.id === deltaId)) throw new Error(`unknown second-opinion delta: ${deltaId}`);
+
+    const record = setDeltaStatus(current, deltaId, accept ? "accepted" : "rejected");
+    await this.opts.secondOpinionStore.save(caseId, record);
+
+    const state = await this.opts.stateStore.load(caseId);
+    const applied = applyAcceptedSecondOpinion(state, record);
+    if (applied !== state) {
+      await this.opts.stateStore.save(applied);
+      this.opts.onState?.(applied);
+    }
+    return { record, state: applied };
   }
 }

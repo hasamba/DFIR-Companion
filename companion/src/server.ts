@@ -99,6 +99,7 @@ import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } 
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
 import type { AssetType } from "./analysis/assetGraph.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
+import { SecondOpinionStore } from "./analysis/secondOpinionStore.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
 import { TemplateStore, buildInitialQuestions, buildInitialNextSteps } from "./analysis/templateStore.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
@@ -255,6 +256,12 @@ export interface AppOptions {
   // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
   // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
   synthMetaStore?: SynthMetaStore;
+  // Second LLM opinion (issue #116): the last QA cross-check record (deltas + analyst decisions),
+  // read by the GET route. `secondOpinionEnabled` gates the dashboard button (a different model is
+  // configured). onSecondOpinion pings dashboard clients to re-fetch after a run or accept/reject.
+  secondOpinionStore?: SecondOpinionStore;
+  secondOpinionEnabled?: boolean;
+  onSecondOpinion?: (caseId: string) => void;
   // Last-import record (when it ran + forensic-timeline diff) for the dashboard's "last import N
   // ago - +N new events" indicator and what-was-added view above the timeline. The unified /import
   // route writes it after the importer completes; onImportMeta pings dashboard clients to re-fetch.
@@ -481,7 +488,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled });
   });
 
   // Read / change the live log verbosity (debug | info | warn | error). The dashboard's
@@ -4961,6 +4968,56 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Second LLM opinion (issue #116): run a DIFFERENT model over the same case (independent
+  // re-synthesis + reconcile) and surface where it disagrees, for analyst QA. On-demand, two
+  // text-only AI calls; NON-DESTRUCTIVE — the deltas are stored, not applied, until the analyst
+  // accepts them per item. 501 when no second-opinion model is configured (DFIR_AI_SECOND_OPINION_MODEL).
+  app.post("/cases/:id/second-opinion", async (req: Request, res: Response) => {
+    if (!options.pipeline || !options.secondOpinionEnabled) {
+      return res.status(501).json({ error: "second-opinion model not configured — set DFIR_AI_SECOND_OPINION_MODEL" });
+    }
+    const caseId = req.params.id;
+    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: "running second opinion" });
+    try {
+      const record = await options.pipeline.secondOpinion(caseId);
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+      options.onSecondOpinion?.(caseId);
+      return res.status(200).json(record);
+    } catch (err) {
+      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Fetch the last second-opinion record for a case (or null). Read-only; no AI.
+  app.get("/cases/:id/second-opinion", async (req: Request, res: Response) => {
+    if (!options.secondOpinionStore) return res.status(200).json(null);
+    try {
+      return res.status(200).json(await options.secondOpinionStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Accept or reject ONE second-opinion delta. Accept (re-)applies all accepted deltas onto the
+  // case (idempotent; durable across re-synthesis); reject only records the decision. The case
+  // state is otherwise untouched. Body: { deltaId, accept }.
+  app.post("/cases/:id/second-opinion/apply", async (req: Request, res: Response) => {
+    if (!options.pipeline || !options.secondOpinionStore) return res.status(501).json({ error: "second opinion not configured" });
+    const deltaId = typeof req.body?.deltaId === "string" ? req.body.deltaId.trim() : "";
+    const accept = req.body?.accept === true;
+    if (!deltaId) return res.status(400).json({ error: "deltaId is required" });
+    try {
+      const { record } = await options.pipeline.applySecondOpinion(req.params.id, deltaId, accept);
+      options.onSecondOpinion?.(req.params.id);
+      return res.status(200).json(record);
+    } catch (err) {
+      const msg = (err as Error).message;
+      const code = /unknown second-opinion delta/.test(msg) ? 404 : /no second opinion/.test(msg) ? 409 : 500;
+      return res.status(code).json({ error: msg });
+    }
+  });
+
   // Ask the LLM a free-form question about the case ("was data exfiltrated?"). Single-shot,
   // no state change — returns a grounded answer + status + collection guidance (`pointer`).
   app.post("/cases/:id/ask", async (req: Request, res: Response) => {
@@ -5744,6 +5801,22 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
   });
 }
 
+// Second-opinion model (issue #116): a DEDICATED, DIFFERENT model for the on-demand QA cross-check.
+// Returns undefined UNLESS DFIR_AI_SECOND_OPINION_MODEL is set — that env var IS the opt-in, and its
+// absence disables the feature (route 501, dashboard button hidden). Recommend a model from a
+// DIFFERENT provider than the primary synthesis model so the opinion is genuinely independent; the
+// key/provider/baseUrl fall back to the main AI config so it works out of the box on one account.
+export function buildSecondOpinionProvider(): AnalyzeProvider | undefined {
+  const model = process.env.DFIR_AI_SECOND_OPINION_MODEL?.trim();
+  if (!model) return undefined;
+  return buildProviderFrom({
+    provider: process.env.DFIR_AI_SECOND_OPINION_PROVIDER ?? process.env.DFIR_AI_PROVIDER,
+    model,
+    apiKey: process.env.DFIR_AI_SECOND_OPINION_KEY ?? process.env.DFIR_AI_KEY,
+    baseUrl: process.env.DFIR_AI_SECOND_OPINION_BASE_URL ?? process.env.DFIR_AI_BASE_URL,
+  });
+}
+
 // Velociraptor-hunt model (issue #70): a DEDICATED model just for generating Velociraptor VQL hunts
 // (suggestPlaybookHunts + suggestHunts), since many models botch VQL. Defaults to openrouter /
 // anthropic/claude-haiku-latest regardless of the main/synth provider; the key falls back to the main
@@ -5950,6 +6023,12 @@ export interface RuntimePipelineParams {
   logger?: Logger;
   // CISA KEV catalog (issue #99): passed to the pipeline so synthesis context includes KEV hits.
   kevStore?: KevStore;
+  // Second LLM opinion (issue #116): a different model + its persistence store, plus the model
+  // labels for the comparison header. Absent → the feature is disabled (route 501).
+  secondOpinionProvider?: AnalyzeProvider;
+  secondOpinionStore?: SecondOpinionStore;
+  synthesisModelLabel?: string;
+  secondOpinionModelLabel?: string;
 }
 
 export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
@@ -5957,6 +6036,10 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     provider: params.provider,
     synthesisProvider: params.synthesisProvider,
     velociraptorProvider: params.velociraptorProvider,
+    secondOpinionProvider: params.secondOpinionProvider,
+    secondOpinionStore: params.secondOpinionStore,
+    synthesisModelLabel: params.synthesisModelLabel,
+    secondOpinionModelLabel: params.secondOpinionModelLabel,
     stateStore: params.stateStore,
     legitimateStore: new LegitimateStore(params.store),
     scopeStore: new ScopeStore(params.store),
@@ -6075,6 +6158,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const playbookControlStore = new PlaybookControlStore(store);
   const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
+  const secondOpinionStore = new SecondOpinionStore(store);
   const importMetaStore = new ImportMetaStore(store);
   // #76: import undo/redo. Depth is the number of import levels kept (each = a full timeline+IOC copy).
   const importUndoStore = new ImportUndoStore(store, Number(process.env.DFIR_IMPORT_UNDO_DEPTH) || undefined);
@@ -6085,6 +6169,11 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
   const velociraptorProvider = buildVelociraptorProvider();   // dedicated VQL-hunt model (#70)
+  const secondOpinionProvider = buildSecondOpinionProvider(); // dedicated second-opinion model (#116)
+  // Model labels for the second-opinion comparison header (fall back to provider name in the pipeline).
+  const synthesisModelLabel = process.env.DFIR_AI_SYNTH_MODEL ?? process.env.DFIR_AI_MODEL ?? undefined;
+  const secondOpinionModelLabel = process.env.DFIR_AI_SECOND_OPINION_MODEL?.trim() || undefined;
+  if (secondOpinionProvider) logLine(`[second-opinion] enabled — model "${secondOpinionModelLabel}" (${secondOpinionProvider.name})`);
   // Provide the Tesseract OCR runner only when the vision model is on an external (cloud)
   // provider — if the model is local, screenshots never leave the machine so redaction is
   // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
@@ -6092,6 +6181,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
   const wiredPipeline = buildRuntimePipeline({
     provider, synthesisProvider, velociraptorProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore,
+    secondOpinionProvider, secondOpinionStore, synthesisModelLabel, secondOpinionModelLabel,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
     // Fully guarded — notifications are a side channel and must NEVER break synthesis.
     onSynth: (caseId, diff, state) => {
@@ -6145,6 +6235,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onLegitimate: (caseId) => hub.broadcastTo(caseId, { type: "legitimate_changed" }),
     onScope: (caseId, scope) => hub.broadcastTo(caseId, { type: "scope_changed", ...scope }),
     synthMetaStore,
+    secondOpinionStore,
+    secondOpinionEnabled: Boolean(secondOpinionProvider),
+    onSecondOpinion: (caseId) => hub.broadcastTo(caseId, { type: "second_opinion_changed" }),
     importMetaStore,
     onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
     importUndoStore,
