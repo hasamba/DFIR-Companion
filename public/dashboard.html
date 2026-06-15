@@ -6127,7 +6127,7 @@
         return;
       }
       const ordered = [...suggestions].sort((a, b) => (MNS_SEV_RANK[a.severity] ?? 9) - (MNS_SEV_RANK[b.severity] ?? 9));
-      const caveat = `<div class="mns-caveat">⚠ AI-suggested commands — review before running. Substitute <code>&lt;image&gt;</code> with your memory image path.</div>`;
+      const caveat = `<div class="mns-caveat">⚠ AI-suggested commands — review before running. Substitute <code>&lt;image&gt;</code> with your memory image path. Most steps print a table you can paste/Import back here; a <code>--dump</code> / <code>dumpfiles</code> step writes a raw <code>.dmp</code> for offline analysis (YARA / capa / sandbox) — import those results, not the binary.</div>`;
       const cards = ordered.map((s, idx) => {
         const sev = s.severity || "Medium";
         const sevColor = MNS_SEV_COLOR[sev] || "#9aa4b2";
