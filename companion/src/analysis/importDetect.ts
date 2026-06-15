@@ -251,6 +251,15 @@ function memprocfsYaraCsvSig(h: Set<string>): boolean {
   // yara.csv: MatchIndex,…,MemoryType,MemoryTag,MemoryBaseAddress,…,ProcessName,…
   return h.has("matchindex") && h.has("memorytype") && h.has("memorytag") && h.has("processname") && h.has("memorybaseaddress");
 }
+// Velociraptor/DetectRaptor data exported from Elastic Discover as CSV: dotted columns + `.keyword`
+// multi-fields, the artifact in `_index`/`_Source`/`Artifact`. Requires an Elastic marker AND a
+// Velociraptor-specific column so an arbitrary Elastic CSV (e.g. MemProcFS mp_timeline) isn't claimed.
+function velociraptorElasticCsvSig(h: Set<string>): boolean {
+  const elastic = h.has("_index") || h.has("_source") || h.has("_source.keyword");
+  const velo = h.has("artifact") || h.has("artifact.keyword") ||
+    h.has("detection.name") || h.has("detection.name.keyword") || h.has("detection.stringhit");
+  return elastic && velo;
+}
 function kapeSig(h: Set<string>): boolean {
   return has(h, "executablename", "runcount") || has(h, "fullpath", "sha1") || has(h, "fullpath", "filekeylastwritetimestamp") ||
     (h.has("path") && h.has("lastmodifiedtimeutc")) || has(h, "updatereasons", "updatetimestamp") ||
@@ -272,6 +281,7 @@ function detectCsv(text: string): ImportKind {
   if (memprocfsTimelineCsvSig(h)) return "memory";
   if (memprocfsYaraCsvSig(h)) return "memory";
   if (memprocfsFindevilCsvSig(h)) return "memory";
+  if (velociraptorElasticCsvSig(h)) return "velociraptor";
   // A comma-delimited table with data rows → the generic (AI) CSV importer.
   if (headers.length >= 2 && rows.length > 0) return "csv";
   return "log";

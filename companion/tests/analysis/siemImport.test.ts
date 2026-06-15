@@ -211,6 +211,12 @@ describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
     expect(vals).toContain("ip:203.0.113.9");
   });
 
+  it("parses Kibana display-format timestamps (\"May 7, 2026 @ 16:31:04.000\") to UTC ISO", () => {
+    const rec = { "@timestamp": "May 7, 2026 @ 16:31:04.000", host: "h", message: "x" };
+    const e = parseSiemExport(JSON.stringify([rec])).events[0];
+    expect(e.timestamp).toBe("2026-05-07T16:31:04.000Z");
+  });
+
   it("maps a numeric risk score to a severity band", () => {
     const rec = { timestamp: "2026-01-01T00:00:00Z", host: "h", risk_score: 95, name: "Beacon" };
     const r = parseSiemExport(JSON.stringify([rec]));

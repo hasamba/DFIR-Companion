@@ -22,6 +22,7 @@
 // [rows], … }. All events are tagged "Velociraptor" for cross-source correlation.
 
 import type { Severity } from "./stateTypes.js";
+import { parseCsv } from "./csvImport.js";
 import {
   extractRecords,
   mapWindows,
@@ -656,9 +657,33 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
 
 // Returns the flat row list. Handles a Velociraptor multi-artifact map { "Artifact": [rows] }
 // (tagging each row's _Source), else delegates to the shared extractor (array/jsonl/wrapped).
+// Parse a CSV export (Elastic Discover "Download CSV") into flat row objects keyed by header,
+// dropping Kibana's "-" empty-cell placeholder. Returns null when it doesn't look tabular.
+function csvToRows(text: string): { rows: Row[]; format: string } | null {
+  const { headers, rows } = parseCsv(text);
+  if (headers.length < 2 || rows.length === 0) return null;
+  const out: Row[] = rows.map((cells) => {
+    const o: Row = {};
+    headers.forEach((h, i) => {
+      const v = cells[i];
+      if (v != null && v !== "" && v !== "-") o[h] = v;
+    });
+    return o;
+  });
+  return { rows: out, format: "csv" };
+}
+
 function extractRows(text: string): { rows: Row[]; format: string } {
   const trimmed = text.trim();
   if (!trimmed) return { rows: [], format: "empty" };
+
+  // CSV export from Elastic Discover (Velociraptor data indexed into Elastic) — not JSON/NDJSON.
+  // Each row becomes a flat object keyed by header; "-" (Kibana's empty-cell placeholder) is dropped.
+  // normalizeElasticRow (in the per-row loop) then un-flattens the dotted/.keyword columns.
+  if (trimmed[0] !== "{" && trimmed[0] !== "[") {
+    const csv = csvToRows(trimmed);
+    if (csv) return csv;
+  }
 
   let root: unknown = null;
   try { root = JSON.parse(trimmed); } catch { /* NDJSON path below */ }

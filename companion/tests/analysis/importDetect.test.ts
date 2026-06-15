@@ -151,6 +151,14 @@ describe("detectImportKind — CSV formats", () => {
   it("cybertriage: timeline CSV header", () => {
     expect(detectImportKind("tl.csv", "event_timestamp,epoch_timestamp,message,timestamp_description,item_type,threat_level\n2026-01-28T01:52:03,1769593923,/x,File Modified,File,None")).toBe("cybertriage");
   });
+  it("velociraptor: Elastic Discover CSV export of DetectRaptor data", () => {
+    const header = '"@timestamp",Artifact,"Artifact.keyword","Detection.Name","Detection.StringHit",_index,_Source';
+    const row = '"May 7, 2026 @ 16:31:04.000",DetectRaptor.Windows.Detection.Amcache,DetectRaptor.Windows.Detection.Amcache,"Execution - PsExec",PsExec.exe,artifact_detectraptor_windows_detection_amcache,"-"';
+    expect(detectImportKind("Untitled Discover session.csv", `${header}\n${row}`)).toBe("velociraptor");
+  });
+  it("csv: a generic Elastic CSV without Velociraptor columns stays the AI CSV importer", () => {
+    expect(detectImportKind("e.csv", '"@timestamp",message,_index\nt,hi,logs-app')).toBe("csv");
+  });
   it("csv: a generic comma table → AI CSV importer", () => {
     expect(detectImportKind("data.csv", "colA,colB,colC\n1,2,3\n4,5,6")).toBe("csv");
   });

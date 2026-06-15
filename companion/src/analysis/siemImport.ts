@@ -353,7 +353,26 @@ export function normalizeTime(s: string): string {
   if (!t) return "";
   const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d+)?Z?$/.exec(t);
   if (m && !/[+-]\d{2}:?\d{2}$|Z$/.test(t)) return `${m[1]}T${m[2]}${m[3] ?? ""}Z`;
+  const kib = parseKibanaDate(t);
+  if (kib) return kib;
   return toUtcIso(t);
+}
+
+// Kibana's Discover / CSV-export display format, e.g. "May 7, 2026 @ 16:31:04.000". Carries no
+// timezone, so — consistent with this codebase's naive-time convention — we read it as UTC. (Kibana
+// renders in the browser TZ unless `dateFormat:tz` is UTC; without offset info that's unrecoverable.)
+const KIBANA_DATE = /^([A-Z][a-z]{2}) (\d{1,2}), (\d{4}) @ (\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/;
+const KIBANA_MONTHS: Record<string, string> = {
+  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+};
+function parseKibanaDate(t: string): string {
+  const m = KIBANA_DATE.exec(t);
+  if (!m) return "";
+  const mon = KIBANA_MONTHS[m[1]];
+  if (!mon) return "";
+  const ms = (m[7] ?? "").padEnd(3, "0");
+  return `${m[3]}-${mon}-${m[2].padStart(2, "0")}T${m[4]}:${m[5]}:${m[6]}.${ms || "000"}Z`;
 }
 
 const TIME_KEYS = [

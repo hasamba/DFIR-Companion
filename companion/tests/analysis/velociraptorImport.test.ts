@@ -115,6 +115,23 @@ describe("parseVelociraptorJson — Elastic-indexed Velociraptor (Kibana push)",
     expect(e.sources).toEqual(["Velociraptor"]);
   });
 
+  it("parses an Elastic Discover CSV export (dotted/.keyword headers, Kibana dates, '-' nulls)", () => {
+    const csv = [
+      '"@timestamp",Artifact,"Artifact.keyword","Detection.Criticality","Detection.Name","Detection.StringHit",EntryPath,"EntryPath.keyword",_index,_Source',
+      '"May 7, 2026 @ 16:31:04.000",DetectRaptor.Windows.Detection.Amcache,DetectRaptor.Windows.Detection.Amcache,Medium,"Execution - PsExec",PsExec.exe,"c:\\tools\\psexec.exe","c:\\tools\\psexec.exe",artifact_detectraptor_windows_detection_amcache,"-"',
+    ].join("\n");
+    const r = parseVelociraptorJson(csv);
+    expect(r.format).toBe("csv");
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e.severity).toBe("Medium"); // honors Detection.Criticality over the psexec keyword
+    expect(e.description).toContain("Execution - PsExec");
+    expect(e.description).toContain("[DetectRaptor.Windows.Detection.Amcache]");
+    expect(e.description).not.toContain("-1"); // "-" cells dropped, not rendered
+    expect(e.timestamp).toContain("2026-05-07T16:31:04"); // Kibana "@" date → ISO
+    expect(e.sources).toEqual(["Velociraptor"]);
+  });
+
   it("synthesizes the artifact source from the index name when no Artifact field is present", () => {
     const row = {
       _index: "artifact_custom_windows_detection_amcache", "@timestamp": "2026-05-07T16:31:04.000Z",
