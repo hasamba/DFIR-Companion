@@ -229,7 +229,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Cross-source correlation** — the same artifact seen by different tools collapses into one corroborated event (shared hash / same path in a time window / exact duplicate), tagged with the real tool names. Idempotent — re-importing never doubles the timeline.
 
 ### Investigation workflow
-- **Ask the case** — free-form Q&A grounded in the full timeline; unknown answers direct you to what artifact to collect and where
+- **Ask the case (GraphRAG)** — free-form Q&A grounded in the full timeline **plus the deterministic evidence-chain graph** (process spawns, file lineage, lateral movement, network flows), so multi-hop questions ("trace the path from the phishing email to the Domain Controller") are answered by following real graph relationships; unknown answers direct you to what artifact to collect and where
 - **Response Playbook** — recommended next steps + Critical/High findings become a trackable checklist (status, priority, assignee, due date, reorder, custom tasks); opt-in IR-templates expand findings into Contain → Investigate → Eradicate → Recover phases. Survives synthesis; renders into the report.
 - **Triage tags & comments** — label any entity (`confirmed-malicious`, `false-positive`, …) and attach notes; synced live over WebSocket; survive synthesis.
 - **Bulk actions** — multi-select timeline events or IOCs and star / tag / mark-legitimate / (IOCs) enrich or copy — each one batched write + a single re-synthesis.

@@ -211,6 +211,14 @@ double), shared hash, or same path within a time window. The merged event unions
 `processName`/`parentName`, `chainCheck`); `IOC` carries optional `enrichments[]`. The
 **asset ↔ IoC graph** (`analysis/assetGraph.ts`, pure) derives compromised assets (hosts from
 `event.asset`; accounts from `DOMAIN\user`/UPN in event text) and the IoCs that touched each. The
+**evidence-chain graph** (`analysis/evidenceGraph.ts`, pure) is the *causal* counterpart — process
+spawns, file lineage (wrote→executed), lateral movement (shared hash/account), network flows, host
+anchors — derived on read from the same structured fields (`ReportWriter.evidenceGraph` →
+`GET /cases/:id/evidence-graph`). **GraphRAG for "Ask the case" (#98):** `ask()` serializes that causal
+graph into the prompt via `analysis/graphContext.ts` (`buildGraphContext`, pure — edges grouped by type,
+ranked worst-severity-first, each line citing its backing `[event ids]`, capped by
+`DFIR_ASK_GRAPH_MAX_EDGES`, default 120) so the model traces multi-hop attack paths through real
+relationships instead of the flat timeline; the asset↔IoC digest is already fed via `buildSynthesisContext`. The
 **temporal attack phases** (`analysis/burstDetect.ts`, pure) group the forensic timeline into bursts by
 the time gap between consecutive events (`DFIR_PHASE_GAP_S`, default 5 min), each labelled with its
 dominant ATT&CK tactic (reuses `tacticForTechniques`) — the *when* axis, complementary to the categorical
