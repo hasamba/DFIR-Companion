@@ -157,6 +157,12 @@ For each case the AI builds and keeps up to date:
   independently of the tampered log — USN Journal, SRUM, Prefetch, Amcache, ShimCache, BAM,
   MFT, UserAssist, LNK — each a ready-to-deploy **Velociraptor** collection to reconstruct the
   missing time frame. Ephemeral; a hypothesis is a lead, confirmed by collecting the artifacts.
+- **Memory-forensics "Next-Step" agent** — when Volatility 3 / Rekall output is imported, one
+  click reads the memory evidence (process tree, malfind, connections, command lines), spots
+  anomalies — a mis-parented `svchost.exe`, injected private memory, a suspicious connection,
+  an encoded command line — and proposes the **exact next Volatility 3 command** to run
+  (`vol -f <image> windows.malfind --pid 1234`), preferring plugins not yet run. Ephemeral; a
+  *Memory Next Steps* panel that appears only once memory evidence exists.
 - **Adversary hints** — known **MITRE ATT&CK groups** ranked by how much their technique
   set overlaps the case's, as early hypothesis fuel. Offline (a bundled dataset, no
   AI/network); sub-technique-aware, so an **exact** sub-technique match (highlighted) outranks

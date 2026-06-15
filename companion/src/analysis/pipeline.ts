@@ -86,6 +86,16 @@ import {
   PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT,
   type PlaybookHuntSuggestion,
 } from "./playbookHunt.js";
+import {
+  memoryNextStepResponseSchema,
+  sanitizeMemoryNextSteps,
+  renderMemoryEvidence,
+  memoryPluginsPresent,
+  isMemoryEvent,
+  hasMemoryMaterial,
+  MEMORY_NEXTSTEP_MAX_DEFAULT,
+  type MemoryNextStep,
+} from "./memoryNextStep.js";
 import type { PlaybookTask } from "./playbook.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
@@ -488,7 +498,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -751,6 +761,67 @@ export const GAP_HYPOTHESIS_PROMPT = [
   }, null, 2),
 ].join("\n");
 
+// Memory-forensics "Next-Step" agent (issue #101). The case already has Volatility 3 / Rekall output
+// imported as forensic events (the process tree, network connections, malfind injected code, command
+// lines, services, modules). Read that memory evidence, identify the ANOMALIES, and propose the EXACT
+// next Volatility 3 command the analyst should run to dig deeper. The agent CONSUMES the enumeration
+// (it does not re-implement Volatility) — it reasons over the rows and recommends the next plugin.
+export const MEMORY_NEXTSTEP_PROMPT = [
+  "You are a senior memory-forensics analyst guiding an ITERATIVE Volatility 3 investigation. Below is",
+  "the memory evidence ALREADY imported from a RAM image (Volatility 3 / Rekall output): the process",
+  "tree (process name, PID, PPID, parent name, start time, command line), network connections, malfind",
+  "(executable/injected private memory), command lines, services, and loaded modules. Identify the",
+  "ANOMALIES and, for each, propose the EXACT next Volatility 3 command the analyst should run to dig in.",
+  "",
+  "What counts as an anomaly (reason from the evidence shown, do NOT invent processes/PIDs):",
+  "- Process-tree masquerading / wrong parentage: svchost.exe NOT parented by services.exe; lsass.exe,",
+  "  csrss.exe, services.exe, wininit.exe with the wrong/absent parent; an unparented process; a system",
+  "  binary running from a non-system path; a user app spawning cmd.exe/powershell.exe.",
+  "- Injected/executable private memory (malfind hits) → dump and scan the region.",
+  "- Suspicious or external network connections owned by an unexpected process (possible C2/beacon).",
+  "- LOLBin / encoded-PowerShell / unusual command lines.",
+  "- A persistence-looking service or an unsigned/odd module.",
+  "",
+  "Rules:",
+  "- Each `command` MUST be a single, real, copy-pasteable Volatility 3 command. Use `vol -f <image>`",
+  "  as the prefix (the analyst substitutes their image path for <image>) followed by a REAL Volatility 3",
+  "  plugin and its REAL options, e.g.:",
+  "    vol -f <image> windows.malfind --pid 1234",
+  "    vol -f <image> windows.dlllist --pid 1234",
+  "    vol -f <image> windows.cmdline --pid 1234",
+  "    vol -f <image> windows.handles --pid 1234",
+  "    vol -f <image> windows.netscan",
+  "    vol -f <image> windows.pstree",
+  "    vol -f <image> windows.dumpfiles --pid 1234",
+  "    vol -f <image> windows.svcscan",
+  "  Use Linux/Mac plugin names (linux.* / mac.*) instead if the evidence is clearly from that OS.",
+  "  Use the REAL plugin/option names — do NOT invent plugins or flags, and do NOT use Volatility 2",
+  "  syntax (no `--profile`, no `vol.py -f mem.raw pslist`-style v2 plugin names).",
+  "- PREFER suggesting plugins that have NOT been run yet (the user message lists the already-imported",
+  "  plugins) when they would advance the investigation — the point is the NEXT step, not re-running",
+  "  what is already on the timeline. Pivot on a SPECIFIC PID/process from the evidence wherever the",
+  "  plugin takes `--pid`; set `pid` to that PID.",
+  "- Prefer a few HIGH-SIGNAL next steps over many near-duplicates. If nothing in the evidence looks",
+  "  anomalous, it is fine to return fewer (or no) suggestions.",
+  "- For each: a short `anomaly` (the observation that triggered it, naming the real process/PID); the",
+  "  `command`; the `plugin` it runs (e.g. windows.malfind); a `rationale` (why run it + how to triage",
+  "  what it returns); `severity` (Critical|High|Medium|Low|Info) of the underlying anomaly;",
+  "  `pid` (the targeted PID, or \"\"); and `mitreTechniques` (relevant ATT&CK ids, e.g. T1055 for injection).",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({
+    suggestions: [{
+      anomaly: "svchost.exe (PID 1234) is parented by explorer.exe (PID 4500), not services.exe — classic masquerading.",
+      command: "vol -f <image> windows.malfind --pid 1234",
+      plugin: "windows.malfind",
+      rationale: "A mis-parented svchost is a strong injection/masquerade signal. malfind dumps executable private memory in the process; triage any MZ/shellcode region by yara-scanning the dump and pivot on its imports.",
+      severity: "High",
+      pid: "1234",
+      mitreTechniques: ["T1055", "T1036.005"],
+    }],
+  }, null, 2),
+].join("\n");
+
 export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROMPT);
 export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
@@ -761,6 +832,7 @@ export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRA
 export const getHuntSuggestPrompt = (): string => resolvePrompt("HUNTS", HUNT_SUGGEST_PROMPT);
 export const getPlaybookHuntPrompt = (): string => resolvePrompt("PBHUNTS", PLAYBOOK_HUNT_PROMPT);
 export const getGapHypothesisPrompt = (): string => resolvePrompt("GAPHYP", GAP_HYPOTHESIS_PROMPT);
+export const getMemoryNextStepPrompt = (): string => resolvePrompt("MEMNEXT", MEMORY_NEXTSTEP_PROMPT);
 
 export interface PipelineOptions {
   provider?: AIProvider;
@@ -2282,6 +2354,44 @@ export class AnalysisPipeline {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "suggest-hunts");
       const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
       return sanitizeHuntSuggestions(suggestions, limit);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // Memory-forensics "Next-Step" agent (issue #101). The case already has Volatility 3 / Rekall output
+  // imported as forensic events; read that memory evidence (the process tree, connections, malfind,
+  // command lines, services), identify the anomalies, and propose the EXACT next Volatility 3 command
+  // the analyst should run to dig deeper. Single text-only AI call; EPHEMERAL like ask()/suggestHunts()
+  // — it does NOT mutate state. Returns [] without an AI call when the case has no memory evidence.
+  async suggestMemoryNextSteps(caseId: string): Promise<MemoryNextStep[]> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("memory next-step suggestions");
+    const loaded = await this.opts.stateStore.load(caseId);
+    if (!hasMemoryMaterial(loaded)) return [];   // no Volatility/Rekall evidence — don't spend a call
+
+    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const memEvents = scopedEvents.filter(isMemoryEvent);
+    if (!memEvents.length) return [];            // all memory evidence is out-of-scope / legitimate
+
+    const pluginsText = memoryPluginsPresent(memEvents).join(", ") || "(unknown)";
+
+    // Trim the memory evidence so the whole prompt fits the model context (the rest is fixed overhead).
+    const renderEvent = (e: ForensicEvent) =>
+      `[${e.severity}] ${(e.description ?? "").replace(/\s+/g, " ").trim().slice(0, 300)}`;
+    const overhead = estimateTokens(getMemoryNextStepPrompt()) + estimateTokens(pluginsText) + 300;
+    const fit = fitItemsToBudget(memEvents, renderEvent, Math.max(0, inputTokenBudget() - overhead));
+    const evidenceText = renderMemoryEvidence(memEvents, Math.max(1, fit));
+
+    const userPrompt =
+      `ALREADY-IMPORTED MEMORY PLUGINS (prefer suggesting plugins NOT in this list where they advance the case): ${pluginsText}\n\n` +
+      `MEMORY EVIDENCE (${memEvents.length} Volatility/Rekall events, worst-severity first):\n${evidenceText}\n\n` +
+      `Propose the next Volatility 3 commands as JSON.`;
+
+    const limit = Number(process.env.DFIR_MEMORY_NEXTSTEP_MAX) || MEMORY_NEXTSTEP_MAX_DEFAULT;
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getMemoryNextStepPrompt(), userPrompt, images: [] }, "memory-next-steps");
+      const { suggestions } = memoryNextStepResponseSchema.parse(parsed);
+      return sanitizeMemoryNextSteps(suggestions, limit);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
