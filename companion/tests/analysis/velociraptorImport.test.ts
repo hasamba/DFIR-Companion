@@ -51,7 +51,8 @@ describe("parseVelociraptorJson — detection rows", () => {
     expect(r.detections).toBe(1);
     expect(r.events).toHaveLength(1);
     const e = r.events[0];
-    expect(e.description).toContain("Velociraptor Sigma: Mimikatz LSASS Access");
+    expect(e.description).toContain("Sigma: Mimikatz LSASS Access"); // artifact tag may precede "Sigma:"
+    expect(e.description).toContain("[Windows.Detection.Sigma]");    // source artifact surfaced
     expect(e.description).toContain("EID 10");          // the underlying event is still mapped
     expect(e.severity).toBe("Critical");                // Sigma critical ≥ the EVTX-derived High
     expect(e.mitreTechniques).toContain("T1003.001");
@@ -63,7 +64,7 @@ describe("parseVelociraptorJson — detection rows", () => {
     const r = parseVelociraptorJson(JSON.stringify([yaraRow()]));
     expect(r.detections).toBe(1);
     const e = r.events[0];
-    expect(e.description).toContain("Velociraptor YARA: APT_Malware_Foo");
+    expect(e.description).toContain("YARA: APT_Malware_Foo"); // artifact tag may precede "YARA:"
     expect(e.severity).toBe("High");
     expect(e.path).toBe("C:\\Users\\bob\\evil.exe");
     expect(e.sha256).toBe("aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899");
@@ -296,8 +297,9 @@ describe("parseVelociraptorJson — IOC hygiene & extra time keys (#102)", () =>
     const generic = { _Source: "Windows.Analysis.EvidenceOfDownload", DownloadedFilePath: "C:\\Users\\v\\a.exe", Mtime: "2026-06-03T08:00:00Z" };
     const det = parseVelociraptorJson(JSON.stringify([detection])).events[0];
     const gen = parseVelociraptorJson(JSON.stringify([generic])).events[0];
-    expect(det.description).toContain("[DetectRaptor.Windows.Detection.LolDrivers]"); // appended to a detection
-    expect(gen.description).toContain("Windows.Analysis.EvidenceOfDownload");          // generic already leads with it
+    // Consistent placement: artifact right after "Velociraptor" for BOTH detection and generic.
+    expect(det.description).toContain("Velociraptor [DetectRaptor.Windows.Detection.LolDrivers] detection:");
+    expect(gen.description).toContain("Velociraptor [Windows.Analysis.EvidenceOfDownload]:");
     // The filename fallback (no _Source) is NOT shown as a bracketed artifact tag.
     const noSource = parseVelociraptorJson(JSON.stringify([{ Detection: { Name: "X" }, EntryPath: "c:\\y.sys" }]), { artifact: "0036_velociraptor-2026.json" }).events[0];
     expect(noSource.description).not.toContain("[0036_velociraptor");

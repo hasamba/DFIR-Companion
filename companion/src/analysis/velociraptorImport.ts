@@ -654,11 +654,14 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     if (m) {
       // Tag every event with the SOURCE artifact (from the row's _Source/_Artifact — stamped by the
       // browser push, or carried by an artifact-map import) so the analyst can navigate back to it.
-      // mapGeneric already leads with "[artifact]"; for detection/sigma/yara/eventlog append it. Only
-      // a REAL artifact name (not the filename fallback) is shown, to avoid a noisy "[import.dat]".
+      // Place it consistently right after "Velociraptor" (the same spot mapGeneric already uses), so
+      // detection/sigma/yara read "Velociraptor [artifact] detection: …" not "… [artifact]" at the
+      // end. Only a REAL artifact name (from _Source) is shown — never the filename fallback.
       const realArtifact = artifactName(row);
       if (realArtifact && !m.description.includes(realArtifact)) {
-        m.description = `${m.description} [${realArtifact}]`.slice(0, 600);
+        m.description = (m.description.startsWith("Velociraptor")
+          ? m.description.replace(/^Velociraptor/, `Velociraptor [${realArtifact}]`)
+          : `[${realArtifact}] ${m.description}`).slice(0, 600);
       }
       // Forensic distinctness: detections sharing a rule title/EID but describing different
       // artifacts (HackTool:Passview vs HackTool:Mimikatz) are SEPARATE events. Fold the message
