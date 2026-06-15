@@ -63,6 +63,7 @@ import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
 import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
+import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
 import type { KevCatalog } from "./kev.js";
 import {
@@ -528,6 +529,14 @@ export const ASK_PROMPT = [
   "You are a DFIR analyst assistant answering a SPECIFIC question about ONE investigation, using ONLY the",
   "case evidence provided below (compromised assets, threat-intel verdicts, attacker path, findings,",
   "forensic timeline, current questions). Do NOT invent evidence — if the case doesn't show it, say so.",
+  "",
+  "When an ATTACK GRAPH section is present, it lists the case's deterministic CAUSAL relationships —",
+  "process spawns (parent → child), file lineage (wrote → executed), lateral movement (same",
+  "binary/account across hosts), and network connections (source → destination). For multi-hop or",
+  "PATH questions (e.g. 'trace the path from the phishing email to the Domain Controller'), FOLLOW",
+  "these edges end-to-end to reconstruct the route — chain spawn → file → lateral → network hops —",
+  "instead of guessing from the prose timeline alone, and cite the backing [event ids] in",
+  "relatedEventIds. The graph is the ground truth for what led to what.",
   "",
   "Pick a status:",
   "- 'answered': the case evidence clearly settles it. Give the answer and cite the supporting event ids",
@@ -2376,16 +2385,21 @@ export class AnalysisPipeline {
     const questionsText = loaded.keyQuestions.map((q) => `- ${q.question}${q.answer ? ` → ${q.answer}` : " (open)"}`).join("\n") || "(none)";
     const kevCatalog = await this.getKevCatalog();
     const contextBlock = buildSynthesisContext(loaded, scopedEvents, kevCatalog);
+    // GraphRAG (#98): serialize the deterministic evidence-chain graph (causal edges) so the model
+    // can trace multi-hop attack paths via the graph's relationships, not just the flat timeline.
+    const graphMaxEdges = Number(process.env.DFIR_ASK_GRAPH_MAX_EDGES) || DEFAULT_MAX_GRAPH_EDGES;
+    const graphBlock = buildGraphContext({ ...loaded, forensicTimeline: scopedEvents }, { maxEdges: graphMaxEdges });
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const askOverhead = estimateTokens(getAskPrompt())
-      + estimateTokens(contextBlock + (loaded.attackerPath || "") + findingsText + questionsText + question) + 300;
+      + estimateTokens(contextBlock + graphBlock + (loaded.attackerPath || "") + findingsText + questionsText + question) + 300;
     const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - askOverhead));
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
 
     const userPrompt =
       contextBlock +
+      graphBlock +
       `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
       `FINDINGS:\n${findingsText}\n\n` +
       `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
