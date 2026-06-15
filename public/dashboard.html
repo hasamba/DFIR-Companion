@@ -919,13 +919,13 @@
     <datalist id="caseList"></datalist>
     <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
-    <button id="seedDemoBtn" data-tip="Load a pre-populated demo case (GlobalTech BEC &amp; Ransomware Precursor) to explore all dashboard features without importing real evidence">Demo case</button>
+    <button id="seedDemoBtn" style="display:none" data-tip="Load a pre-populated demo case (GlobalTech BEC &amp; Ransomware Precursor) to explore all dashboard features without importing real evidence">Demo case</button>
     <input id="snapshotImportFile" type="file" accept=".json,application/json" style="display:none" />
     <button id="importCaseBtn" type="button" data-tip="Import a whole case — an investigation snapshot (.json) shared by a teammate, or pull an existing DFIR-IRIS case. Opens a chooser; the DFIR-IRIS option appears only when configured.">Import case</button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
-    <button id="synthesize" data-tip="Re-run the holistic AI synthesis: one text-only pass over the whole in-scope forensic timeline that (re)derives the case CONCLUSIONS — findings, MITRE ATT&CK techniques, attacker path, narrative timeline, key DFIR questions and recommended next steps. It REPLACES the previous conclusions (so out-of-scope or no-longer-supported ones drop) but PRESERVES the forensic timeline, IOCs and open threads. Forces a fresh run even if nothing changed (capture/import already auto-synthesize). Run it after importing evidence, changing the investigation scope, or marking findings/IOCs legitimate.">AI Re-synthesize</button>
+    <button id="synthesize" data-tip="Re-derive the case conclusions — findings, MITRE ATT&CK, attacker path, narrative, key questions and next steps — from the in-scope forensic timeline. Replaces the previous conclusions but keeps the timeline, IOCs and threads.">AI Re-synthesize</button>
     <button id="secondOpinion" style="display:none" data-tip="Second LLM opinion: run a DIFFERENT model over the same case as an independent QA cross-check, then review where it disagrees with the primary synthesis (findings it adds/drops, severity, ATT&CK technique) and accept or reject each. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.eml,.msg,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,image/png,image/jpeg,image/webp" style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
@@ -9838,6 +9838,9 @@
             if (c.name && c.name !== c.caseId) o.label = c.name; // shown as a hint beside the id
             dl.appendChild(o);
           }
+          // The "Demo case" button is an onboarding affordance — show it only on an empty instance.
+          const demoBtn = document.getElementById("seedDemoBtn");
+          if (demoBtn) demoBtn.style.display = cases.length === 0 ? "" : "none";
         })
         .catch(() => {});
     }
