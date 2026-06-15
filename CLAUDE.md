@@ -257,13 +257,33 @@ sections — title page, distribution, BIA, glossary, recommendations…), `comm
 `import-meta.json` (when the last import ran + its kind/file + the forensic-timeline diff AND the IOC diff for the "📥 last import N ago / +N new events / +N new IOCs" banners + per-row `NEW` highlights; written by the unified `/import` route after the importer completes — the import analog of `synth-meta.json`),
 `playbook.json` (the **Response Playbook** — a trackable checklist auto-derived from the case's next steps + Critical/High findings (`analysis/playbook.ts` `derivePlaybookTasks`/`mergePlaybook`, pure + idempotent: an auto-task's id IS its source key, so a re-derive REFRESHES its text but PRESERVES the analyst's status/assignee/due/notes/order; a *pristine* untouched auto-task whose source vanished is pruned, a touched one is kept) plus custom tasks; the `GET` route re-syncs write-if-changed against current state, and `synthesize` re-syncs on each run — never wiped by synthesis), `playbook-control.json` (the per-case **IR-templates** toggle `{ useTemplates }`, `PlaybookControlStore`, default off — when on, `derivePlaybookTasks` expands each Critical/High finding into severity-based response phases (Critical → Contain/Investigate/Eradicate/Recover, High → Investigate/Contain), the Investigate step tailored to the finding's dominant ATT&CK tactic via `tacticForTechniques`).
 
+**Second LLM opinion (#116).** An on-demand QA cross-check: a DIFFERENT model
+(`DFIR_AI_SECOND_OPINION_MODEL` — ideally a different *provider*, since same-provider models share blind
+spots) independently re-synthesizes the case, and we surface where it disagrees with the primary synthesis
+for per-item analyst accept/reject. **Two passes** (`AnalysisPipeline.secondOpinion`): Pass 1 runs
+`synthesize(caseId, { dryRun:true, force:true, provider })` — the NEW **`dryRun`** flag returns model B's
+conclusions WITHOUT any side effect (no save / synth-meta / notify / accepted-delta re-apply), so it's
+**non-destructive**; Pass 2 builds the deterministic delta set (`analysis/secondOpinion.ts`, pure —
+`diffFindings` for findings-by-title + a MITRE set-diff → `b_only`/`a_only`/`severity`/`mitre_added`/`mitre_removed`
+deltas, each carrying the relevant Finding) and an AI **reconcile** call (`RECONCILE_PROMPT`/`getReconcilePrompt`,
+lenient `reconcileResponseSchema`) annotates each with a rationale + recommendation (`accept_b`/`keep_a`/`review`).
+Stored in `state/second-opinion.json` (`SecondOpinionStore`). **Durability:** findings are DERIVED (synthesis
+rewrites them), so `applyAcceptedSecondOpinion` (pure, idempotent) re-applies every ACCEPTED delta — used in
+BOTH `applySecondOpinion` (the apply route, on the live state) AND `synthesize`'s post-processing (right after
+the high-severity backfill) — so a confirmed model-B finding/severity/technique is never lost on the next
+synthesis. NON-destructive until the analyst accepts; **deliberately excluded from `SNAPSHOT_STATE_FILES`**
+(transient QA scratch — accepted deltas already live in `investigation.json`). Routes
+`POST/GET /cases/:id/second-opinion` + `…/apply`; `/health.secondOpinionEnabled` gates the dashboard **2nd
+opinion** button; `onSecondOpinion` WS-broadcasts `second_opinion_changed`. Two text-only AI calls per run;
+same caching/anonymization invariants as synthesis. Server-only (no `scripts/*` pipeline wiring).
+
 **Per-case stores** follow the same pattern (atomic temp-file rename via `storage/atomicWrite.ts` —
 which **retries the rename through a transient `EPERM`/`EBUSY`/`EACCES` lock**, since `cases/` may live
 in a synced folder where Dropbox/OneDrive/AV briefly locks the file mid-rename; route every new store's
 save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
-`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `ImportMetaStore`, `PlaybookStore`, `PlaybookControlStore`, `ReportTemplateControlStore` (`state/report-template.json` `{ templateId }`). Pure filters/transforms live next to
+`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `SecondOpinionStore`, `ImportMetaStore`, `PlaybookStore`, `PlaybookControlStore`, `ReportTemplateControlStore` (`state/report-template.json` `{ templateId }`). Pure filters/transforms live next to
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
-`backfillHighSeverityFindings`, `diffFindings`, `diffTimeline`, `diffIocs`) and are unit-tested independently of I/O.
+`backfillHighSeverityFindings`, `diffFindings`, `diffTimeline`, `diffIocs`, `buildSecondOpinionDeltas`, `applyAcceptedSecondOpinion`) and are unit-tested independently of I/O.
 
 **Custom report templates (#60).** A report is rendered through a **report template** that controls
 **branding** (accent colour, cover title/subtitle, running header/footer — all with a tiny, safe
@@ -568,8 +588,8 @@ deep-links back to the case; `DFIR_NOTIFY_CA`/`_INSECURE` for a self-hosted webh
 `scripts/*` pipeline wiring — `onSynth` is optional, so CLI synthesize/reanalyze just omit it).
 
 **Customizable prompts.** The prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
-consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`/`getNarrativePrompt()`/`getHuntSuggestPrompt()`/`getPlaybookHuntPrompt()`/`getGapHypothesisPrompt()`/`getMemoryNextStepPrompt()`/`getQueryTranslatePrompt()`,
-which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC|NARRATIVE|HUNTS|PBHUNTS|GAPHYP|MEMNEXT|QUERYXLATE>_PROMPT` inline, or `…_PROMPT_FILE` —
+consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`/`getNarrativePrompt()`/`getHuntSuggestPrompt()`/`getPlaybookHuntPrompt()`/`getGapHypothesisPrompt()`/`getMemoryNextStepPrompt()`/`getQueryTranslatePrompt()`/`getReconcilePrompt()` (the `RECONCILE_PROMPT` lives in `analysis/secondOpinion.ts`),
+which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC|NARRATIVE|HUNTS|PBHUNTS|GAPHYP|MEMNEXT|QUERYXLATE|RECONCILE>_PROMPT` inline, or `…_PROMPT_FILE` —
 re-read each call, so file edits apply with no restart; bad file → warn + fall back to default).
 When you change a prompt's wording, keep the example JSON shape it dictates in sync with `responseSchema.ts`.
 When you add a prompt, also add its `<NAME>` token to `resolvePrompt`'s union type.

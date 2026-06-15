@@ -223,6 +223,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **EDR/XDR + SIEM consoles are evidence** — detections are extracted; analyst tool-navigation is filtered out, with an incident-signal allowlist so a real detection is never dropped.
 - **Severity-aware findings** — a Critical/High row becomes a finding; a deterministic safety net auto-creates one (`AUTO` badge) for any high-severity event synthesis missed.
 - **Efficient, grounded synthesis** — live debounced re-synthesis during capture; skip-if-unchanged; stratified event selection + a *compromised assets ← IoCs* grounding digest.
+- **Second LLM opinion** — on-demand QA cross-check: a *different* model independently re-synthesizes the case, then a reconcile pass surfaces every disagreement (findings it adds/drops, severity, ATT&CK technique) with a rationale + recommendation for per-item **accept/reject**; accepts are durable across re-synthesis. Non-destructive; off until `DFIR_AI_SECOND_OPINION_MODEL` is set (use a different provider for a genuinely independent opinion).
 - **AI-input anonymization** — reversibly tokenizes internal IPs/users/hosts/domains/emails/paths and one-way-redacts secrets (adversary IOCs preserved). Entities auto-discover from the timeline **and screenshots**, each removable; default on.
 
 ### Correlation & deduplication
