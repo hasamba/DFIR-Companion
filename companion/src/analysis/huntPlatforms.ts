@@ -33,6 +33,21 @@ const ALIASES: Readonly<Record<string, HuntPlatform>> = {
 };
 
 /**
+ * Map a single token (a canonical key or a friendly alias) to its canonical {@link HuntPlatform},
+ * or null when unrecognized. Case-insensitive. Single-source for the alias table — used by both
+ * {@link resolveHuntPlatforms} (the env allowlist) and the NL→query translator's sanitizer (#100),
+ * so a model that answers with `vql`/`kql`/`spl` still maps to the right platform.
+ *
+ * Pure — depends only on its argument.
+ */
+export function normalizeHuntPlatform(raw: string | undefined | null): HuntPlatform | null {
+  if (raw == null) return null;
+  const key = raw.trim().toLowerCase();
+  if (!key) return null;
+  return ALIASES[key] ?? null;
+}
+
+/**
  * Resolve the DFIR_HUNT_PLATFORMS allowlist into the set of enabled hunt-query platforms.
  *
  * - Unset / empty → ALL platforms (backward compatible — the generator behaves as before).
@@ -47,9 +62,7 @@ export function resolveHuntPlatforms(raw: string | undefined | null): HuntPlatfo
   if (raw == null || !raw.trim()) return [...HUNT_PLATFORMS];
   const wanted = new Set<HuntPlatform>();
   for (const token of raw.split(/[\s,;]+/)) {
-    const key = token.trim().toLowerCase();
-    if (!key) continue;
-    const mapped = ALIASES[key];
+    const mapped = normalizeHuntPlatform(token);
     if (mapped) wanted.add(mapped);
   }
   if (wanted.size === 0) return [...HUNT_PLATFORMS]; // all tokens unrecognized → don't break the UI

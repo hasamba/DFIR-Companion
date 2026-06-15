@@ -2009,6 +2009,15 @@
       </div>
       <div id="askAnswer"></div>
     </section>
+    <section id="sec-nlquery" style="grid-column: 1 / -1">
+      <h2>Query Translator <span style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)">natural language → VQL / KQL / ES|QL / SPL / Sigma / YARA / Suricata</span></h2>
+      <div class="ask-row">
+        <input id="nlqInput" placeholder="e.g. PowerShell downloading a file and then executing it · outbound RDP from this host · new local admin accounts" />
+        <button id="nlqBtn">Translate</button>
+      </div>
+      <div id="nlqPlatforms" class="nlq-platforms" title="Which query languages to translate into — limited by the server's DFIR_HUNT_PLATFORMS allowlist"></div>
+      <div id="nlqResult"><div class="nlq-empty">Describe the activity you want to hunt for in plain English; the AI translates it into a runnable query for each selected platform, grounded in that platform's real schema. Review every query before running it.</div></div>
+    </section>
     <section id="sec-exec" style="grid-column: 1 / -1"><h2>Executive Summary<button id="genExecBtn" type="button" title="Generate a management-facing executive summary with AI (review before saving it to the report)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genExecMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="summary">—</div><div id="execGenResult"></div></section>
     <section id="sec-next-steps" style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
@@ -2265,6 +2274,28 @@
       #sec-velohunts .vhs-deploy{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
       #sec-velohunts .vhs-deploy:disabled{opacity:.6;cursor:default}
       #sec-velohunts .vhs-res{margin-top:6px}
+      /* ── Query Translator (NL → hunt queries, #100) ── */
+      #sec-nlquery .nlq-empty{color:var(--c-9aa4b2);font-size:12px}
+      #sec-nlquery .nlq-platforms{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+      #sec-nlquery .nlq-chip{display:inline-flex;align-items:center;gap:5px;background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);color:var(--c-c9d1db);border-radius:14px;padding:2px 10px;font-size:11px;cursor:pointer;user-select:none}
+      #sec-nlquery .nlq-chip input{margin:0;cursor:pointer}
+      #sec-nlquery .nlq-chip.off{opacity:.5}
+      #sec-nlquery .nlq-interp{color:var(--c-c9d1db);font-size:12px;margin:6px 0 10px;border-left:3px solid var(--c-6aa9ff);padding-left:8px}
+      #sec-nlquery .nlq-list{display:flex;flex-direction:column;gap:10px}
+      #sec-nlquery .nlq-card{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-6aa9ff);border-radius:6px;padding:8px 10px}
+      #sec-nlquery .nlq-card.na{border-left-color:var(--c-6b7585);opacity:.85}
+      #sec-nlquery .nlq-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+      #sec-nlquery .nlq-platform{color:var(--c-d6deea);font-weight:bold}
+      #sec-nlquery .nlq-na{background:var(--c-6b758522);color:var(--c-9aa4b2);border:1px solid var(--c-6b758555);border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
+      #sec-nlquery .nlq-expl{color:var(--c-c9d1db);font-size:12px;margin:6px 0}
+      #sec-nlquery .nlq-caveat{color:var(--c-ffb454);font-size:11px;margin:4px 0}
+      #sec-nlquery textarea.nlq-query{width:100%;box-sizing:border-box;min-height:80px;resize:vertical;background:var(--c-0f1115);color:var(--c-d6deea);border:1px solid var(--c-2a2f3a);border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;padding:8px;margin-top:4px}
+      #sec-nlquery .nlq-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+      #sec-nlquery .nlq-copy{background:var(--c-2d6cdf);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #sec-nlquery .nlq-copy.copied{background:var(--c-2f8f4e)}
+      #sec-nlquery .nlq-deploy{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #sec-nlquery .nlq-deploy:disabled{opacity:.6;cursor:default}
+      #sec-nlquery .nlq-res{margin-top:6px}
     </style>
     <section id="sec-legitimate" style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
     <style>
@@ -5294,6 +5325,100 @@
         .catch(e => box.innerHTML = `<div style="color:var(--c-ff9f43)">ask failed: ${esc(e.message)} — restart the companion server if this 404s</div>`);
     }
 
+    // ── Query Translator (natural language → hunt queries, #100) ──────────────────────────
+    // The analyst types intent in plain English; the server makes one AI call that translates it
+    // into a runnable query per selected platform, grounded in each platform's real schema. Results
+    // are ephemeral (no state change). The Velociraptor query can be deployed via the existing hunt
+    // flow (launchHuntInto). Platform keys + labels mirror huntPlatforms.ts / queryTranslate.ts.
+    const NLQ_PLATFORM_LABELS = {
+      velociraptor: "Velociraptor (VQL)",
+      defender: "Defender / Sentinel (KQL)",
+      elastic: "Elastic (ES|QL)",
+      splunk: "Splunk (SPL)",
+      sigma: "Sigma rule",
+      yara: "YARA rule",
+      suricata: "Suricata (network)",
+    };
+    const NLQ_PLATFORM_ORDER = ["velociraptor", "defender", "elastic", "splunk", "sigma", "yara", "suricata"];
+
+    // Render the platform picker from the server's enabled-platforms allowlist (set from /health).
+    // All enabled platforms start checked. Re-rendered when /health arrives.
+    function renderNlqPlatforms() {
+      const el = document.getElementById("nlqPlatforms");
+      if (!el) return;
+      const order = NLQ_PLATFORM_ORDER.filter((p) => enabledHuntPlatforms.has(p));
+      el.innerHTML = order.map((p) =>
+        `<label class="nlq-chip"><input type="checkbox" class="nlq-pf" value="${escAttr(p)}" checked>${esc(NLQ_PLATFORM_LABELS[p] || p)}</label>`
+      ).join("");
+      el.querySelectorAll(".nlq-pf").forEach((cb) => cb.onchange = () => cb.closest(".nlq-chip").classList.toggle("off", !cb.checked));
+    }
+
+    function doTranslateQuery() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const reqText = document.getElementById("nlqInput").value.trim();
+      const box = document.getElementById("nlqResult");
+      if (!caseId) { box.innerHTML = "<div class='nlq-empty'>connect to a case first</div>"; return; }
+      if (!reqText) return;
+      const platforms = [...document.querySelectorAll("#nlqPlatforms .nlq-pf:checked")].map((c) => c.value);
+      if (!platforms.length) { box.innerHTML = "<div class='nlq-empty' style='color:var(--c-ff9f43)'>select at least one platform to translate into</div>"; return; }
+      const btn = document.getElementById("nlqBtn");
+      btn.disabled = true;
+      box.innerHTML = "<div class='nlq-empty'>translating… (one AI call across the selected platforms)</div>";
+      fetch(`/cases/${caseId}/translate-query`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request: reqText, platforms }) })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { box.innerHTML = `<div class="nlq-empty" style="color:var(--c-ff9f43)">error: ${esc(j.error || "translation failed")} — restart the companion server if this 404s</div>`; return; }
+          renderQueryTranslations(j);
+        })
+        .catch((e) => box.innerHTML = `<div class="nlq-empty" style="color:var(--c-ff9f43)">error: ${esc(e.message)}</div>`)
+        .finally(() => { btn.disabled = false; });
+    }
+
+    function renderQueryTranslations(result) {
+      const box = document.getElementById("nlqResult");
+      const queries = (result && result.queries) || [];
+      if (!queries.length) {
+        box.innerHTML = "<div class='nlq-empty'>No queries produced — try rephrasing the request, or widen the selected platforms.</div>";
+        return;
+      }
+      const interp = result.interpretation ? `<div class="nlq-interp">🧠 Interpreted as: ${esc(result.interpretation)}</div>` : "";
+      const caveat = `<div class="nlq-caveat" style="margin-bottom:8px">⚠ AI-generated queries — review each against your real schema before running. Deploying the Velociraptor query launches a hunt across ALL enrolled endpoints.</div>`;
+      const cards = queries.map((q, idx) => {
+        const label = q.label || NLQ_PLATFORM_LABELS[q.platform] || q.platform;
+        const na = q.notApplicable || !q.query;
+        const naBadge = na ? `<span class="nlq-na">not applicable</span>` : "";
+        const expl = q.explanation ? `<div class="nlq-expl">${esc(q.explanation)}</div>` : "";
+        const caveats = q.caveats ? `<div class="nlq-caveat">⚠ ${esc(q.caveats)}</div>` : "";
+        const queryBlock = q.query ? `<textarea class="nlq-query" id="nlqQ${idx}" spellcheck="false">${esc(q.query)}</textarea>` : "";
+        const deployBtn = (q.platform === "velociraptor" && q.query)
+          ? (veloEnabled
+              ? `<button class="nlq-deploy" data-idx="${idx}" title="Launch this VQL as a hunt across ALL enrolled Velociraptor clients">▶ Deploy hunt (all clients)</button>`
+              : `<button class="nlq-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">▶ Deploy hunt (all clients)</button>`)
+          : "";
+        const actions = q.query
+          ? `<div class="nlq-actions"><button class="nlq-copy" data-idx="${idx}">Copy</button>${deployBtn}</div><div class="nlq-res" id="nlqRes${idx}"></div>`
+          : "";
+        return `<div class="nlq-card${na ? " na" : ""}">`
+          + `<div class="nlq-head"><span class="nlq-platform">${esc(label)}</span>${naBadge}</div>`
+          + expl + caveats + queryBlock + actions
+          + `</div>`;
+      }).join("");
+      box.innerHTML = interp + caveat + `<div class="nlq-list">${cards}</div>`;
+      box.querySelectorAll(".nlq-copy").forEach((b) => b.onclick = () => {
+        const q = document.getElementById("nlqQ" + b.dataset.idx);
+        navigator.clipboard.writeText(q ? q.value : "").then(() => {
+          b.textContent = "Copied ✓"; b.classList.add("copied");
+          setTimeout(() => { b.textContent = "Copy"; b.classList.remove("copied"); }, 1500);
+        }).catch(() => { b.textContent = "copy failed"; });
+      });
+      box.querySelectorAll(".nlq-deploy:not([disabled])").forEach((b) => b.onclick = () => {
+        const idx = b.dataset.idx;
+        const q = document.getElementById("nlqQ" + idx);
+        const label = (queries[idx] && queries[idx].label) || "DFIR query-translator hunt";
+        launchHuntInto(q ? q.value : "", label, document.getElementById("nlqRes" + idx), b);
+      });
+    }
+
     function applyScope() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
@@ -7287,6 +7412,7 @@
         veloEnabled = !!h.velociraptorEnabled;   // gates the "Run in Velociraptor" button in the hunt modal
         applyVeloEnabled();                        // gates the triage panel's Run buttons + disabled note
         if (Array.isArray(h.huntPlatforms)) enabledHuntPlatforms = new Set(h.huntPlatforms);   // hunt-modal allowlist
+        renderNlqPlatforms();                      // refresh the query-translator platform picker (#100)
       }).catch(() => setAi("unknown", "unknown"));
 
       // Check-on-connect: if screenshots recently arrived for a DIFFERENT case, warn right away
@@ -7816,6 +7942,9 @@
     document.getElementById("hypothesizeGapsBtn").addEventListener("click", (e) => { e.stopPropagation(); doHypothesizeGaps(); });
     document.getElementById("askBtn").onclick = doAsk;
     document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
+    document.getElementById("nlqBtn").onclick = doTranslateQuery;
+    document.getElementById("nlqInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doTranslateQuery(); });
+    renderNlqPlatforms();   // initial render (refreshed when /health arrives)
     document.getElementById("connect").onclick = connect;
     document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
     // A <datalist> filters its suggestions by the field's current text, so a pre-filled case id
@@ -8664,6 +8793,7 @@
     const SECTIONS_ORDER_KEY = "dfir.sectionsOrder";
     const SECTION_DEFS = [
       { id: "sec-ask",          label: "Ask the LLM" },
+      { id: "sec-nlquery",      label: "Query Translator" },
       { id: "sec-exec",         label: "Executive Summary" },
       { id: "sec-playbook",     label: "Playbook" },
       { id: "sec-attack-path",  label: "Attack Path" },
