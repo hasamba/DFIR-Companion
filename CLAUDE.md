@@ -260,7 +260,10 @@ sections — title page, distribution, BIA, glossary, recommendations…), `comm
 **Second LLM opinion (#116).** An on-demand QA cross-check: a DIFFERENT model
 (`DFIR_AI_SECOND_OPINION_MODEL` — ideally a different *provider*, since same-provider models share blind
 spots) independently re-synthesizes the case, and we surface where it disagrees with the primary synthesis
-for per-item analyst accept/reject. **Two passes** (`AnalysisPipeline.secondOpinion`): Pass 1 runs
+for per-item analyst accept/reject. **Three passes** (`AnalysisPipeline.secondOpinion`): Pass 0 freshens the
+PRIMARY synthesis via a plain `synthesize(caseId)` (skip-if-unchanged → no AI call when A is already current)
+so model A reflects the CURRENT timeline — otherwise a stale saved A vs a fresh B yields deltas that are
+staleness artifacts (deterministic gap/backfill findings) not real model disagreements; Pass 1 runs
 `synthesize(caseId, { dryRun:true, force:true, provider })` — the NEW **`dryRun`** flag returns model B's
 conclusions WITHOUT any side effect (no save / synth-meta / notify / accepted-delta re-apply), so it's
 **non-destructive**; Pass 2 builds the deterministic delta set (`analysis/secondOpinion.ts`, pure —

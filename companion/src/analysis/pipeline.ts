@@ -2964,11 +2964,19 @@ export class AnalysisPipeline {
     const provider = this.opts.secondOpinionProvider;
     if (!provider) throw new Error("second-opinion model not configured (set DFIR_AI_SECOND_OPINION_MODEL)");
     if (!this.opts.secondOpinionStore) throw new Error("second-opinion store not configured");
-    const a = await this.opts.stateStore.load(caseId);
-    if (a.forensicTimeline.length === 0) throw new Error("nothing to review — import evidence and synthesize the case first");
+    if ((await this.opts.stateStore.load(caseId)).forensicTimeline.length === 0) {
+      throw new Error("nothing to review — import evidence and synthesize the case first");
+    }
 
-    // Pass 1 — independent synthesis with model B over the SAME inputs (same prompt/context), but
-    // routed through a different model and NOT persisted (dryRun). This is model B's analysis.
+    // Pass 0 — freshen the PRIMARY synthesis so model A reflects the CURRENT timeline. Without this,
+    // a stale saved A vs a fresh model-B run produces deltas that are staleness artifacts (e.g. the
+    // deterministic gap-silence / high-severity backfill findings) rather than real model
+    // disagreements. Uses skip-if-unchanged (no `force`), so it's a NO-OP (no AI call) when A is
+    // already current — it only re-synthesizes when the in-scope timeline/IOCs/scope changed.
+    const a = await this.synthesize(caseId);
+
+    // Pass 1 — independent synthesis with model B over the SAME current timeline/context, routed
+    // through a different model and NOT persisted (dryRun). This is model B's analysis.
     const b = await this.synthesize(caseId, { dryRun: true, force: true, provider });
 
     const modelA = this.opts.synthesisModelLabel ?? (this.opts.synthesisProvider ?? this.opts.provider)?.name ?? "model A";

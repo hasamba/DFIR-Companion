@@ -8,7 +8,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
-import { emptyState, type Finding, type InvestigationState } from "../../src/analysis/stateTypes.js";
+import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
 // A provider that returns the synthesis delta for the Pass-1 (synthesis) call and the reconcile
 // JSON for the Pass-2 (reconcile) call — distinguished by the RECONCILE system prompt marker.
@@ -20,7 +20,20 @@ class ScriptedProvider implements AIProvider {
   }
 }
 
-// Model B's independent synthesis (dry-run) output — valid deltaSchema shape.
+// Model A (primary synthesis) and model B (second opinion) produce DIFFERENT analyses. The second
+// opinion re-synthesizes A first (Pass 0) then dry-runs B, so the two providers must be distinct for
+// a disagreement to exist. Both are valid deltaSchema shapes.
+const SYNTH_A = JSON.stringify({
+  findings: [
+    { id: "f1", severity: "High", confidence: 80, title: "Shared finding", description: "d", relatedIocs: [], mitreTechniques: ["T1078"], status: "open", relatedEventIds: [] },
+    { id: "f2", severity: "Medium", confidence: 60, title: "A only finding", description: "A keeps this", relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: [] },
+  ],
+  iocs: [],
+  mitreTechniques: [{ id: "T1078", name: "Valid Accounts" }],
+  threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "A's summary",
+  forensicEvents: [], attackerPath: "", keyQuestions: [], nextSteps: [],
+});
+
 const SYNTH_B = JSON.stringify({
   findings: [
     { id: "g1", severity: "High", confidence: 80, title: "Shared finding", description: "d", relatedIocs: [], mitreTechniques: ["T1071"], status: "open", relatedEventIds: [] },
@@ -37,22 +50,13 @@ const RECONCILE = JSON.stringify({
   verdicts: [{ id: "b_only:b-only-finding", rationale: "Supported by event e1.", recommendation: "accept_b" }],
 });
 
-function finding(over: Partial<Finding> & Pick<Finding, "id" | "title" | "severity">): Finding {
-  return {
-    confidence: 70, description: "d", relatedIocs: [], sourceScreenshots: [], mitreTechniques: [],
-    firstSeen: "2026-06-01T00:00:00.000Z", lastUpdated: "2026-06-01T00:00:00.000Z", status: "open", ...over,
-  };
-}
-
+// Only the timeline is seeded; model A's findings/MITRE come from the Pass-0 primary re-synthesis.
 function seededState(): InvestigationState {
   const s = emptyState("c1");
   s.forensicTimeline.push({
     id: "e1", timestamp: "2026-06-10T00:00:00.000Z", description: "beaconing to 1.2.3.4",
     severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
   });
-  s.findings.push(finding({ id: "f1", title: "Shared finding", severity: "High" }));
-  s.findings.push(finding({ id: "f2", title: "A only finding", severity: "Medium" }));
-  s.mitreTechniques.push({ id: "T1078", name: "Valid Accounts", findingIds: [] });
   return s;
 }
 
@@ -61,10 +65,11 @@ async function makeApp(opts: { enabled: boolean }) {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const secondOpinionStore = new SecondOpinionStore(store);
-  const provider = new ScriptedProvider(SYNTH_B, RECONCILE);
+  const aProvider = new ScriptedProvider(SYNTH_A, SYNTH_A);   // primary synth (reconcile string unused)
+  const bProvider = new ScriptedProvider(SYNTH_B, RECONCILE); // second opinion: dry-run synth + reconcile
   const pipeline = buildRuntimePipeline({
-    provider, synthesisProvider: provider, stateStore, store,
-    secondOpinionProvider: opts.enabled ? provider : undefined,
+    provider: aProvider, synthesisProvider: aProvider, stateStore, store,
+    secondOpinionProvider: opts.enabled ? bProvider : undefined,
     secondOpinionStore,
     synthesisModelLabel: "model-A",
     secondOpinionModelLabel: "model-B",
@@ -94,6 +99,20 @@ describe("Second opinion routes (#116)", () => {
     expect(bOnly.rationale).toBe("Supported by event e1.");
     expect(bOnly.recommendation).toBe("accept_b");
     expect(bOnly.status).toBe("pending");
+  });
+
+  it("re-synthesizes the primary (model A) first, so a stale saved finding is refreshed out before comparing", async () => {
+    const { app, stateStore } = await makeApp({ enabled: true });
+    // Inject a stale finding the fresh primary synthesis (SYNTH_A) does NOT reproduce.
+    const s = await stateStore.load("c1");
+    s.findings.push({ id: "stale", severity: "Low", title: "Stale leftover finding", description: "", relatedIocs: [], sourceScreenshots: [], mitreTechniques: [], firstSeen: "2026-06-01T00:00:00.000Z", lastUpdated: "2026-06-01T00:00:00.000Z", status: "open" });
+    await stateStore.save(s);
+    await request(app).post("/cases/c1/second-opinion").send({});
+    // Pass 0 re-synthesized A (findings replaced by SYNTH_A), so the stale finding is gone from the
+    // case and never surfaces as a phantom "only in A" delta.
+    const rec = await request(app).get("/cases/c1/second-opinion").then((r) => r.body);
+    expect(rec.deltas.some((d: { title: string }) => d.title === "Stale leftover finding")).toBe(false);
+    expect((await stateStore.load("c1")).findings.some((f) => f.title === "Stale leftover finding")).toBe(false);
   });
 
   it("accepting a b_only delta adds the finding to the case (durably) and records the decision", async () => {
