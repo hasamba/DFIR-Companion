@@ -97,6 +97,72 @@ function flatStr(v: unknown): string {
   return String(v);
 }
 
+// The human-readable message for a row. Velociraptor Sigma/Hayabusa rows put it in `Details`; the
+// parsed event (when present) carries its own `Message`. Used for the description AND for keeping
+// distinct detections distinct (see msgFingerprint).
+function rowMessage(row: Row): string {
+  const m = firstStr(row, ["Message", "Details", "message"]);
+  if (m) return m;
+  const ev = getCI(row, "_Event");
+  return isObject(ev) ? str(getCI(ev, "Message")) : "";
+}
+
+// High-signal labels in a RENDERED Windows event message (4688 process creation, Sysmon, service
+// install, etc.). When an artifact ships the event as free text — no structured EventData to map —
+// these carry the actual evidence (the LOLBIN binary + its command line), which the boilerplate
+// header ("Creator Subject… Target Subject…") buries past the description cut-off. Surfacing them
+// makes e.g. "Use of 32-bit LOLBINs" name the binary that ran, not just the rule. (#102)
+const MSG_FIELD_LABELS = [
+  "New Process Name", "Process Command Line", "CommandLine", "Command Line",
+  "Image", "Application Name", "TargetFilename", "Service File Name", "ServiceFileName", "ScriptBlockText",
+];
+// Velociraptor renders some fields with a trailing "!S!" sentinel — strip it for readability.
+function cleanFieldValue(v: string): string {
+  return v.trim().replace(/!S!\s*$/, "").trim();
+}
+function fieldFromMessage(msg: string, label: string): string {
+  const re = new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:[ \\t]*([^\\r\\n]+)`, "i");
+  const m = re.exec(msg);
+  return m ? cleanFieldValue(m[1]) : "";
+}
+function salientFromMessage(msg: string): string {
+  if (!msg || !msg.includes(":")) return "";
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const label of MSG_FIELD_LABELS) {
+    const v = fieldFromMessage(msg, label);
+    if (v && v !== "-" && !seen.has(v)) { seen.add(v); out.push(`${label}: ${v}`); }
+  }
+  return out.join(" ¦ ").slice(0, 400);
+}
+// The created/executed process named in a rendered event message (the LOLBIN), for the structured
+// processName field + IOC when the row carries no structured process column.
+function parsedNewProcess(msg: string): string {
+  return fieldFromMessage(msg, "New Process Name") || fieldFromMessage(msg, "Image");
+}
+
+// A stable djb2 hash → base36, for folding message content into an aggregation key compactly.
+function hashStr(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (((h << 5) + h) + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+// Fingerprint a message for aggregation: normalize away VOLATILE bits (GUIDs, any digits — PIDs,
+// thread/record ids, counters) but keep the words, then hash the WHOLE thing. So two detections
+// that differ only in a PID collapse, while two that name different tools (HackTool:Passview vs
+// HackTool:Mimikatz) stay separate — the message, not just the rule title, decides identity. The
+// hash (not a prefix) means a distinguishing token anywhere in a long, boilerplate-heavy message
+// still separates the events.
+function msgFingerprint(msg: string): string {
+  const norm = oneLine(msg).toLowerCase()
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "")
+    .replace(/\d+/g, "")
+    .replace(/[^a-z]+/g, " ")
+    .trim();
+  return norm ? hashStr(norm) : "";
+}
+
 // ───────────────────────────── detection verdicts ─────────────────────────────
 
 // Many Velociraptor "*.Detection.*" artifacts (DetectRaptor et al.) carry their VERDICT in a
@@ -161,11 +227,13 @@ function vrTime(v: unknown): string {
 // nested forensic containers (MFT $SI/$FN, file-info, hit-context) and registry/app keys so the
 // detection artifacts that bury their time one level down still get a real timestamp.
 const TIME_KEYS = [
-  "System.TimeCreated.SystemTime", "System.TimeCreated", "EventTime", "Mtime", "Btime",
-  "Ctime", "Created", "CreationTime", "LastWriteTime", "KeyLastWriteTimestamp", "TimeGenerated",
+  "System.TimeCreated.SystemTime", "System.TimeCreated", "EventTime", "EventTimestamp", "Mtime", "Btime",
+  "Ctime", "Created", "CreationTime", "LastWriteTime", "KeyLastWriteTimestamp", "KeyMTime", "TimeGenerated",
   "Timestamp", "timestamp", "time", "StartTime",
   "SITimestamps.LastModified0x10", "SITimestamps.Created0x10", "FNTimestamps.Created0x30",
-  "FileInfo.Mtime", "FileInfo.Ctime", "FileInfo.Btime", "HitContext.Mtime",
+  // Nested file-stat blocks: FileInfo.* (DetectRaptor PSReadline), Stat.* (the Generic PSReadline /
+  // QuickWins shape), so history-line + Amcache/LolDrivers (KeyMTime) rows land dated, not at epoch 0.
+  "FileInfo.Mtime", "FileInfo.Ctime", "FileInfo.Btime", "Stat.Mtime", "Stat.Ctime", "Stat.Btime", "HitContext.Mtime",
   "_ts",
 ];
 function pickTime(row: Row): string {
@@ -236,7 +304,7 @@ function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
 }
 
 // The free-text fields that carry a detection's evidence (and its embedded IOCs).
-const EVIDENCE_TEXT_KEYS = ["Line", "Content", "CommandLine", "HitString", "StringHit", "Message"];
+const EVIDENCE_TEXT_KEYS = ["Line", "Content", "CommandLine", "HitString", "StringHit", "Message", "Details"];
 function scrapeEvidence(row: Row, sink: Map<string, SiemIoc>): void {
   for (const k of EVIDENCE_TEXT_KEYS) scrapeText(str(getCI(row, k)), sink);
 }
@@ -304,7 +372,14 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
   const rule = getCI(row, "Rule");
   const ruleName = typeof rule === "string" && rule.trim() ? rule.trim()
     : str(getPath(row, "Rule.id")) || str(getPath(row, "Rule.Name")) || firstStr(row, ["RuleName", "Namespace"]) || "match";
-  const { sha256, md5 } = collectRowIocs(row, sink);
+  // A YARA hit's only OBSERVED indicator is the matched file (+ its hash / owning process). The rule's
+  // Meta (reference/source_url/author/sample hashes), Strings, and the binary HitContext are detection
+  // LOGIC — flattening the whole row (collectRowIocs) scrapes the rule's GitHub links and match-context
+  // bytes as bogus IOCs (a pagefile scan produced 700+ junk hashes / 360+ junk URLs). Extract
+  // selectively: structured file hash only. (#102)
+  const { sha256, md5 } = vrHashes(row);
+  if (sha256) addIoc(sink, "hash", sha256);
+  else if (md5) addIoc(sink, "hash", md5);
 
   const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path"]);
   const procName = firstStr(row, ["Exe", "ProcessName", "ImageName"]);
@@ -353,11 +428,18 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
     if (!win.timestamp) win.timestamp = pickTime(row);
     return win;
   }
-  // No parsed event underneath — keep the verdict alone.
+  // No parsed event underneath (e.g. a Windows.Sigma.Base row whose event sits in `Details`/`_Event`)
+  // — lead with the verdict, then the message so the analyst sees WHAT fired, not just the rule name.
   collectRowIocs(row, sink);
+  scrapeEvidence(row, sink);
+  const message = rowMessage(row);
+  const detail = salientFromMessage(message) || (message ? oneLine(message).slice(0, 400) : "");
+  let description = `Velociraptor Sigma: ${title}`;
+  if (detail) description += ` — ${detail}`;
+  if (host) description += ` @ ${host}`;
   return {
     timestamp: pickTime(row),
-    description: `Velociraptor Sigma: ${title}${host ? ` @ ${host}` : ""}`.slice(0, 600),
+    description: description.slice(0, 600),
     severity: sev ?? "Medium",
     mitre: tags,
     aggKey: `vr-sigma|${title.toLowerCase()}|${host.toLowerCase()}`.slice(0, 400),
@@ -386,23 +468,44 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     return win;
   }
 
-  // Non-event detection (file / registry / named-pipe / history-line hit).
+  // Non-event detection (file / registry / named-pipe / history-line hit, or a flattened EVTX
+  // detection whose event sits only in the rendered Message).
   const { sha256, md5 } = collectRowIocs(row, sink);
-  const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path", "KeyPath"]);
-  const procRaw = firstStr(row, ["Exe", "Image", "ProcessName", "ProcName", "NewProcessName"]);
+  const message = rowMessage(row);
+  const salient = salientFromMessage(message); // LOLBIN + command line out of a 4688-style message
+  // The triggering FILE: include the Amcache/driver/registry path fields (EntryPath/EntryName/
+  // Detection.PathName) so a "Defence Evasion"/"BAU …" verdict names the file that fired it.
+  const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path", "KeyPath", "EntryPath", "EntryName"])
+    || str(getPath(row, "Detection.PathName"));
+  // The matched CONTENT/evidence: the full matched line/Content the analyst needs to read, falling
+  // back to the rule's own HitString (the substring it matched). NOT Detection.Regex/KeywordRegex
+  // (the rule pattern itself, which stays out of the description).
+  const evidence = firstStr(row, ["Line", "Content", "CommandLine", "StringHit", "HitString"])
+    || str(getPath(row, "Detection.HitString")).trim();
+  const procRaw = firstStr(row, ["Exe", "Image", "ProcessName", "ProcName", "NewProcessName"]) || parsedNewProcess(message);
   const parentRaw = firstStr(row, ["ParentName", "ParentImage", "ParentProcessName"]);
   const processName = procRaw ? baseName(procRaw) : undefined;
   const parentName = parentRaw ? baseName(parentRaw) : undefined;
   const pipe = firstStr(row, ["PipeName"]);
   if (processName) addIoc(sink, "process", processName);
+  if (path) addIoc(sink, "file", path);
 
-  const subjectParts: string[] = [];
-  if (processName) subjectParts.push(processName);
-  if (pipe) subjectParts.push(`pipe ${pipe}`);
-  if (path && !processName) subjectParts.push(path);
-  const line = firstStr(row, ["Line", "StringHit", "HitString", "CommandLine"]);
-  if (line && subjectParts.length === 0) subjectParts.push(oneLine(line).slice(0, 160));
-  const subject = subjectParts.join(" ");
+  // Subject priority: the rendered event's high-signal fields (the actual LOLBIN/command line) win
+  // over structured process/path, which win over the matched content/line. A bare verdict with no
+  // subject (just the rule name) is the failure we're avoiding — the analyst needs the WHAT.
+  let subject: string;
+  if (salient) {
+    subject = salient;
+  } else {
+    const parts: string[] = [];
+    if (processName) parts.push(processName);
+    if (pipe) parts.push(`pipe ${pipe}`);
+    if (path && !processName) parts.push(path);
+    if (parts.length === 0) {
+      parts.push(evidence ? oneLine(evidence).slice(0, 200) : oneLine(message).slice(0, 200));
+    }
+    subject = parts.join(" ");
+  }
 
   let description = `Velociraptor detection: ${v.title}`;
   if (subject) description += ` — ${subject}`;
@@ -440,10 +543,13 @@ function mapEventlog(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   return win;
 }
 
-const GENERIC_MSG_KEYS = ["Message", "message", "Description", "Category", "DisplayName", "Line", "Stdout", "CommandLine", "PipeName", "KeyPath", "OSPath", "FullPath", "Name"];
+const GENERIC_MSG_KEYS = ["Message", "Details", "message", "Description", "Category", "DisplayName", "Line", "Stdout", "CommandLine", "PipeName", "KeyPath", "OSPath", "FullPath", "Name"];
 // Keys whose values are big/structured (rule regexes, PE internals, raw file content) — useful
 // for IOC scanning but noise in a one-line description, so they're skipped in the key=value fallback.
 const NOISE_KEY = /regex|ignore|imports|exports|sections|resources|directories|versioninformation|dllinfo|hitcontext|\bmeta\b|content|reference|url|license/i;
+// Collection-metadata keys (the artifact id surfaced in the "[artifact]" prefix, the _ts collection
+// time) — skipped in the key=value fallback so they don't duplicate the prefix / add noise.
+const META_KEY = /^(_ts|_Source|_Artifact|ArtifactName)$/i;
 
 function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const { sha256, md5 } = collectRowIocs(row, sink);
@@ -452,7 +558,7 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   const pairs: [string, string][] = [];
   flatten(row, pairs);
   const base = msg ? oneLine(msg)
-    : pairs.filter(([k, v]) => k !== "_ts" && !NOISE_KEY.test(k) && v.length <= 200).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
+    : pairs.filter(([k, v]) => !META_KEY.test(k) && !NOISE_KEY.test(k) && v.length <= 200).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
 
   const sevWord = firstStr(row, ["Severity", "Level", "Risk", "Priority"]).toLowerCase();
   const severity: Severity = SEV_WORDS[sevWord] ?? "Info";
@@ -545,7 +651,26 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     else if (kind === "detection") { m = mapDetection(row, artifact, host, iocSink); detections++; }
     else if (kind === "eventlog") { m = mapEventlog(row, host, iocSink) ?? mapGeneric(row, artifact, host, iocSink); }
     else { m = mapGeneric(row, artifact, host, iocSink); }
-    if (m) mapped.push(m);
+    if (m) {
+      // Tag every event with the SOURCE artifact (from the row's _Source/_Artifact — stamped by the
+      // browser push, or carried by an artifact-map import) so the analyst can navigate back to it.
+      // Place it consistently right after "Velociraptor" (the same spot mapGeneric already uses), so
+      // detection/sigma/yara read "Velociraptor [artifact] detection: …" not "… [artifact]" at the
+      // end. Only a REAL artifact name (from _Source) is shown — never the filename fallback.
+      const realArtifact = artifactName(row);
+      if (realArtifact && !m.description.includes(realArtifact)) {
+        m.description = (m.description.startsWith("Velociraptor")
+          ? m.description.replace(/^Velociraptor/, `Velociraptor [${realArtifact}]`)
+          : `[${realArtifact}] ${m.description}`).slice(0, 600);
+      }
+      // Forensic distinctness: detections sharing a rule title/EID but describing different
+      // artifacts (HackTool:Passview vs HackTool:Mimikatz) are SEPARATE events. Fold the message
+      // fingerprint into the agg key so they don't collapse on title alone — while truly identical
+      // repeats (differing only in volatile ids) still merge. See msgFingerprint.
+      const fp = msgFingerprint(rowMessage(row));
+      if (fp) m.aggKey = `${m.aggKey}|m:${fp}`.slice(0, 440);
+      mapped.push(m);
+    }
   }
 
   const { events, groups } = aggregateEvents(mapped, {

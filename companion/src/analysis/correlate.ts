@@ -21,8 +21,12 @@ const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Lo
 
 const SHA256_RE = /\b[a-f0-9]{64}\b/i;
 const MD5_RE = /\b[a-f0-9]{32}\b/i;
-// Windows ("C:\…") or UNC ("\\host\…") or Unix ("/usr/…") paths.
-const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|\/(?:[\w.\-]+\/)+[\w.\-]+/;
+// Windows ("C:\…") or UNC ("\\host\…") or Unix ("/usr/…") paths. The Unix branch carries a
+// negative lookbehind so it does NOT match a URL path (e.g. the "https://go.microsoft.com/fwlink"
+// in a Windows Defender message): a "/seg/seg" preceded by a word char, "/", or ":" is part of a
+// URL/host, not a filesystem path — matching it falsely correlated unrelated detections that merely
+// shared a vendor URL in their text. (#102)
+const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w.\-]+/;
 
 function eventHashes(e: ForensicEvent): string[] {
   const out = new Set<string>();
@@ -35,9 +39,14 @@ function eventHashes(e: ForensicEvent): string[] {
   return [...out];
 }
 
-function eventPath(e: ForensicEvent): string | undefined {
-  const p = e.path ?? PATH_RE.exec(e.description)?.[0];
-  return p ? p.trim().toLowerCase() : undefined;
+// A normalized file path for correlation, plus whether it came from a STRUCTURED field (`e.path`)
+// or was scraped from the description. Free-text paths are weak — a process executable (e.g.
+// powershell.exe) or a vendor URL recurs across unrelated detections — so they correlate ONLY
+// against a structured path, never another free-text one (see the structured gate in step 2). (#102)
+function eventPath(e: ForensicEvent): { path: string; structured: boolean } | undefined {
+  if (e.path && e.path.trim()) return { path: e.path.trim().toLowerCase(), structured: true };
+  const m = PATH_RE.exec(e.description)?.[0];
+  return m ? { path: m.trim().toLowerCase(), structured: false } : undefined;
 }
 
 function epoch(ts: string): number | undefined {
@@ -56,6 +65,18 @@ class DSU {
 
 function worse(a: Severity, b: Severity): Severity {
   return SEV_RANK[a] <= SEV_RANK[b] ? a : b;
+}
+
+// Path+time correlation (step 2) exists for CROSS-tool corroboration — the same file reported by two
+// tools. It must NOT collapse many distinct rows from ONE tool that merely share a container path
+// (e.g. every PSReadline command shares the history-file OSPath; every registry hit shares a hive).
+// So a path merge requires the two events to add corroboration: one carries a source the other lacks.
+// Unknown-source events keep the old behavior (back-compat). Hash/exact-dup merges are unaffected.
+function corroborates(a: ForensicEvent, b: ForensicEvent): boolean {
+  const sa = (a.sources ?? []).filter((s) => s && s !== "unknown source");
+  const sb = (b.sources ?? []).filter((s) => s && s !== "unknown source");
+  if (!sa.length || !sb.length) return true;
+  return sa.some((s) => !sb.includes(s)) || sb.some((s) => !sa.includes(s));
 }
 
 // A legacy "[corroborated by N sources: …]" suffix an earlier build appended to the
@@ -148,18 +169,23 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
     }
   });
 
-  // 2) Same normalized path with timestamps within the window → union.
-  const byPath = new Map<string, number[]>();
+  // 2) Same normalized path with timestamps within the window → union — but only when at least one
+  //    side carries the path as a STRUCTURED field. Two free-text path mentions are too weak (a
+  //    shared process exe or vendor URL would falsely merge distinct same-tool detections, #102);
+  //    a structured path matching a text path still corroborates (AI-extracted event ↔ import).
+  const byPath = new Map<string, { i: number; structured: boolean }[]>();
   events.forEach((e, i) => {
     const p = eventPath(e);
-    if (p) (byPath.get(p) ?? byPath.set(p, []).get(p)!).push(i);
+    if (p) (byPath.get(p.path) ?? byPath.set(p.path, []).get(p.path)!).push({ i, structured: p.structured });
   });
-  for (const idxs of byPath.values()) {
-    if (idxs.length < 2) continue;
-    const dated = idxs.map((i) => ({ i, t: epoch(events[i].timestamp) }))
+  for (const entries of byPath.values()) {
+    if (entries.length < 2) continue;
+    const dated = entries.map((x) => ({ i: x.i, structured: x.structured, t: epoch(events[x.i].timestamp) }))
       .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
     for (let k = 1; k < dated.length; k++) {
       const a = dated[k - 1], b = dated[k];
+      if (!a.structured && !b.structured) continue; // both free-text → too weak to merge
+      if (!corroborates(events[a.i], events[b.i])) continue; // same tool sharing a container path → keep distinct
       // Undated events on the same path correlate too (no time to disprove); dated ones
       // must be within the window.
       if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= windowMs) dsu.union(a.i, b.i);

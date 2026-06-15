@@ -1,4 +1,4 @@
-import type { CapturePayload } from "./types.js";
+import type { CapturePayload, ImportPayload } from "./types.js";
 
 type FetchFn = typeof fetch;
 
@@ -27,6 +27,21 @@ export class CompanionClient {
         body: JSON.stringify(payload),
       });
       return { ok: res.status === 201, status: res.status };
+    } catch {
+      return { ok: false, status: 0 }; // network error — companion unreachable
+    }
+  }
+
+  // Push an intercepted/scraped tool artifact through the unified import route (issue #102). The
+  // companion auto-detects the format and routes it; a successful enqueue is 202 (import runs async).
+  async postImport(caseId: string, payload: ImportPayload): Promise<PostCaptureResult> {
+    try {
+      const res = await this.fetchFn(`${this.baseUrl}/cases/${encodeURIComponent(caseId)}/import`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { ok: res.status === 202, status: res.status };
     } catch {
       return { ok: false, status: 0 }; // network error — companion unreachable
     }
