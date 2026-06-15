@@ -240,6 +240,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **IOC corroboration** — a **⊕ N** badge per IOC for how many distinct tools observed it (panel, report, CSV).
 - **IOC flagged-only filter** — one click hides everything except indicators a threat-intel engine rated malicious/suspicious.
 - **Hunt-pivot generator** — one click on any event/IOC emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, and Suricata queries; offline, no AI.
+- **Query Translator** — a search bar that turns plain English ("PowerShell downloading a file and then executing it", "outbound RDP from this host") into a runnable query for each enabled platform (Velociraptor VQL, Defender/Sentinel KQL, Elastic ES|QL, Splunk SPL, Sigma, YARA, Suricata), grounded in each platform's real schema; one AI call, review/copy each query, one-click-deploy the VQL as a fleet hunt. Platforms gated by `DFIR_HUNT_PLATFORMS`.
 - **Velociraptor** (opt-in, API config) — run a pivot as a fleet hunt; or **triage bundles** (Settings): browse artifacts → save bundles → run as a hunt (label/OS + min-severity) → auto-collect + import + synthesize, with per-artifact params/exclude filters.
 - **AI-suggested fleet hunts** — the AI reads the findings and proposes proactive Velociraptor VQL hunts to sweep the whole fleet for the same tradecraft; review each hunt's VQL + rationale, then one-click deploy across all enrolled endpoints.
 - **AI-suggested playbook hunts** — for each *endpoint-related* Response Playbook task, the AI proposes a Velociraptor hunt; a task tied to **one** host deploys as a single-endpoint **collection** (`collect_client`), anything broader as a **fleet hunt** — review the VQL, then one-click deploy from the Playbook panel.
@@ -477,6 +478,7 @@ Each prompt has two override forms (priority order): `DFIR_AI_<NAME>_PROMPT` (in
 | Suggested fleet hunts | `HUNTS` |
 | Suggested playbook hunts | `PBHUNTS` |
 | Timeline-gap hypotheses | `GAPHYP` |
+| Query Translator (NL → query) | `QUERYXLATE` |
 
 ### Threat-intel enrichment (optional — off by default)
 
