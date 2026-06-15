@@ -449,3 +449,182 @@ describe("parseMemory — MemProcFS yara.csv", () => {
     expect(r.injected).toBe(2);
   });
 });
+
+// ─── MemProcFS timeline_all.csv ──────────────────────────────────────────────
+
+const TIMELINE_HEADER = "Time,Type,Action,PID,Value32,Value64,Text,Pad";
+const TS = "2026-06-03 08:57:15";
+
+function timelineRow(type: string, action: string, pid: string, text: string, ts = TS): string {
+  return `"${ts}",${type},${action},${pid},0x0,0x0,"${text}","  "`;
+}
+
+describe("parseMemory — MemProcFS timeline_all.csv", () => {
+  it("is detected as memprocfs-timeline format", () => {
+    const csv = [TIMELINE_HEADER, timelineRow("NTFS", "MOD", "0", "\\1\\Windows\\foo.etl")].join("\n");
+    const r = parseMemory(csv);
+    expect(r.format).toBe("memprocfs-timeline");
+    expect(r.tool).toBe("MemProcFS");
+  });
+
+  it("PROC CRE → Info event tagged sources=[MemProcFS] with process IOC + file IOC", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("PROC", "CRE", "1868", "svchost.exe [*SYSTEM] \\Device\\HarddiskVolume1\\Windows\\System32\\svchost.exe"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events).toHaveLength(1);
+    const ev = r.events[0];
+    expect(ev.severity).toBe("Info");
+    expect(ev.description).toContain("svchost.exe");
+    expect(ev.description).toContain("start");
+    expect(ev.sources).toContain("MemProcFS");
+    expect(r.iocs.some((i) => i.type === "process" && i.value === "svchost.exe")).toBe(true);
+    expect(r.iocs.some((i) => i.type === "file" && /svchost\.exe/i.test(i.value))).toBe(true);
+  });
+
+  it("PROC DEL → Info event with 'exit' in description", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("PROC", "DEL", "1796", "sppsvc.exe [*] \\Device\\HarddiskVolume1\\Windows\\System32\\sppsvc.exe"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].description).toContain("exit");
+  });
+
+  it("ShTask CRE → Medium severity / T1053.005", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("ShTask", "CRE", "0", "Backdoor - [C:\\Users\\evil.exe :: -persist] (SYSTEM)"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events).toHaveLength(1);
+    const ev = r.events[0];
+    expect(ev.severity).toBe("Medium");
+    expect(ev.mitreTechniques).toContain("T1053.005");
+    expect(ev.description).toContain("created");
+    expect(ev.description).toContain("Backdoor");
+  });
+
+  it("ShTask DEL → Medium severity / T1070", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("ShTask", "DEL", "0", "CleanupTask - [cmd.exe :: /c del /q] (SYSTEM)"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    const ev = r.events[0];
+    expect(ev.severity).toBe("Medium");
+    expect(ev.mitreTechniques).toContain("T1070");
+    expect(ev.description).toContain("deleted");
+  });
+
+  it("ShTask MOD → Low severity / T1053.005", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("ShTask", "MOD", "0", "SvcRestartTask - [Custom Handler :: timer] (NetworkService)"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].severity).toBe("Low");
+    expect(r.events[0].mitreTechniques).toContain("T1053.005");
+  });
+
+  it("Net TCPv4 with real remote → Low event + network IOC", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("Net", "CRE", "3548", "TCPv4  SYN_SENT     192.168.195.154:53145         192.168.56.51:1514          "),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events.length).toBeGreaterThan(0);
+    const ev = r.events[0];
+    expect(ev.severity).toBe("Low");
+    expect(ev.mitreTechniques).toContain("T1071");
+    expect(ev.description).toContain("192.168.56.51");
+    expect(r.iocs.some((i) => i.type === "network" && i.value === "192.168.56.51")).toBe(true);
+  });
+
+  it("Net UDPv6 with *** remote → no event, no IOC", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("Net", "CRE", "2232", "UDPv6  ***          [::]:0                        ***                         "),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events).toHaveLength(0);
+    expect(r.iocs).toHaveLength(0);
+  });
+
+  it("WEB VISIT → Info event / T1217 + URL IOC + domain IOC", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("WEB", "CRE", "7908", "browser:[CHROME] type:[VISIT] url:[https://github.com/hasamba] info:[hasamba · GitHub]"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events).toHaveLength(1);
+    const ev = r.events[0];
+    expect(ev.severity).toBe("Info");
+    expect(ev.mitreTechniques).toContain("T1217");
+    expect(ev.description).toContain("github.com");
+    expect(r.iocs.some((i) => i.type === "url")).toBe(true);
+    expect(r.iocs.some((i) => i.type === "domain" && i.value === "github.com")).toBe(true);
+  });
+
+  it("WEB DOWNLOAD → Low event / T1105", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("WEB", "CRE", "7908", "browser:[CHROME] type:[DOWNLOAD] url:[https://evil.com/payload.exe] info:[]"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].severity).toBe("Low");
+    expect(r.events[0].mitreTechniques).toContain("T1105");
+  });
+
+  it("NTFS CRE with exec extension → file IOC, no event", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("NTFS", "CRE", "0", "\\1\\Users\\Public\\evil.exe"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events).toHaveLength(0);
+    expect(r.iocs.some((i) => i.type === "file" && /evil\.exe/i.test(i.value))).toBe(true);
+  });
+
+  it("NTFS MOD → no event, no IOC", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("NTFS", "MOD", "0", "\\1\\Windows\\System32\\LogFiles\\WMI\\foo.etl"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events).toHaveLength(0);
+    expect(r.iocs).toHaveLength(0);
+  });
+
+  it("REG and THREAD rows are dropped", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("REG", "MOD", "0", "HKLM\\SYSTEM\\CurrentControlSet\\Services"),
+      timelineRow("THREAD", "CRE", "372", "TID: 5740"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events).toHaveLength(0);
+    expect(r.iocs).toHaveLength(0);
+  });
+
+  it("preserves the Time column timestamp on events", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("ShTask", "CRE", "0", "EvilTask - [evil.exe :: -x]", "2026-06-03 09:30:00"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].timestamp).toContain("2026-06-03");
+  });
+
+  it("total = total rows in file", () => {
+    const csv = [
+      TIMELINE_HEADER,
+      timelineRow("PROC",   "CRE", "100", "calc.exe [] \\Device\\HarddiskVolume1\\Windows\\calc.exe"),
+      timelineRow("REG",    "MOD", "0",   "HKLM\\foo"),
+      timelineRow("THREAD", "CRE", "200", "TID: 1"),
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.total).toBe(3);
+  });
+});

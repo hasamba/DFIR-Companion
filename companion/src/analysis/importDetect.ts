@@ -233,6 +233,10 @@ function cybertriageCsvSig(h: Set<string>): boolean {
   // Cyber Triage timeline CSV header: event_timestamp,epoch_timestamp,message,timestamp_description,item_type,threat_level
   return h.has("event_timestamp") && h.has("epoch_timestamp") && h.has("timestamp_description");
 }
+function memprocfsTimelineCsvSig(h: Set<string>): boolean {
+  // timeline_all.csv: Time,Type,Action,PID,Value32,Value64,Text,Pad
+  return h.has("value32") && h.has("value64") && h.has("time") && h.has("action") && h.has("type");
+}
 function memprocfsFindevilCsvSig(h: Set<string>): boolean {
   // findevil.csv: PID,ProcessName,Type,Address,Description — MemProcFS finding report as CSV.
   return h.has("pid") && h.has("processname") && h.has("type") && h.has("address") && h.has("description")
@@ -260,6 +264,7 @@ function detectCsv(text: string): ImportKind {
   if (plasoSig(h)) return "plaso";
   if (hayabusaCsvSig(h)) return "hayabusa";
   if (kapeSig(h)) return "kape";
+  if (memprocfsTimelineCsvSig(h)) return "memory";
   if (memprocfsYaraCsvSig(h)) return "memory";
   if (memprocfsFindevilCsvSig(h)) return "memory";
   // A comma-delimited table with data rows → the generic (AI) CSV importer.

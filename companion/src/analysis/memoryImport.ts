@@ -1,5 +1,5 @@
-// Deterministic importer for memory-forensics tool output — Volatility 3 and Rekall. The
-// fifteenth deterministic ingest path; no AI call.
+// Deterministic importer for memory-forensics tool output — Volatility 3, Rekall, and MemProcFS.
+// The fifteenth deterministic ingest path; no AI call.
 //
 // Memory forensics tools detonate nothing and score nothing — they ENUMERATE the live state of a
 // RAM image: the process tree, network connections, injected/executable private memory, loaded
@@ -937,6 +937,206 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
   };
 }
 
+// ─────────────────────────── MemProcFS timeline_all.csv ────────────────────────────
+//
+// MemProcFS full-system timeline: Time,Type,Action,PID,Value32,Value64,Text,Pad.
+// Every kernel-level event the tool observed in 8 types:
+//   ShTask (566 typical) → CRE/DEL Medium/T1053.005, MOD Low — scheduled-task lifecycle
+//   PROC   (219 typical) → Info evidence events for process start/exit
+//   Net    (118 typical) → Low / network IOCs for real remote connections (TCP/UDP)
+//   WEB    (18 typical)  → browser VISIT (Info/T1217) or DOWNLOAD (Low/T1105) + URL IOCs
+//   NTFS   (248k typical) — too noisy for events; harvest executable-extension CRE as file IOCs
+//   REG, THREAD, KObj  — pure telemetry, 255k+ rows, dropped entirely
+//
+// All events carry the artifact's own Time column timestamp, never the import time.
+// Paths are normalised: \1\ volume prefix and \Device\HarddiskVolumeN\ become C:\.
+
+const MPFS_EXEC_EXT = /\.(exe|dll|sys|drv|bat|cmd|ps1|vbs|js|hta|msi|scr|cpl|ocx|inf|lnk)$/i;
+const MPFS_NET_RE = /^(TCP|UDP)v[46]\s+(\S+)\s+(\S+)\s+(\S+)/i;
+const MPFS_ADDR4_RE = /^([\d.]+):(\d+)$/;
+const MPFS_ADDR6_RE = /^\[([^\]]+)\]:(\d+)$/;
+const MPFS_WEB_BROWSER_RE = /browser:\[([^\]]*)\]/i;
+const MPFS_WEB_TYPE_RE = /type:\[([^\]]*)\]/i;
+const MPFS_WEB_URL_RE = /url:\[([^\]]*)\]/i;
+const MPFS_PROC_RE = /^(\S+)\s+\[([^\]]*)\]\s*(\\.*)?$/;
+const MPFS_SHTASK_RE = /^(.*?)\s+-\s+\[(.+?)\]\s*(?:\(([^)]+)\))?$/;
+
+function cleanMpfsPath(p: string): string {
+  return p
+    .replace(/\\\\/g, "\\")
+    .replace(/^\\1\\/, "C:\\")
+    .replace(/^\\Device\\HarddiskVolume\d+\\/i, "C:\\");
+}
+
+function parseMpfsNetAddr(addr: string): { ip: string; port: string } | null {
+  if (!addr || addr === "***") return null;
+  const m6 = MPFS_ADDR6_RE.exec(addr);
+  if (m6) return { ip: m6[1], port: m6[2] };
+  const m4 = MPFS_ADDR4_RE.exec(addr);
+  if (m4) return { ip: m4[1], port: m4[2] };
+  return null;
+}
+
+function mapMpfsTimelineRow(
+  type: string, action: string, pid: string, txt: string, ts: string,
+  sink: Map<string, SiemIoc>, mapped: MappedEvent[],
+): void {
+  switch (type) {
+    case "PROC": {
+      const m = MPFS_PROC_RE.exec(txt);
+      if (!m) break;
+      const procName = m[1] ?? "";
+      const user = (m[2] ?? "").replace(/^\*/, "").trim();
+      const cleanPath = cleanMpfsPath(m[3] ?? "");
+      const pName = baseName(procName);
+      if (pName) addIoc(sink, "process", pName);
+      if (cleanPath && /[\\/]/.test(cleanPath)) addIoc(sink, "file", cleanPath.slice(0, 300));
+      const verb = action.toUpperCase() === "DEL" ? "exit" : "start";
+      const userNote = user ? ` [${user}]` : "";
+      mapped.push({
+        timestamp: ts,
+        description: `MemProcFS PROC ${verb}: ${procName} (PID ${pid})${userNote}`.slice(0, 400),
+        severity: "Info",
+        mitre: [],
+        aggKey: `memprocfs|proc|${action.toUpperCase()}|${pid}|${procName.toLowerCase()}`,
+        sources: ["MemProcFS"],
+        ...(pName ? { processName: pName } : {}),
+        ...(cleanPath && /[\\/]/.test(cleanPath) ? { path: cleanPath } : {}),
+      });
+      break;
+    }
+    case "Net": {
+      const m = MPFS_NET_RE.exec(txt);
+      if (!m) break;
+      const [, proto, state, , remote] = m;
+      if (!remote || remote === "***" || state === "***") break;
+      const parsed = parseMpfsNetAddr(remote);
+      if (!parsed) break;
+      const ip = cleanIp(parsed.ip);
+      if (!ip) break;
+      addIoc(sink, "network", ip);
+      mapped.push({
+        timestamp: ts,
+        description: `MemProcFS Net: ${proto} ${state} → ${ip}:${parsed.port} (PID ${pid})`.slice(0, 400),
+        severity: /^TCP/i.test(proto) ? "Low" : "Info",
+        mitre: ["T1071"],
+        aggKey: `memprocfs|net|${ip}:${parsed.port}`,
+        sources: ["MemProcFS"],
+      });
+      break;
+    }
+    case "ShTask": {
+      const a = action.toUpperCase();
+      const m = MPFS_SHTASK_RE.exec(txt);
+      const taskName = ((m?.[1] ?? txt).trim()).slice(0, 100);
+      const cmd = (m?.[2] ?? "").split("::")[0].trim().slice(0, 150);
+      const user = m?.[3]?.trim() ?? "";
+      let severity: Severity;
+      let mitre: string[];
+      let verb: string;
+      if (a === "CRE")      { severity = "Medium"; mitre = ["T1053.005"]; verb = "created"; }
+      else if (a === "DEL") { severity = "Medium"; mitre = ["T1070"];     verb = "deleted"; }
+      else                  { severity = "Low";    mitre = ["T1053.005"]; verb = "modified"; }
+      const cmdNote = cmd ? ` — ${cmd}` : "";
+      const userNote = user ? ` (${user})` : "";
+      mapped.push({
+        timestamp: ts,
+        description: `MemProcFS ShTask ${verb}: ${taskName}${cmdNote}${userNote}`.slice(0, 500),
+        severity,
+        mitre,
+        aggKey: `memprocfs|shtask|${a}|${taskName.toLowerCase()}`,
+        sources: ["MemProcFS"],
+      });
+      break;
+    }
+    case "WEB": {
+      const url = MPFS_WEB_URL_RE.exec(txt)?.[1]?.trim() ?? "";
+      if (!url || !/^https?:/i.test(url)) break;
+      const browser = MPFS_WEB_BROWSER_RE.exec(txt)?.[1]?.trim() ?? "";
+      const webType = MPFS_WEB_TYPE_RE.exec(txt)?.[1]?.trim() ?? "VISIT";
+      addIoc(sink, "url", url.slice(0, 500));
+      try {
+        const domain = new URL(url).hostname;
+        if (domain && !PRIVATE_IP.test(domain)) addIoc(sink, "domain", domain);
+      } catch { /* malformed URL */ }
+      const isDownload = /download/i.test(webType);
+      const browserNote = browser ? `[${browser}] ` : "";
+      mapped.push({
+        timestamp: ts,
+        description: `MemProcFS WEB ${webType}: ${browserNote}${url.slice(0, 200)}`.slice(0, 500),
+        severity: isDownload ? "Low" : "Info",
+        mitre: isDownload ? ["T1105"] : ["T1217"],
+        aggKey: `memprocfs|web|${url.slice(0, 200).toLowerCase()}`,
+        sources: ["MemProcFS"],
+      });
+      break;
+    }
+    case "NTFS": {
+      // 248k rows — too noisy for events; harvest executable-extension file creations as IOCs.
+      if (action.toUpperCase() === "CRE" && MPFS_EXEC_EXT.test(txt)) {
+        addIoc(sink, "file", cleanMpfsPath(txt).slice(0, 300));
+      }
+      break;
+    }
+    // REG (254k), THREAD, KObj — pure telemetry, dropped
+  }
+}
+
+function parseMemoryMemprocfsTimeline(text: string, opts: MemoryImportOptions): MemoryParseResult {
+  const empty: MemoryParseResult = {
+    events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0,
+    tables: 0, injected: 0, processes: 0, connections: 0,
+    format: "memprocfs-timeline", tool: "MemProcFS",
+  };
+  const { headers, rows } = parseCsv(text);
+  if (!headers.length || !rows.length) return empty;
+
+  const idx = (name: string): number => headers.findIndex((h) => h.toLowerCase() === name);
+  const timeI = idx("time"); const typeI = idx("type"); const actionI = idx("action");
+  const pidI = idx("pid"); const textI = idx("text");
+  if (typeI < 0 || actionI < 0) return empty;
+
+  const sink = new Map<string, SiemIoc>();
+  const mapped: MappedEvent[] = [];
+  let procCount = 0, netCount = 0;
+
+  for (const row of rows) {
+    const type    = row[typeI]?.trim()   ?? "";
+    const action  = row[actionI]?.trim() ?? "";
+    const pid     = (pidI   >= 0 ? row[pidI]   : undefined)?.trim() ?? "0";
+    const txt     = (textI  >= 0 ? row[textI]  : undefined)?.trim() ?? "";
+    const ts      = normalizeTime((timeI >= 0 ? row[timeI] : undefined)?.trim() ?? "") ?? "";
+    const before  = mapped.length;
+    mapMpfsTimelineRow(type, action, pid, txt, ts, sink, mapped);
+    if (mapped.length > before) {
+      if (type === "PROC") procCount++;
+      if (type === "Net")  netCount++;
+    }
+  }
+
+  const { events, groups } = aggregateEvents(mapped, {
+    aggregate:   opts.aggregate,
+    minSeverity: opts.minSeverity,
+    maxEvents:   opts.maxEvents ?? 2000,
+  });
+  const maxIocs = opts.maxIocs ?? 5000;
+  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  return {
+    events,
+    iocs: [...sink.values()].slice(0, maxIocs),
+    total: rows.length,
+    kept:  events.length,
+    dropped: Math.max(0, rows.length - represented),
+    groups,
+    tables: 1,
+    injected: 0,
+    processes: procCount,
+    connections: netCount,
+    format: "memprocfs-timeline",
+    tool: "MemProcFS",
+  };
+}
+
 // ───────────────────────────── top-level parse ─────────────────────────────
 
 export function parseMemory(text: string, opts: MemoryImportOptions = {}): MemoryParseResult {
@@ -945,6 +1145,10 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
 
   // MemProcFS CSV variants — identified by distinctive column sets in the first header line.
   const cols = csvCols(text);
+  // timeline_all.csv: Time,Type,Action,PID,Value32,Value64,Text,Pad — value32/value64 are unique.
+  if (cols.has("value32") && cols.has("value64") && cols.has("action")) {
+    return parseMemoryMemprocfsTimeline(text, opts);
+  }
   if (cols.has("matchindex") && cols.has("memorytype") && cols.has("processname")) {
     return parseMemoryYaraCsv(text, opts);
   }

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **MemProcFS timeline_all.csv importer** — deterministic parser for the full-system kernel timeline (Time,Type,Action,PID,Value32,Value64,Text,Pad); ShTask CRE/DEL → Medium/T1053.005|T1070, Net TCP → Low/T1071, WEB DOWNLOAD → Low/T1105, PROC → Info; NTFS CRE with exec extensions → file IOCs; 254k REG + THREAD rows dropped; auto-detected by the unified Import button.
 - **MemProcFS findevil importer** — deterministic parser for the `findevil` finding-report table; maps finding types to severity + ATT&CK (YR_HACKTOOL → Critical/T1588.002, PEB_MASQ → High/T1036.005, PE_PATCHED → High/T1055, THREAD SYSTEM_IMPERSONATION → High/T1134, etc.); groups bulk PRIVATE_RWX/PRIVATE_RX pages by process; harvests driver/module/patched-DLL paths as file IOCs; auto-detected by the unified Import button.
 
 ## [0.21.0] - 2026-06-15

@@ -107,6 +107,10 @@ describe("detectImportKind — JSON formats", () => {
     ].join("\n");
     expect(detectImportKind("findevil.txt", findevil)).toBe("memory");
   });
+  it("memory: MemProcFS timeline_all.csv (Time,Type,Action,PID,Value32,Value64,Text,Pad)", () => {
+    const csv = 'Time,Type,Action,PID,Value32,Value64,Text,Pad\n"2026-06-03 08:57:15",NTFS,MOD,0,0x0,0x233820000,\\1\\Windows\\foo.etl,"  "';
+    expect(detectImportKind("timeline_all.csv", csv)).toBe("memory");
+  });
   it("memory: MemProcFS findevil.csv (PID,ProcessName,Type,Address,Description)", () => {
     const csv = 'PID,ProcessName,Type,Address,Description\n6416,svchost.exe,YR_HACKTOOL,0x22a7a0b804e,"Windows_Hacktool_SharpDump_7c17d8b1 [0]"';
     expect(detectImportKind("findevil.csv", csv)).toBe("memory");
