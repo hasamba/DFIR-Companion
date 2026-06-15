@@ -5239,7 +5239,7 @@
     function loadSecondOpinion(caseId) {
       fetch(`/cases/${caseId}/second-opinion`).then(r => r.json()).then(renderSecondOpinion).catch(() => {});
     }
-    const SO_KIND_LABEL = { b_only: "B adds", a_only: "B drops", severity: "severity", mitre_added: "ATT&CK +", mitre_removed: "ATT&CK −" };
+    const SO_KIND_LABEL = { b_only: "only in B", a_only: "only in A", severity: "severity", mitre_added: "ATT&CK · only in B", mitre_removed: "ATT&CK · only in A" };
     function renderSecondOpinion(rec) {
       const el = document.getElementById("secondOpinionPanel");
       if (!el) return;
@@ -5264,8 +5264,8 @@
         if (d.kind === "severity") title += ` <span style="color:var(--c-7e8aa0)">(${esc(d.aSeverity || "?")} → ${esc(d.bSeverity || "?")})</span>`;
         else if (d.kind === "b_only") title += ` <span style="color:var(--c-7e8aa0)">[${esc(d.bSeverity || "?")}]</span>`;
         const rationale = d.rationale ? `<div class="so-rationale">${esc(d.rationale)}</div>` : "";
-        const suggest = d.recommendation && d.recommendation !== "review"
-          ? `<div class="so-rec so-${esc(d.recommendation)}">model suggests: ${d.recommendation === "accept_b" ? "accept B" : "keep A"}</div>` : "";
+        const suggest = (d.recommendation === "accept_b" || d.recommendation === "keep_a")
+          ? `<div class="so-rec so-${esc(d.recommendation)}">model suggests: ${d.recommendation === "accept_b" ? "accept" : "reject"}</div>` : "";
         let acts;
         if (d.status === "accepted") acts = `<span class="so-status" style="color:var(--c-6bcb77)">✓ accepted</span>`;
         else if (d.status === "rejected") acts = `<span class="so-status" style="color:var(--c-ff7a7a)">✕ rejected</span>`;
