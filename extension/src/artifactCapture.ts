@@ -26,7 +26,7 @@ let activeAdapter: Adapter | null = null;
 let latest: CapturedArtifact | null = null;
 let busy = false;
 
-export function initArtifactCapture(): void {
+export async function initArtifactCapture(): Promise<void> {
   activeAdapter = adapterForUrl(location.href);
   if (!activeAdapter) return;
 
@@ -34,7 +34,23 @@ export function initArtifactCapture(): void {
   window.addEventListener("message", onPageMessage);
   requestHookInjection();
   sendConfig();
-  ensureButton();
+
+  // Only show the push button when a case is selected — so the button stays hidden when the
+  // analyst is not actively investigating and hasn't connected the extension to a case.
+  const stored = await chrome.storage.local.get("settings");
+  const initialCaseId = (stored.settings as { caseId?: string } | undefined)?.caseId ?? "";
+  if (initialCaseId) ensureButton();
+
+  // Dynamically show/hide when the analyst connects or disconnects from a case via the popup.
+  chrome.storage.onChanged.addListener((changes) => {
+    if (!changes.settings) return;
+    const newCaseId = (changes.settings.newValue as { caseId?: string } | undefined)?.caseId ?? "";
+    if (newCaseId) {
+      ensureButton();
+    } else {
+      document.getElementById(BTN_ID)?.remove();
+    }
+  });
 }
 
 // ── MAIN-world hook injection + handshake ──────────────────────────────────────────────────────

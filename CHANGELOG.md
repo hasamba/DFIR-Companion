@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Demo case enriched for every section** — `seed-demo` now seeds a deliberate anti-forensics blackout (cleared DC01 event logs + EDR tampering → a ~16h complete-silence gap with finding f010) so the *Timeline Gaps* panel and the new **Hypothesize gaps** (#96) feature have compelling material, plus a seeded narrative timeline and investigator-notebook entries so those sections render too.
 
 ### Fixed
+- **Extension case selection saves without pressing Start** — the extension popup's case dropdown now auto-saves on change (keeping screenshot-capture state unchanged), so switching cases or clearing the case applies immediately; the floating "📤 Push" button on DFIR consoles now only appears when a case is connected and hides dynamically when the case is cleared.
 - **Demo Customer Exposure rows rendered half-empty** — `seed-demo`'s `customer-exposure.json` used a stale schema (`input`/`kind`/`breachNames`/`exposedFields`) so the dashboard (reading `target`/`targetType`/`breach`/`exposedData`) showed only `HIBP · :`; rewritten to the current `StoredCustomerExposureResult` shape (one row per HIBP breach, one per Shodan host, plus `providers`/`targets`/`errors`).
 
 ### Fixed
