@@ -2496,7 +2496,7 @@
     function applyTheme(theme) {
       document.documentElement.setAttribute("data-theme", theme);
       const btn = document.getElementById("themeToggle");
-      if (btn) { btn.setAttribute("aria-pressed", String(theme === "light")); btn.title = "Switch to " + (theme === "light" ? "dark" : "light") + " theme"; }
+      if (btn) { const other = theme === "light" ? "dark" : "light"; btn.setAttribute("aria-pressed", String(theme === "light")); btn.title = "Switch to " + other + " theme"; btn.setAttribute("aria-label", "Switch to " + other + " theme"); }
       _themeColorCache = {};        // token values changed — drop the cache
       rethemeCanvases();            // redraw anything that bakes colors (the swimlane canvas)
     }
@@ -2510,7 +2510,7 @@
       try { if (typeof swRenderCanvas === "function" && typeof swLanes !== "undefined") swRenderCanvas(); } catch (e) {}
     }
     document.getElementById("themeToggle").addEventListener("click", toggleTheme);
-    document.getElementById("themeToggle").setAttribute("aria-pressed", String(currentTheme() === "light"));
+    applyTheme(currentTheme());
     // Follow the OS only while the user hasn't picked an explicit theme.
     try {
       window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", (e) => {

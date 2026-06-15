@@ -811,6 +811,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   app.get("/cases/:id/state", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
+      if (!(await store.caseExists(req.params.id))) {
+        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+      }
       const state = await options.stateStore.load(req.params.id);
       return res.status(200).json(state);
     } catch (err) {
