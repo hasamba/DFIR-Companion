@@ -1380,6 +1380,27 @@
           <div class="sfield"><label>Velo API key<span class="sfield-hint">DFIR_AI_VELO_KEY</span></label><input id="env-DFIR_AI_VELO_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Velo base URL<span class="sfield-hint">DFIR_AI_VELO_BASE_URL</span></label><input id="env-DFIR_AI_VELO_BASE_URL" /></div>
         </div>
+        <div class="settings-group-head">Second opinion model (#116 — a DIFFERENT model for the on-demand QA cross-check)</div>
+        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">Powers the <strong>2nd opinion</strong> button: a second model independently re-synthesizes the case and you review where it disagrees with the primary synthesis. <strong>The feature is OFF until a model is set here</strong> (the button stays hidden otherwise). For a genuinely independent opinion, pick a <strong>different provider</strong> than your synthesis model — same-provider models share blind spots. Leave the key blank to reuse the main AI key.</p>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label>2nd-opinion provider<span class="sfield-hint">DFIR_AI_SECOND_OPINION_PROVIDER</span></label>
+            <select id="env-DFIR_AI_SECOND_OPINION_PROVIDER">
+              <option value="">— same as main —</option>
+              <option value="openai">openai</option>
+              <option value="openrouter">openrouter</option>
+              <option value="ollama">ollama</option>
+              <option value="litellm">litellm</option>
+              <option value="gemini">gemini</option>
+              <option value="anthropic">anthropic</option>
+            </select>
+          </div>
+          <div class="sfield"><label>2nd-opinion model<span class="sfield-hint">DFIR_AI_SECOND_OPINION_MODEL</span></label><input id="env-DFIR_AI_SECOND_OPINION_MODEL" placeholder="e.g. gpt-4o — set this to enable the feature" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>2nd-opinion API key<span class="sfield-hint">DFIR_AI_SECOND_OPINION_KEY</span></label><input id="env-DFIR_AI_SECOND_OPINION_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>2nd-opinion base URL<span class="sfield-hint">DFIR_AI_SECOND_OPINION_BASE_URL</span></label><input id="env-DFIR_AI_SECOND_OPINION_BASE_URL" /></div>
+        </div>
         <div class="settings-group-head">Debugging & custom prompts</div>
         <div class="sfield-row">
           <div class="sfield"><label>Log token usage<span class="sfield-hint">DFIR_AI_DEBUG_USAGE — on to log prompt-cache token usage to the console</span></label><input id="env-DFIR_AI_DEBUG_USAGE" placeholder="off" /></div>
