@@ -2040,6 +2040,26 @@
       <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="forensicTimeline">—</div></section>
     <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
+    <!-- Memory Next-Step agent (#101): shown only when Volatility/Rekall memory output is imported. -->
+    <section id="sec-mem-nextsteps" style="grid-column: 1 / -1; display:none"><h2>Memory Next Steps<span class="ev-sub">iterative memory-forensics agent — reads the imported Volatility/Rekall evidence, spots process-tree/injection/network anomalies, and suggests the exact next Volatility command</span><button id="memNextStepsBtn" type="button" title="Ask the AI to read this case's imported memory evidence (process tree, malfind, connections, command lines), identify anomalies, and propose the exact next Volatility 3 command to run" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest next steps</button><span id="memNextStepsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="memNextSteps"></div></section>
+    <style>
+      #sec-mem-nextsteps .mns-empty{color:var(--c-9aa4b2);font-size:12px;margin-top:10px}
+      #sec-mem-nextsteps .mns-caveat{color:var(--c-ffb454);font-size:12px;margin:10px 0 8px}
+      #sec-mem-nextsteps .mns-list{display:flex;flex-direction:column;gap:10px}
+      #sec-mem-nextsteps .mns-card{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-b5651d);border-radius:6px;padding:8px 10px}
+      #sec-mem-nextsteps .mns-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+      #sec-mem-nextsteps .mns-anomaly{color:var(--c-d6deea);font-weight:bold}
+      #sec-mem-nextsteps .mns-sev{border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
+      #sec-mem-nextsteps .mns-pid{color:var(--c-9aa4b2);font-size:11px}
+      #sec-mem-nextsteps .mns-rationale{color:var(--c-c9d1db);font-size:12px;margin:6px 0}
+      #sec-mem-nextsteps .mns-techs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+      #sec-mem-nextsteps .mns-tech{background:var(--c-0f1620);color:var(--c-6aa9ff);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
+      #sec-mem-nextsteps .mns-tech:hover{text-decoration:underline}
+      #sec-mem-nextsteps .mns-cmd{width:100%;box-sizing:border-box;min-height:34px;resize:vertical;background:var(--c-0f1115);color:var(--c-d6deea);border:1px solid var(--c-2a2f3a);border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;padding:6px;margin-top:4px}
+      #sec-mem-nextsteps .mns-actions{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}
+      #sec-mem-nextsteps .mns-copy{background:var(--c-2d6cdf);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #sec-mem-nextsteps .mns-copy.copied{background:var(--c-2f8f4e)}
+    </style>
     <section id="sec-phases" style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
     <section id="sec-gaps" style="grid-column: 1 / -1"><h2>Timeline Gaps<span class="ev-sub">suspicious silent periods — a complete gap (all sources dark) is the classic log-tampering signature (derived, no AI); a lead, not proof</span><button id="hypothesizeGapsBtn" type="button" title="Ask the AI to hypothesise what the attacker did during each silent period (from the surrounding events) and pair each gap with shadow-artifact collections that reconstruct the missing window" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Hypothesize gaps</button><span id="hypothesizeGapsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="timelineGaps">—</div><div id="gapHypotheses"></div></section>
     <style>
@@ -6173,6 +6193,94 @@
       });
     }
 
+    // ── Memory Next Steps (#101) ──────────────────────────────────────────────────────────
+    // AI-proposed next Volatility 3 commands for an iterative memory investigation. The section is
+    // shown only when the case has imported Volatility/Rekall evidence (toggled from render()). On
+    // demand (an AI call): the analyst clicks "Suggest next steps", reviews each anomaly + command,
+    // and copies the command to run in their own Volatility. Ephemeral — not persisted.
+    const MNS_SEV_COLOR = { Critical:"#ff5c5c", High:"#ff9f43", Medium:"#ffd93b", Low:"#6bcb77", Info:"#6aa9ff" };
+    const MNS_SEV_RANK = { Critical:0, High:1, Medium:2, Low:3, Info:4 };
+
+    // Show the section iff the (in-scope, non-legit) timeline has any Volatility/Rekall events.
+    function toggleMemNextSteps(ft) {
+      const sec = document.getElementById("sec-mem-nextsteps");
+      if (!sec) return;
+      const hasMem = (ft || []).some(e => (e.sources || []).some(s => s === "Volatility" || s === "Rekall"));
+      // Respect the user's Settings visibility choice — only un-hide when memory data exists.
+      sec.dataset.hasMem = hasMem ? "1" : "";
+      sec.style.display = hasMem ? "" : "none";
+    }
+
+    function resetMemNextSteps() {
+      const el = document.getElementById("memNextSteps");
+      if (el) el.innerHTML = "";
+      const msg = document.getElementById("memNextStepsMsg");
+      if (msg) msg.textContent = "";
+    }
+
+    function doMemNextSteps() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const btn = document.getElementById("memNextStepsBtn");
+      const msg = document.getElementById("memNextStepsMsg");
+      const el = document.getElementById("memNextSteps");
+      if (!el) return;
+      if (btn) btn.disabled = true;
+      if (msg) msg.textContent = "thinking… (one AI call over the memory evidence)";
+      el.innerHTML = "";
+      fetch(`/cases/${caseId}/memory/next-steps`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) {
+            if (msg) msg.textContent = "";
+            el.innerHTML = `<div class="mns-empty" style="color:var(--c-ff9f43)">error: ${esc(j.error || "could not generate next steps")} — restart the companion server if this 404s</div>`;
+            return;
+          }
+          renderMemNextSteps(j.suggestions || []);
+          const n = (j.suggestions || []).length;
+          if (msg) msg.textContent = n ? `${n} next step(s) proposed` : "";
+        })
+        .catch((e) => { if (msg) msg.textContent = ""; el.innerHTML = `<div class="mns-empty" style="color:var(--c-ff9f43)">error: ${esc(e.message)}</div>`; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+
+    function renderMemNextSteps(suggestions) {
+      const el = document.getElementById("memNextSteps");
+      if (!el) return;
+      if (!suggestions.length) {
+        el.innerHTML = `<div class="mns-empty">No next steps proposed — the AI found nothing anomalous in the imported memory evidence to dig into. Import more Volatility 3 / Rekall plugin output (pstree, netscan, malfind, cmdline) and try again.</div>`;
+        return;
+      }
+      const ordered = [...suggestions].sort((a, b) => (MNS_SEV_RANK[a.severity] ?? 9) - (MNS_SEV_RANK[b.severity] ?? 9));
+      const caveat = `<div class="mns-caveat">⚠ AI-suggested commands — review before running. Substitute <code>&lt;image&gt;</code> with your memory image path. Most steps print a table you can paste/Import back here; a <code>--dump</code> / <code>dumpfiles</code> step writes a raw <code>.dmp</code> for offline analysis (YARA / capa / sandbox) — import those results, not the binary.</div>`;
+      const cards = ordered.map((s, idx) => {
+        const sev = s.severity || "Medium";
+        const sevColor = MNS_SEV_COLOR[sev] || "#9aa4b2";
+        const sevBadge = `<span class="mns-sev" style="background:${sevColor}22;color:${sevColor};border:1px solid ${sevColor}55">${esc(sev)}</span>`;
+        const pid = s.pid ? `<span class="mns-pid">PID ${esc(s.pid)}</span>` : "";
+        const techs = (s.mitreTechniques || []).map((t) => {
+          const u = attackUrl(t);
+          return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="mns-tech">${esc(t)}</a>` : `<span class="mns-tech">${esc(t)}</span>`;
+        }).join("");
+        const rationale = s.rationale ? `<div class="mns-rationale">${esc(s.rationale)}</div>` : "";
+        return `<div class="mns-card">`
+          + `<div class="mns-head"><span class="mns-anomaly">${esc(s.anomaly)}</span>${sevBadge}${pid}</div>`
+          + rationale
+          + (techs ? `<div class="mns-techs">${techs}</div>` : "")
+          + `<textarea class="mns-cmd" id="mnsC${idx}" spellcheck="false" rows="1">${esc(s.command)}</textarea>`
+          + `<div class="mns-actions"><button class="mns-copy" data-idx="${idx}">Copy command</button></div>`
+          + `</div>`;
+      }).join("");
+      el.innerHTML = caveat + `<div class="mns-list">${cards}</div>`;
+      el.querySelectorAll(".mns-copy").forEach((b) => b.onclick = () => {
+        const q = document.getElementById("mnsC" + b.dataset.idx);
+        navigator.clipboard.writeText(q ? q.value : "").then(() => {
+          b.textContent = "Copied ✓"; b.classList.add("copied");
+          setTimeout(() => { b.textContent = "Copy command"; b.classList.remove("copied"); }, 1500);
+        }).catch(() => { b.textContent = "copy failed"; });
+      });
+    }
+
     // ── Adversary Hints (#46) ─────────────────────────────────────────────────────────────
     // Known ATT&CK groups ranked by technique overlap with the case — offline hypothesis fuel,
     // NOT attribution. Derived server-side (GET /cases/:id/adversary-hints) from the bundled MITRE
@@ -7273,6 +7381,7 @@
       lastFt = ft;
       renderTimelineEvents(ft);
       renderKillChain(ft);
+      toggleMemNextSteps(ft);   // show the Memory Next Steps panel only when Volatility/Rekall evidence exists (#101)
       if (phasesData.length) renderPhases();   // refresh expansion details against the new timeline
 
       const openThreads = state.openThreads.filter(t => t.status === "open");
@@ -7404,6 +7513,7 @@
       resetVeloHuntSuggest();   // clear AI-suggested fleet hunts; analyst regenerates per case on demand
       resetPlaybookHuntSuggest();   // clear AI-suggested playbook hunts (#70) too
       resetGapHypotheses();     // clear AI gap hypotheses (#96); analyst regenerates per case on demand
+      resetMemNextSteps();      // clear AI memory next-steps (#101); analyst regenerates per case on demand
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
@@ -7940,6 +8050,7 @@
     // Suggested Fleet Hunts generator (#57) — same stopPropagation guard so clicking ✨ doesn't toggle the section.
     document.getElementById("suggestHuntsBtn").addEventListener("click", (e) => { e.stopPropagation(); doSuggestHunts(); });
     document.getElementById("hypothesizeGapsBtn").addEventListener("click", (e) => { e.stopPropagation(); doHypothesizeGaps(); });
+    document.getElementById("memNextStepsBtn").addEventListener("click", (e) => { e.stopPropagation(); doMemNextSteps(); });
     document.getElementById("askBtn").onclick = doAsk;
     document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
     document.getElementById("nlqBtn").onclick = doTranslateQuery;

@@ -129,7 +129,10 @@ unfolding, RFC 2047 encoded-words, multipart walk, base64/quoted-printable bodie
 BEST-EFFORT: the import pipeline is text-only, so the binary OLE container is scraped for its embedded RFC 822
 transport-headers stream + URLs (export `.eml` for full fidelity); reuses `siemImport`'s `addIoc`/`cleanIp`),
 and **memory forensics** (`importMemory` → `memoryImport.ts` — **Volatility 3** JSON renderer (an array of row
-objects, the `pstree` tree nested under `__children`; also JSONL + a combined `{ "<plugin>": [rows] }` map) and
+objects, the `pstree` tree nested under `__children`; also JSONL + a combined `{ "<plugin>": [rows] }` map + the
+**default TEXT/grid renderer** `vol <plugin>` with no `-r json` — banner + TAB-separated header + rows, parsed by
+`parseVolatilityText`/`looksLikeVolatilityText` into the SAME header-keyed rows as the JSON path so the classifier
++ mappers are reused; malfind/pstree hexdump+disasm continuation lines are skipped) and
 **Rekall** JSON (`[directive, payload]` statement list — best-effort, its `_EPROCESS` cells are object-laden). Each
 plugin table is identified by its **columns** (not a re-implementation of the tool) and mapped per category:
 pslist/psscan/pstree → process-tree events (parent→child links, `CreateTime`), netscan/netstat → connection events
@@ -557,8 +560,8 @@ deep-links back to the case; `DFIR_NOTIFY_CA`/`_INSECURE` for a self-hosted webh
 `scripts/*` pipeline wiring — `onSynth` is optional, so CLI synthesize/reanalyze just omit it).
 
 **Customizable prompts.** The prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
-consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`/`getNarrativePrompt()`/`getHuntSuggestPrompt()`/`getPlaybookHuntPrompt()`/`getGapHypothesisPrompt()`/`getQueryTranslatePrompt()`,
-which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC|NARRATIVE|HUNTS|PBHUNTS|GAPHYP|QUERYXLATE>_PROMPT` inline, or `…_PROMPT_FILE` —
+consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`/`getNarrativePrompt()`/`getHuntSuggestPrompt()`/`getPlaybookHuntPrompt()`/`getGapHypothesisPrompt()`/`getMemoryNextStepPrompt()`/`getQueryTranslatePrompt()`,
+which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC|NARRATIVE|HUNTS|PBHUNTS|GAPHYP|MEMNEXT|QUERYXLATE>_PROMPT` inline, or `…_PROMPT_FILE` —
 re-read each call, so file edits apply with no restart; bad file → warn + fall back to default).
 When you change a prompt's wording, keep the example JSON shape it dictates in sync with `responseSchema.ts`.
 When you add a prompt, also add its `<NAME>` token to `resolvePrompt`'s union type.

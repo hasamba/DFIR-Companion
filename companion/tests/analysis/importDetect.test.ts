@@ -94,6 +94,10 @@ describe("detectImportKind — JSON formats", () => {
   it("memory: Rekall JSON statement list", () => {
     expect(detectImportKind("rekall.json", j([["m", { tool_name: "rekall", plugin: { name: "pslist" } }], ["t", [], {}], ["r", { _EPROCESS: { name: "System" }, ppid: 0 }]]))).toBe("memory");
   });
+  it("memory: Volatility 3 TEXT/grid renderer (banner + tab-separated header)", () => {
+    const txt = "Volatility 3 Framework 2.28.0\n\nPID\tProcess\tProtection\tTag\n7352\tSearchHost.exe\tPAGE_EXECUTE_READWRITE\tVadS\t";
+    expect(detectImportKind("malfind.txt", txt)).toBe("memory");
+  });
 });
 
 describe("detectImportKind — CSV formats", () => {

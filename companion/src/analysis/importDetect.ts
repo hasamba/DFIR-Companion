@@ -7,7 +7,7 @@
 // The detected kind is shown back to the analyst, so a mis-route is visible, not silent.
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
-import { isRekallCommandList } from "./memoryImport.js";
+import { isRekallCommandList, looksLikeVolatilityText } from "./memoryImport.js";
 import { parseCsv } from "./csvImport.js";
 import { looksLikeJournald } from "./journaldImport.js";
 import { looksLikeSysdig } from "./sysdigImport.js";
@@ -344,6 +344,11 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // Email artifact (.eml RFC 822 header block, or a best-effort .msg) — checked before the
   // CSV/log fallback so a header-block email isn't mistaken for a line-oriented log.
   if (isEmail(filename, t)) return "email";
+
+  // Volatility 3 TEXT/grid renderer (the default `vol <plugin>` output, no -r json) — a banner +
+  // TAB-separated table. Checked before the CSV/log fallback (it's tab-, not comma-separated, and
+  // the interleaved hexdump/disasm would otherwise be mistaken for a generic log).
+  if (looksLikeVolatilityText(t)) return "memory";
 
   // Tabular (CSV / EZ / Plaso / Hayabusa-csv / M365-csv) vs a line-oriented log.
   const csvKind = detectCsv(t);
