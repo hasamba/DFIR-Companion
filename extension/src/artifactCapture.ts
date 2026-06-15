@@ -17,7 +17,7 @@
 import { adapterForUrl } from "./adapters/registry.js";
 import type { Adapter, CapturedArtifact } from "./adapters/types.js";
 import { matrixToRows } from "./adapters/domTable.js";
-import { parseResponseBodies } from "./adapters/extractUtils.js";
+import { decodeCapturedBodies } from "./adapters/extractUtils.js";
 import { DFIR_CAPTURE_MSG, DFIR_CONFIG_MSG, DFIR_READY_MSG } from "./adapters/bridge.js";
 import type { EnsureHookMessage, PushArtifactMessage, PushArtifactResult } from "./types.js";
 
@@ -91,22 +91,29 @@ function onPageMessage(ev: MessageEvent): void {
   if (d.source === DFIR_READY_MSG) { sendConfig(); return; }
 
   if (d.source === DFIR_CAPTURE_MSG && typeof d.body === "string") {
-    // The body may be a single JSON document OR streamed NDJSON (Kibana's batched /internal/bsearch
-    // sends one result object per line) — parse all of them and accumulate rows across each.
-    const bodies = parseResponseBodies(d.body);
-    if (!bodies.length) return; // no JSON at all — ignore
-    const url = String(d.url ?? "");
-    const rows: unknown[] = [];
-    for (const parsed of bodies) {
-      let part: unknown[] | null = null;
-      try { part = activeAdapter.extractRows(url, parsed); } catch { part = null; }
-      if (part && part.length) rows.push(...part);
-    }
-    if (rows.length) {
-      const label = labelRows(rows, url);
-      latest = { adapterId: activeAdapter.id, rows, sourceUrl: location.href, via: "intercept", label };
-      renderButton();
-    }
+    // Decoding may be async (compressed bfetch) — kick it off and don't block the message handler.
+    void ingestCapturedBody(String(d.url ?? ""), d.body);
+  }
+}
+
+// Decode a captured API body (single JSON, streamed NDJSON, or compressed bfetch — see
+// decodeCapturedBodies) and accumulate the clean rows across every object the stream carried. On a
+// non-empty result we remember it as `latest` and turn the push button green.
+async function ingestCapturedBody(url: string, body: string): Promise<void> {
+  if (!activeAdapter) return;
+  let bodies: unknown[];
+  try { bodies = await decodeCapturedBodies(body); } catch { return; }
+  if (!bodies.length) return;
+  const rows: unknown[] = [];
+  for (const parsed of bodies) {
+    let part: unknown[] | null = null;
+    try { part = activeAdapter.extractRows(url, parsed); } catch { part = null; }
+    if (part && part.length) rows.push(...part);
+  }
+  if (rows.length) {
+    const label = labelRows(rows, url);
+    latest = { adapterId: activeAdapter.id, rows, sourceUrl: location.href, via: "intercept", label };
+    renderButton();
   }
 }
 

@@ -41,6 +41,78 @@ export function parseResponseBodies(text: string): unknown[] {
   return out;
 }
 
+const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/**
+ * Inflate a base64-encoded, compressed JSON payload. Kibana's batched `/internal/bsearch` enables
+ * **bfetch compression** for non-localhost connections (Elastic Cloud, remote self-hosted): each
+ * NDJSON line is then `base64(deflate(JSON))` — NOT plain JSON — so a `JSON.parse` of the line throws
+ * and the rows are silently lost. We decode it with the browser's `DecompressionStream` (zlib
+ * `deflate` first, then `gzip`/`deflate-raw` to be robust to encoder differences). Returns the parsed
+ * JSON value, or null when the string isn't base64 / doesn't inflate to JSON. Async (the stream API
+ * is async); a no-op on plain-JSON deployments.
+ */
+export async function inflateBase64Json(raw: string): Promise<unknown | null> {
+  const compact = raw.replace(/\s+/g, "");
+  if (compact.length < 8 || !BASE64_RE.test(compact)) return null;
+  let bytes: Uint8Array;
+  try {
+    const bin = atob(compact);
+    bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  } catch { return null; }
+  for (const format of ["deflate", "gzip", "deflate-raw"] as const) {
+    try {
+      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format));
+      const text = (await new Response(stream).text()).trim();
+      if (text.startsWith("{") || text.startsWith("[")) {
+        try { return JSON.parse(text); } catch { /* inflated but not JSON — try next format */ }
+      }
+    } catch { /* wrong format for these bytes — try the next */ }
+  }
+  return null;
+}
+
+/**
+ * Decode a captured response body into JSON values, transparently handling the three shapes a DFIR
+ * console's data API can emit: (1) a single JSON document, (2) streamed NDJSON (Kibana bsearch), and
+ * (3) **compressed** bfetch — either a whole line that is `base64(deflate(JSON))`, or a JSON wrapper
+ * `{ id, result: "<base64>" }` whose `result` is the compressed payload. The async superset of
+ * `parseResponseBodies`; the capture path uses this so compression on remote Kibana doesn't drop rows.
+ */
+export async function decodeCapturedBodies(text: string): Promise<unknown[]> {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  // 1) Collect raw values — a single JSON document, or NDJSON lines (each plain JSON or compressed).
+  const raw: unknown[] = [];
+  const single = tryParseJson(trimmed);
+  if (single !== undefined) {
+    raw.push(single);
+  } else {
+    for (const line of trimmed.split(/\r?\n/)) {
+      const s = line.trim();
+      if (!s) continue;
+      const parsed = tryParseJson(s);
+      if (parsed !== undefined) raw.push(parsed);
+      else { const inflated = await inflateBase64Json(s); if (inflated !== null) raw.push(inflated); }
+    }
+  }
+  // 2) bfetch may also wrap the compressed payload as { id, result: "<base64>" } — inflate that
+  //    string on whichever path produced the object (single or NDJSON).
+  const out: unknown[] = [];
+  for (let obj of raw) {
+    if (isObject(obj) && typeof obj.result === "string") {
+      const inner = await inflateBase64Json(obj.result);
+      if (inner !== null) obj = { ...obj, result: inner };
+    }
+    out.push(obj);
+  }
+  return out;
+}
+
+function tryParseJson(s: string): unknown | undefined {
+  try { return JSON.parse(s); } catch { return undefined; }
+}
+
 /**
  * Velociraptor / table-style envelope: { columns: string[], rows: [...] }. Each row's cells arrive
  * as a raw array, a { cell: [...] } wrapper, OR — the Velociraptor GUI's GetTable format —

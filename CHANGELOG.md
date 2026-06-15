@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **Extension push button on modern Kibana** — the MAIN-world hook now parses streamed NDJSON response bodies (Kibana's batched `/internal/bsearch` sends one `{result:{rawResponse:…}}` object per line, so the old single-`JSON.parse` produced zero rows and the button stayed gray / "No results"); rows now accumulate across every NDJSON object. Also re-injects the floating push button after React re-renders the page body (a `MutationObserver`), so it survives a page refresh on SPA consoles.
+- **Extension push button on remote / modern Kibana** — the MAIN-world hook now decodes the three shapes Kibana's `/internal/bsearch` emits: a single JSON doc, streamed NDJSON, and **bfetch compression** (on by default for remote/Elastic-Cloud, each line is `base64(deflate(JSON))`) — decompressed in-browser via `DecompressionStream`. The old single-`JSON.parse` produced zero rows on all but the simplest local case, so the button stayed gray / "No results". Also re-injects the floating push button after React re-renders the page body (a `MutationObserver`), so it survives a page refresh on SPA consoles.
 
 ### Added
 - **MemProcFS timeline_all.csv importer** — deterministic parser for the full-system kernel timeline (Time,Type,Action,PID,Value32,Value64,Text,Pad); ShTask CRE/DEL → Medium/T1053.005|T1070, Net TCP → Low/T1071, WEB DOWNLOAD → Low/T1105, PROC → Info; NTFS CRE with exec extensions → file IOCs; 254k REG + THREAD rows dropped; auto-detected by the unified Import button.

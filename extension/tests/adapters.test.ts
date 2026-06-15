@@ -4,7 +4,8 @@ import { splunkAdapter } from "../src/adapters/splunk.js";
 import { velociraptorAdapter, velociraptorSourceLabel } from "../src/adapters/velociraptor.js";
 import { elasticAdapter } from "../src/adapters/elastic.js";
 import { crowdstrikeAdapter } from "../src/adapters/crowdstrike.js";
-import { parseResponseBodies } from "../src/adapters/extractUtils.js";
+import { parseResponseBodies, decodeCapturedBodies } from "../src/adapters/extractUtils.js";
+import { deflateSync, gzipSync } from "node:zlib";
 
 describe("adapterForUrl", () => {
   it("matches Splunk by host, app path, and :8000", () => {
@@ -222,6 +223,50 @@ describe("parseResponseBodies", () => {
       { _id: "1", _index: "logs", msg: "a" },
       { _id: "2", _index: "logs", msg: "b" },
     ]);
+  });
+});
+
+describe("decodeCapturedBodies (compressed bfetch — remote/Cloud Kibana)", () => {
+  const item = (id: number, src: Record<string, unknown>) => ({
+    id, result: { rawResponse: { hits: { hits: [{ _id: String(id), _source: src }] } } },
+  });
+
+  it("passes plain JSON and NDJSON straight through", async () => {
+    expect(await decodeCapturedBodies('{"a":1}')).toEqual([{ a: 1 }]);
+    const nd = JSON.stringify(item(0, { a: 1 })) + "\n" + JSON.stringify(item(1, { a: 2 }));
+    expect(await decodeCapturedBodies(nd)).toHaveLength(2);
+  });
+
+  it("decodes a zlib-deflate base64 NDJSON stream (each line is base64(deflate(JSON)))", async () => {
+    const line0 = deflateSync(Buffer.from(JSON.stringify(item(0, { msg: "a" })))).toString("base64");
+    const line1 = deflateSync(Buffer.from(JSON.stringify(item(1, { msg: "b" })))).toString("base64");
+    const bodies = await decodeCapturedBodies(line0 + "\n" + line1);
+    const rows = bodies.flatMap((b) => elasticAdapter.extractRows("/internal/bsearch", b) ?? []);
+    expect(rows).toEqual([
+      { _id: "0", _index: undefined, msg: "a" },
+      { _id: "1", _index: undefined, msg: "b" },
+    ]);
+  });
+
+  it("decodes the { id, result: '<base64>' } compressed-wrapper variant", async () => {
+    const inner = { rawResponse: { hits: { hits: [{ _id: "9", _source: { z: 1 } }] } } };
+    const wrapper = JSON.stringify({ id: 0, result: deflateSync(Buffer.from(JSON.stringify(inner))).toString("base64") });
+    const bodies = await decodeCapturedBodies(wrapper);
+    const rows = bodies.flatMap((b) => elasticAdapter.extractRows("/internal/bsearch", b) ?? []);
+    expect(rows).toEqual([{ _id: "9", _index: undefined, z: 1 }]);
+  });
+
+  it("also handles gzip-compressed lines", async () => {
+    const line = gzipSync(Buffer.from(JSON.stringify(item(0, { g: 1 })))).toString("base64");
+    const rows = (await decodeCapturedBodies(line)).flatMap((b) => elasticAdapter.extractRows("u", b) ?? []);
+    expect(rows).toEqual([{ _id: "0", _index: undefined, g: 1 }]);
+  });
+
+  it("returns [] for empty input and skips undecodable lines", async () => {
+    expect(await decodeCapturedBodies("")).toEqual([]);
+    expect(await decodeCapturedBodies("   ")).toEqual([]);
+    // A short non-base64, non-JSON line is skipped, not thrown.
+    expect(await decodeCapturedBodies("garbage!!")).toEqual([]);
   });
 });
 
