@@ -86,7 +86,9 @@ function labelRows(rows: unknown[], apiUrl: string): string {
     const selects = Array.from(document.querySelectorAll("select")).map((s) => s.value || "");
     const inputs = Array.from(document.querySelectorAll("input")).map((i) => i.value || "");
     const domInputs = [...selects, ...inputs].filter(Boolean);
-    label = activeAdapter.sourceLabel({ apiUrl, pageUrl: location.href, domInputs, rows });
+    // Notebook cells title their artifact in a heading (<h1>DetectRaptor.Windows.Detection.Evtx</h1>).
+    const domHeadings = Array.from(document.querySelectorAll("h1,h2,h3")).map((h) => h.textContent || "").filter(Boolean);
+    label = activeAdapter.sourceLabel({ apiUrl, pageUrl: location.href, domInputs, domHeadings, rows });
   } catch { label = ""; }
   if (label) {
     for (const r of rows) {

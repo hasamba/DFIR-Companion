@@ -37,7 +37,7 @@ export interface Adapter {
    * pushed row can record where to navigate back to. Given the intercepted API URL, the page URL,
    * the page's <input> values (for combo-box selectors), and the rows. Pure. Returns "" when unknown.
    */
-  sourceLabel?(opts: { apiUrl: string; pageUrl: string; domInputs: readonly string[]; rows: readonly unknown[] }): string;
+  sourceLabel?(opts: { apiUrl: string; pageUrl: string; domInputs: readonly string[]; domHeadings: readonly string[]; rows: readonly unknown[] }): string;
 }
 
 /** A captured set of rows ready to push to the companion. */

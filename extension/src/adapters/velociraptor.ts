@@ -61,9 +61,9 @@ const ARTIFACT_RE = /^[A-Za-z][\w]*(?:[./][A-Za-z][\w]*){2,}$/;
 //   4. the notebook id from the page hash (#/…/notebooks/N.xxx)
 // Pure (the DOM <input> values are passed in) → unit-tested.
 export function velociraptorSourceLabel(opts: {
-  apiUrl?: string; pageUrl?: string; domInputs?: readonly string[]; rows?: readonly unknown[];
+  apiUrl?: string; pageUrl?: string; domInputs?: readonly string[]; domHeadings?: readonly string[]; rows?: readonly unknown[];
 }): string {
-  const { apiUrl = "", pageUrl = "", domInputs = [], rows = [] } = opts;
+  const { apiUrl = "", pageUrl = "", domInputs = [], domHeadings = [], rows = [] } = opts;
   const param = /[?&]artifact=([^&]+)/i.exec(apiUrl);
   if (param) { try { const a = decodeURIComponent(param[1]).trim(); if (a) return a; } catch { /* bad escape */ } }
   for (const r of rows) {
@@ -73,6 +73,11 @@ export function velociraptorSourceLabel(opts: {
     }
   }
   for (const v of domInputs) { const t = (v || "").trim(); if (ARTIFACT_RE.test(t)) return t; }
+  // Notebook cells title each artifact in a markdown heading (<h1>DetectRaptor.Windows.Detection.Evtx</h1>).
+  // Use it only when EXACTLY ONE distinct artifact heading is present — a multi-cell notebook would be
+  // ambiguous (we can't tell which cell's table was captured), so fall through to the notebook id.
+  const headings = [...new Set(domHeadings.map((h) => (h || "").trim()).filter((h) => ARTIFACT_RE.test(h)))];
+  if (headings.length === 1) return headings[0];
   const nb = /#\/(?:fullscreen\/)?notebooks\/(N\.[A-Za-z0-9]+)/.exec(pageUrl);
   if (nb) return `notebook ${nb[1]}`;
   return "";

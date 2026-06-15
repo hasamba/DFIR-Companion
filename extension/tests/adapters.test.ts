@@ -147,9 +147,20 @@ describe("velociraptorSourceLabel", () => {
     expect(velociraptorSourceLabel({ domInputs: ["Custom.DFIR.RDPLateralMovementDetection/ExplicitCredentialLogons"] }))
       .toBe("Custom.DFIR.RDPLateralMovementDetection/ExplicitCredentialLogons");
   });
-  it("uses the notebook id from the page hash", () => {
+  it("reads the artifact from a unique notebook-cell heading (notebook tab)", () => {
+    expect(velociraptorSourceLabel({
+      pageUrl: "https://h:5888/app/index.html?org_id=root#/notebooks/N.ABC",
+      domHeadings: ["DetectRaptor.Windows.Detection.Evtx"],
+    })).toBe("DetectRaptor.Windows.Detection.Evtx");
+  });
+  it("falls back to the notebook id when no heading, or headings are ambiguous", () => {
     expect(velociraptorSourceLabel({ pageUrl: "https://h:5888/app/index.html?org_id=root#/fullscreen/notebooks/N.D8G0LA8MEASII" }))
       .toBe("notebook N.D8G0LA8MEASII");
+    // Two different artifact headings → ambiguous → notebook id, not a guess.
+    expect(velociraptorSourceLabel({
+      pageUrl: "https://h/#/notebooks/N.XYZ",
+      domHeadings: ["DetectRaptor.Windows.Detection.Evtx", "Windows.Hayabusa.Rules"],
+    })).toBe("notebook N.XYZ");
   });
   it("returns empty when nothing identifies the source", () => {
     expect(velociraptorSourceLabel({ domInputs: ["Search clients", "10"], pageUrl: "https://h/#/collected/C.x/F.y/results" })).toBe("");
@@ -158,7 +169,7 @@ describe("velociraptorSourceLabel", () => {
   it("is wired onto the adapter (adapter.sourceLabel is used by the content script)", () => {
     expect(typeof velociraptorAdapter.sourceLabel).toBe("function");
     expect(velociraptorAdapter.sourceLabel!({
-      apiUrl: "", pageUrl: "https://h/app/index.html?org_id=root#/notebooks/N.ABC", domInputs: [], rows: [],
+      apiUrl: "", pageUrl: "https://h/app/index.html?org_id=root#/notebooks/N.ABC", domInputs: [], domHeadings: [], rows: [],
     })).toBe("notebook N.ABC");
   });
 });
