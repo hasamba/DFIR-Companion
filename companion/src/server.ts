@@ -623,6 +623,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     // hangs forever (a real bug report: "this message is stuck, I don't know if it finished").
     const idle = (detail?: string) =>
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), ...(detail ? { detail } : {}) });
+    // No screenshots to analyze, but evidence IMPORTED while AI was off (deterministic Velociraptor/
+    // CSV/… imports populate the timeline without an AI call) still needs synthesis. Trigger it —
+    // skip-if-unchanged makes it a no-op when nothing actually changed — so turning AI on analyzes
+    // the imported data, not just screenshots. If synthesis can't run, clear the optimistic message.
+    const catchUpSynthesis = () => {
+      if (autoSynth && options.pipeline && hasAiProvider()) {
+        options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "synthesizing imported evidence" });
+        scheduleSynthesis(caseId);
+      } else {
+        idle();
+      }
+    };
     if (!options.pipeline || !hasAiProvider()) {
       idle("AI on — no AI model configured"); // can't analyze, but clear the optimistic message
       return;
@@ -633,12 +645,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const log = await readFile(store.capturesLogPath(caseId), "utf8");
       captures = log.split("\n").filter((l) => l.trim().length > 0).map((l) => JSON.parse(l) as CaptureMetadata);
     } catch {
-      idle(); // no capture log yet → nothing to catch up on
+      catchUpSynthesis(); // no capture log (import-only case) → still synthesize imported evidence
       return;
     }
     const pending = captures.filter((c) => !c.isDuplicate && c.sequenceNumber > control.lastAnalyzedSeq);
     if (pending.length === 0) {
-      idle(); // already up to date → clear the "catching up…" message
+      catchUpSynthesis(); // no new screenshots → still synthesize anything imported while off
       return;
     }
     options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `catching up on ${pending.length} screenshot(s)` });
