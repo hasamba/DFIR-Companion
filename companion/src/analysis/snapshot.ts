@@ -50,6 +50,7 @@ export const SNAPSHOT_EXCLUDED_STATE_FILES = [
   "anon-entities.json",
   "anon-discovered.json",
   "import-undo-stack.json", // #76 import undo/redo snapshots — machine-local convenience, large, transient
+  "second-opinion.json",    // #116 second-LLM-opinion QA scratch — transient; ACCEPTED deltas already live in investigation.json
 ] as const;
 
 const ALLOWED = new Set<string>(SNAPSHOT_STATE_FILES);
