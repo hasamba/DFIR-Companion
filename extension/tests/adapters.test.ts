@@ -187,6 +187,21 @@ describe("elastic.extractRows", () => {
     expect(elasticAdapter.extractRows("/internal/bsearch", body)).toEqual([{ _id: "9", _index: undefined, a: 1 }]);
   });
 
+  it("unwraps the async-search strategy envelope (/internal/search/ese → response.hits.hits)", () => {
+    // The exact shape Kibana's ese strategy returns: the ES _async_search body under `response`.
+    const body = {
+      id: "FmxTeDA…==", is_partial: false, is_running: false,
+      start_time_in_millis: 1781543631529, completion_time_in_millis: 1781543631603,
+      response: {
+        took: 74, timed_out: false, _shards: { total: 27, successful: 27, skipped: 0, failed: 0 },
+        hits: { total: { value: 39 }, hits: [{ _id: "d1", _index: "velociraptor", _source: { "Detection.Name": "Execution - PsExec" } }] },
+      },
+    };
+    expect(elasticAdapter.extractRows("/internal/search/ese", body)).toEqual([
+      { _id: "d1", _index: "velociraptor", "Detection.Name": "Execution - PsExec" },
+    ]);
+  });
+
   it("returns null when there are no hits", () => {
     expect(elasticAdapter.extractRows("u", { hits: { hits: [] } })).toBeNull();
     expect(elasticAdapter.extractRows("u", { took: 5 })).toBeNull();
