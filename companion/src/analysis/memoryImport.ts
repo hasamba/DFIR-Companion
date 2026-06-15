@@ -48,6 +48,7 @@ import {
   type SiemEvent,
   type SiemIoc,
 } from "./siemImport.js";
+import { parseCsv } from "./csvImport.js";
 
 type Row = Record<string, unknown>;
 
@@ -622,9 +623,335 @@ function extractTables(text: string, filename: string | undefined): { tables: Ta
   return { tables: [], format: "empty", tool: "" };
 }
 
+// ───────────────────────────── MemProcFS findevil ─────────────────────────────
+//
+// MemProcFS `findevil` scans a live RAM image for suspicious memory indicators and emits a REPORT
+// (not raw enumeration like Volatility). Each row is a verdict with a finding TYPE (HIGH_ENTROPY,
+// PEB_MASQ, YR_HACKTOOL, PE_PATCHED, PRIVATE_RWX, …). We map type→severity+MITRE deterministically.
+//
+// Format (space-separated fixed-width table):
+//    #    PID Process        Type            Address          Description
+//   -----------------------------------------------------------------------
+//   0000   8684 Velociraptor.e HIGH_ENTROPY    000000c001c00000 Entropy:[8.00]  p-rw--
+//   0004   6416 svchost.exe    YR_HACKTOOL     0000022a7a0b804e Windows_Hacktool_SharpDump_… [0]
+
+const FINDEVIL_HEADER_RE = /\bPID\b.{0,20}\bProcess\b.{0,30}\bType\b.{0,30}\bAddress\b/i;
+const FINDEVIL_ROW_RE = /^([0-9a-f]{4})\s+(\d+)\s+(\S+)\s+([A-Z][A-Z_0-9]+)\s+([0-9a-f]{16})\s*(.*)/i;
+
+// Exported so importDetect can route findevil files to "memory" without JSON-parsing them.
+export function looksLikeMemprocfsFindevil(text: string): boolean {
+  const lines = (text ?? "").slice(0, 3000).split(/\r\n|\r|\n/);
+  let hasHeader = false;
+  for (const line of lines.slice(0, 10)) {
+    const t = line.trim();
+    if (FINDEVIL_HEADER_RE.test(t)) { hasHeader = true; continue; }
+    if (hasHeader && (/^-{20,}$/.test(t) || FINDEVIL_ROW_RE.test(t))) return true;
+  }
+  return false;
+}
+
+interface FindevilRow {
+  pid: string; process: string; type: string; address: string; description: string;
+}
+
+function findevilSeverity(type: string, desc: string): { severity: Severity; mitre: string[] } {
+  const t = type.toUpperCase();
+  if (t.startsWith("YR_") || t.startsWith("YARA_")) {
+    if (/hacktool/i.test(t))  return { severity: "Critical", mitre: ["T1588.002"] };
+    if (/ransom/i.test(t))    return { severity: "Critical", mitre: ["T1486"] };
+    if (/shellcode/i.test(t)) return { severity: "Critical", mitre: ["T1055.001"] };
+    if (/malware|trojan|backdoor|rat\b|loader|dropper/i.test(t)) return { severity: "Critical", mitre: ["T1055"] };
+    return { severity: "High", mitre: ["T1027"] };
+  }
+  switch (t) {
+    case "PEB_MASQ":    return { severity: "High",   mitre: ["T1036.005"] };
+    case "PE_PATCHED":  return { severity: "High",   mitre: ["T1055"] };
+    case "THREAD":      return /system_impersonation/i.test(desc)
+                          ? { severity: "High",   mitre: ["T1134"] }
+                          : { severity: "Medium", mitre: ["T1055"] };
+    case "HIGH_ENTROPY": return { severity: "Medium", mitre: ["T1027"] };
+    case "PE_NOLINK":   return { severity: "Medium", mitre: ["T1055"] };
+    case "PROC_DEBUG":  return { severity: "Medium", mitre: ["T1055"] };
+    case "PRIVATE_RWX": return { severity: "Medium", mitre: ["T1055", "T1620"] };
+    case "DRIVER_PATH": {
+      const suspicious = /\\(?:temp|tmp|users|downloads?|desktop|appdata|public)\\/i.test(desc);
+      return { severity: suspicious ? "Medium" : "Low", mitre: ["T1014"] };
+    }
+    case "PRIVATE_RX":  return { severity: "Info", mitre: [] };
+    default:            return { severity: "Low",  mitre: [] };
+  }
+}
+
+// For bulk types group by process+type (many pages → one event with count).
+// For signal-rich types keep each finding individual (include rule/detail in key).
+function findevilAggKey(type: string, pid: string, proc: string, desc: string): string {
+  const t = type.toUpperCase();
+  if (t === "PRIVATE_RWX" || t === "PRIVATE_RX") {
+    return `findevil|${t}|${pid}|${proc.toLowerCase()}`;
+  }
+  if (t === "PE_PATCHED") {
+    const path = /([A-Za-z]:\\[^\s]+|\\[^\s]+\.(?:dll|exe|sys))\s*$/.exec(desc)?.[1] ?? "";
+    return `findevil|pe_patched|${pid}|${proc.toLowerCase()}|${path.toLowerCase()}`;
+  }
+  if (t === "PE_NOLINK") {
+    const path = /VAD:\[([^\]]+)\]/.exec(desc)?.[1] ?? /Module:\[([^\]]+)\]/.exec(desc)?.[1] ?? "";
+    return `findevil|pe_nolink|${pid}|${proc.toLowerCase()}|${path.toLowerCase()}`;
+  }
+  return `findevil|${t}|${pid}|${proc.toLowerCase()}|${desc.slice(0, 80).toLowerCase()}`;
+}
+
+function findevilEventDesc(type: string, proc: string, pid: string, desc: string, address: string): string {
+  const t = type.toUpperCase();
+  const addrNote = address && address !== "0000000000000000" ? ` @ 0x${address}` : "";
+  switch (t) {
+    case "YR_HACKTOOL":
+    case "YR_MALWARE":
+    case "YR_RANSOMWARE":
+    case "YR_SHELLCODE": {
+      const rule = /^(\S+)/.exec(desc.trim())?.[1] ?? desc;
+      return `MemProcFS findevil ${type}: ${proc} (PID ${pid}) — YARA ${rule}${addrNote}`.slice(0, 600);
+    }
+    case "PE_PATCHED": {
+      const path = /([A-Za-z]:\\[^\s]+|\\[^\s]+\.(?:dll|exe|sys))\s*$/.exec(desc)?.[1] ?? "";
+      return `MemProcFS findevil PE_PATCHED: ${proc} (PID ${pid}) — patched PE${path ? ` ${path}` : ""}${addrNote}`.slice(0, 600);
+    }
+    case "PE_NOLINK": {
+      const mod = /Module:\[([^\]]+)\]/.exec(desc)?.[1] ?? desc;
+      return `MemProcFS findevil PE_NOLINK: ${proc} (PID ${pid}) — unlisted PE ${mod}${addrNote}`.slice(0, 600);
+    }
+    case "DRIVER_PATH": {
+      const drv = /Driver:\[([^\]]+)\]/.exec(desc)?.[1] ?? "";
+      const mod = /Module:\[([^\]]+)\]/.exec(desc)?.[1] ?? "";
+      const note = drv ? ` — driver ${drv}${mod ? ` (${mod})` : ""}` : (desc ? ` — ${desc}` : "");
+      return `MemProcFS findevil DRIVER_PATH: ${proc} (PID ${pid})${note}`.slice(0, 600);
+    }
+    case "PRIVATE_RWX":
+      return `MemProcFS findevil PRIVATE_RWX: ${proc} (PID ${pid}) — executable private memory (RWX)${addrNote}`.slice(0, 600);
+    case "PRIVATE_RX":
+      return `MemProcFS findevil PRIVATE_RX: ${proc} (PID ${pid}) — private executable memory${addrNote}`.slice(0, 600);
+    case "PEB_MASQ":
+      return `MemProcFS findevil PEB_MASQ: ${proc} (PID ${pid}) — PEB process name masquerading`.slice(0, 600);
+    case "PROC_DEBUG":
+      return `MemProcFS findevil PROC_DEBUG: ${proc} (PID ${pid}) — process under debugger`.slice(0, 600);
+    default:
+      return `MemProcFS findevil ${type}: ${proc} (PID ${pid})${desc ? ` — ${oneLine(desc).slice(0, 200)}` : ""}${addrNote}`.slice(0, 600);
+  }
+}
+
+function parseFindevilRows(text: string): FindevilRow[] {
+  const rows: FindevilRow[] = [];
+  let pastHeader = false;
+  for (const line of text.split(/\r\n|\r|\n/)) {
+    const t = line.trim();
+    if (!pastHeader) {
+      if (FINDEVIL_HEADER_RE.test(t)) { pastHeader = true; }
+      continue;
+    }
+    if (/^-{20,}$/.test(t) || !t) continue;
+    const m = FINDEVIL_ROW_RE.exec(t);
+    if (!m) continue;
+    rows.push({ pid: m[2], process: m[3], type: m[4], address: m[5], description: (m[6] ?? "").trim() });
+  }
+  return rows;
+}
+
+function mapFindevil(rows: FindevilRow[], sink: Map<string, SiemIoc>): MappedEvent[] {
+  const out: MappedEvent[] = [];
+  for (const { pid, process, type, address, description } of rows) {
+    const { severity, mitre } = findevilSeverity(type, description);
+    const pName = baseName(process);
+    if (pName) addIoc(sink, "process", pName);
+
+    // Harvest file IOCs from structural fields in the description.
+    const t = type.toUpperCase();
+    let pathIoc = "";
+    if (t === "DRIVER_PATH") {
+      pathIoc = /Module:\[([^\]]+)\]/.exec(description)?.[1] ?? "";
+    } else if (t === "PE_NOLINK") {
+      pathIoc = /VAD:\[([^\]]+)\]/.exec(description)?.[1] ?? /Module:\[([^\]]+)\]/.exec(description)?.[1] ?? "";
+    } else if (t === "PE_PATCHED") {
+      pathIoc = /([A-Za-z]:\\[^\s]+|\\[^\s]+\.(?:dll|exe|sys))\s*$/.exec(description)?.[1] ?? "";
+    }
+    if (pathIoc && /[\\/]/.test(pathIoc)) addIoc(sink, "file", pathIoc.slice(0, 300));
+
+    out.push({
+      timestamp: "",
+      description: findevilEventDesc(type, process, pid, description, address),
+      severity,
+      mitre,
+      aggKey: findevilAggKey(type, pid, process, description),
+      sources: ["MemProcFS"],
+      ...(pName ? { processName: pName } : {}),
+      ...(pathIoc && /[\\/]/.test(pathIoc) ? { path: pathIoc } : {}),
+    });
+  }
+  return out;
+}
+
+function parseMemoryFindevil(text: string, opts: MemoryImportOptions): MemoryParseResult {
+  const rows = parseFindevilRows(text);
+  const empty: MemoryParseResult = { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, tables: 0, injected: 0, processes: 0, connections: 0, format: "memprocfs-findevil", tool: "MemProcFS" };
+  if (!rows.length) return empty;
+
+  const sink = new Map<string, SiemIoc>();
+  const mapped = mapFindevil(rows, sink);
+  const { events, groups } = aggregateEvents(mapped, {
+    aggregate: opts.aggregate,
+    minSeverity: opts.minSeverity,
+    maxEvents: opts.maxEvents ?? 2000,
+  });
+  const maxIocs = opts.maxIocs ?? 5000;
+  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  return {
+    events,
+    iocs: [...sink.values()].slice(0, maxIocs),
+    total: rows.length,
+    kept: events.length,
+    dropped: Math.max(0, rows.length - represented),
+    groups,
+    tables: 1,
+    injected: rows.filter((r) => /^(YR_|YARA_)/i.test(r.type)).length,
+    processes: 0,
+    connections: 0,
+    format: "memprocfs-findevil",
+    tool: "MemProcFS",
+  };
+}
+
+// ───────────────────────────── MemProcFS CSV variants ─────────────────────────────
+//
+// MemProcFS exports its data in two CSV flavours that complement the text `findevil` report:
+//
+//   findevil.csv  — PID,ProcessName,Type,Address,Description
+//     The same finding set as findevil.txt but as a clean CSV (no fixed-width padding). We
+//     parse rows into FindevilRow and reuse the same mapFindevil / severity / aggKey logic.
+//
+//   yara.csv  — MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,
+//               MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,
+//               User,Created,AddressCount,String0,Address0,…
+//     YARA scan results with process context + match timestamps. Every row is a YARA hit →
+//     Critical / T1055 (code found in memory). Aggregated by process + base-address so all
+//     matches in the same heap/VAD region collapse into one event with a count.
+
+// Lightweight first-line check (no full CSV parse): split on comma, normalise header names.
+function csvCols(text: string): Set<string> {
+  const first = text.trim().split(/\r\n|\r|\n/, 1)[0] ?? "";
+  return new Set(first.split(",").map((c) => c.trim().replace(/['"]/g, "").toLowerCase()));
+}
+
+function parseMemoryFindevilCsv(text: string, opts: MemoryImportOptions): MemoryParseResult {
+  const empty: MemoryParseResult = { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, tables: 0, injected: 0, processes: 0, connections: 0, format: "memprocfs-findevil-csv", tool: "MemProcFS" };
+  const { headers, rows } = parseCsv(text);
+  if (!headers.length || !rows.length) return empty;
+
+  const col = (name: string): number => headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
+  const pidI = col("PID"); const procI = col("ProcessName"); const typeI = col("Type");
+  const addrI = col("Address"); const descI = col("Description");
+
+  const findevilRows: FindevilRow[] = rows
+    .filter((r) => r[typeI]?.trim())
+    .map((r) => ({
+      pid: r[pidI] ?? "",
+      process: r[procI] ?? "",
+      type: r[typeI] ?? "",
+      // CSV address has a 0x prefix (e.g. 0x7ff824c43000); strip it for consistency.
+      address: (r[addrI] ?? "").replace(/^0x/i, "").toLowerCase(),
+      description: r[descI] ?? "",
+    }));
+
+  if (!findevilRows.length) return empty;
+  const sink = new Map<string, SiemIoc>();
+  const mapped = mapFindevil(findevilRows, sink);
+  const { events, groups } = aggregateEvents(mapped, {
+    aggregate: opts.aggregate, minSeverity: opts.minSeverity, maxEvents: opts.maxEvents ?? 2000,
+  });
+  const maxIocs = opts.maxIocs ?? 5000;
+  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  return {
+    events, iocs: [...sink.values()].slice(0, maxIocs),
+    total: findevilRows.length, kept: events.length,
+    dropped: Math.max(0, findevilRows.length - represented), groups, tables: 1,
+    injected: findevilRows.filter((r) => /^(YR_|YARA_)/i.test(r.type)).length,
+    processes: 0, connections: 0, format: "memprocfs-findevil-csv", tool: "MemProcFS",
+  };
+}
+
+function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryParseResult {
+  const empty: MemoryParseResult = { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, tables: 0, injected: 0, processes: 0, connections: 0, format: "memprocfs-yara-csv", tool: "MemProcFS" };
+  const { headers, rows } = parseCsv(text);
+  if (!headers.length || !rows.length) return empty;
+
+  const col = (name: string): number => headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
+  const pidI = col("PID"); const procI = col("ProcessName"); const procPathI = col("ProcessPath");
+  const cmdI = col("CommandLine"); const createdI = col("Created");
+  const memTypeI = col("MemoryType"); const memTagI = col("MemoryTag");
+  const baseAddrI = col("MemoryBaseAddress"); const objAddrI = col("ObjectAddress");
+
+  const sink = new Map<string, SiemIoc>();
+  const mapped: MappedEvent[] = [];
+
+  for (const row of rows) {
+    const pid = row[pidI] ?? "";
+    const proc = row[procI] ?? "";
+    const procPath = row[procPathI] ?? "";
+    const cmd = row[cmdI] ?? "";
+    const created = row[createdI] ?? "";
+    const memType = row[memTypeI] ?? "";
+    const memTag = row[memTagI] ?? "";
+    const baseAddr = row[baseAddrI] ?? "";
+    const objAddr = row[objAddrI] ?? "";
+
+    const pName = baseName(proc);
+    if (pName) addIoc(sink, "process", pName);
+    if (procPath && /[\\/]/.test(procPath)) addIoc(sink, "file", procPath.slice(0, 300));
+
+    const timestamp = normalizeTime(created) ?? "";
+    const memNote = [memType, memTag].filter(Boolean).join(" / ");
+    const addrNote = baseAddr ? ` @ base 0x${baseAddr}` : "";
+    const objNote = objAddr ? ` (obj 0x${objAddr})` : "";
+    const cmdNote = cmd ? ` — cmd: ${oneLine(cmd).slice(0, 120)}` : "";
+    const description = `MemProcFS YARA: ${proc} (PID ${pid})${memNote ? ` — match in ${memNote}` : " — YARA match"}${addrNote}${objNote}${cmdNote}`.slice(0, 600);
+
+    mapped.push({
+      timestamp,
+      description,
+      severity: "Critical",
+      mitre: ["T1055"],
+      aggKey: `memprocfs|yara|${pid}|${proc.toLowerCase()}|${baseAddr}`.slice(0, 400),
+      sources: ["MemProcFS"],
+      ...(pName ? { processName: pName } : {}),
+    });
+  }
+
+  const { events, groups } = aggregateEvents(mapped, {
+    aggregate: opts.aggregate, minSeverity: opts.minSeverity, maxEvents: opts.maxEvents ?? 2000,
+  });
+  const maxIocs = opts.maxIocs ?? 5000;
+  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  return {
+    events, iocs: [...sink.values()].slice(0, maxIocs),
+    total: rows.length, kept: events.length,
+    dropped: Math.max(0, rows.length - represented), groups, tables: 1,
+    injected: rows.length, processes: 0, connections: 0,
+    format: "memprocfs-yara-csv", tool: "MemProcFS",
+  };
+}
+
 // ───────────────────────────── top-level parse ─────────────────────────────
 
 export function parseMemory(text: string, opts: MemoryImportOptions = {}): MemoryParseResult {
+  // MemProcFS findevil: a flat finding-report table — check before JSON/text Volatility paths.
+  if (looksLikeMemprocfsFindevil(text)) return parseMemoryFindevil(text, opts);
+
+  // MemProcFS CSV variants — identified by distinctive column sets in the first header line.
+  const cols = csvCols(text);
+  if (cols.has("matchindex") && cols.has("memorytype") && cols.has("processname")) {
+    return parseMemoryYaraCsv(text, opts);
+  }
+  if (cols.has("processname") && cols.has("type") && cols.has("address") && !cols.has("matchindex")) {
+    return parseMemoryFindevilCsv(text, opts);
+  }
+
   const maxIocs = opts.maxIocs ?? 5000;
   const { tables, format, tool } = extractTables(text, opts.filename);
   const total = tables.reduce((n, t) => n + t.rows.length, 0);

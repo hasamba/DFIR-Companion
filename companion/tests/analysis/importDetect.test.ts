@@ -98,6 +98,23 @@ describe("detectImportKind — JSON formats", () => {
     const txt = "Volatility 3 Framework 2.28.0\n\nPID\tProcess\tProtection\tTag\n7352\tSearchHost.exe\tPAGE_EXECUTE_READWRITE\tVadS\t";
     expect(detectImportKind("malfind.txt", txt)).toBe("memory");
   });
+  it("memory: MemProcFS findevil report (space-separated finding table)", () => {
+    const findevil = [
+      "   #    PID Process        Type            Address          Description",
+      "-----------------------------------------------------------------------",
+      "0000   8684 Velociraptor.e HIGH_ENTROPY    000000c001c00000 Entropy:[8.00]",
+      "0004   6416 svchost.exe    YR_HACKTOOL     0000022a7a0b804e Windows_Hacktool_SharpDump_7c17d8b1 [0]",
+    ].join("\n");
+    expect(detectImportKind("findevil.txt", findevil)).toBe("memory");
+  });
+  it("memory: MemProcFS findevil.csv (PID,ProcessName,Type,Address,Description)", () => {
+    const csv = 'PID,ProcessName,Type,Address,Description\n6416,svchost.exe,YR_HACKTOOL,0x22a7a0b804e,"Windows_Hacktool_SharpDump_7c17d8b1 [0]"';
+    expect(detectImportKind("findevil.csv", csv)).toBe("memory");
+  });
+  it("memory: MemProcFS yara.csv (MatchIndex,...,MemoryType,MemoryTag,...,ProcessName,...)", () => {
+    const csv = 'MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0\n0,"","","Elastic Security","","Virtual Memory (VAD)","HEAP-00",22a7a000000,"",6416,svchost.exe,\\path,cmd,SYSTEM,"2026-06-03 08:31:44",1,abc,22a7a0b804e';
+    expect(detectImportKind("yara.csv", csv)).toBe("memory");
+  });
 });
 
 describe("detectImportKind — CSV formats", () => {

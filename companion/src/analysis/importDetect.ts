@@ -7,7 +7,7 @@
 // The detected kind is shown back to the analyst, so a mis-route is visible, not silent.
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
-import { isRekallCommandList, looksLikeVolatilityText } from "./memoryImport.js";
+import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { parseCsv } from "./csvImport.js";
 import { looksLikeJournald } from "./journaldImport.js";
 import { looksLikeSysdig } from "./sysdigImport.js";
@@ -233,6 +233,15 @@ function cybertriageCsvSig(h: Set<string>): boolean {
   // Cyber Triage timeline CSV header: event_timestamp,epoch_timestamp,message,timestamp_description,item_type,threat_level
   return h.has("event_timestamp") && h.has("epoch_timestamp") && h.has("timestamp_description");
 }
+function memprocfsFindevilCsvSig(h: Set<string>): boolean {
+  // findevil.csv: PID,ProcessName,Type,Address,Description — MemProcFS finding report as CSV.
+  return h.has("pid") && h.has("processname") && h.has("type") && h.has("address") && h.has("description")
+    && !h.has("matchindex"); // guard against YARA CSV which also has these columns
+}
+function memprocfsYaraCsvSig(h: Set<string>): boolean {
+  // yara.csv: MatchIndex,…,MemoryType,MemoryTag,MemoryBaseAddress,…,ProcessName,…
+  return h.has("matchindex") && h.has("memorytype") && h.has("memorytag") && h.has("processname") && h.has("memorybaseaddress");
+}
 function kapeSig(h: Set<string>): boolean {
   return has(h, "executablename", "runcount") || has(h, "fullpath", "sha1") || has(h, "fullpath", "filekeylastwritetimestamp") ||
     (h.has("path") && h.has("lastmodifiedtimeutc")) || has(h, "updatereasons", "updatetimestamp") ||
@@ -251,6 +260,8 @@ function detectCsv(text: string): ImportKind {
   if (plasoSig(h)) return "plaso";
   if (hayabusaCsvSig(h)) return "hayabusa";
   if (kapeSig(h)) return "kape";
+  if (memprocfsYaraCsvSig(h)) return "memory";
+  if (memprocfsFindevilCsvSig(h)) return "memory";
   // A comma-delimited table with data rows → the generic (AI) CSV importer.
   if (headers.length >= 2 && rows.length > 0) return "csv";
   return "log";
@@ -344,6 +355,10 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // Email artifact (.eml RFC 822 header block, or a best-effort .msg) — checked before the
   // CSV/log fallback so a header-block email isn't mistaken for a line-oriented log.
   if (isEmail(filename, t)) return "email";
+
+  // MemProcFS `findevil` report — a space-separated finding table (# PID Process Type Address Desc).
+  // Checked before Volatility text (both are text tables, but findevil has no tabs and a distinct header).
+  if (looksLikeMemprocfsFindevil(t)) return "memory";
 
   // Volatility 3 TEXT/grid renderer (the default `vol <plugin>` output, no -r json) — a banner +
   // TAB-separated table. Checked before the CSV/log fallback (it's tab-, not comma-separated, and

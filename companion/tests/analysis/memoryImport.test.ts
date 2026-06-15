@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseMemory, isRekallCommandList, looksLikeVolatilityText } from "../../src/analysis/memoryImport.js";
+import { parseMemory, isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "../../src/analysis/memoryImport.js";
 
 // ── Volatility 3 JSON-renderer fixtures (each node carries `__children`) ──────
 function pslist(): object[] {
@@ -225,5 +225,227 @@ describe("parseMemory — Volatility 3 TEXT/grid renderer (default `vol`, no -r 
     const evil = r.events.find((e) => e.description.includes("evil.exe"));
     expect(evil?.parentName).toBe("smss.exe");                   // PPID 880 → smss.exe
     expect(evil?.processName).toBe("evil.exe");
+  });
+});
+
+// ── MemProcFS findevil ──────────────────────────────────────────────────────
+
+const FINDEVIL_SAMPLE = [
+  "   #    PID Process        Type            Address          Description",
+  "-----------------------------------------------------------------------",
+  "0000   8684 Velociraptor.e HIGH_ENTROPY    000000c001c00000 Entropy:[8.00]       p-rw-- ",
+  "0001   3080 elastic-agent. PEB_MASQ        0000000000000000 ",
+  "0002      4 System         DRIVER_PATH     ffff848b42043b00 Driver:[winpmem] Module:[\\??\\C:\\Windows\\Temp\\winpmem.sys]",
+  "0004   6416 svchost.exe    YR_HACKTOOL     0000022a7a0b804e Windows_Hacktool_SharpDump_7c17d8b1 [0]",
+  "0005   6416 svchost.exe    YR_HACKTOOL     0000022a7a0b8341 Windows_Hacktool_SharpMove_05e28928 [1]",
+  "000e   4152 taskhostw.exe  THREAD          00007ff824bb6870 TID:5756 SYSTEM_IMPERSONATION",
+  "0013   6364 explorer.exe   PE_NOLINK       00007ff800bb0000 Module:[SearchIndexerCore.dll] VAD:[\\Windows\\System32\\SearchIndexerCore.dll]",
+  "0019   1004 chrome.exe     PE_PATCHED      00007ff824c43000 00003161f000 010000003161f025 A r-x Image ---wxc \\Windows\\System32\\ntdll.dll",
+  "0027   1004 chrome.exe     PRIVATE_RWX     00007fffc3b80000 0001ffcb2000 01000001ffcb2867 A rwx p----- ",
+  "0028   1004 chrome.exe     PRIVATE_RWX     00007fffc3b81000 0001ff7b4000 01000001ff7b4847 A rwx p----- ",
+  "000b   6900 powershell.exe PROC_DEBUG      0000000000000000 ",
+].join("\n");
+
+describe("parseMemory — MemProcFS findevil", () => {
+  it("looksLikeMemprocfsFindevil detects the header+data pattern and rejects plain text", () => {
+    expect(looksLikeMemprocfsFindevil(FINDEVIL_SAMPLE)).toBe(true);
+    expect(looksLikeMemprocfsFindevil("just some log lines\nwith no structure")).toBe(false);
+    expect(looksLikeMemprocfsFindevil("Volatility 3 Framework 2.28.0\nPID\tProcess\n4\tSystem")).toBe(false);
+  });
+
+  it("produces format=memprocfs-findevil and tool=MemProcFS", () => {
+    const r = parseMemory(FINDEVIL_SAMPLE);
+    expect(r.format).toBe("memprocfs-findevil");
+    expect(r.tool).toBe("MemProcFS");
+    expect(r.total).toBeGreaterThan(0);
+  });
+
+  it("maps YR_HACKTOOL to Critical with T1588.002 and includes the YARA rule name", () => {
+    const r = parseMemory(FINDEVIL_SAMPLE);
+    const sd = r.events.find((e) => e.description.includes("SharpDump"));
+    expect(sd?.severity).toBe("Critical");
+    expect(sd?.mitreTechniques).toContain("T1588.002");
+    expect(sd?.processName).toBe("svchost.exe");
+    // Two different hacktools → two separate events (not aggregated together)
+    const sm = r.events.find((e) => e.description.includes("SharpMove"));
+    expect(sm).toBeTruthy();
+  });
+
+  it("maps THREAD with SYSTEM_IMPERSONATION to High with T1134", () => {
+    const r = parseMemory(FINDEVIL_SAMPLE);
+    const ev = r.events.find((e) => e.description.includes("taskhostw.exe") && e.description.includes("SYSTEM_IMPERSONATION"));
+    expect(ev?.severity).toBe("High");
+    expect(ev?.mitreTechniques).toContain("T1134");
+  });
+
+  it("maps PEB_MASQ to High with T1036.005", () => {
+    const r = parseMemory(FINDEVIL_SAMPLE);
+    const ev = r.events.find((e) => e.description.includes("PEB_MASQ"));
+    expect(ev?.severity).toBe("High");
+    expect(ev?.mitreTechniques).toContain("T1036.005");
+    expect(ev?.processName).toBe("elastic-agent.");
+  });
+
+  it("maps DRIVER_PATH to Low (or Medium for suspicious paths) and harvests the module as a file IOC", () => {
+    const r = parseMemory(FINDEVIL_SAMPLE);
+    const ev = r.events.find((e) => e.description.includes("winpmem"));
+    // Temp path → suspicious → Medium
+    expect(ev?.severity).toBe("Medium");
+    expect(ev?.mitreTechniques).toContain("T1014");
+    expect(r.iocs.some((i) => i.type === "file" && /winpmem\.sys/i.test(i.value))).toBe(true);
+  });
+
+  it("maps PE_NOLINK to Medium with T1055 and harvests the VAD path as a file IOC", () => {
+    const r = parseMemory(FINDEVIL_SAMPLE);
+    const ev = r.events.find((e) => e.description.includes("SearchIndexerCore"));
+    expect(ev?.severity).toBe("Medium");
+    expect(ev?.mitreTechniques).toContain("T1055");
+    expect(r.iocs.some((i) => i.type === "file" && /SearchIndexerCore/i.test(i.value))).toBe(true);
+  });
+
+  it("maps PE_PATCHED to High with T1055 and harvests the patched DLL path as a file IOC", () => {
+    const r = parseMemory(FINDEVIL_SAMPLE);
+    const ev = r.events.find((e) => e.description.includes("PE_PATCHED") && e.description.includes("ntdll.dll"));
+    expect(ev?.severity).toBe("High");
+    expect(ev?.mitreTechniques).toContain("T1055");
+    expect(r.iocs.some((i) => i.type === "file" && /ntdll\.dll/i.test(i.value))).toBe(true);
+  });
+
+  it("groups multiple PRIVATE_RWX rows from the same process into one event (count reflects all pages)", () => {
+    const r = parseMemory(FINDEVIL_SAMPLE);
+    const chromePrwx = r.events.filter(
+      (e) => e.description.includes("chrome.exe") && e.description.includes("PRIVATE_RWX"),
+    );
+    // Two PRIVATE_RWX rows from chrome.exe PID 1004 → aggregated into one event
+    expect(chromePrwx).toHaveLength(1);
+    expect((chromePrwx[0].count ?? 1)).toBe(2);
+    expect(chromePrwx[0].severity).toBe("Medium");
+  });
+
+  it("maps HIGH_ENTROPY to Medium and PROC_DEBUG to Medium", () => {
+    const r = parseMemory(FINDEVIL_SAMPLE);
+    const he = r.events.find((e) => e.description.includes("HIGH_ENTROPY"));
+    expect(he?.severity).toBe("Medium");
+    expect(he?.mitreTechniques).toContain("T1027");
+    const pd = r.events.find((e) => e.description.includes("PROC_DEBUG"));
+    expect(pd?.severity).toBe("Medium");
+  });
+
+  it("tags all events with sources=[MemProcFS]", () => {
+    const r = parseMemory(FINDEVIL_SAMPLE);
+    expect(r.events.every((e) => e.sources?.includes("MemProcFS"))).toBe(true);
+  });
+
+  it("reports injected count = number of YR_* rows", () => {
+    const r = parseMemory(FINDEVIL_SAMPLE);
+    expect(r.injected).toBe(2);                                  // two YR_HACKTOOL rows
+  });
+});
+
+// ── MemProcFS findevil.csv ──────────────────────────────────────────────────
+
+const FINDEVIL_CSV = [
+  "PID,ProcessName,Type,Address,Description",
+  '4,System,DRIVER_PATH,0xffff848b42043b00,"Driver:[winpmem] Module:[\\??\\C:\\Windows\\Temp\\winpmem.sys]"',
+  '6416,svchost.exe,YR_HACKTOOL,0x22a7a0b804e,"Windows_Hacktool_SharpDump_7c17d8b1 [0]"',
+  '6416,svchost.exe,YR_HACKTOOL,0x22a7a0b8341,"Windows_Hacktool_SharpMove_05e28928 [1]"',
+  '4152,taskhostw.exe,THREAD,0x7ff824bb6870,"TID:5756 SYSTEM_IMPERSONATION"',
+  '6364,explorer.exe,PE_NOLINK,0x7ff800bb0000,"Module:[SearchIndexerCore.dll] VAD:[\\Windows\\System32\\SearchIndexerCore.dll]"',
+  '1004,chrome.exe,PRIVATE_RWX,0x7fffc3b80000,"..."',
+  '1004,chrome.exe,PRIVATE_RWX,0x7fffc3b81000,"..."',
+  '6900,powershell.exe,PROC_DEBUG,0x0,""',
+].join("\n");
+
+describe("parseMemory — MemProcFS findevil CSV", () => {
+  it("produces format=memprocfs-findevil-csv and tool=MemProcFS", () => {
+    const r = parseMemory(FINDEVIL_CSV);
+    expect(r.format).toBe("memprocfs-findevil-csv");
+    expect(r.tool).toBe("MemProcFS");
+    expect(r.total).toBe(8);
+  });
+
+  it("maps YR_HACKTOOL rows to Critical/T1588.002 (same logic as text format)", () => {
+    const r = parseMemory(FINDEVIL_CSV);
+    const sd = r.events.find((e) => e.description.includes("SharpDump"));
+    expect(sd?.severity).toBe("Critical");
+    expect(sd?.mitreTechniques).toContain("T1588.002");
+  });
+
+  it("maps THREAD SYSTEM_IMPERSONATION to High/T1134", () => {
+    const r = parseMemory(FINDEVIL_CSV);
+    const ev = r.events.find((e) => e.description.includes("SYSTEM_IMPERSONATION"));
+    expect(ev?.severity).toBe("High");
+    expect(ev?.mitreTechniques).toContain("T1134");
+  });
+
+  it("groups PRIVATE_RWX rows from the same chrome.exe PID into one event", () => {
+    const r = parseMemory(FINDEVIL_CSV);
+    const chromePrwx = r.events.filter(
+      (e) => e.description.includes("chrome.exe") && e.description.includes("PRIVATE_RWX"),
+    );
+    expect(chromePrwx).toHaveLength(1);
+    expect((chromePrwx[0].count ?? 1)).toBe(2);
+  });
+
+  it("harvests the winpmem driver path as a file IOC (Medium for Temp path)", () => {
+    const r = parseMemory(FINDEVIL_CSV);
+    expect(r.iocs.some((i) => i.type === "file" && /winpmem\.sys/i.test(i.value))).toBe(true);
+    const driverEv = r.events.find((e) => e.description.includes("winpmem"));
+    expect(driverEv?.severity).toBe("Medium");
+  });
+
+  it("reports injected count = YR_* rows only", () => {
+    const r = parseMemory(FINDEVIL_CSV);
+    expect(r.injected).toBe(2);
+  });
+});
+
+// ── MemProcFS yara.csv ──────────────────────────────────────────────────────
+
+const YARA_CSV = [
+  "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+  '0,"","","Elastic Security","","Virtual Memory (VAD)","HEAP-00 [SegSegment]",22a7a000000,"",6416,svchost.exe,\\Device\\HarddiskVolume1\\Windows\\System32\\svchost.exe,"C:\\Windows\\system32\\svchost.exe -k osprivacy -p -s camsvc",SYSTEM,"2026-06-03 08:31:44",1,9c9bba3-a0ea-431c-866c-77004802d,22a7a0b804e',
+  '1,"","","Elastic Security","","Virtual Memory (VAD)","HEAP-00 [SegSegment]",22a7a000000,"",6416,svchost.exe,\\Device\\HarddiskVolume1\\Windows\\System32\\svchost.exe,"C:\\Windows\\system32\\svchost.exe -k osprivacy -p -s camsvc",SYSTEM,"2026-06-03 08:31:44",1,8BF82BBE-909C-4777-A2FC-EA7C070FF43E,22a7a0b8341',
+].join("\n");
+
+describe("parseMemory — MemProcFS yara.csv", () => {
+  it("produces format=memprocfs-yara-csv and tool=MemProcFS", () => {
+    const r = parseMemory(YARA_CSV);
+    expect(r.format).toBe("memprocfs-yara-csv");
+    expect(r.tool).toBe("MemProcFS");
+    expect(r.total).toBe(2);
+  });
+
+  it("maps every row to Critical/T1055 with process and memory context in the description", () => {
+    const r = parseMemory(YARA_CSV);
+    expect(r.events.length).toBeGreaterThan(0);
+    expect(r.events.every((e) => e.severity === "Critical")).toBe(true);
+    expect(r.events.every((e) => e.mitreTechniques?.includes("T1055"))).toBe(true);
+    expect(r.events.some((e) => e.description.includes("svchost.exe"))).toBe(true);
+    expect(r.events.some((e) => e.description.includes("Virtual Memory (VAD)"))).toBe(true);
+  });
+
+  it("aggregates matches from the same process+base-address into one event with count", () => {
+    const r = parseMemory(YARA_CSV);
+    // Both rows are svchost PID 6416, same MemoryBaseAddress 22a7a000000 → one event, count 2
+    expect(r.events).toHaveLength(1);
+    expect((r.events[0].count ?? 1)).toBe(2);
+    expect(r.events[0].processName).toBe("svchost.exe");
+  });
+
+  it("preserves the Created timestamp from the CSV row", () => {
+    const r = parseMemory(YARA_CSV);
+    expect(r.events[0].timestamp).toBeTruthy();
+    expect(r.events[0].timestamp).toContain("2026-06-03");
+  });
+
+  it("harvests the process path as a file IOC", () => {
+    const r = parseMemory(YARA_CSV);
+    expect(r.iocs.some((i) => i.type === "file" && /svchost\.exe/i.test(i.value))).toBe(true);
+  });
+
+  it("reports injected = total rows (all are YARA hits)", () => {
+    const r = parseMemory(YARA_CSV);
+    expect(r.injected).toBe(2);
   });
 });

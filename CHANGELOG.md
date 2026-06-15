@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **MemProcFS findevil importer** — deterministic parser for the `findevil` finding-report table; maps finding types to severity + ATT&CK (YR_HACKTOOL → Critical/T1588.002, PEB_MASQ → High/T1036.005, PE_PATCHED → High/T1055, THREAD SYSTEM_IMPERSONATION → High/T1134, etc.); groups bulk PRIVATE_RWX/PRIVATE_RX pages by process; harvests driver/module/patched-DLL paths as file IOCs; auto-detected by the unified Import button.
+
 ## [0.21.0] - 2026-06-15
 
 ### Added
