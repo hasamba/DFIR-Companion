@@ -1542,6 +1542,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Memory-forensics "Next-Step" agent (issue #101). When the case has Volatility 3 / Rekall output
+  // imported, this makes ONE text-only AI call that reads the memory evidence (process tree, malfind,
+  // connections, command lines), spots anomalies, and proposes the exact next Volatility command to
+  // run. EPHEMERAL (no state change). Needs an AI provider; returns [] when the case has no memory
+  // evidence (the dashboard hides the panel in that case).
+  app.post("/cases/:id/memory/next-steps", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for memory next-step suggestions" });
+    try {
+      const suggestions = await options.pipeline.suggestMemoryNextSteps(req.params.id);
+      logLine(`[memory] suggested ${suggestions.length} next step(s) for ${req.params.id}`);
+      return res.status(200).json({ suggestions });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Velociraptor triage bundles ───────────────────────────────────────────────────────────
   // On-demand: list collectable CLIENT artifacts → build/save named bundles → run a bundle as a hunt
   // → after a delay, collect results, auto-import (deterministic Velociraptor importer) + synthesize.

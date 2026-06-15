@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseMemory, isRekallCommandList } from "../../src/analysis/memoryImport.js";
+import { parseMemory, isRekallCommandList, looksLikeVolatilityText } from "../../src/analysis/memoryImport.js";
 
 // ── Volatility 3 JSON-renderer fixtures (each node carries `__children`) ──────
 function pslist(): object[] {
@@ -171,5 +171,59 @@ describe("parseMemory — options & edges", () => {
     const r = parseMemory(JSON.stringify({ foo: "bar" }));
     expect(r.events.length).toBe(0);
     expect(r.iocs.length).toBe(0);
+  });
+});
+
+describe("parseMemory — Volatility 3 TEXT/grid renderer (default `vol`, no -r json)", () => {
+  // A real-shaped malfind text export: banner, TAB-separated header, two rows each followed by a
+  // hexdump block and a disassembly block (which must be skipped, not parsed as rows).
+  const malfindText = [
+    "Volatility 3 Framework 2.28.0",
+    "",
+    "PID\tProcess\tStart VPN\tEnd VPN\tTag\tProtection\tCommitCharge\tPrivateMemory\tFile output\tNotes\tHexdump\tDisasm",
+    "",
+    "7352\tSearchHost.exe\t0x1e1901d0000\t0x1e1901effff\tVadS\tPAGE_EXECUTE_READWRITE\t5\t1\tDisabled\tN/A\t",
+    "48 89 54 24 10 48 89 4c 24 08 4c 89 44 24 18 4c H.T$.H.L$.L.D$.L",
+    "89 4c 24 20 48 8b 41 28 48 8b 48 08 48 8b 51 50 .L$ H.A(H.H.H.QP",
+    "0x1e1901d0000:\tmov\tqword ptr [rsp + 0x10], rdx",
+    "0x1e1901d0005:\tmov\tqword ptr [rsp + 8], rcx",
+    "6900\tpowershell.exe\t0x2ea5f970000\t0x2ea5f97cfff\tVadS\tPAGE_EXECUTE_READWRITE\t1\t1\tDisabled\tN/A\t",
+    "00 00 00 00 00 00 00 00 90 78 9b 5f ea 02 00 00 .........x._....",
+    "0x2ea5f970000:\tadd\tbyte ptr [rax], al",
+  ].join("\n");
+
+  it("looksLikeVolatilityText recognises the banner and a known-column header (and rejects plain text)", () => {
+    expect(looksLikeVolatilityText(malfindText)).toBe(true);
+    expect(looksLikeVolatilityText("PID\tProcess\tProtection\tTag\tStart VPN\n7352\tx\tRWX\tVadS\t0x1")).toBe(true); // no banner, header cols
+    expect(looksLikeVolatilityText("just some\nlog lines\nwith no tabs")).toBe(false);
+  });
+
+  it("parses the grid into malfind events, skipping the hexdump + disasm continuation lines", () => {
+    const r = parseMemory(malfindText, { filename: "malfind.txt" });
+    expect(r.format).toBe("volatility-text");
+    expect(r.tool).toBe("Volatility");
+    expect(r.injected).toBe(2);                                  // two data rows, not the hexdump/disasm lines
+    expect(r.events).toHaveLength(2);
+    expect(r.events.every((e) => e.severity === "High")).toBe(true);
+    expect(r.events.every((e) => e.mitreTechniques.includes("T1055"))).toBe(true);
+    const sh = r.events.find((e) => e.description.includes("SearchHost.exe"));
+    expect(sh?.processName).toBe("SearchHost.exe");
+    expect(sh?.description).toContain("PAGE_EXECUTE_READWRITE");
+    expect(r.iocs.some((i) => i.type === "process" && i.value === "SearchHost.exe")).toBe(true);
+  });
+
+  it("parses a tab-separated pslist text grid with parent links", () => {
+    const pslistText = [
+      "Volatility 3 Framework 2.28.0",
+      "PID\tPPID\tImageFileName\tCreateTime",
+      "880\t4\tsmss.exe\t2021-04-29 21:26:48.000000",
+      "3120\t880\tevil.exe\t2021-04-29 21:40:00.000000",
+    ].join("\n");
+    const r = parseMemory(pslistText, { filename: "windows.pslist.txt" });
+    expect(r.format).toBe("volatility-text");
+    expect(r.processes).toBe(2);
+    const evil = r.events.find((e) => e.description.includes("evil.exe"));
+    expect(evil?.parentName).toBe("smss.exe");                   // PPID 880 → smss.exe
+    expect(evil?.processName).toBe("evil.exe");
   });
 });

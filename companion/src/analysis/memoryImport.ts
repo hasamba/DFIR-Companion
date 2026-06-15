@@ -14,6 +14,10 @@
 //     column name → value. The TreeGrid renderer tags every node with a `__children` key (the
 //     `pstree` plugin nests children under it). Also a JSON-Lines variant, and a combined
 //     `{ "<plugin>": [rows] }` map some orchestration emits.
+//   • Volatility 3 TEXT/grid renderer (the DEFAULT `vol <plugin>`, no `-r json`): a banner, a
+//     TAB-separated column header, then TAB-separated data rows (malfind/pstree interleave a
+//     hexdump + disassembly block per row, which is skipped). Parsed into the same header-keyed
+//     rows as the JSON path, so the column-fingerprint classification + mappers are reused.
 //   • Rekall JSON renderer (`rekall … --format json`): a list of `[directive, payload]` statements
 //     ("m" metadata / "t" table header / "r" row / "s" section). We walk it, grouping each "r"
 //     row under the most recent "t" table and taking the plugin name from the "m"/"s" context.
@@ -70,7 +74,7 @@ export interface MemoryParseResult {
   injected: number;     // malfind (injected-code) rows seen
   processes: number;    // process-listing rows seen
   connections: number;  // network-connection rows seen
-  format: string;       // "volatility" | "volatility-jsonl" | "volatility-map" | "rekall" | "empty"
+  format: string;       // "volatility" | "volatility-jsonl" | "volatility-map" | "volatility-text" | "rekall" | "empty"
   tool: string;         // "Volatility" | "Rekall" | ""
 }
 
@@ -506,6 +510,76 @@ function pluginFromFilename(name: string | undefined): string {
   return m ? m[1] : "";
 }
 
+// ───────────────────────────── Volatility 3 TEXT/grid renderer ─────────────────────────────
+//
+// The DEFAULT `vol <plugin>` output (no `-r json`): a "Volatility 3 Framework <ver>" banner, a
+// TAB-separated column header, then TAB-separated data rows. `malfind`/`pstree` interleave a
+// multi-line hexdump + disassembly block AFTER each row — those continuation lines are skipped. We
+// parse the grid into the SAME header-keyed Row objects the JSON path produces, so all the
+// column-fingerprint classification and per-category mappers above are reused unchanged.
+
+const VOL_TEXT_BANNER = /^Volatility 3 Framework\b/i;
+const VOL_TEXT_HEXDUMP = /^[0-9a-fA-F]{2}( [0-9a-fA-F]{2}){3,}/;   // a hexdump gutter line: "48 89 54 24 …"
+const VOL_TEXT_DISASM = /^0x[0-9a-fA-F]+:/;                         // a disassembly line: "0x…:\tmov …"
+// Column names that appear in Volatility 3 text headers — used (with the banner) to recognize the
+// format when the banner was stripped. Lowercased; matched against the TAB-split header cells.
+const VOL_TEXT_HEADER_COLS = new Set([
+  "pid", "ppid", "process", "imagefilename", "comm", "offset(v)", "offset", "protection", "tag",
+  "createtime", "exittime", "threads", "handles", "sessionid", "wow64", "args", "cmd",
+  "localaddr", "foreignaddr", "localport", "foreignport", "proto", "state", "owner", "created",
+  "name", "displayname", "binary", "start", "path", "base", "size", "start vpn", "end vpn",
+]);
+
+// Recognize a Volatility 3 text/grid export — the banner, or a TAB-separated header carrying several
+// known Volatility column names. Pure; exported so the unified import detector can route to "memory".
+export function looksLikeVolatilityText(text: string): boolean {
+  const head = (text ?? "").slice(0, 4000);
+  if (VOL_TEXT_BANNER.test(head.trimStart())) return true;
+  for (const line of head.split(/\r\n|\r|\n/).slice(0, 12)) {
+    if (!line.includes("\t")) continue;
+    const cols = line.split("\t").map((c) => c.trim().toLowerCase());
+    if (cols.filter((c) => VOL_TEXT_HEADER_COLS.has(c)).length >= 3) return true;
+  }
+  return false;
+}
+
+// Parse a Volatility 3 text/grid export into one header-keyed table (or null if no rows found).
+function parseVolatilityText(text: string, filename: string | undefined): Table | null {
+  const lines = text.split(/\r\n|\r|\n/);
+  let header: string[] | null = null;
+  let i = 0;
+  // Find the header: the first TAB-containing line that is not the banner / a progress line.
+  for (; i < lines.length; i++) {
+    const line = lines[i].replace(/\s+$/, "");
+    if (!line.trim()) continue;
+    const trimmed = line.trim();
+    if (VOL_TEXT_BANNER.test(trimmed) || /^Progress:/i.test(trimmed)) continue;
+    if (!line.includes("\t")) continue;
+    header = line.split("\t").map((c) => c.trim());
+    while (header.length && header[header.length - 1] === "") header.pop();   // drop trailing empties
+    i++;
+    break;
+  }
+  if (!header || !header.length) return null;
+
+  const rows: Row[] = [];
+  for (; i < lines.length; i++) {
+    const raw = lines[i];
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    if (VOL_TEXT_DISASM.test(trimmed) || VOL_TEXT_HEXDUMP.test(trimmed)) continue;  // hexdump/disasm continuation
+    if (!raw.includes("\t")) continue;                                             // ascii gutter etc.
+    const cells = raw.split("\t");
+    cells[0] = cells[0].replace(/^[*\s]+/, "").trim();   // strip pstree depth markers ("* ", "** ")
+    if (cells.filter((c) => c.trim() !== "").length < 2) continue;
+    const row: Row = {};
+    header.forEach((col, idx) => { if (col) row[col] = (cells[idx] ?? "").trim(); });
+    rows.push(row);
+  }
+  if (!rows.length) return null;
+  return { plugin: pluginFromFilename(filename), rows };
+}
+
 function extractTables(text: string, filename: string | undefined): { tables: Table[]; format: string; tool: string } {
   const trimmed = text.trim();
   if (!trimmed) return { tables: [], format: "empty", tool: "" };
@@ -539,6 +613,12 @@ function extractTables(text: string, filename: string | undefined): { tables: Ta
     try { const o = JSON.parse(l); if (isObject(o)) rows.push(o); } catch { /* skip */ }
   }
   if (rows.length) return { tables: [{ plugin: pluginFromFilename(filename), rows }], format: "volatility-jsonl", tool: "Volatility" };
+
+  // Volatility 3 TEXT/grid renderer (the default `vol <plugin>`, no -r json).
+  if (looksLikeVolatilityText(trimmed)) {
+    const table = parseVolatilityText(trimmed, filename);
+    if (table) return { tables: [table], format: "volatility-text", tool: "Volatility" };
+  }
   return { tables: [], format: "empty", tool: "" };
 }
 

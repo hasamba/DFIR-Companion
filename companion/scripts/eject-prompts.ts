@@ -6,7 +6,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   SYSTEM_PROMPT, CSV_SYSTEM_PROMPT, LOG_SYSTEM_PROMPT, SYNTHESIS_PROMPT, ASK_PROMPT, EXEC_SUMMARY_PROMPT,
-  HUNT_SUGGEST_PROMPT, PLAYBOOK_HUNT_PROMPT, GAP_HYPOTHESIS_PROMPT, QUERY_TRANSLATE_PROMPT,
+  HUNT_SUGGEST_PROMPT, PLAYBOOK_HUNT_PROMPT, GAP_HYPOTHESIS_PROMPT, MEMORY_NEXTSTEP_PROMPT, QUERY_TRANSLATE_PROMPT,
 } from "../src/analysis/pipeline.js";
 
 const dir = resolve(process.argv[2] || "./prompts");
@@ -22,6 +22,7 @@ const files: Array<[string, string, string]> = [
   ["hunts.txt", HUNT_SUGGEST_PROMPT, "DFIR_AI_HUNTS_PROMPT_FILE"],
   ["pbhunts.txt", PLAYBOOK_HUNT_PROMPT, "DFIR_AI_PBHUNTS_PROMPT_FILE"],
   ["gap-hypothesis.txt", GAP_HYPOTHESIS_PROMPT, "DFIR_AI_GAPHYP_PROMPT_FILE"],
+  ["memory-next-step.txt", MEMORY_NEXTSTEP_PROMPT, "DFIR_AI_MEMNEXT_PROMPT_FILE"],
   ["query-translate.txt", QUERY_TRANSLATE_PROMPT, "DFIR_AI_QUERYXLATE_PROMPT_FILE"],
 ];
 
