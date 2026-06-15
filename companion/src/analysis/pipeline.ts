@@ -86,6 +86,15 @@ import {
   PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT,
   type PlaybookHuntSuggestion,
 } from "./playbookHunt.js";
+import {
+  queryTranslationResponseSchema,
+  sanitizeQueryTranslations,
+  sanitizeInterpretation,
+  renderPlatformGuide,
+  renderCaseDataSources,
+  type QueryTranslationResult,
+} from "./queryTranslate.js";
+import { HUNT_PLATFORMS, type HuntPlatform } from "./huntPlatforms.js";
 import type { PlaybookTask } from "./playbook.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
@@ -488,7 +497,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "QUERYXLATE", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -751,6 +760,62 @@ export const GAP_HYPOTHESIS_PROMPT = [
   }, null, 2),
 ].join("\n");
 
+// Translate a free-text analyst request into a runnable hunting query per platform (issue #100).
+// The analyst describes the activity in plain English; the model maps that intent onto each requested
+// platform's REAL schema (the per-platform reference is supplied in the user message). EPHEMERAL like
+// ask()/suggestHunts(): no state change. The Velociraptor query is deployable as-is via launchHunt, so
+// the VQL shape constraints mirror what splitVqlStatements expects (one self-contained statement).
+export const QUERY_TRANSLATE_PROMPT = [
+  "You are a senior DFIR detection engineer. An analyst will give you a request in PLAIN ENGLISH describing",
+  "the activity they want to find in their logs (e.g. \"PowerShell downloading a file and then executing it\",",
+  "\"outbound RDP from this host\", \"new local administrator accounts\"). Translate that intent into a runnable",
+  "hunting query for EACH target platform listed in the user message, grounded in that platform's REAL schema",
+  "(the tables / plugins / field names given for it).",
+  "",
+  "Rules:",
+  "- Emit one entry per TARGET PLATFORM key shown in the user message — use the exact key (velociraptor,",
+  "  defender, elastic, splunk, sigma, yara, suricata). Do NOT invent platforms or emit one not requested.",
+  "- Ground every query in the platform's REAL schema shown for it — its actual tables/plugins/field names.",
+  "  Do NOT invent table or field names; prefer the canonical fields listed.",
+  "- Capture the analyst's FULL intent, including sequencing/relationships where the platform allows it (e.g.",
+  "  a parent→child process relationship, \"download THEN execute\"). When a platform can't express a relation,",
+  "  approximate with the closest field filters and note the limitation in `caveats`.",
+  "- If the request references a specific case entity (\"this host\", \"that IP/hash\"), use the matching value",
+  "  from the PIVOTABLE INDICATORS list — do NOT invent indicators the case does not contain.",
+  "- Velociraptor `query` MUST be a SINGLE, self-contained, CLIENT-side VQL statement — one",
+  "  `SELECT … FROM <plugin>(…) WHERE …`. glob() uses FORWARD slashes; VQL has NO SQL JOIN (use foreach() or",
+  "  inline calls) and NO duration literals (use now() - N * 86400). Do NOT put a blank line inside one query.",
+  "- KQL / ES|QL / SPL queries must be directly runnable (piped where idiomatic). Sigma is a YAML detection",
+  "  rule; Suricata is `alert … (msg:…; …; sid:9000001; rev:1;)`; YARA targets FILE CONTENT.",
+  "- If a platform genuinely cannot express the request (e.g. YARA or Suricata for a pure process-behavior",
+  "  request with no file/network indicator), set `notApplicable` true, leave `query` empty, and explain why",
+  "  in `caveats` — do NOT force a meaningless query.",
+  "- For each entry: a short `label`; the `query`; an `explanation` (how it captures the request + what a hit",
+  "  looks like); optional `caveats` (assumptions, field-mapping notes, what to verify before trusting hits).",
+  "- Also return a one-sentence `interpretation` of how you understood the request, so the analyst can confirm",
+  "  intent before running anything.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({
+    interpretation: "Find PowerShell processes that download a file and then execute it.",
+    queries: [{
+      platform: "velociraptor",
+      label: "PowerShell download-and-execute (live processes)",
+      query: "SELECT Pid, Ppid, Name, CommandLine, Exe FROM pslist() WHERE Name =~ '(?i)powershell' AND CommandLine =~ '(?i)(DownloadString|DownloadFile|Invoke-WebRequest|iwr|curl|wget)' AND CommandLine =~ '(?i)(Invoke-Expression|iex|Start-Process|-enc)'",
+      explanation: "Lists running PowerShell processes whose command line shows BOTH a download primitive and an execution primitive; a hit is one process doing both.",
+      caveats: "Live process list only — pair with EID 4104 script-block logs / Sysmon 1 for historical coverage.",
+      notApplicable: false,
+    }, {
+      platform: "defender",
+      label: "PowerShell download then execute",
+      query: "DeviceProcessEvents\n| where FileName =~ \"powershell.exe\"\n| where ProcessCommandLine has_any (\"DownloadString\",\"DownloadFile\",\"Invoke-WebRequest\",\"iwr\",\"curl\",\"wget\")\n| where ProcessCommandLine has_any (\"Invoke-Expression\",\"iex\",\"Start-Process\",\"-enc\")",
+      explanation: "Returns PowerShell process events whose command line contains both a download and an execution primitive.",
+      caveats: "Tune the keyword lists; join DeviceNetworkEvents to confirm the download egress.",
+      notApplicable: false,
+    }],
+  }, null, 2),
+].join("\n");
+
 export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROMPT);
 export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
@@ -761,6 +826,7 @@ export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRA
 export const getHuntSuggestPrompt = (): string => resolvePrompt("HUNTS", HUNT_SUGGEST_PROMPT);
 export const getPlaybookHuntPrompt = (): string => resolvePrompt("PBHUNTS", PLAYBOOK_HUNT_PROMPT);
 export const getGapHypothesisPrompt = (): string => resolvePrompt("GAPHYP", GAP_HYPOTHESIS_PROMPT);
+export const getQueryTranslatePrompt = (): string => resolvePrompt("QUERYXLATE", QUERY_TRANSLATE_PROMPT);
 
 export interface PipelineOptions {
   provider?: AIProvider;
@@ -2282,6 +2348,40 @@ export class AnalysisPipeline {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "suggest-hunts");
       const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
       return sanitizeHuntSuggestions(suggestions, limit);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // Translate a free-text analyst request into a runnable hunting query per platform (issue #100).
+  // Unlike suggestHunts (findings-driven proposals), this is analyst-DRIVEN: the request is plain
+  // English ("PowerShell downloading a file and executing it") and the model maps that intent onto
+  // each requested platform's real schema. EPHEMERAL like ask()/suggestHunts() — no state change.
+  // Works on an empty case (the analyst may translate before any evidence is imported); the case's
+  // known data sources + pivotable IOCs are passed only as light grounding. Uses the strong
+  // synthesisProvider like ask()/executiveSummary() — this spans MANY query languages (KQL/SPL/ES|QL/
+  // Sigma/…) in one call, so the broad general model follows the multi-platform instruction far better
+  // than the narrow VQL-tuned velociraptorProvider (which biases toward VQL and ignores the rest).
+  async translateQuery(caseId: string, request: string, platforms?: readonly HuntPlatform[]): Promise<QueryTranslationResult> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("query translation");
+    const loaded = await this.opts.stateStore.load(caseId);
+
+    // The caller's requested subset, intersected with the canonical platform set; empty → all.
+    const requested = (platforms ?? []).filter((p): p is HuntPlatform => (HUNT_PLATFORMS as readonly string[]).includes(p));
+    const targets: HuntPlatform[] = requested.length ? [...new Set(requested)] : [...HUNT_PLATFORMS];
+
+    const sourcesText = renderCaseDataSources(loaded);
+    const iocText = renderHuntIocs(loaded.iocs);
+    const guide = renderPlatformGuide(targets);
+
+    const userPrompt =
+      `KNOWN CASE DATA SOURCES (the tools/log sources this investigation already has data from):\n${sourcesText}\n\n` +
+      `PIVOTABLE INDICATORS observed in this case (use these exact values when the request refers to "this" host/IP/hash/etc.):\n${iocText}\n\n` +
+      `TARGET PLATFORMS (emit one query per key, grounded in the schema shown):\n${guide}\n\n` +
+      `ANALYST REQUEST: ${request.trim()}\n\nTranslate it as JSON.`;
+
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getQueryTranslatePrompt(), userPrompt, images: [] }, "translate-query");
+      const { interpretation, queries } = queryTranslationResponseSchema.parse(parsed);
+      return { interpretation: sanitizeInterpretation(interpretation), queries: sanitizeQueryTranslations(queries, targets) };
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 

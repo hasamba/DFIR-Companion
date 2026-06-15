@@ -21,7 +21,7 @@ import { parseSnapshot } from "./analysis/snapshot.js";
 import { exportCaseSnapshot, importCaseSnapshot, SnapshotImportConflictError } from "./analysis/snapshotIo.js";
 import { parseCsv } from "./analysis/csvImport.js";
 import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
-import { resolveHuntPlatforms, HUNT_PLATFORMS, type HuntPlatform } from "./analysis/huntPlatforms.js";
+import { resolveHuntPlatforms, normalizeHuntPlatform, HUNT_PLATFORMS, type HuntPlatform } from "./analysis/huntPlatforms.js";
 import { parseLogLines } from "./analysis/logImport.js";
 import { parseThorReport } from "./analysis/thorImport.js";
 import { parseSiemExport } from "./analysis/siemImport.js";
@@ -4951,6 +4951,32 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const answer = await options.pipeline.ask(req.params.id, question);
       return res.status(200).json(answer);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Translate a plain-English hunting request into runnable queries per platform (issue #100).
+  // EPHEMERAL (no state change) — the dashboard shows each query for review, copy, and (for the
+  // Velociraptor query) one-click deploy via POST /velociraptor/hunt. Body: { request, platforms? }.
+  // `platforms` is an optional analyst-chosen subset; both it and the result are bounded by the
+  // server's DFIR_HUNT_PLATFORMS allowlist so a disabled platform is never generated.
+  app.post("/cases/:id/translate-query", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for query translation" });
+    const request = typeof req.body?.request === "string" ? req.body.request.trim() : "";
+    if (!request) return res.status(400).json({ error: "request is required" });
+    const enabled = options.huntPlatforms ?? [...HUNT_PLATFORMS];
+    const bodyPlatforms = Array.isArray(req.body?.platforms)
+      ? req.body.platforms
+          .map((p: unknown) => normalizeHuntPlatform(typeof p === "string" ? p : ""))
+          .filter((p: HuntPlatform | null): p is HuntPlatform => !!p)
+      : [];
+    const wanted = bodyPlatforms.length ? enabled.filter((p) => bodyPlatforms.includes(p)) : enabled;
+    const platforms = wanted.length ? wanted : enabled;
+    try {
+      const result = await options.pipeline.translateQuery(req.params.id, request, platforms);
+      logLine(`[translate-query] produced ${result.queries.length} query/ies for ${req.params.id}`);
+      return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
