@@ -1616,6 +1616,19 @@ describe("AI on/off control", () => {
     expect(phases).toContain("synthesizing");
   });
 
+  it("POST /import fires onImport(caseId) so dashboards can warn cross-case (parity with captures)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-onimport-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const imported: string[] = [];
+    const app = createApp(store, { pipeline: findingPipeline(stateStore), stateStore, onImport: (c) => imported.push(c) });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const velo = JSON.stringify([{ _Source: "Windows.Detection.X", Detection: { Name: "Bad" }, EventTime: "2026-01-01T00:00:00Z", EntryPath: "c:\\x.exe" }]);
+    const res = await request(app).post("/cases/c1/import").send({ json: velo, filename: "v.json" });
+    expect(res.status).toBe(202);
+    expect(imported).toContain("c1"); // → startServer broadcasts { type:"import_ingest", caseId } to all dashboards
+  });
+
   it("GET /cases/:id/ai-control reports the current state", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-aictl-route-"));
     const store = new CaseStore(root);
