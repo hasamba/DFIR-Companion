@@ -273,7 +273,8 @@ BOTH `applySecondOpinion` (the apply route, on the live state) AND `synthesize`'
 the high-severity backfill) — so a confirmed model-B finding/severity/technique is never lost on the next
 synthesis. NON-destructive until the analyst accepts; **deliberately excluded from `SNAPSHOT_STATE_FILES`**
 (transient QA scratch — accepted deltas already live in `investigation.json`). Routes
-`POST/GET /cases/:id/second-opinion` + `…/apply`; `/health.secondOpinionEnabled` gates the dashboard **2nd
+`POST/GET /cases/:id/second-opinion` + `…/apply` (one delta) + `…/apply-all` (`{ accept }` — bulk over the
+still-pending deltas via `setAllPendingStatus`; single + bulk share `persistSecondOpinion`); `/health.secondOpinionEnabled` gates the dashboard **2nd
 opinion** button; `onSecondOpinion` WS-broadcasts `second_opinion_changed`. Two text-only AI calls per run;
 same caching/anonymization invariants as synthesis. Server-only (no `scripts/*` pipeline wiring).
 

@@ -5018,6 +5018,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Bulk accept-all / reject-all over the still-pending second-opinion deltas, in one pass. Body:
+  // { accept }. Accept (re-)applies all accepted deltas to the case; reject just records decisions.
+  app.post("/cases/:id/second-opinion/apply-all", async (req: Request, res: Response) => {
+    if (!options.pipeline || !options.secondOpinionStore) return res.status(501).json({ error: "second opinion not configured" });
+    const accept = req.body?.accept === true;
+    try {
+      const { record } = await options.pipeline.applyAllSecondOpinion(req.params.id, accept);
+      options.onSecondOpinion?.(req.params.id);
+      return res.status(200).json(record);
+    } catch (err) {
+      const msg = (err as Error).message;
+      const code = /no second opinion/.test(msg) ? 409 : 500;
+      return res.status(code).json({ error: msg });
+    }
+  });
+
   // Ask the LLM a free-form question about the case ("was data exfiltrated?"). Single-shot,
   // no state change — returns a grounded answer + status + collection guidance (`pointer`).
   app.post("/cases/:id/ask", async (req: Request, res: Response) => {

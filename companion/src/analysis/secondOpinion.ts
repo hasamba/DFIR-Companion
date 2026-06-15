@@ -217,6 +217,13 @@ export function setDeltaStatus(so: SecondOpinion, id: string, status: DeltaStatu
   return { ...so, deltas: so.deltas.map((d) => (d.id === id ? { ...d, status } : d)) };
 }
 
+// Bulk variant for accept-all / reject-all: set EVERY still-pending delta to `status`. Deltas the
+// analyst already decided (accepted/rejected) are left as-is, so a bulk action never silently
+// reverses an individual decision. Immutable.
+export function setAllPendingStatus(so: SecondOpinion, status: DeltaStatus): SecondOpinion {
+  return { ...so, deltas: so.deltas.map((d) => (d.status === "pending" ? { ...d, status } : d)) };
+}
+
 // Apply EVERY accepted delta onto a case state. Pure, immutable, IDEMPOTENT (safe to run on every
 // read/synthesis): b_only adds B's finding if absent by title; a_only dismisses A's finding in
 // place; severity rewrites A's finding severity; mitre_added/removed add/remove the technique.

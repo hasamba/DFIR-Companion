@@ -116,6 +116,35 @@ describe("Second opinion routes (#116)", () => {
     expect((await stateStore.load("c1")).findings).toHaveLength(before);
   });
 
+  it("accept-all applies every pending delta in one call", async () => {
+    const { app, stateStore } = await makeApp({ enabled: true });
+    await request(app).post("/cases/c1/second-opinion").send({});
+    const res = await request(app).post("/cases/c1/second-opinion/apply-all").send({ accept: true });
+    expect(res.status).toBe(200);
+    expect(res.body.deltas.every((d: { status: string }) => d.status === "accepted")).toBe(true);
+    expect((await stateStore.load("c1")).findings.some((f) => f.title === "B only finding")).toBe(true);
+  });
+
+  it("reject-all records the decisions without changing the case", async () => {
+    const { app, stateStore } = await makeApp({ enabled: true });
+    await request(app).post("/cases/c1/second-opinion").send({});
+    const before = (await stateStore.load("c1")).findings.length;
+    const res = await request(app).post("/cases/c1/second-opinion/apply-all").send({ accept: false });
+    expect(res.status).toBe(200);
+    expect(res.body.deltas.every((d: { status: string }) => d.status === "rejected")).toBe(true);
+    expect((await stateStore.load("c1")).findings).toHaveLength(before);
+  });
+
+  it("apply-all leaves an already-decided delta untouched", async () => {
+    const { app } = await makeApp({ enabled: true });
+    await request(app).post("/cases/c1/second-opinion").send({});
+    await request(app).post("/cases/c1/second-opinion/apply").send({ deltaId: "a_only:a-only-finding", accept: false });
+    const res = await request(app).post("/cases/c1/second-opinion/apply-all").send({ accept: true });
+    const byId = (id: string) => res.body.deltas.find((d: { id: string }) => d.id === id).status;
+    expect(byId("a_only:a-only-finding")).toBe("rejected");
+    expect(res.body.deltas.filter((d: { id: string }) => d.id !== "a_only:a-only-finding").every((d: { status: string }) => d.status === "accepted")).toBe(true);
+  });
+
   it("GET returns the stored record after a run", async () => {
     const { app } = await makeApp({ enabled: true });
     await request(app).post("/cases/c1/second-opinion").send({});

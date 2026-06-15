@@ -635,6 +635,8 @@
     .so-acts { display: flex; gap: 5px; flex-shrink: 0; }
     .so-acts button { font-size: 11px; padding: 3px 8px; }
     .so-acts .so-status { font-size: 11px; align-self: center; }
+    .so-bulk { display: flex; gap: 6px; justify-content: flex-end; margin: 0 0 8px; }
+    .so-bulk button { font-size: 11px; padding: 3px 10px; }
     /* "New since last import" highlight on forensic-timeline / IOC rows + its badge (see #importMeta) */
     .ev-row.ev-new { box-shadow: inset 3px 0 0 var(--c-6bcb77); }
     .ioc-new { box-shadow: inset 3px 0 0 var(--c-6bcb77); padding-left: 6px; border-radius: 3px; }
@@ -5252,6 +5254,10 @@
         el.innerHTML = head + summary + `<div class="so-empty">No disagreements — both models concur on the findings, severities and ATT&amp;CK techniques.</div>`;
         return;
       }
+      const pending = deltas.filter(d => d.status === "pending").length;
+      const bulk = pending >= 2
+        ? `<div class="so-bulk"><button data-so-all="accept" title="Adopt model B's call on every pending delta (durable across re-synthesis)">✓ accept all (${pending})</button><button data-so-all="reject" title="Keep model A on every pending delta — just record the decisions">✕ reject all</button></div>`
+        : "";
       const rows = deltas.map(d => {
         const kindLabel = SO_KIND_LABEL[d.kind] || d.kind;
         let title = esc(d.title);
@@ -5267,7 +5273,7 @@
           + `<button data-so-reject="${esc(d.id)}" title="Keep model A — just record the decision">reject</button>`;
         return `<div class="so-delta so-${esc(d.status)}"><div class="so-body"><span class="so-kind so-${esc(d.kind)}">${esc(kindLabel)}</span><span class="so-title">${title}</span>${rationale}${suggest}</div><div class="so-acts">${acts}</div></div>`;
       }).join("");
-      el.innerHTML = head + summary + rows;
+      el.innerHTML = head + summary + bulk + rows;
     }
     function applySecondOpinionDelta(caseId, deltaId, accept) {
       fetch(`/cases/${caseId}/second-opinion/apply`, {
@@ -5277,6 +5283,16 @@
         if (rec && rec.error) { document.getElementById("status").textContent = "second opinion: " + rec.error; return; }
         renderSecondOpinion(rec);
         // The accept may have changed findings/MITRE — refresh the case view.
+        fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
+      }).catch(e => document.getElementById("status").textContent = "second opinion error: " + e.message);
+    }
+    function applyAllSecondOpinion(caseId, accept) {
+      fetch(`/cases/${caseId}/second-opinion/apply-all`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accept }),
+      }).then(r => r.json()).then(rec => {
+        if (rec && rec.error) { document.getElementById("status").textContent = "second opinion: " + rec.error; return; }
+        renderSecondOpinion(rec);
         fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
       }).catch(e => document.getElementById("status").textContent = "second opinion error: " + e.message);
     }
@@ -8366,6 +8382,8 @@
       const caseId = document.getElementById("caseId").value.trim(); if (!caseId) return;
       if (t.dataset.soAccept) applySecondOpinionDelta(caseId, t.dataset.soAccept, true);
       else if (t.dataset.soReject) applySecondOpinionDelta(caseId, t.dataset.soReject, false);
+      else if (t.dataset.soAll === "accept") { if (confirm("Accept ALL pending second-opinion deltas? This adds/edits the case findings, severities and ATT&CK techniques to match model B.")) applyAllSecondOpinion(caseId, true); }
+      else if (t.dataset.soAll === "reject") applyAllSecondOpinion(caseId, false);
     });
     document.getElementById("enrichToggle").onclick = openEnrichModal;
     document.getElementById("enrichSave").onclick = saveEnrich;

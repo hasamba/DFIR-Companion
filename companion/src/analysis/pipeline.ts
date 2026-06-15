@@ -44,6 +44,7 @@ import {
   mergeReconcileVerdicts,
   applyAcceptedSecondOpinion,
   setDeltaStatus,
+  setAllPendingStatus,
   type SecondOpinion,
 } from "./secondOpinion.js";
 import { correlateEvents } from "./correlate.js";
@@ -3004,10 +3005,22 @@ export class AnalysisPipeline {
     const current = await this.opts.secondOpinionStore.load(caseId);
     if (!current) throw new Error("no second opinion to act on — run a second opinion first");
     if (!current.deltas.some((d) => d.id === deltaId)) throw new Error(`unknown second-opinion delta: ${deltaId}`);
+    return this.persistSecondOpinion(caseId, setDeltaStatus(current, deltaId, accept ? "accepted" : "rejected"));
+  }
 
-    const record = setDeltaStatus(current, deltaId, accept ? "accepted" : "rejected");
-    await this.opts.secondOpinionStore.save(caseId, record);
+  // Bulk accept-all / reject-all: decide every still-PENDING delta at once (already-decided deltas
+  // are left as the analyst set them), persist, and apply the accepted set to the case in ONE pass.
+  async applyAllSecondOpinion(caseId: string, accept: boolean): Promise<{ record: SecondOpinion; state: InvestigationState }> {
+    if (!this.opts.secondOpinionStore) throw new Error("second-opinion store not configured");
+    const current = await this.opts.secondOpinionStore.load(caseId);
+    if (!current) throw new Error("no second opinion to act on — run a second opinion first");
+    return this.persistSecondOpinion(caseId, setAllPendingStatus(current, accept ? "accepted" : "rejected"));
+  }
 
+  // Save the (re)decided record, then re-apply ALL accepted deltas onto the live state (idempotent).
+  // Shared by the single + bulk apply methods so both persist and broadcast identically.
+  private async persistSecondOpinion(caseId: string, record: SecondOpinion): Promise<{ record: SecondOpinion; state: InvestigationState }> {
+    await this.opts.secondOpinionStore!.save(caseId, record);
     const state = await this.opts.stateStore.load(caseId);
     const applied = applyAcceptedSecondOpinion(state, record);
     if (applied !== state) {

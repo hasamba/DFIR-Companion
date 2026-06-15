@@ -8,6 +8,7 @@ import {
   setDeltaStatus,
   buildReconcilePrompt,
   reconcileResponseSchema,
+  setAllPendingStatus,
   type SecondOpinion,
 } from "../../src/analysis/secondOpinion.js";
 
@@ -190,6 +191,19 @@ describe("applyAcceptedSecondOpinion", () => {
     const ids = out.mitreTechniques.map((t) => t.id);
     expect(ids).toContain("T1071");
     expect(ids).not.toContain("T1078");
+  });
+
+  it("setAllPendingStatus flips only the pending deltas (accept-all), leaving decided ones", () => {
+    let so = buildSecondOpinion({ a: A, b: B, modelA: "a", modelB: "b", now: () => "t" });
+    // decide one delta individually, then bulk-accept the rest
+    const first = so.deltas[0].id;
+    so = setDeltaStatus(so, first, "rejected");
+    const out = setAllPendingStatus(so, "accepted");
+    expect(out.deltas.find((d) => d.id === first)!.status).toBe("rejected"); // individual decision preserved
+    expect(out.deltas.filter((d) => d.id !== first).every((d) => d.status === "accepted")).toBe(true);
+    expect(out.deltas.some((d) => d.status === "pending")).toBe(false);
+    // original untouched (immutable)
+    expect(so.deltas.filter((d) => d.id !== first).every((d) => d.status === "pending")).toBe(true);
   });
 
   it("setDeltaStatus is immutable and only touches the target", () => {
