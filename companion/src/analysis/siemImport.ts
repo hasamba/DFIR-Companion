@@ -607,7 +607,7 @@ function pickGenericSeverity(rec: Row): Severity {
 }
 
 const GENERIC_MSG_KEYS = [
-  "message", "Message", "description", "Description", "event.action", "action",
+  "message", "Message", "description", "Description", "desc", "Desc", "event.action", "action",
   "rule.name", "ruleName", "signature", "signature_name", "name", "alert_name",
   "title", "event.original", "_raw", "raw", "summary",
 ];
@@ -649,6 +649,24 @@ export function genericIocs(pairs: [string, string][], iocSink: Map<string, Siem
   }
 }
 
+// Document/transport metadata that carries no investigative signal — excluded from the fallback
+// field dump so the description leads with real content (e.g. Elasticsearch hit metadata).
+const META_KEYS = new Set([
+  "_id", "_index", "_type", "_score", "_version", "_ignored", "_routing", "_seq_no",
+  "_primary_term", "sort", "clientid", "flowid", "highlight",
+]);
+// Field names worth surfacing first when there's no standard message field (detections, rule hits,
+// command lines, paths, …). Matched against flattened (possibly dotted) key names.
+const SALIENT_RE = /(name|message|detection|rule|signature|title|desc|stringhit|scriptblock|command|cmdline|action|alert|artifact|reference|keyword|path|process|original|user|account)/i;
+
+// Build a one-line summary from a record's fields when it has no recognized message field: drop
+// metadata noise, prefer salient fields, and fall back to the first handful of the rest.
+function summarizePairs(pairs: [string, string][]): string {
+  const meaningful = pairs.filter(([k]) => !k.startsWith("_") && !META_KEYS.has(k.toLowerCase()));
+  const salient = meaningful.filter(([k]) => SALIENT_RE.test(k));
+  return (salient.length ? salient : meaningful).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
+}
+
 export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent {
   const vendor = detectVendor(rec);
   const msg = firstStr(rec, GENERIC_MSG_KEYS);
@@ -656,7 +674,7 @@ export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>
   flatten(rec, pairs);
   genericIocs(pairs, iocSink);
 
-  const base = msg ? oneLine(msg) : pairs.slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
+  const base = msg ? oneLine(msg) : summarizePairs(pairs);
   let description = `${vendor ?? "SIEM event"}: ${base}`.slice(0, 600);
   if (host && !description.toLowerCase().includes(host.toLowerCase())) description = `${description} @ ${host}`.slice(0, 600);
 

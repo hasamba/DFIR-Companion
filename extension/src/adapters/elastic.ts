@@ -39,9 +39,15 @@ export const elasticAdapter: Adapter = {
     return hits.map((hit) => {
       if (!isObject(hit)) return hit;
       const src = hit._source;
-      if (isObject(src)) {
+      if (isObject(src) && Object.keys(src).length > 0) {
         // Carry the document id/index alongside the source fields, without clobbering them.
         return { _id: hit._id, _index: hit._index, ...src };
+      }
+      // No usable `_source` — indices with `_source` disabled (common for high-volume timeline data,
+      // e.g. MemProcFS `mp_timeline`) return docvalue `fields` instead, each value a single-element
+      // array. Flatten so the companion sees flat scalar fields (desc/date/…) instead of a raw hit.
+      if (isObject(hit.fields)) {
+        return { _id: hit._id, _index: hit._index, ...unwrapEsFields(hit.fields) };
       }
       return hit;
     });
@@ -49,3 +55,14 @@ export const elasticAdapter: Adapter = {
 
   tableSelector: "table",
 };
+
+// Elasticsearch `fields` (docvalue) responses wrap every value in an array. Unwrap single-element
+// arrays to a scalar so downstream field-name heuristics (timestamp/description) match; keep
+// genuine multi-value fields as arrays.
+function unwrapEsFields(fields: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    out[k] = Array.isArray(v) ? (v.length === 1 ? v[0] : v) : v;
+  }
+  return out;
+}

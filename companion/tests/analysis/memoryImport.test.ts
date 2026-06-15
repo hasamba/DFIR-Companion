@@ -539,7 +539,7 @@ describe("parseMemory — MemProcFS timeline_all.csv", () => {
     expect(ev.severity).toBe("Low");
     expect(ev.mitreTechniques).toContain("T1071");
     expect(ev.description).toContain("192.168.56.51");
-    expect(r.iocs.some((i) => i.type === "network" && i.value === "192.168.56.51")).toBe(true);
+    expect(r.iocs.some((i) => i.type === "ip" && i.value === "192.168.56.51")).toBe(true);
   });
 
   it("Net UDPv6 with *** remote → no event, no IOC", () => {

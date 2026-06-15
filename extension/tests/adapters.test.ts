@@ -202,6 +202,38 @@ describe("elastic.extractRows", () => {
     ]);
   });
 
+  it("flattens docvalue `fields` when _source is disabled (each value a single-element array)", () => {
+    // mp_timeline-style hit: index has _source off, so Kibana returns `fields` arrays, not _source.
+    const body = {
+      response: {
+        hits: {
+          hits: [{
+            _id: "M_cWzJ4", _index: "mp_timeline",
+            fields: {
+              date: ["2026-06-03T08:42:12.000Z"],
+              desc: ["HKU\\S-1-5-21\\Software\\Trigona\\Wallpaper"],
+              action: ["MOD"], type: ["REG"], ver: ["5.16"], num: [0],
+              tags: ["a", "b"], // genuine multi-value stays an array
+            },
+          }],
+        },
+      },
+    };
+    expect(elasticAdapter.extractRows("/internal/search/ese", body)).toEqual([{
+      _id: "M_cWzJ4", _index: "mp_timeline",
+      date: "2026-06-03T08:42:12.000Z",
+      desc: "HKU\\S-1-5-21\\Software\\Trigona\\Wallpaper",
+      action: "MOD", type: "REG", ver: "5.16", num: 0, tags: ["a", "b"],
+    }]);
+  });
+
+  it("prefers _source over fields, and falls back to fields only when _source is empty/absent", () => {
+    const withSource = { hits: { hits: [{ _id: "1", _source: { a: 1 }, fields: { a: [9] } }] } };
+    expect(elasticAdapter.extractRows("u", withSource)).toEqual([{ _id: "1", _index: undefined, a: 1 }]);
+    const emptySource = { hits: { hits: [{ _id: "2", _source: {}, fields: { a: [7] } }] } };
+    expect(elasticAdapter.extractRows("u", emptySource)).toEqual([{ _id: "2", _index: undefined, a: 7 }]);
+  });
+
   it("returns null when there are no hits", () => {
     expect(elasticAdapter.extractRows("u", { hits: { hits: [] } })).toBeNull();
     expect(elasticAdapter.extractRows("u", { took: 5 })).toBeNull();

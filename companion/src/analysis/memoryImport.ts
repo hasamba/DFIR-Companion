@@ -1014,7 +1014,7 @@ function mapMpfsTimelineRow(
       if (!parsed) break;
       const ip = cleanIp(parsed.ip);
       if (!ip) break;
-      addIoc(sink, "network", ip);
+      addIoc(sink, "ip", ip);
       mapped.push({
         timestamp: ts,
         description: `MemProcFS Net: ${proto} ${state} → ${ip}:${parsed.port} (PID ${pid})`.slice(0, 400),
