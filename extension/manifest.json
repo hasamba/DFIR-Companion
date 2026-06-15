@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "DFIR Capture",
   "version": "0.20.0",
-  "description": "Periodic + event-driven screenshot capture for forensic investigations.",
+  "description": "Periodic + event-driven screenshot capture and one-click artifact push for forensic investigations.",
   "permissions": ["tabs", "activeTab", "webNavigation", "storage", "alarms", "scripting"],
   "host_permissions": ["<all_urls>"],
   "options_ui": { "page": "options.html", "open_in_tab": true },

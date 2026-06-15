@@ -2,7 +2,8 @@ import { CompanionClient } from "./companionClient.js";
 import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
 import { setActionIcon } from "./actionIcon.js";
-import { DEFAULT_SETTINGS, type Settings, type TriggerType } from "./types.js";
+import { buildArtifactFilename } from "./adapters/artifactName.js";
+import { DEFAULT_SETTINGS, type PushArtifactMessage, type PushArtifactResult, type Settings, type TriggerType } from "./types.js";
 
 const ALARM = "dfir-capture-timer";
 const queue = new CaptureQueue();
@@ -56,6 +57,54 @@ async function captureActiveTab(trigger: TriggerType): Promise<void> {
   }
 }
 
+// Inject the MAIN-world fetch/XHR hook (pageHook.js) into a tab the content script recognized as a
+// known DFIR console (#102). executeScript into world "MAIN" bypasses the page's CSP (a <script src>
+// tag would be blocked by the strict CSPs these consoles ship). Idempotent — the hook guards against
+// double install. Best-effort: a restricted/blocked page just falls back to DOM-scrape.
+async function injectHook(tabId: number | undefined): Promise<void> {
+  if (typeof tabId !== "number") return;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      files: ["pageHook.js"],
+    });
+  } catch { /* page not injectable — the content script's DOM-scrape fallback still works */ }
+}
+
+// Push a tool artifact (intercepted JSON or scraped table) the content script captured to the
+// companion's unified import route (#102). Uses the active case from settings — the artifact path
+// reuses the same case the analyst already selected for screenshot capture.
+async function pushArtifact(msg: PushArtifactMessage): Promise<PushArtifactResult> {
+  const settings = await getSettings();
+  if (!settings.caseId) {
+    return { ok: false, error: "No case selected — open the extension popup and pick a case." };
+  }
+  const rows = Array.isArray(msg.rows) ? msg.rows : [];
+  if (!rows.length) return { ok: false, error: "No rows to push." };
+
+  // Name the evidence file after the source artifact/notebook when known (nicer audit trail + a
+  // Velociraptor-looking name keeps detectImportKind routing it to the Velociraptor importer).
+  const filename = buildArtifactFilename(msg.sourceLabel?.trim() || msg.adapterId, new Date());
+  const client = new CompanionClient(settings.companionUrl);
+  const result = await client.postImport(settings.caseId, { json: JSON.stringify(rows), filename });
+
+  await chrome.storage.local.set({
+    lastArtifactPush: {
+      at: new Date().toISOString(), adapterId: msg.adapterId, rows: rows.length,
+      caseId: settings.caseId, ok: result.ok, status: result.status,
+    },
+  });
+
+  if (result.ok) return { ok: true, status: result.status, rows: rows.length, caseId: settings.caseId };
+  const error = result.status === 0 ? `Companion offline at ${settings.companionUrl}`
+    : result.status === 404 ? `Case "${settings.caseId}" not found — re-select it in the popup`
+    : result.status === 400 ? "Companion couldn't detect the artifact format"
+    : result.status === 501 ? "Companion has no AI provider configured for this artifact type"
+    : `Import rejected (HTTP ${result.status})`;
+  return { ok: false, status: result.status, error };
+}
+
 async function rescheduleAlarm(): Promise<void> {
   const settings = await getSettings();
   await chrome.alarms.clear(ALARM);
@@ -87,9 +136,15 @@ chrome.tabs.onActivated.addListener(() => void captureActiveTab("tab_switch"));
 chrome.webNavigation.onCommitted.addListener((d) => {
   if (d.frameId === 0) void captureActiveTab("navigation");
 });
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.kind === "user_event") void captureActiveTab("click");
-  if (msg?.kind === "settings_changed") void rescheduleAlarm();
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.kind === "user_event") { void captureActiveTab("click"); return; }
+  if (msg?.kind === "settings_changed") { void rescheduleAlarm(); return; }
+  if (msg?.kind === "ensure_hook") { void injectHook(sender.tab?.id); return; }
+  if (msg?.kind === "push_artifact") {
+    // Async — return true to keep the message channel open until pushArtifact resolves.
+    void pushArtifact(msg as PushArtifactMessage).then(sendResponse);
+    return true;
+  }
 });
 chrome.runtime.onInstalled.addListener(() => void rescheduleAlarm());
 chrome.runtime.onStartup.addListener(() => void rescheduleAlarm());

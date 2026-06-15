@@ -9,6 +9,9 @@ export default defineConfig({
       input: {
         serviceWorker: resolve(__dirname, "src/serviceWorker.ts"),
         content: resolve(__dirname, "src/content.ts"),
+        // pageHook is injected into the page (MAIN world) as a web-accessible resource, so it must
+        // build to a single standalone file with no shared-chunk imports (see #102).
+        pageHook: resolve(__dirname, "src/pageHook.ts"),
         popup: resolve(__dirname, "src/popup.ts"),
         options: resolve(__dirname, "src/options.ts"),
       },

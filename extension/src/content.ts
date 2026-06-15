@@ -1,3 +1,5 @@
+import { initArtifactCapture } from "./artifactCapture.js";
+
 let lastKeyNotify = 0;
 
 function notify(reason: "click" | "keydown") {
@@ -13,3 +15,8 @@ document.addEventListener("keydown", () => {
     notify("keydown");
   }
 }, { capture: true, passive: true });
+
+// Automated artifact fetching (#102): on recognized DFIR consoles (Splunk / Velociraptor /
+// Elastic / CrowdStrike) inject a "Push to DFIR-Companion" button + the API-interception hook.
+// No-ops on every other site.
+initArtifactCapture();

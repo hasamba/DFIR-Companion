@@ -51,7 +51,8 @@ describe("parseVelociraptorJson — detection rows", () => {
     expect(r.detections).toBe(1);
     expect(r.events).toHaveLength(1);
     const e = r.events[0];
-    expect(e.description).toContain("Velociraptor Sigma: Mimikatz LSASS Access");
+    expect(e.description).toContain("Sigma: Mimikatz LSASS Access"); // artifact tag may precede "Sigma:"
+    expect(e.description).toContain("[Windows.Detection.Sigma]");    // source artifact surfaced
     expect(e.description).toContain("EID 10");          // the underlying event is still mapped
     expect(e.severity).toBe("Critical");                // Sigma critical ≥ the EVTX-derived High
     expect(e.mitreTechniques).toContain("T1003.001");
@@ -63,7 +64,7 @@ describe("parseVelociraptorJson — detection rows", () => {
     const r = parseVelociraptorJson(JSON.stringify([yaraRow()]));
     expect(r.detections).toBe(1);
     const e = r.events[0];
-    expect(e.description).toContain("Velociraptor YARA: APT_Malware_Foo");
+    expect(e.description).toContain("YARA: APT_Malware_Foo"); // artifact tag may precede "YARA:"
     expect(e.severity).toBe("High");
     expect(e.path).toBe("C:\\Users\\bob\\evil.exe");
     expect(e.sha256).toBe("aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899");
@@ -117,6 +118,116 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     expect(e.sources).toEqual(["Velociraptor"]);
   });
 
+  it("GUI-flattened Evtx detection (no Channel/EventData columns): dated, MITRE, Message subject", () => {
+    // The Velociraptor GUI's DetectRaptor.*.Evtx table exposes only EventTime/Computer/Detection.Name/
+    // EventID/Username/Message — no Channel/EventData to overlay — so this takes the non-event verdict
+    // branch. The browser extension un-flattens "Detection.Name" → Detection:{Name} before pushing.
+    const row = {
+      EventTime: "2026-06-03T08:28:58Z",
+      Computer: "WIN11.windomain.local",
+      Detection: { Name: "T1567.002-Execution of Exfiltration Programs" },
+      EventID: 4688,
+      Username: "",
+      Message: "A new process has been created. Creator Subject: Security ID: S-1-5-18 New Process Name: rclone.exe",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.description).toContain("Velociraptor detection: T1567.002-Execution of Exfiltration Programs");
+    expect(e.description).toContain("rclone.exe");  // the actual process surfaced, not boilerplate
+    expect(e.timestamp).toContain("2026-06-03T08:28:58");                // EventTime, not undated
+    expect(e.mitreTechniques).toContain("T1567.002");
+    expect(e.asset).toBe("WIN11.windomain.local");
+    expect(e.severity === "Medium" || e.severity === "High").toBe(true);
+  });
+
+  it("Windows.Sigma.Base rows with the same Title but different Details stay SEPARATE events", () => {
+    // The Velociraptor Sigma artifact puts the message in `Details`; 8 HackTool detections share the
+    // rule Title "Antivirus Hacktool Detection" but name different tools — each is its own event.
+    const mk = (ts: string, tool: string, id: number) => ({
+      _Source: "Windows.Sigma.Base",
+      Timestamp: ts, Computer: "WIN11.windomain.local",
+      Channel: "Microsoft-Windows-Windows Defender/Operational", EID: 1011, Level: "high",
+      Title: "Antivirus Hacktool Detection", RecordID: id,
+      Details: `Microsoft Defender Antivirus removed an item from quarantine. name=HackTool:Win32/${tool}&threatid=${id}`,
+    });
+    const rows = [
+      mk("2026-06-03T08:15:40.382Z", "Passview", 2147597639),
+      mk("2026-06-03T08:15:40.393Z", "Wirekeyview", 2147657007),
+      mk("2026-06-03T08:15:40.417Z", "Mimikatz", 2147686744),
+    ];
+    const r = parseVelociraptorJson(JSON.stringify(rows));
+    expect(r.events).toHaveLength(3);                                  // NOT collapsed into one ×3
+    const blob = r.events.map((e) => e.description).join("\n");
+    expect(blob).toContain("Passview");
+    expect(blob).toContain("Mimikatz");
+    expect(r.events.every((e) => /Antivirus Hacktool Detection/.test(e.description))).toBe(true);
+    expect(r.events.every((e) => e.timestamp.startsWith("2026-06-03T08:15:40"))).toBe(true);
+  });
+
+  it("identical Sigma rows differing only in a volatile id DO still collapse", () => {
+    const mk = (pid: number) => ({
+      _Source: "Windows.Sigma.Base", Timestamp: "2026-06-03T08:15:40Z", Computer: "WIN11",
+      Channel: "Security", EID: 4688, Level: "high", Title: "Suspicious Process",
+      Details: `Process created. pid=${pid} name=evil.exe`,
+    });
+    const r = parseVelociraptorJson(JSON.stringify([mk(101), mk(202), mk(303)]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(3);
+  });
+
+  it("surfaces the LOLBIN (New Process Name + Command Line) from a rendered 4688 message", () => {
+    // DetectRaptor "Use of 32-bit LOLBINs": EID 4688 shipped as free-text Message, no EventData. The
+    // binary that ran is the New Process Name/Command Line, buried past the Creator/Target boilerplate.
+    const row = {
+      EventTime: "2026-06-03T07:56:16Z", Computer: "WIN11.windomain.local",
+      Detection: { Name: "T1567.002-Use of 32-bit LOLBINs" }, EventID: 4688,
+      Message: [
+        "A new process has been created.", "",
+        "Creator Subject:", "\tSecurity ID:\t\tS-1-5-18", "\tAccount Name:\t\tWIN11$", "",
+        "Target Subject:", "\tSecurity ID:\t\tS-1-0-0", "\tAccount Name:\t\t-", "",
+        "Process Information:",
+        "\tNew Process Name:\tC:\\Windows\\SysWOW64\\dllhost.exe!S!",
+        "\tProcess Command Line:\t\"C:\\Windows\\SysWOW64\\DllHost.exe\" /Processid:{5250E46F-BB09-D602}!S!",
+      ].join("\n"),
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.description).toContain("Use of 32-bit LOLBINs");
+    expect(e.description).toContain("dllhost.exe");                 // the LOLBIN binary, surfaced
+    expect(e.description).toContain("/Processid:");                 // its command line, surfaced
+    expect(e.description).not.toContain("Token Elevation Type");    // boilerplate not leading
+    expect(e.timestamp).toContain("2026-06-03T07:56:16");
+    expect(r.iocs.some((i) => i.type === "process" && i.value === "dllhost.exe")).toBe(true);
+  });
+
+  it("names the triggering file (EntryPath) in an Amcache-style detection verdict", () => {
+    const row = {
+      Detection: { Name: "Defence Evasion", KeywordRegex: "CleanWipe|RULEPAT_MARKER", Criticality: "Medium" },
+      KeyMTime: "2026-06-06T20:42:51Z", EntryName: "kprocesshacker.sys",
+      EntryPath: "c:\\program files\\process hacker 2\\kprocesshacker.sys", SHA1: "a".repeat(40),
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.description).toContain("Defence Evasion");
+    expect(e.description).toContain("kprocesshacker.sys");                 // the file that fired the rule
+    expect(e.description).not.toContain("RULEPAT_MARKER");                 // the KeywordRegex pattern is kept out
+    expect(r.iocs.some((i) => i.type === "file" && i.value.includes("kprocesshacker.sys"))).toBe(true);
+  });
+
+  it("surfaces the matched Content of a PSReadline/ISE detection, not just the rule name", () => {
+    const row = {
+      Detection: { ID: "win_ps_b64", Name: "Powershell large Base64 blob - IN DEVELOPMENT", Regex: "[a-z0-9+/]{44,}", HitString: "Sy1pYktKVUJX" },
+      FileInfo: { OSPath: "C:\\Users\\v\\ise.ps1", Mtime: "2026-06-03T08:40:48Z" },
+      Content: "download elasticagent from https://www.elastic.co/downloads/elastic-agent",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.description).toContain("Powershell large Base64 blob");
+    expect(e.description).toContain("elastic.co/downloads");               // the matched content
+    expect(e.description).not.toMatch(/\[a-z0-9/);                         // the rule Regex must not leak
+    expect(e.severity).toBe("Low");                                        // IN DEVELOPMENT
+  });
+
   it("MFT detection: object verdict with explicit Criticality wins; nested $SI timestamp resolved", () => {
     const row = {
       Detection: { Name: "BAU Cloud Data Transfer", KeywordRegex: "OneDrive\\.exe", Criticality: "Low" },
@@ -161,6 +272,46 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     expect(e.description).toContain("Powershell encoded command - IN DEVELOPMENT");
     expect(e.description).not.toContain("nc*o*d*e*d");          // the rule Regex must not leak into the description
     expect(r.iocs.some((i) => i.type === "ip" && i.value === "192.168.56.50")).toBe(true); // scraped from Content
+  });
+});
+
+describe("parseVelociraptorJson — IOC hygiene & extra time keys (#102)", () => {
+  it("a YARA hit extracts only the matched file — NOT the rule's Meta references / HitContext bytes", () => {
+    const row = {
+      _Source: "DetectRaptor.Generic.Detection.YaraFile",
+      OSPath: "C:\\pagefile.sys", Mtime: "2026-06-12T11:12:41Z",
+      Rule: "SUSP_Download_Temp_Rundll",
+      Tags: ["POWERSHELL", "DOWNLOAD"],
+      Meta: { author: "X", reference: "https://github.com/SIFalcon/Detection", source_url: "https://github.com/x/y.yar", hash: "a".repeat(64) },
+      HitContext: "deadbeef" + "b".repeat(64) + " http://rule-example.test/sample",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.iocs.filter((i) => i.type === "file")).toHaveLength(1);
+    expect(r.iocs.some((i) => i.type === "file" && i.value.includes("pagefile.sys"))).toBe(true);
+    expect(r.iocs.some((i) => i.type === "hash")).toBe(false);   // no Meta/HitContext hashes
+    expect(r.iocs.some((i) => i.type === "url")).toBe(false);    // no Meta reference URLs
+  });
+
+  it("tags every event type with its source artifact (_Source) so it can be traced back", () => {
+    const detection = { _Source: "DetectRaptor.Windows.Detection.LolDrivers", Detection: { Name: "Defence Evasion" }, EntryPath: "c:\\x\\kproc.sys", KeyMTime: "2026-06-06T20:42:51Z" };
+    const generic = { _Source: "Windows.Analysis.EvidenceOfDownload", DownloadedFilePath: "C:\\Users\\v\\a.exe", Mtime: "2026-06-03T08:00:00Z" };
+    const det = parseVelociraptorJson(JSON.stringify([detection])).events[0];
+    const gen = parseVelociraptorJson(JSON.stringify([generic])).events[0];
+    // Consistent placement: artifact right after "Velociraptor" for BOTH detection and generic.
+    expect(det.description).toContain("Velociraptor [DetectRaptor.Windows.Detection.LolDrivers] detection:");
+    expect(gen.description).toContain("Velociraptor [Windows.Analysis.EvidenceOfDownload]:");
+    // The filename fallback (no _Source) is NOT shown as a bracketed artifact tag.
+    const noSource = parseVelociraptorJson(JSON.stringify([{ Detection: { Name: "X" }, EntryPath: "c:\\y.sys" }]), { artifact: "0036_velociraptor-2026.json" }).events[0];
+    expect(noSource.description).not.toContain("[0036_velociraptor");
+  });
+
+  it("dates rows via EventTimestamp, KeyMTime, and nested Stat.Mtime", () => {
+    const rdp = { _Source: "Custom.RDP", EventTimestamp: "2025-03-14T22:30:42Z", EventID: 4648, Message: "explicit cred logon" };
+    const amcache = { _Source: "DetectRaptor.Windows.Detection.Amcache", Detection: { Name: "Defence Evasion" }, KeyMTime: "2026-06-06T20:42:51Z", EntryName: "x.exe" };
+    const psr = { _Source: "Windows.System.Powershell.PSReadline", Line: "whoami /all", Stat: { Mtime: "2026-06-03T08:40:48Z" } };
+    expect(parseVelociraptorJson(JSON.stringify([rdp])).events[0].timestamp).toContain("2025-03-14T22:30:42");
+    expect(parseVelociraptorJson(JSON.stringify([amcache])).events[0].timestamp).toContain("2026-06-06T20:42:51");
+    expect(parseVelociraptorJson(JSON.stringify([psr])).events[0].timestamp).toContain("2026-06-03T08:40:48");
   });
 });
 

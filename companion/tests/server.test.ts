@@ -1596,6 +1596,26 @@ describe("AI on/off control", () => {
     expect(events.some((e) => e.status === "analyzing")).toBe(false);
   });
 
+  it("synthesizes evidence imported while AI was off when AI is turned on (no screenshots)", async () => {
+    // Bug: importing a Velociraptor table with AI off populates the timeline deterministically, but
+    // turning AI on only "caught up" on screenshots — with none, backfill idled and never synthesized
+    // the imported data (only a fresh import did). With autosynthesis on, AI-on must trigger synthesis.
+    const root = await mkdtemp(join(tmpdir(), "dfir-aibackfill-import-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const phases: string[] = [];
+    const app = createApp(store, {
+      pipeline: findingPipeline(stateStore), stateStore,
+      autoSynthesize: true, autoSynthesizeDebounceMs: 10,
+      onAiStatus: (_c, e) => { if (e.phase) phases.push(e.phase); },
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    // No capture log at all (import-only case). Turning AI on must trigger synthesis, not idle.
+    await request(app).post("/cases/c1/ai-control").send({ enabled: true });
+    for (let i = 0; i < 80 && !phases.includes("synthesizing"); i++) await new Promise((r) => setTimeout(r, 25));
+    expect(phases).toContain("synthesizing");
+  });
+
   it("GET /cases/:id/ai-control reports the current state", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-aictl-route-"));
     const store = new CaseStore(root);
