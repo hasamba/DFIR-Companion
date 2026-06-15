@@ -57,11 +57,12 @@ async function loadCases(companionUrl: string, selectedId: string): Promise<void
       sel.appendChild(new Option("(no cases — create one in the dashboard)", ""));
       return;
     }
+    sel.appendChild(new Option("— no case (push button hidden) —", ""));
     for (const c of cases) {
       const label = c.name && c.name !== c.caseId ? `${c.caseId} — ${c.name}` : c.caseId;
       sel.appendChild(new Option(label, c.caseId));
     }
-    if (selectedId && cases.some((c) => c.caseId === selectedId)) sel.value = selectedId;
+    sel.value = cases.some((c) => c.caseId === selectedId) ? selectedId : "";
   } catch {
     // Offline or endpoint missing — keep the last-used case selectable so Start works.
     sel.innerHTML = "";
@@ -111,6 +112,13 @@ async function init() {
   await refreshStatus(s);
   await showLastCapture();
   await showHotkey();
+
+  // Auto-save the case selection immediately on change so the analyst can switch cases
+  // (or clear them) without pressing Start — screenshots stay in their current state.
+  caseSelect().addEventListener("change", async () => {
+    const current = await load();
+    await save({ ...current, caseId: caseSelect().value });
+  });
 
   // Re-fetch the case list — e.g. after creating a case in the dashboard, or after
   // pointing Companion URL at a different instance.
