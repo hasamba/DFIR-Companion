@@ -62,7 +62,7 @@ rationale and a pointer to the finding or artifact it came from.
 
 ### Forensic Timeline
 
-31 corroborated events from Chainsaw · THOR · Suricata · CrowdStrike Falcon — severity filters, per-row
+events from Chainsaw · THOR · Suricata · severity filters, per-row
 triage tags (`initial-access`, `c2-comms`, `key-evidence`, …), import change tracking
 (+19 new events banner with expandable diff), and analyst star / bulk-action controls.
 
@@ -82,7 +82,7 @@ Full attacker-path write-up from initial access to ransomware attempt, an intera
 ### Findings
 
 8 AI-generated findings (2 Critical · 2 High · 2 Medium · 1 Low) — each with a confidence %,
-analyst triage tags, MITRE technique links, and a synthesis freshness diff (+8 new since last run).
+analyst triage tags, MITRE technique links, and a synthesis freshness diff.
 
 <img src="docs/screenshots/companion-demo-04.png" alt="DFIR Companion — findings with confidence scores, analyst triage tags, and MITRE ATT&CK links" width="900" />
 
@@ -90,7 +90,7 @@ analyst triage tags, MITRE technique links, and a synthesis freshness diff (+8 n
 
 ### Evidence Chain Graph
 
-Process trees + lateral movement across DC01, FS01, and WKSTN-JSMITH stitched into one causal
+Process trees + lateral movement stitched into one causal
 attack graph. Derived deterministically from importer-populated fields — no AI, no cost, runs offline.
 
 <img src="docs/screenshots/companion-demo-05.png" alt="DFIR Companion — evidence chain graph with process trees and lateral movement across hosts" width="900" />
@@ -99,7 +99,7 @@ attack graph. Derived deterministically from importer-populated fields — no AI
 
 ### IOCs with Threat-Intel Enrichments
 
-15 indicators (IPs · domains · hashes · files · processes · URL) enriched against VirusTotal,
+indicators (IPs · domains · hashes · files · processes · URL) enriched against VirusTotal,
 AbuseIPDB, ThreatFox, URLhaus, and MalwareBazaar — verdict badges, detection scores, `NEW` import
 highlights, and analyst `confirmed-malicious` / `pivot-point` triage labels.
 
@@ -120,7 +120,7 @@ to the indicators that touched each — Host / Account toggles, fullscreen, drag
 
 ### Key Investigative Questions
 
-8 standard DFIR questions auto-answered from the synthesized case
+Standard DFIR questions auto-answered from the synthesized case
 (answered ✅ / partial 🟡 / unknown ❓), each with an evidence pointer or a "collect this next" directive.
 
 <img src="docs/screenshots/companion-demo-08.png" alt="DFIR Companion — key investigative questions with answers and evidence pointers" width="900" />
