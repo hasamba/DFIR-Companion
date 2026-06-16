@@ -147,6 +147,8 @@ import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
 import { pushPlaybookToClickUp } from "./integrations/clickup/clickupPush.js";
+import { getDiskStats, getDiskWarningLevel, diskWarnEnvThresholds } from "./analysis/diskWarn.js";
+import { archiveCase } from "./analysis/caseArchive.js";
 import { NotificationConfigStore } from "./analysis/notificationStore.js";
 import { seedDemoCase } from "./analysis/seedDemoCase.js";
 import {
@@ -739,6 +741,54 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === "EEXIST") return res.status(409).json({ error: e.message });
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Disk space stats (#119) ────────────────────────────────────────────────────────────
+  // Reports free/total bytes on the cases-root filesystem and the configured warning level.
+  app.get("/disk-stats", async (_req: Request, res: Response) => {
+    try {
+      const stats = await getDiskStats(store.casesRoot);
+      const thresholds = diskWarnEnvThresholds();
+      const level = getDiskWarningLevel(stats.usedPct, thresholds);
+      return res.status(200).json({ ...stats, level, thresholds });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Case lifecycle (#119) ──────────────────────────────────────────────────────────────
+  // Set a case's lifecycle status (open / closed). A closed case is eligible for archiving.
+  app.patch("/cases/:id/status", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
+      if (!await store.caseExists(id)) return res.status(404).json({ error: `case ${id} not found` });
+      const { status } = req.body ?? {};
+      if (status !== "open" && status !== "closed") return res.status(400).json({ error: "status must be 'open' or 'closed'" });
+      const updated = await store.updateCaseMeta(id, { status });
+      logLine(`[lifecycle] case=${id} status=${status}`);
+      return res.status(200).json(updated);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Archive a case to a ZIP file (<casesRoot>/<caseId>.zip). Intended for closed cases.
+  // Returns the archive path and a manifest of archived files + checksums.
+  // Never deletes the original folder.
+  app.post("/cases/:id/archive", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
+      if (!await store.caseExists(id)) return res.status(404).json({ error: `case ${id} not found` });
+      logLine(`[archive] starting archive for case=${id}`);
+      const result = await archiveCase(store.casesRoot, id);
+      logLine(`[archive] done case=${id} files=${result.manifest.totalFiles} bytes=${result.manifest.totalBytes} path=${result.archivePath}`);
+      return res.status(200).json(result);
+    } catch (err) {
+      errLine(`[archive] error case=${req.params.id}: ${(err as Error).message}`);
       return res.status(500).json({ error: (err as Error).message });
     }
   });

@@ -888,6 +888,21 @@
     #searchFilterBar { padding: 5px 16px; background: var(--c-0e1116); border-bottom: 1px solid var(--c-1a1f28);
       display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: var(--c-9aa4b2); }
     #searchFilterBar[hidden] { display: none; }
+    /* Disk-space warning banner (#119). */
+    #diskWarnBanner { display: flex; align-items: center; gap: 10px; padding: 6px 16px;
+      border-bottom: 1px solid; font-size: 12.5px; }
+    #diskWarnBanner[hidden] { display: none; }
+    #diskWarnBanner.dw-warning { background: var(--c-3a2a00); color: var(--c-ffcf66); border-color: var(--c-5a4416); }
+    #diskWarnBanner.dw-danger  { background: #3a1800; color: #ff9933; border-color: #7a3000; }
+    #diskWarnBanner.dw-critical { background: #3a0000; color: #ff5c5c; border-color: #7a0000; }
+    #diskWarnBanner span { flex: 1; }
+    #diskWarnBanner button { background: rgba(0,0,0,0.3); color: inherit; border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 5px; cursor: pointer; padding: 2px 8px; font-size: 12px; }
+    #diskWarnBanner button:hover { background: rgba(0,0,0,0.5); }
+    /* Case-closed badge in toolbar. */
+    #caseClosedBadge { font-size: 11px; font-weight: 600; color: #ff9933;
+      border: 1px solid #7a3000; border-radius: 4px; padding: 1px 6px;
+      background: #3a1800; vertical-align: middle; display: none; }
     /* Cross-case warning banner (captures arriving for a case other than the one being viewed). */
     #caseMismatchBanner { display: flex; align-items: center; gap: 10px; padding: 7px 16px;
       background: var(--c-3a2a00); color: var(--c-ffcf66); border-bottom: 1px solid var(--c-5a4416); font-size: 12.5px; }
@@ -953,6 +968,13 @@
       <option value="">Push to…</option>
     </select>
     <span id="reportLinks" class="report-links"></span>
+    <span id="caseClosedBadge" title="This case is closed — reopen it to resume active investigation">CLOSED</span>
+    <select id="lifecycleSelect" class="toolbar-select" style="display:none" data-tip="Change the case lifecycle state or compress it to a ZIP archive">
+      <option value="">Case lifecycle…</option>
+      <option value="close">Close case</option>
+      <option value="reopen">Reopen case</option>
+      <option value="archive">Archive to ZIP…</option>
+    </select>
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
     <button id="toggleSearchBar" type="button" aria-label="Filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Filter events, findings and IOCs by text and time range (press /)">Filter</button>
     <span id="status">disconnected</span>
@@ -2088,6 +2110,12 @@
     <label>to <input id="filterTo" type="datetime-local" title="Filter timeline to (UTC)" /></label>
     <button id="clearFiltersBtn" type="button" hidden>Clear</button>
     <span id="searchMatchCount"></span>
+  </div>
+
+  <!-- Disk-space warning banner (#119): shown when the cases-root filesystem is nearly full. -->
+  <div id="diskWarnBanner" hidden>
+    <span id="diskWarnText"></span>
+    <button id="diskWarnDismiss" type="button" title="Dismiss">✕</button>
   </div>
 
   <!-- Cross-case warning: shown when screenshots arrive for a case other than the one being viewed. -->
@@ -7690,6 +7718,7 @@
       loadImportMeta(caseId);
       loadUndoStack(caseId);
       loadCustomerExposure(caseId);
+      loadCaseLifecycle(caseId);
       loadVeloTriage(caseId);
       resetVeloHuntSuggest();   // clear AI-suggested fleet hunts; analyst regenerates per case on demand
       resetPlaybookHuntSuggest();   // clear AI-suggested playbook hunts (#70) too
@@ -10008,9 +10037,114 @@
         .catch(() => {});
     }
 
+    // ── Disk-space warning (#119) ───────────────────────────────────────────
+    // Poll GET /disk-stats once on load. Shows a banner when the cases-root
+    // filesystem is at warning / danger / critical level. Dismissed per-session.
+    let diskWarnDismissed = false;
+    function loadDiskStats() {
+      if (diskWarnDismissed) return;
+      fetch("/disk-stats")
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d || d.level === "none") { hideDiskWarn(); return; }
+          const banner = document.getElementById("diskWarnBanner");
+          const text   = document.getElementById("diskWarnText");
+          if (!banner || !text) return;
+          const usedGb = ((d.totalBytes - d.freeBytes) / 1e9).toFixed(1);
+          const totalGb = (d.totalBytes / 1e9).toFixed(1);
+          const pct = d.usedPct.toFixed(1);
+          text.textContent = `Disk space ${d.level.toUpperCase()}: ${usedGb} GB used of ${totalGb} GB (${pct}%) on the cases folder filesystem.` +
+            (d.level === "critical" ? " Free space is very low — consider archiving or moving closed cases." :
+             d.level === "danger"   ? " Consider archiving or moving closed cases before this fills." :
+                                      " Monitor disk usage and archive closed cases if needed.");
+          banner.className = `dw-${d.level}`;
+          banner.hidden = false;
+        })
+        .catch(() => {});
+    }
+    function hideDiskWarn() {
+      const el = document.getElementById("diskWarnBanner");
+      if (el) el.hidden = true;
+    }
+    const diskWarnDismissBtn = document.getElementById("diskWarnDismiss");
+    if (diskWarnDismissBtn) diskWarnDismissBtn.onclick = () => { diskWarnDismissed = true; hideDiskWarn(); };
+
+    // ── Case lifecycle (#119) ───────────────────────────────────────────────
+    // Load the case's status (open/closed) and update the toolbar badge + lifecycle select.
+    function loadCaseLifecycle(caseId) {
+      fetch(`/cases/${caseId}/state`)
+        .then(r => r.ok ? r.json() : null)
+        .then(() => {
+          // State doesn't include case meta. Fetch the cases list to get status.
+          return fetch("/cases").then(r => r.ok ? r.json() : []);
+        })
+        .then(cases => {
+          const meta = cases.find(c => c.caseId === caseId);
+          const isClosed = meta && meta.status === "closed";
+          const badge = document.getElementById("caseClosedBadge");
+          const sel   = document.getElementById("lifecycleSelect");
+          if (badge) badge.style.display = isClosed ? "" : "none";
+          if (sel)   sel.style.display   = caseId ? "" : "none";
+          // Pre-select the action that makes sense for the current status.
+          if (sel) sel.value = "";
+        })
+        .catch(() => {});
+    }
+
+    (function wireLifecycleSelect() {
+      const sel = document.getElementById("lifecycleSelect");
+      if (!sel) return;
+      sel.addEventListener("change", async () => {
+        const action = sel.value;
+        sel.value = "";
+        const caseId = document.getElementById("caseId").value.trim();
+        if (!caseId || !action) return;
+
+        if (action === "close" || action === "reopen") {
+          const status = action === "close" ? "closed" : "open";
+          try {
+            const r = await fetch(`/cases/${caseId}/status`, {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ status }),
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              alert("Failed to update case status: " + (err.error || "HTTP " + r.status));
+              return;
+            }
+            loadCaseLifecycle(caseId);
+            loadCaseList();
+          } catch (e) {
+            alert("Error: " + e.message);
+          }
+        } else if (action === "archive") {
+          const meta = await fetch("/cases").then(r => r.json()).catch(() => []);
+          const c = meta.find(m => m.caseId === caseId);
+          if (c && c.status !== "closed") {
+            if (!confirm("The case is currently open. It is recommended to close it first before archiving. Archive anyway?")) return;
+          } else {
+            if (!confirm(`Archive case "${esc(caseId)}" to a ZIP file? This may take a moment for large cases. The original folder is kept.`)) return;
+          }
+          try {
+            const r = await fetch(`/cases/${caseId}/archive`, { method: "POST" });
+            const body = await r.json().catch(() => ({}));
+            if (!r.ok) {
+              alert("Archive failed: " + (body.error || "HTTP " + r.status));
+              return;
+            }
+            alert(`Case archived successfully.\nPath: ${body.archivePath}\nFiles: ${body.manifest.totalFiles}\nBytes: ${body.manifest.totalBytes.toLocaleString()}`);
+          } catch (e) {
+            alert("Archive error: " + e.message);
+          }
+        }
+      });
+    })();
+
     // On load, populate the case picker, then restore the case from the URL (?caseId=) or last
     // session and reconnect.
     loadCaseList();
+    loadDiskStats();
     (function restore() {
       const fromUrl = new URLSearchParams(location.search).get("caseId");
       const caseId = (fromUrl || localStorage.getItem("dfir.caseId") || "").trim();

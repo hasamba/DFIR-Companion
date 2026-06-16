@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Case lifecycle & archiving** — cases can be marked open/closed (`PATCH /cases/:id/status`); closed cases can be compressed to a ZIP archive (`POST /cases/:id/archive`) with a per-file SHA-256 manifest; disk-space warning banner in the dashboard when the cases-root filesystem reaches configurable thresholds (`DFIR_DISK_WARN_PCT`, default danger at 85%); toolbar lifecycle menu for close/reopen/archive (closes #119).
 - **Custom declarative importers** — drop a JSON importer definition in the importers folder (or paste in Settings → Importers) and a matching file auto-detects + imports like a built-in; LLM-authorable via a built-in prompt, with user-selectable built-in/custom precedence.
 
 ## [0.22.0] - 2026-06-15
