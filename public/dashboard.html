@@ -1245,6 +1245,7 @@
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
         <button class="stab" data-stab="whitelist">IOC Whitelist</button>
         <button class="stab" data-stab="nsrl">NSRL</button>
+        <button class="stab" data-stab="importers">Importers</button>
         <button class="stab" data-stab="kev">KEV</button>
         <button class="stab" data-stab="reports">Report Templates</button>
         <button class="stab" data-stab="notifications">Notifications</button>
@@ -1843,6 +1844,52 @@
             <span id="nsrlApplyMsg" class="manual-msg"></span>
           </div>
           <span class="sfield-hint">Scans the loaded case's IOCs + forensic events and marks known-good matches legitimate (already auto-runs on every import).</span>
+        </div>
+      </div>
+
+      <!-- Custom importers — user-authored declarative import shapes (external plugin layer) -->
+      <div class="stab-pane" id="stab-importers">
+        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+          <strong>Declarative importers</strong> let you add support for a new tool's export format <em>without writing code</em>.
+          Drop a JSON definition in the <code>importers/</code> folder (auto-loaded on startup) or paste one below.
+          Global — shared across all cases. Generate a definition for any file format with an LLM via the prompt button.
+        </div>
+        <div style="background:var(--c-211405);border:1px solid var(--c-5a4a1a);border-radius:6px;padding:6px 9px;font-size:12px;color:var(--c-ffce8a);margin-bottom:12px">
+          ⚠ Custom importers run on every matching import. Review a generated definition before adding it — a too-broad match can shadow a built-in importer.
+        </div>
+
+        <div class="sfield">
+          <label>Detection precedence</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <select id="impPrecedence" style="flex:1 1 240px">
+              <option value="builtin-first">Built-in importers first (safe)</option>
+              <option value="external-first">Custom importers first (override)</option>
+            </select>
+            <button id="impReloadBtn" type="button" style="background:var(--c-2a2f3a)">Reload from folder</button>
+            <button id="impPromptBtn" type="button" style="background:var(--c-2a2f3a)">Copy LLM prompt</button>
+          </div>
+          <span class="sfield-hint">Built-in-first keeps the shipped importers authoritative; custom-first lets a definition override one.</span>
+        </div>
+
+        <div class="sfield">
+          <label>Loaded importers <span id="impCount" class="sfield-hint" style="display:inline"></span></label>
+          <div id="impStatus" style="font-size:12px;color:var(--c-9aa4b2);padding:2px 0">Loading…</div>
+          <div id="impList" style="max-height:240px;overflow:auto;border:1px solid var(--c-2a2f3a);border-radius:6px;padding:4px"></div>
+        </div>
+
+        <div class="sfield">
+          <label>Load errors <span id="impErrCount" class="sfield-hint" style="display:inline"></span></label>
+          <div id="impErrors" style="font-size:12px;color:var(--c-ff9f9f)"></div>
+        </div>
+
+        <hr class="settings-hr" />
+        <div class="sfield">
+          <label>Add an importer (paste JSON)</label>
+          <textarea id="impPasteBox" rows="6" spellcheck="false" placeholder="Paste an importer JSON definition… (use the prompt button to generate one with any LLM)" style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+            <button id="impAddBtn" type="button">Add importer</button>
+            <span id="impMsg" class="manual-msg"></span>
+          </div>
         </div>
       </div>
 
@@ -7698,6 +7745,7 @@
         else if (msg.type === "velo_hunt_changed") loadVeloHuntJobs(caseId);
         else if (msg.type === "velo_monitor_changed") loadVeloMonitors(caseId);
         else if (msg.type === "push_token_changed") loadPushToken(caseId);
+        else if (msg.type === "importers_changed") { if (document.getElementById("stab-importers")) loadImporters(); }
         else if (msg.type === "legitimate_changed") loadLegitimate(caseId);
         else if (msg.type === "scope_changed") {
           scope = { start: msg.start ?? null, end: msg.end ?? null };
@@ -9311,6 +9359,18 @@
     document.getElementById("nsrlDbConnectBtn").addEventListener("click", nsrlDbConnect);
     document.getElementById("nsrlDbDisconnectBtn").addEventListener("click", nsrlDbDisconnect);
     document.getElementById("nsrlDbPath").addEventListener("keydown", e => { if (e.key === "Enter") nsrlDbConnect(); });
+    // Custom importers (declarative external plugin layer)
+    document.getElementById("impAddBtn").addEventListener("click", impAdd);
+    document.getElementById("impReloadBtn").addEventListener("click", impReload);
+    document.getElementById("impPromptBtn").addEventListener("click", impCopyPrompt);
+    document.getElementById("impPrecedence").addEventListener("change", impSetPrecedence);
+    document.getElementById("impList").addEventListener("click", e => {
+      const del = e.target.closest(".imp-del");
+      if (del) {
+        fetch("/importers/" + encodeURIComponent(del.dataset.id), { method: "DELETE" })
+          .then(r => { if (r.ok) loadImporters(); }).catch(() => {});
+      }
+    });
     // CISA KEV catalog (#99)
     document.getElementById("kevImportUrlBtn").addEventListener("click", kevImportUrl);
     document.getElementById("kevFileBtn").addEventListener("click", kevImportFile);
@@ -9351,6 +9411,7 @@
         document.querySelectorAll(".stab-pane").forEach(p => p.classList.toggle("active", p.id === "stab-" + tab));
         if (tab === "whitelist") loadWhitelist();
         if (tab === "nsrl") loadNsrl();
+        if (tab === "importers") loadImporters();
         if (tab === "kev") loadKev();
         if (tab === "reports") loadReportTemplates();
         if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
@@ -9556,6 +9617,90 @@
         .catch(e => { msg.textContent = e.message; });
     }
     function wlExport(format) { window.open(`/ioc-whitelist/export?format=${format}`, "_blank"); }
+
+    // --- Custom importers (declarative external plugin layer) — global, Settings → Importers -------
+    function renderImporters(d) {
+      const list = document.getElementById("impList");
+      const status = document.getElementById("impStatus");
+      const cnt = document.getElementById("impCount");
+      const errBox = document.getElementById("impErrors");
+      const errCnt = document.getElementById("impErrCount");
+      const importers = (d && d.importers) || [];
+      const errors = (d && d.errors) || [];
+      const prec = document.getElementById("impPrecedence");
+      if (prec && d && d.precedence) prec.value = d.precedence;
+      if (cnt) cnt.textContent = importers.length ? `(${importers.length})` : "";
+      if (status) status.textContent = importers.length
+        ? `${importers.length} custom importer${importers.length !== 1 ? "s" : ""} loaded — applied on every matching import.`
+        : "No custom importers loaded — paste a definition below or drop one in the importers/ folder.";
+      if (list) {
+        list.innerHTML = importers.length ? importers.map(m =>
+          `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;border-bottom:1px solid var(--c-1a1f28);font-size:12px">`
+          + `<span style="flex:1;word-break:break-all"><b>${esc(m.label)}</b> <code style="color:var(--c-9aa4b2)">${esc(m.id)}</code></span>`
+          + `<span style="flex:0 0 auto;color:var(--c-7e8aa0)">priority ${esc(m.priority)}</span>`
+          + `<button class="imp-del" data-id="${escAttr(m.id)}" title="Delete importer" style="background:transparent;border:1px solid var(--c-5a2a2a);color:var(--c-ff9f9f);border-radius:5px;padding:0 7px;cursor:pointer">✕</button>`
+          + `</div>`).join("") : "";
+      }
+      if (errCnt) errCnt.textContent = errors.length ? `(${errors.length})` : "";
+      if (errBox) {
+        errBox.innerHTML = errors.length ? errors.map(e =>
+          `<div style="padding:2px 0">⚠ <code>${esc(e.file)}</code>: ${esc((e.errors || []).map(x => x.path + " — " + x.message).join("; "))}</div>`
+        ).join("") : "";
+      }
+    }
+    function loadImporters() {
+      const status = document.getElementById("impStatus");
+      fetch("/importers")
+        .then(r => {
+          if (!r.ok) throw new Error(r.status === 404 ? "404" : "HTTP " + r.status);
+          return r.json();
+        })
+        .then(renderImporters)
+        .catch(e => { if (status) status.textContent = e.message === "404" ? "Restart the companion server — /importers 404 (server is stale)." : "Could not load importers: " + e.message; });
+    }
+    function impAdd() {
+      const box = document.getElementById("impPasteBox");
+      const msg = document.getElementById("impMsg");
+      let spec;
+      try { spec = JSON.parse(box.value); }
+      catch (e) { msg.textContent = "Not valid JSON: " + e.message; return; }
+      msg.textContent = "adding…";
+      fetch("/importers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec }) })
+        .then(async r => {
+          const j = await r.json().catch(() => ({}));
+          if (r.ok) { msg.textContent = "Added " + (j.id || "importer"); box.value = ""; loadImporters(); }
+          else if (r.status === 404) { msg.textContent = "Restart the companion server — /importers 404 (server is stale)."; }
+          else { msg.textContent = "Invalid: " + ((j.errors || []).map(x => x.path + " — " + x.message).join("; ") || j.error || "HTTP " + r.status); }
+        })
+        .catch(e => { msg.textContent = "failed: " + e.message; });
+    }
+    function impReload() {
+      const msg = document.getElementById("impMsg");
+      msg.textContent = "reloading…";
+      fetch("/importers/reload", { method: "POST" })
+        .then(async r => { if (!r.ok) throw new Error(r.status === 404 ? "Restart the companion server — /importers 404." : "HTTP " + r.status); return r.json(); })
+        .then(d => { msg.textContent = "reloaded"; renderImporters(d); loadImporters(); })
+        .catch(e => { msg.textContent = e.message; });
+    }
+    function impSetPrecedence(e) {
+      const msg = document.getElementById("impMsg");
+      const precedence = e.target.value;
+      fetch("/importers/precedence", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ precedence }) })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(() => { msg.textContent = `precedence set to ${precedence}`; })
+        .catch(err => { msg.textContent = "failed: " + err.message + " — restart the server if the endpoint 404s."; });
+    }
+    function impCopyPrompt() {
+      const msg = document.getElementById("impMsg");
+      fetch("/importers/prompt")
+        .then(async r => { if (!r.ok) throw new Error(r.status === 404 ? "Restart the companion server — /importers 404." : "HTTP " + r.status); return r.json(); })
+        .then(j => navigator.clipboard.writeText(j.prompt || "").then(
+          () => { msg.textContent = "LLM prompt copied — paste it + your file sample into any LLM."; },
+          () => { msg.textContent = "Could not copy to clipboard — check browser permissions."; }
+        ))
+        .catch(e => { msg.textContent = e.message; });
+    }
+
     function wlApplyToCase() {
       const caseId = document.getElementById("caseId").value.trim();
       const msg = document.getElementById("wlApplyMsg");

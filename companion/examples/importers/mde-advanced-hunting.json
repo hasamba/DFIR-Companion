@@ -1,0 +1,27 @@
+{
+  "id": "mde-advanced-hunting",
+  "label": "Microsoft Defender XDR — Advanced Hunting",
+  "version": 1,
+  "description": "MDE advanced hunting CSV/JSON export",
+  "match": {
+    "format": "csv",
+    "requireHeaders": ["Timestamp", "DeviceName"],
+    "anyHeaders": ["ActionType", "FileName"],
+    "priority": 50
+  },
+  "map": {
+    "timestamp": { "from": ["Timestamp"], "format": "auto" },
+    "description": "{{ActionType}} on {{DeviceName}} — {{FileName}}",
+    "severity": { "from": ["Severity"], "map": { "high": "High", "medium": "Medium", "informational": "Info" }, "default": "Medium" },
+    "asset": { "from": ["DeviceName"] },
+    "user": { "from": ["AccountDomain", "AccountName"], "join": "\\" },
+    "processName": { "from": ["FileName"] },
+    "sha256": { "from": ["SHA256"] },
+    "mitre": { "from": ["AttackTechniques"] },
+    "iocs": [
+      { "type": "hash", "from": ["SHA256", "MD5"] },
+      { "type": "ip", "from": ["RemoteIP"], "transform": "cleanIp" }
+    ]
+  },
+  "options": { "aggregate": true, "maxEvents": 2000 }
+}

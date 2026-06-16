@@ -323,6 +323,51 @@ updates the catalog.
 **Opt-in by design:** the catalog starts empty. A KEV match is a strong hypothesis (the CVE is actively
 exploited), not proof of exploitation in this specific case — the AI is told this explicitly.
 
+## Custom (declarative) importers
+
+Beyond the built-in importers, you can teach the Companion a new file format **without writing
+code** by dropping a small JSON **importer definition** into the importers folder. A definition is
+pure data — the Companion interprets it; nothing from your file is executed. A matching file then
+imports through the normal **Import** button, with detection automatic, and flows through the exact
+same downstream chain as a built-in (cross-source correlation → import diff → IOC-whitelist / NSRL
+auto-legitimate → re-synthesis).
+
+**The folder.** Each `*.json` file is one importer, living in an `importers/` directory **beside
+your `cases/` root** (created on first save). Override the location with `DFIR_IMPORTERS_DIR`
+(absolute used as-is; relative anchors to the cases-root parent). Files **auto-load at startup**;
+add or edit one and click **Settings → Importers → Reload** (or restart) to apply without a
+restart. A malformed importer is **skipped, never fatal** — its field-pathed errors show in
+Settings → Importers while the valid ones keep working.
+
+**The `ImporterSpec` shape (brief).** `{ id, label, version, description?, match, map, options }`:
+
+- **`match`** — how to detect the file: `format` (`csv`/`json`/`ndjson`/`auto`), CSV
+  `requireHeaders`/`anyHeaders`, JSON `requireKeys`/`anyKeys`/`keyEquals`, an optional
+  `filenamePattern`, and a `priority` (lower tried first).
+- **`map`** — how to turn each record into a forensic event + IOCs: `timestamp` and `description`
+  (a `{{Column}}` template) are required; `severity` (fixed or value-mapped), `asset`, `user`,
+  `processName`, `parentName`, `sha256`, `md5`, `path`, `srcIp`, `dstIp`, `port`, `mitre`, and
+  `iocs` are optional, each binding to source columns with an optional `transform` (`trim` /
+  `lowercase` / `basename` / `cleanIp` / `defang` / `refang`).
+- **`options`** — `{ aggregate, minSeverity?, maxEvents?, maxIocs? }`.
+
+**LLM authoring.** You don't hand-write these. On the dashboard, **Settings → Importers → Copy LLM
+prompt** (`GET /importers/prompt`) gives you a prompt embedding the full schema + a worked example;
+paste it plus a sample of your exported file into any LLM, and it returns a definition you save into
+the folder. The prompt is overridable via `DFIR_AI_IMPORTGEN_PROMPT` / `DFIR_AI_IMPORTGEN_PROMPT_FILE`.
+
+**Precedence.** When a file could match both a built-in and a custom importer, a per-server setting
+decides: `builtin-first` (default — a specific built-in wins; custom fills only the gaps the
+built-ins don't confidently claim) or `external-first` (custom tried first).
+
+**Worked example + guide.** A complete, valid importer ships in
+[`examples/importers/mde-advanced-hunting.json`](./examples/importers/) (a Microsoft Defender XDR
+Advanced Hunting export), alongside an analyst-facing `README.md`.
+
+**Security.** Declarative only — **no code is ever executed**. Your file's contents are parsed, not
+run. User regexes are length-bounded (ReDoS guard) and the `description` template engine is
+helper-free (no injection).
+
 ## Case folder layout
 
     cases/<caseId>/

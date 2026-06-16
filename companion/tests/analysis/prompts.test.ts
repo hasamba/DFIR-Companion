@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getSystemPrompt, getSynthesisPrompt, getNarrativePrompt, NARRATIVE_PROMPT, SYSTEM_PROMPT } from "../../src/analysis/pipeline.js";
+import { getSystemPrompt, getSynthesisPrompt, getNarrativePrompt, getImporterPrompt, NARRATIVE_PROMPT, SYSTEM_PROMPT } from "../../src/analysis/pipeline.js";
+import { parseImporterSpec, EXAMPLE_IMPORTER_SPEC } from "../../src/analysis/importerSpec.js";
 
 const ENVS = ["DFIR_AI_SYSTEM_PROMPT", "DFIR_AI_SYSTEM_PROMPT_FILE", "DFIR_AI_SYNTH_PROMPT", "DFIR_AI_SYNTH_PROMPT_FILE"];
 afterEach(() => { for (const e of ENVS) delete process.env[e]; });
@@ -53,5 +54,14 @@ describe("user-overridable prompts", () => {
     expect(NARRATIVE_PROMPT).toContain("prose");
     // The synthesis prompt must also include narrativeTimeline in its output spec.
     expect(getSynthesisPrompt()).toContain("narrativeTimeline");
+  });
+});
+
+describe("importer-authoring prompt", () => {
+  it("is non-empty and embeds the schema-valid worked example", () => {
+    const p = getImporterPrompt();
+    expect(p.length).toBeGreaterThan(200);
+    expect(p).toContain("mde-advanced-hunting");
+    expect(parseImporterSpec(EXAMPLE_IMPORTER_SPEC).ok).toBe(true);
   });
 });
