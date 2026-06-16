@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { detectImportKind } from "../../src/analysis/importDetect.js";
+import { detectImportWithCustom, buildDetectContext } from "../../src/analysis/importDetect.js";
+import { buildImporter } from "../../src/analysis/declarativeImporter.js";
+import { EXAMPLE_IMPORTER_SPEC, parseImporterSpec } from "../../src/analysis/importerSpec.js";
 
 const j = (o: unknown): string => JSON.stringify(o);
 const ndjson = (...o: unknown[]): string => o.map((x) => JSON.stringify(x)).join("\n");
@@ -282,5 +285,34 @@ describe("detectImportKind — logs & edges", () => {
     // An ES hit carrying a TheHive-like `_type` must NOT be detected as thehive.
     const esHit = { _type: "case", _source: { title: "x" }, _index: "thehive_cases", _id: "abc123" };
     expect(detectImportKind("es.json", j([esHit]))).not.toBe("thehive");
+  });
+});
+
+function exampleImporter() {
+  const r = parseImporterSpec(EXAMPLE_IMPORTER_SPEC);
+  if (!r.ok) throw new Error("bad example");
+  return buildImporter(r.spec);
+}
+const MDE = "Timestamp,DeviceName,ActionType,FileName,Severity\n2026-06-10T12:00:00Z,H,A,f.exe,High";
+
+describe("detectImportWithCustom precedence", () => {
+  const imps = new Map([["mde-advanced-hunting", exampleImporter()]]);
+
+  it("builtin-first: a custom importer claims a file that would otherwise fall back to csv", () => {
+    expect(detectImportKind("ah.csv", MDE)).toBe("csv"); // built-in fallback today
+    expect(detectImportWithCustom("ah.csv", MDE, imps, "builtin-first")).toBe("mde-advanced-hunting");
+  });
+
+  it("builtin-first: a confident built-in still wins over a custom importer", () => {
+    const siem = JSON.stringify([{ EventID: 4624, Channel: "Security" }]);
+    expect(detectImportWithCustom("x.json", siem, imps, "builtin-first")).toBe("siem");
+  });
+
+  it("external-first: a custom importer can override even a specific built-in", () => {
+    const r = parseImporterSpec({ ...EXAMPLE_IMPORTER_SPEC, id: "my-evtx", match: { format: "json", requireKeys: ["EventID"], priority: 1 } });
+    if (!r.ok) throw new Error("bad");
+    const m = new Map([["my-evtx", buildImporter(r.spec)]]);
+    const siem = JSON.stringify([{ EventID: 4624, Channel: "Security" }]);
+    expect(detectImportWithCustom("x.json", siem, m, "external-first")).toBe("my-evtx");
   });
 });

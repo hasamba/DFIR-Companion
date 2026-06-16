@@ -11,6 +11,7 @@ import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevi
 import { parseCsv } from "./csvImport.js";
 import { looksLikeJournald } from "./journaldImport.js";
 import { looksLikeSysdig } from "./sysdigImport.js";
+import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
 
 export type ImportKind =
   | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "network"
@@ -390,4 +391,68 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   if (csvKind !== "unknown" && csvKind !== "log") return csvKind;
   // No CSV signature and no comma-table → treat as a generic log (AI line triage).
   return "log";
+}
+
+// ───────────────────────────── custom-importer seam ─────────────────────────────
+
+export type DetectContext = EngineDetectContext;
+
+// Compute the shared detection context ONCE for custom importers (mirrors detectImportKind's own
+// structural sniff): a representative JSON record sample and/or the lowercased CSV header set.
+export function buildDetectContext(filename: string, text: string): DetectContext {
+  const t = (text ?? "").trim();
+  let root: unknown;
+  let sample: Row | null = null;
+  if (t[0] === "{" || t[0] === "[") {
+    const s = jsonSample(t);
+    root = s.root; sample = s.sample;
+  } else {
+    const firstLine = t.split(/\r\n|\r|\n/, 1)[0]?.trim() ?? "";
+    if (firstLine[0] === "{") { const s = jsonSample(t); root = s.root; sample = s.sample; }
+  }
+  let csvHeaders: Set<string> | null = null;
+  if (!sample) {
+    try {
+      const { headers } = parseCsv(t);
+      if (headers.length) csvHeaders = new Set(headers.map((h) => h.trim().toLowerCase()));
+    } catch { /* not CSV */ }
+  }
+  return { filename, text: t, root, sample, csvHeaders };
+}
+
+// Like detectImportKind, but also reports whether the match was a CONFIDENT specific importer vs a
+// generic fallback. csv/log are inherently generic buckets; a "siem" result is confident only when a
+// real SIEM signature matched (not the event-shaped catch-all). Used to decide whether a custom
+// importer is allowed to claim the file under builtin-first precedence.
+export function detectImportKindEx(filename: string, text: string): { kind: ImportKind; confident: boolean } {
+  const kind = detectImportKind(filename, text);
+  if (kind === "csv" || kind === "log" || kind === "unknown") return { kind, confident: false };
+  if (kind === "siem") {
+    const { sample } = jsonSample((text ?? "").trim());
+    return { kind, confident: sample ? isSiem(sample) : false };
+  }
+  return { kind, confident: true };
+}
+
+// Resolve a file to a built-in ImportKind OR a custom importer id, honoring the user's precedence.
+export function detectImportWithCustom(
+  filename: string,
+  text: string,
+  importers: Map<string, ExternalImporter>,
+  precedence: "builtin-first" | "external-first",
+): string {
+  const tryCustom = (): string | null => {
+    if (importers.size === 0) return null;
+    const ctx = buildDetectContext(filename, text);
+    const ordered = [...importers.values()].sort((a, b) => a.priority - b.priority);
+    for (const imp of ordered) { try { if (imp.detect(ctx)) return imp.id; } catch { /* skip a throwing importer */ } }
+    return null;
+  };
+
+  if (precedence === "external-first") {
+    return tryCustom() ?? detectImportKind(filename, text);
+  }
+  const { kind, confident } = detectImportKindEx(filename, text);
+  if (confident) return kind;            // a specific built-in wins
+  return tryCustom() ?? kind;            // else custom fills the gap, else the generic fallback
 }

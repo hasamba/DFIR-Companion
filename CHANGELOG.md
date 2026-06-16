@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Custom declarative importers** — drop a JSON importer definition in the importers folder (or paste in Settings → Importers) and a matching file auto-detects + imports like a built-in; LLM-authorable via a built-in prompt, with user-selectable built-in/custom precedence.
+
 ## [0.22.0] - 2026-06-15
 
 ### Fixed
