@@ -62,7 +62,10 @@ import { parseSysdig } from "./analysis/sysdigImport.js";
 import type { SysdigImportOptions } from "./analysis/sysdigImport.js";
 import { parseWazuhAlerts } from "./analysis/wazuhImport.js";
 import type { WazuhImportOptions } from "./analysis/wazuhImport.js";
-import { detectImportKind, type ImportKind } from "./analysis/importDetect.js";
+import { detectImportKind, detectImportWithCustom, type ImportKind } from "./analysis/importDetect.js";
+import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "./analysis/importerStore.js";
+import { parseImporterSpec } from "./analysis/importerSpec.js";
+import { getImporterPrompt } from "./analysis/pipeline.js";
 import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix } from "./settings/envManager.js";
 import { parseMinSeverity } from "./analysis/severityFloor.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
@@ -345,6 +348,10 @@ export interface AppOptions {
   // IOC whitelist (global, shared across cases): known-good patterns (CIDR ranges, hashes, regexes)
   // that auto-mark matching IOCs LEGITIMATE on import. Opt-in (the store starts empty).
   iocWhitelistStore?: IocWhitelistStore;
+  // User-authored declarative importers (global, shared across cases): the external plugin layer that
+  // lets analysts add new import shapes without code. onImporters broadcasts a registry change.
+  importerStore?: ImporterStore;
+  onImporters?: () => void;
   // NSRL known-good hash set (global, shared across cases, #63): a forensic event whose file hash —
   // or an IOC whose value — is a known-software hash is auto-marked LEGITIMATE on import, reducing
   // false positives. Opt-in (the store starts empty).
@@ -488,7 +495,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, customImporters: importerRegistry.importers.size });
   });
 
   // Read / change the live log verbosity (debug | info | warn | error). The dashboard's
@@ -1631,11 +1638,31 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   type ImportBase = { label: string; idPrefix: string; importedAt: string; onProgress?: (done: number, total: number) => void; minSeverity?: Severity };
 
+  // User-authored declarative importers (external plugin layer). Loaded async at startup; empty
+  // until the load resolves (parity with the velociraptor inventory / iris reconnect self-heals).
+  let importerRegistry: ImporterRegistry = { importers: new Map(), meta: [], errors: [] };
+  let importerPrecedence: ImporterPrecedence = "builtin-first";
+  if (options.importerStore) {
+    options.importerStore.loadAll().then((r) => { importerRegistry = r; }).catch(() => { /* keep empty */ });
+    options.importerStore.precedence().then((p) => { importerPrecedence = p; }).catch(() => { /* default */ });
+  }
+  async function reloadImporters(): Promise<void> {
+    if (!options.importerStore) return;
+    importerRegistry = await options.importerStore.loadAll();
+    importerPrecedence = await options.importerStore.precedence();
+    options.onImporters?.();
+  }
+  const resolveImportKind = (filename: string, text: string): string =>
+    detectImportWithCustom(filename, text, importerRegistry.importers, importerPrecedence);
+
   // Dispatch a detected import kind to the matching pipeline importer. Shared by the unified /import
   // route and the Velociraptor bundle collector (which ingests uploaded JSON reports the same way).
-  function dispatchImport(kind: ImportKind, caseId: string, text: string, base: ImportBase): Promise<unknown> {
+  function dispatchImport(kind: string, caseId: string, text: string, base: ImportBase): Promise<unknown> {
     const pipeline = options.pipeline;
     if (!pipeline) return Promise.reject(new Error("AI pipeline not configured"));
+    // A user-authored declarative importer takes the matching kind first (its id is the kind).
+    const custom = importerRegistry.importers.get(kind);
+    if (custom) return pipeline.importDeclarative(caseId, text, { importer: custom, ...base });
     switch (kind) {
       case "thor": return pipeline.importThor(caseId, text, base);
       case "siem": return pipeline.importSiem(caseId, text, base);
@@ -1686,7 +1713,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // checkpoint (per-poll snapshots would flood the undo stack). Resolves with the diff counts; the push
   // route fires-and-forgets, the poller awaits to update the monitor's running stats.
   async function ingestStreamed(
-    caseId: string, kind: ImportKind, text: string, originalName: string, minSeverity?: Severity,
+    caseId: string, kind: string, text: string, originalName: string, minSeverity?: Severity,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
@@ -2173,7 +2200,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
     const { text, source, filename } = extractPushPayload(req.body);
     if (!text.trim()) return res.status(400).json({ error: "empty push payload" });
-    const kind = detectImportKind(filename, text);
+    const kind = resolveImportKind(filename, text);
     if (kind === "unknown") return res.status(400).json({ error: "could not detect the payload type — not recognized as any supported import shape" });
     if ((kind === "csv" || kind === "log") && !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
 
@@ -3280,6 +3307,56 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // User-authored declarative importers (external plugin layer). GLOBAL, shared across cases — these
+  // CRUD the registry of import shapes the analyst can add without code. Unconfigured ⇒ empty list /
+  // 501 on writes. A save/delete/reload re-reads the on-disk registry (reloadImporters) so the in-
+  // memory copy + the detection seam (resolveImportKind) stay current without the #1-gotcha restart.
+  app.get("/importers", async (_req: Request, res: Response) => {
+    if (!options.importerStore) return res.status(200).json({ importers: [], precedence: "builtin-first", errors: [] });
+    return res.status(200).json({ importers: importerRegistry.meta, precedence: importerPrecedence, errors: importerRegistry.errors });
+  });
+
+  app.get("/importers/prompt", (_req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "pipeline not configured" });
+    return res.status(200).json({ prompt: getImporterPrompt() });
+  });
+
+  app.post("/importers", async (req: Request, res: Response) => {
+    if (!options.importerStore) return res.status(501).json({ error: "custom importers not configured" });
+    const body = req.body?.spec ?? req.body;
+    const parsed = parseImporterSpec(body);
+    if (!parsed.ok) return res.status(400).json({ error: "invalid importer", errors: parsed.errors });
+    try {
+      await options.importerStore.save(parsed.spec);
+      await reloadImporters();
+      return res.status(201).json({ id: parsed.spec.id });
+    } catch (err) { return res.status(500).json({ error: (err as Error).message }); }
+  });
+
+  app.delete("/importers/:id", async (req: Request, res: Response) => {
+    if (!options.importerStore) return res.status(501).json({ error: "custom importers not configured" });
+    try {
+      const removed = await options.importerStore.delete(req.params.id);
+      if (!removed) return res.status(404).json({ error: "importer not found" });
+      await reloadImporters();
+      return res.status(200).json({ removed: true });
+    } catch (err) { return res.status(500).json({ error: (err as Error).message }); }
+  });
+
+  app.post("/importers/reload", async (_req: Request, res: Response) => {
+    if (!options.importerStore) return res.status(501).json({ error: "custom importers not configured" });
+    try { await reloadImporters(); return res.status(200).json({ importers: importerRegistry.meta, errors: importerRegistry.errors }); }
+    catch (err) { return res.status(500).json({ error: (err as Error).message }); }
+  });
+
+  app.put("/importers/precedence", async (req: Request, res: Response) => {
+    if (!options.importerStore) return res.status(501).json({ error: "custom importers not configured" });
+    const p = req.body?.precedence;
+    if (p !== "builtin-first" && p !== "external-first") return res.status(400).json({ error: "precedence must be 'builtin-first' or 'external-first'" });
+    try { await options.importerStore.setPrecedence(p); importerPrecedence = p; options.onImporters?.(); return res.status(200).json({ precedence: p }); }
+    catch (err) { return res.status(500).json({ error: (err as Error).message }); }
+  });
+
   // Apply the whitelist to THIS case's current IOCs now (the analyst just added rules, or wants to
   // sweep an already-imported case). Marks matches legitimate, then re-synthesizes so they drop.
   app.post("/cases/:id/ioc-whitelist/apply", async (req: Request, res: Response) => {
@@ -3592,7 +3669,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const originalName = String(req.body?.filename ?? "import.dat");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
-    const kind = detectImportKind(originalName, text);
+    const kind = resolveImportKind(originalName, text);
     if (kind === "unknown") {
       return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / CSV / log)" });
     }
@@ -6102,6 +6179,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // when DFIR_CASES_ROOT is a drive root child (e.g. C:\cases) the sibling is C:\ — and Windows
   // forbids creating files directly in a drive root. A subdir is always creatable + writable.
   const iocWhitelistStore = new IocWhitelistStore(join(dirname(casesRoot), "whitelist", "ioc-whitelist.json"));
+  // User-authored declarative importers (#: external plugin layer) — its own subdir beside cases/
+  // (same drive-root rationale as the whitelist). Each *.json is one importer spec.
+  const importerStore = new ImporterStore(join(dirname(casesRoot), "importers"));
   // NSRL known-good hash set (#63) — its own subdir next to cases/ (same drive-root rationale as the
   // whitelist). Optionally pre-loaded at startup from file(s) named in DFIR_NSRL_FILE (; separated):
   // an NSRLFile.txt RDS export, a hashdeep CSV, or a plain hash-per-line list. Ingest is idempotent.
@@ -6282,6 +6362,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     velociraptorClientStore,
     artifactBundleStore,
     iocWhitelistStore,
+    importerStore,
+    onImporters: () => hub.broadcastAll({ type: "importers_changed" }),
     nsrlStore,
     nsrlDb,
     nsrlDbConfigFile,
