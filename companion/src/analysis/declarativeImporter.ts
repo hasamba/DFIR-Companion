@@ -73,7 +73,145 @@ export function buildImporter(spec: ImporterSpec): ExternalImporter {
   return { id: spec.id, label: spec.label, priority: spec.match.priority, detect, parse: buildParse(spec) };
 }
 
-// Implemented in Task 3 — temporary stub returning an empty result.
+function applyTransform(v: string, t?: string): string {
+  switch (t) {
+    case "trim": return v.trim();
+    case "lowercase": return v.toLowerCase();
+    case "basename": return v.trim().split(/[\\/]/).pop() || v.trim();
+    case "cleanIp": return cleanIp(v);
+    case "defang": return v.replace(/:\/\//g, "[://]").replace(/\./g, "[.]");
+    case "refang": return v.replace(/\[\.\]/g, ".").replace(/\[:\/\/\]/g, "://").replace(/hxxp/gi, "http");
+    default: return v;
+  }
+}
+
+function bindStr(rec: Row, b: { from: string[]; transform?: string; join?: string }): string {
+  if (b.join) {
+    const parts = b.from.map((k) => str(getField(rec, k)).trim()).filter(Boolean);
+    return parts.length ? applyTransform(parts.join(b.join), b.transform) : "";
+  }
+  for (const k of b.from) {
+    const raw = str(getField(rec, k)).trim();
+    if (raw) return applyTransform(raw, b.transform);
+  }
+  return "";
+}
+
+// Column-aware {{name}} substitution — column names may contain spaces, so we cannot reuse the
+// reportTemplate {{\w+}} engine. No helpers, no nested logic → no injection surface.
+function renderDesc(template: string, rec: Row): string {
+  return template
+    .replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_m, key: string) => str(getField(rec, key.trim())).trim())
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const TID = /\bT\d{4}(?:\.\d{3})?\b/gi;
+function resolveMitre(rec: Row, b: ImporterSpec["map"]["mitre"]): string[] {
+  if (!b) return [];
+  if ("fixed" in b) return [...new Set(b.fixed.map((t) => t.toUpperCase()))];
+  const raw = bindStr(rec, b);
+  return [...new Set((raw.match(TID) ?? []).map((t) => t.toUpperCase()))];
+}
+
+function resolveSeverity(rec: Row, b: ImporterSpec["map"]["severity"]): Severity {
+  if (!b) return "Info";
+  if (typeof b === "string") return b;
+  const raw = bindStr(rec, b);
+  if (raw && b.map) {
+    const hit = b.map[raw] ?? Object.entries(b.map).find(([k]) => k.toLowerCase() === raw.toLowerCase())?.[1];
+    if (hit) return hit;
+  }
+  return b.default ?? "Info";
+}
+
+function resolveTs(rec: Row, b: ImporterSpec["map"]["timestamp"]): string {
+  const raw = bindStr(rec, b);
+  if (!raw) return "";
+  if (b.format === "epoch_s" || b.format === "epoch_ms") {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return "";
+    return normalizeTime(new Date(b.format === "epoch_s" ? n * 1000 : n).toISOString());
+  }
+  return normalizeTime(raw);
+}
+
+function rowsOf(text: string, format: string): { rows: Row[]; format: string } {
+  const t = text.trim();
+  const json = format === "json" || format === "ndjson" || (format === "auto" && (t[0] === "{" || t[0] === "["));
+  if (json) {
+    const { records, format: f } = extractRecords(text);
+    return { rows: records, format: f };
+  }
+  const { headers, rows } = parseCsv(text);
+  const objs = rows.map((cells) => {
+    const o: Row = {};
+    headers.forEach((h, i) => { o[h] = cells[i] ?? ""; });
+    return o;
+  });
+  return { rows: objs, format: "csv" };
+}
+
 function buildParse(spec: ImporterSpec): ExternalImporter["parse"] {
-  return () => ({ events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, format: "empty", hostname: "" });
+  const m = spec.map;
+  return (text, opts) => {
+    const { rows, format } = rowsOf(text, spec.match.format);
+    const iocSink = new Map<string, SiemIoc>();
+    const mapped: MappedEvent[] = [];
+    let host = "";
+
+    for (const rec of rows) {
+      let description = renderDesc(m.description, rec);
+      if (!description) continue;
+      const userVal = m.user ? bindStr(rec, m.user) : "";
+      if (userVal) description = `${description} (user ${userVal})`;
+      const severity = resolveSeverity(rec, m.severity);
+      const asset = m.asset ? bindStr(rec, m.asset) : "";
+      if (asset && !host) host = asset;
+
+      const opt = (key: keyof typeof m, name: string): Record<string, string> => {
+        const b = m[key] as { from: string[]; transform?: string } | undefined;
+        if (!b) return {};
+        const v = bindStr(rec, b);
+        return v ? { [name]: v } : {};
+      };
+
+      mapped.push({
+        timestamp: resolveTs(rec, m.timestamp),
+        description,
+        severity,
+        mitre: resolveMitre(rec, m.mitre),
+        aggKey: `${severity}|${description}`,
+        ...(asset ? { asset } : {}),
+        ...opt("sha256", "sha256"),
+        ...opt("md5", "md5"),
+        ...opt("path", "path"),
+        ...opt("processName", "processName"),
+        ...opt("parentName", "parentName"),
+        ...opt("srcIp", "srcIp"),
+        ...opt("dstIp", "dstIp"),
+        ...(m.port ? (() => { const v = bindStr(rec, m.port!); const n = Number(v); return Number.isFinite(n) && v ? { port: n } : {}; })() : {}),
+      });
+
+      for (const rule of m.iocs ?? []) {
+        if ("autoExtract" in rule) {
+          genericIocs(rule.autoExtract.map((k) => [k, str(getField(rec, k))] as [string, string]), iocSink);
+        } else {
+          for (const k of rule.from) {
+            const v = applyTransform(str(getField(rec, k)).trim(), rule.transform);
+            if (v) addIoc(iocSink, rule.type, v);
+          }
+        }
+      }
+    }
+
+    const { events, groups } = aggregateEvents(mapped, {
+      aggregate: spec.options.aggregate,
+      minSeverity: opts?.minSeverity ?? spec.options.minSeverity,
+      maxEvents: spec.options.maxEvents,
+    });
+    let iocs = [...iocSink.values()];
+    if (spec.options.maxIocs && iocs.length > spec.options.maxIocs) iocs = iocs.slice(0, spec.options.maxIocs);
+    return { events, iocs, total: rows.length, kept: events.length, dropped: rows.length - events.length, groups, format, hostname: host };
+  };
 }
