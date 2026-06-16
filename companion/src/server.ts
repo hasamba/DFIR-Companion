@@ -62,7 +62,7 @@ import { parseSysdig } from "./analysis/sysdigImport.js";
 import type { SysdigImportOptions } from "./analysis/sysdigImport.js";
 import { parseWazuhAlerts } from "./analysis/wazuhImport.js";
 import type { WazuhImportOptions } from "./analysis/wazuhImport.js";
-import { detectImportKind, detectImportWithCustom, type ImportKind } from "./analysis/importDetect.js";
+import { detectImportWithCustom } from "./analysis/importDetect.js";
 import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "./analysis/importerStore.js";
 import { parseImporterSpec } from "./analysis/importerSpec.js";
 import { getImporterPrompt } from "./analysis/pipeline.js";
@@ -1916,7 +1916,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       try { uploads = await client.huntUploads(job.huntId); }
       catch (e) { logLine(`[velociraptor] hunt uploads read failed (override DFIR_VELOCIRAPTOR_UPLOAD_VQL?): ${(e as Error).message}`); }
       for (const up of uploads) {
-        const upKind = detectImportKind(up.name, up.content);
+        const upKind = resolveImportKind(up.name, up.content);   // honor custom importers like /import + /push
         if (upKind === "unknown") continue;
         if ((upKind === "csv" || upKind === "log") && !(await getControl(caseId)).enabled) continue;   // AI-dependent, AI off
         try {
