@@ -59,4 +59,11 @@ describe("declarativeImporter parse", () => {
     const csv = "Timestamp,DeviceName,ActionType,FileName,Severity\n2026-06-10T12:00:00Z,H,A,f.exe,weird";
     expect(imp.parse(csv).events[0].severity).toBe("Medium"); // unmapped → default
   });
+
+  it("reports dropped=0 when all rows are represented via aggregation", () => {
+    const imp = buildImporter(spec());
+    const r = imp.parse(MDE_CSV); // 2 identical rows aggregate into 1 event with count 2
+    expect(r.kept).toBe(1);
+    expect(r.dropped).toBe(0);
+  });
 });

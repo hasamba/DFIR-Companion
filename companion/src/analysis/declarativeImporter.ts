@@ -212,6 +212,7 @@ function buildParse(spec: ImporterSpec): ExternalImporter["parse"] {
     });
     let iocs = [...iocSink.values()];
     if (spec.options.maxIocs && iocs.length > spec.options.maxIocs) iocs = iocs.slice(0, spec.options.maxIocs);
-    return { events, iocs, total: rows.length, kept: events.length, dropped: rows.length - events.length, groups, format, hostname: host };
+    const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+    return { events, iocs, total: rows.length, kept: events.length, dropped: Math.max(0, rows.length - represented), groups, format, hostname: host };
   };
 }
