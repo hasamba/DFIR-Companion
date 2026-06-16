@@ -157,6 +157,26 @@ N ago / +N new events" and "+N new IOCs" banners + per-row `NEW` highlights abov
 analog of `synth-meta.json`) — this is at the route level, so the per-format `import-*` routes and script imports
 don't record it.
 
+**Custom declarative importers (the external plugin layer).** Analysts can teach the Companion a new file format
+WITHOUT code by dropping a JSON **`ImporterSpec`** (`analysis/importerSpec.ts` — Zod schema + `BUILTIN_KINDS` +
+`EXAMPLE_IMPORTER_SPEC`) into a folder beside `cases/`. It's **pure data, never executed**: `match` (format +
+header/key/filename/`keyEquals` signatures) DETECTS the file and `map` binds each record's columns into a forensic
+event + IOCs (timestamp/description-template/severity/asset/user/processName/sha256/.../mitre/iocs, with a small
+`transform` set). The interpreter is `declarativeImporter.ts` (`buildImporter` → an `ExternalImporter` with
+`detect`/`parse`); the folder store is `importerStore.ts` (`ImporterStore`, GLOBAL, own subdir beside `cases/` like
+`IocWhitelistStore`/`NsrlStore`; overridable via `DFIR_IMPORTERS_DIR`; loads `*.json`, a bad file is skipped + surfaced,
+NEVER fatal; `config.json` holds the precedence). Detection seam in `importDetect.ts`:
+`detectImportKindEx` (built-in kind + whether the match was a CONFIDENT specific importer vs a generic csv/log/siem
+fallback) and `detectImportWithCustom(filename, text, importers, precedence)` — the precedence setting
+(`builtin-first` default — a confident built-in wins, custom fills the gap; `external-first` — custom tried first).
+The `/import` route resolves a custom id and dispatches to `pipeline.importDeclarative`, which feeds the SAME downstream
+chain as every built-in: `mergeDelta` → import-meta diff → IOC-whitelist/NSRL auto-legitimate → re-synthesize. The
+LLM-authoring prompt is `IMPORTER_PROMPT`/`getImporterPrompt()` (`GET /importers/prompt`, env override
+`DFIR_AI_IMPORTGEN_PROMPT`/`_FILE`); routes `GET/POST /importers` + `POST /importers/reload` + Settings → Importers tab.
+Security: declarative only (no code), user regexes ReDoS-guarded (length-bounded input), the description template engine
+is helper-free (no injection). **INVARIANT: when you add a new built-in `ImportKind`, ALSO add it to `BUILTIN_KINDS`
+in `importerSpec.ts`** (kept in sync with `importDetect.ts`) so a custom importer id can't shadow it.
+
 **IOC whitelist (auto-mark known-good legitimate).** A GLOBAL store (`IocWhitelistStore`, `whitelist/ioc-whitelist.json`
 next to `cases/`, mirrors `ArtifactBundleStore`/`TemplateStore`) holds known-good patterns: **CIDR** (internal IP
 ranges), **exact** (hashes/values), **regex**, each optionally type-scoped. The pure matcher (`analysis/iocWhitelist.ts` —

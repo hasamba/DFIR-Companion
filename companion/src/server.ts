@@ -6180,8 +6180,14 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // forbids creating files directly in a drive root. A subdir is always creatable + writable.
   const iocWhitelistStore = new IocWhitelistStore(join(dirname(casesRoot), "whitelist", "ioc-whitelist.json"));
   // User-authored declarative importers (#: external plugin layer) — its own subdir beside cases/
-  // (same drive-root rationale as the whitelist). Each *.json is one importer spec.
-  const importerStore = new ImporterStore(join(dirname(casesRoot), "importers"));
+  // (same drive-root rationale as the whitelist). Each *.json is one importer spec. The folder is
+  // overridable with DFIR_IMPORTERS_DIR (absolute used as-is; relative anchors to the cases-root
+  // parent, where the default importers/ lives); unset → importers/ beside the cases root.
+  const rawImportersDir = process.env.DFIR_IMPORTERS_DIR;
+  const importersDir = rawImportersDir && rawImportersDir.trim() !== ""
+    ? (isAbsolute(rawImportersDir) ? rawImportersDir : resolve(dirname(casesRoot), rawImportersDir))
+    : join(dirname(casesRoot), "importers");
+  const importerStore = new ImporterStore(importersDir);
   // NSRL known-good hash set (#63) — its own subdir next to cases/ (same drive-root rationale as the
   // whitelist). Optionally pre-loaded at startup from file(s) named in DFIR_NSRL_FILE (; separated):
   // an NSRLFile.txt RDS export, a hashdeep CSV, or a plain hash-per-line list. Ingest is idempotent.
