@@ -16,6 +16,8 @@ import { deltaSchema, askSchema, execSummarySchema, type AskAnswer, type ExecSum
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
 import { applySeverityFloor } from "./severityFloor.js";
+import { EXAMPLE_IMPORTER_SPEC } from "./importerSpec.js";
+import type { ExternalImporter } from "./declarativeImporter.js";
 import { parseJsonLoose } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
@@ -520,7 +522,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -943,6 +945,39 @@ export const getGapHypothesisPrompt = (): string => resolvePrompt("GAPHYP", GAP_
 export const getMemoryNextStepPrompt = (): string => resolvePrompt("MEMNEXT", MEMORY_NEXTSTEP_PROMPT);
 export const getQueryTranslatePrompt = (): string => resolvePrompt("QUERYXLATE", QUERY_TRANSLATE_PROMPT);
 export const getReconcilePrompt = (): string => resolvePrompt("RECONCILE", RECONCILE_PROMPT);
+
+export const IMPORTER_PROMPT = [
+  "You are writing a DECLARATIVE IMPORTER DEFINITION for the DFIR Companion. Output ONLY a single",
+  "JSON object conforming to the schema below — no prose, no markdown fences.",
+  "",
+  "The importer tells the Companion how to (1) RECOGNIZE a file by its shape, and (2) MAP each row",
+  "into a forensic event + IOCs. It is pure data; no code runs.",
+  "",
+  "SCHEMA (all fields):",
+  "- id: kebab-case unique id (not a built-in name). label: human name. version: 1.",
+  "- match: how to detect the file. format: csv|json|ndjson|auto. For CSV use requireHeaders (all",
+  "  present) / anyHeaders (>=1 present). For JSON use requireKeys / anyKeys / keyEquals {key: regex}.",
+  "  Optional filenamePattern (regex). priority: lower = tried earlier (default 100).",
+  "- map: timestamp {from:[cols], format:auto|iso|epoch_s|epoch_ms} (REQUIRED); description: a",
+  "  template string with {{ColumnName}} placeholders (REQUIRED); severity: a fixed level OR",
+  "  {from:[col], map:{value:Level}, default:Level}; asset (host), user (account), processName,",
+  "  parentName, sha256, md5, path, srcIp, dstIp, port: each {from:[cols], transform?}; mitre:",
+  "  {from:[col]} (parses Txxxx) or {fixed:[...]}; iocs: list of {type,from:[cols]} or",
+  "  {autoExtract:[cols]}. Levels: Critical|High|Medium|Low|Info. transforms: trim|lowercase|",
+  "  basename|cleanIp|defang|refang.",
+  "- options: { aggregate:true, minSeverity?, maxEvents?, maxIocs? }.",
+  "",
+  "WORKED EXAMPLE (a valid importer):",
+  JSON.stringify(EXAMPLE_IMPORTER_SPEC, null, 2),
+  "",
+  "Now write an importer for THIS file. Paste a representative sample of your exported file below,",
+  "then I will return one JSON importer definition that maps it for the DFIR Companion.",
+  "",
+  "FILE SAMPLE:",
+  "<<< paste a few representative rows/records of your export here >>>",
+].join("\n");
+
+export const getImporterPrompt = (): string => resolvePrompt("IMPORTGEN", IMPORTER_PROMPT);
 
 export interface PipelineOptions {
   provider?: AIProvider;
@@ -1455,6 +1490,49 @@ export class AnalysisPipeline {
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Run a USER-authored declarative importer (the external plugin path). Mirrors the built-in
+  // deterministic wrappers exactly: parse -> severity floor -> standard delta (findings/MITRE empty,
+  // MITRE rides inside each event) -> mergeDelta -> save -> notify. Does NOT depend on any shared-runner
+  // refactor of the built-ins.
+  async importDeclarative(
+    caseId: string,
+    text: string,
+    opts: {
+      importer: ExternalImporter;
+      label: string;
+      idPrefix: string;
+      importedAt: string;
+      minSeverity?: Severity;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = opts.importer.parse(text, { minSeverity: opts.minSeverity });
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [opts.importer.label],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `${opts.importer.label} import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [opts.label] });
     await this.opts.stateStore.save(state);
     this.opts.onState?.(state);
     opts.onProgress?.(1, 1);
