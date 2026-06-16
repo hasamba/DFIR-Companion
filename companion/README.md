@@ -25,32 +25,29 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 
 ## Configuration (`companion/.env`, gitignored)
 
-| Variable | Meaning | Example |
-| --- | --- | --- |
-| `DFIR_CASES_ROOT` | Where case folders are written. Relative paths resolve against `companion/`, so the same folder is used no matter where you launch from. | `./cases` or `../cases` |
-| `DFIR_PORT` | Port the localhost server binds to. Default `4773`. Must be 1–65535; invalid values fall back to the default with a warning. Change this if 4773 is taken, or to run multiple companions side-by-side. The extension and dashboard must use the same port. | `4773` or `4774` |
-| `DFIR_LOG_LEVEL` | Log verbosity: `debug` \| `info` \| `warn` \| `error` (default `info`). Logs tee to the console **and** to files — a global `logs/session-<time>.log` (beside the cases root) + a per-case `cases/<id>/logs/session-<time>.log` (new file per server start). `debug` traces every AI call (model/phase + token usage), screenshot capture, OCR redaction, anonymization, and enrichment lookups. Change live (no restart) from **Settings → Log verbosity**. | `info` or `debug` |
-| `DFIR_LOG_DIR` | Folder for the **global** session log. Default: a `logs/` folder beside the cases root. Relative paths anchor to `companion/`; absolute paths used as-is. Per-case logs always stay in the case folder (`cases/<id>/logs/`). | `./logs` or `D:\DFIR\logs` |
-| `DFIR_AI_PROVIDER` | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini`. Leave **unset** to run capture-only (no AI). | `litellm` |
-| `DFIR_AI_MODEL` | Model id understood by the provider. | `ollama/llama3.1` |
-| `DFIR_AI_KEY` | Provider API key (blank for an auth-less local LiteLLM proxy). | `sk-...` |
-| `DFIR_AI_BASE_URL` | Override the provider's API base URL. Needed for a self-hosted **LiteLLM** proxy or any OpenAI-compatible local endpoint. `litellm` defaults to `http://localhost:4000/v1`. | `http://localhost:4000/v1` |
-| `DFIR_AI_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high`). High tiles screenshots at full resolution for accurate small-text OCR (OpenAI/OpenRouter models). | `high` |
-| `DFIR_AI_SYNTH_PROVIDER` / `DFIR_AI_SYNTH_MODEL` / `DFIR_AI_SYNTH_KEY` | Optional **synthesis** model (findings / MITRE / attacker path). The vars above are the cheap per-screenshot **extraction** model; point a stronger model here for the one text-only synthesis call. Unset → reuses the extraction model. | `google/gemini-2.5-pro` |
-| `DFIR_AI_VELO_PROVIDER` / `DFIR_AI_VELO_MODEL` / `DFIR_AI_VELO_KEY` / `DFIR_AI_VELO_BASE_URL` | Dedicated model for **Velociraptor VQL hunt generation** (`✨ Suggest Velociraptor hunts` + Fleet Hunts) — separate from extraction/synthesis/OCR, since many models botch VQL (#70). Key/base-URL fall back to the main `DFIR_AI_KEY`/`DFIR_AI_BASE_URL`. Also editable in **Settings → AI**. | `openrouter` / `anthropic/claude-haiku-4.5` |
-| `DFIR_AI_SECOND_OPINION_MODEL` / `_PROVIDER` / `_KEY` / `_BASE_URL` | Dedicated model for the **second LLM opinion** (#116) — an on-demand QA cross-check that re-synthesizes the case with a *different* model and reconciles the disagreements. **Off until `DFIR_AI_SECOND_OPINION_MODEL` is set** (that var hides/shows the dashboard *2nd opinion* button). Pick a **different provider** than your synthesis model for a genuinely independent opinion. Provider/key/base-URL fall back to the main `DFIR_AI_*`. | `gpt-4o` |
-
-Other AI tunables: `DFIR_AI_TIMEOUT_MS` (per-request timeout, default 180000),
-`DFIR_AI_MAX_TOKENS` (max completion tokens, default 16000 — also stops OpenRouter from
-402-ing a large request by over-reserving credit), `DFIR_AI_SYNTH_MAX_EVENTS`
-(events fed to the synthesis prompt, default 300, most-severe first), and
-`DFIR_AI_CONTEXT_TOKENS` (the model's context window, default **128000**). Every prompt is
-budgeted to fit `DFIR_AI_CONTEXT_TOKENS`: the synthesis/ask timelines are trimmed, CSV/log
-imports are batched by token budget (not just row count), and the state-summary echo is
-bounded — so a big case no longer fails with *"maximum context length is 128000 tokens"*.
-Raise it for a bigger-context model (Claude 200k, Gemini 1M); the default only trims
-genuinely huge prompts. A prompt that still can't fit fails fast with an actionable message
-instead of a cryptic upstream 400.
+| Variable | Meaning |
+| --- | --- |
+| `DFIR_CASES_ROOT` | Case folder location (relative to `companion/`) |
+| `DFIR_PORT` | Server port (default `4773`); must match extension + dashboard |
+| `DFIR_LOG_LEVEL` | `debug`/`info`/`warn`/`error` (default `info`); live toggle via Settings |
+| `DFIR_LOG_DIR` | Global session log folder (beside cases root) |
+| **AI — extraction** | — |
+| `DFIR_AI_PROVIDER` | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini` (unset = capture-only) |
+| `DFIR_AI_MODEL` | Model id (must support vision for screenshot extraction) |
+| `DFIR_AI_KEY` | Provider API key (blank for auth-less local proxy) |
+| `DFIR_AI_BASE_URL` | Override API base URL (for LiteLLM or OpenAI-compatible endpoints) |
+| `DFIR_AI_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high` for OCR) |
+| **AI — synthesis (optional two-tier)** | — |
+| `DFIR_AI_SYNTH_PROVIDER` / `_MODEL` / `_KEY` | Stronger model for findings/MITRE/attacker path (unset = reuses extraction model) |
+| **AI — Velociraptor VQL generation** | — |
+| `DFIR_AI_VELO_PROVIDER` / `_MODEL` / `_KEY` | Dedicated model for VQL hunts (many models botch VQL) |
+| **AI — second LLM opinion** | — |
+| `DFIR_AI_SECOND_OPINION_MODEL` | On-demand QA cross-check (set to enable; pick different provider) |
+| **AI tuning** | — |
+| `DFIR_AI_TIMEOUT_MS` | Per-request timeout; default 180000 |
+| `DFIR_AI_MAX_TOKENS` | Max completion tokens; default 16000 (prevents OpenRouter 402) |
+| `DFIR_AI_SYNTH_MAX_EVENTS` | Events sent to synthesis; default 300 (high-severity first) |
+| `DFIR_AI_CONTEXT_TOKENS` | Model context window; default 128000 (raise for Claude 200k/Gemini 1M) |
 
 Local models via **LiteLLM**: run [LiteLLM](https://docs.litellm.ai/) as a local gateway
 in front of Ollama / vLLM / any of its 100+ backends — it speaks the OpenAI chat-completions
@@ -74,15 +71,7 @@ private CA (verification stays on), or `DFIR_MISP_INSECURE` / `DFIR_YETI_INSECUR
 skip verification for a lab (insecure — logs a warning). Each is scoped to that one provider
 via an injected undici dispatcher; VirusTotal/AbuseIPDB and the AI calls keep the verified store.
 
-Custom AI prompts: override any of the five built-in prompts — `SYSTEM` (per-screenshot
-extraction), `CSV`, `LOG`, `SYNTH` (holistic synthesis), `ASK` (case Q&A) — via env. Set `DFIR_AI_<NAME>_PROMPT`
-for inline text, or `DFIR_AI_<NAME>_PROMPT_FILE` to point at a file. The **file** is re-read on
-each AI call, so editing it applies on the next analysis with **no restart**; an unreadable/empty
-file falls back to the built-in prompt with a warning. `npm run prompts:eject` writes the four
-defaults to `./prompts` so you can start from them.
-
-Shell environment variables override `.env`. `GET /health` returns `{ aiEnabled }`
-so you can confirm whether an AI provider is configured.
+**Custom AI prompts:** override via `DFIR_AI_<NAME>_PROMPT` (inline) or `DFIR_AI_<NAME>_PROMPT_FILE` (file, re-read each call, no restart); `npm run prompts:eject` dumps defaults to `./prompts`. Shell env vars override `.env`; `GET /health` returns `{ aiEnabled }`.
 
 ## npm scripts
 
