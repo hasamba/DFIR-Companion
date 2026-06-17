@@ -215,9 +215,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Freshness** — "last synthesized N ago" + diff; "last import N ago" + NEW row highlights
 
 ### Threat-intel enrichment (off by default — opt-in per case)
-- **Sources** — VirusTotal, Hunting.ch (MalwareBazaar/ThreatFox/URLhaus/YARAify), CrowdStrike Falcon TI, AbuseIPDB, MISP, YETI, RockyRaccoon (process prevalence + anomalous parent/child)
+- **Sources** — VirusTotal, Hunting.ch (MalwareBazaar/ThreatFox/URLhaus/YARAify), CrowdStrike Falcon TI, AbuseIPDB, MISP, YETI, OpenCTI, RockyRaccoon (process prevalence + anomalous parent/child)
 - **IP infrastructure** — Reverse DNS (PTR hostnames), WHOIS over RDAP (netblock/ASN/abuse-contact), GeoIP (country/city/ASN/org), Shodan host (hosted domains/ports/services/CVEs); the "where from / who owns it / what's hosted" context layer — Reverse DNS/WHOIS/GeoIP are keyless, Shodan reuses `DFIR_SHODAN_KEY`
-- **Local vs external** — MISP/YETI on-box; third-party SaaS opt-in per case; enabling source re-checks all existing IOCs
+- **Local vs external** — MISP/YETI/OpenCTI on-box; third-party SaaS opt-in per case; enabling source re-checks all existing IOCs
 - **Reachability gate** — health-probe self-hosted instances; auto-resume when online
 
 ### Customer exposure (separate from IOC enrichment)
@@ -472,6 +472,11 @@ Add a key to enable that provider. All external providers are opt-in per case fr
 | `DFIR_YETI_KEY` | — | YETI API key |
 | `DFIR_YETI_CA` | — | PEM CA bundle for internal-CA YETI |
 | `DFIR_YETI_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+| `DFIR_OPENCTI_URL` | — | OpenCTI instance URL — both URL + key required (hash/ip/domain/url) |
+| `DFIR_OPENCTI_KEY` | — | OpenCTI API token |
+| `DFIR_OPENCTI_CA` | — | PEM CA bundle for internal-CA OpenCTI |
+| `DFIR_OPENCTI_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+| `DFIR_OPENCTI_MALICIOUS_SCORE` | `75` | `x_opencti_score` threshold for malicious verdict |
 | `DFIR_RDAP_URL` | `https://rdap.org` | WHOIS-over-RDAP base (keyless; IANA bootstrap to the owning RIR) |
 | `DFIR_GEOIP_URL` | `https://ipinfo.io/{ip}/json` | GeoIP URL template (keyless HTTPS; `{ip}` substituted; parser also tolerates ip-api.com + ipwho.is) |
 | `DFIR_GEOIP_KEY` | — | Optional GeoIP key (fills `{key}`, else appended as `?token=`) for a paid/self-hosted backend |
