@@ -5419,6 +5419,21 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Explain a single forensic event in context (issue #141). EPHEMERAL — no state change.
+  // Returns structured analysis: what happened, why it matters, ATT&CK mapping, pivot queries,
+  // and evidence for/against maliciousness. Useful for junior analysts and training.
+  app.post("/cases/:id/events/:eid/explain", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for event explanation" });
+    try {
+      const result = await options.pipeline.explainEvent(req.params.id, req.params.eid);
+      return res.status(200).json(result);
+    } catch (err: unknown) {
+      const msg = (err as Error).message;
+      if (msg.startsWith("event not found") || msg.startsWith("Case not found")) return res.status(404).json({ error: msg });
+      return res.status(500).json({ error: msg });
+    }
+  });
+
   // Translate a plain-English hunting request into runnable queries per platform (issue #100).
   // EPHEMERAL (no state change) — the dashboard shows each query for review, copy, and (for the
   // Velociraptor query) one-click deploy via POST /velociraptor/hunt. Body: { request, platforms? }.

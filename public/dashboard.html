@@ -543,6 +543,12 @@
     .hunt-add { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
       padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .hunt-add:hover { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); }
+    .explain-btn { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
+      padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+    .explain-btn:hover { color: var(--c-ffd93b); border-color: var(--c-a88200); }
+    .explain-modal { width: min(640px, 95vw); max-height: 85vh; overflow-y: auto; }
+    .explain-section { margin-bottom: 10px; }
+    .explain-section strong { display: block; margin-bottom: 3px; color: var(--c-c9d1d9); }
     .hunt-modal { width: min(740px, 95vw); }
     .hunt-card { border: 1px solid var(--c-2a2f3a); border-radius: 6px; margin: 8px 0; overflow: hidden; }
     .hunt-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -566,8 +572,8 @@
     .ev-row { display: flex; align-items: flex-start; border-bottom: 1px solid var(--c-1a1f28); padding: 3px 0; }
     .ev-row:hover { background: var(--c-0d1117); }
     .ev-row.ev-selected { background: var(--c-142038); }
-    .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 118px; padding-top: 1px; }
-    .ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add { margin-left: 0; }
+    .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 140px; padding-top: 1px; }
+    .ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add, .ev-col-ctrl .explain-btn { margin-left: 0; }
     .ev-checkbox { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; margin: 0; }
     .ev-star { background: transparent; border: 0; color: var(--c-3a4050); font-size: 13px; cursor: pointer; padding: 0 1px; line-height: 1; flex-shrink: 0; }
     .ev-star.starred, .ev-star:hover { color: var(--c-ffd93b); }
@@ -1167,6 +1173,16 @@
       <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
         <button id="huntClose" style="background:var(--c-2a2f3a);">Close</button>
         <span style="color:var(--c-9aa4b2);font-size:11px">Pivot templates — review &amp; adapt field/table names to your schema before running.</span>
+      </div>
+    </div>
+  </div>
+  <div id="explainOverlay" class="comment-overlay">
+    <div class="comment-modal explain-modal">
+      <h3>💡 Explain Event</h3>
+      <div id="explainEventTitle" style="color:var(--c-9aa4b2);font-size:12px;margin-bottom:10px;font-style:italic"></div>
+      <div id="explainBody"></div>
+      <div style="margin-top:12px">
+        <button id="explainClose" style="background:var(--c-2a2f3a);">Close</button>
       </div>
     </div>
   </div>
@@ -4249,6 +4265,10 @@
       return `<button class="hunt-add" data-hk="${escAttr(kind)}" data-hi="${escAttr(String(id))}" `
         + `title="Generate hunt / pivot queries (Velociraptor, Defender KQL, Elastic ES|QL, Splunk, Sigma, YARA, Suricata)">🔍</button>`;
     }
+    // Explain button for forensic events (#141): one AI call per click, no state change.
+    function explainChip(id) {
+      return `<button class="explain-btn" data-exid="${escAttr(String(id))}" title="Explain this event in context (AI) — what happened, why it matters, ATT&amp;CK mapping, pivot queries">💡</button>`;
+    }
     // Indicator harvesting for EVENT hunts. Events often carry indicators only in free text — a
     // Suricata/Zeek alert puts the domain + IPs in its description, not in structured fields — so a
     // hunt built purely from structured fields wrongly shows "nothing to pivot on". Refang the text,
@@ -5606,6 +5626,54 @@
           };
         })
         .catch(e => box.innerHTML = `<div style="color:var(--c-ff9f43)">ask failed: ${esc(e.message)} — restart the companion server if this 404s</div>`);
+    }
+
+    // ── Explain Event (#141) ─────────────────────────────────────────────────────────────────
+    // Single AI call per click: what happened, why it matters, ATT&CK mapping, pivot queries,
+    // and evidence for/against maliciousness. Ephemeral — no state change.
+    function openExplainPanel(caseId, eventId) {
+      const event = lastState && lastState.forensicTimeline && lastState.forensicTimeline.find(e => e.id === eventId);
+      const overlay = document.getElementById("explainOverlay");
+      const titleEl = document.getElementById("explainEventTitle");
+      const bodyEl = document.getElementById("explainBody");
+      overlay.classList.add("open");
+      titleEl.textContent = event ? event.description.slice(0, 140) : eventId;
+      bodyEl.innerHTML = "<div style='color:var(--c-9aa4b2)'>analyzing…</div>";
+      fetch(`/cases/${encodeURIComponent(caseId)}/events/${encodeURIComponent(eventId)}/explain`, { method: "POST" })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(result => {
+          const section = (label, content, color) =>
+            content ? `<div class="explain-section"><strong>${label}</strong><span style="color:${color || "var(--c-c9d1d9)"}">${esc(content)}</span></div>` : "";
+          const qhtml = (result.pivotQueries || []).map((q, i) => {
+            const uid = "exq" + i + "_" + Date.now();
+            return `<div class="hunt-card">`
+              + `<div class="hunt-card-head"><span>${esc(q.platform || "query")}</span>`
+              + `<button class="hunt-copy" onclick="navigator.clipboard?.writeText(${JSON.stringify(q.query)});this.textContent='✓ copied';setTimeout(()=>this.textContent='Copy',1500)">Copy</button></div>`
+              + `<pre style="margin:0;padding:10px;background:var(--c-0f1115);color:var(--c-d6deea);font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all">${esc(q.query)}</pre>`
+              + (q.rationale ? `<div style="padding:6px 10px;font-size:11px;color:var(--c-9aa4b2)">${esc(q.rationale)}</div>` : "")
+              + `</div>`;
+          }).join("");
+          const cited = (result.relatedEventIds || []).map(esc).join(", ");
+          bodyEl.innerHTML =
+            section("What happened", result.summary, "var(--c-c9d1d9)") +
+            section("Why it matters", result.whyItMatters, "var(--c-6aa9ff)") +
+            (result.normalContext || result.suspiciousIndicators
+              ? `<div class="explain-section"><strong>Normal vs. suspicious</strong>`
+                + (result.normalContext ? `<div style="color:var(--c-9aa4b2);margin-bottom:3px">${esc(result.normalContext)}</div>` : "")
+                + (result.suspiciousIndicators ? `<div style="color:var(--c-ff9f43)">${esc(result.suspiciousIndicators)}</div>` : "")
+                + `</div>` : "") +
+            section("ATT&CK mapping", result.attackMapping, "var(--c-c9d1d9)") +
+            (result.evidenceFor || result.evidenceAgainst
+              ? `<div class="explain-section"><strong>Evidence</strong>`
+                + (result.evidenceFor ? `<div style="color:var(--c-ff7a7a)">✓ ${esc(result.evidenceFor)}</div>` : "")
+                + (result.evidenceAgainst ? `<div style="color:var(--c-9aa4b2);margin-top:3px">⊘ ${esc(result.evidenceAgainst)}</div>` : "")
+                + `</div>` : "") +
+            (qhtml ? `<div class="explain-section"><strong>Pivot queries</strong>${qhtml}</div>` : "") +
+            (cited ? `<div class="explain-section"><strong>Related events</strong><span style="color:var(--c-9aa4b2);font-size:12px">${cited}</span></div>` : "");
+        })
+        .catch(e => {
+          bodyEl.innerHTML = `<div style="color:var(--c-ff9f43)">explain failed: ${esc(e.message)} — restart the companion server if this 404s</div>`;
+        });
     }
 
     // ── Query Translator (natural language → hunt queries, #100) ──────────────────────────
@@ -7636,7 +7704,7 @@
           + `<div class="ev-col-ctrl">`
           + `<input type="checkbox" class="ev-checkbox ev-row-cb" data-evid="${escAttr(id)}" ${isSelected ? "checked" : ""} title="Select event" />`
           + `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>`
-          + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)}`
+          + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)}`
           + `</div>`
           + `<div class="ev-col-time"><span class="sev-${esc(e.severity)}">${span}</span></div>`
           + `<div class="ev-col-content">${tagPills("event", e.id)}${newBadge}${badge}${corro}${chain}${host} <strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}`
@@ -8327,7 +8395,12 @@
       const tag = e.target.closest && e.target.closest(".tag-add");
       if (tag) { openTagModal(tag.getAttribute("data-tt"), tag.getAttribute("data-ti")); return; }
       const hunt = e.target.closest && e.target.closest(".hunt-add");
-      if (hunt) openHuntModal(hunt.getAttribute("data-hk"), hunt.getAttribute("data-hi"));
+      if (hunt) { openHuntModal(hunt.getAttribute("data-hk"), hunt.getAttribute("data-hi")); return; }
+      const explain = e.target.closest && e.target.closest(".explain-btn");
+      if (explain) {
+        const caseId = document.getElementById("caseId").value.trim();
+        if (caseId) openExplainPanel(caseId, explain.getAttribute("data-exid"));
+      }
     });
     // Row checkboxes + select-all (change, not click, so we read the post-toggle checked state)
     document.querySelector("main").addEventListener("change", (e) => {
@@ -8394,6 +8467,9 @@
     // Hunt-pivot modal (the 🔍 buttons are handled by the main click handler above).
     document.getElementById("huntClose").onclick = closeHuntModal;
     document.getElementById("huntOverlay").addEventListener("click", (e) => { if (e.target.id === "huntOverlay") closeHuntModal(); });
+    // Explain-event modal (#141).
+    document.getElementById("explainClose").onclick = () => document.getElementById("explainOverlay").classList.remove("open");
+    document.getElementById("explainOverlay").addEventListener("click", (e) => { if (e.target.id === "explainOverlay") document.getElementById("explainOverlay").classList.remove("open"); });
     // Executive summary generator (stopPropagation so the h2 click doesn't collapse the section).
     document.getElementById("genExecBtn").addEventListener("click", (e) => { e.stopPropagation(); genExecSummary(); });
     // Suggested Fleet Hunts generator (#57) — same stopPropagation guard so clicking ✨ doesn't toggle the section.
