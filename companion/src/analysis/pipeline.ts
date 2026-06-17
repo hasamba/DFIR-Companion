@@ -21,6 +21,7 @@ import type { ExternalImporter } from "./declarativeImporter.js";
 import { parseJsonLoose } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
+import { resolveSynthThinkingBudget, type SynthThinkingInput } from "./synthThinking.js";
 import { detectTimelineGaps, backfillSilenceGapFindings, gapEnvOptions } from "./gapDetect.js";
 import {
   gapHypothesesResponseSchema,
@@ -2561,6 +2562,36 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
+  // Targeted hunt for ONE ATT&CK technique the adversary-emulation panel flagged as a likely next
+  // move (issue #121). Unlike suggestHunts (findings-driven), this is technique-DRIVEN: the technique
+  // has NOT been observed yet — the analyst wants VQL to detect it proactively if a lookalike actor
+  // brings it here. Reuses the fleet-hunt system prompt + schema + sanitizer + deploy flow, with a
+  // technique-focused user prompt grounded in the case's pivotable IOCs. EPHEMERAL like suggestHunts()
+  // — no state change. Works on ANY case (the technique is by definition not in the timeline).
+  async suggestTechniqueHunts(caseId: string, techniqueId: string, techniqueName?: string): Promise<HuntSuggestion[]> {
+    const provider = this.opts.velociraptorProvider ?? this.opts.synthesisProvider ?? this.requireProvider("technique hunt");
+    const id = String(techniqueId || "").trim().toUpperCase();
+    if (!/^T\d{4}(?:\.\d{3})?$/.test(id)) return []; // not a technique id — nothing to hunt
+    const loaded = await this.opts.stateStore.load(caseId);
+    const iocText = renderHuntIocs(loaded.iocs);
+    const label = techniqueName ? `${id} (${techniqueName})` : id;
+    const userPrompt =
+      `Focus EXCLUSIVELY on ONE ATT&CK technique the analyst wants to hunt for proactively across the fleet:\n` +
+      `  ${label}\n\n` +
+      `This technique has NOT yet been observed in this case. A group whose tradecraft resembles this case is known ` +
+      `to use it, so the goal is to DETECT it on any enrolled endpoint if it is being used here but missed.\n\n` +
+      `Propose 1–3 CLIENT-side Velociraptor VQL hunts that surface this technique's tradecraft generally (not tied to ` +
+      `one host). Where relevant, pivot on these case indicators, but do not depend on them:\n` +
+      `PIVOTABLE INDICATORS:\n${iocText}\n\n` +
+      `Set every suggestion's mitreTechniques to ["${id}"]. Propose the hunt(s) as JSON.`;
+    const limit = Number(process.env.DFIR_HUNT_SUGGEST_MAX) || HUNT_SUGGEST_MAX_DEFAULT;
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "hunt-technique");
+      const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
+      return sanitizeHuntSuggestions(suggestions, limit);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
   // Memory-forensics "Next-Step" agent (issue #101). The case already has Volatility 3 / Rekall output
   // imported as forensic events; read that memory evidence (the process tree, connections, malfind,
   // command lines, services), identify the anomalies, and propose the EXACT next Volatility 3 command
@@ -2826,7 +2857,7 @@ export class AnalysisPipeline {
   // (no save, no synth-meta, no notifications, no accepted-delta re-apply) — used by the second
   // opinion (issue #116) to compute model B's analysis non-destructively. `provider` overrides the
   // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
-  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider } = {}): Promise<InvestigationState> {
+  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider } & SynthThinkingInput = {}): Promise<InvestigationState> {
     const synthProvider = opts.provider ?? this.opts.synthesisProvider ?? this.requireProvider("synthesis");
     const loaded = await this.opts.stateStore.load(caseId);
     if (loaded.forensicTimeline.length === 0) return loaded;
@@ -2951,8 +2982,20 @@ export class AnalysisPipeline {
 
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
+    // Chain-of-Thought / extended thinking for the complex synthesis call (issue #121, feature 1).
+    // Budget resolved per-run: an explicit value or the dashboard "deep reasoning" toggle wins, else
+    // the global DFIR_AI_SYNTH_THINKING_TOKENS default (off when unset). The Anthropic provider maps
+    // it to extended thinking; OpenRouter to its unified `reasoning`; other providers ignore it. Only
+    // synthesis reasons step-by-step — extraction stays cheap.
+    const synthThinkingTokens = resolveSynthThinkingBudget(opts, Number(process.env.DFIR_AI_SYNTH_THINKING_TOKENS) || 0);
     const delta = await withRetry(async () => {
-      const parsed = await this.analyzeRestored(caseId, state, synthProvider, { systemPrompt: getSynthesisPrompt(), userPrompt, images: [] }, "synthesis");
+      const parsed = await this.analyzeRestored(
+        caseId,
+        state,
+        synthProvider,
+        { systemPrompt: getSynthesisPrompt(), userPrompt, images: [], ...(synthThinkingTokens > 0 ? { thinkingTokens: synthThinkingTokens } : {}) },
+        "synthesis",
+      );
       return deltaSchema.parse(parsed);
     }, retries, backoffMs);
 
@@ -3038,24 +3081,26 @@ export class AnalysisPipeline {
   // rationale + recommendation. Returns the saved record; never mutates the case state — the
   // analyst adjudicates per delta via applySecondOpinion(). Throws (→ route 501/500) when the
   // second-opinion model isn't configured.
-  async secondOpinion(caseId: string): Promise<SecondOpinion> {
+  async secondOpinion(caseId: string, opts: SynthThinkingInput = {}): Promise<SecondOpinion> {
     const provider = this.opts.secondOpinionProvider;
     if (!provider) throw new Error("second-opinion model not configured (set DFIR_AI_SECOND_OPINION_MODEL)");
     if (!this.opts.secondOpinionStore) throw new Error("second-opinion store not configured");
     if ((await this.opts.stateStore.load(caseId)).forensicTimeline.length === 0) {
       throw new Error("nothing to review — import evidence and synthesize the case first");
     }
+    // Deep-reasoning toggle (#121) flows into BOTH synthesis passes below, so model A's freshened
+    // synthesis and model B's independent pass reason equally hard for the comparison.
 
     // Pass 0 — freshen the PRIMARY synthesis so model A reflects the CURRENT timeline. Without this,
     // a stale saved A vs a fresh model-B run produces deltas that are staleness artifacts (e.g. the
     // deterministic gap-silence / high-severity backfill findings) rather than real model
     // disagreements. Uses skip-if-unchanged (no `force`), so it's a NO-OP (no AI call) when A is
     // already current — it only re-synthesizes when the in-scope timeline/IOCs/scope changed.
-    const a = await this.synthesize(caseId);
+    const a = await this.synthesize(caseId, { deepReasoning: opts.deepReasoning, thinkingTokens: opts.thinkingTokens });
 
     // Pass 1 — independent synthesis with model B over the SAME current timeline/context, routed
     // through a different model and NOT persisted (dryRun). This is model B's analysis.
-    const b = await this.synthesize(caseId, { dryRun: true, force: true, provider });
+    const b = await this.synthesize(caseId, { dryRun: true, force: true, provider, deepReasoning: opts.deepReasoning, thinkingTokens: opts.thinkingTokens });
 
     const modelA = this.opts.synthesisModelLabel ?? (this.opts.synthesisProvider ?? this.opts.provider)?.name ?? "model A";
     const modelB = this.opts.secondOpinionModelLabel ?? provider.name;

@@ -47,6 +47,8 @@ interface StixObject {
   relationship_type?: string;
   source_ref?: string;
   target_ref?: string;
+  // data-component → its parent data-source
+  x_mitre_data_source_ref?: string;
 }
 interface StixBundle {
   objects?: StixObject[];
@@ -110,12 +112,40 @@ async function main(): Promise<void> {
   const objects = bundle.objects ?? [];
   console.log(`[attack] ${objects.length} STIX objects`);
 
-  // 1. attack-pattern STIX id → full technique id (live techniques only).
+  // 1. attack-pattern STIX id → full technique id (live techniques only), plus id → human name.
   const techniqueById = new Map<string, string>();
+  const techniqueName = new Map<string, string>(); // full technique id → name ("System Information Discovery")
   for (const o of objects) {
     if (o.type !== "attack-pattern" || !o.id || !isLive(o)) continue;
     const full = fullTechnique(attackId(o));
-    if (full) techniqueById.set(o.id, full);
+    if (!full) continue;
+    techniqueById.set(o.id, full);
+    if (o.name) techniqueName.set(full, o.name.trim());
+  }
+
+  // 1b. Data sources (ATT&CK's relationship model): an x-mitre-data-component belongs to an
+  // x-mitre-data-source, and a "detects" relationship links a component to the technique it can
+  // detect. We resolve each technique → the "Source: Component" labels (e.g. "Process: Process
+  // Creation") so the emulation panel can say WHERE to look when hunting that technique (#121).
+  const dataSourceName = new Map<string, string>(); // x-mitre-data-source stix id → name
+  for (const o of objects) {
+    if (o.type === "x-mitre-data-source" && o.id && o.name && isLive(o)) dataSourceName.set(o.id, o.name.trim());
+  }
+  const componentLabel = new Map<string, string>(); // x-mitre-data-component stix id → "Source: Component"
+  for (const o of objects) {
+    if (o.type !== "x-mitre-data-component" || !o.id || !o.name || !isLive(o)) continue;
+    const src = o.x_mitre_data_source_ref ? dataSourceName.get(o.x_mitre_data_source_ref) : undefined;
+    componentLabel.set(o.id, src ? `${src}: ${o.name.trim()}` : o.name.trim());
+  }
+  const dataSourcesByTechnique = new Map<string, Set<string>>(); // full technique id → labels
+  for (const o of objects) {
+    if (o.type !== "relationship" || o.relationship_type !== "detects") continue;
+    const label = o.source_ref ? componentLabel.get(o.source_ref) : undefined;
+    const tech = o.target_ref ? techniqueById.get(o.target_ref) : undefined;
+    if (!label || !tech) continue;
+    let set = dataSourcesByTechnique.get(tech);
+    if (!set) { set = new Set<string>(); dataSourcesByTechnique.set(tech, set); }
+    set.add(label);
   }
 
   // 2. intrusion-set STIX id → slim group record (live groups only).
@@ -152,6 +182,18 @@ async function main(): Promise<void> {
   }
   groups.sort((a, b) => a.id.localeCompare(b.id));
 
+  // Technique metadata (name + data sources) for ONLY the techniques some group uses — bounds the
+  // map (no point shipping names for techniques no group is attributed). Powers the human-readable
+  // labels and "where to look" hunt hints on the emulation panel (#121).
+  const usedTechniques = new Set<string>();
+  for (const g of groups) for (const t of g.techniques) usedTechniques.add(t);
+  const techniqueInfo: Record<string, { name: string; dataSources?: string[] }> = {};
+  for (const id of [...usedTechniques].sort()) {
+    const name = techniqueName.get(id) ?? "";
+    const ds = dataSourcesByTechnique.get(id);
+    techniqueInfo[id] = ds && ds.size ? { name, dataSources: [...ds].sort() } : { name };
+  }
+
   // ATT&CK release version from the collection object, when present.
   const collection = objects.find((o) => o.type === "x-mitre-collection");
   const attackVersion = collection?.x_mitre_version || "unknown";
@@ -164,6 +206,7 @@ async function main(): Promise<void> {
     techniqueField: "full" as const, // techniques keep sub-technique granularity (T1059.001), base derived at match time
     groupCount: groups.length,
     groups,
+    techniqueInfo, // full technique id → { name, dataSources? } for the used techniques (#121)
   };
 
   await mkdir(dirname(OUT_PATH), { recursive: true });
