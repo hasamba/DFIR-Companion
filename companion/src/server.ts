@@ -79,6 +79,7 @@ import { AbuseIpdbProvider } from "./enrichment/abuseipdb.js";
 import { MispProvider } from "./enrichment/misp.js";
 import { RockyRaccoonProvider, type ParentChildResult } from "./enrichment/rockyraccoon.js";
 import { YetiProvider } from "./enrichment/yeti.js";
+import { OpenCtiProvider } from "./enrichment/opencti.js";
 import { ReverseDnsProvider } from "./enrichment/reverseDns.js";
 import { RdapProvider } from "./enrichment/rdap.js";
 import { GeoIpProvider } from "./enrichment/geoip.js";
@@ -6241,7 +6242,7 @@ export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
 // self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
 // DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
-function tlsFetchFor(name: "MISP" | "YETI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY") {
+function tlsFetchFor(name: "MISP" | "YETI" | "OPENCTI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY") {
   return buildTlsFetch({
     caCertPath: process.env[`DFIR_${name}_CA`],
     insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
@@ -6360,6 +6361,15 @@ export function buildEnrichmentProviders(): EnrichmentProvider[] {
   if (process.env.DFIR_MISP_URL && process.env.DFIR_MISP_KEY) providers.push(new MispProvider({ baseUrl: process.env.DFIR_MISP_URL, apiKey: process.env.DFIR_MISP_KEY, fetchFn: tlsFetchFor("MISP") }));
   if (process.env.DFIR_ROCKYRACCOON_KEY) providers.push(new RockyRaccoonProvider({ apiKey: process.env.DFIR_ROCKYRACCOON_KEY }));
   if (process.env.DFIR_YETI_URL && process.env.DFIR_YETI_KEY) providers.push(new YetiProvider({ baseUrl: process.env.DFIR_YETI_URL, apiKey: process.env.DFIR_YETI_KEY, fetchFn: tlsFetchFor("YETI") }));
+  if (process.env.DFIR_OPENCTI_URL && process.env.DFIR_OPENCTI_KEY) {
+    const octiScore = Number(process.env.DFIR_OPENCTI_MALICIOUS_SCORE);
+    providers.push(new OpenCtiProvider({
+      baseUrl: process.env.DFIR_OPENCTI_URL,
+      apiKey: process.env.DFIR_OPENCTI_KEY,
+      fetchFn: tlsFetchFor("OPENCTI"),
+      maliciousScore: Number.isFinite(octiScore) && octiScore > 0 ? octiScore : undefined,
+    }));
+  }
   // IP-infrastructure context providers (#134): reverse DNS, WHOIS-over-RDAP, and GeoIP need
   // NO API key, so they're always available — but, like all `external` providers, they're
   // opt-in per case (default OFF), so nothing is looked up off-box without analyst approval.
