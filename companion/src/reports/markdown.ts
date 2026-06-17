@@ -10,6 +10,7 @@ import { detectTimelineGaps, gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDe
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
+import { ADVERSARY_EMULATION_CAVEAT } from "../analysis/adversaryEmulation.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import { hasExposureFinding, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev.js";
@@ -335,6 +336,25 @@ function adversaryHints(state: InvestigationState, lines: string[]): void {
     );
   }
   lines.push("");
+
+  // Emulation (#121): from those matched groups, the techniques the case hasn't observed yet —
+  // predictive hunt priorities. Only rendered when at least one group matched.
+  if (result.nextTechniques.length > 0) {
+    lines.push(
+      "**Likely next techniques (hunt priorities).** Techniques the matched groups above are known " +
+        "to use that this case has not yet observed, ranked by how many of those groups use each.",
+      "",
+      `_${ADVERSARY_EMULATION_CAVEAT}_`,
+      "",
+      "| Technique | Tactic | Used by matched groups |",
+      "| --- | --- | --- |",
+    );
+    for (const n of result.nextTechniques) {
+      const used = `${n.groupCount} — ${n.groups.map((g) => `${g.id} ${g.name}`).join(", ")}`;
+      lines.push(`| ${cellMd(attackTechniqueMd(n.id))} | ${cellMd(n.tactic)} | ${cellMd(used)} |`);
+    }
+    lines.push("");
+  }
 }
 
 function customerExposure(exposure: CustomerExposureSummary | undefined, lines: string[]): void {

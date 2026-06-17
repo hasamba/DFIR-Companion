@@ -23,6 +23,7 @@
 // every surface that renders these hints must show the "not attribution" caveat.
 
 import type { InvestigationState } from "./stateTypes.js";
+import { suggestNextTechniques, type NextTechnique } from "./adversaryEmulation.js";
 
 // One adversary group's slimmed record from the bundled dataset. `techniques` carries ATT&CK ids at
 // full granularity — sub-technique (T1059.001) where MITRE maps it, base (T1486) otherwise.
@@ -53,6 +54,7 @@ export interface AdversaryHint {
 export interface AdversaryHintOptions {
   minOverlap?: number; // minimum overlapping techniques (base-or-better) to surface a group (default 3)
   topN?: number; // cap on how many ranked groups to return (default 5)
+  maxNextTechniques?: number; // cap on emulation "next technique" suggestions (default 10, issue #121)
 }
 
 // The full response a caller (route / report) returns: the ranked hints plus the provenance and
@@ -65,6 +67,9 @@ export interface AdversaryHintsResult {
   minOverlap: number; // threshold applied
   caveat: string; // the standing "not attribution" disclaimer
   hints: AdversaryHint[];
+  // Adversary emulation (#121): techniques the matched groups are known to use that the case has NOT
+  // yet observed — predictive hunt priorities, ranked by how many matched groups use each.
+  nextTechniques: NextTechnique[];
 }
 
 export const DEFAULT_MIN_OVERLAP = 3;
@@ -209,6 +214,11 @@ export function buildAdversaryHintsResult(
   const minOverlap = Math.max(1, Math.floor(opts.minOverlap ?? DEFAULT_MIN_OVERLAP));
   const caseTechniques = collectCaseTechniques(state);
   const hints = rankAdversaryGroups(caseTechniques, dataset.groups, { ...opts, minOverlap });
+  // Emulation: from those same matched groups, surface the techniques the case hasn't observed yet —
+  // predictive hunt priorities (#121). Empty when no group matched (nothing to emulate).
+  const nextTechniques = suggestNextTechniques(caseTechniques, hints, dataset.groups, {
+    maxTechniques: opts.maxNextTechniques,
+  });
   return {
     attackVersion: dataset.attackVersion,
     datasetGenerated: dataset.generated,
@@ -217,5 +227,6 @@ export function buildAdversaryHintsResult(
     minOverlap,
     caveat: ADVERSARY_HINTS_CAVEAT,
     hints,
+    nextTechniques,
   };
 }

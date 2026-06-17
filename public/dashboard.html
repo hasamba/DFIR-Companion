@@ -2387,7 +2387,7 @@
     <section id="sec-questions" style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section id="sec-threads"><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
-    <section id="sec-adversary" style="grid-column: 1 / -1"><h2>Adversary Hints<span class="ev-sub">known ATT&amp;CK groups by technique overlap — hypothesis fuel, not attribution (derived, no AI)</span></h2><div id="adversaryHints">—</div></section>
+    <section id="sec-adversary" style="grid-column: 1 / -1"><h2>Adversary Hints<span class="ev-sub">known ATT&amp;CK groups by technique overlap + their likely next techniques — hypothesis fuel, not attribution (derived, no AI)</span></h2><div id="adversaryHints">—</div></section>
     <style>
       #sec-adversary .adv-caveat{color:var(--c-ffb454);font-size:12px;margin-bottom:8px}
       #sec-adversary .adv-meta{color:var(--c-9aa4b2);font-size:11px;margin-bottom:8px}
@@ -2406,6 +2406,15 @@
       #sec-adversary .adv-tech:hover{text-decoration:underline}
       #sec-adversary .adv-tech-exact{background:var(--c-13243a);color:var(--c-9ecbff);border-color:var(--c-3a567d);font-weight:bold}
       #sec-adversary .adv-tech-base{opacity:0.6}
+      #sec-adversary .adv-next{margin-top:12px;border-top:1px solid var(--c-232a33);padding-top:10px}
+      #sec-adversary .adv-next-h{color:var(--c-ffb454);font-size:12px;font-weight:bold;margin-bottom:2px}
+      #sec-adversary .adv-next-sub{color:var(--c-9aa4b2);font-size:11px;margin-bottom:8px}
+      #sec-adversary .adv-next-list{display:flex;flex-direction:column;gap:5px}
+      #sec-adversary .adv-next-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-ffb454);border-radius:5px;padding:4px 8px}
+      #sec-adversary .adv-next-tech{color:var(--c-ffb454);font-weight:bold;text-decoration:none;font-size:12px}
+      #sec-adversary .adv-next-tech:hover{text-decoration:underline}
+      #sec-adversary .adv-next-tactic{color:var(--c-6aa9ff);font-size:11px;background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px}
+      #sec-adversary .adv-next-support{margin-left:auto;color:var(--c-9aa4b2);font-size:11px;white-space:nowrap}
     </style>
     <section id="sec-velohunts" style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="veloHuntSuggest">—</div></section>
     <style>
@@ -6562,7 +6571,26 @@
           `<div class="adv-techs">${techs}</div>` +
         `</div>`;
       }).join("");
-      el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>`;
+      // Adversary emulation (#121): the matched groups' techniques the case hasn't observed yet —
+      // predictive hunt priorities. Only present when at least one group matched (server-derived).
+      const next = (d.nextTechniques && d.nextTechniques.length) ? (() => {
+        const rows = d.nextTechniques.map(n => {
+          const u = n.url || attackUrl(n.id);
+          const tech = u
+            ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="adv-next-tech">${esc(n.id)}</a>`
+            : `<span class="adv-next-tech">${esc(n.id)}</span>`;
+          const groupNames = (n.groups || []).map(g => `${g.id} ${g.name}`).join(", ");
+          const plural = n.groupCount === 1 ? "" : "s";
+          const support = `<span class="adv-next-support" title="${escAttr(groupNames)}">used by ${esc(n.groupCount)} matched group${plural}</span>`;
+          return `<div class="adv-next-row">${tech}<span class="adv-next-tactic">${esc(n.tactic)}</span>${support}</div>`;
+        }).join("");
+        return `<div class="adv-next">` +
+          `<div class="adv-next-h">⌖ Likely next techniques — hunt priorities</div>` +
+          `<div class="adv-next-sub">Techniques the matched groups above are known to use that this case hasn't observed yet, ranked by how many of those groups use each — hypothesis fuel for focused hunting, not attribution or a forecast.</div>` +
+          `<div class="adv-next-list">${rows}</div>` +
+        `</div>`;
+      })() : "";
+      el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>` + next;
     }
 
     // ── Suggested Fleet Hunts (#57) ───────────────────────────────────────────────────────
