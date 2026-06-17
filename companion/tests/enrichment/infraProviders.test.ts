@@ -93,36 +93,50 @@ describe("RdapProvider (WHOIS over RDAP)", () => {
 });
 
 describe("GeoIpProvider", () => {
-  it("maps the ipwho.is shape to country + ASN/org context", async () => {
+  it("maps the default ipinfo.io shape (country code + 'AS… Org' org) and hits the /json template", async () => {
     const fetchFn = vi.fn(async () => jsonResponse({
-      ip: "8.8.8.8", success: true, country: "United States", country_code: "US",
-      region: "California", city: "Mountain View",
-      connection: { asn: 15169, org: "Google LLC", isp: "Google LLC" },
+      ip: "8.8.8.8", hostname: "dns.google", city: "Mountain View", region: "California",
+      country: "US", org: "AS15169 Google LLC",
     }));
     const geo = new GeoIpProvider({ fetchFn });
     const r = await geo.lookup("ip", "8.8.8.8");
     expect(r).toMatchObject({ source: "GeoIP", verdict: "unknown" });
+    expect(r!.score).toBe("US · AS15169 Google LLC");                   // code-only country, AS split out of org
+    expect(r!.tags).toEqual(expect.arrayContaining(["US", "Mountain View", "AS15169", "Google LLC"]));
+    expect(fetchFn.mock.calls[0][0]).toBe("https://ipinfo.io/8.8.8.8/json");
+    const headers = (fetchFn.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers["User-Agent"]).toBe("DFIR-Companion");               // many free GeoIPs 403 a UA-less request
+  });
+
+  it("tolerates the ipwho.is shape (full country name + numeric connection.asn)", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({
+      success: true, country: "United States", country_code: "US",
+      region: "California", city: "Mountain View",
+      connection: { asn: 15169, org: "Google LLC", isp: "Google LLC" },
+    }));
+    const r = await new GeoIpProvider({ baseUrl: "https://ipwho.is/{ip}", fetchFn }).lookup("ip", "8.8.8.8");
     expect(r!.score).toBe("United States (US) · AS15169 Google LLC");
     expect(r!.tags).toEqual(expect.arrayContaining(["US", "Mountain View", "AS15169", "Google LLC"]));
     expect(fetchFn.mock.calls[0][0]).toBe("https://ipwho.is/8.8.8.8");
   });
 
-  it("tolerates the ip-api.com shape (countryCode / as string / regionName)", async () => {
+  it("tolerates the ip-api.com shape (countryCode / as string / regionName) and append-style base", async () => {
     const fetchFn = vi.fn(async () => jsonResponse({
       status: "success", country: "Germany", countryCode: "DE", regionName: "Hesse",
-      city: "Frankfurt", as: "AS24940 Hetzner Online GmbH", isp: "Hetzner",
+      city: "Frankfurt", as: "AS24940 Hetzner Online GmbH", isp: "Hetzner", org: "Hetzner Online GmbH",
     }));
     const r = await new GeoIpProvider({ baseUrl: "http://ip-api.com/json", fetchFn }).lookup("ip", "1.2.3.4");
-    expect(r!.tags).toEqual(expect.arrayContaining(["DE", "AS24940", "Hetzner"]));
+    expect(r!.tags).toEqual(expect.arrayContaining(["DE", "AS24940", "Hetzner Online GmbH"]));
     expect(r!.score).toContain("Germany (DE)");
+    expect(fetchFn.mock.calls[0][0]).toBe("http://ip-api.com/json/1.2.3.4");   // appended, no {ip} placeholder
   });
 
-  it("returns null on a non-success body (reserved/invalid IP) and appends the optional key", async () => {
-    const miss = new GeoIpProvider({ fetchFn: vi.fn(async () => jsonResponse({ success: false, message: "Reserved range" })) });
+  it("returns null on a non-success/error body (reserved/invalid IP) and appends the optional key as ?token=", async () => {
+    const miss = new GeoIpProvider({ fetchFn: vi.fn(async () => jsonResponse({ error: { title: "Wrong ip" } })) });
     expect(await miss.lookup("ip", "10.0.0.1")).toBeNull();
-    const fetchFn = vi.fn(async () => jsonResponse({ success: true, country: "US", country_code: "US" }));
+    const fetchFn = vi.fn(async () => jsonResponse({ country: "US", org: "AS15169 Google LLC" }));
     await new GeoIpProvider({ apiKey: "secret", fetchFn }).lookup("ip", "8.8.4.4");
-    expect(fetchFn.mock.calls[0][0]).toBe("https://ipwho.is/8.8.4.4?key=secret");
+    expect(fetchFn.mock.calls[0][0]).toBe("https://ipinfo.io/8.8.4.4/json?token=secret");
   });
 
   it("throws on auth / rate-limit statuses", async () => {
