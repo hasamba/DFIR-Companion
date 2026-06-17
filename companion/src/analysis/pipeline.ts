@@ -12,7 +12,7 @@ import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity } from "./stateTypes.js";
-import { deltaSchema, askSchema, execSummarySchema, type AskAnswer, type ExecSummary } from "./responseSchema.js";
+import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, type AskAnswer, type ExecSummary, type ExplainEventResult } from "./responseSchema.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
 import { applySeverityFloor } from "./severityFloor.js";
@@ -523,7 +523,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -598,6 +598,40 @@ export const EXEC_SUMMARY_PROMPT = [
   "",
   "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
   JSON.stringify({ summary: "the executive summary as a few plain-language paragraphs (use \\n\\n between them)" }, null, 2),
+].join("\n");
+
+// Explain a SINGLE forensic event in context — what happened, why it matters, ATT&CK mapping,
+// pivot queries, and evidence for/against maliciousness (issue #141). EPHEMERAL (no state change).
+export const EXPLAIN_EVENT_PROMPT = [
+  "You are a DFIR (Digital Forensics & Incident Response) analyst explaining ONE specific forensic",
+  "event to another analyst. Using ONLY the case evidence provided (compromised assets, threat-intel",
+  "verdicts, findings, nearby timeline events), explain:",
+  "",
+  "- WHAT happened: describe the event in plain English",
+  "- WHY it matters: its significance to this specific investigation",
+  "- NORMAL vs. SUSPICIOUS: would this event be expected behavior, or is it clearly attacker activity?",
+  "- ATTACK MAPPING: what the tagged ATT&CK technique(s) mean in this context (or empty if none tagged)",
+  "- PIVOT QUERIES: 1–3 concrete follow-up hunts (Velociraptor VQL, Defender/Sentinel KQL, or Splunk",
+  "  SPL) that would collect corroborating or contradicting evidence for this specific event",
+  "- EVIDENCE FOR: what in the case makes this event look malicious",
+  "- EVIDENCE AGAINST: any plausible benign explanation (be honest; do not dismiss ambiguity)",
+  "",
+  "Ground every claim in the provided case context. If context is insufficient, say so explicitly.",
+  "Pivot queries must use real field names for the platform; make them runnable as-is or with minimal",
+  "schema edits. Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({
+    summary: "what happened, in plain English",
+    whyItMatters: "why this event matters to THIS investigation (1–2 sentences)",
+    normalContext: "is this kind of event normal in non-incident environments?",
+    suspiciousIndicators: "what specifically makes this instance suspicious",
+    attackMapping: "ATT&CK technique(s) and what they mean in context (empty string if none tagged)",
+    pivotQueries: [
+      { platform: "velociraptor|kql|spl|other", query: "the runnable query", rationale: "what it would prove/disprove" },
+    ],
+    evidenceFor: "case evidence supporting malicious interpretation",
+    evidenceAgainst: "plausible benign explanation (or empty string if clearly malicious)",
+    relatedEventIds: ["event ids from the context that support the explanation"],
+  }, null, 2),
 ].join("\n");
 
 // Standalone narrative-timeline generator: produces a stakeholder-friendly prose story of the
@@ -946,6 +980,7 @@ export const getGapHypothesisPrompt = (): string => resolvePrompt("GAPHYP", GAP_
 export const getMemoryNextStepPrompt = (): string => resolvePrompt("MEMNEXT", MEMORY_NEXTSTEP_PROMPT);
 export const getQueryTranslatePrompt = (): string => resolvePrompt("QUERYXLATE", QUERY_TRANSLATE_PROMPT);
 export const getReconcilePrompt = (): string => resolvePrompt("RECONCILE", RECONCILE_PROMPT);
+export const getExplainEventPrompt = (): string => resolvePrompt("EXPLAIN", EXPLAIN_EVENT_PROMPT);
 
 export const IMPORTER_PROMPT = [
   "You are writing a DECLARATIVE IMPORTER DEFINITION for the DFIR Companion. Output ONLY a single",
@@ -2512,6 +2547,64 @@ export class AnalysisPipeline {
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getAskPrompt(), userPrompt, images: [] }, "ask");
       return askSchema.parse(parsed);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // Explain a single forensic event in context (issue #141). Single text-only AI call; EPHEMERAL —
+  // no state change. Returns structured analysis: what happened, why it matters, ATT&CK mapping,
+  // normal vs suspicious context, pivot queries, and evidence for/against maliciousness.
+  async explainEvent(caseId: string, eventId: string): Promise<ExplainEventResult> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("event explanation");
+    const loaded = await this.opts.stateStore.load(caseId);
+
+    const event = loaded.forensicTimeline.find((e) => e.id === eventId);
+    if (!event) throw new Error(`event not found: ${eventId}`);
+
+    // Context: events adjacent in time + events on the same asset (up to 15 total).
+    const sorted = [...loaded.forensicTimeline].sort((a, b) =>
+      (a.timestamp || "").localeCompare(b.timestamp || ""),
+    );
+    const focalIdx = sorted.findIndex((e) => e.id === eventId);
+    const nearby = [
+      ...sorted.slice(Math.max(0, focalIdx - 7), focalIdx),
+      ...sorted.slice(focalIdx + 1, focalIdx + 8),
+    ];
+    const sameAsset = event.asset
+      ? loaded.forensicTimeline.filter((e) => e.id !== eventId && e.asset === event.asset).slice(0, 10)
+      : [];
+    const contextIds = new Set([...nearby.map((e) => e.id), ...sameAsset.map((e) => e.id)]);
+    const contextEvents = [...contextIds]
+      .map((id) => loaded.forensicTimeline.find((e) => e.id === id)!)
+      .filter(Boolean)
+      .slice(0, 15);
+
+    const renderEv = (e: ForensicEvent, focal = false): string =>
+      `[${e.id}]${focal ? " *** FOCAL EVENT ***" : ""} ${e.timestamp || "(undated)"} [${e.severity}]`
+      + ` ${e.description.slice(0, 300)}`
+      + (e.asset ? ` | asset: ${e.asset}` : "")
+      + (e.processName ? ` | process: ${e.processName}` : "")
+      + (e.parentName ? ` | parent: ${e.parentName}` : "")
+      + (e.sha256 ? ` | sha256: ${e.sha256.slice(0, 16)}…` : "")
+      + (e.path ? ` | path: ${e.path}` : "")
+      + (e.mitreTechniques.length ? ` | MITRE: ${e.mitreTechniques.join(", ")}` : "");
+
+    const findingsText = loaded.findings.slice(0, 50)
+      .map((f) => `[${f.severity}] ${f.title}`).join("\n") || "(none)";
+    const kevCatalog = await this.getKevCatalog();
+    const contextBlock = buildSynthesisContext(loaded, [event, ...contextEvents], kevCatalog);
+
+    const userPrompt =
+      contextBlock
+      + `CASE FINDINGS (summary):\n${findingsText}\n\n`
+      + `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n`
+      + `FOCAL EVENT TO EXPLAIN:\n${renderEv(event, true)}\n\n`
+      + `CONTEXT EVENTS (nearby / same asset):\n`
+      + (contextEvents.map((e) => renderEv(e)).join("\n") || "(no context events)")
+      + `\n\nExplain the focal event as JSON.`;
+
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getExplainEventPrompt(), userPrompt, images: [] }, "explain-event");
+      return explainEventSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
