@@ -472,8 +472,8 @@ Add a key to enable that provider. All external providers are opt-in per case fr
 | `DFIR_YETI_CA` | — | PEM CA bundle for internal-CA YETI |
 | `DFIR_YETI_INSECURE` | — | `=1` to skip TLS verification (lab only) |
 | `DFIR_RDAP_URL` | `https://rdap.org` | WHOIS-over-RDAP base (keyless; IANA bootstrap to the owning RIR) |
-| `DFIR_GEOIP_URL` | `https://ipwho.is` | GeoIP base (keyless HTTPS; parser also tolerates ip-api.com) |
-| `DFIR_GEOIP_KEY` | — | Optional GeoIP key (appended as `?key=`) for a paid/self-hosted backend |
+| `DFIR_GEOIP_URL` | `https://ipinfo.io/{ip}/json` | GeoIP URL template (keyless HTTPS; `{ip}` substituted; parser also tolerates ip-api.com + ipwho.is) |
+| `DFIR_GEOIP_KEY` | — | Optional GeoIP key (fills `{key}`, else appended as `?token=`) for a paid/self-hosted backend |
 | `DFIR_SHODAN_KEY` | — | Shodan API key — also powers the Shodan host-lookup IP enricher (shared with customer exposure) |
 | `DFIR_ENRICH_DELAY_MS` | `1500` | Throttle between lookups (ms) |
 | `DFIR_ENRICH_MAX` | `100` | Max IOCs per enrich run |

@@ -344,8 +344,9 @@ what's hosted" layer, so each returns `verdict: "unknown"` with the detail in `s
 `reverseDns.ts` (`ReverseDnsProvider`, "Reverse DNS" — PTR hostnames via an injectable `node:dns`
 resolver, no key), `rdap.ts` (`RdapProvider`, "WHOIS" — WHOIS-over-RDAP via rdap.org's IANA bootstrap,
 netblock/CIDR/country/ASN/abuse-contact from the RDAP IP object + recursive vCard entity walk, no key),
-`geoip.ts` (`GeoIpProvider`, "GeoIP" — country/city/ASN/org, keyless ipwho.is default, parser tolerant
-of the ip-api.com shape too), `shodan.ts` (`ShodanProvider`, "Shodan" — host lookup: hosted
+`geoip.ts` (`GeoIpProvider`, "GeoIP" — country/city/ASN/org, keyless **ipinfo.io** default via a `{ip}` URL
+template — ipwho.is/ipapi.co bot-block Node's fetch, so ipinfo is the reliable server-side default; parser
+tolerant of the ip-api.com + ipwho.is shapes too), `shodan.ts` (`ShodanProvider`, "Shodan" — host lookup: hosted
 domains/ports/services/CVEs, reuses `DFIR_SHODAN_KEY`). All are IP-only, `scope: "external"` (opt-in per
 case, default OFF), built in `buildEnrichmentProviders()` (the three keyless ones ALWAYS — so the picker
 is never empty — Shodan only when keyed) and ride the existing enrichService cache + dashboard badges +
