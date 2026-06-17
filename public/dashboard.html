@@ -932,6 +932,9 @@
       color: var(--c-9aa4b2); cursor: pointer; padding: 2px 7px; font-size: 11px; }
     #clearFiltersBtn:hover { color: var(--c-ff7a7a); border-color: var(--c-ff7a7a); }
     #searchMatchCount { color: var(--c-6aa9ff); font-size: 11px; }
+    /* Toolbar is tight on real estate: on narrower screens collapse the "deep" label to just the
+       🧠 checkbox (the tooltip still explains it). */
+    @media (max-width: 1440px) { #deepReasoningLabel .dr-text { display: none; } }
   </style>
 </head>
 <body>
@@ -957,7 +960,7 @@
     <button id="synthesize" data-tip="Re-derive the case conclusions — findings, MITRE ATT&CK, attacker path, narrative, key questions and next steps — from the in-scope forensic timeline. Replaces the previous conclusions but keeps the timeline, IOCs and threads.">AI Re-synthesize</button>
     <button id="secondOpinion" style="display:none" data-tip="Second LLM opinion: refreshes the primary synthesis (only if the timeline changed), then runs a DIFFERENT model over the same case as an independent QA cross-check, and shows where it disagrees with the primary (findings it adds/drops, severity, ATT&CK technique) for you to accept or reject each. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
     <label id="deepReasoningLabel" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--c-9aa4b2);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs an Anthropic or OpenRouter reasoning-capable synthesis model.">
-      <input type="checkbox" id="deepReasoning" style="margin:0;cursor:pointer" />🧠 deep
+      <input type="checkbox" id="deepReasoning" style="margin:0;cursor:pointer" />🧠<span class="dr-text">&nbsp;deep</span>
     </label>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.eml,.msg,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,image/png,image/jpeg,image/webp" style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
