@@ -79,6 +79,10 @@ import { AbuseIpdbProvider } from "./enrichment/abuseipdb.js";
 import { MispProvider } from "./enrichment/misp.js";
 import { RockyRaccoonProvider, type ParentChildResult } from "./enrichment/rockyraccoon.js";
 import { YetiProvider } from "./enrichment/yeti.js";
+import { ReverseDnsProvider } from "./enrichment/reverseDns.js";
+import { RdapProvider } from "./enrichment/rdap.js";
+import { GeoIpProvider } from "./enrichment/geoip.js";
+import { ShodanProvider } from "./enrichment/shodan.js";
 import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
@@ -6340,6 +6344,16 @@ export function buildEnrichmentProviders(): EnrichmentProvider[] {
   if (process.env.DFIR_MISP_URL && process.env.DFIR_MISP_KEY) providers.push(new MispProvider({ baseUrl: process.env.DFIR_MISP_URL, apiKey: process.env.DFIR_MISP_KEY, fetchFn: tlsFetchFor("MISP") }));
   if (process.env.DFIR_ROCKYRACCOON_KEY) providers.push(new RockyRaccoonProvider({ apiKey: process.env.DFIR_ROCKYRACCOON_KEY }));
   if (process.env.DFIR_YETI_URL && process.env.DFIR_YETI_KEY) providers.push(new YetiProvider({ baseUrl: process.env.DFIR_YETI_URL, apiKey: process.env.DFIR_YETI_KEY, fetchFn: tlsFetchFor("YETI") }));
+  // IP-infrastructure context providers (#134): reverse DNS, WHOIS-over-RDAP, and GeoIP need
+  // NO API key, so they're always available — but, like all `external` providers, they're
+  // opt-in per case (default OFF), so nothing is looked up off-box without analyst approval.
+  // Base/endpoint overridable via env for self-hosted/paid backends or an air-gapped mirror.
+  providers.push(new ReverseDnsProvider());
+  providers.push(new RdapProvider({ baseUrl: process.env.DFIR_RDAP_URL }));
+  providers.push(new GeoIpProvider({ baseUrl: process.env.DFIR_GEOIP_URL, apiKey: process.env.DFIR_GEOIP_KEY }));
+  // Shodan host lookup (hosted domains / open ports / services / CVEs) reuses the existing
+  // DFIR_SHODAN_KEY (also used by the customer-exposure attack-surface check).
+  if (process.env.DFIR_SHODAN_KEY) providers.push(new ShodanProvider({ apiKey: process.env.DFIR_SHODAN_KEY }));
   return providers;
 }
 
@@ -6354,6 +6368,10 @@ export function buildEnrichProviderDelayMap(): Record<string, number> | undefine
     ["ROCKYRACCOON", "RockyRaccoon"],
     ["MISP", "MISP"],
     ["YETI", "YETI"],
+    ["REVERSE_DNS", "Reverse DNS"],
+    ["WHOIS", "WHOIS"],
+    ["GEOIP", "GeoIP"],
+    ["SHODAN", "Shodan"],
   ];
   const map: Record<string, number> = {};
   for (const [suffix, name] of entries) {

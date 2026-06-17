@@ -215,6 +215,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Threat-intel enrichment (off by default — opt-in per case)
 - **Sources** — VirusTotal, Hunting.ch (MalwareBazaar/ThreatFox/URLhaus/YARAify), CrowdStrike Falcon TI, AbuseIPDB, MISP, YETI, RockyRaccoon (process prevalence + anomalous parent/child)
+- **IP infrastructure** — Reverse DNS (PTR hostnames), WHOIS over RDAP (netblock/ASN/abuse-contact), GeoIP (country/city/ASN/org), Shodan host (hosted domains/ports/services/CVEs); the "where from / who owns it / what's hosted" context layer — Reverse DNS/WHOIS/GeoIP are keyless, Shodan reuses `DFIR_SHODAN_KEY`
 - **Local vs external** — MISP/YETI on-box; third-party SaaS opt-in per case; enabling source re-checks all existing IOCs
 - **Reachability gate** — health-probe self-hosted instances; auto-resume when online
 
@@ -470,6 +471,10 @@ Add a key to enable that provider. All external providers are opt-in per case fr
 | `DFIR_YETI_KEY` | — | YETI API key |
 | `DFIR_YETI_CA` | — | PEM CA bundle for internal-CA YETI |
 | `DFIR_YETI_INSECURE` | — | `=1` to skip TLS verification (lab only) |
+| `DFIR_RDAP_URL` | `https://rdap.org` | WHOIS-over-RDAP base (keyless; IANA bootstrap to the owning RIR) |
+| `DFIR_GEOIP_URL` | `https://ipinfo.io/{ip}/json` | GeoIP URL template (keyless HTTPS; `{ip}` substituted; parser also tolerates ip-api.com + ipwho.is) |
+| `DFIR_GEOIP_KEY` | — | Optional GeoIP key (fills `{key}`, else appended as `?token=`) for a paid/self-hosted backend |
+| `DFIR_SHODAN_KEY` | — | Shodan API key — also powers the Shodan host-lookup IP enricher (shared with customer exposure) |
 | `DFIR_ENRICH_DELAY_MS` | `1500` | Throttle between lookups (ms) |
 | `DFIR_ENRICH_MAX` | `100` | Max IOCs per enrich run |
 | `DFIR_ENRICH_HEALTH_TTL_MS` | `60000` | Cache up/down verdict for self-hosted providers (ms) |
