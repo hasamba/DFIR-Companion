@@ -10081,7 +10081,8 @@
       const aiCard = diagCard("AI connectivity & config", aiRows);
       const im = report.importers;
       let impRows = [
-        diagRow("Attempts", `${im.attempts.last24h} (24h) · ${im.attempts.last7d} (7d) · ${im.attempts.total} total`),
+        diagRow("Evidence files imported", `${im.attempts.last24h} (24h) · ${im.attempts.last7d} (7d) · ${im.attempts.total} total`),
+        `<div style="font-size:11px;color:#7e8aa0;margin:1px 0 5px">files imported across all cases (from each case's imports.jsonl audit log) in the last 24h / 7d / all-time</div>`,
         diagRow("Custom importers loaded", String(im.customImporters)),
       ].join("");
       if (im.recentFailures && im.recentFailures.length) {
