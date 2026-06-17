@@ -7249,14 +7249,32 @@
         `<div class="kc-strip">${cards}</div><div id="kcDetail" class="kc-detail" hidden></div>`;
       renderKcDetail();
     }
+    // True when the score line already shows this tag (matched as a bounded token, so "US" isn't
+    // matched inside "Russia") — used to drop redundant context chips: the IP-infrastructure
+    // providers (GeoIP/WHOIS/…) put the same country/ASN/org in both score and tags.
+    function scoreCoversTag(score, tag) {
+      const t = String(tag || "").trim();
+      if (!t) return true;
+      const re = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(^|[^a-z0-9])${re}([^a-z0-9]|$)`, "i").test(score);
+    }
     function enrichBadges(ioc) {
       if (!ioc.enrichments) return ""; // not enriched yet
       if (!ioc.enrichments.length) return ` <span style="color:var(--c-5b6472);font-size:11px">· checked, no intel</span>`;
       return " " + ioc.enrichments.map(e => {
         const c = verdictColor(e.verdict);
-        const tags = e.tags && e.tags.length ? ` — ${esc(e.tags.slice(0, 3).join(", "))}` : "";
-        const inner = `<span style="display:inline-block;vertical-align:middle;color:${c};border:1px solid ${c};border-radius:4px;padding:0 6px;font-size:11px;white-space:normal;word-break:break-word">` +
-          `${esc(e.source)}: ${esc(e.verdict)}${e.score ? ` (${esc(e.score)})` : ""}${tags}</span>`;
+        const score = e.score ? String(e.score) : "";
+        // Drop tag chips already present in the score so they don't read as duplicated.
+        const shownTags = (e.tags || []).filter(t => !scoreCoversTag(score, t)).slice(0, 3);
+        const tags = shownTags.length ? ` — ${esc(shownTags.join(", "))}` : "";
+        // The IP-infrastructure providers (Reverse DNS / WHOIS / GeoIP / Shodan) return verdict
+        // "unknown" because they give CONTEXT, not a threat call. When there's data to show, omit
+        // the literal "unknown" so the badge reads as info — not "we don't know".
+        const asContext = e.verdict === "unknown" && (score || tags);
+        const label = asContext
+          ? `${esc(e.source)}${score ? `: ${esc(score)}` : ""}${tags}`
+          : `${esc(e.source)}: ${esc(e.verdict)}${score ? ` (${esc(score)})` : ""}${tags}`;
+        const inner = `<span style="display:inline-block;vertical-align:middle;color:${c};border:1px solid ${c};border-radius:4px;padding:0 6px;font-size:11px;white-space:normal;word-break:break-word">${label}</span>`;
         return e.link ? `<a href="${escAttr(e.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner;
       }).join(" ");
     }
