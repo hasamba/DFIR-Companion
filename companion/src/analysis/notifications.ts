@@ -15,8 +15,17 @@ import type { PlaybookTask } from "./playbook.js";
 // enrichment, this is OFF by default — the channel list starts empty and each channel is created
 // + enabled explicitly by the analyst (opt-in). Nothing leaves the box until then.
 
-export const NOTIFICATION_CHANNEL_TYPES = ["slack", "teams", "email", "telegram"] as const;
+export const NOTIFICATION_CHANNEL_TYPES = ["slack", "teams", "mattermost", "discord", "email", "telegram"] as const;
 export type NotificationChannelType = (typeof NOTIFICATION_CHANNEL_TYPES)[number];
+
+// slack/teams/mattermost/discord are all incoming-webhook channels — they carry only a `webhookUrl`
+// (no other transport config) and share the same validation, secret-redaction, and update path.
+// email (SMTP) and telegram (bot token) are not webhook channels.
+export const WEBHOOK_CHANNEL_TYPES: readonly NotificationChannelType[] = ["slack", "teams", "mattermost", "discord"];
+
+export function isWebhookChannelType(type: NotificationChannelType): boolean {
+  return WEBHOOK_CHANNEL_TYPES.includes(type);
+}
 
 // The three signal classes from the issue. The kind is also the per-channel toggle key.
 export const NOTIFICATION_EVENT_KINDS = ["critical_finding", "playbook_update", "milestone"] as const;
@@ -79,8 +88,8 @@ export interface SmtpChannelConfig {
   rejectUnauthorized?: boolean;  // verify the server cert (default true) — set false for self-signed
 }
 
-// A configured destination. Webhook channels (slack/teams) use `webhookUrl`; email uses `smtp`;
-// Telegram uses `telegram`.
+// A configured destination. Webhook channels (slack/teams/mattermost/discord) use `webhookUrl`;
+// email uses `smtp`; Telegram uses `telegram`.
 export interface NotificationChannel {
   id: string;
   type: NotificationChannelType;
@@ -88,7 +97,7 @@ export interface NotificationChannel {
   enabled: boolean;
   minSeverity: Severity;                          // only events at or above this fire (findings/playbook)
   events: Record<NotificationEventKind, boolean>; // which signal classes this channel wants
-  webhookUrl?: string;                            // slack / teams incoming-webhook URL
+  webhookUrl?: string;                            // slack / teams / mattermost / discord incoming-webhook URL
   smtp?: SmtpChannelConfig;                        // email transport
   telegram?: TelegramChannelConfig;               // telegram bot transport
   createdAt: string;
@@ -284,10 +293,10 @@ export function parseChannelInput(raw: unknown, existing?: NotificationChannel):
     events,
   };
 
-  if (v.type === "slack" || v.type === "teams") {
-    // Blank URL on update → keep the saved one (only valid when the existing channel is the same
-    // webhook type and already has a URL).
-    const sameTypeExisting = existing && (existing.type === "slack" || existing.type === "teams") ? existing.webhookUrl : undefined;
+  if (isWebhookChannelType(v.type)) {
+    // Blank URL on update → keep the saved one (only valid when the existing channel is also a
+    // webhook channel and already has a URL).
+    const sameTypeExisting = existing && isWebhookChannelType(existing.type) ? existing.webhookUrl : undefined;
     const url = (v.webhookUrl ?? "").trim() || (sameTypeExisting ?? "");
     if (!/^https?:\/\//i.test(url)) return { ok: false, error: `${v.type} channel requires an http(s) webhook URL` };
     draft.webhookUrl = url;
@@ -319,6 +328,8 @@ export function parseChannelInput(raw: unknown, existing?: NotificationChannel):
 function defaultName(type: NotificationChannelType): string {
   if (type === "slack") return "Slack";
   if (type === "teams") return "MS Teams";
+  if (type === "mattermost") return "Mattermost";
+  if (type === "discord") return "Discord";
   if (type === "telegram") return "Telegram";
   return "Email";
 }
@@ -338,7 +349,7 @@ export function applyChannelPatch(existing: NotificationChannel, draft: ChannelD
     updatedAt: at,
   };
 
-  if (draft.type === "slack" || draft.type === "teams") {
+  if (isWebhookChannelType(draft.type)) {
     next.webhookUrl = draft.webhookUrl || existing.webhookUrl || "";
     delete next.smtp;
     delete next.telegram;
