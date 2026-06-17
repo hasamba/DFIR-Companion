@@ -21,6 +21,7 @@ import type { ExternalImporter } from "./declarativeImporter.js";
 import { parseJsonLoose } from "./extractJson.js";
 import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
+import { resolveSynthThinkingBudget, type SynthThinkingInput } from "./synthThinking.js";
 import { detectTimelineGaps, backfillSilenceGapFindings, gapEnvOptions } from "./gapDetect.js";
 import {
   gapHypothesesResponseSchema,
@@ -2856,7 +2857,7 @@ export class AnalysisPipeline {
   // (no save, no synth-meta, no notifications, no accepted-delta re-apply) — used by the second
   // opinion (issue #116) to compute model B's analysis non-destructively. `provider` overrides the
   // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
-  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider } = {}): Promise<InvestigationState> {
+  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider } & SynthThinkingInput = {}): Promise<InvestigationState> {
     const synthProvider = opts.provider ?? this.opts.synthesisProvider ?? this.requireProvider("synthesis");
     const loaded = await this.opts.stateStore.load(caseId);
     if (loaded.forensicTimeline.length === 0) return loaded;
@@ -2982,16 +2983,17 @@ export class AnalysisPipeline {
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
     // Chain-of-Thought / extended thinking for the complex synthesis call (issue #121, feature 1).
-    // Opt-in via DFIR_AI_SYNTH_THINKING_TOKENS (≥1024 to engage; 0/unset = off). The Anthropic
-    // provider maps it to extended thinking; OpenRouter to its unified `reasoning`; other providers
-    // ignore it. Only synthesis reasons step-by-step — extraction stays cheap.
-    const synthThinkingTokens = Math.floor(Number(process.env.DFIR_AI_SYNTH_THINKING_TOKENS) || 0);
+    // Budget resolved per-run: an explicit value or the dashboard "deep reasoning" toggle wins, else
+    // the global DFIR_AI_SYNTH_THINKING_TOKENS default (off when unset). The Anthropic provider maps
+    // it to extended thinking; OpenRouter to its unified `reasoning`; other providers ignore it. Only
+    // synthesis reasons step-by-step — extraction stays cheap.
+    const synthThinkingTokens = resolveSynthThinkingBudget(opts, Number(process.env.DFIR_AI_SYNTH_THINKING_TOKENS) || 0);
     const delta = await withRetry(async () => {
       const parsed = await this.analyzeRestored(
         caseId,
         state,
         synthProvider,
-        { systemPrompt: getSynthesisPrompt(), userPrompt, images: [], ...(synthThinkingTokens >= 1024 ? { thinkingTokens: synthThinkingTokens } : {}) },
+        { systemPrompt: getSynthesisPrompt(), userPrompt, images: [], ...(synthThinkingTokens > 0 ? { thinkingTokens: synthThinkingTokens } : {}) },
         "synthesis",
       );
       return deltaSchema.parse(parsed);
@@ -3079,24 +3081,26 @@ export class AnalysisPipeline {
   // rationale + recommendation. Returns the saved record; never mutates the case state — the
   // analyst adjudicates per delta via applySecondOpinion(). Throws (→ route 501/500) when the
   // second-opinion model isn't configured.
-  async secondOpinion(caseId: string): Promise<SecondOpinion> {
+  async secondOpinion(caseId: string, opts: SynthThinkingInput = {}): Promise<SecondOpinion> {
     const provider = this.opts.secondOpinionProvider;
     if (!provider) throw new Error("second-opinion model not configured (set DFIR_AI_SECOND_OPINION_MODEL)");
     if (!this.opts.secondOpinionStore) throw new Error("second-opinion store not configured");
     if ((await this.opts.stateStore.load(caseId)).forensicTimeline.length === 0) {
       throw new Error("nothing to review — import evidence and synthesize the case first");
     }
+    // Deep-reasoning toggle (#121) flows into BOTH synthesis passes below, so model A's freshened
+    // synthesis and model B's independent pass reason equally hard for the comparison.
 
     // Pass 0 — freshen the PRIMARY synthesis so model A reflects the CURRENT timeline. Without this,
     // a stale saved A vs a fresh model-B run produces deltas that are staleness artifacts (e.g. the
     // deterministic gap-silence / high-severity backfill findings) rather than real model
     // disagreements. Uses skip-if-unchanged (no `force`), so it's a NO-OP (no AI call) when A is
     // already current — it only re-synthesizes when the in-scope timeline/IOCs/scope changed.
-    const a = await this.synthesize(caseId);
+    const a = await this.synthesize(caseId, { deepReasoning: opts.deepReasoning, thinkingTokens: opts.thinkingTokens });
 
     // Pass 1 — independent synthesis with model B over the SAME current timeline/context, routed
     // through a different model and NOT persisted (dryRun). This is model B's analysis.
-    const b = await this.synthesize(caseId, { dryRun: true, force: true, provider });
+    const b = await this.synthesize(caseId, { dryRun: true, force: true, provider, deepReasoning: opts.deepReasoning, thinkingTokens: opts.thinkingTokens });
 
     const modelA = this.opts.synthesisModelLabel ?? (this.opts.synthesisProvider ?? this.opts.provider)?.name ?? "model A";
     const modelB = this.opts.secondOpinionModelLabel ?? provider.name;

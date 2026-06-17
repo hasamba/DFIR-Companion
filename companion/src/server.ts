@@ -5101,10 +5101,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (caseMeta?.status === "closed") {
       return res.status(423).json({ error: `Case "${caseId}" is closed — reopen it before running synthesis` });
     }
-    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: "synthesizing conclusions" });
+    // Per-run Chain-of-Thought toggle (#121): "deepReasoning" enables extended thinking for THIS run
+    // only (no .env edit + restart) — an optional thinkingTokens overrides the budget. Off otherwise.
+    const deepReasoning = (req.body as { deepReasoning?: unknown })?.deepReasoning === true;
+    const reqThinking = Number((req.body as { thinkingTokens?: unknown })?.thinkingTokens);
+    const thinkingTokens = Number.isFinite(reqThinking) && reqThinking > 0 ? Math.floor(reqThinking) : undefined;
+    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: deepReasoning ? "synthesizing (deep reasoning)" : "synthesizing conclusions" });
     try {
       // Explicit user action → force, so it always runs even if inputs are unchanged.
-      const state = await options.pipeline.synthesize(caseId, { force: true });
+      const state = await options.pipeline.synthesize(caseId, { force: true, deepReasoning, ...(thinkingTokens !== undefined ? { thinkingTokens } : {}) });
       // Keep the playbook checklist aligned with the fresh next steps/findings (idempotent —
       // preserves analyst status/edits). Best-effort: never fail synthesis on a playbook hiccup.
       if (options.playbookStore) {
@@ -5137,9 +5142,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(501).json({ error: "second-opinion model not configured — set DFIR_AI_SECOND_OPINION_MODEL" });
     }
     const caseId = req.params.id;
-    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: "running second opinion" });
+    // Same per-run deep-reasoning toggle (#121) as /synthesize — flows into both model A & B passes.
+    const deepReasoning = (req.body as { deepReasoning?: unknown })?.deepReasoning === true;
+    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: deepReasoning ? "running second opinion (deep reasoning)" : "running second opinion" });
     try {
-      const record = await options.pipeline.secondOpinion(caseId);
+      const record = await options.pipeline.secondOpinion(caseId, { deepReasoning });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       options.onSecondOpinion?.(caseId);
       return res.status(200).json(record);
