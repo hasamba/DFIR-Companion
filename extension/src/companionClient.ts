@@ -8,6 +8,7 @@ type FetchFn = typeof fetch;
 export interface PostCaptureResult {
   ok: boolean;
   status: number;
+  errorMessage?: string;
 }
 
 export class CompanionClient {
@@ -26,7 +27,9 @@ export class CompanionClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
-      return { ok: res.status === 201, status: res.status };
+      if (res.status === 201) return { ok: true, status: 201 };
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      return { ok: false, status: res.status, errorMessage: body.error };
     } catch {
       return { ok: false, status: 0 }; // network error — companion unreachable
     }
