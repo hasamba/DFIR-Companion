@@ -50,6 +50,13 @@ export class OpenAIProvider implements AIProvider {
     }
   }
 
+  // Extra request-body fields to enable Chain-of-Thought / reasoning (issue #121). The base
+  // OpenAI chat-completions shape has no portable reasoning flag, so this is a NO-OP here; gateways
+  // that DO expose one (OpenRouter's unified `reasoning`) override this. Returns {} unless enabled.
+  protected reasoningBody(_req: AnalyzeRequest): Record<string, unknown> {
+    return {};
+  }
+
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     const detail = this.opts.imageDetail ?? "high";
     const content: unknown[] = [{ type: "text", text: req.userPrompt }];
@@ -93,6 +100,7 @@ export class OpenAIProvider implements AIProvider {
           model: this.opts.model,
           response_format: { type: "json_object" },
           ...(maxTokens ? { max_tokens: maxTokens } : {}),
+          ...this.reasoningBody(req), // Chain-of-Thought hook (#121) — no-op unless a subclass adds it
           messages: [
             { role: "system", content: req.systemPrompt },
             { role: "user", content },

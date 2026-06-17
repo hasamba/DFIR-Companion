@@ -7,6 +7,10 @@ export interface AnalyzeRequest {
   systemPrompt: string;
   userPrompt: string;
   images: AnalyzeImage[];
+  // Chain-of-Thought / extended-thinking budget in tokens (issue #121). When set (≥1024), a
+  // supporting provider lets the model reason step-by-step BEFORE answering — used for the complex
+  // synthesis call. Ignored by providers/models without a thinking/reasoning mode (graceful no-op).
+  thinkingTokens?: number;
 }
 
 // Token accounting a provider reports back, when it does. All optional — most providers

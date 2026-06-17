@@ -76,6 +76,45 @@ describe("AnthropicProvider", () => {
     expect((init.headers as Record<string, string>)["anthropic-version"]).toBe("2023-06-01");
   });
 
+  it("enables extended thinking and bumps max_tokens above the budget when a CoT budget is set (#121)", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const p = new AnthropicProvider({ apiKey: "k", model: "claude-sonnet-4-6", fetchFn, maxTokens: 16000 });
+    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 8000 });
+    const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 8000 });
+    expect(body.max_tokens).toBeGreaterThan(8000); // headroom for the answer above the budget
+  });
+
+  it("raises max_tokens so the budget always fits when the configured cap is too low", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const p = new AnthropicProvider({ apiKey: "k", model: "m", fetchFn, maxTokens: 4000 });
+    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 10000 });
+    const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.max_tokens).toBeGreaterThan(body.thinking.budget_tokens);
+  });
+
+  it("does NOT enable thinking without a budget, or below the 1024-token minimum", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const p = new AnthropicProvider({ apiKey: "k", model: "m", fetchFn });
+    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 500 });
+    for (const call of fetchFn.mock.calls) {
+      expect(JSON.parse((call[1] as RequestInit).body as string).thinking).toBeUndefined();
+    }
+  });
+
+  it("returns the text answer even when a thinking block precedes it in the response", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({
+      content: [
+        { type: "thinking", thinking: "let me reason about this..." },
+        { type: "text", text: '{"summary":"reasoned"}' },
+      ],
+    }));
+    const p = new AnthropicProvider({ apiKey: "k", model: "m", fetchFn });
+    const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 2048 });
+    expect(result.rawText).toBe('{"summary":"reasoned"}');
+  });
+
   it("maps 529 (overloaded) to a rate_limit ProviderError", async () => {
     const fetchFn = vi.fn(async () => jsonResponse({ error: "overloaded" }, 529));
     const p = new AnthropicProvider({ apiKey: "k", model: "m", fetchFn });

@@ -47,6 +47,7 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_AI_TIMEOUT_MS` | Per-request timeout; default 180000 |
 | `DFIR_AI_MAX_TOKENS` | Max completion tokens; default 16000 (prevents OpenRouter 402) |
 | `DFIR_AI_SYNTH_MAX_EVENTS` | Events sent to synthesis; default 300 (high-severity first) |
+| `DFIR_AI_SYNTH_THINKING_TOKENS` | **Chain-of-Thought** budget for synthesis (#121); off by default, set ≥1024 to let the model reason step-by-step before findings (Anthropic extended thinking / OpenRouter `reasoning`) |
 | `DFIR_AI_CONTEXT_TOKENS` | Model context window; default 128000 (raise for Claude 200k/Gemini 1M) |
 
 Local models via **LiteLLM**: run [LiteLLM](https://docs.litellm.ai/) as a local gateway

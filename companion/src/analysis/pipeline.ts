@@ -2981,8 +2981,19 @@ export class AnalysisPipeline {
 
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
+    // Chain-of-Thought / extended thinking for the complex synthesis call (issue #121, feature 1).
+    // Opt-in via DFIR_AI_SYNTH_THINKING_TOKENS (≥1024 to engage; 0/unset = off). The Anthropic
+    // provider maps it to extended thinking; OpenRouter to its unified `reasoning`; other providers
+    // ignore it. Only synthesis reasons step-by-step — extraction stays cheap.
+    const synthThinkingTokens = Math.floor(Number(process.env.DFIR_AI_SYNTH_THINKING_TOKENS) || 0);
     const delta = await withRetry(async () => {
-      const parsed = await this.analyzeRestored(caseId, state, synthProvider, { systemPrompt: getSynthesisPrompt(), userPrompt, images: [] }, "synthesis");
+      const parsed = await this.analyzeRestored(
+        caseId,
+        state,
+        synthProvider,
+        { systemPrompt: getSynthesisPrompt(), userPrompt, images: [], ...(synthThinkingTokens >= 1024 ? { thinkingTokens: synthThinkingTokens } : {}) },
+        "synthesis",
+      );
       return deltaSchema.parse(parsed);
     }, retries, backoffMs);
 
