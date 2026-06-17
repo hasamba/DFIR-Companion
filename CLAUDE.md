@@ -338,7 +338,18 @@ NOT shared until deliberately added, so nothing leaks by default).
 
 **Threat-intel enrichment** (`enrichment/`): `EnrichmentProvider`s (VirusTotal, Hunting.ch,
 CrowdStrike, AbuseIPDB, MISP, YETI, RockyRaccoon) look up IOCs by kind; `enrichService.ts` routes/
-throttles/caps/caches; `chainValidate.ts` checks RockyRaccoon parent→child chains. **Hunting.ch**
+throttles/caps/caches; `chainValidate.ts` checks RockyRaccoon parent→child chains. **IP-infrastructure
+context (#134)** is a separate class of provider — NOT reputation but the "where from / who owns it /
+what's hosted" layer, so each returns `verdict: "unknown"` with the detail in `score`/`tags`:
+`reverseDns.ts` (`ReverseDnsProvider`, "Reverse DNS" — PTR hostnames via an injectable `node:dns`
+resolver, no key), `rdap.ts` (`RdapProvider`, "WHOIS" — WHOIS-over-RDAP via rdap.org's IANA bootstrap,
+netblock/CIDR/country/ASN/abuse-contact from the RDAP IP object + recursive vCard entity walk, no key),
+`geoip.ts` (`GeoIpProvider`, "GeoIP" — country/city/ASN/org, keyless ipwho.is default, parser tolerant
+of the ip-api.com shape too), `shodan.ts` (`ShodanProvider`, "Shodan" — host lookup: hosted
+domains/ports/services/CVEs, reuses `DFIR_SHODAN_KEY`). All are IP-only, `scope: "external"` (opt-in per
+case, default OFF), built in `buildEnrichmentProviders()` (the three keyless ones ALWAYS — so the picker
+is never empty — Shodan only when keyed) and ride the existing enrichService cache + dashboard badges +
+CSV export with zero UI wiring. **Hunting.ch**
 (`huntingch.ts`) is the abuse.ch unified hunt — one indicator fans out across MalwareBazaar +
 ThreatFox + URLhaus + YARAify (one **abuse.ch Auth-Key**: `DFIR_HUNTINGCH_KEY`, falling back to the
 legacy `DFIR_MB_KEY`) and returns **one result per back-end** that hits (there's no standalone
