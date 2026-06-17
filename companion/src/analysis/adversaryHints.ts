@@ -23,7 +23,7 @@
 // every surface that renders these hints must show the "not attribution" caveat.
 
 import type { InvestigationState } from "./stateTypes.js";
-import { suggestNextTechniques, type NextTechnique } from "./adversaryEmulation.js";
+import { suggestNextTechniques, type NextTechnique, type TechniqueInfoMap } from "./adversaryEmulation.js";
 
 // One adversary group's slimmed record from the bundled dataset. `techniques` carries ATT&CK ids at
 // full granularity — sub-technique (T1059.001) where MITRE maps it, base (T1486) otherwise.
@@ -202,6 +202,7 @@ interface DatasetView {
   generated: string;
   groupCount: number;
   groups: AdversaryGroup[];
+  techniqueInfo?: TechniqueInfoMap; // optional id → name/dataSources, for labelling next-techniques (#121)
 }
 
 // End-to-end: collect the case's techniques, rank the dataset's groups, and wrap the result with
@@ -220,6 +221,7 @@ export function buildAdversaryHintsResult(
   const nextTechniques = suggestNextTechniques(caseTechniques, hints, dataset.groups, {
     maxTechniques: opts.maxNextTechniques,
     maxPrevalence: opts.maxNextPrevalence,
+    info: dataset.techniqueInfo,
   });
   return {
     attackVersion: dataset.attackVersion,

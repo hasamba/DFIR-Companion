@@ -18,7 +18,11 @@ import {
   type AdversaryGroup,
   type AdversaryHintOptions,
 } from "./adversaryHints.js";
-import { DEFAULT_MAX_NEXT_TECHNIQUES, DEFAULT_MAX_NEXT_PREVALENCE } from "./adversaryEmulation.js";
+import {
+  DEFAULT_MAX_NEXT_TECHNIQUES,
+  DEFAULT_MAX_NEXT_PREVALENCE,
+  type TechniqueInfoMap,
+} from "./adversaryEmulation.js";
 
 export interface AdversaryGroupsDataset {
   source: string;
@@ -26,6 +30,7 @@ export interface AdversaryGroupsDataset {
   generated: string; // ISO date the slim file was generated
   groupCount: number;
   groups: AdversaryGroup[];
+  techniqueInfo: TechniqueInfoMap; // full technique id → { name, dataSources? } (#121); {} when absent
 }
 
 const EMPTY: AdversaryGroupsDataset = {
@@ -34,6 +39,7 @@ const EMPTY: AdversaryGroupsDataset = {
   generated: "",
   groupCount: 0,
   groups: [],
+  techniqueInfo: {},
 };
 
 // Candidate locations, most-likely first: dev/tsc resolve relative to this module; the SEA EXE
@@ -68,12 +74,17 @@ function isGroup(value: unknown): value is AdversaryGroup {
 function coerce(raw: unknown): AdversaryGroupsDataset {
   const obj = raw as Partial<AdversaryGroupsDataset>;
   const groups = Array.isArray(obj?.groups) ? obj.groups.filter(isGroup) : [];
+  const techniqueInfo =
+    obj?.techniqueInfo && typeof obj.techniqueInfo === "object" && !Array.isArray(obj.techniqueInfo)
+      ? obj.techniqueInfo
+      : {};
   return {
     source: typeof obj?.source === "string" ? obj.source : "",
     attackVersion: typeof obj?.attackVersion === "string" ? obj.attackVersion : "unknown",
     generated: typeof obj?.generated === "string" ? obj.generated : "",
     groupCount: groups.length,
     groups,
+    techniqueInfo,
   };
 }
 

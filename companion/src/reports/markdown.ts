@@ -355,7 +355,8 @@ function adversaryHints(state: InvestigationState, lines: string[]): void {
     for (const n of result.nextTechniques) {
       const used = `${n.groupCount} — ${n.groups.map((g) => `${g.id} ${g.name}`).join(", ")}`;
       const pct = `${Math.round(n.prevalence * 100)}%`;
-      lines.push(`| ${cellMd(attackTechniqueMd(n.id))} | ${cellMd(n.tactic)} | ${pct} | ${cellMd(used)} |`);
+      const tech = attackTechniqueMd(n.id) + (n.name ? ` — ${n.name}` : "");
+      lines.push(`| ${cellMd(tech)} | ${cellMd(n.tactic)} | ${pct} | ${cellMd(used)} |`);
     }
     lines.push("");
   }

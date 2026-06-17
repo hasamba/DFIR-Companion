@@ -2561,6 +2561,36 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
+  // Targeted hunt for ONE ATT&CK technique the adversary-emulation panel flagged as a likely next
+  // move (issue #121). Unlike suggestHunts (findings-driven), this is technique-DRIVEN: the technique
+  // has NOT been observed yet — the analyst wants VQL to detect it proactively if a lookalike actor
+  // brings it here. Reuses the fleet-hunt system prompt + schema + sanitizer + deploy flow, with a
+  // technique-focused user prompt grounded in the case's pivotable IOCs. EPHEMERAL like suggestHunts()
+  // — no state change. Works on ANY case (the technique is by definition not in the timeline).
+  async suggestTechniqueHunts(caseId: string, techniqueId: string, techniqueName?: string): Promise<HuntSuggestion[]> {
+    const provider = this.opts.velociraptorProvider ?? this.opts.synthesisProvider ?? this.requireProvider("technique hunt");
+    const id = String(techniqueId || "").trim().toUpperCase();
+    if (!/^T\d{4}(?:\.\d{3})?$/.test(id)) return []; // not a technique id — nothing to hunt
+    const loaded = await this.opts.stateStore.load(caseId);
+    const iocText = renderHuntIocs(loaded.iocs);
+    const label = techniqueName ? `${id} (${techniqueName})` : id;
+    const userPrompt =
+      `Focus EXCLUSIVELY on ONE ATT&CK technique the analyst wants to hunt for proactively across the fleet:\n` +
+      `  ${label}\n\n` +
+      `This technique has NOT yet been observed in this case. A group whose tradecraft resembles this case is known ` +
+      `to use it, so the goal is to DETECT it on any enrolled endpoint if it is being used here but missed.\n\n` +
+      `Propose 1–3 CLIENT-side Velociraptor VQL hunts that surface this technique's tradecraft generally (not tied to ` +
+      `one host). Where relevant, pivot on these case indicators, but do not depend on them:\n` +
+      `PIVOTABLE INDICATORS:\n${iocText}\n\n` +
+      `Set every suggestion's mitreTechniques to ["${id}"]. Propose the hunt(s) as JSON.`;
+    const limit = Number(process.env.DFIR_HUNT_SUGGEST_MAX) || HUNT_SUGGEST_MAX_DEFAULT;
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "hunt-technique");
+      const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
+      return sanitizeHuntSuggestions(suggestions, limit);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
   // Memory-forensics "Next-Step" agent (issue #101). The case already has Volatility 3 / Rekall output
   // imported as forensic events; read that memory evidence (the process tree, connections, malfind,
   // command lines, services), identify the anomalies, and propose the EXACT next Volatility 3 command

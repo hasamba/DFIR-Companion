@@ -41,17 +41,28 @@ export interface NextTechniqueGroup {
   name: string; // e.g. "APT29"
 }
 
+// Per-technique metadata from the bundled dataset (id → name + optional "where to look" data sources).
+// `dataSources` is populated only when the ATT&CK release still ships the data-component model (the
+// legacy fields were reworked into "detection strategies" in ATT&CK v17), so treat it as optional.
+export interface TechniqueInfo {
+  name?: string; // human-readable technique name, e.g. "Screen Capture"
+  dataSources?: string[]; // "Source: Component" hunt hints, e.g. ["Process: Process Creation"]
+}
+export type TechniqueInfoMap = Record<string, TechniqueInfo>;
+
 // One predicted "next technique" — a technique the matched groups are known to use that the case has
 // not observed (at base level), ranked by distinctiveness (consensus among matched groups × global
 // rarity), with the support, prevalence and hunt focus needed to present it honestly.
 export interface NextTechnique {
   id: string; // ATT&CK technique id at the granularity the group lists it (T1486, T1021.001)
+  name?: string; // human-readable name from the dataset ("Screen Capture"), when available
   url: string | null; // attack.mitre.org technique page (null only for an unparseable id — defensive)
   tactic: string; // ATT&CK tactic name for hunt focus ("Impact"), or "Unspecified"
   groupCount: number; // how many of the matched groups are known to use it (support / consensus)
   groups: NextTechniqueGroup[]; // which matched groups use it (id + name), sorted by id
   prevalence: number; // fraction of ALL groups in the dataset that use it (0..1) — lower = rarer/more distinctive
   score: number; // distinctiveness rank key: support × ln(N / globalCount)
+  dataSources?: string[]; // "where to look" hunt hints, when the dataset carries them
 }
 
 export const DEFAULT_MAX_NEXT_TECHNIQUES = 10;
@@ -82,6 +93,18 @@ const TACTIC_RANK: Record<string, number> = {
 };
 const UNSPECIFIED = "Unspecified";
 
+// PRE-COMPROMISE technique bases (ATT&CK Reconnaissance TA0043 + Resource Development TA0042). These
+// happen on the adversary's own infrastructure (registering domains, harvesting OSINT, acquiring
+// tooling), NOT on the victim's endpoints — so they are useless as endpoint HUNT priorities and are
+// dropped from the emulation list even when distinctive. (Most are also caught by the prevalence cap;
+// this guarantees the rarer ones, e.g. T1585/T1584, never surface as "hunt for this next".)
+const NON_HUNTABLE_BASES: ReadonlySet<string> = new Set([
+  // Reconnaissance
+  "T1595", "T1592", "T1589", "T1590", "T1591", "T1598", "T1597", "T1596", "T1593", "T1594",
+  // Resource Development
+  "T1583", "T1586", "T1584", "T1587", "T1585", "T1588", "T1608", "T1650",
+]);
+
 // How many of the N total groups use each technique id (full granularity, deduped per group). This is
 // the "document frequency" for the TF-IDF distinctiveness score — common tradecraft has a high count.
 function globalTechniqueCounts(groups: readonly AdversaryGroup[]): Map<string, number> {
@@ -106,7 +129,7 @@ export function suggestNextTechniques(
   caseTechniques: readonly string[],
   hints: readonly AdversaryHint[],
   groups: readonly AdversaryGroup[],
-  opts: { maxTechniques?: number; maxPrevalence?: number } = {},
+  opts: { maxTechniques?: number; maxPrevalence?: number; info?: TechniqueInfoMap } = {},
 ): NextTechnique[] {
   const max = Math.max(1, Math.floor(opts.maxTechniques ?? DEFAULT_MAX_NEXT_TECHNIQUES));
   const maxPrevalence = clamp01(opts.maxPrevalence ?? DEFAULT_MAX_NEXT_PREVALENCE);
@@ -140,6 +163,7 @@ export function suggestNextTechniques(
       if (!id) continue;
       const b = baseTechniqueId(id);
       if (!b || observedBases.has(b)) continue; // already observed at base → not new hunting ground
+      if (NON_HUNTABLE_BASES.has(b)) continue; // pre-compromise (recon / resource dev) → not endpoint-huntable
       if (seenInGroup.has(id)) continue;
       seenInGroup.add(id);
       let m = support.get(id);
@@ -161,14 +185,17 @@ export function suggestNextTechniques(
     const groupList = [...groupMap.entries()]
       .map(([gid, name]) => ({ id: gid, name }))
       .sort((a, b) => a.id.localeCompare(b.id));
+    const info = opts.info?.[id];
     out.push({
       id,
+      name: info?.name || undefined, // drop empty-string names so the UI cleanly falls back to the id
       url: attackTechniqueUrl(id),
       tactic: tacticForTechniques([id]) ?? UNSPECIFIED,
       groupCount: supportCount,
       groups: groupList,
       prevalence,
       score: supportCount * idf,
+      dataSources: info?.dataSources?.length ? info.dataSources : undefined,
     });
   }
 

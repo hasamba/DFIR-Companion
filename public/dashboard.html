@@ -2414,8 +2414,12 @@
       #sec-adversary .adv-next-tech{color:var(--c-ffb454);font-weight:bold;text-decoration:none;font-size:12px}
       #sec-adversary .adv-next-tech:hover{text-decoration:underline}
       #sec-adversary .adv-next-tactic{color:var(--c-6aa9ff);font-size:11px;background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px}
+      #sec-adversary .adv-next-name{color:var(--c-d6deea);font-size:12px;font-weight:600}
       #sec-adversary .adv-next-rare{color:var(--c-c79bff);font-size:11px;background:var(--c-2a2233);border:1px solid var(--c-4a3a5a);border-radius:3px;padding:0 5px}
       #sec-adversary .adv-next-support{margin-left:auto;color:var(--c-9aa4b2);font-size:11px;white-space:nowrap}
+      #sec-adversary .adv-next-hunt{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400}
+      #sec-adversary .adv-next-hunt:disabled{opacity:.6;cursor:default}
+      #sec-adversary .adv-next-ds{color:var(--c-9aa4b2);font-size:11px;margin:2px 0 0 4px;font-style:italic}
     </style>
     <section id="sec-velohunts" style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="veloHuntSuggest">—</div></section>
     <style>
@@ -6581,12 +6585,18 @@
           const tech = u
             ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="adv-next-tech">${esc(n.id)}</a>`
             : `<span class="adv-next-tech">${esc(n.id)}</span>`;
+          const nm = n.name ? `<span class="adv-next-name">${esc(n.name)}</span>` : "";
           const groupNames = (n.groups || []).map(g => `${g.id} ${g.name}`).join(", ");
           const support = `<span class="adv-next-support" title="${escAttr(groupNames)}">${esc(n.groupCount)} of ${esc(matchedTotal)} matched groups</span>`;
           // Distinctiveness: lower global prevalence = rarer across ALL groups = more telling a signal.
           const pct = typeof n.prevalence === "number" ? Math.round(n.prevalence * 100) : null;
           const rare = pct === null ? "" : `<span class="adv-next-rare" title="Used by ${esc(pct)}% of all known groups — lower is more distinctive to this actor profile">${esc(pct)}% of groups</span>`;
-          return `<div class="adv-next-row">${tech}<span class="adv-next-tactic">${esc(n.tactic)}</span>${rare}${support}</div>`;
+          // "Where to look" hint, only when the dataset carries data sources (ATT&CK <v17 model).
+          const ds = (n.dataSources && n.dataSources.length)
+            ? `<div class="adv-next-ds" title="ATT&CK data sources — telemetry to hunt in for this technique">🔍 ${esc(n.dataSources.join(" · "))}</div>` : "";
+          // A targeted hunt: hand this technique to the AI Fleet-Hunts feature to generate a VQL query.
+          const huntBtn = `<button type="button" class="adv-next-hunt" onclick="huntForTechnique('${escAttr(n.id)}', this)" title="Generate a Velociraptor VQL hunt for this technique (one AI call)">⌖ hunt this</button>`;
+          return `<div class="adv-next-row">${tech}${nm}<span class="adv-next-tactic">${esc(n.tactic)}</span>${rare}${support}${huntBtn}</div>${ds}`;
         }).join("");
         return `<div class="adv-next">` +
           `<div class="adv-next-h">⌖ Likely next techniques — hunt priorities</div>` +
@@ -6595,6 +6605,39 @@
         `</div>`;
       })() : "";
       el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>` + next;
+    }
+
+    // Adversary emulation (#121): turn a "likely next technique" into a runnable, fleet-wide
+    // Velociraptor VQL hunt (one AI call). Results render in the Suggested Fleet Hunts panel below,
+    // reusing its review + deploy flow. The technique name is looked up from the loaded data (not
+    // passed through the inline handler) to avoid attribute-escaping pitfalls.
+    function huntForTechnique(techId, btn) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !techId) return;
+      const info = ((adversaryHintsData && adversaryHintsData.nextTechniques) || []).find(n => n.id === techId);
+      const techniqueName = info && info.name ? info.name : "";
+      const msg = document.getElementById("suggestHuntsMsg");
+      const panel = document.getElementById("veloHuntSuggest");
+      if (btn) { btn.disabled = true; btn.textContent = "⌖ hunting…"; }
+      if (msg) msg.textContent = `generating a hunt for ${techId}… (one AI call)`;
+      fetch(`/cases/${caseId}/adversary-hints/hunt-technique`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ techniqueId: techId, techniqueName })
+      })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) {
+            if (msg) msg.textContent = "";
+            if (panel) panel.innerHTML = `<div class="vhs-empty" style="color:var(--c-ff9f43)">error: ${esc(j.error || "could not generate a hunt")} — restart the companion server if this 404s</div>`;
+            return;
+          }
+          renderVeloHuntSuggest(j.suggestions || []);
+          if (msg) msg.textContent = (j.suggestions || []).length ? `${j.suggestions.length} hunt(s) for ${techId} — review below ↓` : `no hunt generated for ${techId}`;
+          const sec = document.getElementById("sec-velohunts");
+          if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+        })
+        .catch(e => { if (msg) msg.textContent = ""; if (panel) panel.innerHTML = `<div class="vhs-empty" style="color:var(--c-ff9f43)">error: ${esc(e.message)}</div>`; })
+        .finally(() => { if (btn) { btn.disabled = false; btn.textContent = "⌖ hunt this"; } });
     }
 
     // ── Suggested Fleet Hunts (#57) ───────────────────────────────────────────────────────

@@ -145,6 +145,13 @@ describe("suggestNextTechniques — observed-filter / shape / guards", () => {
     expect(suggestNextTechniques([], [hint("G9")], ds)).toEqual([]);
   });
 
+  it("drops pre-compromise techniques (reconnaissance / resource development) — not endpoint-huntable", () => {
+    // T1585.001 (Establish Accounts) + T1584.001 (Compromise Infrastructure: Domains) happen off the
+    // victim's endpoints; only the huntable T1486 (Impact) should survive.
+    const ds = [group("G1", "A", ["T1585.001", "T1584.001", "T1486"]), ...fillers(9, ["T9999"])];
+    expect(ids(suggestNextTechniques([], [hint("G1")], ds))).toEqual(["T1486"]);
+  });
+
   it("skips unparseable technique ids in a group's list", () => {
     const ds = [group("G1", "A", ["nope", "TA0001", "T1486"]), ...fillers(9, ["T9999"])];
     expect(ids(suggestNextTechniques([], [hint("G1")], ds))).toEqual(["T1486"]);
@@ -153,5 +160,20 @@ describe("suggestNextTechniques — observed-filter / shape / guards", () => {
   it("exposes the default prevalence cap constant", () => {
     expect(DEFAULT_MAX_NEXT_PREVALENCE).toBeGreaterThan(0);
     expect(DEFAULT_MAX_NEXT_PREVALENCE).toBeLessThan(1);
+  });
+
+  it("labels suggestions with name + dataSources from the techniqueInfo map", () => {
+    const ds = [group("G1", "A", ["T1486"]), ...fillers(9, ["T9999"])];
+    const info = { T1486: { name: "Data Encrypted for Impact", dataSources: ["Command: Command Execution", "File: File Modification"] } };
+    const [n] = suggestNextTechniques([], [hint("G1")], ds, { info });
+    expect(n.name).toBe("Data Encrypted for Impact");
+    expect(n.dataSources).toEqual(["Command: Command Execution", "File: File Modification"]);
+  });
+
+  it("omits an empty name / empty dataSources so the UI falls back cleanly to the id", () => {
+    const ds = [group("G1", "A", ["T1486"]), ...fillers(9, ["T9999"])];
+    const [n] = suggestNextTechniques([], [hint("G1")], ds, { info: { T1486: { name: "", dataSources: [] } } });
+    expect(n.name).toBeUndefined();
+    expect(n.dataSources).toBeUndefined();
   });
 });

@@ -1616,6 +1616,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // AI-suggest a Velociraptor VQL hunt for ONE adversary-emulation "likely next technique" (issue
+  // #121). The technique hasn't been observed yet; this turns the suggestion into a runnable, fleet-
+  // wide hunt to proactively detect it. Single text-only AI call, EPHEMERAL (no state change) — the
+  // dashboard shows the VQL + rationale for review, then deploys via POST /velociraptor/hunt.
+  app.post("/cases/:id/adversary-hints/hunt-technique", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
+    const techniqueId = String((req.body as { techniqueId?: unknown })?.techniqueId ?? "").trim();
+    const techniqueName = String((req.body as { techniqueName?: unknown })?.techniqueName ?? "").trim() || undefined;
+    if (!/^T\d{4}(?:\.\d{3})?$/i.test(techniqueId)) return res.status(400).json({ error: "valid ATT&CK techniqueId required" });
+    try {
+      const suggestions = await options.pipeline.suggestTechniqueHunts(req.params.id, techniqueId, techniqueName);
+      logLine(`[adversary] suggested ${suggestions.length} hunt(s) for technique ${techniqueId} (${req.params.id})`);
+      return res.status(200).json({ suggestions });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Memory-forensics "Next-Step" agent (issue #101). When the case has Volatility 3 / Rekall output
   // imported, this makes ONE text-only AI call that reads the memory evidence (process tree, malfind,
   // connections, command lines), spots anomalies, and proposes the exact next Volatility command to
