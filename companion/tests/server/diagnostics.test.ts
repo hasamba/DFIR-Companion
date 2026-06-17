@@ -87,17 +87,23 @@ describe("POST /diagnostics/ai-test", () => {
   });
 
   it("returns ok with latency when the provider responds", async () => {
+    let seen: { systemPrompt: string; userPrompt: string } | null = null;
     const fake: AIProvider = {
       name: "fake",
-      analyze: async () => ({ rawText: "OK" }),
+      analyze: async (req) => { seen = { systemPrompt: req.systemPrompt, userPrompt: req.userPrompt }; return { rawText: '{"ok":true}' }; },
     };
     const app = createApp(store, { aiTestProvider: () => fake });
     const res = await request(app).post("/diagnostics/ai-test");
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.provider).toBe("fake");
-    expect(res.body.reply).toBe("OK");
+    expect(res.body.reply).toBe('{"ok":true}');
     expect(typeof res.body.latencyMs).toBe("number");
+    // Regression guard: the OpenAI/OpenRouter JSON mode (response_format: json_object) 400s unless the
+    // messages contain the word "json", so the probe MUST mention it. (See server.ts ai-test route.)
+    expect(seen).not.toBeNull();
+    const probe = `${seen!.systemPrompt} ${seen!.userPrompt}`.toLowerCase();
+    expect(probe).toContain("json");
   });
 
   it("maps a ProviderError to an actionable kind without 500ing", async () => {

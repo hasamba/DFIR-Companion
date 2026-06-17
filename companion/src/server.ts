@@ -936,9 +936,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
     const startedAt = Date.now();
     try {
+      // The OpenAI/OpenRouter providers always send response_format: json_object, and OpenAI's JSON
+      // mode REQUIRES the literal word "json" somewhere in the messages (a 400 otherwise). So the probe
+      // asks for a tiny JSON object — both messages mention "json" — which also exercises the real
+      // request shape (auth + json_object + parse) across every provider, not just bare connectivity.
       const result = await provider.analyze({
-        systemPrompt: "You are a connectivity probe. Reply with the single word: OK.",
-        userPrompt: "ping",
+        systemPrompt: "You are a connectivity probe. Reply ONLY with the JSON object {\"ok\":true} and nothing else.",
+        userPrompt: "Return the JSON object {\"ok\":true}.",
         images: [],
       });
       const latencyMs = Date.now() - startedAt;
