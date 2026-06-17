@@ -572,7 +572,7 @@
     .ev-row { display: flex; align-items: flex-start; border-bottom: 1px solid var(--c-1a1f28); padding: 3px 0; }
     .ev-row:hover { background: var(--c-0d1117); }
     .ev-row.ev-selected { background: var(--c-142038); }
-    .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 140px; padding-top: 1px; }
+    .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 162px; padding-top: 1px; }
     .ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add, .ev-col-ctrl .explain-btn { margin-left: 0; }
     .ev-checkbox { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; margin: 0; }
     .ev-star { background: transparent; border: 0; color: var(--c-3a4050); font-size: 13px; cursor: pointer; padding: 0 1px; line-height: 1; flex-shrink: 0; }
@@ -580,7 +580,7 @@
     .ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; padding-top: 2px; font-family: ui-monospace, Menlo, Consolas, monospace; }
     .ev-col-content { flex: 1; min-width: 0; padding-top: 1px; }
     .ev-header-row { display: flex; align-items: center; padding: 2px 0 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 1px; font-size: 11px; color: var(--c-6b7280); }
-    .ev-header-ctrl { width: 118px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
+    .ev-header-ctrl { width: 162px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
     .ev-header-time { width: 192px; flex-shrink: 0; }
     .ev-bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 0 4px; font-size: 12px; color: var(--c-9aa4b2); border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 4px; }
     .ev-bulk-bar.active { display: flex; }
@@ -5672,7 +5672,11 @@
             (cited ? `<div class="explain-section"><strong>Related events</strong><span style="color:var(--c-9aa4b2);font-size:12px">${cited}</span></div>` : "");
         })
         .catch(e => {
-          bodyEl.innerHTML = `<div style="color:var(--c-ff9f43)">explain failed: ${esc(e.message)} — restart the companion server if this 404s</div>`;
+          const msg = String(e.message || e);
+          const hint = /501/.test(msg) ? "AI provider not configured — check Settings → AI"
+                     : /404/.test(msg) ? "route not found — restart the companion server"
+                     : "check the server console for details";
+          bodyEl.innerHTML = `<div style="color:var(--c-ff9f43)">explain failed: ${esc(msg)} — ${hint}</div>`;
         });
     }
 
