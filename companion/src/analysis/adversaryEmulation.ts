@@ -13,9 +13,15 @@
 // command-interpreter ground. A suggestion points at a technique family the case hasn't touched at
 // all, so it opens NEW hunting ground rather than a variation of what's already seen.
 //
-// Each suggestion carries its SUPPORT — how many of the matched groups use it. A technique used by 4
-// of 5 lookalike groups is a stronger "watch for this next" than one used by a single group. Ties
-// break toward the worst stage (impact/exfil) so the most damaging plausible next move surfaces first.
+// RANKING IS BY DISTINCTIVENESS, NOT POPULARITY. Ranking by raw support (how many matched groups use
+// a technique) floats UBIQUITOUS techniques to the top — every group does recon (T1082) and obtains
+// tooling (T1588.002), so "what everyone does" wins the count and the list is useless. Instead we
+// score each candidate TF-IDF style:
+//   score = support × idf,  idf = ln(N / globalCount)
+// where support = how many of the M matched groups use it (consensus) and globalCount = how many of
+// the N total groups use it (popularity). A technique many matched groups share but that is globally
+// RARE scores high (distinctive to this actor profile); one everybody uses has idf≈0 and sinks. A
+// hard prevalence cap (`maxPrevalence`) drops the truly ubiquitous outright so they never appear.
 //
 // SAME framing as adversary hints: statistical, predictive hypothesis fuel for hunt prioritization —
 // NOT attribution, and NOT a claim the actor WILL do this. Every surface that renders it says so.
@@ -36,23 +42,30 @@ export interface NextTechniqueGroup {
 }
 
 // One predicted "next technique" — a technique the matched groups are known to use that the case has
-// not observed (at base level), with its support (how many matched groups use it) and its hunt focus.
+// not observed (at base level), ranked by distinctiveness (consensus among matched groups × global
+// rarity), with the support, prevalence and hunt focus needed to present it honestly.
 export interface NextTechnique {
   id: string; // ATT&CK technique id at the granularity the group lists it (T1486, T1021.001)
   url: string | null; // attack.mitre.org technique page (null only for an unparseable id — defensive)
   tactic: string; // ATT&CK tactic name for hunt focus ("Impact"), or "Unspecified"
-  groupCount: number; // how many of the matched groups are known to use it (support / confidence)
+  groupCount: number; // how many of the matched groups are known to use it (support / consensus)
   groups: NextTechniqueGroup[]; // which matched groups use it (id + name), sorted by id
+  prevalence: number; // fraction of ALL groups in the dataset that use it (0..1) — lower = rarer/more distinctive
+  score: number; // distinctiveness rank key: support × ln(N / globalCount)
 }
 
 export const DEFAULT_MAX_NEXT_TECHNIQUES = 10;
+
+// Drop a candidate whose global prevalence exceeds this — "everyone does it" is not a hunt priority.
+// 0.33 ≈ used by more than a third of all known groups (recon, tooling acquisition, run-keys, …).
+export const DEFAULT_MAX_NEXT_PREVALENCE = 0.33;
 
 // The standing disclaimer, shared by every surface that renders next-technique suggestions.
 export const ADVERSARY_EMULATION_CAVEAT =
   "Predictive hunt priorities from lookalike groups' tradecraft — hypothesis fuel, not attribution or a forecast.";
 
-// Tie-break order: among equally-supported techniques, surface the worst plausible next stage first
-// so the most damaging move the actor might make next is what the analyst sees at the top.
+// Tie-break order: among equally-scored techniques, surface the worst plausible next stage first so
+// the most damaging move the actor might make next is what the analyst sees at the top.
 const TACTIC_RANK: Record<string, number> = {
   Impact: 0,
   Exfiltration: 1,
@@ -69,19 +82,39 @@ const TACTIC_RANK: Record<string, number> = {
 };
 const UNSPECIFIED = "Unspecified";
 
+// How many of the N total groups use each technique id (full granularity, deduped per group). This is
+// the "document frequency" for the TF-IDF distinctiveness score — common tradecraft has a high count.
+function globalTechniqueCounts(groups: readonly AdversaryGroup[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const g of groups) {
+    const seen = new Set<string>();
+    for (const raw of g.techniques) {
+      const id = normalizeTechniqueId(raw);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
 // Given the case's observed techniques and the ranked group hints, suggest the matched groups'
-// techniques the case has NOT yet observed (base-level), ranked by support (how many matched groups
-// use each), then by worst tactic, then by id for determinism. Pure: the groups dataset supplies each
-// hint's FULL technique list (AdversaryHint carries only the overlap, not the group's whole set), so
-// the dataset must be passed alongside the hints.
+// techniques the case has NOT yet observed (base-level), ranked by DISTINCTIVENESS (support × global
+// rarity) with the truly ubiquitous dropped. Pure: the groups dataset supplies both each hint's FULL
+// technique list (AdversaryHint carries only the overlap) and the global prevalence baseline.
 export function suggestNextTechniques(
   caseTechniques: readonly string[],
   hints: readonly AdversaryHint[],
   groups: readonly AdversaryGroup[],
-  opts: { maxTechniques?: number } = {},
+  opts: { maxTechniques?: number; maxPrevalence?: number } = {},
 ): NextTechnique[] {
   const max = Math.max(1, Math.floor(opts.maxTechniques ?? DEFAULT_MAX_NEXT_TECHNIQUES));
+  const maxPrevalence = clamp01(opts.maxPrevalence ?? DEFAULT_MAX_NEXT_PREVALENCE);
   if (hints.length === 0) return [];
+
+  const totalGroups = groups.length;
+  if (totalGroups === 0) return [];
+  const globalCounts = globalTechniqueCounts(groups);
 
   // Bases the case has already observed — a suggestion must open NEW ground, not a sub-technique of
   // something already seen.
@@ -120,6 +153,11 @@ export function suggestNextTechniques(
 
   const out: NextTechnique[] = [];
   for (const [id, groupMap] of support) {
+    const globalCount = globalCounts.get(id) ?? groupMap.size; // ≥ support (matched groups ⊆ all groups)
+    const prevalence = globalCount / totalGroups;
+    if (prevalence > maxPrevalence) continue; // ubiquitous tradecraft is not a hunt priority — drop it
+    const supportCount = groupMap.size;
+    const idf = Math.log(totalGroups / globalCount); // distinctiveness: rarer globally → larger
     const groupList = [...groupMap.entries()]
       .map(([gid, name]) => ({ id: gid, name }))
       .sort((a, b) => a.id.localeCompare(b.id));
@@ -127,17 +165,26 @@ export function suggestNextTechniques(
       id,
       url: attackTechniqueUrl(id),
       tactic: tacticForTechniques([id]) ?? UNSPECIFIED,
-      groupCount: groupMap.size,
+      groupCount: supportCount,
       groups: groupList,
+      prevalence,
+      score: supportCount * idf,
     });
   }
 
   const rank = (t: string): number => (t in TACTIC_RANK ? TACTIC_RANK[t] : 99);
   out.sort(
     (a, b) =>
-      b.groupCount - a.groupCount || // most-supported first (confidence)
+      b.score - a.score || // distinctiveness: consensus × global rarity
+      b.groupCount - a.groupCount || // then breadth of agreement among matched groups
+      a.prevalence - b.prevalence || // then the rarer (more distinctive) technique
       rank(a.tactic) - rank(b.tactic) || // then the worst plausible stage
       a.id.localeCompare(b.id), // deterministic
   );
   return out.slice(0, max);
+}
+
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return DEFAULT_MAX_NEXT_PREVALENCE;
+  return Math.min(1, Math.max(0, n));
 }

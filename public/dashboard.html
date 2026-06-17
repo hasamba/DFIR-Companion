@@ -2414,6 +2414,7 @@
       #sec-adversary .adv-next-tech{color:var(--c-ffb454);font-weight:bold;text-decoration:none;font-size:12px}
       #sec-adversary .adv-next-tech:hover{text-decoration:underline}
       #sec-adversary .adv-next-tactic{color:var(--c-6aa9ff);font-size:11px;background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px}
+      #sec-adversary .adv-next-rare{color:var(--c-c79bff);font-size:11px;background:var(--c-2a2233);border:1px solid var(--c-4a3a5a);border-radius:3px;padding:0 5px}
       #sec-adversary .adv-next-support{margin-left:auto;color:var(--c-9aa4b2);font-size:11px;white-space:nowrap}
     </style>
     <section id="sec-velohunts" style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="veloHuntSuggest">—</div></section>
@@ -6574,19 +6575,22 @@
       // Adversary emulation (#121): the matched groups' techniques the case hasn't observed yet —
       // predictive hunt priorities. Only present when at least one group matched (server-derived).
       const next = (d.nextTechniques && d.nextTechniques.length) ? (() => {
+        const matchedTotal = (d.hints || []).length;
         const rows = d.nextTechniques.map(n => {
           const u = n.url || attackUrl(n.id);
           const tech = u
             ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="adv-next-tech">${esc(n.id)}</a>`
             : `<span class="adv-next-tech">${esc(n.id)}</span>`;
           const groupNames = (n.groups || []).map(g => `${g.id} ${g.name}`).join(", ");
-          const plural = n.groupCount === 1 ? "" : "s";
-          const support = `<span class="adv-next-support" title="${escAttr(groupNames)}">used by ${esc(n.groupCount)} matched group${plural}</span>`;
-          return `<div class="adv-next-row">${tech}<span class="adv-next-tactic">${esc(n.tactic)}</span>${support}</div>`;
+          const support = `<span class="adv-next-support" title="${escAttr(groupNames)}">${esc(n.groupCount)} of ${esc(matchedTotal)} matched groups</span>`;
+          // Distinctiveness: lower global prevalence = rarer across ALL groups = more telling a signal.
+          const pct = typeof n.prevalence === "number" ? Math.round(n.prevalence * 100) : null;
+          const rare = pct === null ? "" : `<span class="adv-next-rare" title="Used by ${esc(pct)}% of all known groups — lower is more distinctive to this actor profile">${esc(pct)}% of groups</span>`;
+          return `<div class="adv-next-row">${tech}<span class="adv-next-tactic">${esc(n.tactic)}</span>${rare}${support}</div>`;
         }).join("");
         return `<div class="adv-next">` +
           `<div class="adv-next-h">⌖ Likely next techniques — hunt priorities</div>` +
-          `<div class="adv-next-sub">Techniques the matched groups above are known to use that this case hasn't observed yet, ranked by how many of those groups use each — hypothesis fuel for focused hunting, not attribution or a forecast.</div>` +
+          `<div class="adv-next-sub">Techniques the matched groups above are known to use that this case hasn't observed yet, ranked by <strong>distinctiveness</strong> (how many matched groups use each × how rare it is across all groups) so generic tradecraft is filtered out — hypothesis fuel for focused hunting, not attribution or a forecast.</div>` +
           `<div class="adv-next-list">${rows}</div>` +
         `</div>`;
       })() : "";

@@ -69,7 +69,11 @@ describe("archiveCase", () => {
     return {
       scanFiles: async (_dir: string) => Object.keys(files),
       readFile: async (absPath: string) => {
-        const rel = Object.keys(files).find(k => absPath.endsWith(k));
+        // archiveCase builds absPath via path.join (backslashes on Windows);
+        // the files map is keyed with forward-slash relative paths — normalize
+        // before matching so the mock is path-separator agnostic.
+        const normalized = absPath.replaceAll("\\", "/");
+        const rel = Object.keys(files).find(k => normalized.endsWith(k));
         if (!rel) throw new Error(`file not found: ${absPath}`);
         return Buffer.from(files[rel], "utf8");
       },

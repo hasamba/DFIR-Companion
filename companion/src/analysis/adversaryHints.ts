@@ -55,6 +55,7 @@ export interface AdversaryHintOptions {
   minOverlap?: number; // minimum overlapping techniques (base-or-better) to surface a group (default 3)
   topN?: number; // cap on how many ranked groups to return (default 5)
   maxNextTechniques?: number; // cap on emulation "next technique" suggestions (default 10, issue #121)
+  maxNextPrevalence?: number; // drop emulation suggestions used by > this fraction of all groups (default 0.33, #121)
 }
 
 // The full response a caller (route / report) returns: the ranked hints plus the provenance and
@@ -218,6 +219,7 @@ export function buildAdversaryHintsResult(
   // predictive hunt priorities (#121). Empty when no group matched (nothing to emulate).
   const nextTechniques = suggestNextTechniques(caseTechniques, hints, dataset.groups, {
     maxTechniques: opts.maxNextTechniques,
+    maxPrevalence: opts.maxNextPrevalence,
   });
   return {
     attackVersion: dataset.attackVersion,

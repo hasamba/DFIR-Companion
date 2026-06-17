@@ -342,16 +342,20 @@ function adversaryHints(state: InvestigationState, lines: string[]): void {
   if (result.nextTechniques.length > 0) {
     lines.push(
       "**Likely next techniques (hunt priorities).** Techniques the matched groups above are known " +
-        "to use that this case has not yet observed, ranked by how many of those groups use each.",
+        "to use that this case has not yet observed, ranked by **distinctiveness** — how many matched " +
+        "groups use each weighted by how rare it is across all known groups, so generic tradecraft " +
+        "(recon, tooling) is filtered out. The _global %_ is how many of all known groups use it " +
+        "(lower = more distinctive to this actor profile).",
       "",
       `_${ADVERSARY_EMULATION_CAVEAT}_`,
       "",
-      "| Technique | Tactic | Used by matched groups |",
-      "| --- | --- | --- |",
+      "| Technique | Tactic | Global % | Matched groups |",
+      "| --- | --- | --- | --- |",
     );
     for (const n of result.nextTechniques) {
       const used = `${n.groupCount} — ${n.groups.map((g) => `${g.id} ${g.name}`).join(", ")}`;
-      lines.push(`| ${cellMd(attackTechniqueMd(n.id))} | ${cellMd(n.tactic)} | ${cellMd(used)} |`);
+      const pct = `${Math.round(n.prevalence * 100)}%`;
+      lines.push(`| ${cellMd(attackTechniqueMd(n.id))} | ${cellMd(n.tactic)} | ${pct} | ${cellMd(used)} |`);
     }
     lines.push("");
   }

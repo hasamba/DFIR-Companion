@@ -18,7 +18,7 @@ import {
   type AdversaryGroup,
   type AdversaryHintOptions,
 } from "./adversaryHints.js";
-import { DEFAULT_MAX_NEXT_TECHNIQUES } from "./adversaryEmulation.js";
+import { DEFAULT_MAX_NEXT_TECHNIQUES, DEFAULT_MAX_NEXT_PREVALENCE } from "./adversaryEmulation.js";
 
 export interface AdversaryGroupsDataset {
   source: string;
@@ -104,15 +104,24 @@ export function loadAdversaryGroupsDataset(): AdversaryGroupsDataset {
 }
 
 // Hint thresholds resolved from the environment, so the route and the report agree:
-//   DFIR_ADVERSARY_MIN_OVERLAP (default 3)  — minimum overlapping techniques to surface a group
-//   DFIR_ADVERSARY_TOP_N       (default 5)  — cap on how many groups to return
-//   DFIR_ADVERSARY_NEXT_MAX    (default 10) — cap on emulation "next technique" suggestions (#121)
+//   DFIR_ADVERSARY_MIN_OVERLAP   (default 3)    — minimum overlapping techniques to surface a group
+//   DFIR_ADVERSARY_TOP_N         (default 5)    — cap on how many groups to return
+//   DFIR_ADVERSARY_NEXT_MAX      (default 10)   — cap on emulation "next technique" suggestions (#121)
+//   DFIR_ADVERSARY_NEXT_MAX_PREVALENCE (0.33)   — drop suggestions used by > this fraction of all groups (#121)
 export function adversaryHintEnvOptions(): Required<AdversaryHintOptions> {
   return {
     minOverlap: Number(process.env.DFIR_ADVERSARY_MIN_OVERLAP) || DEFAULT_MIN_OVERLAP,
     topN: Number(process.env.DFIR_ADVERSARY_TOP_N) || DEFAULT_TOP_N,
     maxNextTechniques: Number(process.env.DFIR_ADVERSARY_NEXT_MAX) || DEFAULT_MAX_NEXT_TECHNIQUES,
+    maxNextPrevalence: envFloat(process.env.DFIR_ADVERSARY_NEXT_MAX_PREVALENCE, DEFAULT_MAX_NEXT_PREVALENCE),
   };
+}
+
+// Parse a fractional env var, keeping an explicit 0 (which `Number(x) || default` would wrongly drop).
+function envFloat(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 // Test-only: drop the cache so a test can point the loader at a fresh state.
