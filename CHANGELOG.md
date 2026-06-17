@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-06-17
+
 ### Added
 - **Mattermost & Discord notifications** — two new notification channels alongside Slack/Teams/Telegram/SMTP: Mattermost (Slack-compatible coloured attachment) and Discord (rich embed, severity-coloured, clickable case link); both webhook-based, with the test button + secret redaction (closes #136).
 - **Explain This Event** — 💡 button on every forensic timeline row fires a focused AI call that explains the event in context: what happened, why it matters, normal-vs-suspicious assessment, ATT&CK mapping, 1–3 runnable pivot queries (Velociraptor VQL / KQL / SPL), and evidence for/against maliciousness; ephemeral (no state change), overlay panel with copy buttons on each query (closes #141).
@@ -337,7 +339,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.19.0...v0.20.0
