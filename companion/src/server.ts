@@ -5430,6 +5430,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     } catch (err: unknown) {
       const msg = (err as Error).message;
       if (msg.startsWith("event not found") || msg.startsWith("Case not found")) return res.status(404).json({ error: msg });
+      errLine(`[explain] case=${req.params.id} event=${req.params.eid}: ${msg}`);
       return res.status(500).json({ error: msg });
     }
   });
