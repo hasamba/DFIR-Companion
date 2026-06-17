@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { formatSlack } from "../../src/integrations/notify/slackFormat.js";
 import { formatTeams } from "../../src/integrations/notify/teamsFormat.js";
+import { formatMattermost } from "../../src/integrations/notify/mattermostFormat.js";
+import { formatDiscord } from "../../src/integrations/notify/discordFormat.js";
 import { formatTelegram } from "../../src/integrations/notify/telegramFormat.js";
 import { formatEmail, buildRfc822Message } from "../../src/integrations/notify/emailFormat.js";
 import { postWebhook } from "../../src/integrations/notify/webhookSender.js";
@@ -80,6 +82,40 @@ describe("slack/teams/email/telegram formatters", () => {
     const p = formatTelegram(event({ url: "http://127.0.0.1:4773/dashboard" }));
     expect(p.text).toContain("Open case");
     expect(p.text).toContain("http://127.0.0.1:4773/dashboard");
+  });
+
+  it("Mattermost payload colours by severity, renders Key: value lines as fields, has a markdown headline", () => {
+    const p = formatMattermost(event());
+    expect(p.text).toContain("Cobalt Strike beacon");
+    expect(p.text).toContain("**"); // bold markdown headline
+    const att = p.attachments[0];
+    expect(att.color).toBe("#D00000"); // Critical = red
+    expect(att.fields.find((f) => f.title === "Case")?.value).toBe("case-1");
+    expect(att.fields.find((f) => f.title === "Severity")?.value).toBe("Critical");
+    expect(att.text).toContain("C2 on DC01"); // non Key:value line → body
+  });
+
+  it("Mattermost adds an Open case markdown link when url is set", () => {
+    const p = formatMattermost(event({ url: "http://127.0.0.1:4773/dashboard" }));
+    expect(p.attachments[0].text).toContain("[Open case](http://127.0.0.1:4773/dashboard)");
+  });
+
+  it("Discord payload uses an integer colour, an embed, fields, and a timestamp", () => {
+    const p = formatDiscord(event());
+    const embed = p.embeds[0];
+    expect(embed.color).toBe(0xd00000); // Critical = red, as an integer
+    expect(embed.title).toContain("Cobalt Strike beacon");
+    expect(embed.title).toContain("🔴");
+    expect(embed.fields.find((f) => f.name === "Case")?.value).toBe("case-1");
+    expect(embed.fields.find((f) => f.name === "Severity")?.value).toBe("Critical");
+    expect(embed.description).toContain("C2 on DC01"); // non Key:value line → description
+    expect(embed.timestamp).toBe(NOW);
+    expect(embed.url).toBeUndefined();
+  });
+
+  it("Discord embed links its title to the case when url is set", () => {
+    const p = formatDiscord(event({ url: "http://127.0.0.1:4773/dashboard" }));
+    expect(p.embeds[0].url).toBe("http://127.0.0.1:4773/dashboard");
   });
 
   it("email content has subject/text/html; the RFC822 message is deterministic multipart base64", () => {
@@ -214,6 +250,25 @@ describe("dispatchEvent + createNotifier", () => {
     expect(results.every((r) => r.ok)).toBe(true);
     expect(sent).toContain("https://slack");
     expect(sent).toContain("https://teams");
+  });
+
+  it("routes mattermost + discord events to their webhook URLs with the right payload shape", async () => {
+    const sent: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      sent.push({ url: String(url), body: JSON.parse((init?.body as string) ?? "{}") });
+      return new Response(null, { status: 204 }); // Discord replies 204 No Content
+    }) as typeof fetch;
+    const channels = [
+      channel({ id: "mm1", type: "mattermost", webhookUrl: "https://mm.example.com/hooks/abc" }),
+      channel({ id: "dc1", type: "discord", webhookUrl: "https://discord.com/api/webhooks/1/xyz" }),
+    ];
+    const results = await dispatchEvent(channels, event(), { fetchFn });
+    expect(results.map((r) => r.channelId).sort()).toEqual(["dc1", "mm1"]);
+    expect(results.every((r) => r.ok)).toBe(true);
+    const mm = sent.find((s) => s.url.includes("/hooks/"))!;
+    expect(Array.isArray(mm.body.attachments)).toBe(true);
+    const dc = sent.find((s) => s.url.includes("/api/webhooks/"))!;
+    expect(Array.isArray(dc.body.embeds)).toBe(true);
   });
 
   it("routes telegram events to the Bot API sendMessage endpoint", async () => {

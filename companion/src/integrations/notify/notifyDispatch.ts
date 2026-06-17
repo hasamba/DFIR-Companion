@@ -9,10 +9,22 @@ import {
 import type { NotificationConfigStore } from "../../analysis/notificationStore.js";
 import { formatSlack } from "./slackFormat.js";
 import { formatTeams } from "./teamsFormat.js";
+import { formatMattermost } from "./mattermostFormat.js";
+import { formatDiscord } from "./discordFormat.js";
 import { formatTelegram } from "./telegramFormat.js";
 import { buildRfc822Message, formatEmail } from "./emailFormat.js";
 import { postWebhook } from "./webhookSender.js";
 import { sendSmtp, type SmtpConnect } from "./smtpClient.js";
+
+// Per-type payload builder for the incoming-webhook channels. They all POST a JSON body to the
+// channel's webhookUrl — only the body shape differs (Slack Block Kit, Teams MessageCard,
+// Mattermost Slack-compatible attachment, Discord embed). email/telegram use their own transports.
+const WEBHOOK_FORMATTERS: Partial<Record<NotificationChannelType, (e: NotificationEvent) => unknown>> = {
+  slack: formatSlack,
+  teams: formatTeams,
+  mattermost: formatMattermost,
+  discord: formatDiscord,
+};
 
 // Routes a NotificationEvent to every channel that wants it (shouldNotify), formats per channel
 // type, and sends. Best-effort: a channel failure NEVER throws — it's captured in the per-channel
@@ -53,14 +65,10 @@ async function sendToChannel(
 ): Promise<ChannelResult> {
   const base = { channelId: channel.id, channel: channel.name, type: channel.type, skipped: false };
   try {
-    if (channel.type === "slack") {
+    const formatter = WEBHOOK_FORMATTERS[channel.type];
+    if (formatter) {
       if (!channel.webhookUrl) return { ...base, ok: false, error: "no webhook URL configured" };
-      const r = await postWebhook(transport.fetchFn, channel.webhookUrl, formatSlack(event), transport.timeoutMs);
-      return { ...base, ok: r.ok, ...(r.error ? { error: r.error } : {}) };
-    }
-    if (channel.type === "teams") {
-      if (!channel.webhookUrl) return { ...base, ok: false, error: "no webhook URL configured" };
-      const r = await postWebhook(transport.fetchFn, channel.webhookUrl, formatTeams(event), transport.timeoutMs);
+      const r = await postWebhook(transport.fetchFn, channel.webhookUrl, formatter(event), transport.timeoutMs);
       return { ...base, ok: r.ok, ...(r.error ? { error: r.error } : {}) };
     }
     if (channel.type === "telegram") {
