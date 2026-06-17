@@ -143,7 +143,7 @@ double), shared hash, or same path within a time window. The merged event unions
 **asset ↔ IoC graph** (`analysis/assetGraph.ts`, pure) derives compromised assets (hosts from
 `event.asset`; accounts from `DOMAIN\user`/UPN in event text) and the IoCs that touched each. Side files in `state/`:
 `ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (per-source enrichment
-selection — the enabled provider names; **default = local-only** (MISP/YETI), external opt-in),
+selection — the enabled provider names; **default = local-only** (MISP/YETI/OpenCTI), external opt-in),
 `pending_analysis.json`, `report-meta.json` (human-authored report
 sections — title page, distribution, BIA, glossary, recommendations…), `comments.json`
 (investigator comments on entities — never wiped by synthesis).
@@ -156,10 +156,10 @@ save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`) and are unit-tested independently of I/O.
 
-**Threat-intel enrichment** (`enrichment/`): `EnrichmentProvider`s (VirusTotal, MalwareBazaar,
-AbuseIPDB, MISP, YETI, RockyRaccoon) look up IOCs by kind; `enrichService.ts` routes/throttles/
+**Threat-intel enrichment** (`enrichment/`): `EnrichmentProvider`s (VirusTotal, Hunting.ch,
+AbuseIPDB, MISP, YETI, OpenCTI, RockyRaccoon) look up IOCs by kind; `enrichService.ts` routes/throttles/
 caps/caches; `chainValidate.ts` checks RockyRaccoon parent→child chains. Each provider has a
-`scope`: **local** (MISP/YETI — your own instance, OPSEC-safe) or **external** (third-party SaaS).
+`scope`: **local** (MISP/YETI/OpenCTI — your own instance, OPSEC-safe) or **external** (third-party SaaS).
 **OPSEC: per-source selection, default local-only** (`resolveEnabledProviders` in `enrichControl`),
 external opt-in per case (`enrich-control` stores the enabled provider names). enrichService caches
 per (IOC, provider) via the IOC's `enrichedBy`, so enabling a source re-checks every IOC on it.
