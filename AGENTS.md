@@ -156,7 +156,7 @@ save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`) and are unit-tested independently of I/O.
 
-**Threat-intel enrichment** (`enrichment/`): `EnrichmentProvider`s (VirusTotal, MalwareBazaar,
+**Threat-intel enrichment** (`enrichment/`): `EnrichmentProvider`s (VirusTotal, Hunting.ch,
 AbuseIPDB, MISP, YETI, OpenCTI, RockyRaccoon) look up IOCs by kind; `enrichService.ts` routes/throttles/
 caps/caches; `chainValidate.ts` checks RockyRaccoon parent→child chains. Each provider has a
 `scope`: **local** (MISP/YETI/OpenCTI — your own instance, OPSEC-safe) or **external** (third-party SaaS).

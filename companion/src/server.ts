@@ -6394,6 +6394,7 @@ export function buildEnrichProviderDelayMap(): Record<string, number> | undefine
     ["ROCKYRACCOON", "RockyRaccoon"],
     ["MISP", "MISP"],
     ["YETI", "YETI"],
+    ["OPENCTI", "OpenCTI"],
     ["REVERSE_DNS", "Reverse DNS"],
     ["WHOIS", "WHOIS"],
     ["GEOIP", "GeoIP"],
