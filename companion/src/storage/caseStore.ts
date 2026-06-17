@@ -2,6 +2,7 @@ import { mkdir, writeFile, appendFile, readFile, stat, readdir } from "node:fs/p
 import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
+import { atomicWrite } from "./atomicWrite.js";
 
 export interface CreateCaseInput {
   caseId: string;
@@ -151,6 +152,14 @@ export class CaseStore {
     await mkdir(this.metadataDir(caseId), { recursive: true });
     await appendFile(this.importsLogPath(caseId), JSON.stringify(metadata) + "\n", "utf8");
     return metadata;
+  }
+
+  /** Atomically patch case.json with the given fields. Unknown fields are preserved. */
+  async updateCaseMeta(caseId: string, patch: Partial<CaseMeta>): Promise<CaseMeta> {
+    const existing = (await this.getCaseMeta(caseId)) ?? { caseId, name: "", createdAt: "", investigator: "", aiProvider: null } as CaseMeta;
+    const updated = { ...existing, ...patch, caseId } as CaseMeta;
+    await atomicWrite(this.caseMetaPath(caseId), JSON.stringify(updated, null, 2));
+    return updated;
   }
 
   async nextImportSeq(caseId: string): Promise<number> {

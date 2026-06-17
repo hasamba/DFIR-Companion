@@ -888,6 +888,27 @@
     #searchFilterBar { padding: 5px 16px; background: var(--c-0e1116); border-bottom: 1px solid var(--c-1a1f28);
       display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: var(--c-9aa4b2); }
     #searchFilterBar[hidden] { display: none; }
+    /* Disk-space warning banner (#119). */
+    #diskWarnBanner { display: flex; align-items: center; gap: 10px; padding: 6px 16px;
+      border-bottom: 1px solid; font-size: 12.5px; }
+    #diskWarnBanner[hidden] { display: none; }
+    #diskWarnBanner.dw-warning { background: var(--c-3a2a00); color: var(--c-ffcf66); border-color: var(--c-5a4416); }
+    #diskWarnBanner.dw-danger  { background: #3a1800; color: #ff9933; border-color: #7a3000; }
+    #diskWarnBanner.dw-critical { background: #3a0000; color: #ff5c5c; border-color: #7a0000; }
+    #diskWarnBanner span { flex: 1; }
+    #diskWarnBanner button { background: rgba(0,0,0,0.3); color: inherit; border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 5px; cursor: pointer; padding: 2px 8px; font-size: 12px; }
+    #diskWarnBanner button:hover { background: rgba(0,0,0,0.5); }
+    /* Case lifecycle button and dropdown. */
+    #lifecycleBtn { padding: 4px 7px; cursor: pointer; background: transparent;
+      border: 1px solid var(--c-30363d); border-radius: 4px;
+      transition: background 0.2s; align-items: center; vertical-align: middle; }
+    #lifecycleBtn:hover { background: var(--hover-wash); }
+    #lifecycleBtn .lc-icon-active { color: var(--c-4ade80); display: inline-block; }
+    #lifecycleBtn .lc-icon-closed { color: #ff9933; display: none; }
+    #lifecycleBtn.lc-closed .lc-icon-active { display: none; }
+    #lifecycleBtn.lc-closed .lc-icon-closed { display: inline-block; }
+    #lifecycleMenu button:hover { background: var(--hover-wash); }
     /* Cross-case warning banner (captures arriving for a case other than the one being viewed). */
     #caseMismatchBanner { display: flex; align-items: center; gap: 10px; padding: 7px 16px;
       background: var(--c-3a2a00); color: var(--c-ffcf66); border-bottom: 1px solid var(--c-5a4416); font-size: 12.5px; }
@@ -924,6 +945,12 @@
     <button id="seedDemoBtn" style="display:none" data-tip="Load a pre-populated demo case (GlobalTech BEC &amp; Ransomware Precursor) to explore all dashboard features without importing real evidence">Demo case</button>
     <input id="snapshotImportFile" type="file" accept=".json,application/json" style="display:none" />
     <button id="importCaseBtn" type="button" data-tip="Import a whole case — an investigation snapshot (.json) shared by a teammate, or pull an existing DFIR-IRIS case. Opens a chooser; the DFIR-IRIS option appears only when configured.">Import case</button>
+    <button id="lifecycleBtn" style="display:none" data-tip="Case lifecycle — close, reopen, or archive this case">
+      <!-- unlocked padlock = active (green) -->
+      <svg class="lc-icon-active" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+      <!-- locked padlock = closed (orange) -->
+      <svg class="lc-icon-closed" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    </button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
@@ -1293,6 +1320,9 @@
         <div class="sfield-row">
           <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>
           <div class="sfield"><label>Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Disk-space warning threshold (%)<span class="sfield-hint">DFIR_DISK_WARN_PCT — "danger" usage % that triggers the orange disk-space banner; warning is 15 pp below, critical 10 pp above. Leave blank for defaults (70/85/95%). Set to 0 to disable the check</span></label><input id="env-DFIR_DISK_WARN_PCT" placeholder="85" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Log directory<span class="sfield-hint">DFIR_LOG_DIR — folder for the global session log; blank = <code>logs/</code> beside the cases root. Per-case logs always stay in the case folder</span></label><input id="env-DFIR_LOG_DIR" placeholder="(logs/ beside cases root)" /></div>
@@ -2090,6 +2120,12 @@
     <span id="searchMatchCount"></span>
   </div>
 
+  <!-- Disk-space warning banner (#119): shown when the cases-root filesystem is nearly full. -->
+  <div id="diskWarnBanner" hidden>
+    <span id="diskWarnText"></span>
+    <button id="diskWarnDismiss" type="button" title="Dismiss">✕</button>
+  </div>
+
   <!-- Cross-case warning: shown when screenshots arrive for a case other than the one being viewed. -->
   <div id="caseMismatchBanner" hidden>
     <span id="caseMismatchText"></span>
@@ -2577,6 +2613,13 @@
       </div>
     </section>
   </main>
+  <!-- Lifecycle dropdown — lives outside toolbarMain so it never triggers the fitToolbar
+       MutationObserver. Positioned via JS (position:fixed). Must be before the script. -->
+  <div id="lifecycleMenu" style="display:none;position:fixed;background:var(--c-161b22);border:1px solid var(--c-30363d);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:9999;min-width:180px;">
+    <button id="closeBtn" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Close case</button>
+    <button id="reopenBtn" style="display:none;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Reopen case</button>
+    <button id="archiveBtn" style="width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;">Archive to ZIP…</button>
+  </div>
   <script>
     // ---- Theme (issue #53: dark/light with persistence + OS preference) ---------------------
     // The effective theme lives in <html data-theme>. It was set FOUC-free by the <head> bootstrap;
@@ -7690,6 +7733,7 @@
       loadImportMeta(caseId);
       loadUndoStack(caseId);
       loadCustomerExposure(caseId);
+      loadCaseLifecycle(caseId);
       loadVeloTriage(caseId);
       resetVeloHuntSuggest();   // clear AI-suggested fleet hunts; analyst regenerates per case on demand
       resetPlaybookHuntSuggest();   // clear AI-suggested playbook hunts (#70) too
@@ -8412,7 +8456,7 @@
       if (!caseId) return;
       document.getElementById("status").textContent = "synthesizing…";
       fetch(`/cases/${caseId}/synthesize`, { method: "POST" })
-        .then(r => r.json())
+        .then(r => { if (r.status === 423) return r.json().then(p => { throw Object.assign(new Error(p.error || "Case is closed"), { locked: true }); }); return r.json(); })
         .then(p => {
           if (p.error) { document.getElementById("status").textContent = "synthesis failed: " + p.error; return; }
           document.getElementById("status").textContent =
@@ -8501,6 +8545,7 @@
             body: JSON.stringify({ filename: f.name, text, minSeverity }),
           });
           const jr = await r.json().catch(() => ({}));
+          if (r.status === 423) { statusEl.textContent = jr.error || "Case is closed — reopen it to import evidence"; e.target.value = ""; return; }
           if (!r.ok) throw new Error(jr.error || ("HTTP " + r.status));
           // CSV/log need the LLM to interpret them; with AI off the server saves the evidence but
           // skips analysis (jr.analyzed === false). Surface that honestly instead of "analyzing".
@@ -8525,6 +8570,7 @@
               tabTitle: f.name.replace(/\.[^.]+$/, ""), triggerType, imageBase64,
             }),
           });
+          if (r.status === 423) { const jr = await r.json().catch(() => ({})); statusEl.textContent = jr.error || "Case is closed — reopen it to add screenshots"; e.target.value = ""; return; }
           if (!r.ok) { imgFail++; continue; }
           const meta = await r.json();
           if (meta.isDuplicate) imgDup++; else imgOk++;
@@ -10008,9 +10054,162 @@
         .catch(() => {});
     }
 
+    // ── Disk-space warning (#119) ───────────────────────────────────────────
+    // Poll GET /disk-stats once on load. Shows a banner when the cases-root
+    // filesystem is at warning / danger / critical level. Dismissed per-session.
+    let diskWarnDismissed = false;
+    function loadDiskStats() {
+      if (diskWarnDismissed) return;
+      fetch("/disk-stats")
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d || d.level === "none") { hideDiskWarn(); return; }
+          const banner = document.getElementById("diskWarnBanner");
+          const text   = document.getElementById("diskWarnText");
+          if (!banner || !text) return;
+          const usedGb = ((d.totalBytes - d.freeBytes) / 1e9).toFixed(1);
+          const totalGb = (d.totalBytes / 1e9).toFixed(1);
+          const pct = d.usedPct.toFixed(1);
+          text.textContent = `Disk space ${d.level.toUpperCase()}: ${usedGb} GB used of ${totalGb} GB (${pct}%) on the cases folder filesystem.` +
+            (d.level === "critical" ? " Free space is very low — consider archiving or moving closed cases." :
+             d.level === "danger"   ? " Consider archiving or moving closed cases before this fills." :
+                                      " Monitor disk usage and archive closed cases if needed.");
+          banner.className = `dw-${d.level}`;
+          banner.hidden = false;
+        })
+        .catch(() => {});
+    }
+    function hideDiskWarn() {
+      const el = document.getElementById("diskWarnBanner");
+      if (el) el.hidden = true;
+    }
+    const diskWarnDismissBtn = document.getElementById("diskWarnDismiss");
+    if (diskWarnDismissBtn) diskWarnDismissBtn.onclick = () => { diskWarnDismissed = true; hideDiskWarn(); };
+
+    // ── Case lifecycle (#119) ───────────────────────────────────────────────
+    // Load the case's status (open/closed) and update the toolbar button + label.
+    function loadCaseLifecycle(caseId) {
+      fetch(`/cases/${caseId}/state`)
+        .then(r => r.ok ? r.json() : null)
+        .then(() => {
+          // State doesn't include case meta. Fetch the cases list to get status.
+          return fetch("/cases").then(r => r.ok ? r.json() : []);
+        })
+        .then(cases => {
+          const meta = cases.find(c => c.caseId === caseId);
+          const isClosed = meta && meta.status === "closed";
+          const btn    = document.getElementById("lifecycleBtn");
+          const closeBtn = document.getElementById("closeBtn");
+          const reopenBtn = document.getElementById("reopenBtn");
+          if (btn) {
+            btn.style.display = caseId ? "inline-flex" : "none";
+            btn.classList.toggle("lc-closed", isClosed);
+            btn.title = isClosed ? "Case CLOSED — click to reopen or archive" : "Case ACTIVE — click to close or archive";
+          }
+          if (closeBtn) closeBtn.style.display = isClosed ? "none" : "block";
+          if (reopenBtn) reopenBtn.style.display = isClosed ? "block" : "none";
+        })
+        .catch(() => {});
+    }
+
+    (function wireLifecycleButtons() {
+      const btn = document.getElementById("lifecycleBtn");
+      const menu = document.getElementById("lifecycleMenu");
+      const closeBtn = document.getElementById("closeBtn");
+      const reopenBtn = document.getElementById("reopenBtn");
+      const archiveBtn = document.getElementById("archiveBtn");
+      if (!btn || !menu) return;
+
+      // Toggle menu on button click — position fixed relative to button so it works
+      // even though the menu lives outside the toolbar (prevents fitToolbar flicker).
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (menu.style.display !== "none") { menu.style.display = "none"; return; }
+        const r = btn.getBoundingClientRect();
+        menu.style.top = (r.bottom + 4) + "px";
+        menu.style.left = r.left + "px";
+        menu.style.display = "block";
+      });
+
+      // Close menu when clicking outside
+      document.addEventListener("click", () => { menu.style.display = "none"; });
+
+      // Close case
+      closeBtn.addEventListener("click", async () => {
+        menu.style.display = "none";
+        const caseId = document.getElementById("caseId").value.trim();
+        if (!caseId) return;
+        try {
+          const r = await fetch(`/cases/${caseId}/status`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ status: "closed" }),
+          });
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            alert("Failed to close case: " + (err.error || "HTTP " + r.status));
+            return;
+          }
+          loadCaseLifecycle(caseId);
+          loadCaseList();
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
+      });
+
+      // Reopen case
+      reopenBtn.addEventListener("click", async () => {
+        menu.style.display = "none";
+        const caseId = document.getElementById("caseId").value.trim();
+        if (!caseId) return;
+        try {
+          const r = await fetch(`/cases/${caseId}/status`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ status: "open" }),
+          });
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            alert("Failed to reopen case: " + (err.error || "HTTP " + r.status));
+            return;
+          }
+          loadCaseLifecycle(caseId);
+          loadCaseList();
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
+      });
+
+      // Archive case
+      archiveBtn.addEventListener("click", async () => {
+        menu.style.display = "none";
+        const caseId = document.getElementById("caseId").value.trim();
+        if (!caseId) return;
+        const meta = await fetch("/cases").then(r => r.json()).catch(() => []);
+        const c = meta.find(m => m.caseId === caseId);
+        if (c && c.status !== "closed") {
+          if (!confirm("The case is currently open. It is recommended to close it first before archiving. Archive anyway?")) return;
+        } else {
+          if (!confirm(`Archive case "${esc(caseId)}" to a ZIP file? This may take a moment for large cases. The original folder is kept.`)) return;
+        }
+        try {
+          const r = await fetch(`/cases/${caseId}/archive`, { method: "POST" });
+          const body = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            alert("Archive failed: " + (body.error || "HTTP " + r.status));
+            return;
+          }
+          alert(`Case archived successfully.\nPath: ${body.archivePath}\nFiles: ${body.manifest.totalFiles}\nBytes: ${body.manifest.totalBytes.toLocaleString()}`);
+        } catch (e) {
+          alert("Archive error: " + e.message);
+        }
+      });
+    })();
+
     // On load, populate the case picker, then restore the case from the URL (?caseId=) or last
     // session and reconnect.
     loadCaseList();
+    loadDiskStats();
     (function restore() {
       const fromUrl = new URLSearchParams(location.search).get("caseId");
       const caseId = (fromUrl || localStorage.getItem("dfir.caseId") || "").trim();

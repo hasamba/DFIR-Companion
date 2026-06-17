@@ -38,6 +38,7 @@ export interface ConnectionStatus {
   // not exist). The payload is NOT queued (retrying won't help); the popup surfaces it so
   // the analyst knows to create/select the case in the dashboard.
   rejected?: number;
+  rejectedMessage?: string;
 }
 
 // ── Automated artifact fetching (issue #102) ──────────────────────────────────────────────────
