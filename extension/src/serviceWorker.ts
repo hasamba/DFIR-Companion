@@ -40,7 +40,9 @@ async function captureActiveTab(trigger: TriggerType): Promise<void> {
 
   // Record the last capture outcome so the popup can surface it.
   const diag = status.rejected
-    ? `rejected (HTTP ${status.rejected}) — case missing? create/select it in the dashboard`
+    ? status.rejectedMessage
+      ? `rejected (HTTP ${status.rejected}) — ${status.rejectedMessage}`
+      : `rejected (HTTP ${status.rejected}) — case missing? create/select it in the dashboard`
     : status.online
       ? `ok (online=true, queued=${status.queued})`
       : `offline — capture queued for retry (queued=${status.queued})`;

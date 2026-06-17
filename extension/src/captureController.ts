@@ -30,9 +30,9 @@ export class CaptureController {
     }
 
     // The companion responded but rejected the capture (4xx — typically 404, the case
-    // doesn't exist). Retrying won't help, so don't queue; surface it for the popup.
+    // doesn't exist, or 423 — the case is closed). Retrying won't help, so don't queue.
     if (result.status >= 400 && result.status < 500) {
-      return { online: true, queued: await this.queue.size(), rejected: result.status };
+      return { online: true, queued: await this.queue.size(), rejected: result.status, rejectedMessage: result.errorMessage };
     }
 
     // Transient failure (unreachable / 5xx) — queue for retry when the companion is back.
