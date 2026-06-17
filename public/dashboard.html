@@ -710,7 +710,7 @@
        collapse to font-size:0 and only the icon remains, so the toolbar fits one line; the
        hover tooltips (data-tip) keep every icon discoverable. */
     #connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
-    #aiToggle::before, #synthesize::before, #importBtn::before, #importCaseBtn::before,
+    #aiToggle::before, #synthesize::before, #secondOpinion::before, #importBtn::before, #importCaseBtn::before,
     #importUndoBtn::before, #importRedoBtn::before,
     #toggleAll::before, #toggleSearchBar::before {
       content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
@@ -721,6 +721,8 @@
     #anonToggle::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3l18 18'/><path d='M10.6 10.6a2 2 0 0 0 2.8 2.8'/><path d='M9.5 5.2A9.5 9.5 0 0 1 21 12a13 13 0 0 1-2 2.6M6 6.3A13 13 0 0 0 3 12a9.5 9.5 0 0 0 12.5 5.8'/></svg>"); }
     #aiToggle::before    { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z'/><path d='M18.5 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'/></svg>"); }
     #synthesize::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/></svg>"); }
+    /* Second opinion (#116) — balance scales = weighing an independent opinion against the primary. */
+    #secondOpinion::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v18'/><path d='M5 7h14'/><path d='M5 7l-3 6a3 3 0 0 0 6 0z'/><path d='M19 7l-3 6a3 3 0 0 0 6 0z'/><path d='M8 21h8'/></svg>"); }
     #importBtn::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v11'/><path d='M8 10l4 4 4-4'/><path d='M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2'/></svg>"); }
     /* Import case (#88) — an archive box, distinct from the evidence-import down-arrow: this restores a whole packaged case (snapshot or IRIS). */
     #importCaseBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 8v13H3V8'/><rect x='1' y='3' width='22' height='5' rx='1'/><path d='M10 12h4'/></svg>"); }
@@ -932,6 +934,9 @@
       color: var(--c-9aa4b2); cursor: pointer; padding: 2px 7px; font-size: 11px; }
     #clearFiltersBtn:hover { color: var(--c-ff7a7a); border-color: var(--c-ff7a7a); }
     #searchMatchCount { color: var(--c-6aa9ff); font-size: 11px; }
+    /* Toolbar is tight on real estate: on narrower screens collapse the "deep" label to just the
+       🧠 checkbox (the tooltip still explains it). */
+    @media (max-width: 1440px) { #deepReasoningLabel .dr-text { display: none; } }
   </style>
 </head>
 <body>
@@ -956,6 +961,9 @@
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" data-tip="Re-derive the case conclusions — findings, MITRE ATT&CK, attacker path, narrative, key questions and next steps — from the in-scope forensic timeline. Replaces the previous conclusions but keeps the timeline, IOCs and threads.">AI Re-synthesize</button>
     <button id="secondOpinion" style="display:none" data-tip="Second LLM opinion: refreshes the primary synthesis (only if the timeline changed), then runs a DIFFERENT model over the same case as an independent QA cross-check, and shows where it disagrees with the primary (findings it adds/drops, severity, ATT&CK technique) for you to accept or reject each. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
+    <label id="deepReasoningLabel" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--c-9aa4b2);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs an Anthropic or OpenRouter reasoning-capable synthesis model.">
+      <input type="checkbox" id="deepReasoning" style="margin:0;cursor:pointer" />🧠<span class="dr-text">&nbsp;deep</span>
+    </label>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.eml,.msg,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,image/png,image/jpeg,image/webp" style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
     <button id="importUndoBtn" type="button" style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
@@ -2387,7 +2395,7 @@
     <section id="sec-questions" style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
     <section id="sec-threads"><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
-    <section id="sec-adversary" style="grid-column: 1 / -1"><h2>Adversary Hints<span class="ev-sub">known ATT&amp;CK groups by technique overlap — hypothesis fuel, not attribution (derived, no AI)</span></h2><div id="adversaryHints">—</div></section>
+    <section id="sec-adversary" style="grid-column: 1 / -1"><h2>Adversary Hints<span class="ev-sub">known ATT&amp;CK groups by technique overlap + their likely next techniques — hypothesis fuel, not attribution (derived, no AI)</span></h2><div id="adversaryHints">—</div></section>
     <style>
       #sec-adversary .adv-caveat{color:var(--c-ffb454);font-size:12px;margin-bottom:8px}
       #sec-adversary .adv-meta{color:var(--c-9aa4b2);font-size:11px;margin-bottom:8px}
@@ -2406,6 +2414,20 @@
       #sec-adversary .adv-tech:hover{text-decoration:underline}
       #sec-adversary .adv-tech-exact{background:var(--c-13243a);color:var(--c-9ecbff);border-color:var(--c-3a567d);font-weight:bold}
       #sec-adversary .adv-tech-base{opacity:0.6}
+      #sec-adversary .adv-next{margin-top:12px;border-top:1px solid var(--c-232a33);padding-top:10px}
+      #sec-adversary .adv-next-h{color:var(--c-ffb454);font-size:12px;font-weight:bold;margin-bottom:2px}
+      #sec-adversary .adv-next-sub{color:var(--c-9aa4b2);font-size:11px;margin-bottom:8px}
+      #sec-adversary .adv-next-list{display:flex;flex-direction:column;gap:5px}
+      #sec-adversary .adv-next-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-ffb454);border-radius:5px;padding:4px 8px}
+      #sec-adversary .adv-next-tech{color:var(--c-ffb454);font-weight:bold;text-decoration:none;font-size:12px}
+      #sec-adversary .adv-next-tech:hover{text-decoration:underline}
+      #sec-adversary .adv-next-tactic{color:var(--c-6aa9ff);font-size:11px;background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px}
+      #sec-adversary .adv-next-name{color:var(--c-d6deea);font-size:12px;font-weight:600}
+      #sec-adversary .adv-next-rare{color:var(--c-c79bff);font-size:11px;background:var(--c-2a2233);border:1px solid var(--c-4a3a5a);border-radius:3px;padding:0 5px}
+      #sec-adversary .adv-next-support{margin-left:auto;color:var(--c-9aa4b2);font-size:11px;white-space:nowrap}
+      #sec-adversary .adv-next-hunt{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400}
+      #sec-adversary .adv-next-hunt:disabled{opacity:.6;cursor:default}
+      #sec-adversary .adv-next-ds{color:var(--c-9aa4b2);font-size:11px;margin:2px 0 0 4px;font-style:italic}
     </style>
     <section id="sec-velohunts" style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="veloHuntSuggest">—</div></section>
     <style>
@@ -5391,8 +5413,9 @@
       if (!caseId) return;
       const btn = document.getElementById("secondOpinion");
       if (btn) btn.disabled = true;
-      document.getElementById("status").textContent = "running second opinion (refreshing the primary, then a different model)…";
-      fetch(`/cases/${caseId}/second-opinion`, { method: "POST" })
+      const deep = !!document.getElementById("deepReasoning")?.checked;
+      document.getElementById("status").textContent = (deep ? "running second opinion with deep reasoning " : "running second opinion ") + "(refreshing the primary, then a different model)…";
+      fetch(`/cases/${caseId}/second-opinion`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deepReasoning: deep }) })
         .then(r => r.json())
         .then(rec => {
           if (btn) btn.disabled = false;
@@ -6562,7 +6585,68 @@
           `<div class="adv-techs">${techs}</div>` +
         `</div>`;
       }).join("");
-      el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>`;
+      // Adversary emulation (#121): the matched groups' techniques the case hasn't observed yet —
+      // predictive hunt priorities. Only present when at least one group matched (server-derived).
+      const next = (d.nextTechniques && d.nextTechniques.length) ? (() => {
+        const matchedTotal = (d.hints || []).length;
+        const rows = d.nextTechniques.map(n => {
+          const u = n.url || attackUrl(n.id);
+          const tech = u
+            ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="adv-next-tech">${esc(n.id)}</a>`
+            : `<span class="adv-next-tech">${esc(n.id)}</span>`;
+          const nm = n.name ? `<span class="adv-next-name">${esc(n.name)}</span>` : "";
+          const groupNames = (n.groups || []).map(g => `${g.id} ${g.name}`).join(", ");
+          const support = `<span class="adv-next-support" title="${escAttr(groupNames)}">${esc(n.groupCount)} of ${esc(matchedTotal)} matched groups</span>`;
+          // Distinctiveness: lower global prevalence = rarer across ALL groups = more telling a signal.
+          const pct = typeof n.prevalence === "number" ? Math.round(n.prevalence * 100) : null;
+          const rare = pct === null ? "" : `<span class="adv-next-rare" title="Used by ${esc(pct)}% of all known groups — lower is more distinctive to this actor profile">${esc(pct)}% of groups</span>`;
+          // "Where to look" hint, only when the dataset carries data sources (ATT&CK <v17 model).
+          const ds = (n.dataSources && n.dataSources.length)
+            ? `<div class="adv-next-ds" title="ATT&CK data sources — telemetry to hunt in for this technique">🔍 ${esc(n.dataSources.join(" · "))}</div>` : "";
+          // A targeted hunt: hand this technique to the AI Fleet-Hunts feature to generate a VQL query.
+          const huntBtn = `<button type="button" class="adv-next-hunt" onclick="huntForTechnique('${escAttr(n.id)}', this)" title="Generate a Velociraptor VQL hunt for this technique (one AI call)">⌖ hunt this</button>`;
+          return `<div class="adv-next-row">${tech}${nm}<span class="adv-next-tactic">${esc(n.tactic)}</span>${rare}${support}${huntBtn}</div>${ds}`;
+        }).join("");
+        return `<div class="adv-next">` +
+          `<div class="adv-next-h">⌖ Likely next techniques — hunt priorities</div>` +
+          `<div class="adv-next-sub">Techniques the matched groups above are known to use that this case hasn't observed yet, ranked by <strong>distinctiveness</strong> (how many matched groups use each × how rare it is across all groups) so generic tradecraft is filtered out — hypothesis fuel for focused hunting, not attribution or a forecast.</div>` +
+          `<div class="adv-next-list">${rows}</div>` +
+        `</div>`;
+      })() : "";
+      el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>` + next;
+    }
+
+    // Adversary emulation (#121): turn a "likely next technique" into a runnable, fleet-wide
+    // Velociraptor VQL hunt (one AI call). Results render in the Suggested Fleet Hunts panel below,
+    // reusing its review + deploy flow. The technique name is looked up from the loaded data (not
+    // passed through the inline handler) to avoid attribute-escaping pitfalls.
+    function huntForTechnique(techId, btn) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !techId) return;
+      const info = ((adversaryHintsData && adversaryHintsData.nextTechniques) || []).find(n => n.id === techId);
+      const techniqueName = info && info.name ? info.name : "";
+      const msg = document.getElementById("suggestHuntsMsg");
+      const panel = document.getElementById("veloHuntSuggest");
+      if (btn) { btn.disabled = true; btn.textContent = "⌖ hunting…"; }
+      if (msg) msg.textContent = `generating a hunt for ${techId}… (one AI call)`;
+      fetch(`/cases/${caseId}/adversary-hints/hunt-technique`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ techniqueId: techId, techniqueName })
+      })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) {
+            if (msg) msg.textContent = "";
+            if (panel) panel.innerHTML = `<div class="vhs-empty" style="color:var(--c-ff9f43)">error: ${esc(j.error || "could not generate a hunt")} — restart the companion server if this 404s</div>`;
+            return;
+          }
+          renderVeloHuntSuggest(j.suggestions || []);
+          if (msg) msg.textContent = (j.suggestions || []).length ? `${j.suggestions.length} hunt(s) for ${techId} — review below ↓` : `no hunt generated for ${techId}`;
+          const sec = document.getElementById("sec-velohunts");
+          if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+        })
+        .catch(e => { if (msg) msg.textContent = ""; if (panel) panel.innerHTML = `<div class="vhs-empty" style="color:var(--c-ff9f43)">error: ${esc(e.message)}</div>`; })
+        .finally(() => { if (btn) { btn.disabled = false; btn.textContent = "⌖ hunt this"; } });
     }
 
     // ── Suggested Fleet Hunts (#57) ───────────────────────────────────────────────────────
@@ -8454,8 +8538,9 @@
     document.getElementById("synthesize").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
-      document.getElementById("status").textContent = "synthesizing…";
-      fetch(`/cases/${caseId}/synthesize`, { method: "POST" })
+      const deep = !!document.getElementById("deepReasoning")?.checked;
+      document.getElementById("status").textContent = deep ? "synthesizing (deep reasoning)…" : "synthesizing…";
+      fetch(`/cases/${caseId}/synthesize`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deepReasoning: deep }) })
         .then(r => { if (r.status === 423) return r.json().then(p => { throw Object.assign(new Error(p.error || "Case is closed"), { locked: true }); }); return r.json(); })
         .then(p => {
           if (p.error) { document.getElementById("status").textContent = "synthesis failed: " + p.error; return; }

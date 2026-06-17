@@ -10,6 +10,7 @@ import { detectTimelineGaps, gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDe
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
+import { ADVERSARY_EMULATION_CAVEAT } from "../analysis/adversaryEmulation.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import { hasExposureFinding, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev.js";
@@ -335,6 +336,30 @@ function adversaryHints(state: InvestigationState, lines: string[]): void {
     );
   }
   lines.push("");
+
+  // Emulation (#121): from those matched groups, the techniques the case hasn't observed yet —
+  // predictive hunt priorities. Only rendered when at least one group matched.
+  if (result.nextTechniques.length > 0) {
+    lines.push(
+      "**Likely next techniques (hunt priorities).** Techniques the matched groups above are known " +
+        "to use that this case has not yet observed, ranked by **distinctiveness** — how many matched " +
+        "groups use each weighted by how rare it is across all known groups, so generic tradecraft " +
+        "(recon, tooling) is filtered out. The _global %_ is how many of all known groups use it " +
+        "(lower = more distinctive to this actor profile).",
+      "",
+      `_${ADVERSARY_EMULATION_CAVEAT}_`,
+      "",
+      "| Technique | Tactic | Global % | Matched groups |",
+      "| --- | --- | --- | --- |",
+    );
+    for (const n of result.nextTechniques) {
+      const used = `${n.groupCount} — ${n.groups.map((g) => `${g.id} ${g.name}`).join(", ")}`;
+      const pct = `${Math.round(n.prevalence * 100)}%`;
+      const tech = attackTechniqueMd(n.id) + (n.name ? ` — ${n.name}` : "");
+      lines.push(`| ${cellMd(tech)} | ${cellMd(n.tactic)} | ${pct} | ${cellMd(used)} |`);
+    }
+    lines.push("");
+  }
 }
 
 function customerExposure(exposure: CustomerExposureSummary | undefined, lines: string[]): void {

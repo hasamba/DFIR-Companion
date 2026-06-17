@@ -2,6 +2,11 @@ import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, type Provider
 
 type FetchFn = typeof fetch;
 
+// Anthropic requires the extended-thinking budget to be ≥1024 tokens; a smaller ask means "off".
+const MIN_THINKING_TOKENS = 1024;
+// Keep this much output room above the thinking budget (budget_tokens must be < max_tokens).
+const THINKING_OUTPUT_HEADROOM = 4096;
+
 export interface AnthropicOptions {
   apiKey: string;
   model: string;       // e.g. "claude-haiku-4-5-20251001", "claude-sonnet-4-6"
@@ -30,7 +35,17 @@ export class AnthropicProvider implements AIProvider {
       });
     }
 
-    const maxTokens = this.opts.maxTokens ?? 16000;
+    let maxTokens = this.opts.maxTokens ?? 16000;
+    // Extended thinking / Chain-of-Thought (issue #121). When the caller asks for a thinking budget
+    // (synthesis only), enable it: the model reasons step-by-step in `thinking` blocks before the
+    // final answer. The Messages API requires budget_tokens ≥ 1024 AND < max_tokens, so we bump
+    // max_tokens to keep output headroom above the budget. Thinking forces temperature=1 — we never
+    // send a custom temperature, so the default is already compatible. Prompt caching is UNAFFECTED:
+    // the cache breakpoint stays on the static system prompt (OPSEC) and thinking happens in the reply.
+    const thinkingBudget = req.thinkingTokens && req.thinkingTokens >= MIN_THINKING_TOKENS
+      ? Math.floor(req.thinkingTokens)
+      : 0;
+    if (thinkingBudget > 0) maxTokens = Math.max(maxTokens, thinkingBudget + THINKING_OUTPUT_HEADROOM);
     const timeoutMs = this.opts.timeoutMs ?? 60_000;
     let res: Response;
     try {
@@ -44,6 +59,7 @@ export class AnthropicProvider implements AIProvider {
         body: JSON.stringify({
           model: this.opts.model,
           max_tokens: maxTokens,
+          ...(thinkingBudget > 0 ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } } : {}),
           // Prompt caching (GA — no beta header). Mark ONLY the static system prompt as the
           // cacheable prefix: extraction reuses it across many screenshot batches, so the
           // prefix is billed once and read cheaply thereafter. The case content (user message
