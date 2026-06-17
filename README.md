@@ -249,6 +249,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Mobile companion** — read-only PWA (`/mobile`) for findings/timeline/IOCs with verdicts; offline app-shell
 
 ### Ops
+- **Health / Diagnostics** — **Settings → Diagnostics** one-page operator view: disk usage, case count, capture/synthesis queue, redacted AI config + live *Test AI connectivity*, importer attempts (24h/7d) + recent failures; compute-on-demand case sizes; key-free copy-to-clipboard
 - **Logging** — console + global session log + per-case audit trail; `DFIR_LOG_LEVEL` live toggle; `debug` traces AI/captures/OCR/anonymization
 - **Portable Windows EXE** — unzip + double-click, no Node required
 - **Docker / Compose** — `docker compose up`; evidence on host volume, no bundled AI backend
