@@ -1,8 +1,8 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { config as loadDotenv } from "dotenv";
-import { join, isAbsolute, resolve, dirname } from "node:path";
+import { join, isAbsolute, resolve, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeFile, readFile, rm } from "node:fs/promises";
+import { writeFile, readFile, rm, readdir, stat } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
@@ -148,6 +148,10 @@ import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
 import { pushPlaybookToClickUp } from "./integrations/clickup/clickupPush.js";
 import { getDiskStats, getDiskWarningLevel, diskWarnEnvThresholds } from "./analysis/diskWarn.js";
+import {
+  buildAiDiagnostics, summarizeImportAttempts, countByKind, aggregateCaseSizes, buildDiagnosticsText,
+  type DiagnosticsReport, type ImporterFailure, type AiError, type ScannedFile,
+} from "./analysis/diagnostics.js";
 import { archiveCase } from "./analysis/caseArchive.js";
 import { NotificationConfigStore } from "./analysis/notificationStore.js";
 import { seedDemoCase } from "./analysis/seedDemoCase.js";
@@ -402,6 +406,11 @@ export interface AppOptions {
   notifier?: Notifier;
   notifyEmailEnabled?: boolean;
   dashboardBaseUrl?: string;
+  // Diagnostics (#118): builds an AI provider from the CURRENT config so the diagnostics
+  // page's "Test AI connectivity" button can make a lightweight live request (validating
+  // auth + timeout). Defaults to the env-based buildProvider in startServer; tests inject a
+  // fake (no network). Absent / returns undefined → the test route reports "not configured".
+  aiTestProvider?: () => AnalyzeProvider | undefined;
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -422,6 +431,40 @@ function evidenceContentType(file: string): string {
   }
 }
 
+// Recursively collect files (path relative to `baseDir`, size in bytes) under `dir` for the
+// diagnostics size scan (#118). Best-effort: unreadable dirs/files are skipped, never thrown.
+// `budget.n` bounds the total files visited so a pathological case can't run unbounded.
+async function walkCaseFiles(
+  dir: string,
+  baseDir: string,
+  caseId: string,
+  out: ScannedFile[],
+  budget: { n: number },
+): Promise<void> {
+  if (budget.n <= 0) return;
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    if (budget.n <= 0) return;
+    const full = join(dir, e.name);
+    if (e.isDirectory()) {
+      await walkCaseFiles(full, baseDir, caseId, out, budget);
+    } else if (e.isFile()) {
+      budget.n--;
+      try {
+        const st = await stat(full);
+        out.push({ caseId, path: relative(baseDir, full), bytes: st.size });
+      } catch {
+        /* unreadable file — skip */
+      }
+    }
+  }
+}
+
 // Normalize a label/tag input that may arrive as a comma-separated string or an array of strings.
 function toStringArray(v: unknown): string[] {
   if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
@@ -432,6 +475,24 @@ function toStringArray(v: unknown): string[] {
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const app = express();
   const hasAiProvider = (): boolean => options.aiConfigured ?? Boolean(options.pipeline?.hasAiProvider());
+
+  // ── Diagnostics runtime state (#118) ─────────────────────────────────────────────────
+  // In-memory, best-effort rings powering the Health/Diagnostics page. They reset on restart
+  // (like `lastCapture` below) — durable history lives in the per-case audit logs. Capped so a
+  // long-running server can't grow them unbounded.
+  const appStartedAt = Date.now();
+  const DIAG_RING = 50;
+  const recentImportFailures: ImporterFailure[] = [];
+  const recentAiErrors: AiError[] = [];
+  function recordImportFailure(caseId: string, kind: string, filename: string, err: unknown): void {
+    recentImportFailures.unshift({ at: new Date().toISOString(), caseId, kind, filename, error: (err as Error)?.message ?? String(err) });
+    if (recentImportFailures.length > DIAG_RING) recentImportFailures.length = DIAG_RING;
+  }
+  function recordAiError(caseId: string, phase: string, err: unknown): void {
+    const kind = err instanceof ProviderError ? err.kind : "other";
+    recentAiErrors.unshift({ at: new Date().toISOString(), caseId, phase, kind, detail: (err as Error)?.message ?? String(err) });
+    if (recentAiErrors.length > DIAG_RING) recentAiErrors.length = DIAG_RING;
+  }
 
   // Deep link a notification back to the case dashboard (when a public base URL is configured).
   const caseLink = (caseId: string): string | undefined =>
@@ -578,7 +639,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "synthesizing conclusions" });
       options.pipeline!.synthesize(caseId)
         .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); autoEnrichIfEnabled(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }))
+        .catch((err) => { recordAiError(caseId, "synthesizing", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); })
         .finally(() => synthInFlight.delete(caseId));
     }, synthDebounceMs));
   }
@@ -603,6 +664,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       scheduleSynthesis(caseId); // live findings/attacker path
     } catch (err) {
+      recordAiError(caseId, "extracting", err);
       const seqs = buf.map((c) => c.sequenceNumber);
       await writeFile(
         join(store.stateDir(caseId), "pending_analysis.json"),
@@ -755,6 +817,143 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json({ ...stats, level, thresholds });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Health / Diagnostics (#118) ──────────────────────────────────────────────────────────
+  // Operator-facing system state to troubleshoot ingestion / AI problems without digging through
+  // logs. Fast by design — NO recursive directory scan here (per-case sizes are the separate
+  // compute-on-demand /diagnostics/sizes endpoint), so this stays well under the <2s budget. All
+  // AI config is REDACTED (buildAiDiagnostics never reads an API key), so the JSON + the
+  // copy-to-clipboard text blob are safe to share.
+  app.get("/diagnostics", async (_req: Request, res: Response) => {
+    try {
+      const thresholds = diskWarnEnvThresholds();
+      let disk: DiagnosticsReport["disk"];
+      try {
+        const stats = await getDiskStats(store.casesRoot);
+        disk = { ...stats, level: getDiskWarningLevel(stats.usedPct, thresholds), thresholds };
+      } catch {
+        // statfs can fail on exotic mounts — report zeros rather than 500 the whole page.
+        disk = { totalBytes: 0, freeBytes: 0, usedPct: 0, level: getDiskWarningLevel(0, thresholds), thresholds };
+      }
+
+      const cases = await store.listCases();
+      const open = cases.filter((c) => c.status !== "closed").length;
+
+      // Queue: in-memory capture buffers + synthesis in-flight + on-disk failure markers.
+      let bufferedCaptures = 0;
+      let casesBuffering = 0;
+      let oldestBufferedAtMs: number | null = null;
+      for (const buf of buffers.values()) {
+        if (buf.length === 0) continue;
+        casesBuffering++;
+        bufferedCaptures += buf.length;
+        for (const c of buf) {
+          const t = Date.parse(c.timestamp);
+          if (Number.isFinite(t)) oldestBufferedAtMs = oldestBufferedAtMs == null ? t : Math.min(oldestBufferedAtMs, t);
+        }
+      }
+      // Cases whose last analysis window failed (pending_analysis.json on disk).
+      const pendingChecks = await Promise.all(cases.map(async (c) => {
+        try { await stat(join(store.stateDir(c.caseId), "pending_analysis.json")); return 1; } catch { return 0; }
+      }));
+      const pendingAnalysisCases = pendingChecks.reduce<number>((a, b) => a + b, 0);
+
+      // Import attempts: count the per-case imports.jsonl audit lines (durable; survives restart).
+      const importTimestamps: number[] = [];
+      await Promise.all(cases.map(async (c) => {
+        try {
+          const log = await readFile(store.importsLogPath(c.caseId), "utf8");
+          for (const line of log.split("\n")) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const rec = JSON.parse(trimmed) as { importedAt?: string };
+              const ms = Date.parse(rec.importedAt ?? "");
+              if (Number.isFinite(ms)) importTimestamps.push(ms);
+            } catch { /* skip a malformed audit line */ }
+          }
+        } catch { /* no imports for this case */ }
+      }));
+
+      const now = Date.now();
+      const ai = buildAiDiagnostics(process.env);
+      const report: DiagnosticsReport = {
+        generatedAt: new Date(now).toISOString(),
+        uptimeMs: now - appStartedAt,
+        casesRoot: store.casesRoot,
+        disk,
+        cases: { count: cases.length, open, closed: cases.length - open },
+        queue: {
+          bufferedCaptures,
+          casesBuffering,
+          oldestBufferedAgeMs: oldestBufferedAtMs == null ? null : Math.max(0, now - oldestBufferedAtMs),
+          synthInFlight: synthInFlight.size,
+          pendingAnalysisCases,
+        },
+        ai: { ...ai, recentErrors: recentAiErrors.slice(0, 20), errorCounts: countByKind(recentAiErrors) },
+        importers: {
+          attempts: summarizeImportAttempts(importTimestamps, now),
+          recentFailures: recentImportFailures.slice(0, 20),
+          customImporters: importerRegistry.importers.size,
+        },
+      };
+      return res.status(200).json({ report, text: buildDiagnosticsText(report) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Per-case sizes + top-N largest evidence files. SEPARATE from /diagnostics because it walks the
+  // whole cases tree (compute-on-demand, behind the dashboard's "Compute sizes" button) so the
+  // default diagnostics load stays cheap. Bounded to DFIR_DIAG_MAX_FILES files (default 100k).
+  app.get("/diagnostics/sizes", async (req: Request, res: Response) => {
+    try {
+      const topN = Math.min(50, Math.max(1, Number(req.query.top) || 10));
+      const budget = { n: Number(process.env.DFIR_DIAG_MAX_FILES) || 100_000 };
+      const cases = await store.listCases();
+      const files: ScannedFile[] = [];
+      for (const c of cases) {
+        if (budget.n <= 0) break;
+        const dir = store.caseDir(c.caseId);
+        await walkCaseFiles(dir, dir, c.caseId, files, budget);
+      }
+      const report = aggregateCaseSizes(files, topN);
+      return res.status(200).json({ ...report, truncated: budget.n <= 0, scannedFiles: files.length });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Lightweight live AI connectivity test (validates auth + timeout against the CURRENT config).
+  // Makes ONE tiny request. 501 when no provider is configured; a reachable-but-failing provider
+  // returns 200 { ok:false, kind, error } so the dashboard renders the actionable error inline.
+  app.post("/diagnostics/ai-test", async (_req: Request, res: Response) => {
+    const provider = options.aiTestProvider?.();
+    if (!provider) {
+      return res.status(501).json({ ok: false, error: "AI provider not configured — set DFIR_AI_PROVIDER / DFIR_AI_MODEL / DFIR_AI_KEY in Settings → AI, then restart the server" });
+    }
+    const startedAt = Date.now();
+    try {
+      // The OpenAI/OpenRouter providers always send response_format: json_object, and OpenAI's JSON
+      // mode REQUIRES the literal word "json" somewhere in the messages (a 400 otherwise). So the probe
+      // asks for a tiny JSON object — both messages mention "json" — which also exercises the real
+      // request shape (auth + json_object + parse) across every provider, not just bare connectivity.
+      const result = await provider.analyze({
+        systemPrompt: "You are a connectivity probe. Reply ONLY with the JSON object {\"ok\":true} and nothing else.",
+        userPrompt: "Return the JSON object {\"ok\":true}.",
+        images: [],
+      });
+      const latencyMs = Date.now() - startedAt;
+      const reply = (result.rawText ?? "").trim().slice(0, 120);
+      logLine(`[diagnostics] AI test ok provider=${provider.name} latency=${latencyMs}ms`);
+      return res.status(200).json({ ok: true, provider: provider.name, latencyMs, reply });
+    } catch (err) {
+      const latencyMs = Date.now() - startedAt;
+      const kind = err instanceof ProviderError ? err.kind : "other";
+      logLine(`[diagnostics] AI test failed provider=${provider.name} kind=${kind}: ${(err as Error).message}`);
+      return res.status(200).json({ ok: false, provider: provider.name, latencyMs, kind, error: (err as Error).message });
     }
   });
 
@@ -3849,9 +4048,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           } catch { /* non-fatal */ }
           resynthesizeInBackground(caseId);
         })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+        .catch((err) => { recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
       return;
     } catch (err) {
+      recordImportFailure(caseId, kind, originalName, err);
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -5906,7 +6106,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 import { StateStore as StateStoreImpl } from "./analysis/stateStore.js";
 import { AnalysisPipeline as AnalysisPipelineImpl } from "./analysis/pipeline.js";
 import { makeImageLoader } from "./analysis/imageLoader.js";
-import { ProviderRegistry } from "./providers/provider.js";
+import { ProviderRegistry, ProviderError } from "./providers/provider.js";
 import type { AIProvider as AnalyzeProvider } from "./providers/provider.js";
 import { OpenAIProvider } from "./providers/openai.js";
 import { OpenRouterProvider } from "./providers/openrouter.js";
@@ -6491,6 +6691,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     notifier,
     notifyEmailEnabled: true,
     dashboardBaseUrl,
+    // Diagnostics AI connectivity test (#118): rebuild a provider from the CURRENT env each call,
+    // so a key/model saved via Settings is reflected even before a server restart.
+    aiTestProvider: () => buildProvider(),
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted

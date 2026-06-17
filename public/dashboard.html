@@ -1284,6 +1284,7 @@
         <button class="stab" data-stab="kev">KEV</button>
         <button class="stab" data-stab="reports">Report Templates</button>
         <button class="stab" data-stab="notifications">Notifications</button>
+        <button class="stab" data-stab="diagnostics">Diagnostics</button>
       </div>
 
       <!-- General -->
@@ -2103,6 +2104,22 @@
           <button id="rtDeleteBtn" type="button" style="background:#5a2a2a">Delete</button>
           <span id="rtMsg" class="manual-msg"></span>
         </div>
+      </div>
+
+      <!-- Diagnostics (#118) -->
+      <div class="stab-pane" id="stab-diagnostics">
+        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+          Operator-facing system state for troubleshooting ingestion / AI problems. Read-only and
+          <strong>redacted</strong> (no API keys or evidence content). The summary loads fast; per-case
+          disk sizes are computed on demand.
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <button id="diagRefreshBtn" type="button">↻ Refresh</button>
+          <button id="diagCopyBtn" type="button">📋 Copy diagnostics</button>
+          <button id="diagSizesBtn" type="button">📁 Compute case sizes</button>
+          <span id="diagMsg" class="manual-msg"></span>
+        </div>
+        <div id="diagBody" style="font-size:12.5px;color:var(--c-cbd3df)">Loading…</div>
       </div>
 
       <div class="settings-footer">
@@ -9507,6 +9524,11 @@
     document.getElementById("kevFileBtn").addEventListener("click", kevImportFile);
     document.getElementById("kevFilePath").addEventListener("keydown", e => { if (e.key === "Enter") kevImportFile(); });
     document.getElementById("kevClearBtn").addEventListener("click", kevClear);
+    document.getElementById("diagRefreshBtn").addEventListener("click", loadDiagnostics);
+    document.getElementById("diagCopyBtn").addEventListener("click", diagCopy);
+    document.getElementById("diagSizesBtn").addEventListener("click", diagComputeSizes);
+    // The AI-test button is re-rendered with the diagnostics body, so delegate from the pane.
+    document.getElementById("diagBody").addEventListener("click", e => { if (e.target.closest("#diagAiTestBtn")) diagAiTest(); });
     document.getElementById("stab-whitelist").addEventListener("click", e => {
       const q = e.target.closest(".wl-quick");
       if (q) { document.getElementById("wlMatch").value = q.dataset.m; document.getElementById("wlPattern").value = q.dataset.p; document.getElementById("wlType").value = q.dataset.t || ""; return; }
@@ -9546,6 +9568,7 @@
         if (tab === "kev") loadKev();
         if (tab === "reports") loadReportTemplates();
         if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
+        if (tab === "diagnostics") loadDiagnostics();
       });
     });
 
@@ -9987,6 +10010,153 @@
         .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
         .then(() => { msg.textContent = "cleared"; loadKev(); })
         .catch(e => { msg.textContent = "failed: " + e.message; });
+    }
+
+    // --- Health / Diagnostics (#118) — operator system state, Settings → Diagnostics --------------
+    let diagCopyText = "";
+    function diagFmtBytes(b) {
+      if (b == null || !isFinite(b) || b < 0) return "—";
+      if (b < 1024) return Math.round(b) + " B";
+      const u = ["KB", "MB", "GB", "TB", "PB"]; let v = b / 1024, i = 0;
+      while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+      return (v >= 100 ? Math.round(v) : v.toFixed(1)) + " " + u[i];
+    }
+    function diagFmtAge(ms) {
+      if (ms == null || !isFinite(ms) || ms <= 0) return "0s";
+      const s = Math.floor(ms / 1000); if (s < 60) return s + "s";
+      const m = Math.floor(s / 60); if (m < 60) return m + "m";
+      const h = Math.floor(m / 60); if (h < 24) return h + "h";
+      return Math.floor(h / 24) + "d";
+    }
+    const DIAG_LEVEL_COLOR = { none: "#5ad17a", warning: "#ffce8a", danger: "#ffb05a", critical: "#ff5a5a" };
+    function diagCard(title, rows) {
+      return `<div style="background:var(--c-1a1f29,#1a1f29);border:1px solid var(--c-2a2f3a);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+        <div style="font-weight:600;color:var(--c-cbd3df);margin-bottom:6px">${esc(title)}</div>${rows}</div>`;
+    }
+    function diagRow(label, value, color) {
+      return `<div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0">
+        <span style="color:#9aa4b2">${esc(label)}</span>
+        <span style="text-align:right${color ? `;color:${color}` : ""}">${value}</span></div>`;
+    }
+    function renderDiagnostics(report) {
+      const d = report.disk;
+      const lvlColor = DIAG_LEVEL_COLOR[d.level] || "#cbd3df";
+      const disk = diagCard("Disk", [
+        diagRow("Free", `${diagFmtBytes(d.freeBytes)} of ${diagFmtBytes(d.totalBytes)}`),
+        diagRow("Used", `${(d.usedPct || 0).toFixed(1)}%`, lvlColor),
+        diagRow("Status", esc(d.level), lvlColor),
+        diagRow("Cases root", `<code>${esc(report.casesRoot)}</code>`),
+      ].join(""));
+      const cs = report.cases;
+      const cases = diagCard("Cases", diagRow("Total", `${cs.count} (${cs.open} open, ${cs.closed} closed)`));
+      const q = report.queue;
+      const queue = diagCard("Queue / processing", [
+        diagRow("Buffered screenshots", `${q.bufferedCaptures} across ${q.casesBuffering} case(s)`),
+        q.oldestBufferedAgeMs != null ? diagRow("Oldest buffered", diagFmtAge(q.oldestBufferedAgeMs)) : "",
+        diagRow("Synthesis in flight", String(q.synthInFlight)),
+        diagRow("Failed-analysis cases", String(q.pendingAnalysisCases), q.pendingAnalysisCases > 0 ? "#ffb05a" : ""),
+      ].join(""));
+      const ai = report.ai;
+      let aiRows;
+      if (!ai.configured) {
+        aiRows = diagRow("Status", "not configured", "#ffb05a");
+      } else {
+        const errEntries = Object.entries(ai.errorCounts || {});
+        aiRows = [
+          diagRow("Provider", `${esc(ai.provider)} <span style="color:${ai.local ? "#5ad17a" : "#ffb05a"}">(${ai.local ? "local" : "external"})</span>`),
+          diagRow("Model", esc(ai.model)),
+          ai.synthModel && ai.synthModel !== ai.model ? diagRow("Synthesis model", esc(ai.synthModel)) : "",
+          ai.secondOpinionModel ? diagRow("2nd-opinion model", esc(ai.secondOpinionModel)) : "",
+          ai.baseUrl ? diagRow("Base URL", `<code>${esc(ai.baseUrl)}</code>`) : "",
+          diagRow("Timeout", `${ai.timeoutMs} ms`),
+          diagRow("Max tokens", String(ai.maxTokens)),
+          diagRow("Context window", String(ai.contextTokens)),
+          diagRow("Anonymize default", ai.anonymizeDefault ? "on" : "off"),
+          errEntries.length ? diagRow("Recent AI errors", errEntries.map(([k, n]) => `${esc(k)}=${n}`).join(", "), "#ff9f9f") : "",
+        ].join("");
+      }
+      aiRows += `<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button id="diagAiTestBtn" type="button">⚡ Test AI connectivity</button>
+        <span id="diagAiTestMsg" class="manual-msg"></span></div>`;
+      const aiCard = diagCard("AI connectivity & config", aiRows);
+      const im = report.importers;
+      let impRows = [
+        diagRow("Evidence files imported", `${im.attempts.last24h} (24h) · ${im.attempts.last7d} (7d) · ${im.attempts.total} total`),
+        `<div style="font-size:11px;color:#7e8aa0;margin:1px 0 5px">files imported across all cases (from each case's imports.jsonl audit log) in the last 24h / 7d / all-time</div>`,
+        diagRow("Custom importers loaded", String(im.customImporters)),
+      ].join("");
+      if (im.recentFailures && im.recentFailures.length) {
+        impRows += `<div style="margin-top:6px;color:#9aa4b2">Recent failures (${im.recentFailures.length}):</div>`;
+        impRows += `<div style="max-height:160px;overflow:auto;margin-top:3px">` + im.recentFailures.map(f =>
+          `<div style="border-left:2px solid #5a2a2a;padding:2px 0 2px 8px;margin:3px 0;font-family:monospace;font-size:11.5px">
+            <span style="color:#7e8aa0">${esc((f.at || "").replace("T", " ").slice(0, 19))}</span>
+            <span style="color:#ff9f9f">${esc(f.kind)}</span> ${esc(f.caseId)}/${esc(f.filename)}<br>
+            <span style="color:#ffb0b0">${esc(f.error)}</span></div>`).join("") + `</div>`;
+      } else {
+        impRows += diagRow("Recent failures", "none", "#5ad17a");
+      }
+      const importers = diagCard("Importer health", impRows);
+      const footer = `<div style="font-size:11px;color:#7e8aa0;margin-top:4px">generated ${esc((report.generatedAt || "").replace("T", " ").slice(0, 19))} · uptime ${diagFmtAge(report.uptimeMs)}</div>`;
+      return disk + cases + queue + aiCard + importers + `<div id="diagSizes"></div>` + footer;
+    }
+    function loadDiagnostics() {
+      const body = document.getElementById("diagBody");
+      const msg = document.getElementById("diagMsg");
+      if (msg) msg.textContent = "";
+      body.textContent = "Loading…";
+      fetch("/diagnostics").then(r => r.json()).then(j => {
+        if (!j.report) throw new Error(j.error || "no report");
+        diagCopyText = j.text || "";
+        body.innerHTML = renderDiagnostics(j.report);
+      }).catch(e => { body.textContent = "Could not load diagnostics: " + e.message + " — restart the companion server if this 404s."; });
+    }
+    function diagAiTest() {
+      const btn = document.getElementById("diagAiTestBtn");
+      const msg = document.getElementById("diagAiTestMsg");
+      if (!msg) return;
+      if (btn) btn.disabled = true;
+      msg.style.color = "#9aa4b2";
+      msg.textContent = "testing…";
+      fetch("/diagnostics/ai-test", { method: "POST" })
+        .then(async r => ({ status: r.status, body: await r.json().catch(() => ({})) }))
+        .then(({ status, body }) => {
+          if (status === 501) { msg.style.color = "#ffb05a"; msg.textContent = body.error || "AI not configured"; return; }
+          if (body.ok) { msg.style.color = "#5ad17a"; msg.textContent = `✓ ${esc(body.provider)} responded in ${body.latencyMs} ms`; }
+          else { msg.style.color = "#ff9f9f"; msg.textContent = `✗ ${esc(body.kind || "error")}: ${esc(body.error || "failed")}`; }
+        })
+        .catch(e => { msg.style.color = "#ff9f9f"; msg.textContent = "request failed: " + e.message; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    function diagComputeSizes() {
+      const btn = document.getElementById("diagSizesBtn");
+      const target = document.getElementById("diagSizes");
+      if (!target) { loadDiagnostics(); return; }
+      if (btn) btn.disabled = true;
+      target.innerHTML = `<div style="color:#9aa4b2;padding:6px 0">Scanning case files…</div>`;
+      fetch("/diagnostics/sizes?top=10").then(r => r.json()).then(j => {
+        if (j.error) throw new Error(j.error);
+        const cases = (j.cases || []).map(c => diagRow(esc(c.caseId), diagFmtBytes(c.bytes))).join("") || `<div style="color:#9aa4b2">no cases</div>`;
+        const files = (j.largestFiles || []).map(f =>
+          `<div style="display:flex;justify-content:space-between;gap:12px;font-family:monospace;font-size:11.5px;padding:1px 0">
+            <span style="color:#9aa4b2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.caseId)}/${esc(f.path)}</span>
+            <span>${diagFmtBytes(f.bytes)}</span></div>`).join("") || `<div style="color:#9aa4b2">none</div>`;
+        const trunc = j.truncated ? ` <span style="color:#ffb05a">(scan truncated at ${j.scannedFiles} files)</span>` : "";
+        target.innerHTML = diagCard("Case sizes — total " + diagFmtBytes(j.totalBytes) + trunc,
+          `<div style="font-weight:600;color:#9aa4b2;margin:2px 0">By case</div>${cases}
+           <div style="font-weight:600;color:#9aa4b2;margin:8px 0 2px">Largest files</div>${files}`);
+      }).catch(e => { target.innerHTML = `<div style="color:#ff9f9f">Size scan failed: ${esc(e.message)}</div>`; })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    function diagCopy() {
+      const msg = document.getElementById("diagMsg");
+      const text = diagCopyText || "(load diagnostics first)";
+      const done = () => { if (msg) { msg.style.color = "#5ad17a"; msg.textContent = "copied to clipboard"; } };
+      const fail = () => { if (msg) { msg.style.color = "#ff9f9f"; msg.textContent = "copy failed — select & copy manually"; } };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(fail);
+      } else {
+        try { const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); done(); } catch { fail(); }
+      }
     }
 
     // --- Notifications (issue #58) — Slack/Teams/SMTP channels, Settings → Notifications ----------
