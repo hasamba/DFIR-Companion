@@ -101,3 +101,23 @@ export const execSummarySchema = z.object({
 });
 
 export type ExecSummary = z.infer<typeof execSummarySchema>;
+
+// AI explanation of a single forensic event in the context of the investigation (issue #141).
+// Lenient (.catch) so a slightly-off model response still parses.
+export const explainEventSchema = z.object({
+  summary: z.string().catch(""),
+  whyItMatters: z.string().catch(""),
+  normalContext: z.string().catch(""),
+  suspiciousIndicators: z.string().catch(""),
+  attackMapping: z.string().catch(""),
+  pivotQueries: z.array(z.object({
+    platform: z.string().catch(""),
+    query: z.string().catch(""),
+    rationale: z.string().catch(""),
+  })).catch([]),
+  evidenceFor: z.string().catch(""),
+  evidenceAgainst: z.string().catch(""),
+  relatedEventIds: z.array(z.string()).catch([]),
+});
+
+export type ExplainEventResult = z.infer<typeof explainEventSchema>;
