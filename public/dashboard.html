@@ -1999,7 +1999,7 @@
       <div class="stab-pane" id="stab-notifications">
         <div class="sfield-hint" style="display:block;margin-bottom:8px">
           Push <strong>new/escalated findings</strong>, <strong>playbook updates</strong>, and <strong>investigation milestones</strong>
-          to Slack, MS Teams, or email — with a per-channel severity threshold and per-event toggles. Global — shared across all cases.
+          to Slack, MS Teams, Mattermost, Discord, Telegram, or email — with a per-channel severity threshold and per-event toggles. Global — shared across all cases.
         </div>
         <div style="background:var(--c-211405);border:1px solid var(--c-5a4a1a);border-radius:6px;padding:6px 9px;font-size:12px;color:var(--c-ffce8a);margin-bottom:12px">
           ⚠ Notifications send case content (finding/task titles) to a third party. Off by default — each channel is opt-in. Don't enable on a sensitive case unless the destination is trusted.
@@ -2011,6 +2011,8 @@
             <select id="ntfType" style="flex:0 0 auto">
               <option value="slack">Slack webhook</option>
               <option value="teams">MS Teams webhook</option>
+              <option value="mattermost">Mattermost webhook</option>
+              <option value="discord">Discord webhook</option>
               <option value="email">SMTP email</option>
               <option value="telegram">Telegram bot</option>
             </select>
@@ -2023,7 +2025,7 @@
               <option value="Info">≥ Info (all)</option>
             </select>
           </div>
-          <!-- Webhook (slack/teams) -->
+          <!-- Webhook (slack/teams/mattermost/discord) -->
           <div id="ntfWebhookRow" style="margin-bottom:6px">
             <input id="ntfWebhookUrl" placeholder="https://hooks.slack.com/services/…  or  https://outlook.office.com/webhook/…" style="width:100%;box-sizing:border-box" autocomplete="off" />
           </div>
@@ -10259,7 +10261,13 @@
 
     // --- Notifications (issue #58) — Slack/Teams/SMTP channels, Settings → Notifications ----------
     let ntfChannels = [];
-    const NTF_TYPE_LABEL = { slack: "Slack", teams: "MS Teams", email: "Email", telegram: "Telegram" };
+    const NTF_TYPE_LABEL = { slack: "Slack", teams: "MS Teams", mattermost: "Mattermost", discord: "Discord", email: "Email", telegram: "Telegram" };
+    const NTF_WEBHOOK_PLACEHOLDER = {
+      slack: "https://hooks.slack.com/services/…",
+      teams: "https://outlook.office.com/webhook/…  or Power Automate URL",
+      mattermost: "https://mattermost.example.com/hooks/…",
+      discord: "https://discord.com/api/webhooks/…",
+    };
     function ntfTypeChanged() {
       const t = document.getElementById("ntfType").value;
       const email = t === "email";
@@ -10268,10 +10276,7 @@
       document.getElementById("ntfSmtpRows").style.display = email ? "" : "none";
       document.getElementById("ntfTelegramRows").style.display = telegram ? "" : "none";
       if (!email && !telegram) {
-        const wh = document.getElementById("ntfWebhookUrl");
-        wh.placeholder = t === "teams"
-          ? "https://outlook.office.com/webhook/…  or Power Automate URL"
-          : "https://hooks.slack.com/services/…";
+        document.getElementById("ntfWebhookUrl").placeholder = NTF_WEBHOOK_PLACEHOLDER[t] || NTF_WEBHOOK_PLACEHOLDER.slack;
       }
     }
     function ntfChannelToBody(ch) {

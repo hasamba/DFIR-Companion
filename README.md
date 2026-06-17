@@ -246,7 +246,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Timesketch push** — find-or-create sketch; export JSONL
 - **Notion export** — managed page block; your notes outside it untouched
 - **ClickUp export** — Response Playbook as tasks; re-push updates in place
-- **Notifications** — Slack/MS Teams/Telegram/SMTP for findings/playbook/milestones; per-channel threshold + toggles
+- **Notifications** — Slack/MS Teams/Mattermost/Discord/Telegram/SMTP for findings/playbook/milestones; per-channel threshold + toggles
 - **Report templates** — global branded layouts (accent, header/footer, section order); pick per case
 - **Mobile companion** — read-only PWA (`/mobile`) for findings/timeline/IOCs with verdicts; offline app-shell
 

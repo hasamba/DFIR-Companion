@@ -134,6 +134,25 @@ describe("parseChannelInput", () => {
     expect(ok.draft?.minSeverity).toBe("High"); // default
   });
 
+  it("treats mattermost + discord as webhook channels with default names", () => {
+    expect(parseChannelInput({ type: "mattermost", webhookUrl: "not-a-url" }).ok).toBe(false);
+    const mm = parseChannelInput({ type: "mattermost", webhookUrl: "https://mm.example.com/hooks/abc" });
+    expect(mm.ok).toBe(true);
+    expect(mm.draft?.webhookUrl).toBe("https://mm.example.com/hooks/abc");
+    expect(mm.draft?.name).toBe("Mattermost"); // default name
+
+    const dc = parseChannelInput({ type: "discord", webhookUrl: "https://discord.com/api/webhooks/1/xyz" });
+    expect(dc.ok).toBe(true);
+    expect(dc.draft?.name).toBe("Discord");
+  });
+
+  it("preserves a saved mattermost/discord webhook URL when the edit leaves it blank", () => {
+    const existing = channel({ type: "discord", webhookUrl: "https://discord.com/api/webhooks/1/saved" });
+    const r = parseChannelInput({ type: "discord", webhookUrl: "" }, existing);
+    expect(r.ok).toBe(true);
+    expect(r.draft?.webhookUrl).toBe("https://discord.com/api/webhooks/1/saved");
+  });
+
   it("requires smtp host/from/to for email and splits a recipient string", () => {
     expect(parseChannelInput({ type: "email", smtp: { host: "mx", port: 587, from: "a@b.c", to: "" } }).ok).toBe(false);
     const ok = parseChannelInput({ type: "email", smtp: { host: "mx", port: "587", from: "a@b.c", to: "x@y.z, p@q.r" } });
