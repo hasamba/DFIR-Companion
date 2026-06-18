@@ -41,4 +41,21 @@ describe("SynthMetaStore", () => {
     expect(meta.lastSynthesizedAt).toBe("2026-06-06T13:00:00.000Z");
     expect(meta.lastDiff).toEqual(empty);
   });
+
+  it("stores and loads performance metrics", async () => {
+    const at = "2026-06-18T10:00:00.000Z";
+    await store.record("c1", DIFF, at, { durationMs: 12345, eventCount: 500, iocCount: 42 });
+    const meta = await store.load("c1");
+    expect(meta.durationMs).toBe(12345);
+    expect(meta.eventCount).toBe(500);
+    expect(meta.iocCount).toBe(42);
+  });
+
+  it("loads fine when perf fields are absent (old record format)", async () => {
+    await store.record("c1", DIFF, "2026-06-18T10:00:00.000Z");
+    const meta = await store.load("c1");
+    expect(meta.durationMs).toBeUndefined();
+    expect(meta.eventCount).toBeUndefined();
+    expect(meta.iocCount).toBeUndefined();
+  });
 });
