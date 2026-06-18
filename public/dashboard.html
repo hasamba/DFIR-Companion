@@ -6332,7 +6332,7 @@
       const maxSev = KC_SEV_ORDER.find(s => events.some(e => e.severity === s));
       const topColor = maxSev ? KC_SEV_COLOR[maxSev] : "var(--c-9aa4b2)";
       const rows = events.map(e => {
-        const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
+        const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "").replace(/\s*\[more\]$/, "");
         return `<div class="kc-event-row">` +
           `<span class="kc-ev-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
           `<span class="kc-ev-desc">${esc(desc)}</span>` +
@@ -6404,7 +6404,7 @@
         const evRows = (p.eventIds || []).map(id => {
           const e = evById[String(id)];
           if (!e) return `<div class="ph-ev-row"><span class="ph-ev-desc" style="color:var(--c-9aa4b2)">${esc(String(id))}</span></div>`;
-          const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
+          const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "").replace(/\s*\[more\]$/, "");
           return `<div class="ph-ev-row">` +
             `<span class="ph-ev-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
             `<span class="ph-ev-desc">${esc(desc)}</span>` +
@@ -7821,7 +7821,7 @@
           const inner = `<span title="${escAttr(cc.note || "")}" style="color:${col};border:1px solid ${col};border-radius:4px;padding:0 5px;font-size:10px">${label}</span>`;
           chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner);
         }
-        const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "");
+        const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "").replace(/\s*\[more\]$/, "");
         // Affected host/asset, shown as a compact chip before the description for fast scanning.
         const host = e.asset ? ` <span class="ev-host" title="Affected host / asset">🖥 ${esc(e.asset)}</span>` : "";
         // Findings this event backs — clickable, jump to the finding in the Findings section.
