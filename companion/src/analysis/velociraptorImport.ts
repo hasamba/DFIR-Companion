@@ -526,11 +526,13 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
 }
 
 // Truncate text at a word boundary instead of mid-word, appending " [more]" as a signal.
+// Truncate long evidence text at a word boundary so the stored description is clean text.
+// The dashboard adds an interactive [more]/[less] toggle for display; no sentinel needed here.
 function truncateWithMore(s: string, max: number): string {
   if (s.length <= max) return s;
   const cut = s.slice(0, max);
   const sp = cut.lastIndexOf(" ");
-  return (sp > max * 0.6 ? cut.slice(0, sp) : cut).trimEnd() + " [more]";
+  return (sp > max * 0.6 ? cut.slice(0, sp) : cut).trimEnd();
 }
 
 const MAX_EVIDENCE_CHARS = 500;
