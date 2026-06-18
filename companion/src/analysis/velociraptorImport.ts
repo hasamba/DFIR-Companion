@@ -525,17 +525,6 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   };
 }
 
-// Truncate text at a word boundary instead of mid-word, appending " [more]" as a signal.
-// Truncate long evidence text at a word boundary so the stored description is clean text.
-// The dashboard adds an interactive [more]/[less] toggle for display; no sentinel needed here.
-function truncateWithMore(s: string, max: number): string {
-  if (s.length <= max) return s;
-  const cut = s.slice(0, max);
-  const sp = cut.lastIndexOf(" ");
-  return (sp > max * 0.6 ? cut.slice(0, sp) : cut).trimEnd();
-}
-
-const MAX_EVIDENCE_CHARS = 500;
 
 // A DetectRaptor-style detection: the `Detection`/`RuleName` verdict leads. If a parsed Windows
 // event sits underneath (Evtx), overlay the verdict onto the per-EID mapping (like Sigma);
@@ -609,14 +598,14 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     if (parts.length === 0) {
       // No structured fields — fall back to the labeled evidence or plain message.
       if (evidence) {
-        parts.push(`${evidenceKey}: ${truncateWithMore(oneLine(evidence), MAX_EVIDENCE_CHARS)}`);
+        parts.push(`${evidenceKey}: ${oneLine(evidence)}`);
       } else {
-        parts.push(truncateWithMore(oneLine(message), MAX_EVIDENCE_CHARS));
+        parts.push(oneLine(message));
       }
     } else if (!processName && !pipe && evidence) {
       // Content-centric detection (ISEAutoSave / PSReadline): path found but the evidence IS the
       // main signal — include it labeled so the analyst sees what the rule matched.
-      parts.push(`${evidenceKey}: ${truncateWithMore(oneLine(evidence), MAX_EVIDENCE_CHARS)}`);
+      parts.push(`${evidenceKey}: ${oneLine(evidence)}`);
     }
     subject = parts.join(" — ");
   }
@@ -625,7 +614,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   if (subject) description += ` — ${subject}`;
   if (fileDeleted) description += ` [deleted]`;
   if (host) description += ` @ ${host}`;
-  description = description.slice(0, 1200);
+  description = description.slice(0, 4000);
 
   const aggKey = `vr-det|${v.title.toLowerCase()}|${(path || processName || pipe || subject).toLowerCase()}|${host.toLowerCase()}`
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")

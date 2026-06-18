@@ -3048,7 +3048,8 @@
       const uid = `evdesc-${escAttr(id)}`;
       const shown = esc(desc.slice(0, DESC_INLINE_LIMIT));
       const rest  = esc(desc.slice(DESC_INLINE_LIMIT));
-      return `<strong>${shown}<button class="ev-more-btn" onclick="var b=document.getElementById('${uid}');b.hidden=!b.hidden;this.textContent=b.hidden?'[more]':'[less]'">[more]</button><span id="${uid}" hidden>${rest}</span></strong>`;
+      const toggle = `var r=document.getElementById('${uid}');var m=document.getElementById('${uid}-more');r.hidden=!r.hidden;m.hidden=!m.hidden`;
+      return `<strong>${shown}<button id="${uid}-more" class="ev-more-btn" onclick="${toggle}">[more]</button><span id="${uid}" hidden>${rest}<button class="ev-more-btn" onclick="${toggle}">[less]</button></span></strong>`;
     }
 
     function loadAssetGraph(caseId) {
