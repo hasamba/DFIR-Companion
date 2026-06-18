@@ -26,7 +26,8 @@
     "seed-demo": "tsx scripts/seed-demo-case.ts",
     "data:update-attack": "tsx scripts/update-attack-groups.ts",
     "icons": "tsx scripts/make-icons.ts",
-    "package:sea": "node scripts/build-sea.mjs"
+    "package:sea": "node scripts/build-sea.mjs",
+    "package:appimage": "node scripts/build-appimage.mjs"
   },
   "dependencies": {
     "docx": "^9.7.1",

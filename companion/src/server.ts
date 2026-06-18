@@ -7143,7 +7143,9 @@ if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.
   const companionDir = seaRuntime
     ? dirname(process.execPath) + "/"
     : fileURLToPath(new URL("../", import.meta.url)); // .../companion/
-  loadDotenv({ path: seaRuntime ? join(companionDir, ".env") : undefined });
+  // DFIR_ENV_FILE lets a read-only deployment (e.g. an AppImage mount) point at a writable .env.
+  const envFile = process.env.DFIR_ENV_FILE || (seaRuntime ? join(companionDir, ".env") : undefined);
+  loadDotenv({ path: envFile });
   const raw = process.env.DFIR_CASES_ROOT ?? "cases";
   // Anchor a relative cases root to the companion package directory, so the SAME
   // physical folder is used no matter which directory the server is launched from.

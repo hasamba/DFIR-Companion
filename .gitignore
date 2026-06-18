@@ -39,6 +39,10 @@ dist/
 build-sea/
 dist-sea/
 
+# Linux AppImage build outputs (issue #127) — AppDir staging + the produced .AppImage + appimagetool.
+build-appimage/
+dist-appimage/
+
 # Docker: the pre-built browser add-on the companion container copies out for "Load unpacked".
 /addon/
 
