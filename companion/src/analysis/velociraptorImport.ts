@@ -569,10 +569,20 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     || str(getPath(row, "FileInfo.OSPath")).trim()
     || str(getPath(row, "Detection.PathName"));
   // The matched CONTENT/evidence: the full matched line/Content the analyst needs to read, falling
-  // back to the rule's own HitString (the substring it matched). NOT Detection.Regex/KeywordRegex
-  // (the rule pattern itself, which stays out of the description).
-  const evidence = firstStr(row, ["Line", "Content", "CommandLine", "StringHit", "HitString"])
-    || str(getPath(row, "Detection.HitString")).trim();
+  // back to the rule's own HitString (the substring it matched). Track the source field name so
+  // it can be shown as a label (Line: / Content: / CommandLine: / etc.). NOT Detection.Regex /
+  // KeywordRegex (the rule pattern itself, which stays out of the description).
+  const EVIDENCE_FIELD_KEYS = ["Line", "Content", "CommandLine", "StringHit", "HitString"] as const;
+  let evidenceKey = "";
+  let evidence = "";
+  for (const k of EVIDENCE_FIELD_KEYS) {
+    const v = str(getCI(row, k)).trim();
+    if (v) { evidenceKey = k; evidence = v; break; }
+  }
+  if (!evidence) {
+    const hit = str(getPath(row, "Detection.HitString")).trim();
+    if (hit) { evidenceKey = "HitString"; evidence = hit; }
+  }
   const procRaw = firstStr(row, ["Exe", "Image", "ProcessName", "ProcName", "NewProcessName"]) || parsedNewProcess(message);
   const parentRaw = firstStr(row, ["ParentName", "ParentImage", "ParentProcessName"]);
   const processName = procRaw ? baseName(procRaw) : undefined;
@@ -582,9 +592,10 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   if (path) addIoc(sink, "file", path);
 
   // Subject priority: the rendered event's high-signal fields (the actual LOLBIN/command line) win
-  // over structured process/path, which win over the matched content/line. Each field is labeled
-  // (ProcName: / PipeName: / Path:) and joined with " — " so the analyst can read them at a glance.
-  // Content-centric detections (ISEAutoSave, PSReadline) get both the filename AND the evidence text.
+  // over structured process/path, which win over the matched content/line. Every field is labeled
+  // with its source key (ProcName: / PipeName: / Path: / Line: / Content: / …) and joined with
+  // " — " so the analyst can read them at a glance without knowing the artifact's column layout.
+  // Content-centric detections (ISEAutoSave, PSReadline) get both the filename AND the evidence.
   let subject: string;
   if (salient) {
     subject = salient;
@@ -594,13 +605,16 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     if (pipe) parts.push(`PipeName: ${pipe}`);
     if (path) parts.push(`Path: ${baseName(path)}`);
     if (parts.length === 0) {
-      // No structured fields — fall back to the evidence/message text.
-      const text = evidence ? oneLine(evidence) : oneLine(message);
-      parts.push(truncateWithMore(text, MAX_EVIDENCE_CHARS));
+      // No structured fields — fall back to the labeled evidence or plain message.
+      if (evidence) {
+        parts.push(`${evidenceKey}: ${truncateWithMore(oneLine(evidence), MAX_EVIDENCE_CHARS)}`);
+      } else {
+        parts.push(truncateWithMore(oneLine(message), MAX_EVIDENCE_CHARS));
+      }
     } else if (!processName && !pipe && evidence) {
       // Content-centric detection (ISEAutoSave / PSReadline): path found but the evidence IS the
-      // main signal — include it so the analyst sees what the rule matched, not just the filename.
-      parts.push(truncateWithMore(oneLine(evidence), MAX_EVIDENCE_CHARS));
+      // main signal — include it labeled so the analyst sees what the rule matched.
+      parts.push(`${evidenceKey}: ${truncateWithMore(oneLine(evidence), MAX_EVIDENCE_CHARS)}`);
     }
     subject = parts.join(" — ");
   }
