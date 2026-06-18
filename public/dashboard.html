@@ -375,6 +375,7 @@
     .scope-group button { padding: 4px 9px; font-size: 12px; }
     .scope-preset { background: transparent; color: var(--c-9aa4b2); border: 1px solid var(--c-2a2f3a); }
     .scope-preset:hover { color: var(--c-ffd93b); border-color: var(--c-ffd93b); }
+    .toolbar-sep { width: 1px; height: 16px; background: var(--c-2a2f3a); margin: 0 4px; flex-shrink: 0; }
     main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
     section { background: var(--c-161a22); border-radius: 8px; padding: 12px; }
     /* Click a section's header to collapse/expand it; state persists across reloads. */
@@ -582,6 +583,13 @@
     .ev-header-row { display: flex; align-items: center; padding: 2px 0 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 1px; font-size: 11px; color: var(--c-6b7280); }
     .ev-header-ctrl { width: 162px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
     .ev-header-time { width: 192px; flex-shrink: 0; }
+    .tl-pagesize-wrap { margin-left: auto; flex-shrink: 0; }
+    .tl-pagesize-sel { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-9aa4b2); border-radius: 4px; padding: 1px 5px; font-size: 11px; cursor: pointer; }
+    .tl-page-bar { display: flex; align-items: center; gap: 8px; padding: 6px 0 2px; font-size: 11px; color: var(--c-9aa4b2); border-top: 1px solid var(--c-2a2f3a); margin-top: 4px; }
+    .tl-page-btn { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-cbd3df); border-radius: 4px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
+    .tl-page-btn:disabled { opacity: 0.35; cursor: default; }
+    .tl-page-btn:not(:disabled):hover { background: var(--c-2a3050); border-color: var(--c-6aa9ff); color: #fff; }
+    .tl-page-info { color: var(--c-9aa4b2); }
     .ev-bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 0 4px; font-size: 12px; color: var(--c-9aa4b2); border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 4px; }
     .ev-bulk-bar.active { display: flex; }
     .ev-bulk-btn { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-cbd3df); border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
@@ -609,6 +617,7 @@
     .vql-result th, .vql-result td { border: 1px solid var(--c-2a2f3a); padding: 3px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
     .vql-result th { background: var(--c-11151c); position: sticky; top: 0; }
     /* Synthesis freshness + what-changed diff (shown above the findings) */
+    .synth-meta .sm-perf { color: var(--c-6b7280); font-size: 11px; }
     .synth-meta { font-size: 12px; color: var(--c-9aa4b2); margin: 0 0 8px; padding: 6px 9px;
       border: 1px solid var(--c-2a2f3a); border-radius: 6px; background: var(--c-0f1115); }
     .synth-meta .sm-line { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
@@ -1015,6 +1024,17 @@
       <button id="applyScope" title="Re-synthesize using only events inside this window">Apply</button>
       <button id="clearScope" title="Remove the time window (use all events)">Clear</button>
       <span id="scopeInfo"></span>
+      <span class="toolbar-sep"></span>
+      <span style="color:var(--c-cbd3df);">Correlation:</span>
+      <select id="corrProfileSel" title="Cross-source event correlation time window (controls how aggressively events from different tools are merged)">
+        <option value="strict">Strict (exact)</option>
+        <option value="moderate" selected>Moderate (2s)</option>
+        <option value="aggressive">Aggressive (5m)</option>
+        <option value="custom">Custom…</option>
+      </select>
+      <input id="corrWindowSec" type="number" min="0" step="1" placeholder="seconds" title="Custom window in seconds" style="display:none;width:68px" />
+      <button id="applyCorrProfile" title="Save correlation profile (takes effect on next synthesis)">Apply</button>
+      <span id="corrProfileInfo" style="color:var(--c-9aa4b2);font-size:11px;"></span>
     </div>
   </header>
   <div id="enrichOverlay" class="comment-overlay">
@@ -2761,6 +2781,9 @@
     let filterFrom = null;                    // timeline view lower bound (ISO UTC string or null)
     let filterTo = null;                      // timeline view upper bound (ISO UTC string or null)
     let _searchDebounce = null;
+    let tlPage = 0;                           // current timeline page (0-based)
+    let tlPageSize = 250;                     // rows per page; user-selectable
+    let _tlKeepPage = false;                  // pagination buttons set this to avoid resetting to page 0
 
     // --- Search/filter helpers (mirror companion/src/analysis/searchFilter.ts) ---------
     function _evMatchesSearch(e, q) {
@@ -5400,8 +5423,64 @@
         ].join("");
         detail = `<details><summary>what changed since the prior run</summary>${items}</details>`;
       }
-      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span><span>${summary}</span></div>${detail}`;
+      const perfParts = [];
+      if (m.durationMs !== undefined) perfParts.push(`<span title="Synthesis AI call duration">⏱ ${m.durationMs < 60000 ? (m.durationMs / 1000).toFixed(1) + 's' : Math.round(m.durationMs / 60000) + 'm'}</span>`);
+      if (m.eventCount !== undefined) perfParts.push(`<span title="Events in case at synthesis time">${m.eventCount.toLocaleString()} events</span>`);
+      if (m.iocCount !== undefined) perfParts.push(`<span title="IOCs in case at synthesis time">${m.iocCount.toLocaleString()} IOCs</span>`);
+      const perfSpan = perfParts.length ? `<span class="sm-perf">${perfParts.join(' · ')}</span>` : '';
+      const largeAdvisory = (m.eventCount !== undefined && m.eventCount >= 5000)
+        ? `<div style="margin-top:5px;color:var(--c-ffd93b);font-size:11px">⚠ Large case (${m.eventCount.toLocaleString()} events) — consider restricting the investigation scope to a date range for faster synthesis.</div>`
+        : '';
+      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${detail}${largeAdvisory}`;
     }
+
+    // --- Correlation profile (per-case cross-source event merge window) -------------------------
+    const CORR_PROFILE_WINDOWS = { strict: 0, moderate: 2, aggressive: 300 };
+    function loadCorrProfile(caseId) {
+      fetch(`/cases/${caseId}/correlation-profile`)
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(p => {
+          const sel = document.getElementById("corrProfileSel");
+          const winEl = document.getElementById("corrWindowSec");
+          if (!sel) return;
+          const name = p.profileName || "moderate";
+          sel.value = name;
+          if (name === "custom" && winEl) { winEl.style.display = ""; winEl.value = p.windowSeconds ?? 2; }
+          else if (winEl) winEl.style.display = "none";
+          _updateCorrProfileInfo(p);
+        })
+        .catch(() => {}); // endpoint absent on older servers — silently skip
+    }
+    function _updateCorrProfileInfo(p) {
+      const el = document.getElementById("corrProfileInfo");
+      if (!el) return;
+      const labels = { strict: "exact match only", moderate: "±2 s window", aggressive: "±5 min window" };
+      el.textContent = labels[p.profileName] || `±${p.windowSeconds}s window`;
+    }
+    function applyCorrProfile() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const sel = document.getElementById("corrProfileSel");
+      const winEl = document.getElementById("corrWindowSec");
+      if (!sel) return;
+      const profileName = sel.value;
+      const windowSeconds = profileName === "custom"
+        ? (winEl ? Math.max(0, parseInt(winEl.value, 10) || 0) : 2)
+        : (CORR_PROFILE_WINDOWS[profileName] ?? 2);
+      fetch(`/cases/${caseId}/correlation-profile`, {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ profileName, windowSeconds }),
+      })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(p => { _updateCorrProfileInfo(p); document.getElementById("status").textContent = "Correlation profile saved — takes effect on next synthesis."; })
+        .catch(() => { document.getElementById("status").textContent = "Correlation profile save failed — restart the companion server."; });
+    }
+    document.getElementById("corrProfileSel").addEventListener("change", function() {
+      const winEl = document.getElementById("corrWindowSec");
+      if (!winEl) return;
+      winEl.style.display = this.value === "custom" ? "" : "none";
+    });
+    document.getElementById("applyCorrProfile").addEventListener("click", applyCorrProfile);
 
     // --- Second LLM opinion (#116): independent-model QA cross-check ----------------------------
     // A DIFFERENT model re-synthesizes the case; we surface where it disagrees with the primary
@@ -7647,6 +7726,9 @@
     // Render the forensic timeline from a pre-scoped+legit-filtered list.
     // Called both from render() (new state) and from the severity-filter checkboxes (re-filter only).
     function renderTimelineEvents(ft) {
+      if (!_tlKeepPage) tlPage = 0;
+      _tlKeepPage = false;
+
       const checked = document.querySelectorAll('.sev-filter:checked');
       const activeSevs = new Set([...checked].map(cb => cb.value));
       const allSevs = ['Critical', 'High', 'Medium', 'Low', 'Info'];
@@ -7657,34 +7739,57 @@
       if (filterFrom || filterTo) visible = visible.filter(e => _evMatchesTimeRange(e, filterFrom, filterTo));
       visible = sortTimelineEvents(visible);
 
+      const totalFiltered = visible.length;
+      const totalPages = tlPageSize > 0 ? Math.max(1, Math.ceil(totalFiltered / tlPageSize)) : 1;
+      if (tlPage >= totalPages) tlPage = totalPages - 1;
+      const pStart = tlPage * tlPageSize;
+      const pEnd = tlPageSize > 0 ? Math.min(pStart + tlPageSize, totalFiltered) : totalFiltered;
+      const pageVisible = tlPageSize > 0 ? visible.slice(pStart, pEnd) : visible;
+
       const countEl = document.getElementById('timelineCount');
       if (countEl) {
         const total = ft.length;
-        countEl.textContent = (filtering || showStarredOnly || _hasActiveFilter())
-          ? `(${visible.length} of ${total} events)`
-          : `(${total} event${total !== 1 ? 's' : ''})`;
+        const baseText = (filtering || showStarredOnly || _hasActiveFilter())
+          ? `${totalFiltered} of ${total} events`
+          : `${total} event${total !== 1 ? 's' : ''}`;
+        countEl.textContent = (tlPageSize > 0 && totalFiltered > tlPageSize)
+          ? `(${baseText} — page ${tlPage + 1} of ${totalPages})`
+          : `(${baseText})`;
       }
-      _updateSearchCount(visible.length, ft.length);
+      _updateSearchCount(totalFiltered, ft.length);
 
       const caseId = lastState && lastState.caseId;
 
-      if (!visible.length) {
+      if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
           (_hasActiveFilter() && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
         return;
       }
 
-      const allIds = visible.map(e => String(e.id));
+      const allIds = pageVisible.map(e => String(e.id));
       const allSelected = allIds.length > 0 && allIds.every(id => selectedEvents.has(id));
       const someSelected = allIds.some(id => selectedEvents.has(id));
+
+      // Pagination controls bar (shown only when content exceeds one page).
+      const pageSizes = [100, 250, 500, 0];
+      const pageSizeLabel = n => n === 0 ? "All" : String(n);
+      const pageSizeOpts = pageSizes.map(n =>
+        `<option value="${n}"${tlPageSize === n ? " selected" : ""}>${pageSizeLabel(n)}</option>`
+      ).join("");
+      const paginationBar = (tlPageSize > 0 && totalFiltered > tlPageSize) ? `<div class="tl-page-bar">`
+        + `<button class="tl-page-btn" onclick="if(tlPage>0){_tlKeepPage=true;tlPage--;renderTimelineEvents(lastFt)}" ${tlPage === 0 ? "disabled" : ""}>‹ Prev</button>`
+        + `<span class="tl-page-info">${pStart + 1}–${pEnd} of ${totalFiltered}</span>`
+        + `<button class="tl-page-btn" onclick="if(tlPage<${totalPages - 1}){_tlKeepPage=true;tlPage++;renderTimelineEvents(lastFt)}" ${tlPage >= totalPages - 1 ? "disabled" : ""}>Next ›</button>`
+        + `</div>` : "";
 
       const headerRow = `<div class="ev-header-row">`
         + `<div class="ev-header-ctrl"><input type="checkbox" class="ev-checkbox" id="evSelectAll" ${allSelected ? "checked" : ""} title="Select / deselect all visible events" /></div>`
         + `<div class="ev-header-time">Timestamp (UTC)${sortArrows("date")}</div>`
         + `<div style="flex:1">Message<span class="tl-sevsort-label">severity</span>${sortArrows("severity")}</div>`
+        + `<div class="tl-pagesize-wrap" title="Rows per page"><select class="tl-pagesize-sel" onchange="tlPageSize=+this.value;renderTimelineEvents(lastFt)">${pageSizeOpts}</select></div>`
         + `</div>`;
 
-      const rows = visible.map(e => {
+      const rows = pageVisible.map(e => {
         const id = String(e.id);
         const starred = starredEvents.has(id);
         const isSelected = selectedEvents.has(id);
@@ -7743,7 +7848,7 @@
           + `</div>`;
       }).join("");
 
-      document.getElementById("forensicTimeline").innerHTML = headerRow + rows;
+      document.getElementById("forensicTimeline").innerHTML = headerRow + rows + paginationBar;
 
       // indeterminate can only be set via JS, not HTML attribute
       const selAll = document.getElementById("evSelectAll");
@@ -7909,6 +8014,7 @@
       loadAnonToggle(caseId);
       loadLegitimate(caseId);
       loadScope(caseId);
+      loadCorrProfile(caseId);
       loadReportMeta(caseId);
       loadCaseTemplatePicker(caseId);
       loadAssetGraph(caseId);

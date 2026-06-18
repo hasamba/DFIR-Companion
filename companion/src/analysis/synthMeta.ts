@@ -23,11 +23,20 @@ export const synthMetaSchema = z.object({
     removed: z.array(z.string()).catch([]),
     severityChanged: z.array(severityChangeSchema).catch([]),
   }).nullable().catch(null),
+  durationMs: z.number().optional().catch(undefined),
+  eventCount: z.number().optional().catch(undefined),
+  iocCount: z.number().optional().catch(undefined),
 });
 
 export type SynthMeta = z.infer<typeof synthMetaSchema>;
 
 const EMPTY: SynthMeta = { lastSynthesizedAt: "", lastDiff: null };
+
+export interface SynthPerfMetrics {
+  durationMs: number;
+  eventCount: number;
+  iocCount: number;
+}
 
 export class SynthMetaStore {
   constructor(private readonly cases: CaseStore) {}
@@ -45,9 +54,10 @@ export class SynthMetaStore {
     }
   }
 
-  // Record a completed synthesis run: stamp the time and store the findings diff.
-  async record(caseId: string, diff: FindingsDiff, at: string = new Date().toISOString()): Promise<SynthMeta> {
-    const meta: SynthMeta = { lastSynthesizedAt: at, lastDiff: diff };
+  // Record a completed synthesis run: stamp the time, store the findings diff, and
+  // optionally store performance metrics (duration, event/IOC counts).
+  async record(caseId: string, diff: FindingsDiff, at: string = new Date().toISOString(), perf?: SynthPerfMetrics): Promise<SynthMeta> {
+    const meta: SynthMeta = { lastSynthesizedAt: at, lastDiff: diff, ...perf };
     await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
     return meta;
   }

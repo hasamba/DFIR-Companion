@@ -17,6 +17,7 @@ import { resolveRedactedExportOptions, redactedExportFilename } from "./analysis
 import { buildRedactedExport } from "./reports/redactedExportBuilder.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
+import { CorrelationProfileStore } from "./analysis/correlationProfile.js";
 import { parseSnapshot } from "./analysis/snapshot.js";
 import { exportCaseSnapshot, importCaseSnapshot, SnapshotImportConflictError } from "./analysis/snapshotIo.js";
 import { parseCsv } from "./analysis/csvImport.js";
@@ -271,6 +272,7 @@ export interface AppOptions {
   // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
   // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
   synthMetaStore?: SynthMetaStore;
+  correlationProfileStore?: CorrelationProfileStore;
   // Second LLM opinion (issue #116): the last QA cross-check record (deltas + analyst decisions),
   // read by the GET route. `secondOpinionEnabled` gates the dashboard button (a different model is
   // configured). onSecondOpinion pings dashboard clients to re-fetch after a run or accept/reject.
@@ -5514,6 +5516,36 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Correlation profile (per-case time window for cross-source event correlation).
+  app.get("/cases/:id/correlation-profile", async (req, res) => {
+    if (!options.correlationProfileStore) return res.status(501).json({ error: "correlation profile not configured" });
+    try {
+      return res.status(200).json(await options.correlationProfileStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.put("/cases/:id/correlation-profile", async (req, res) => {
+    if (!options.correlationProfileStore) return res.status(501).json({ error: "correlation profile not configured" });
+    try {
+      const { profileName, windowSeconds } = req.body as { profileName?: string; windowSeconds?: number };
+      const validNames = ["strict", "moderate", "aggressive", "custom"];
+      if (profileName !== undefined && !validNames.includes(profileName)) {
+        return res.status(400).json({ error: "invalid profileName" });
+      }
+      if (windowSeconds !== undefined && (typeof windowSeconds !== "number" || windowSeconds < 0)) {
+        return res.status(400).json({ error: "windowSeconds must be a non-negative number" });
+      }
+      const current = await options.correlationProfileStore.load(req.params.id);
+      const updated = { ...current, ...(profileName ? { profileName: profileName as import("./analysis/correlationProfile.js").CorrelationProfileName } : {}), ...(windowSeconds !== undefined ? { windowSeconds } : {}) };
+      await options.correlationProfileStore.save(req.params.id, updated);
+      return res.status(200).json(updated);
+    } catch (err) {
+      return res.status(500).json({ error: String(err) });
+    }
+  });
+
   // Last-import metadata: when the last import ran + what it added to the forensic timeline.
   // Backs the dashboard's "last import N ago - +N new events" banner and per-row "new" highlight.
   app.get("/cases/:id/import-meta", async (req: Request, res: Response) => {
@@ -6485,6 +6517,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     customEntitiesStore: new CustomEntitiesStore(params.store),
     discoveredStore: new DiscoveredEntitiesStore(params.store),
     synthMetaStore: new SynthMetaStore(params.store),
+    correlationProfileStore: new CorrelationProfileStore(params.store),
     notebookStore: new NotebookStore(params.store),
     aiControlStore: new AiControlStore(params.store),
     ocrRunner: params.ocrRunner,
@@ -6602,6 +6635,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const playbookControlStore = new PlaybookControlStore(store);
   const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
+  const correlationProfileStore = new CorrelationProfileStore(store);
   const secondOpinionStore = new SecondOpinionStore(store);
   const importMetaStore = new ImportMetaStore(store);
   // #76: import undo/redo. Depth is the number of import levels kept (each = a full timeline+IOC copy).
@@ -6679,6 +6713,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onLegitimate: (caseId) => hub.broadcastTo(caseId, { type: "legitimate_changed" }),
     onScope: (caseId, scope) => hub.broadcastTo(caseId, { type: "scope_changed", ...scope }),
     synthMetaStore,
+    correlationProfileStore,
     secondOpinionStore,
     secondOpinionEnabled: Boolean(secondOpinionProvider),
     onSecondOpinion: (caseId) => hub.broadcastTo(caseId, { type: "second_opinion_changed" }),

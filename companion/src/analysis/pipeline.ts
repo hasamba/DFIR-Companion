@@ -38,6 +38,7 @@ import {
 import { SHADOW_ARTIFACTS } from "./shadowArtifacts.js";
 import { diffFindings, type FindingsDiff } from "./findingsDiff.js";
 import type { SynthMetaStore } from "./synthMeta.js";
+import { CorrelationProfileStore } from "./correlationProfile.js";
 import type { SecondOpinionStore } from "./secondOpinionStore.js";
 import {
   RECONCILE_PROMPT,
@@ -1054,6 +1055,7 @@ export interface PipelineOptions {
   // Optional: record when synthesis actually ran + what changed in the findings, so the
   // dashboard can show "last synthesized N ago" and a what-changed diff. Absent → not recorded.
   synthMetaStore?: SynthMetaStore;
+  correlationProfileStore?: CorrelationProfileStore;
   // When both notebookStore and aiControlStore are set, synthesis checks aiControl.includeNotebook
   // and — when true — appends the analyst's notebook entries to the synthesis prompt.
   notebookStore?: NotebookStore;
@@ -2973,10 +2975,12 @@ export class AnalysisPipeline {
     // corroborated event. This dedups the timeline AND means one finding (with both tools
     // as evidence) instead of two. Idempotent, so repeated synthesis is stable. The
     // correlated timeline is persisted below.
-    const windowSeconds = Number(process.env.DFIR_CORRELATE_WINDOW_S);
+    const envWindow = Number(process.env.DFIR_CORRELATE_WINDOW_S);
+    const corrProfile = await this.opts.correlationProfileStore?.load(caseId);
+    const windowSeconds = Number.isFinite(envWindow) ? envWindow : (corrProfile?.windowSeconds ?? 2);
     const state: InvestigationState = {
       ...loaded,
-      forensicTimeline: correlateEvents(loaded.forensicTimeline, Number.isFinite(windowSeconds) ? { windowSeconds } : {}),
+      forensicTimeline: correlateEvents(loaded.forensicTimeline, { windowSeconds }),
     };
 
     const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
@@ -3085,6 +3089,7 @@ export class AnalysisPipeline {
       (legitimateBlock ? `${legitimateBlock}\n\n` : "") +
       `Running notes: ${state.lastSummary || "(none)"}\n\nReturn the JSON conclusions.`;
 
+    const synthStart = Date.now();
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
     // Chain-of-Thought / extended thinking for the complex synthesis call (issue #121, feature 1).
@@ -3172,7 +3177,11 @@ export class AnalysisPipeline {
     // Record what this run changed (diff vs the findings that existed before the AI call) and
     // when it ran — surfaced on the dashboard. Only reached on a real run; skips return early above.
     const findingsDiff = diffFindings(loaded.findings, next.findings);
-    await this.opts.synthMetaStore?.record(caseId, findingsDiff);
+    await this.opts.synthMetaStore?.record(caseId, findingsDiff, new Date().toISOString(), {
+      durationMs: Date.now() - synthStart,
+      eventCount: next.forensicTimeline.length,
+      iocCount: next.iocs.length,
+    });
     // Notify on new/escalated findings (issue #58). Best-effort, fire-and-forget — never blocks or
     // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.
     this.opts.onSynth?.(caseId, findingsDiff, next);

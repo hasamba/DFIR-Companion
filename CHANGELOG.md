@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **CIRCL hashlookup enrichment** — keyless known-file lookup for hash IOCs against CIRCL's hashlookup DB (NSRL-derived + distro packages); the known-good angle that complements VirusTotal/Hunting.ch (high-trust hit → harmless, low-trust → unknown, `KnownMalicious` → malicious), `external` scope (opt-in per case), base overridable via `DFIR_HASHLOOKUP_URL` (closes #154).
+- **Timeline pagination** — timeline renders 100/250/500 or all rows per page (user-selectable); page counter in the event count and prev/next controls at the bottom of the table (#125).
+- **Correlation profile** — per-case named profile (Strict/Moderate/Aggressive) exposes the cross-source event merge window in the dashboard toolbar; `PUT /cases/:id/correlation-profile`; `DFIR_CORRELATE_WINDOW_S` env override still wins when set (#125).
+- **Synthesis performance metrics** — `synth-meta.json` now records `durationMs`, `eventCount`, and `iocCount` from each synthesis run; dashboard "last synthesized" banner surfaces these, plus a ⚠ advisory when the case exceeds 5 000 events (#125).
 
 ### Changed
 - **Graph-grounded fleet-hunt suggestions** — `suggestHunts` now feeds the deterministic causal evidence graph (process spawn chains, file lineage, lateral-movement edges) into the prompt, so hunts target the *relationship* (parent→child chain, the binary/account that moved between hosts) fleet-wide instead of just the leaf indicator the flat timeline carries (#124).

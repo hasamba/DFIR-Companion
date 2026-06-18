@@ -212,7 +212,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Webhook push ingest** (opt-in, token) — external tools push alerts via `POST /cases/:id/push` (SIEM webhook, Velociraptor monitor, scripts)
 - **Velociraptor live monitoring** (opt-in) — stream CLIENT_EVENT artifacts (e.g., ProcessCreation) as events fire; auto-collect on interval; one-click auto-monitor for all enabled artifacts
 - **Scope + legitimacy** — set time window; mark findings/IOCs/events legitimate (reversible); all views re-project
-- **Freshness** — "last synthesized N ago" + diff; "last import N ago" + NEW row highlights
+- **Freshness** — "last synthesized N ago" + diff (duration/event/IOC counts); "last import N ago" + NEW row highlights; ⚠ advisory for cases >5 000 events
+- **Timeline pagination** — 100/250/500/all rows per page (user-selectable); prev/next controls
+- **Correlation profile** — per-case Strict/Moderate/Aggressive/Custom window for cross-source event merging; toolbar dropdown + `PUT /cases/:id/correlation-profile`
 
 ### Threat-intel enrichment (off by default — opt-in per case)
 - **Sources** — VirusTotal, Hunting.ch (MalwareBazaar/ThreatFox/URLhaus/YARAify), CrowdStrike Falcon TI, AbuseIPDB, MISP, YETI, OpenCTI, RockyRaccoon (process prevalence + anomalous parent/child), CIRCL hashlookup (keyless known-file / known-good hash lookup — cuts false positives)
