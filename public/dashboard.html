@@ -580,6 +580,7 @@
     .ev-star.starred, .ev-star:hover { color: var(--c-ffd93b); }
     .ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; padding-top: 2px; font-family: ui-monospace, Menlo, Consolas, monospace; }
     .ev-col-content { flex: 1; min-width: 0; padding-top: 1px; }
+    .ev-more-btn { background: none; border: none; color: var(--c-6aa9ff); cursor: pointer; font-size: 0.78em; padding: 0 3px; margin-left: 2px; vertical-align: middle; }
     .ev-header-row { display: flex; align-items: center; padding: 2px 0 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 1px; font-size: 11px; color: var(--c-6b7280); }
     .ev-header-ctrl { width: 162px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
     .ev-header-time { width: 192px; flex-shrink: 0; }
@@ -3040,6 +3041,15 @@
     }
 
     function truncate(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+    const DESC_INLINE_LIMIT = 300;
+    function descHtml(desc, id) {
+      if (desc.length <= DESC_INLINE_LIMIT) return `<strong>${esc(desc)}</strong>`;
+      const uid = `evdesc-${escAttr(id)}`;
+      const shown = esc(desc.slice(0, DESC_INLINE_LIMIT));
+      const rest  = esc(desc.slice(DESC_INLINE_LIMIT));
+      return `<strong>${shown}<button class="ev-more-btn" onclick="var b=document.getElementById('${uid}');b.hidden=!b.hidden;this.textContent=b.hidden?'[more]':'[less]'">[more]</button><span id="${uid}" hidden>${rest}</span></strong>`;
+    }
 
     function loadAssetGraph(caseId) {
       loadAssetPosOverride();   // restore this case's manual node positions
@@ -7839,7 +7849,7 @@
           + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)}`
           + `</div>`
           + `<div class="ev-col-time"><span class="sev-${esc(e.severity)}">${span}</span></div>`
-          + `<div class="ev-col-content">${tagPills("event", e.id)}${newBadge}${badge}${corro}${chain}${host} <strong>${esc(desc)}</strong> ${legitBtn("event", e.id, desc)}`
+          + `<div class="ev-col-content">${tagPills("event", e.id)}${newBadge}${badge}${corro}${chain}${host} ${descHtml(desc, e.id)} ${legitBtn("event", e.id, desc)}`
           + `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:var(--c-ff8a8a)">${esc(e.chainCheck.note)}</small>` : ""}`
           + `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}`
           + findingLinks
