@@ -3048,7 +3048,7 @@
       const uid = `evdesc-${escAttr(id)}`;
       const shown = esc(desc.slice(0, DESC_INLINE_LIMIT));
       const rest  = esc(desc.slice(DESC_INLINE_LIMIT));
-      const toggle = `var r=document.getElementById('${uid}');var m=document.getElementById('${uid}-more');r.hidden=!r.hidden;m.hidden=!m.hidden`;
+      const toggle = `var r=document.getElementById('${uid}');var m=document.getElementById('${uid}-more');r.hidden=!r.hidden;m.style.display=r.hidden?'':'none';`;
       return `<strong>${shown}<button id="${uid}-more" class="ev-more-btn" onclick="${toggle}">[more]</button><span id="${uid}" hidden>${rest}<button class="ev-more-btn" onclick="${toggle}">[less]</button></span></strong>`;
     }
 
