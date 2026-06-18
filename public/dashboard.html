@@ -2782,7 +2782,7 @@
     let filterTo = null;                      // timeline view upper bound (ISO UTC string or null)
     let _searchDebounce = null;
     let tlPage = 0;                           // current timeline page (0-based)
-    let tlPageSize = 250;                     // rows per page; user-selectable
+    let tlPageSize = 50;                      // rows per page; user-selectable
     let _tlKeepPage = false;                  // pagination buttons set this to avoid resetting to page 0
 
     // --- Search/filter helpers (mirror companion/src/analysis/searchFilter.ts) ---------
@@ -7771,7 +7771,7 @@
       const someSelected = allIds.some(id => selectedEvents.has(id));
 
       // Pagination controls bar (shown only when content exceeds one page).
-      const pageSizes = [100, 250, 500, 0];
+      const pageSizes = [50, 100, 250, 500, 0];
       const pageSizeLabel = n => n === 0 ? "All" : String(n);
       const pageSizeOpts = pageSizes.map(n =>
         `<option value="${n}"${tlPageSize === n ? " selected" : ""}>${pageSizeLabel(n)}</option>`
