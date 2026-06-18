@@ -308,6 +308,11 @@ describe("detectImportWithCustom precedence", () => {
     expect(detectImportWithCustom("x.json", siem, imps, "builtin-first")).toBe("siem");
   });
 
+  it("velociraptor: pslist/pstree NDJSON (CallChain + Pid, no _Source)", () => {
+    const row = { Pid: "1004", Ppid: "592", Name: "svchost.exe", Exe: "C:\\Windows\\System32\\svchost.exe", CommandLine: "svchost.exe -k netsvcs", StartTime: "2026-06-12T11:12:45Z", EndTime: "0001-01-01T00:00:00Z", CallChain: "svchost.exe", PSTree: null };
+    expect(detectImportKind("F.D8M0V5UIO64QE.H.json", ndjson(row))).toBe("velociraptor");
+  });
+
   it("external-first: a custom importer can override even a specific built-in", () => {
     const r = parseImporterSpec({ ...EXAMPLE_IMPORTER_SPEC, id: "my-evtx", match: { format: "json", requireKeys: ["EventID"], priority: 1 } });
     if (!r.ok) throw new Error("bad");

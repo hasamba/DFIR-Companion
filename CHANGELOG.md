@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Correlation profile** — per-case named profile (Strict/Moderate/Aggressive) exposes the cross-source event merge window in the dashboard toolbar; `PUT /cases/:id/correlation-profile`; `DFIR_CORRELATE_WINDOW_S` env override still wins when set (#125).
 - **Synthesis performance metrics** — `synth-meta.json` now records `durationMs`, `eventCount`, and `iocCount` from each synthesis run; dashboard "last synthesized" banner surfaces these, plus a ⚠ advisory when the case exceeds 5 000 events (#125).
 
+### Fixed
+- **Velociraptor pslist/pstree import** — NDJSON exports without `_Source`/`Artifact` markers (e.g. `F.<flowId>.H.json`) were mis-detected as SIEM, leaving all events undated and losing CommandLine; `CallChain`+`Pid` presence now correctly routes them to the Velociraptor importer with a dedicated `mapPslist` formatter showing `Name (pid) ← ppid: CommandLine`.
+
 ### Changed
 - **Graph-grounded fleet-hunt suggestions** — `suggestHunts` now feeds the deterministic causal evidence graph (process spawn chains, file lineage, lateral-movement edges) into the prompt, so hunts target the *relationship* (parent→child chain, the binary/account that moved between hosts) fleet-wide instead of just the leaf indicator the flat timeline carries (#124).
 
