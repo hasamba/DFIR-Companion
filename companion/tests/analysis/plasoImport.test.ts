@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { parsePlasoCsv } from "../../src/analysis/plasoImport.js";
+import { parsePlasoCsv, parsePlasoFromLines } from "../../src/analysis/plasoImport.js";
+
+async function* asLines(text: string): AsyncGenerator<string> {
+  for (const l of text.split("\n")) yield l;
+}
 
 function csv(header: string[], rows: string[][]): string {
   const esc = (v: string): string => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
@@ -71,5 +75,53 @@ describe("parsePlasoCsv — edges", () => {
     const r = parsePlasoCsv(csv(["a", "b"], [["1", "2"]]));
     expect(r.format).toBe("unknown");
     expect(r.events).toHaveLength(0);
+  });
+
+  it("counts every row even when the format is unknown (drains the stream)", () => {
+    const r = parsePlasoCsv(csv(["a", "b"], [["1", "2"], ["3", "4"], ["5", "6"]]));
+    expect(r.format).toBe("unknown");
+    expect(r.total).toBe(3);
+    expect(r.dropped).toBe(3);
+  });
+
+  it("parsePlasoFromLines (streaming from disk) matches parsePlasoCsv on the same input", async () => {
+    const header = ["datetime", "timestamp_desc", "source", "source_long", "message", "parser", "display_name", "tag"];
+    const text = csv(header, [
+      ["2023-08-01T10:00:00.123456+00:00", "ctime", "FILE", "File stat", "C:/Temp/evil.exe sha256 aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899", "filestat", "TSK:/Temp/evil.exe", "-"],
+      ["2023-08-01T10:05:00+00:00", "mtime", "EVT", "WinEVTX", "A service was installed: svc.exe from 203.0.113.5", "winevtx", "OS:/Windows/Temp/svc.exe", "-"],
+    ]);
+    const sync = parsePlasoCsv(text);
+    const streamed = await parsePlasoFromLines(asLines(text));
+    expect(streamed.format).toBe(sync.format);
+    expect(streamed.total).toBe(sync.total);
+    expect(streamed.events).toEqual(sync.events);
+    expect(streamed.iocs).toEqual(sync.iocs);
+  });
+
+  it("parsePlasoFromLines stitches a quoted message with an embedded newline", async () => {
+    const header = ["datetime", "timestamp_desc", "source", "source_long", "message", "parser", "display_name", "tag"];
+    // message field contains a literal newline (quoted) → arrives as two physical lines.
+    const text = `${header.join(",")}\n2023-08-01T10:00:00+00:00,ctime,REG,Registry,"key set:\nHKLM\\Run\\evil = bad.exe",winreg,OS:/reg,-`;
+    const r = await parsePlasoFromLines(asLines(text));
+    expect(r.format).toBe("dynamic");
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].description).toContain("key set:");
+    expect(r.events[0].description).toContain("HKLM");
+  });
+
+  it("streams a large super-timeline with bounded output (events capped, IOC sink capped)", () => {
+    const header = ["datetime", "timestamp_desc", "source", "source_long", "message", "parser", "display_name", "tag"];
+    // 20k rows, each with a UNIQUE hash + unique message → would be 20k events + 20k IOCs if
+    // unbounded. The aggregation cap (maxEvents) and the IOC cap (maxIocs) must hold both down,
+    // and total must still reflect every streamed row.
+    const rows: string[][] = [];
+    for (let i = 0; i < 20_000; i++) {
+      const hash = i.toString(16).padStart(64, "0");
+      rows.push([`2023-08-01T10:00:00+00:00`, "ctime", "FILE", "File stat", `unique event ${i} hash ${hash}`, "filestat", `OS:/f/${i}`, "-"]);
+    }
+    const r = parsePlasoCsv(csv(header, rows), { maxEvents: 2000, maxIocs: 5000, aggregate: false });
+    expect(r.total).toBe(20_000);
+    expect(r.events.length).toBeLessThanOrEqual(2000);
+    expect(r.iocs.length).toBeLessThanOrEqual(5000);
   });
 });

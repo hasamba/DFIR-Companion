@@ -734,14 +734,19 @@ export function addIoc(sink: Map<string, SiemIoc>, type: SiemIoc["type"], value:
 
 // ───────────────────────────── aggregation (shared) ─────────────────────────────
 
-// Collapse mapped events by their aggKey into counted rows, apply the severity floor,
-// sort (most-severe → noisiest → earliest) and cap. Shared by the SIEM and Chainsaw/EVTX
-// importers so both aggregate, sort, and cap identically. Returns the capped rows plus the
-// group count BEFORE the cap (so callers can report "N over the cap"). Pure.
-export function aggregateEvents(
-  mapped: MappedEvent[],
+// Incremental accumulator behind aggregateEvents — collapse mapped events by aggKey into counted
+// rows, apply the severity floor, then sort + cap on finish(). Exposed as an accumulator (not just
+// the one-shot function) so a STREAMING caller (e.g. the Plaso file importer reading a 555 MB
+// super-timeline line-by-line) can feed events one at a time without ever materializing the full
+// mapped[] array — memory stays bounded by the distinct-key set, not the row count. Stateful.
+export interface EventAggregator {
+  add(m: MappedEvent): void;
+  finish(): { events: SiemEvent[]; groups: number };
+}
+
+export function createEventAggregator(
   opts: { aggregate?: boolean; minSeverity?: Severity; maxEvents?: number } = {},
-): { events: SiemEvent[]; groups: number } {
+): EventAggregator {
   const aggregate = opts.aggregate ?? true;
   const maxEvents = opts.maxEvents ?? 2000;
   const floorRank = opts.minSeverity ? SEVERITY_RANK[opts.minSeverity] : Infinity;
@@ -749,55 +754,71 @@ export function aggregateEvents(
   const byKey = new Map<string, SiemEvent>();
   const order: string[] = [];
 
-  for (const m of mapped) {
-    if (SEVERITY_RANK[m.severity] > floorRank) continue;        // below the severity floor
-    const key = aggregate ? m.aggKey : `${order.length}`;       // no-agg ⇒ unique key per row
-    const existing = byKey.get(key);
-    if (existing) {
-      existing.count = (existing.count ?? 1) + 1;
-      const t = m.timestamp;
-      if (t) {
-        if (!existing.timestamp || t < existing.timestamp) existing.timestamp = t;
-        if (!existing.endTimestamp || t > existing.endTimestamp) existing.endTimestamp = t;
+  return {
+    add(m: MappedEvent): void {
+      if (SEVERITY_RANK[m.severity] > floorRank) return;          // below the severity floor
+      const key = aggregate ? m.aggKey : `${order.length}`;       // no-agg ⇒ unique key per row
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.count = (existing.count ?? 1) + 1;
+        const t = m.timestamp;
+        if (t) {
+          if (!existing.timestamp || t < existing.timestamp) existing.timestamp = t;
+          if (!existing.endTimestamp || t > existing.endTimestamp) existing.endTimestamp = t;
+        }
+        existing.severity = worst(existing.severity, m.severity);
+        for (const mt of m.mitre) if (!existing.mitreTechniques.includes(mt)) existing.mitreTechniques.push(mt);
+        if (m.sources) for (const s of m.sources) { (existing.sources ??= []); if (!existing.sources.includes(s)) existing.sources.push(s); }
+      } else {
+        byKey.set(key, {
+          id: "",
+          timestamp: m.timestamp,
+          description: m.description,
+          severity: m.severity,
+          mitreTechniques: [...m.mitre],
+          count: 1,
+          ...(m.sha256 ? { sha256: m.sha256 } : {}),
+          ...(m.md5 ? { md5: m.md5 } : {}),
+          ...(m.path ? { path: m.path } : {}),
+          ...(m.asset ? { asset: m.asset } : {}),
+          ...(m.processName ? { processName: m.processName } : {}),
+          ...(m.parentName ? { parentName: m.parentName } : {}),
+          ...(m.sources?.length ? { sources: [...m.sources] } : {}),
+          ...(m.srcIp ? { srcIp: m.srcIp } : {}),
+          ...(m.dstIp ? { dstIp: m.dstIp } : {}),
+          ...(m.port ? { port: m.port } : {}),
+        });
+        order.push(key);
       }
-      existing.severity = worst(existing.severity, m.severity);
-      for (const mt of m.mitre) if (!existing.mitreTechniques.includes(mt)) existing.mitreTechniques.push(mt);
-      if (m.sources) for (const s of m.sources) { (existing.sources ??= []); if (!existing.sources.includes(s)) existing.sources.push(s); }
-    } else {
-      byKey.set(key, {
-        id: "",
-        timestamp: m.timestamp,
-        description: m.description,
-        severity: m.severity,
-        mitreTechniques: [...m.mitre],
-        count: 1,
-        ...(m.sha256 ? { sha256: m.sha256 } : {}),
-        ...(m.md5 ? { md5: m.md5 } : {}),
-        ...(m.path ? { path: m.path } : {}),
-        ...(m.asset ? { asset: m.asset } : {}),
-        ...(m.processName ? { processName: m.processName } : {}),
-        ...(m.parentName ? { parentName: m.parentName } : {}),
-        ...(m.sources?.length ? { sources: [...m.sources] } : {}),
-        ...(m.srcIp ? { srcIp: m.srcIp } : {}),
-        ...(m.dstIp ? { dstIp: m.dstIp } : {}),
-        ...(m.port ? { port: m.port } : {}),
-      });
-      order.push(key);
-    }
-  }
+    },
+    finish(): { events: SiemEvent[]; groups: number } {
+      // Drop the synthetic count:1 marker on un-aggregated singletons for a cleaner timeline.
+      const events = order.map((k) => byKey.get(k)!);
+      for (const e of events) if (e.count === 1) delete e.count;
+      const groups = events.length;
 
-  // Drop the synthetic count:1 marker on un-aggregated singletons for a cleaner timeline.
-  const events = order.map((k) => byKey.get(k)!);
-  for (const e of events) if (e.count === 1) delete e.count;
-  const groups = events.length;
+      // Most-severe first, then noisiest, then earliest — then cap.
+      events.sort((a, b) =>
+        SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
+        (b.count ?? 1) - (a.count ?? 1) ||
+        (a.timestamp || "~").localeCompare(b.timestamp || "~"));
 
-  // Most-severe first, then noisiest, then earliest — then cap.
-  events.sort((a, b) =>
-    SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
-    (b.count ?? 1) - (a.count ?? 1) ||
-    (a.timestamp || "~").localeCompare(b.timestamp || "~"));
+      return { events: events.slice(0, maxEvents), groups };
+    },
+  };
+}
 
-  return { events: events.slice(0, maxEvents), groups };
+// Collapse mapped events by their aggKey into counted rows, apply the severity floor,
+// sort (most-severe → noisiest → earliest) and cap. Shared by the SIEM and Chainsaw/EVTX
+// importers so both aggregate, sort, and cap identically. Returns the capped rows plus the
+// group count BEFORE the cap (so callers can report "N over the cap"). Pure.
+export function aggregateEvents(
+  mapped: Iterable<MappedEvent>,
+  opts: { aggregate?: boolean; minSeverity?: Severity; maxEvents?: number } = {},
+): { events: SiemEvent[]; groups: number } {
+  const agg = createEventAggregator(opts);
+  for (const m of mapped) agg.add(m);
+  return agg.finish();
 }
 
 // ───────────────────────────── top-level parse ─────────────────────────────

@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, createReadStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import { join as joinPath } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -68,7 +69,7 @@ import { parseCybertriage, type CybertriageImportOptions } from "./cybertriageIm
 import { parseM365Audit, type M365ImportOptions } from "./m365Import.js";
 import { parseCloudTrail, type AwsImportOptions } from "./awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "./cloudActivityImport.js";
-import { parsePlasoCsv, type PlasoImportOptions } from "./plasoImport.js";
+import { parsePlasoCsv, parsePlasoFromLines, type PlasoImportOptions, type PlasoParseResult } from "./plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "./sandboxImport.js";
 import { parseMemory, type MemoryImportOptions } from "./memoryImport.js";
 import { parseEmail, type EmailImportOptions } from "./emailImport.js";
@@ -2039,6 +2040,47 @@ export class AnalysisPipeline {
     },
   ): Promise<InvestigationState> {
     const parsedRaw = parsePlasoCsv(text, opts.plaso);
+    return this.persistPlasoParsed(caseId, parsedRaw, opts);
+  }
+
+  // Streaming-from-disk Plaso import: for super-timelines too large to hold as one JS string (a
+  // 555 MB export EXCEEDS V8's ~512 MB max string length, so readFile(utf8) throws "Invalid string
+  // length"). Reads the file line-by-line via node:readline and feeds parsePlasoFromLines, which
+  // keeps memory bounded by the distinct-key set, not the row count. Same downstream merge as
+  // importPlaso. The route persists the evidence file separately (by copy, not as a string).
+  async importPlasoFile(
+    caseId: string,
+    filePath: string,
+    opts: {
+      label: string;
+      idPrefix: string;
+      importedAt: string;
+      plaso?: PlasoImportOptions;
+      minSeverity?: Severity;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const rl = createInterface({
+      input: createReadStream(filePath, { encoding: "utf8", highWaterMark: 1 << 20 }),
+      crlfDelay: Infinity,
+    });
+    let parsedRaw: PlasoParseResult;
+    try {
+      parsedRaw = await parsePlasoFromLines(rl, opts.plaso);
+    } finally {
+      rl.close();
+    }
+    return this.persistPlasoParsed(caseId, parsedRaw, opts);
+  }
+
+  // Shared tail of both Plaso entry points: apply the severity floor, build the delta and merge it
+  // into the case state. (Keeping this in one place means the in-memory and streaming importers
+  // produce identical timeline rows / IOCs / notes.)
+  private async persistPlasoParsed(
+    caseId: string,
+    parsedRaw: PlasoParseResult,
+    opts: { label: string; idPrefix: string; importedAt: string; minSeverity?: Severity; onProgress?: (done: number, total: number) => void },
+  ): Promise<InvestigationState> {
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 

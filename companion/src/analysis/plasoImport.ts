@@ -14,9 +14,10 @@
 //     short,desc,version,filename,inode,notes,format,extra` (date MM/DD/YYYY + time + timezone).
 
 import type { Severity } from "./stateTypes.js";
-import { parseCsv } from "./csvImport.js";
+import { parseCsvRecords, parseCsvRecordsFromLines } from "./csvImport.js";
 import {
   aggregateEvents,
+  createEventAggregator,
   cleanIp,
   addIoc,
   firstStr,
@@ -153,24 +154,55 @@ function aggKey(source: string, message: string): string {
     .slice(0, 400);
 }
 
+// Per-import mapping context shared by the in-memory and streaming entry points: a bounded IOC
+// sink + a row→MappedEvent mapper. Once the sink hits maxIocs it stops growing (a swap to a no-op
+// sink), so a file with millions of distinct indicators can't balloon memory.
+function makePlasoMapper(headers: string[], flavor: Flavor, maxIocs: number): {
+  iocSink: Map<string, SiemIoc>;
+  mapRow: (cols: string[]) => MappedEvent | null;
+} {
+  const iocSink = new Map<string, SiemIoc>();
+  const noopSink = new Map<string, SiemIoc>();
+  const trimmedHeaders = headers.map((h) => h.trim());
+  return {
+    iocSink,
+    mapRow(cols: string[]): MappedEvent | null {
+      const row: Row = {};
+      trimmedHeaders.forEach((h, i) => { row[h] = cols[i] ?? ""; });
+      return flavor.map(row, iocSink.size >= maxIocs ? noopSink : iocSink);
+    },
+  };
+}
+
+function detectFlavorFromHeaders(headers: string[]): Flavor | null {
+  return headers.length ? detectFlavor(new Set(headers.map((h) => h.trim().toLowerCase()))) : null;
+}
+
 export function parsePlasoCsv(text: string, opts: PlasoImportOptions = {}): PlasoParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
-  const { headers, rows } = parseCsv(text);
-  const flavor = headers.length ? detectFlavor(new Set(headers.map((h) => h.trim().toLowerCase()))) : null;
+
+  // STREAMING: a Plaso super-timeline can be 100s of MB (millions of rows). Parsing it into a
+  // full 2D array + a full mapped[] array OOMs the server. Instead we stream records one at a
+  // time through map→aggregate, so memory stays bounded by the distinct aggKey set (thousands)
+  // + the capped IOC sink — never the row count. (For files too big to hold as a string at all,
+  // use parsePlasoFromLines, which streams from disk line-by-line.)
+  const iter = parseCsvRecords(text);
+  const first = iter.next();
+  const headers = first.done ? [] : first.value;
+  const flavor = detectFlavorFromHeaders(headers);
+
+  let total = 0;
   if (!flavor) {
-    return { events: [], iocs: [], total: rows.length, kept: 0, dropped: rows.length, groups: 0, format: "unknown" };
+    for (const _ of iter) total++; // drain to count rows for the "unknown format" report
+    return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "unknown" };
   }
 
-  const iocSink = new Map<string, SiemIoc>();
-  const mapped: MappedEvent[] = [];
-  for (const cols of rows) {
-    const row: Row = {};
-    headers.forEach((h, i) => { row[h.trim()] = cols[i] ?? ""; });
-    const m = flavor.map(row, iocSink);
-    if (m) mapped.push(m);
+  const { iocSink, mapRow } = makePlasoMapper(headers, flavor, maxIocs);
+  function* mappedGen(): Generator<MappedEvent> {
+    for (const cols of iter) { total++; const m = mapRow(cols); if (m) yield m; }
   }
 
-  const { events, groups } = aggregateEvents(mapped, {
+  const { events, groups } = aggregateEvents(mappedGen(), {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? 2000,
@@ -180,9 +212,56 @@ export function parsePlasoCsv(text: string, opts: PlasoImportOptions = {}): Plas
   return {
     events,
     iocs: [...iocSink.values()].slice(0, maxIocs),
-    total: rows.length,
+    total,
     kept: events.length,
-    dropped: Math.max(0, rows.length - represented),
+    dropped: Math.max(0, total - represented),
+    groups,
+    format: flavor.name,
+  };
+}
+
+// Streaming-from-disk variant: parse a Plaso super-timeline from a LINE source (node:readline over
+// a file read stream) so a file too large to ever hold as one JS string — a 555 MB super-timeline
+// EXCEEDS V8's ~512 MB max string length, so readFile(utf8) throws "Invalid string length" — is
+// processed with bounded memory (header + one logical record at a time; aggregation collapses the
+// rest into the capped distinct-key set). Same result shape + caps as parsePlasoCsv.
+export async function parsePlasoFromLines(
+  lines: AsyncIterable<string>,
+  opts: PlasoImportOptions = {},
+): Promise<PlasoParseResult> {
+  const maxIocs = opts.maxIocs ?? 5000;
+  const records = parseCsvRecordsFromLines(lines);
+
+  const firstRes = await records.next();
+  const headers = firstRes.done ? [] : firstRes.value;
+  const flavor = detectFlavorFromHeaders(headers);
+
+  let total = 0;
+  if (!flavor) {
+    for await (const _ of records) total++; // drain to count rows
+    return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "unknown" };
+  }
+
+  const { iocSink, mapRow } = makePlasoMapper(headers, flavor, maxIocs);
+  const agg = createEventAggregator({
+    aggregate: opts.aggregate,
+    minSeverity: opts.minSeverity,
+    maxEvents: opts.maxEvents ?? 2000,
+  });
+  for await (const cols of records) {
+    total++;
+    const m = mapRow(cols);
+    if (m) agg.add(m);
+  }
+  const { events, groups } = agg.finish();
+
+  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  return {
+    events,
+    iocs: [...iocSink.values()].slice(0, maxIocs),
+    total,
+    kept: events.length,
+    dropped: Math.max(0, total - represented),
     groups,
     format: flavor.name,
   };
