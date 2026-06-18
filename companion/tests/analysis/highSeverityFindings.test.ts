@@ -64,4 +64,40 @@ describe("backfillHighSeverityFindings", () => {
     expect(twice.findings).toHaveLength(1);
     expect(twice).toBe(once); // already linked → no-op
   });
+
+  it("groups near-identical events by shortTitle into a single finding", () => {
+    const state = emptyState("c1");
+    // Three events with the same first sentence (same Sigma rule, different threat IDs).
+    const sharedDesc = "Windows Defender Threat Detected. Malware details vary per event.";
+    state.forensicTimeline.push(
+      ev({ id: "e1", severity: "High", description: sharedDesc, mitreTechniques: ["T1059"] }),
+      ev({ id: "e2", severity: "High", description: sharedDesc, mitreTechniques: ["T1059", "T1027"] }),
+      ev({ id: "e3", severity: "High", description: sharedDesc }),
+    );
+    const out = backfillHighSeverityFindings(state, new Set(["e1", "e2", "e3"]), "t");
+    // All three collapse into one finding.
+    expect(out.findings).toHaveLength(1);
+    const f = out.findings[0];
+    // Id uses the lex-first event id.
+    expect(f.id).toBe("f-auto-e1");
+    expect(f.title).toBe("Windows Defender Threat Detected.");
+    // Description mentions the count.
+    expect(f.description).toContain("3 similar");
+    // MITRE union.
+    expect(f.mitreTechniques).toEqual(expect.arrayContaining(["T1059", "T1027"]));
+    // All events linked to the one finding.
+    for (const e of out.forensicTimeline) {
+      expect(e.relatedFindingIds).toEqual(["f-auto-e1"]);
+    }
+  });
+
+  it("keeps distinct titles as separate findings", () => {
+    const state = emptyState("c1");
+    state.forensicTimeline.push(
+      ev({ id: "e1", severity: "High", description: "Mimikatz credential dump detected." }),
+      ev({ id: "e2", severity: "High", description: "Rubeus Kerberoasting detected." }),
+    );
+    const out = backfillHighSeverityFindings(state, new Set(["e1", "e2"]), "t");
+    expect(out.findings).toHaveLength(2);
+  });
 });
