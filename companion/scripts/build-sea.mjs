@@ -69,6 +69,7 @@ async function copyTree(src, dest) {
 }
 
 async function bundleServer() {
+  const pkg = JSON.parse(await readFile(join(COMPANION_DIR, "package.json"), "utf8"));
   console.log("[sea] esbuild → bundle.cjs");
   await build({
     entryPoints: [join(COMPANION_DIR, "src", "server.ts")],
@@ -102,6 +103,7 @@ async function bundleServer() {
     },
     define: {
       "process.env.NODE_ENV": JSON.stringify("production"),
+      "process.env.DFIR_BUILD_VERSION": JSON.stringify(pkg.version),
     },
     // `import.meta.url` becomes empty in CJS — esbuild warns. The two call sites that
     // consult it (`detectSea` + the URL fallback in serverAssets.ts) are guarded by the

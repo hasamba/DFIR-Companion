@@ -257,6 +257,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Logging** — console + global session log + per-case audit trail; `DFIR_LOG_LEVEL` live toggle; `debug` traces AI/captures/OCR/anonymization
 - **Portable Windows EXE** — unzip + double-click, no Node required
 - **Docker / Compose** — `docker compose up`; evidence on host volume, no bundled AI backend
+- **Update notice** — opt-in (default off) check for a newer GitHub release; dashboard banner, never auto-downloads
 - **Customizable prompts** — override prompts via env var or file; edits apply without restart
 - **Demo case** — one-click load or `npm run seed-demo` to seed GlobalTech scenario
 - **CLI scripts** — `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`

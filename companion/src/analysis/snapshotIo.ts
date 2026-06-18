@@ -9,14 +9,15 @@ import {
   SNAPSHOT_STATE_FILES,
   type CaseSnapshot,
 } from "./snapshot.js";
+import { getAppVersion } from "../version.js";
 
 // Filesystem orchestration for investigation snapshots (issue #56). The portability rules live in
 // snapshot.ts (pure); this module just reads the case directory into a snapshot and writes a
 // snapshot back into a (new) case directory. The Companion version stamped into a snapshot is
-// informational — npm sets npm_package_version for dev/test/run; the SEA build may not, hence the
-// fallback.
+// informational. getAppVersion() resolves it across dev/Docker/SEA (npm_package_version is unset
+// inside the EXE, hence the shared helper).
 function appVersion(): string {
-  return process.env.npm_package_version || "unknown";
+  return getAppVersion();
 }
 
 // Thrown when an import targets a case id that already exists. The route maps it to HTTP 409 so the

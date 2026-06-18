@@ -121,6 +121,13 @@ import { whitelistMatches, parseWhitelistText, toWhitelistCsv, sanitizeRuleInput
 import { NsrlStore, ingestNsrlFiles, splitNsrlPaths } from "./analysis/nsrlStore.js";
 import { parseNsrlText, nsrlMatchIocs, nsrlMatchEvents } from "./analysis/nsrl.js";
 import { KevStore } from "./analysis/kevStore.js";
+import { getAppVersion } from "./version.js";
+import {
+  resolveUpdateMode, buildUpdateStatus, DEFAULT_UPDATE_REPO,
+  UPDATE_CHECK_THROTTLE_MS, type UpdateMode,
+} from "./analysis/updateCheck.js";
+import { UpdateCheckStore } from "./analysis/updateCheckStore.js";
+import { performUpdateCheck } from "./analysis/updateCheckRun.js";
 import { NsrlDb, loadNsrlDbPath, saveNsrlDbPath, removeNsrlDbPath } from "./analysis/nsrlDb.js";
 import { applyDeobfuscation } from "./analysis/applyDeobfuscation.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
@@ -419,6 +426,13 @@ export interface AppOptions {
   // auth + timeout). Defaults to the env-based buildProvider in startServer; tests inject a
   // fake (no network). Absent / returns undefined → the test route reports "not configured".
   aiTestProvider?: () => AnalyzeProvider | undefined;
+  // Opt-in "newer release available" notice (issue #127). All optional → a bare createApp (tests)
+  // gets the feature OFF and never touches the network or a timer.
+  updateCheckStore?: UpdateCheckStore;
+  appVersion?: string;                 // resolved once in startServer via getAppVersion()
+  updateRepo?: string;                 // default DEFAULT_UPDATE_REPO; override for forks
+  updateCheckEnv?: string;             // raw DFIR_UPDATE_CHECK (passed, not read globally, for testability)
+  updateFetch?: typeof fetch;          // injectable so tests never hit the network
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -566,7 +580,56 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, customImporters: importerRegistry.importers.size });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked });
+  });
+
+  // ── Update check (opt-in "newer release available" notice; NEVER downloads) ──────────────
+  const updateRepo = options.updateRepo ?? DEFAULT_UPDATE_REPO;
+  const updateAppVersion = options.appVersion ?? getAppVersion();
+  const updateEnv = options.updateCheckEnv;
+  const updateFetch = options.updateFetch ?? fetch;
+
+  async function currentUpdateMode(): Promise<UpdateMode> {
+    const stored = options.updateCheckStore ? (await options.updateCheckStore.load()).enabled : undefined;
+    return resolveUpdateMode(updateEnv, stored);
+  }
+
+  app.get("/update-check", async (_req: Request, res: Response) => {
+    try {
+      const mode = await currentUpdateMode();
+      const result = options.updateCheckStore ? (await options.updateCheckStore.load()).result : undefined;
+      res.status(200).json(buildUpdateStatus(mode, updateAppVersion, result));
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/update-check/settings", async (req: Request, res: Response) => {
+    try {
+      if (!options.updateCheckStore) return res.status(404).json({ error: "update-check store not configured — restart the server" });
+      if ((await currentUpdateMode()).locked) return res.status(423).json({ error: "update checks are disabled by DFIR_UPDATE_CHECK=0" });
+      const enabled = (req.body as { enabled?: unknown })?.enabled;
+      if (typeof enabled !== "boolean") return res.status(400).json({ error: "enabled must be a boolean" });
+      await options.updateCheckStore.setEnabled(enabled);
+      const mode = await currentUpdateMode();
+      const result = (await options.updateCheckStore.load()).result;
+      return res.status(200).json(buildUpdateStatus(mode, updateAppVersion, result));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/update-check/run", async (_req: Request, res: Response) => {
+    try {
+      if (!options.updateCheckStore) return res.status(404).json({ error: "update-check store not configured — restart the server" });
+      const mode = await currentUpdateMode();
+      if (mode.locked) return res.status(423).json({ error: "update checks are disabled by DFIR_UPDATE_CHECK=0" });
+      if (!mode.enabled) return res.status(400).json({ error: "enable update checks first" });
+      const result = await performUpdateCheck({ store: options.updateCheckStore, repo: updateRepo, fetchFn: updateFetch, now: Date.now() });
+      return res.status(200).json(buildUpdateStatus(mode, updateAppVersion, result));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // Read / change the live log verbosity (debug | info | warn | error). The dashboard's
@@ -6739,6 +6802,12 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // drive-root rationale as the whitelist/nsrl). No env pre-load: analysts fetch/import it via
   // Settings → KEV. The pipeline lazy-loads it so an import during a session is picked up.
   const kevStore = new KevStore(join(dirname(casesRoot), "kev", "catalog.json"));
+  const updateCheckStore = new UpdateCheckStore(join(dirname(casesRoot), "updates", "update-check.json"));
+  const appVersion = getAppVersion();
+  const updateRepo = (() => {
+    const envRepo = process.env.DFIR_UPDATE_REPO;
+    return envRepo && /^[\w.-]+\/[\w.-]+$/.test(envRepo) ? envRepo : DEFAULT_UPDATE_REPO;
+  })();
   // Notifications (issue #58): a global channel store (own subdir, Windows drive-root-safe) + a
   // notifier wired with a TLS-aware fetch (Slack/Teams webhooks, honoring DFIR_NOTIFY_CA/_INSECURE
   // for self-hosted Mattermost) and the built-in SMTP transport for email channels.
@@ -6920,6 +6989,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // Diagnostics AI connectivity test (#118): rebuild a provider from the CURRENT env each call,
     // so a key/model saved via Settings is reflected even before a server restart.
     aiTestProvider: () => buildProvider(),
+    updateCheckStore,
+    appVersion,
+    updateCheckEnv: process.env.DFIR_UPDATE_CHECK,
+    updateRepo,
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
@@ -7016,6 +7089,23 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     };
     attempt(0);
   }
+
+  // Opt-in update check (issue #127): when enabled (and not env-locked), check GitHub at most
+  // once / 24h on startup and on a daily timer. Best-effort, never blocks startup, never throws.
+  void (async () => {
+    const stored = (await updateCheckStore.load()).enabled;
+    const mode = resolveUpdateMode(process.env.DFIR_UPDATE_CHECK, stored);
+    if (!mode.enabled || mode.locked) return;
+    const runIfStale = async () => {
+      const prev = (await updateCheckStore.load()).result;
+      if (prev && !prev.error && Date.now() - prev.checkedAt < UPDATE_CHECK_THROTTLE_MS) return;
+      await performUpdateCheck({ store: updateCheckStore, repo: updateRepo, fetchFn: fetch, now: Date.now() });
+      logLine(`[update] checked ${updateRepo} for a newer release`);
+    };
+    await runIfStale().catch((e) => warnLine(`[update] check failed: ${(e as Error).message}`));
+    const timer = setInterval(() => { void runIfStale().catch(() => {}); }, UPDATE_CHECK_THROTTLE_MS);
+    timer.unref?.();
+  })();
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.
   server.on("error", (err: NodeJS.ErrnoException) => {
