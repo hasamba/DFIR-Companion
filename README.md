@@ -215,7 +215,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Freshness** — "last synthesized N ago" + diff; "last import N ago" + NEW row highlights
 
 ### Threat-intel enrichment (off by default — opt-in per case)
-- **Sources** — VirusTotal, Hunting.ch (MalwareBazaar/ThreatFox/URLhaus/YARAify), CrowdStrike Falcon TI, AbuseIPDB, MISP, YETI, OpenCTI, RockyRaccoon (process prevalence + anomalous parent/child)
+- **Sources** — VirusTotal, Hunting.ch (MalwareBazaar/ThreatFox/URLhaus/YARAify), CrowdStrike Falcon TI, AbuseIPDB, MISP, YETI, OpenCTI, RockyRaccoon (process prevalence + anomalous parent/child), CIRCL hashlookup (keyless known-file / known-good hash lookup — cuts false positives)
 - **IP infrastructure** — Reverse DNS (PTR hostnames), WHOIS over RDAP (netblock/ASN/abuse-contact), GeoIP (country/city/ASN/org), Shodan host (hosted domains/ports/services/CVEs); the "where from / who owns it / what's hosted" context layer — Reverse DNS/WHOIS/GeoIP are keyless, Shodan reuses `DFIR_SHODAN_KEY`
 - **Local vs external** — MISP/YETI/OpenCTI on-box; third-party SaaS opt-in per case; enabling source re-checks all existing IOCs
 - **Reachability gate** — health-probe self-hosted instances; auto-resume when online
@@ -481,6 +481,7 @@ Add a key to enable that provider. All external providers are opt-in per case fr
 | `DFIR_GEOIP_URL` | `https://ipinfo.io/{ip}/json` | GeoIP URL template (keyless HTTPS; `{ip}` substituted; parser also tolerates ip-api.com + ipwho.is) |
 | `DFIR_GEOIP_KEY` | — | Optional GeoIP key (fills `{key}`, else appended as `?token=`) for a paid/self-hosted backend |
 | `DFIR_SHODAN_KEY` | — | Shodan API key — also powers the Shodan host-lookup IP enricher (shared with customer exposure) |
+| `DFIR_HASHLOOKUP_URL` | `https://hashlookup.circl.lu` | CIRCL hashlookup base (keyless known-file lookup for hash IOCs); override for a self-hosted / air-gapped mirror |
 | `DFIR_ENRICH_DELAY_MS` | `1500` | Throttle between lookups (ms) |
 | `DFIR_ENRICH_MAX` | `100` | Max IOCs per enrich run |
 | `DFIR_ENRICH_HEALTH_TTL_MS` | `60000` | Cache up/down verdict for self-hosted providers (ms) |

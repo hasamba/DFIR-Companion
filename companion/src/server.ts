@@ -84,6 +84,7 @@ import { ReverseDnsProvider } from "./enrichment/reverseDns.js";
 import { RdapProvider } from "./enrichment/rdap.js";
 import { GeoIpProvider } from "./enrichment/geoip.js";
 import { ShodanProvider } from "./enrichment/shodan.js";
+import { HashlookupProvider } from "./enrichment/hashlookup.js";
 import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
@@ -6370,6 +6371,11 @@ export function buildEnrichmentProviders(): EnrichmentProvider[] {
       maliciousScore: Number.isFinite(octiScore) && octiScore > 0 ? octiScore : undefined,
     }));
   }
+  // CIRCL hashlookup (#154): free, keyless KNOWN-FILE lookup for hash IOCs — the known-good
+  // angle that complements VirusTotal / Hunting.ch (a hit confirms a known, legitimate file).
+  // Always available; `external` scope → opt-in per case. Base URL overridable for a self-hosted
+  // / air-gapped mirror via DFIR_HASHLOOKUP_URL.
+  providers.push(new HashlookupProvider({ baseUrl: process.env.DFIR_HASHLOOKUP_URL }));
   // IP-infrastructure context providers (#134): reverse DNS, WHOIS-over-RDAP, and GeoIP need
   // NO API key, so they're always available — but, like all `external` providers, they're
   // opt-in per case (default OFF), so nothing is looked up off-box without analyst approval.
@@ -6399,6 +6405,7 @@ export function buildEnrichProviderDelayMap(): Record<string, number> | undefine
     ["WHOIS", "WHOIS"],
     ["GEOIP", "GeoIP"],
     ["SHODAN", "Shodan"],
+    ["HASHLOOKUP", "Hashlookup"],
   ];
   const map: Record<string, number> = {};
   for (const [suffix, name] of entries) {

@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **CIRCL hashlookup enrichment** — keyless known-file lookup for hash IOCs against CIRCL's hashlookup DB (NSRL-derived + distro packages); the known-good angle that complements VirusTotal/Hunting.ch (high-trust hit → harmless, low-trust → unknown, `KnownMalicious` → malicious), `external` scope (opt-in per case), base overridable via `DFIR_HASHLOOKUP_URL` (closes #154).
+
 ## [0.23.0] - 2026-06-17
 
 ### Added
