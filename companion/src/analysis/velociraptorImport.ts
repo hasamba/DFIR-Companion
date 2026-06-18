@@ -525,6 +525,16 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   };
 }
 
+// Truncate text at a word boundary instead of mid-word, appending " [more]" as a signal.
+function truncateWithMore(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > max * 0.6 ? cut.slice(0, sp) : cut).trimEnd() + " [more]";
+}
+
+const MAX_EVIDENCE_CHARS = 500;
+
 // A DetectRaptor-style detection: the `Detection`/`RuleName` verdict leads. If a parsed Windows
 // event sits underneath (Evtx), overlay the verdict onto the per-EID mapping (like Sigma);
 // otherwise build the event from the row's file/process/pipe/path + hashes.
@@ -553,8 +563,10 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   const message = rowMessage(row);
   const salient = salientFromMessage(message); // LOLBIN + command line out of a 4688-style message
   // The triggering FILE: include the Amcache/driver/registry path fields (EntryPath/EntryName/
-  // Detection.PathName) so a "Defence Evasion"/"BAU …" verdict names the file that fired it.
+  // Detection.PathName) and the nested FileInfo.OSPath (DetectRaptor ISEAutoSave/PSReadline shape)
+  // so a verdict names the file that fired it even when OSPath is nested one level down.
   const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path", "KeyPath", "EntryPath", "EntryName"])
+    || str(getPath(row, "FileInfo.OSPath")).trim()
     || str(getPath(row, "Detection.PathName"));
   // The matched CONTENT/evidence: the full matched line/Content the analyst needs to read, falling
   // back to the rule's own HitString (the substring it matched). NOT Detection.Regex/KeywordRegex
@@ -570,27 +582,34 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   if (path) addIoc(sink, "file", path);
 
   // Subject priority: the rendered event's high-signal fields (the actual LOLBIN/command line) win
-  // over structured process/path, which win over the matched content/line. A bare verdict with no
-  // subject (just the rule name) is the failure we're avoiding — the analyst needs the WHAT.
+  // over structured process/path, which win over the matched content/line. Each field is labeled
+  // (ProcName: / PipeName: / Path:) and joined with " — " so the analyst can read them at a glance.
+  // Content-centric detections (ISEAutoSave, PSReadline) get both the filename AND the evidence text.
   let subject: string;
   if (salient) {
     subject = salient;
   } else {
     const parts: string[] = [];
-    if (processName) parts.push(processName);
-    if (pipe) parts.push(`pipe ${pipe}`);
-    if (path && !processName) parts.push(path);
+    if (processName) parts.push(`ProcName: ${processName}`);
+    if (pipe) parts.push(`PipeName: ${pipe}`);
+    if (path) parts.push(`Path: ${baseName(path)}`);
     if (parts.length === 0) {
-      parts.push(evidence ? oneLine(evidence).slice(0, 200) : oneLine(message).slice(0, 200));
+      // No structured fields — fall back to the evidence/message text.
+      const text = evidence ? oneLine(evidence) : oneLine(message);
+      parts.push(truncateWithMore(text, MAX_EVIDENCE_CHARS));
+    } else if (!processName && !pipe && evidence) {
+      // Content-centric detection (ISEAutoSave / PSReadline): path found but the evidence IS the
+      // main signal — include it so the analyst sees what the rule matched, not just the filename.
+      parts.push(truncateWithMore(oneLine(evidence), MAX_EVIDENCE_CHARS));
     }
-    subject = parts.join(" ");
+    subject = parts.join(" — ");
   }
 
   let description = `Velociraptor detection: ${v.title}`;
   if (subject) description += ` — ${subject}`;
   if (fileDeleted) description += ` [deleted]`;
   if (host) description += ` @ ${host}`;
-  description = description.slice(0, 600);
+  description = description.slice(0, 1200);
 
   const aggKey = `vr-det|${v.title.toLowerCase()}|${(path || processName || pipe || subject).toLowerCase()}|${host.toLowerCase()}`
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
@@ -978,7 +997,7 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
       if (realArtifact && !m.description.includes(realArtifact)) {
         m.description = (m.description.startsWith("Velociraptor")
           ? m.description.replace(/^Velociraptor/, `Velociraptor [${realArtifact}]`)
-          : `[${realArtifact}] ${m.description}`).slice(0, 600);
+          : `[${realArtifact}] ${m.description}`).slice(0, 1200);
       }
       // Forensic distinctness: detections sharing a rule title/EID but describing different
       // artifacts (HackTool:Passview vs HackTool:Mimikatz) are SEPARATE events. Fold the message
