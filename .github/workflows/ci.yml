@@ -1,0 +1,76 @@
+name: CI
+
+# Build + test gate on every PR and push to master. These are the SAME commands the release
+# (release-artifacts.yml) runs at tag time — this just runs them earlier, on a clean cloud box
+# (fresh `npm ci`), so a red change is caught at the offending PR instead of at release.
+#
+# Node 22 to match release-artifacts.yml / docker-publish.yml. The project's floor is Node 20,
+# but two NSRL tests hard-require `node:sqlite` (Node 22.5+) at import time, so a Node-20 leg
+# can't go green until those tests are guarded with skipIf — tracked as a follow-up to #126.
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to the same PR/branch cancels the previous, still-running CI for it.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  companion:
+    name: Companion build + test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: companion/package-lock.json
+
+      - name: Install dependencies
+        working-directory: companion
+        run: npm ci
+
+      - name: Build (tsc type-check)
+        working-directory: companion
+        run: npm run build
+
+      - name: Test (vitest)
+        working-directory: companion
+        run: npm test
+
+  extension:
+    name: Extension build + test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        working-directory: extension
+        run: npm ci
+
+      - name: Test (vitest)
+        working-directory: extension
+        run: npm test
+
+      - name: Build (vite)
+        working-directory: extension
+        run: npm run build
