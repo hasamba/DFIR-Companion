@@ -26,6 +26,8 @@ export const DEFAULT_DISK_THRESHOLDS: DiskWarnThresholds = {
  */
 export function diskWarnEnvThresholds(): DiskWarnThresholds {
   const pct = Number(process.env.DFIR_DISK_WARN_PCT);
+  // 0 = explicitly disabled — return thresholds above 100% that can never trigger
+  if (Number.isFinite(pct) && pct === 0) return { warnPct: 101, dangerPct: 101, criticalPct: 101 };
   if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) return DEFAULT_DISK_THRESHOLDS;
   return {
     warnPct: Math.max(1, pct - 15),
