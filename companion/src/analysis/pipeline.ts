@@ -672,6 +672,10 @@ export const HUNT_SUGGEST_PROMPT = [
   "- Hunt for the PATTERN across the fleet, do NOT merely restate a single-host finding. If a",
   "  webshell was found in one web root, hunt every host's web roots; if a malicious service was",
   "  installed, enumerate that service/registry value everywhere.",
+  "- When an ATTACK GRAPH is shown below, hunt for the RELATIONSHIP it reveals — the parent→child",
+  "  spawn chain, the wrote→executed file lineage, the binary/account that moved between hosts — not",
+  "  just the leaf indicator alone. A chain (e.g. winword.exe → powershell.exe → rundll32.exe) is far",
+  "  more specific than any single process name, and a binary seen on two hosts means hunt the rest.",
   "- Pivot ONLY on the case's REAL indicators (the exact hashes, file paths, process names,",
   "  service names, domains, IPs shown below). Do NOT invent IOCs the case does not contain.",
   "- Each `vql` MUST be a SINGLE, self-contained, CLIENT-side Velociraptor VQL statement that runs",
@@ -2630,16 +2634,24 @@ export class AnalysisPipeline {
     const techText = loaded.mitreTechniques.map((t) => `${t.id} ${t.name}`).join(", ") || "(none)";
     const kevCatalog = await this.getKevCatalog();
     const contextBlock = buildSynthesisContext(loaded, scopedEvents, kevCatalog);
+    // Causal grounding (#124): serialize the deterministic evidence-chain graph — process spawn
+    // chains, file lineage, lateral-movement edges — so the model hunts the RELATIONSHIP (the
+    // parent→child chain, the binary/account that moved between hosts) fleet-wide, not just the leaf
+    // indicator. The flat timeline drops processName/parentName; the graph carries them. Built from
+    // the SAME scoped+legitimate-filtered events as the rest of the prompt; "" when there are no edges.
+    // Capped at the shared default (the timeline trim below absorbs the block into the prompt budget).
+    const graphBlock = buildGraphContext({ ...loaded, forensicTimeline: scopedEvents }, { maxEdges: DEFAULT_MAX_GRAPH_EDGES });
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getHuntSuggestPrompt())
-      + estimateTokens(contextBlock + findingsText + iocText + techText + (loaded.attackerPath || "")) + 300;
+      + estimateTokens(contextBlock + graphBlock + findingsText + iocText + techText + (loaded.attackerPath || "")) + 300;
     const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
 
     const userPrompt =
       contextBlock +
+      graphBlock +
       `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
       `ATT&CK TECHNIQUES: ${techText}\n\n` +
       `FINDINGS:\n${findingsText}\n\n` +

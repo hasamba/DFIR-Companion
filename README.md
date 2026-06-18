@@ -207,7 +207,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Hunt-pivot generator** — one-click emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries
 - **Query Translator** — plain English → runnable queries (NL: "PowerShell downloading then executing") across all enabled platforms; one-click-deploy VQL hunts
 - **Velociraptor triage bundles** — browse artifacts → save bundles → run as hunts (label/OS/min-severity) → auto-collect + import
-- **AI-suggested fleet hunts** — AI proposes proactive hunts to sweep fleet for case tradecraft
+- **AI-suggested fleet hunts** — AI proposes proactive hunts to sweep fleet for case tradecraft (grounded in the causal evidence graph — spawn chains, file lineage, lateral movement — so hunts target the relationship, not just the leaf indicator)
 - **AI-suggested playbook hunts** — AI proposes hunts per endpoint-related task (single-endpoint collection or fleet hunt)
 - **Webhook push ingest** (opt-in, token) — external tools push alerts via `POST /cases/:id/push` (SIEM webhook, Velociraptor monitor, scripts)
 - **Velociraptor live monitoring** (opt-in) — stream CLIENT_EVENT artifacts (e.g., ProcessCreation) as events fire; auto-collect on interval; one-click auto-monitor for all enabled artifacts

@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **CIRCL hashlookup enrichment** — keyless known-file lookup for hash IOCs against CIRCL's hashlookup DB (NSRL-derived + distro packages); the known-good angle that complements VirusTotal/Hunting.ch (high-trust hit → harmless, low-trust → unknown, `KnownMalicious` → malicious), `external` scope (opt-in per case), base overridable via `DFIR_HASHLOOKUP_URL` (closes #154).
 
+### Changed
+- **Graph-grounded fleet-hunt suggestions** — `suggestHunts` now feeds the deterministic causal evidence graph (process spawn chains, file lineage, lateral-movement edges) into the prompt, so hunts target the *relationship* (parent→child chain, the binary/account that moved between hosts) fleet-wide instead of just the leaf indicator the flat timeline carries (#124).
+
 ## [0.23.0] - 2026-06-17
 
 ### Added
