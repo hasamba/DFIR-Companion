@@ -906,6 +906,25 @@
     #searchFilterBar { padding: 5px 16px; background: var(--c-0e1116); border-bottom: 1px solid var(--c-1a1f28);
       display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: var(--c-9aa4b2); }
     #searchFilterBar[hidden] { display: none; }
+    /* Import progress bar — strip at the bottom edge of the header. */
+    #importProgressBar {
+      position: fixed; top: 0; left: 0; right: 0; height: 4px; z-index: 10000;
+      overflow: hidden; display: none; pointer-events: none; background: transparent;
+    }
+    #importProgressBar.ipb-active { display: block; }
+    #importProgressBar::after {
+      content: ''; position: absolute; top: 0; left: 0; height: 100%;
+      width: var(--ipb-w, 0%); background: var(--c-ffd93b);
+      box-shadow: 0 0 8px var(--c-ffd93b); transition: width 0.25s ease;
+    }
+    #importProgressBar.ipb-indeterminate::after {
+      width: 40%; transition: none;
+      animation: ipbSlide 1.5s ease-in-out infinite;
+    }
+    @keyframes ipbSlide {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(250%); }
+    }
     /* Disk-space warning banner (#119). */
     #diskWarnBanner { display: flex; align-items: center; gap: 10px; padding: 6px 16px;
       border-bottom: 1px solid; font-size: 12.5px; }
@@ -956,6 +975,7 @@
   </style>
 </head>
 <body>
+<div id="importProgressBar"></div>
   <header>
     <div id="toolbarMain" class="toolbar-main">
     <strong>DFIR Companion</strong>
@@ -6158,8 +6178,45 @@
       el.textContent = "AI: " + text;
     }
 
+    // ── Import progress bar helpers ───────────────────────────────────────────
+    // The bar is a fixed strip whose ::after pseudo-element is driven by --ipb-w.
+    // Indeterminate mode uses a CSS animation on ::after instead of the custom property.
+    const _ipb = () => document.getElementById("importProgressBar");
+    function showImportProgress(pct) {
+      const b = _ipb(); if (!b) return;
+      b.classList.remove("ipb-indeterminate");
+      b.classList.add("ipb-active");
+      b.style.setProperty("--ipb-w", Math.min(95, Math.max(0, pct)).toFixed(1) + "%");
+    }
+    function showImportProgressIndeterminate() {
+      const b = _ipb(); if (!b) return;
+      b.classList.remove("ipb-indeterminate");
+      b.classList.add("ipb-active");
+      void b.offsetWidth; // force reflow so the animation restarts cleanly
+      b.classList.add("ipb-indeterminate");
+    }
+    function hideImportProgress() {
+      const b = _ipb(); if (!b) return;
+      b.classList.remove("ipb-indeterminate");
+      b.style.setProperty("--ipb-w", "100%");
+      setTimeout(() => { b.classList.remove("ipb-active"); b.style.setProperty("--ipb-w", "0%"); }, 400);
+    }
+    // Read a File as text while driving the progress bar (0 → 40%).
+    function readFileTextWithProgress(file) {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onprogress = (e) => { if (e.lengthComputable) showImportProgress((e.loaded / e.total) * 40); };
+        fr.onload = (e) => resolve(e.target.result);
+        fr.onerror = () => reject(new Error("file read failed"));
+        fr.readAsText(file);
+      });
+    }
+
     function applyAiStatus(evt) {
       if (evt.status === "analyzing") {
+        // Drive the progress bar from server-side "kind import — N/M" updates (40 → 95%).
+        const m = evt.detail && evt.detail.match(/import\s*[—\-]\s*(\d+)\/(\d+)/i);
+        if (m) { const d = +m[1], t = +m[2]; if (t > 0) showImportProgress(40 + (d / t) * 55); }
         if (evt.phase === "synthesizing") setAi("analyzing", "synthesizing findings… " + (evt.detail || ""));
         else if (evt.detail && /^enriching IOC/.test(evt.detail)) {
           const el = document.getElementById("aiStatus");
@@ -6167,9 +6224,11 @@
           el.textContent = evt.detail;
         } else setAi("analyzing", "processing evidence… " + (evt.detail || ""));
       } else if (evt.status === "idle") {
+        hideImportProgress();
         setAi("idle", "idle — up to date (" + fmtTime(evt.at) + ")");
         clearTransientStatus();  // re-synthesis finished → drop the "…re-synthesizing" line
       } else if (evt.status === "error") {
+        hideImportProgress();
         setAi("error", "error — " + (evt.detail || "see server log"));
         clearTransientStatus();
       }
@@ -8873,19 +8932,41 @@
       }
 
       // Data files → the unified /import endpoint (server auto-detects + routes).
+      // Files over 200 MB would OOM the browser tab if read via FileReader, so for those
+      // we prompt for the full local path and let the server read the file directly instead.
+      const LARGE_FILE_MB = 200;
       const kinds = {};
       let dataFail = 0, aiOffSkipped = 0;
+      if (data.length) showImportProgressIndeterminate();
       for (let i = 0; i < data.length; i++) {
         const f = data[i];
         statusEl.textContent = `importing ${i + 1}/${data.length}: ${f.name}…`;
         try {
-          const text = await f.text();
-          const r = await fetch(`/cases/${caseId}/import`, {
-            method: "POST", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ filename: f.name, text, minSeverity }),
-          });
+          let r;
+          if (f.size > LARGE_FILE_MB * 1024 * 1024) {
+            const filePath = prompt(
+              `"${f.name}" is ${Math.round(f.size / 1024 / 1024)} MB — too large to load in the browser.\n\n` +
+              `Enter the full path to this file on your machine so the server reads it directly\n` +
+              `(e.g. C:\\Users\\you\\Downloads\\${f.name}):`,
+              f.name,
+            );
+            if (!filePath) { dataFail++; continue; }
+            // Large file: server reads from disk — bar stays indeterminate until WebSocket N/M updates arrive.
+            r = await fetch(`/cases/${caseId}/import-file`, {
+              method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ path: filePath, minSeverity }),
+            });
+          } else {
+            // Small file: read in browser with progress (0→40%), then upload (bar holds at 40% until server N/M).
+            const text = await readFileTextWithProgress(f);
+            showImportProgress(40);
+            r = await fetch(`/cases/${caseId}/import`, {
+              method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ filename: f.name, text, minSeverity }),
+            });
+          }
           const jr = await r.json().catch(() => ({}));
-          if (r.status === 423) { statusEl.textContent = jr.error || "Case is closed — reopen it to import evidence"; e.target.value = ""; return; }
+          if (r.status === 423) { hideImportProgress(); statusEl.textContent = jr.error || "Case is closed — reopen it to import evidence"; e.target.value = ""; return; }
           if (!r.ok) throw new Error(jr.error || ("HTTP " + r.status));
           // CSV/log need the LLM to interpret them; with AI off the server saves the evidence but
           // skips analysis (jr.analyzed === false). Surface that honestly instead of "analyzing".
@@ -8893,6 +8974,7 @@
           else kinds[jr.kind] = (kinds[jr.kind] || 0) + 1;
         } catch (err) { dataFail++; console.warn("import failed:", f.name, err && err.message); }
       }
+      if (!data.length) hideImportProgress(); // images-only batch: nothing to track
 
       // Image files → screenshot ingest (stored as evidence, analyzed when AI is on).
       let imgOk = 0, imgDup = 0, imgFail = 0;

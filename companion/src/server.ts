@@ -1,8 +1,8 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { config as loadDotenv } from "dotenv";
-import { join, isAbsolute, resolve, dirname, relative } from "node:path";
+import { join, basename, isAbsolute, resolve, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeFile, readFile, rm, readdir, stat } from "node:fs/promises";
+import { writeFile, readFile, rm, readdir, stat, open, copyFile, mkdir } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
@@ -4050,6 +4050,145 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
             if (ns.added > 0) logLine(`[nsrl] ${caseId} auto-marked ${ns.added} imported known-good item(s) legitimate`);
           } catch { /* non-fatal */ }
           // #97: decode obfuscated command lines (PowerShell -enc, base64) and extract hidden IOCs.
+          try {
+            const deob = await applyDeobfuscationToCase(caseId);
+            if (deob.deobfuscated > 0) logLine(`[deobfuscate] ${caseId} decoded ${deob.deobfuscated} event(s), +${deob.newIocs} new IOC(s)`);
+          } catch { /* non-fatal */ }
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) => { recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
+      return;
+    } catch (err) {
+      recordImportFailure(caseId, kind, originalName, err);
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import a large file from the server's local filesystem by path — bypasses the browser
+  // FileReader memory limit for files too large to upload through the dashboard (400 MB+).
+  // Same pipeline as /import: detect kind → persist evidence → dispatchImport → diff → resynth.
+  // Localhost-only tool: reading an operator-specified path is intentional (same trust level
+  // as DFIR_NSRL_FILE / KEV import-file). Body: { path, minSeverity? }.
+  app.post("/cases/:id/import-file", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
+    if (caseMeta?.status === "closed") {
+      return res.status(423).json({ error: `Case "${caseId}" is closed — reopen it before importing evidence` });
+    }
+    const filePath = typeof req.body?.path === "string" ? req.body.path.trim() : "";
+    if (!filePath) return res.status(400).json({ error: "path is required (absolute path to a file on the server)" });
+    const minSeverity = parseMinSeverity(req.body?.minSeverity);
+
+    // Detect the import kind from a bounded HEAD sample — never read the whole file just to sniff
+    // it. A Plaso super-timeline can exceed V8's ~512 MB max string length (readFile(utf8) throws
+    // "Invalid string length"), so a sample-based sniff is the only way to even classify it.
+    let sample: string;
+    try {
+      const fh = await open(filePath, "r");
+      try {
+        const buf = Buffer.alloc(1 << 18); // 256 KB — plenty for the header + many rows
+        const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+        sample = buf.subarray(0, bytesRead).toString("utf8");
+      } finally { await fh.close(); }
+    } catch (err) {
+      return res.status(400).json({ error: `cannot read file: ${(err as Error).message}` });
+    }
+    if (!sample.trim()) return res.status(400).json({ error: "file is empty" });
+
+    const originalName = basename(filePath);
+    const kind = resolveImportKind(originalName, sample);
+    if (kind === "unknown") {
+      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import format" });
+    }
+    if ((kind === "csv" || kind === "log") && !hasAiProvider()) {
+      return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
+    }
+
+    // Plaso streams from disk line-by-line (handles 500 MB+ super-timelines that can't be held as a
+    // string at all); every other kind is read into one string and dispatched as usual. A non-Plaso
+    // file too big to string-decode fails with a clear, actionable error instead of an OOM crash.
+    const streaming = kind === "plaso";
+    let text = "";
+    if (!streaming) {
+      try {
+        text = await readFile(filePath, "utf8");
+      } catch (err) {
+        const m = (err as Error).message;
+        if (/Invalid string length/i.test(m)) {
+          return res.status(413).json({ error: `file is too large to import as ${kind} (exceeds the ~512 MB in-memory limit); only Plaso super-timelines support streaming import — split or convert the file` });
+        }
+        return res.status(400).json({ error: `cannot read file: ${m}` });
+      }
+      if (!text.trim()) return res.status(400).json({ error: "file is empty" });
+    }
+
+    options.onImport?.(caseId);
+
+    try {
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.dat";
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      // Evidence-first: copy the raw file into the case's imports dir (by bytes, so a >512 MB file we
+      // never string-decode is still persisted faithfully) and append the audit line.
+      await mkdir(store.importsDir(caseId), { recursive: true });
+      await copyFile(filePath, join(store.importsDir(caseId), storedName));
+      const { size } = await stat(filePath);
+      await store.appendImport(caseId, {
+        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        originalName, rows: 0, bytes: size,
+      });
+
+      const aiDependent = kind === "csv" || kind === "log";
+      if (aiDependent && !(await getControl(caseId)).enabled) {
+        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)` });
+        return res.status(202).json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
+      }
+
+      res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
+
+      const pipeline = options.pipeline;
+      const onProgress = (done: number, total: number): void => options.onAiStatus?.(caseId, {
+        status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}`,
+      });
+      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress, minSeverity };
+      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind}) from path${minSeverity ? ` — min severity ${minSeverity}` : ""}` });
+
+      let stateBefore: InvestigationState | null = null;
+      if (options.stateStore) {
+        try { stateBefore = await options.stateStore.load(caseId); } catch { /* keep null */ }
+      }
+
+      // Plaso streams from disk; everything else dispatches the in-memory string.
+      const run = (): Promise<unknown> =>
+        streaming ? pipeline.importPlasoFile(caseId, filePath, base) : dispatchImport(kind, caseId, text, base);
+
+      run()
+        .then(async () => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          if (options.stateStore && stateBefore) {
+            try {
+              const s = await options.stateStore.load(caseId);
+              const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
+              const iDiff = diffIocs(stateBefore.iocs, s.iocs);
+              if (options.importMetaStore) {
+                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff });
+                options.onImportMeta?.(caseId);
+              }
+              if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
+                await pushImportCheckpoint(caseId, stateBefore, `${kind} (${storedName})`);
+              }
+            } catch { /* non-fatal */ }
+          }
+          try {
+            const wl = await applyWhitelistToCase(caseId);
+            if (wl.added > 0) logLine(`[whitelist] ${caseId} auto-marked ${wl.added} imported IOC(s) legitimate`);
+          } catch { /* non-fatal */ }
+          try {
+            const ns = await applyNsrlToCase(caseId);
+            if (ns.added > 0) logLine(`[nsrl] ${caseId} auto-marked ${ns.added} imported known-good item(s) legitimate`);
+          } catch { /* non-fatal */ }
           try {
             const deob = await applyDeobfuscationToCase(caseId);
             if (deob.deobfuscated > 0) logLine(`[deobfuscate] ${caseId} decoded ${deob.deobfuscated} event(s), +${deob.newIocs} new IOC(s)`);

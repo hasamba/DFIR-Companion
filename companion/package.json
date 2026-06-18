@@ -9,7 +9,7 @@
     "pretest": "node scripts/clean-vitest-temp.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsx src/server.ts",
+    "dev": "node --max-old-space-size=8192 --import tsx/esm src/server.ts",
     "verify:ai": "tsx scripts/verify-ai.ts",
     "ocr:demo": "tsx scripts/ocr-redact-demo.ts",
     "coverage": "tsx scripts/coverage.ts",
