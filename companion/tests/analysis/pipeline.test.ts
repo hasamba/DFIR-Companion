@@ -213,6 +213,33 @@ describe("AnalysisPipeline", () => {
     expect(sentPrompt).toContain("shell.aspx");                 // pivotable IOC fed to the model
   });
 
+  it("suggestHunts feeds the causal evidence graph (process spawn chains) into the prompt", async () => {
+    const seeded = emptyState("c1");
+    seeded.findings.push({ id: "f1", severity: "Critical", title: "Malicious macro on ALCLIENT07", description: "Office macro spawned PowerShell",
+      relatedIocs: [], mitreTechniques: ["T1059.001"], sourceScreenshots: [], firstSeen: "2026-05-20T09:00:00Z", lastUpdated: "2026-05-20T09:00:00Z", status: "open" });
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "winword.exe spawned powershell.exe",
+      severity: "High", mitreTechniques: ["T1059.001"], relatedFindingIds: ["f1"], sourceScreenshots: [],
+      asset: "ALCLIENT07", parentName: "winword.exe", processName: "powershell.exe" });
+    await stateStore.save(seeded);
+
+    let sentPrompt = "";
+    const provider = {
+      name: "spy",
+      analyze: async (req: { userPrompt: string; systemPrompt: string }) => {
+        sentPrompt = req.userPrompt;
+        return { rawText: JSON.stringify({ suggestions: [
+          { title: "Hunt Office→PowerShell spawns fleet-wide", rationale: "macro execution chain", vql: "SELECT Name, CommandLine FROM pslist() WHERE Name =~ 'powershell'", severity: "High", mitreTechniques: ["T1059.001"], relatedFindingIds: ["f1"] },
+        ] }) };
+      },
+    };
+    const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+
+    const hunts = await pipeline.suggestHunts("c1");
+    expect(hunts).toHaveLength(1);
+    expect(sentPrompt).toContain("ATTACK GRAPH");                   // causal evidence graph block present
+    expect(sentPrompt).toContain("winword.exe → powershell.exe"); // the spawn-chain edge fed to the model
+  });
+
   it("suggestHunts returns [] without an AI call on an empty case", async () => {
     await stateStore.save(emptyState("c1"));
     let called = false;
