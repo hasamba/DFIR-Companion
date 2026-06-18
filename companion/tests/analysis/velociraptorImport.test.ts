@@ -568,3 +568,107 @@ describe("parseVelociraptorJson — netstat rows (no _Source marker)", () => {
     expect(r.events[0].description).toContain("LISTEN");
   });
 });
+
+describe("parseVelociraptorJson — download rows (Zone.Identifier / BrowserDownloads)", () => {
+  function downloadRow(overrides: object = {}): object {
+    return {
+      DownloadedFilePath: "\\\\.\\C:\\$Recycle.Bin\\S-1-5-21-976873477-4042199845-2240577298-1000\\$RHQQSXA.zip",
+      Mtime: "2026-06-03T08:38:22.9209026Z",
+      FileHash: {
+        MD5: "a0400686df632dbb89a4b6d80fba0483",
+        SHA1: "528a0ccec61c10d99165bd30af77d268c4c0956d",
+        SHA256: "9ca4b2678a3b6ece4c858dd99c1bd35ec8752343110044b6452a49c02462a978",
+      },
+      ZoneId: "3",
+      HostUrl: "https://codeload.github.com/hasamba/Digital-Forensic-Artifacts/zip/refs/heads/main",
+      ReferrerUrl: "https://github.com/hasamba/Digital-Forensic-Artifacts",
+      ...overrides,
+    };
+  }
+
+  it("uses Mtime as the event timestamp", () => {
+    const r = parseVelociraptorJson(JSON.stringify([downloadRow()]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].timestamp).toContain("2026-06-03");
+  });
+
+  it("includes filename and HostUrl in description", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([downloadRow()])).events[0].description;
+    expect(desc).toContain("$RHQQSXA.zip");
+    expect(desc).toContain("https://codeload.github.com/hasamba/Digital-Forensic-Artifacts/zip/refs/heads/main");
+  });
+
+  it("adds HostUrl and ReferrerUrl as URL IOCs", () => {
+    const iocs = parseVelociraptorJson(JSON.stringify([downloadRow()])).iocs;
+    expect(iocs.some((i) => i.value === "https://codeload.github.com/hasamba/Digital-Forensic-Artifacts/zip/refs/heads/main")).toBe(true);
+    expect(iocs.some((i) => i.value === "https://github.com/hasamba/Digital-Forensic-Artifacts")).toBe(true);
+  });
+
+  it("adds SHA256 from nested FileHash as hash IOC", () => {
+    const iocs = parseVelociraptorJson(JSON.stringify([downloadRow()])).iocs;
+    expect(iocs.some((i) => i.value === "9ca4b2678a3b6ece4c858dd99c1bd35ec8752343110044b6452a49c02462a978")).toBe(true);
+  });
+
+  it("strips the Velociraptor NTFS device prefix from the path", () => {
+    const r = parseVelociraptorJson(JSON.stringify([downloadRow()]));
+    expect(r.events[0].path).not.toContain("\\\\.\\");
+    expect(r.events[0].path).toContain("C:\\$Recycle.Bin");
+  });
+
+  it("sets severity to Info (telemetry, not a detection)", () => {
+    expect(parseVelociraptorJson(JSON.stringify([downloadRow()])).events[0].severity).toBe("Info");
+  });
+
+  it("is also classified correctly when _Source names the artifact", () => {
+    const r = parseVelociraptorJson(JSON.stringify([{ ...downloadRow(), _Source: "Windows.Forensics.BrowserDownloads" }]));
+    expect(r.events[0].description).toContain("$RHQQSXA.zip");
+    expect(r.events[0].description).toContain("codeload.github.com");
+  });
+
+  it("skips ReferrerUrl IOC when not present", () => {
+    const r = parseVelociraptorJson(JSON.stringify([downloadRow({ ReferrerUrl: null })]));
+    const urlIocs = r.iocs.filter((i) => i.type === "url");
+    expect(urlIocs).toHaveLength(1);
+    expect(urlIocs[0].value).toContain("codeload.github.com");
+  });
+});
+
+describe("parseVelociraptorJson — startup rows (Windows.Sys.StartupItems)", () => {
+  function startupRow(overrides: object = {}): object {
+    return {
+      Name: "bginfo",
+      OSPath: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\bginfo",
+      Details: "wscript \"c:\\Program Files\\sysinternals\\bginfo.vbs\"",
+      Enabled: "disabled",
+      Upload: "",
+      ...overrides,
+    };
+  }
+
+  it("includes Name, Details, and enabled status in description", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([startupRow()])).events[0].description;
+    expect(desc).toContain("bginfo");
+    expect(desc).toContain("bginfo.vbs");
+    expect(desc).toContain("disabled");
+  });
+
+  it("sets severity to Info for disabled items, Low for enabled items", () => {
+    const dis = parseVelociraptorJson(JSON.stringify([startupRow()])).events[0];
+    const en = parseVelociraptorJson(JSON.stringify([startupRow({ Enabled: "enable" })])).events[0];
+    expect(dis.severity).toBe("Info");
+    expect(en.severity).toBe("Low");
+  });
+
+  it("adds T1547 MITRE only for enabled items", () => {
+    const dis = parseVelociraptorJson(JSON.stringify([startupRow()])).events[0];
+    const en = parseVelociraptorJson(JSON.stringify([startupRow({ Enabled: "enable" })])).events[0];
+    expect(dis.mitreTechniques ?? []).not.toContain("T1547");
+    expect(en.mitreTechniques).toContain("T1547");
+  });
+
+  it("is classified correctly when _Source names the artifact", () => {
+    const r = parseVelociraptorJson(JSON.stringify([{ ...startupRow({ Enabled: "enable" }), _Source: "Windows.Sys.StartupItems" }]));
+    expect(r.events[0].description).toContain("bginfo");
+    expect(r.events[0].description).toContain("enabled");
+  });
+});

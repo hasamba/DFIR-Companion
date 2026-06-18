@@ -404,7 +404,7 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
 
 // ───────────────────────────── per-row mapping ─────────────────────────────
 
-type Kind = "sigma" | "yara" | "detection" | "eventlog" | "pslist" | "netstat" | "generic";
+type Kind = "sigma" | "yara" | "detection" | "eventlog" | "pslist" | "netstat" | "download" | "startup" | "generic";
 
 function artifactName(row: Row): string {
   return firstStr(row, ["_Source", "Artifact", "_Artifact", "artifact", "Source", "ArtifactName"]);
@@ -417,6 +417,8 @@ function classify(row: Row, artifact: string): Kind {
   // Artifact-name fast-paths for the most common telemetry artifacts (column detection is the fallback)
   if (/netstat/.test(a)) return "netstat";
   if (/pslist|pstree|psscan/.test(a)) return "pslist";
+  if (/browserdownload|evidence.*download/i.test(a)) return "download";
+  if (/startup|autorun/i.test(a)) return "startup";
 
   const rule = getCI(row, "Rule");
   if (typeof rule === "string" && rule.trim() && (getCI(row, "Strings") || getCI(row, "Meta") || getCI(row, "Namespace") || getCI(row, "Rules"))) return "yara";
@@ -433,6 +435,10 @@ function classify(row: Row, artifact: string): Kind {
   // Column-based fallbacks for files without _Source markers
   if (getCI(row, "CallChain") != null && getCI(row, "Pid") != null && getCI(row, "Name") != null) return "pslist";
   if (getCI(row, "Laddr") != null && getCI(row, "Lport") != null && getCI(row, "Status") != null) return "netstat";
+  // Evidence-of-download rows: Zone.Identifier ADS data (DownloadedFilePath + HostUrl)
+  if (getCI(row, "DownloadedFilePath") != null && getCI(row, "HostUrl") != null) return "download";
+  // Startup/autorun rows: Name + OSPath + Enabled (Windows.Sys.StartupItems and similar)
+  if (getCI(row, "Enabled") != null && getCI(row, "OSPath") != null && getCI(row, "Name") != null) return "startup";
   return "generic";
 }
 
@@ -748,6 +754,85 @@ function mapNetstat(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   };
 }
 
+function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+  // Velociraptor renders NTFS device paths with a leading \\.\  — strip it for readability.
+  const raw = str(getCI(row, "DownloadedFilePath"));
+  const rawPath = (raw.startsWith("\\\\.\\") ? raw.slice(4) : raw).trim();
+  const hostUrl = str(getCI(row, "HostUrl")).trim();
+  const referrerUrl = str(getCI(row, "ReferrerUrl")).trim();
+  const name = rawPath ? baseName(rawPath) : "";
+
+  if (hostUrl && /^https?:\/\//i.test(hostUrl)) addIoc(sink, "url", hostUrl.slice(0, 300));
+  if (referrerUrl && /^https?:\/\//i.test(referrerUrl)) addIoc(sink, "url", referrerUrl.slice(0, 300));
+  if (rawPath) addIoc(sink, "file", rawPath);
+
+  // FileHash is a nested object {MD5, SHA1, SHA256} in the Velociraptor artifact
+  const hashObj = getCI(row, "FileHash");
+  const { sha256, md5 } = isObject(hashObj) ? vrHashes(hashObj as Row) : vrHashes(row);
+  if (sha256) addIoc(sink, "hash", sha256);
+  else if (md5) addIoc(sink, "hash", md5);
+
+  const urlDisplay = hostUrl || "unknown source";
+  // Prefix with "Velociraptor:" so the artifact-name injection in the main loop can insert
+  // [_Source] right after "Velociraptor" (consistent with every other mapper).
+  let description = `Velociraptor: Downloaded ${name || rawPath || "file"} from ${urlDisplay}`;
+  if (host) description += ` @ ${host}`;
+  description = description.slice(0, 600);
+
+  const aggKey = `vr-download|${name.toLowerCase()}|${urlDisplay.toLowerCase()}|${host.toLowerCase()}`
+    .replace(/\d+/g, "#")
+    .slice(0, 400);
+
+  return {
+    timestamp: pickTime(row),
+    description,
+    severity: "Info",
+    mitre: [],
+    aggKey,
+    sources: ["Velociraptor"],
+    ...(sha256 ? { sha256 } : {}),
+    ...(md5 && !sha256 ? { md5 } : {}),
+    ...(rawPath ? { path: rawPath } : {}),
+    ...(host ? { asset: host } : {}),
+  };
+}
+
+function mapStartup(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+  const name = str(getCI(row, "Name")).trim();
+  const ospath = str(getCI(row, "OSPath")).trim();
+  const details = str(getCI(row, "Details")).trim();
+  const enabledRaw = str(getCI(row, "Enabled")).trim().toLowerCase();
+  const enabled = enabledRaw === "enable" || enabledRaw === "enabled" || enabledRaw === "true" || enabledRaw === "1";
+
+  // Add the executable path or registry path as file/process IOC when it looks like a real path.
+  const cmdPath = details.replace(/^["']?([A-Za-z]:\\[^"'\s]+).*$/, "$1");
+  if (details && /^[A-Za-z]:\\/.test(cmdPath)) addIoc(sink, "file", cmdPath.slice(0, 300));
+  if (ospath && /^[A-Za-z]:\\/.test(ospath)) addIoc(sink, "file", ospath.slice(0, 300));
+
+  const enabledLabel = enabled ? "enabled" : "disabled";
+  const subject = details && details !== name ? oneLine(details).slice(0, 300) : ospath;
+  let description = `Velociraptor: Startup [${name || "item"}] — ${subject} (${enabledLabel})`;
+  if (host) description += ` @ ${host}`;
+  description = description.slice(0, 600);
+
+  // Active persistence is worth surfacing; disabled items are informational.
+  const severity: Severity = enabled ? "Low" : "Info";
+
+  const aggKey = `vr-startup|${name.toLowerCase()}|${ospath.toLowerCase()}`
+    .replace(/\d+/g, "#")
+    .slice(0, 400);
+
+  return {
+    timestamp: pickTime(row),
+    description,
+    severity,
+    mitre: enabled ? ["T1547"] : [],
+    aggKey,
+    sources: ["Velociraptor"],
+    ...(host ? { asset: host } : {}),
+  };
+}
+
 // ───────────────────────────── row extraction ─────────────────────────────
 
 // Returns the flat row list. Handles a Velociraptor multi-artifact map { "Artifact": [rows] }
@@ -834,6 +919,8 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     else if (kind === "eventlog") { m = mapEventlog(row, host, iocSink) ?? mapGeneric(row, artifact, host, iocSink); }
     else if (kind === "pslist") { m = mapPslist(row, host, iocSink); }
     else if (kind === "netstat") { m = mapNetstat(row, host, iocSink); }
+    else if (kind === "download") { m = mapDownload(row, host, iocSink); }
+    else if (kind === "startup") { m = mapStartup(row, host, iocSink); }
     else { m = mapGeneric(row, artifact, host, iocSink); }
     if (m) {
       // Tag every event with the SOURCE artifact (from the row's _Source/_Artifact — stamped by the
