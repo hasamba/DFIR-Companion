@@ -33,13 +33,14 @@ function eventlogRow(): object {
   };
 }
 
-// ── A generic Velociraptor artifact row (netstat) — raw evidence, no verdict.
+// ── A Velociraptor netstat row — now routed through mapNetstat.
 function netstatRow(): object {
   return {
     _Source: "Windows.Network.Netstat",
     Pid: 4321,
-    Exe: "C:\\temp\\evil.exe",
-    RemoteAddr: "8.8.8.8",
+    Name: "evil.exe",
+    Path: "C:\\temp\\evil.exe",
+    Raddr: "8.8.8.8",
     Status: "ESTABLISHED",
     _ts: 1677662400,
   };
@@ -397,11 +398,13 @@ describe("parseVelociraptorJson — eventlog & generic rows", () => {
     expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("10.0.0.20");
   });
 
-  it("maps a generic artifact row (Info), extracting IOCs by value", () => {
+  it("maps a Windows.Network.Netstat row via mapNetstat (Low for external ESTABLISHED)", () => {
     const r = parseVelociraptorJson(JSON.stringify([netstatRow()]));
     const e = r.events[0];
-    expect(e.severity).toBe("Info");
-    expect(e.description).toContain("Velociraptor [Windows.Network.Netstat]");
+    expect(e.severity).toBe("Low"); // ESTABLISHED to external IP → Low
+    expect(e.description).toContain("evil.exe (pid 4321)");
+    expect(e.description).toContain("ESTABLISHED");
+    expect(e.description).toContain("8.8.8.8");
     expect(e.processName).toBe("evil.exe");
     expect(e.timestamp).toBe("2023-03-01T09:20:00.000Z"); // _ts epoch seconds → UTC
     expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("8.8.8.8");
@@ -448,10 +451,10 @@ describe("parseVelociraptorJson — inputs, floor & edges", () => {
     expect(r.detections).toBe(1); // the yara row classified via the artifact key
   });
 
-  it("applies a minSeverity floor (drops Info raw-collection rows)", () => {
+  it("applies a minSeverity floor (drops rows below the threshold)", () => {
     const text = JSON.stringify([sigmaRow(), netstatRow()]);
-    const r = parseVelociraptorJson(text, { minSeverity: "Low" });
-    expect(r.events).toHaveLength(1);
+    const r = parseVelociraptorJson(text, { minSeverity: "Medium" });
+    expect(r.events).toHaveLength(1); // netstat row is Low → dropped; sigma is Critical → kept
     expect(r.events[0].severity).toBe("Critical");
   });
 
@@ -507,5 +510,61 @@ describe("parseVelociraptorJson — pslist/pstree rows (no _Source marker)", () 
     const r = parseVelociraptorJson(JSON.stringify(rows));
     expect(r.events).toHaveLength(1);
     expect(r.events[0].count).toBe(2);
+  });
+});
+
+describe("parseVelociraptorJson — netstat rows (no _Source marker)", () => {
+  function netstatRow(overrides: object = {}): object {
+    return {
+      Pid: 896,
+      Ppid: 592,
+      Name: "svchost.exe",
+      Path: "C:\\Windows\\System32\\svchost.exe",
+      CommandLine: "C:\\Windows\\system32\\svchost.exe -k RPCSS -p",
+      Hash: { MD5: "fb118e243e216b84b3838332da8f5665", SHA256: "b276aa5385601d8e8b302c4e8eeb3d8682a72861de149beb6bc28726e4ec815b" },
+      Username: "NT AUTHORITY\\NETWORK SERVICE",
+      Family: "IPv4",
+      Type: "TCP",
+      Status: "LISTEN",
+      Laddr: "0.0.0.0",
+      Lport: 135,
+      Raddr: "0.0.0.0",
+      Rport: 0,
+      Timestamp: "2026-06-12T11:12:43Z",
+      ...overrides,
+    };
+  }
+
+  it("uses Timestamp as the event timestamp", () => {
+    const r = parseVelociraptorJson(JSON.stringify([netstatRow()]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].timestamp).toContain("2026-06-12");
+  });
+
+  it("includes process name, protocol, status, src and dst in description", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([netstatRow()])).events[0].description;
+    expect(desc).toContain("svchost.exe");
+    expect(desc).toContain("TCP");
+    expect(desc).toContain("LISTEN");
+    expect(desc).toContain("0.0.0.0:135");
+  });
+
+  it("marks ESTABLISHED connection to external IP as Low severity and adds remote IP as IOC", () => {
+    const r = parseVelociraptorJson(JSON.stringify([netstatRow({ Status: "ESTABLISHED", Raddr: "8.8.8.8", Rport: 443 })]));
+    expect(r.events[0].severity).toBe("Low");
+    expect(r.iocs.some((i) => i.value === "8.8.8.8")).toBe(true);
+  });
+
+  it("keeps LISTEN / RFC-1918 ESTABLISHED connections as Info severity", () => {
+    const listen = parseVelociraptorJson(JSON.stringify([netstatRow()])).events[0];
+    const internal = parseVelociraptorJson(JSON.stringify([netstatRow({ Status: "ESTABLISHED", Raddr: "192.168.1.5", Rport: 443 })])).events[0];
+    expect(listen.severity).toBe("Info");
+    expect(internal.severity).toBe("Info");
+  });
+
+  it("is also classified correctly when _Source names the artifact", () => {
+    const r = parseVelociraptorJson(JSON.stringify([{ ...netstatRow(), _Source: "Windows.Network.Netstat" }]));
+    expect(r.events[0].description).toContain("TCP");
+    expect(r.events[0].description).toContain("LISTEN");
   });
 });

@@ -404,7 +404,7 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
 
 // ───────────────────────────── per-row mapping ─────────────────────────────
 
-type Kind = "sigma" | "yara" | "detection" | "eventlog" | "pslist" | "generic";
+type Kind = "sigma" | "yara" | "detection" | "eventlog" | "pslist" | "netstat" | "generic";
 
 function artifactName(row: Row): string {
   return firstStr(row, ["_Source", "Artifact", "_Artifact", "artifact", "Source", "ArtifactName"]);
@@ -414,6 +414,9 @@ function classify(row: Row, artifact: string): Kind {
   const a = artifact.toLowerCase();
   if (/yara/.test(a)) return "yara";
   if (/sigma/.test(a)) return "sigma";
+  // Artifact-name fast-paths for the most common telemetry artifacts (column detection is the fallback)
+  if (/netstat/.test(a)) return "netstat";
+  if (/pslist|pstree|psscan/.test(a)) return "pslist";
 
   const rule = getCI(row, "Rule");
   if (typeof rule === "string" && rule.trim() && (getCI(row, "Strings") || getCI(row, "Meta") || getCI(row, "Namespace") || getCI(row, "Rules"))) return "yara";
@@ -427,8 +430,9 @@ function classify(row: Row, artifact: string): Kind {
     if (firstStr(row, ["Level"]) && firstStr(row, ["Title", "SigmaTitle", "RuleTitle"])) return "sigma";
     return "eventlog";
   }
-  // Velociraptor pslist/pstree: CallChain (ancestor string) alongside Pid + Name
+  // Column-based fallbacks for files without _Source markers
   if (getCI(row, "CallChain") != null && getCI(row, "Pid") != null && getCI(row, "Name") != null) return "pslist";
+  if (getCI(row, "Laddr") != null && getCI(row, "Lport") != null && getCI(row, "Status") != null) return "netstat";
   return "generic";
 }
 
@@ -693,6 +697,57 @@ function mapPslist(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEv
   };
 }
 
+function mapNetstat(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+  const { sha256, md5 } = collectRowIocs(row, sink);
+
+  const laddr = str(getCI(row, "Laddr")).trim();
+  const lport = str(getCI(row, "Lport")).trim();
+  const raddr = str(getCI(row, "Raddr")).trim();
+  const rport = str(getCI(row, "Rport")).trim();
+  const status = str(getCI(row, "Status")).trim();
+  const proto = firstStr(row, ["Type", "Proto", "Family"]);
+  const name = str(getCI(row, "Name")).trim();
+  const pid = str(getCI(row, "Pid")).trim();
+  const path = firstStr(row, ["Path", "Exe"]);
+
+  // Remote IP as IOC for non-zero, non-loopback addresses
+  const rAddrIsReal = raddr && raddr !== "0.0.0.0" && raddr !== "::" && raddr !== "::1" && raddr !== "127.0.0.1";
+  if (rAddrIsReal) addIoc(sink, "ip", raddr);
+  if (name) addIoc(sink, "process", name);
+
+  // ESTABLISHED connections to non-RFC-1918 remote IPs are Low (worth reviewing)
+  const isExternal = rAddrIsReal && !/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(raddr);
+  const severity: Severity = status === "ESTABLISHED" && isExternal ? "Low" : "Info";
+
+  // "svchost.exe (pid 896) TCP LISTEN 0.0.0.0:135 → 0.0.0.0"
+  const src = lport ? `${laddr}:${lport}` : laddr;
+  const dst = rport && rport !== "0" ? `${raddr}:${rport}` : raddr;
+  let description = `${name || "process"}${pid ? ` (pid ${pid})` : ""}`;
+  if (proto) description += ` ${proto}`;
+  if (status) description += ` ${status}`;
+  description += ` ${src} → ${dst}`;
+  if (host) description += ` @ ${host}`;
+  description = description.slice(0, 600);
+
+  const aggKey = `vr-netstat|${name.toLowerCase()}|${status.toLowerCase()}|${lport}|${raddr.toLowerCase()}|${rport}|${host.toLowerCase()}`
+    .replace(/\d+/g, "#")
+    .slice(0, 400);
+
+  return {
+    timestamp: pickTime(row),
+    description,
+    severity,
+    mitre: [],
+    aggKey,
+    sources: ["Velociraptor"],
+    ...(sha256 ? { sha256 } : {}),
+    ...(md5 && !sha256 ? { md5 } : {}),
+    ...(path ? { path } : {}),
+    ...(host ? { asset: host } : {}),
+    ...(name ? { processName: name } : {}),
+  };
+}
+
 // ───────────────────────────── row extraction ─────────────────────────────
 
 // Returns the flat row list. Handles a Velociraptor multi-artifact map { "Artifact": [rows] }
@@ -778,6 +833,7 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     else if (kind === "detection") { m = mapDetection(row, artifact, host, iocSink); detections++; }
     else if (kind === "eventlog") { m = mapEventlog(row, host, iocSink) ?? mapGeneric(row, artifact, host, iocSink); }
     else if (kind === "pslist") { m = mapPslist(row, host, iocSink); }
+    else if (kind === "netstat") { m = mapNetstat(row, host, iocSink); }
     else { m = mapGeneric(row, artifact, host, iocSink); }
     if (m) {
       // Tag every event with the SOURCE artifact (from the row's _Source/_Artifact — stamped by the
