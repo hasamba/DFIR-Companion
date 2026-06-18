@@ -672,3 +672,94 @@ describe("parseVelociraptorJson — startup rows (Windows.Sys.StartupItems)", ()
     expect(r.events[0].description).toContain("enabled");
   });
 });
+
+describe("parseVelociraptorJson — taskscheduler rows (Windows.System.TaskScheduler/Analysis)", () => {
+  function taskRow(overrides: Record<string, unknown> = {}): object {
+    return {
+      _Source: "Windows.System.TaskScheduler/Analysis",
+      TaskName: "\\SystemUpdate_BK24XM32",
+      Mtime: "2026-06-03T08:41:08.5250412Z",
+      Command: "regsvr32.exe",
+      Arguments: "/s /u /i:C:\\TrigonaSim\\payloads\\icedid_artifact.bin scrobj.dll",
+      UserId: "WIN11\\vagrant",
+      RunLevel: "LeastPrivilege",
+      OSPath: "C:\\Windows\\System32\\Tasks\\SystemUpdate_BK24XM32",
+      Authenticode: null,
+      ...overrides,
+    };
+  }
+
+  it("includes TaskName and Command+Arguments in description", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([taskRow()])).events[0].description;
+    expect(desc).toContain("SystemUpdate_BK24XM32");
+    expect(desc).toContain("regsvr32.exe");
+    expect(desc).toContain("icedid_artifact.bin");
+  });
+
+  it("uses Mtime as the event timestamp", () => {
+    const e = parseVelociraptorJson(JSON.stringify([taskRow()])).events[0];
+    expect(e.timestamp).toContain("2026-06-03T08:41:08");
+  });
+
+  it("sets severity to Info (raw task listing, not a detection)", () => {
+    expect(parseVelociraptorJson(JSON.stringify([taskRow()])).events[0].severity).toBe("Info");
+  });
+
+  it("surfaces the UserId in description; maps well-known SIDs to readable labels", () => {
+    const domainDesc = parseVelociraptorJson(JSON.stringify([taskRow()])).events[0].description;
+    expect(domainDesc).toContain("WIN11\\vagrant");
+
+    const systemDesc = parseVelociraptorJson(JSON.stringify([taskRow({ UserId: "S-1-5-18" })])).events[0].description;
+    expect(systemDesc).toContain("SYSTEM");
+
+    const lsDesc = parseVelociraptorJson(JSON.stringify([taskRow({ UserId: "S-1-5-19" })])).events[0].description;
+    expect(lsDesc).toContain("LOCAL SERVICE");
+  });
+
+  it("adds OSPath as a file IOC", () => {
+    const iocs = parseVelociraptorJson(JSON.stringify([taskRow()])).iocs;
+    expect(iocs.some((i) => i.type === "file" && i.value.includes("SystemUpdate_BK24XM32"))).toBe(true);
+  });
+
+  it("is classified by column detection when _Source is absent", () => {
+    const row = { TaskName: "\\MyTask", Mtime: "2026-01-01T00:00:00Z", Command: "cmd.exe", Arguments: "/c whoami", OSPath: "C:\\Windows\\System32\\Tasks\\MyTask" };
+    const desc = parseVelociraptorJson(JSON.stringify([row])).events[0].description;
+    expect(desc).toContain("MyTask");
+    expect(desc).toContain("cmd.exe");
+  });
+
+  it("is classified correctly when _Source names the artifact", () => {
+    const r = parseVelociraptorJson(JSON.stringify([taskRow()]));
+    expect(r.events[0].description).toContain("[Windows.System.TaskScheduler/Analysis]");
+  });
+});
+
+describe("parseVelociraptorJson — InUse field in MFT detection rows", () => {
+  function mftRow(inUse: boolean): object {
+    return {
+      _Source: "DetectRaptor.Windows.Detection.MFT",
+      Detection: { Name: "Credential Theft", Criticality: "High" },
+      InUse: inUse,
+      OSPath: "\\\\.\\C:\\Tools\\NirLauncher\\NirSoft\\ChromePass.cfg",
+      SITimestamps: { Created0x10: "2026-06-13T17:51:20Z", LastModified0x10: "2026-06-13T17:51:20Z" },
+    };
+  }
+
+  it("does NOT append [deleted] when InUse is true", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([mftRow(true)])).events[0].description;
+    expect(desc).not.toContain("[deleted]");
+    expect(desc).toContain("Credential Theft");
+  });
+
+  it("appends [deleted] to description when InUse is false", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([mftRow(false)])).events[0].description;
+    expect(desc).toContain("[deleted]");
+    expect(desc).toContain("Credential Theft");
+  });
+
+  it("handles string 'false' for InUse", () => {
+    const row = { ...mftRow(true), InUse: "false" };
+    const desc = parseVelociraptorJson(JSON.stringify([row])).events[0].description;
+    expect(desc).toContain("[deleted]");
+  });
+});

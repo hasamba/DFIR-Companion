@@ -404,7 +404,7 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
 
 // ───────────────────────────── per-row mapping ─────────────────────────────
 
-type Kind = "sigma" | "yara" | "detection" | "eventlog" | "pslist" | "netstat" | "download" | "startup" | "generic";
+type Kind = "sigma" | "yara" | "detection" | "eventlog" | "pslist" | "netstat" | "download" | "startup" | "taskscheduler" | "generic";
 
 function artifactName(row: Row): string {
   return firstStr(row, ["_Source", "Artifact", "_Artifact", "artifact", "Source", "ArtifactName"]);
@@ -419,6 +419,7 @@ function classify(row: Row, artifact: string): Kind {
   if (/pslist|pstree|psscan/.test(a)) return "pslist";
   if (/browserdownload|evidence.*download/i.test(a)) return "download";
   if (/startup|autorun/i.test(a)) return "startup";
+  if (/taskscheduler/i.test(a)) return "taskscheduler";
 
   const rule = getCI(row, "Rule");
   if (typeof rule === "string" && rule.trim() && (getCI(row, "Strings") || getCI(row, "Meta") || getCI(row, "Namespace") || getCI(row, "Rules"))) return "yara";
@@ -439,6 +440,8 @@ function classify(row: Row, artifact: string): Kind {
   if (getCI(row, "DownloadedFilePath") != null && getCI(row, "HostUrl") != null) return "download";
   // Startup/autorun rows: Name + OSPath + Enabled (Windows.Sys.StartupItems and similar)
   if (getCI(row, "Enabled") != null && getCI(row, "OSPath") != null && getCI(row, "Name") != null) return "startup";
+  // Scheduled task rows (Windows.System.TaskScheduler/Analysis): TaskName is unique to this artifact
+  if (getCI(row, "TaskName") != null && (getCI(row, "Mtime") != null || getCI(row, "OSPath") != null)) return "taskscheduler";
   return "generic";
 }
 
@@ -544,6 +547,8 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
 
   // Non-event detection (file / registry / named-pipe / history-line hit, or a flattened EVTX
   // detection whose event sits only in the rendered Message).
+  const inUse = getCI(row, "InUse");
+  const fileDeleted = inUse === false || str(inUse).toLowerCase() === "false";
   const { sha256, md5 } = collectRowIocs(row, sink);
   const message = rowMessage(row);
   const salient = salientFromMessage(message); // LOLBIN + command line out of a 4688-style message
@@ -583,6 +588,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
 
   let description = `Velociraptor detection: ${v.title}`;
   if (subject) description += ` — ${subject}`;
+  if (fileDeleted) description += ` [deleted]`;
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
 
@@ -833,6 +839,45 @@ function mapStartup(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   };
 }
 
+function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+  const taskName = str(getCI(row, "TaskName")).trim();
+  const command = str(getCI(row, "Command")).trim();
+  const args = str(getCI(row, "Arguments")).trim();
+  const userId = str(getCI(row, "UserId")).trim();
+  const runLevel = str(getCI(row, "RunLevel")).trim();
+  const ospath = str(getCI(row, "OSPath")).trim();
+
+  if (ospath) addIoc(sink, "file", ospath);
+  if (command && /^[A-Za-z]:\\/.test(command)) addIoc(sink, "file", command.slice(0, 300));
+
+  const cmd = [command, args].filter(Boolean).join(" ");
+  const userLabel = userId === "S-1-5-18" ? "SYSTEM"
+    : userId === "S-1-5-19" ? "LOCAL SERVICE"
+    : userId === "S-1-5-20" ? "NETWORK SERVICE"
+    : userId;
+
+  let description = `Velociraptor: Scheduled Task [${taskName || "task"}]`;
+  if (cmd) description += ` — ${oneLine(cmd).slice(0, 250)}`;
+  if (userLabel) description += ` (${userLabel}${runLevel ? `, ${runLevel}` : ""})`;
+  if (host) description += ` @ ${host}`;
+  description = description.slice(0, 600);
+
+  const aggKey = `vr-task|${taskName.toLowerCase()}|${host.toLowerCase()}`
+    .replace(/\d+/g, "#")
+    .slice(0, 400);
+
+  return {
+    timestamp: pickTime(row),
+    description,
+    severity: "Info",
+    mitre: [],
+    aggKey,
+    sources: ["Velociraptor"],
+    ...(ospath ? { path: ospath } : {}),
+    ...(host ? { asset: host } : {}),
+  };
+}
+
 // ───────────────────────────── row extraction ─────────────────────────────
 
 // Returns the flat row list. Handles a Velociraptor multi-artifact map { "Artifact": [rows] }
@@ -921,6 +966,7 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     else if (kind === "netstat") { m = mapNetstat(row, host, iocSink); }
     else if (kind === "download") { m = mapDownload(row, host, iocSink); }
     else if (kind === "startup") { m = mapStartup(row, host, iocSink); }
+    else if (kind === "taskscheduler") { m = mapTaskScheduler(row, host, iocSink); }
     else { m = mapGeneric(row, artifact, host, iocSink); }
     if (m) {
       // Tag every event with the SOURCE artifact (from the row's _Source/_Artifact — stamped by the
