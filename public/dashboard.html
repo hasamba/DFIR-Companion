@@ -10366,7 +10366,7 @@
       const dismissed = sessionStorage.getItem("updDismissed") === (j.latestTag || "");
       if (j && j.isNewer && j.htmlUrl && !dismissed) {
         banner.innerHTML = `🔔 A newer DFIR Companion (<strong>${esc(j.latestTag || j.latest)}</strong>) is available — you're on ${esc(j.current)}. `
-          + `<a href="${esc(j.htmlUrl)}" target="_blank" rel="noopener">View release</a> `
+          + `<a href="${escAttr(j.htmlUrl)}" target="_blank" rel="noopener">View release</a> `
           + `<a href="#" id="updDismiss" style="margin-left:8px;color:#9aa4b2">dismiss</a>`;
         banner.style.display = "block";
         const d = document.getElementById("updDismiss");
