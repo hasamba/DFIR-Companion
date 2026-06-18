@@ -161,7 +161,8 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     expect(r.detections).toBe(1);
     const e = r.events[0];
     expect(e.description).toContain("Velociraptor detection: Cobalt Strike: trick_ryuk.profile");
-    expect(e.description).toContain("pipe SearchTextHarvester");
+    expect(e.description).toContain("ProcName: SearchIndexer.exe");
+    expect(e.description).toContain("PipeName: SearchTextHarvester");
     expect(e.severity).toBe("High");           // "cobalt strike" keyword
     expect(e.processName).toBe("SearchIndexer.exe");
     expect(e.sources).toEqual(["Velociraptor"]);
