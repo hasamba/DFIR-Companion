@@ -461,3 +461,51 @@ describe("parseVelociraptorJson — inputs, floor & edges", () => {
     expect(r.events).toHaveLength(0);
   });
 });
+
+describe("parseVelociraptorJson — pslist/pstree rows (no _Source marker)", () => {
+  function pslistRow(overrides: object = {}): object {
+    return {
+      Pid: "1004",
+      Ppid: "592",
+      Name: "svchost.exe",
+      Username: "NT AUTHORITY\\LOCAL SERVICE",
+      Exe: "C:\\Windows\\System32\\svchost.exe",
+      CommandLine: "C:\\Windows\\System32\\svchost.exe -k LocalServiceNetworkRestricted -p -s EventLog",
+      StartTime: "2026-06-12T11:12:45.8986623Z",
+      EndTime: "0001-01-01T00:00:00Z",
+      CallChain: "svchost.exe",
+      PSTree: null,
+      ...overrides,
+    };
+  }
+
+  it("uses StartTime as the event timestamp", () => {
+    const r = parseVelociraptorJson(JSON.stringify([pslistRow()]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].timestamp).toContain("2026-06-12");
+  });
+
+  it("includes process name and CommandLine in description", () => {
+    const r = parseVelociraptorJson(JSON.stringify([pslistRow()]));
+    const desc = r.events[0].description;
+    expect(desc).toContain("svchost.exe");
+    expect(desc).toContain("-k LocalServiceNetworkRestricted");
+  });
+
+  it("sets processName from the Name field", () => {
+    const r = parseVelociraptorJson(JSON.stringify([pslistRow()]));
+    expect(r.events[0].processName).toBe("svchost.exe");
+  });
+
+  it("falls back to Name in description when CommandLine is empty", () => {
+    const r = parseVelociraptorJson(JSON.stringify([pslistRow({ Name: "Registry", Pid: "100", Ppid: "4", Exe: "", CommandLine: "", CallChain: "Registry" })]));
+    expect(r.events[0].description).toContain("Registry");
+  });
+
+  it("aggregates multiple instances of the same service host together", () => {
+    const rows = [pslistRow(), pslistRow({ Pid: "2000" })]; // same cmdline, different PIDs
+    const r = parseVelociraptorJson(JSON.stringify(rows));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+});

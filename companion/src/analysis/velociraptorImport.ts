@@ -404,7 +404,7 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
 
 // ───────────────────────────── per-row mapping ─────────────────────────────
 
-type Kind = "sigma" | "yara" | "detection" | "eventlog" | "generic";
+type Kind = "sigma" | "yara" | "detection" | "eventlog" | "pslist" | "generic";
 
 function artifactName(row: Row): string {
   return firstStr(row, ["_Source", "Artifact", "_Artifact", "artifact", "Source", "ArtifactName"]);
@@ -427,6 +427,8 @@ function classify(row: Row, artifact: string): Kind {
     if (firstStr(row, ["Level"]) && firstStr(row, ["Title", "SigmaTitle", "RuleTitle"])) return "sigma";
     return "eventlog";
   }
+  // Velociraptor pslist/pstree: CallChain (ancestor string) alongside Pid + Name
+  if (getCI(row, "CallChain") != null && getCI(row, "Pid") != null && getCI(row, "Name") != null) return "pslist";
   return "generic";
 }
 
@@ -653,6 +655,44 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   };
 }
 
+function mapPslist(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+  const name = str(getCI(row, "Name")).trim();
+  const exe = firstStr(row, ["Exe", "Image"]);
+  const cmdline = str(getCI(row, "CommandLine")).trim();
+  const pid = str(getCI(row, "Pid")).trim();
+  const ppid = str(getCI(row, "Ppid")).trim();
+  const callChain = str(getCI(row, "CallChain")).trim();
+
+  if (exe) addIoc(sink, "process", baseName(exe));
+  else if (name) addIoc(sink, "process", name);
+
+  // "svchost.exe (1004) ← ppid 592 [chain: ...]: C:\Windows\... @ WIN11"
+  let description = `${name || "process"}${pid ? ` (pid ${pid})` : ""}`;
+  if (ppid && ppid !== "0") description += ` ← ppid ${ppid}`;
+  if (callChain && callChain !== name) description += ` [${callChain}]`;
+  const subject = cmdline || exe;
+  if (subject) description += `: ${oneLine(subject).slice(0, 300)}`;
+  if (host) description += ` @ ${host}`;
+  description = description.slice(0, 600);
+
+  const aggKey = `vr-pslist|${name.toLowerCase()}|${ppid}|${host.toLowerCase()}|${(cmdline || exe || name).toLowerCase()}`
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
+    .replace(/\d+/g, "#")
+    .slice(0, 400);
+
+  return {
+    timestamp: pickTime(row),
+    description,
+    severity: "Info",
+    mitre: [],
+    aggKey,
+    sources: ["Velociraptor"],
+    ...(exe ? { path: exe } : {}),
+    ...(host ? { asset: host } : {}),
+    ...(name ? { processName: name } : {}),
+  };
+}
+
 // ───────────────────────────── row extraction ─────────────────────────────
 
 // Returns the flat row list. Handles a Velociraptor multi-artifact map { "Artifact": [rows] }
@@ -737,6 +777,7 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     else if (kind === "sigma") { m = mapSigma(row, host, iocSink); detections++; }
     else if (kind === "detection") { m = mapDetection(row, artifact, host, iocSink); detections++; }
     else if (kind === "eventlog") { m = mapEventlog(row, host, iocSink) ?? mapGeneric(row, artifact, host, iocSink); }
+    else if (kind === "pslist") { m = mapPslist(row, host, iocSink); }
     else { m = mapGeneric(row, artifact, host, iocSink); }
     if (m) {
       // Tag every event with the SOURCE artifact (from the row's _Source/_Artifact — stamped by the

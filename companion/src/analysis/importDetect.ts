@@ -96,6 +96,9 @@ function isVelociraptor(s: Row, root: unknown): boolean {
   const rule = getCI(s, "Rule");
   if (typeof rule === "string" && (!!getCI(s, "Strings") || !!getCI(s, "Meta") || !!getCI(s, "Namespace"))) return true;
   if (isObject(getCI(s, "System")) && !!getCI(s, "EventData")) return true; // VR parsed-evtx (no Event wrapper)
+  // Velociraptor pslist/pstree: CallChain (process-ancestor string) is specific to VR's pslist
+  // artifact family and absent from Windows event logs / SIEM exports.
+  if (!!getCI(s, "CallChain") && (getCI(s, "Pid") != null || getCI(s, "Ppid") != null)) return true;
   return isArtifactMap(root);
 }
 function isArtifactMap(root: unknown): boolean {
