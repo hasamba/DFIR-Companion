@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Linux AppImage** — single-file build (Node SEA wrapped via appimagetool) attached to every release; writable `cases/` / `.env` redirect to the launch dir; new `DFIR_ENV_FILE` env override points the server at a `.env` outside a read-only mount (#127).
 - **Update notice** — opt-in, default-off check for a newer GitHub release; shows a dashboard banner linking to the release, never downloads or self-installs; env `DFIR_UPDATE_CHECK` (`0` locks it off, `1` defaults on) + Settings → Updates toggle + "Check now" (#127).
 - **CI build + test gate** — `.github/workflows/ci.yml` runs `npm ci && build && test` for `companion/` and `extension/` on every PR and push to master (clean-install, Linux), catching breakage at the PR instead of at release time (#126).
 - **Scheduled-task mapper** — Velociraptor `TaskScheduler/Analysis` artifacts now get a dedicated `taskscheduler` kind: the timeline event reads `"Scheduled Task [Name] — command args (user, RunLevel)"` using `Mtime` as the timestamp; well-known SIDs (S-1-5-18/19/20) are shown as SYSTEM/LOCAL SERVICE/NETWORK SERVICE.
