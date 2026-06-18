@@ -101,9 +101,12 @@ describe("diskWarnEnvThresholds", () => {
     delete process.env.DFIR_DISK_WARN_PCT;
   });
 
-  it("returns defaults for invalid (zero) env var", () => {
+  it("disables the check when env var is 0 (thresholds above 100%)", () => {
     process.env.DFIR_DISK_WARN_PCT = "0";
-    expect(diskWarnEnvThresholds()).toEqual(DEFAULT_DISK_THRESHOLDS);
+    const t = diskWarnEnvThresholds();
+    expect(t.warnPct).toBeGreaterThan(100);
+    expect(t.dangerPct).toBeGreaterThan(100);
+    expect(t.criticalPct).toBeGreaterThan(100);
     delete process.env.DFIR_DISK_WARN_PCT;
   });
 
