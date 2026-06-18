@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Synthesis performance metrics** — `synth-meta.json` now records `durationMs`, `eventCount`, and `iocCount` from each synthesis run; dashboard "last synthesized" banner surfaces these, plus a ⚠ advisory when the case exceeds 5 000 events (#125).
 
 ### Fixed
+- **Playbook task flood from burst detections** — `backfillHighSeverityFindings` now groups uncovered Critical/High events by their short title before creating auto-findings, so 30 identical Sigma/AV hits become one finding + one playbook task instead of one per event.
 - **Velociraptor pslist/pstree import** — NDJSON exports without `_Source`/`Artifact` markers (e.g. `F.<flowId>.H.json`) were mis-detected as SIEM, leaving all events undated and losing CommandLine; `CallChain`+`Pid` presence now correctly routes them to the Velociraptor importer with a dedicated `mapPslist` formatter showing `Name (pid) ← ppid: CommandLine`.
 - **Velociraptor netstat import** — `Windows.Network.Netstat` exports were mis-detected as SIEM; `Laddr`+`Lport`+`Status` presence (and artifact-name fast-path) now routes them to a dedicated `mapNetstat` formatter showing process, protocol, status, and full `src:port → dst:port` with ESTABLISHED external connections promoted to Low severity and remote IP added as an IOC.
 
