@@ -99,6 +99,8 @@ function isVelociraptor(s: Row, root: unknown): boolean {
   // Velociraptor pslist/pstree: CallChain (process-ancestor string) is specific to VR's pslist
   // artifact family and absent from Windows event logs / SIEM exports.
   if (!!getCI(s, "CallChain") && (getCI(s, "Pid") != null || getCI(s, "Ppid") != null)) return true;
+  // Velociraptor Windows.Network.Netstat: Laddr/Lport/Status combination is specific to VR's netstat
+  if (getCI(s, "Laddr") != null && getCI(s, "Lport") != null && getCI(s, "Status") != null) return true;
   return isArtifactMap(root);
 }
 function isArtifactMap(root: unknown): boolean {

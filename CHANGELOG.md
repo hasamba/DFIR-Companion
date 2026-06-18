@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Velociraptor pslist/pstree import** — NDJSON exports without `_Source`/`Artifact` markers (e.g. `F.<flowId>.H.json`) were mis-detected as SIEM, leaving all events undated and losing CommandLine; `CallChain`+`Pid` presence now correctly routes them to the Velociraptor importer with a dedicated `mapPslist` formatter showing `Name (pid) ← ppid: CommandLine`.
+- **Velociraptor netstat import** — `Windows.Network.Netstat` exports were mis-detected as SIEM; `Laddr`+`Lport`+`Status` presence (and artifact-name fast-path) now routes them to a dedicated `mapNetstat` formatter showing process, protocol, status, and full `src:port → dst:port` with ESTABLISHED external connections promoted to Low severity and remote IP added as an IOC.
 
 ### Changed
 - **Graph-grounded fleet-hunt suggestions** — `suggestHunts` now feeds the deterministic causal evidence graph (process spawn chains, file lineage, lateral-movement edges) into the prompt, so hunts target the *relationship* (parent→child chain, the binary/account that moved between hosts) fleet-wide instead of just the leaf indicator the flat timeline carries (#124).

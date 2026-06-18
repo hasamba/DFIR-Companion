@@ -313,6 +313,11 @@ describe("detectImportWithCustom precedence", () => {
     expect(detectImportKind("F.D8M0V5UIO64QE.H.json", ndjson(row))).toBe("velociraptor");
   });
 
+  it("velociraptor: netstat NDJSON (Laddr + Lport + Status, no _Source)", () => {
+    const row = { Pid: "1004", Name: "svchost.exe", Family: "TCP", Type: "SOCK_STREAM", Laddr: "0.0.0.0", Lport: "445", Raddr: "", Rport: "0", Status: "LISTEN", Timestamp: "2026-06-12T11:15:00Z" };
+    expect(detectImportKind("Netstat.json", ndjson(row))).toBe("velociraptor");
+  });
+
   it("external-first: a custom importer can override even a specific built-in", () => {
     const r = parseImporterSpec({ ...EXAMPLE_IMPORTER_SPEC, id: "my-evtx", match: { format: "json", requireKeys: ["EventID"], priority: 1 } });
     if (!r.ok) throw new Error("bad");
