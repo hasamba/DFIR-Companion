@@ -52,6 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $tag = $tag -replace '/', '-'   # branch refs (workflow_dispatch) contain slashes; tags don't
           $zipName = "dfir-companion-$tag-win-x64.zip"
           Compress-Archive -Path dist-sea\* -DestinationPath $zipName -Force
           Get-FileHash $zipName -Algorithm SHA256 | Format-List
@@ -100,6 +101,7 @@ jobs:
         working-directory: companion
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${TAG//\//-}"   # branch refs (workflow_dispatch) contain slashes; tags don't
           OUT="dfir-companion-${TAG}-x86_64.AppImage"
           mv dist-appimage/DFIR-Companion-x86_64.AppImage "dist-appimage/${OUT}"
           sha256sum "dist-appimage/${OUT}"
@@ -142,6 +144,7 @@ jobs:
         working-directory: extension
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${TAG//\//-}"   # branch refs (workflow_dispatch) contain slashes; tags don't
           ZIP_NAME="dfir-capture-extension-${TAG}.zip"
           cd dist
           zip -r "../${ZIP_NAME}" .
