@@ -52,6 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $tag = $tag -replace '/', '-'   # branch refs (workflow_dispatch) contain slashes; tags don't
           $zipName = "dfir-companion-$tag-win-x64.zip"
           Compress-Archive -Path dist-sea\* -DestinationPath $zipName -Force
           Get-FileHash $zipName -Algorithm SHA256 | Format-List
@@ -62,6 +63,55 @@ jobs:
         with:
           name: windows-exe
           path: companion/${{ env.ZIP_NAME }}
+          if-no-files-found: error
+
+  linux-appimage:
+    name: Build Linux AppImage (Node SEA)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: companion/package-lock.json
+
+      - name: Install companion dependencies
+        working-directory: companion
+        run: npm ci
+
+      - name: Type-check + tests
+        working-directory: companion
+        run: |
+          npm run build
+          npm test
+
+      - name: Build Linux SEA binary
+        working-directory: companion
+        run: npm run package:sea
+
+      - name: Build AppImage
+        working-directory: companion
+        run: npm run package:appimage
+
+      - name: Rename + checksum
+        working-directory: companion
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${TAG//\//-}"   # branch refs (workflow_dispatch) contain slashes; tags don't
+          OUT="dfir-companion-${TAG}-x86_64.AppImage"
+          mv dist-appimage/DFIR-Companion-x86_64.AppImage "dist-appimage/${OUT}"
+          sha256sum "dist-appimage/${OUT}"
+          echo "APPIMAGE_NAME=${OUT}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: companion/dist-appimage/${{ env.APPIMAGE_NAME }}
           if-no-files-found: error
 
   extension-zip:
@@ -94,6 +144,7 @@ jobs:
         working-directory: extension
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${TAG//\//-}"   # branch refs (workflow_dispatch) contain slashes; tags don't
           ZIP_NAME="dfir-capture-extension-${TAG}.zip"
           cd dist
           zip -r "../${ZIP_NAME}" .
@@ -110,8 +161,11 @@ jobs:
 
   release:
     name: Attach to GitHub Release
-    needs: [windows-exe, extension-zip]
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    needs: [windows-exe, linux-appimage, extension-zip]
+    # Only publish a Release for a real tag push, or a manual run that explicitly names a tag.
+    # A tagless workflow_dispatch (e.g. a branch build to test artifacts) builds + uploads them
+    # but does NOT create a junk release named after the branch.
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -128,6 +182,7 @@ jobs:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
             artifacts/windows-exe/*
+            artifacts/linux-appimage/*
             artifacts/extension-zip/*
           fail_on_unmatched_files: true
           # Don't auto-create; the release is published manually per CLAUDE.md.

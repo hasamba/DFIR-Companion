@@ -18,6 +18,8 @@
 //  - Node 20 SEA only supports CommonJS main scripts; esbuild handles the ESM→CJS transform.
 //  - Targets the host platform (whatever node you launched this with); CI is responsible
 //    for running this on the right OS (Windows for .exe).
+//  - Build with Node 20 or 22. postject can't inject the SEA blob into a Node 23+ binary
+//    (you'll get "Could not find the sentinel NODE_SEA_FUSE ..."); CI pins Node 22.
 
 import { build } from "esbuild";
 import { mkdir, copyFile, rm, writeFile, readFile, chmod, cp, stat } from "node:fs/promises";
@@ -69,6 +71,7 @@ async function copyTree(src, dest) {
 }
 
 async function bundleServer() {
+  const pkg = JSON.parse(await readFile(join(COMPANION_DIR, "package.json"), "utf8"));
   console.log("[sea] esbuild → bundle.cjs");
   await build({
     entryPoints: [join(COMPANION_DIR, "src", "server.ts")],
@@ -102,6 +105,7 @@ async function bundleServer() {
     },
     define: {
       "process.env.NODE_ENV": JSON.stringify("production"),
+      "process.env.DFIR_BUILD_VERSION": JSON.stringify(pkg.version),
     },
     // `import.meta.url` becomes empty in CJS — esbuild warns. The two call sites that
     // consult it (`detectSea` + the URL fallback in serverAssets.ts) are guarded by the
@@ -147,7 +151,22 @@ async function injectBlob() {
   if (process.platform === "darwin") {
     options.machoSegmentName = "NODE_SEA";
   }
-  await postjectInject(EXE_PATH, "NODE_SEA_BLOB", blob, options);
+  try {
+    await postjectInject(EXE_PATH, "NODE_SEA_BLOB", blob, options);
+  } catch (err) {
+    // postject (alpha) can't parse a Node 23+ binary, so it never finds the fuse sentinel.
+    // Turn the cryptic failure into an actionable one rather than blocking outright (in case a
+    // future postject handles newer Node).
+    const major = Number(process.versions.node.split(".")[0]);
+    if (major >= 23) {
+      throw new Error(
+        `${err?.message ?? err}\n` +
+        `[sea] HINT: postject couldn't inject into a Node ${process.version} binary — SEA ` +
+        `packaging needs Node 20 or 22. Switch (e.g. \`nvm use 22\`) and re-run; CI pins Node 22.`,
+      );
+    }
+    throw err;
+  }
 }
 
 // All packages that sharp requires at runtime (direct deps + their transitive deps).

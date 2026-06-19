@@ -1058,6 +1058,7 @@
       <span id="corrProfileInfo" style="color:var(--c-9aa4b2);font-size:11px;"></span>
     </div>
   </header>
+  <div id="updateBanner" style="display:none;margin:8px 0;padding:8px 12px;border-radius:6px;background:var(--c-211405);border:1px solid var(--c-5a4a1a);color:var(--c-ffce8a);font-size:13px"></div>
   <div id="enrichOverlay" class="comment-overlay">
     <div class="comment-modal">
       <h3>Threat-intel enrichment — choose sources</h3>
@@ -1341,6 +1342,7 @@
         <button class="stab" data-stab="kev">KEV</button>
         <button class="stab" data-stab="reports">Report Templates</button>
         <button class="stab" data-stab="notifications">Notifications</button>
+        <button class="stab" data-stab="updates">Updates</button>
         <button class="stab" data-stab="diagnostics">Diagnostics</button>
       </div>
 
@@ -2053,6 +2055,28 @@
             <span id="kevClearMsg" class="manual-msg"></span>
           </div>
           <span class="sfield-hint">Removes the catalog from disk. The catalog is global — clearing it affects all cases.</span>
+        </div>
+      </div>
+
+      <!-- Update check (#127) — opt-in "newer release available" notice; never downloads -->
+      <div class="stab-pane" id="stab-updates">
+        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+          Opt-in check against the project's GitHub <strong>Releases</strong> page. When enabled, the
+          server checks at most once a day (and on demand) and shows a banner if a newer version exists.
+          It <strong>never downloads or installs</strong> anything — the banner just links to the release.
+          Off by default. Set <code>DFIR_UPDATE_CHECK=0</code> to lock it off entirely.
+        </div>
+        <div class="sfield">
+          <label><input type="checkbox" id="updEnabled" /> Check for newer releases</label>
+          <span id="updLocked" class="sfield-hint" style="display:none;color:var(--c-ffce8a)">Disabled by administrator (DFIR_UPDATE_CHECK=0).</span>
+        </div>
+        <div class="sfield">
+          <label>Status</label>
+          <div id="updStatus" style="font-size:12px;color:#9aa4b2;padding:2px 0">Loading…</div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+            <button id="updCheckNowBtn" type="button">Check now</button>
+            <span id="updMsg" class="manual-msg"></span>
+          </div>
         </div>
       </div>
 
@@ -8142,6 +8166,7 @@
         const soBtn = document.getElementById("secondOpinion");
         if (soBtn) soBtn.style.display = secondOpinionEnabled ? "" : "none";
       }).catch(() => setAi("unknown", "unknown"));
+      loadUpdateCheck();
 
       // Check-on-connect: if screenshots recently arrived for a DIFFERENT case, warn right away
       // (the live WS event only fires on the next capture, which may be a while off).
@@ -9773,6 +9798,7 @@
       loadVeloClients();
       loadVeloMonitors(veloCaseId());
       loadPushToken(veloCaseId());
+      loadUpdateCheck();
       document.getElementById("settingsOverlay").classList.add("open");
     }
 
@@ -9888,6 +9914,7 @@
         if (tab === "kev") loadKev();
         if (tab === "reports") loadReportTemplates();
         if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
+        if (tab === "updates") loadUpdateCheck();
         if (tab === "diagnostics") loadDiagnostics();
       });
     });
@@ -10331,6 +10358,58 @@
         .then(() => { msg.textContent = "cleared"; loadKev(); })
         .catch(e => { msg.textContent = "failed: " + e.message; });
     }
+
+    // --- Update check (#127) — opt-in "newer release available" notice; Settings → Updates ----------
+    function renderUpdateBanner(j) {
+      const banner = document.getElementById("updateBanner");
+      if (!banner) return;
+      const dismissed = sessionStorage.getItem("updDismissed") === (j.latestTag || "");
+      if (j && j.isNewer && j.htmlUrl && !dismissed) {
+        banner.innerHTML = `🔔 A newer DFIR Companion (<strong>${esc(j.latestTag || j.latest)}</strong>) is available — you're on ${esc(j.current)}. `
+          + `<a href="${escAttr(j.htmlUrl)}" target="_blank" rel="noopener">View release</a> `
+          + `<a href="#" id="updDismiss" style="margin-left:8px;color:#9aa4b2">dismiss</a>`;
+        banner.style.display = "block";
+        const d = document.getElementById("updDismiss");
+        if (d) d.onclick = (e) => { e.preventDefault(); sessionStorage.setItem("updDismissed", j.latestTag || ""); banner.style.display = "none"; };
+      } else {
+        banner.style.display = "none";
+      }
+    }
+
+    function loadUpdateCheck() {
+      return fetch("/update-check").then(r => r.json()).then(j => {
+        const en = document.getElementById("updEnabled");
+        const locked = document.getElementById("updLocked");
+        const status = document.getElementById("updStatus");
+        if (en) { en.checked = !!j.enabled; en.disabled = !!j.locked; }
+        if (locked) locked.style.display = j.locked ? "inline" : "none";
+        if (status) {
+          if (j.error) status.innerHTML = `last check failed: ${esc(j.error)}`;
+          else if (j.checkedAt) status.innerHTML = `current ${esc(j.current)} · latest ${esc(j.latest || "?")} · checked ${esc(new Date(j.checkedAt).toLocaleString())}`;
+          else status.textContent = `current ${j.current} — not checked yet`;
+        }
+        renderUpdateBanner(j);
+        return j;
+      }).catch(() => {
+        const status = document.getElementById("updStatus");
+        if (status) status.textContent = "unavailable — restart the companion server if this 404s";
+      });
+    }
+
+    document.getElementById("updEnabled")?.addEventListener("change", function () {
+      const msg = document.getElementById("updMsg");
+      fetch("/update-check/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: this.checked }) })
+        .then(r => r.json()).then(j => { if (msg) msg.textContent = j.error ? ("error: " + j.error) : "saved"; loadUpdateCheck(); })
+        .catch(e => { this.checked = !this.checked; if (msg) msg.textContent = "failed (restart the companion server?): " + e.message; });
+    });
+
+    document.getElementById("updCheckNowBtn")?.addEventListener("click", function () {
+      const msg = document.getElementById("updMsg");
+      if (msg) msg.textContent = "checking…";
+      fetch("/update-check/run", { method: "POST" })
+        .then(r => r.json()).then(j => { if (msg) msg.textContent = j.error ? ("error: " + j.error) : "done"; loadUpdateCheck(); })
+        .catch(e => { if (msg) msg.textContent = "failed (restart the companion server?): " + e.message; });
+    });
 
     // --- Health / Diagnostics (#118) — operator system state, Settings → Diagnostics --------------
     let diagCopyText = "";
