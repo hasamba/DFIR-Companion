@@ -89,6 +89,9 @@ describe("detectImportKind — JSON formats", () => {
   it("network: a plain Suricata eve.json alert (no SO-CRATES markers) stays network", () => {
     expect(detectImportKind("eve.json", j([{ event_type: "alert", src_ip: "1.2.3.4", alert: { signature: "ET x", severity: 1 } }]))).toBe("network");
   });
+  it("siem: a generic Windows event (no SO-CRATES markers) is not claimed by socrates", () => {
+    expect(detectImportKind("evt.json", j([{ EventID: 4624, message: "An account was successfully logged on", "@timestamp": "2024-01-01T00:00:00Z" }]))).toBe("siem");
+  });
   it("hayabusa: json-timeline", () => {
     expect(detectImportKind("hb.json", j([{ Timestamp: "t", RuleTitle: "x", Level: "high" }]))).toBe("hayabusa");
   });
