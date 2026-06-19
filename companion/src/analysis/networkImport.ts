@@ -141,7 +141,7 @@ function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>): M
 
   let description = `Suricata alert: ${sig}`;
   if (category) description += ` [${category}]`;
-  if (src && dst) description += ` — ${src}${sp ? `:${sp}` : ""} → ${dst}${dp ? `:${dp}` : ""}${proto ? ` ${proto}` : ""}`;
+  if (src && dst) description += ` - ${src}${sp ? `:${sp}` : ""} → ${dst}${dp ? `:${dp}` : ""}${proto ? ` ${proto}` : ""}`;
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
 
@@ -186,7 +186,7 @@ function mapZeekNotice(row: Row, host: string, sink: Map<string, SiemIoc>): Mapp
   const src = str(getCI(row, "src")), dst = str(getCI(row, "dst"));
 
   let description = `Zeek notice: ${note}`;
-  if (msg) description += ` — ${msg}`;
+  if (msg) description += ` - ${msg}`;
   if (sub) description += ` (${sub})`;
   if (src && dst) description += ` [${src} → ${dst}]`;
   if (host) description += ` @ ${host}`;

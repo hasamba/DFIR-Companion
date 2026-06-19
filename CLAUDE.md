@@ -95,6 +95,7 @@ verdict-first for detections, reuses `siemImport`'s `mapWindows`/`aggregateEvent
 own time not `_ts`), and **Suricata/Zeek** network logs (`importNetwork` → `networkImport.ts` — Suricata
 `eve.json` + Zeek JSON; the timeline is built from the **detections** only (Suricata `alert` + Zeek `notice`),
 while telemetry (`dns`/`http`/`tls`/`files`/…) contributes **IOCs only** so the timeline stays signal-rich),
+and **SO-CRATES** (`importSocrates` → `socratesImport.ts` — the dougburks/so-crates web app's verdicts: Suricata `alert` (reuses `networkImport`), YARA `filealerts`→file-match events + hash/file IOCs, Sigma `/api/sigma-alerts`→verdict-first severity/MITRE **overlaid on the matched event** (parses the `original_log` Sysmon record and reuses `siemImport`'s `mapWindows` like Chainsaw, so the event carries CommandLine/ParentImage/ParentCommandLine + process/parent names + hash/file/process IOCs); tagged `SO-CRATES`, detected ahead of `isVelociraptor`'s `_Source` catch-all),
 and **KAPE / Eric Zimmerman Tools** CSV (`importKape` → `kapeImport.ts` — host triage: detects the EZ tool
 from the CSV header (Prefetch/Amcache/ShimCache/LNK/JumpLists/UsnJrnl/MFT/SRUM/RecycleBin/Shellbags), maps each
 row to an Info evidence event reading the artifact's own time + file/hash/process IOCs; reuses `csvImport`'s
@@ -140,7 +141,7 @@ pslist/psscan/pstree → process-tree events (parent→child links, `CreateTime`
 events (bumped on LOLBin/encoded tradecraft via the exported `isSuspiciousCmd`), svcscan/modules/driverscan →
 service/driver evidence; dlllist/handles are IOC-only/dropped to stay signal-rich. Tagged **Volatility**/**Rekall**;
 reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`/`genericIocs` and reads the artifact's own time).
-The last fifteen
+The last sixteen
 are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.

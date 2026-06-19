@@ -2015,6 +2015,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "hayabusa": return pipeline.importHayabusa(caseId, text, base);
       case "velociraptor": return pipeline.importVelociraptor(caseId, text, base);
       case "securityonion": return pipeline.importSecurityOnion(caseId, text, base);
+      case "socrates": return pipeline.importSocrates(caseId, text, base);
       case "network": return pipeline.importNetwork(caseId, text, base);
       case "kape": return pipeline.importKape(caseId, text, base);
       case "cybertriage": return pipeline.importCybertriage(caseId, text, base);

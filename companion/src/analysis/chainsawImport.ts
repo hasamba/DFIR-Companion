@@ -189,7 +189,7 @@ function applySigma(mapped: MappedEvent, meta: SigmaMeta): MappedEvent {
   if (sev) mapped.severity = worst(mapped.severity, sev);
   for (const m of mitreFromTags(meta.tags)) if (!mapped.mitre.includes(m)) mapped.mitre.push(m);
   const head = `Chainsaw${meta.group ? `/${meta.group}` : ""}: ${meta.ruleName}`;
-  mapped.description = `${head} | ${mapped.description}`.slice(0, 600);
+  mapped.description = `${head} - ${mapped.description}`.slice(0, 600);
   mapped.aggKey = `chainsaw|${meta.ruleName.toLowerCase()}|${mapped.aggKey}`;
   mapped.sources = ["Chainsaw"];
   if (!mapped.timestamp && meta.ts) mapped.timestamp = normalizeTime(meta.ts);
