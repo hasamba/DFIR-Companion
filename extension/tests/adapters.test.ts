@@ -33,6 +33,12 @@ describe("adapterForUrl", () => {
     expect(adapterForUrl("https://falcon.us-2.crowdstrike.com/investigate")?.id).toBe("crowdstrike");
   });
 
+  it("matches Security Onion Console by hash route", () => {
+    expect(adapterForUrl("https://manager.example/#/hunt?q=*")?.id).toBe("securityonion");
+    expect(adapterForUrl("https://so.corp.local/#/alerts")?.id).toBe("securityonion");
+    expect(adapterForUrl("https://10.0.0.2/#/dashboards")?.id).toBe("securityonion");
+  });
+
   it("returns null for unrecognized sites and non-http schemes", () => {
     expect(adapterForUrl("https://example.com/foo")).toBeNull();
     expect(adapterForUrl("https://news.ycombinator.com/")).toBeNull();
@@ -40,9 +46,10 @@ describe("adapterForUrl", () => {
     expect(adapterForUrl("not a url")).toBeNull();
   });
 
-  it("adapterById resolves and the registry holds the four tools", () => {
-    expect(ADAPTERS.map((a) => a.id).sort()).toEqual(["crowdstrike", "elastic", "splunk", "velociraptor"]);
+  it("adapterById resolves and the registry holds the five tools", () => {
+    expect(ADAPTERS.map((a) => a.id).sort()).toEqual(["crowdstrike", "elastic", "securityonion", "splunk", "velociraptor"]);
     expect(adapterById("splunk")?.label).toBe("Splunk");
+    expect(adapterById("securityonion")?.label).toBe("Security Onion");
     expect(adapterById("nope")).toBeNull();
   });
 });
