@@ -4,6 +4,7 @@ import { splunkAdapter } from "../src/adapters/splunk.js";
 import { velociraptorAdapter, velociraptorSourceLabel } from "../src/adapters/velociraptor.js";
 import { elasticAdapter } from "../src/adapters/elastic.js";
 import { crowdstrikeAdapter } from "../src/adapters/crowdstrike.js";
+import { securityOnionAdapter } from "../src/adapters/securityonion.js";
 import { parseResponseBodies, decodeCapturedBodies } from "../src/adapters/extractUtils.js";
 import { deflateSync, gzipSync } from "node:zlib";
 
@@ -330,5 +331,53 @@ describe("crowdstrike.extractRows", () => {
 
   it("returns null with no rows", () => {
     expect(crowdstrikeAdapter.extractRows("u", { meta: {}, errors: [] })).toBeNull();
+  });
+});
+
+describe("securityonion.extractRows", () => {
+  it("flattens events[].payload with _id/_index metadata (SOC EventSearchResults)", () => {
+    const body = {
+      totalEvents: 2,
+      events: [
+        {
+          id: "ru5", source: "so:.ds-logs-suricata-so-2026.06.19-000001",
+          timestamp: "2026-06-19T20:08:15.970Z", score: 0,
+          payload: { "@timestamp": "2026-06-19T20:08:15.970Z", "rule.name": "ET MALWARE Win32/Trojan", "source.ip": "10.0.0.5", "event.module": "suricata" },
+        },
+        {
+          id: "rv6", source: "so:.ds-logs-zeek-so-2026.06.19-000017",
+          timestamp: "2026-06-19T20:09:00.000Z", score: 0,
+          payload: { "@timestamp": "2026-06-19T20:09:00.000Z", "destination.ip": "1.2.3.4", "event.module": "zeek" },
+        },
+      ],
+      metrics: {},
+    };
+    expect(securityOnionAdapter.extractRows("/api/events/?query=x", body)).toEqual([
+      { _id: "ru5", _index: "so:.ds-logs-suricata-so-2026.06.19-000001", "@timestamp": "2026-06-19T20:08:15.970Z", "rule.name": "ET MALWARE Win32/Trojan", "source.ip": "10.0.0.5", "event.module": "suricata" },
+      { _id: "rv6", _index: "so:.ds-logs-zeek-so-2026.06.19-000017", "@timestamp": "2026-06-19T20:09:00.000Z", "destination.ip": "1.2.3.4", "event.module": "zeek" },
+    ]);
+  });
+
+  it("carries the record timestamp only when payload lacks a time field", () => {
+    const body = { events: [{ id: "a", source: "idx", timestamp: "2026-06-19T00:00:00Z", payload: { "rule.name": "x" } }] };
+    expect(securityOnionAdapter.extractRows("u", body)).toEqual([
+      { _id: "a", _index: "idx", "rule.name": "x", timestamp: "2026-06-19T00:00:00Z" },
+    ]);
+  });
+
+  it("returns null for metrics-only / empty-events / non-object responses", () => {
+    expect(securityOnionAdapter.extractRows("u", { totalEvents: 0, events: [], metrics: { "rule.name": [{ keys: ["X"], value: 5 }] } })).toBeNull();
+    expect(securityOnionAdapter.extractRows("u", { metrics: {} })).toBeNull();
+    expect(securityOnionAdapter.extractRows("u", "nope")).toBeNull();
+  });
+});
+
+describe("securityOnionAdapter.sourceLabel", () => {
+  it("derives the SOC view name from the page hash", () => {
+    expect(securityOnionAdapter.sourceLabel!({ apiUrl: "/api/events/", pageUrl: "https://manager.example/#/hunt?q=*", domInputs: [], domHeadings: [], rows: [] })).toBe("Security Onion Hunt");
+    expect(securityOnionAdapter.sourceLabel!({ apiUrl: "", pageUrl: "https://manager.example/#/alerts", domInputs: [], domHeadings: [], rows: [] })).toBe("Security Onion Alerts");
+  });
+  it("returns empty when no SOC data view is in the hash", () => {
+    expect(securityOnionAdapter.sourceLabel!({ apiUrl: "", pageUrl: "https://manager.example/#/grid", domInputs: [], domHeadings: [], rows: [] })).toBe("");
   });
 });
