@@ -153,7 +153,7 @@ function evContext(ev: Row, sink: Map<string, SiemIoc>): string {
     const v = oneLine(str(getCI(ev, k))).trim();
     if (v && v !== "-") parts.push(`${k}=${v.slice(0, 140)}`);
   }
-  return parts.join(" ");
+  return parts.join(" - ");
 }
 
 // Sigma alert (from /api/sigma-alerts) → a log detection event, verdict-first. When the matched
@@ -187,8 +187,9 @@ function mapSigma(row: Row, sink: Map<string, SiemIoc>): MappedEvent {
       if (!win.sha256 && HEX_HASH.test(sha)) win.sha256 = sha;
       addHash(sink, sha);
       addHash(sink, md5);
-      const pcl = oneLine(str(getCI(ev, "ParentCommandLine"))).trim();
-      win.description = (`Sigma: ${title} — ${win.description}` + (pcl ? ` ParentCommandLine=${pcl.slice(0, 140)}` : "")).slice(0, 600);
+      // ParentCommandLine is now part of mapWindows' standard subject fields, so the rich detail
+      // (CommandLine/ParentImage/ParentCommandLine, ` - `-separated) is already in win.description.
+      win.description = `Sigma: ${title} - ${win.description}`.slice(0, 600);
       win.severity = worst(sev, win.severity);
       for (const m of mitre) if (!win.mitre.includes(m)) win.mitre.push(m);
       win.sources = ["SO-CRATES", "Sigma"];
@@ -203,7 +204,7 @@ function mapSigma(row: Row, sink: Map<string, SiemIoc>): MappedEvent {
   const parentName = ev ? baseName(str(getCI(ev, "ParentImage"))) : "";
   return {
     timestamp: normalizeTime(str(getCI(row, "timestamp")) || (ev ? str(getCI(ev, "SystemTime")) : "")),
-    description: (`Sigma: ${title}` + (logsource ? ` [${logsource}]` : "") + (ctx ? ` — ${ctx}` : "")).slice(0, 600),
+    description: (`Sigma: ${title}` + (logsource ? ` [${logsource}]` : "") + (ctx ? ` - ${ctx}` : "")).slice(0, 600),
     severity: sev,
     mitre,
     aggKey: `socrates-sigma|${ruleKey}`.slice(0, 400),

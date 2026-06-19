@@ -177,7 +177,7 @@ function mapSecurityOnionRow(row: Row, sink: Map<string, SiemIoc>): MappedEvent 
   let description = `Security Onion alert: ${ruleName || "event"}`;
   if (moduleName) description += ` [${moduleName}]`;
   else if (category) description += ` [${category}]`;
-  if (src && dst) description += ` — ${src}${sp ? `:${sp}` : ""} → ${dst}${dp ? `:${dp}` : ""}`;
+  if (src && dst) description += ` - ${src}${sp ? `:${sp}` : ""} → ${dst}${dp ? `:${dp}` : ""}`;
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
 

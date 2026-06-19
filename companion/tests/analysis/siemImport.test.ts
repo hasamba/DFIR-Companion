@@ -28,7 +28,7 @@ const SYSMON_PROC = {
   event_data: {
     UtcTime: "2017-03-20 09:46:58.000", Image: "C:\\Windows\\System32\\taskeng.exe",
     CommandLine: "taskeng.exe {GUID}", ParentImage: "C:\\Windows\\System32\\svchost.exe",
-    User: "NT AUTHORITY\\SYSTEM",
+    ParentCommandLine: "svchost.exe -k netsvcs", User: "NT AUTHORITY\\SYSTEM",
     Hashes: "SHA1=6F6959BB113BACAF9D8336BA73F555D97A140085,MD5=7474098E40072B5C6C5D16B562AE81FF,SHA256=425A1A21A4DBC212C3C3DB5F8FECDD6235E7E7FE2FCFCE3AFFE3F9F80AA24A92,IMPHASH=C3B5EB32FB406506B162083DDB9FF480",
   },
 };
@@ -117,6 +117,12 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
     expect(e.sha256).toBe("425a1a21a4dbc212c3c3db5f8fecdd6235e7e7fe2fcfce3affe3f9f80aa24a92");
     expect(e.processName).toBe("taskeng.exe");
     expect(e.parentName).toBe("svchost.exe");
+    // Field separator convention: fields are joined by " - " (never "|"), and ParentCommandLine
+    // is part of the standard subject fields.
+    expect(e.description).toContain("CommandLine=taskeng.exe {GUID}");
+    expect(e.description).toContain("ParentCommandLine=svchost.exe -k netsvcs");
+    expect(e.description).toContain(" - ");
+    expect(e.description).not.toContain("|");
   });
 
   it("bumps a LOLBin / suspicious command-line process-create above the benign Low", () => {

@@ -190,7 +190,7 @@ function salientFromMessage(msg: string): string {
     const v = fieldFromMessage(msg, label);
     if (v && v !== "-" && !seen.has(v)) { seen.add(v); out.push(`${label}: ${v}`); }
   }
-  return out.join(" ¦ ").slice(0, 400);
+  return out.join(" - ").slice(0, 400);
 }
 // The created/executed process named in a rendered event message (the LOLBIN), for the structured
 // processName field + IOC when the row carries no structured process column.
@@ -467,8 +467,8 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
   const mitre = mitreFromText(flatStr(getCI(row, "Meta")), flatStr(getCI(row, "Tags")), ruleName);
 
   let description = `Velociraptor YARA: ${ruleName}`;
-  if (procName) description += ` — ${baseName(procName)}${pid ? ` (pid ${pid})` : ""}`;
-  else if (path) description += ` — ${path}`;
+  if (procName) description += ` - ${baseName(procName)}${pid ? ` (pid ${pid})` : ""}`;
+  else if (path) description += ` - ${path}`;
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
 
@@ -499,7 +499,7 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   if (win) {
     if (sev) win.severity = worst(win.severity, sev);
     for (const m of tags) if (!win.mitre.includes(m)) win.mitre.push(m);
-    win.description = `Velociraptor Sigma: ${title} | ${win.description}`.slice(0, 600);
+    win.description = `Velociraptor Sigma: ${title} - ${win.description}`.slice(0, 600);
     win.aggKey = `vr-sigma|${title.toLowerCase()}|${win.aggKey}`;
     win.sources = ["Velociraptor"];
     if (!win.timestamp) win.timestamp = pickTime(row);
@@ -512,7 +512,7 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   const message = rowMessage(row);
   const detail = salientFromMessage(message) || (message ? oneLine(message).slice(0, 400) : "");
   let description = `Velociraptor Sigma: ${title}`;
-  if (detail) description += ` — ${detail}`;
+  if (detail) description += ` - ${detail}`;
   if (host) description += ` @ ${host}`;
   return {
     timestamp: pickTime(row),
@@ -539,7 +539,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   if (win) {
     win.severity = worst(win.severity, severity);
     for (const m of v.mitre) if (!win.mitre.includes(m)) win.mitre.push(m);
-    win.description = `Velociraptor detection: ${v.title} | ${win.description}`.slice(0, 600);
+    win.description = `Velociraptor detection: ${v.title} - ${win.description}`.slice(0, 600);
     win.aggKey = `vr-det|${v.title.toLowerCase()}|${win.aggKey}`.slice(0, 400);
     win.sources = ["Velociraptor"];
     if (!win.timestamp) win.timestamp = pickTime(row);
@@ -585,7 +585,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   // Subject priority: the rendered event's high-signal fields (the actual LOLBIN/command line) win
   // over structured process/path, which win over the matched content/line. Every field is labeled
   // with its source key (ProcName: / PipeName: / Path: / Line: / Content: / …) and joined with
-  // " — " so the analyst can read them at a glance without knowing the artifact's column layout.
+  // " - " so the analyst can read them at a glance without knowing the artifact's column layout.
   // Content-centric detections (ISEAutoSave, PSReadline) get both the filename AND the evidence.
   let subject: string;
   if (salient) {
@@ -607,11 +607,11 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
       // main signal — include it labeled so the analyst sees what the rule matched.
       parts.push(`${evidenceKey}: ${oneLine(evidence)}`);
     }
-    subject = parts.join(" — ");
+    subject = parts.join(" - ");
   }
 
   let description = `Velociraptor detection: ${v.title}`;
-  if (subject) description += ` — ${subject}`;
+  if (subject) description += ` - ${subject}`;
   if (fileDeleted) description += ` [deleted]`;
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 4000);
@@ -662,7 +662,7 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   const pairs: [string, string][] = [];
   flatten(row, pairs);
   const base = msg ? oneLine(msg)
-    : pairs.filter(([k, v]) => !META_KEY.test(k) && !NOISE_KEY.test(k) && v.length <= 200).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
+    : pairs.filter(([k, v]) => !META_KEY.test(k) && !NOISE_KEY.test(k) && v.length <= 200).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" - ");
 
   const sevWord = firstStr(row, ["Severity", "Level", "Risk", "Priority"]).toLowerCase();
   const severity: Severity = SEV_WORDS[sevWord] ?? "Info";
@@ -755,13 +755,13 @@ function mapNetstat(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   const isExternal = rAddrIsReal && !/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(raddr);
   const severity: Severity = status === "ESTABLISHED" && isExternal ? "Low" : "Info";
 
-  // "svchost.exe (pid 896) TCP LISTEN 0.0.0.0:135 → 0.0.0.0"
+  // "svchost.exe (pid 896) - TCP - LISTEN - 0.0.0.0:135 → 0.0.0.0"
   const src = lport ? `${laddr}:${lport}` : laddr;
   const dst = rport && rport !== "0" ? `${raddr}:${rport}` : raddr;
   let description = `${name || "process"}${pid ? ` (pid ${pid})` : ""}`;
-  if (proto) description += ` ${proto}`;
-  if (status) description += ` ${status}`;
-  description += ` ${src} → ${dst}`;
+  if (proto) description += ` - ${proto}`;
+  if (status) description += ` - ${status}`;
+  description += ` - ${src} → ${dst}`;
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
 
