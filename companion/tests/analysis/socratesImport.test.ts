@@ -93,4 +93,42 @@ describe("parseSocrates", () => {
     const r = parseSocrates(JSON.stringify([row]));
     expect(r.events[0].severity).toBe("Critical");
   });
+
+  it("Sigma over a Sysmon event surfaces CommandLine/ParentImage/ParentCommandLine + process IOCs", () => {
+    // SO-CRATES carries the matched event as a JSON string in `original_log` (the actual shape).
+    const sigmaWithEvent = {
+      timestamp: "2019-05-26T04:01:43.567204Z",
+      rule_title: "Uncommon Svchost Command Line Parameter - Sysmon",
+      rule_id: "f17211f1-1f24-4d0c-829f-31e28dc93cdd",
+      severity: "high", level: "high",
+      logsource: "Microsoft-Windows-Sysmon/Operational",
+      tags: '["attack.privilege-escalation", "attack.t1036.005", "attack.t1055"]',
+      mitre_techniques: '["attack.t1036.005", "attack.t1055"]',
+      original_log: JSON.stringify({
+        Channel: "Microsoft-Windows-Sysmon/Operational", EventID: 1,
+        CommandLine: "C:\\Windows\\system32\\svchost.exe",
+        Image: "C:\\Windows\\System32\\svchost.exe",
+        ParentImage: "C:\\Users\\IEUser\\Desktop\\info.rar\\jjs.exe",
+        ParentCommandLine: "\"C:\\Users\\IEUser\\Desktop\\info.rar\\jjs.exe\"",
+        Computer: "IEWIN7", User: "NT AUTHORITY\\SYSTEM",
+        Hashes: "SHA1=4AF001B3C3816B860660CF2DE2C0FD3C1DFB4878,MD5=54A47F6B5E09A77E61649109C6A08866,SHA256=121118A0F5E0E8C933EFD28C9901E54E42792619A8A3A6D11E1F0025A7324BC2,IMPHASH=58E185299ECCA757FE68BA83A6495FDE",
+        SHA256: "121118a0f5e0e8c933efd28c9901e54e42792619a8a3a6d11e1f0025a7324bc2",
+        SystemTime: "2019-05-26T04:01:43.567204Z",
+      }),
+    };
+    const r = parseSocrates(JSON.stringify([sigmaWithEvent]));
+    expect(r.sigma).toBe(1);
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e.description).toContain("Sigma: Uncommon Svchost Command Line Parameter");
+    expect(e.description).toMatch(/CommandLine=[^]*svchost\.exe/);
+    expect(e.description).toMatch(/ParentImage=[^]*jjs\.exe/);
+    expect(e.description).toMatch(/ParentCommandLine=[^]*jjs\.exe/);
+    expect(e.severity).toBe("High");
+    expect(e.processName).toBe("svchost.exe");
+    expect(e.parentName).toBe("jjs.exe");
+    expect(e.mitreTechniques).toEqual(expect.arrayContaining(["T1055", "T1036.005"]));
+    expect(e.sources).toEqual(["SO-CRATES", "Sigma"]);
+    expect(r.iocs.some((i) => i.type === "hash" && i.value === "121118a0f5e0e8c933efd28c9901e54e42792619a8a3a6d11e1f0025a7324bc2")).toBe(true);
+  });
 });
