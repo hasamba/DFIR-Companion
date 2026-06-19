@@ -396,7 +396,7 @@ helper-free (no injection).
       imports/0001_<name>.csv             evidence (raw uploaded CSV / log / THOR / SIEM-EDR JSON result exports)
       imports/0002_<name>.log             evidence (raw uploaded log files — firewall, syslog, sshd, IIS/Apache/nginx, app logs)
       metadata/captures.jsonl             append-only audit trail
-      metadata/imports.jsonl              append-only import audit trail (CSV + log + THOR + SIEM/EDR + Chainsaw/EVTX + Hayabusa + Velociraptor + Suricata/Zeek + KAPE/EZ + Cyber Triage + M365/Entra + AWS CloudTrail + GCP/Azure + Plaso + Sandbox + Memory + Email + auditd + journald + sysdig/Falco + Wazuh uploads share the same sequence)
+      metadata/imports.jsonl              append-only import audit trail (CSV + log + THOR + SIEM/EDR + Chainsaw/EVTX + Hayabusa + Velociraptor + Suricata/Zeek + Security Onion + KAPE/EZ + Cyber Triage + M365/Entra + AWS CloudTrail + GCP/Azure + Plaso + Sandbox + Memory + Email + auditd + journald + sysdig/Falco + Wazuh uploads share the same sequence)
       logs/session-<time>.log             per-case audit trail (AI calls / captures / OCR / anonymization / enrichment for this case; one file per server session, DFIR_LOG_LEVEL)
       state/
         investigation.json                accumulating findings/timeline/forensic events

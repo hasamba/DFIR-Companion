@@ -164,6 +164,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Velociraptor** | JSON array, JSONL, or artifact map | Sigma/YARA verdict or per-EID |
 | **THOR (Nextron)** | JSON-Lines scan output | THOR alert level |
 | **Suricata / Zeek** | `eve.json`, Zeek JSON logs; telemetry → IOCs only | Alert priority / notice severity |
+| **Security Onion** | SOC Alerts/Hunt events (ECS); pushed by the extension or a SOC API export | `event.severity_label` (Suricata/SO label) |
 | **Cyber Triage** | JSONL / JSON / CSV timeline | Cyber Triage item score |
 | **M365 / Entra ID** | UAL, Entra sign-in + audit logs | BEC tradecraft table / Entra riskLevel |
 | **AWS CloudTrail** | Records JSON, NDJSON, Athena | API action table (IAM/logging/S3/secrets) |
