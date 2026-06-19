@@ -12,168 +12,162 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Draggable push button (extension)** — the injected "Push to DFIR-Companion" button can now be dragged anywhere on the page (it was fixed bottom-right, where a site's own UI could hide it); its position is remembered across pages and tabs and is always clamped on-screen.
-- **Security Onion adapter (extension)** — the capture extension now recognizes the Security Onion Console (SOC) event views — Alerts/Hunt/Dashboards (hash-routed Vue SPA) — and offers one-click **Push to DFIR-Companion** of individual events from `GET /api/events/`; the rule-catalog (Detections) and Cases views are intentionally excluded (not events). SO's proxied Kibana (`/kibana/app/...`) is also recognized. Verified on SO 3.x (API-compatible with 2.4).
-- **Security Onion importer (companion)** — a dedicated deterministic importer consumes SOC's verdict: `event.severity_label`→severity (fixes alerts importing as Info), `rule.name`→description, ECS threat fields→MITRE, source/dest IPs + dns/url/hash→IOCs. Covers both push paths — the SOC native UI (Alerts/Hunt) and SO's bundled Kibana (ECS docs via the elastic adapter) — detected ahead of Velociraptor/SIEM so the `_Source` stamp and the credential-laden raw `message` blob no longer mis-route or leak.
-- **Linux AppImage** — single-file build (Node SEA wrapped via appimagetool) attached to every release; writable `cases/` / `.env` redirect to the launch dir; new `DFIR_ENV_FILE` env override points the server at a `.env` outside a read-only mount (#127).
-- **Update notice** — opt-in, default-off check for a newer GitHub release; shows a dashboard banner linking to the release, never downloads or self-installs; env `DFIR_UPDATE_CHECK` (`0` locks it off, `1` defaults on) + Settings → Updates toggle + "Check now" (#127).
-- **CI build + test gate** — `.github/workflows/ci.yml` runs `npm ci && build && test` for `companion/` and `extension/` on every PR and push to master (clean-install, Linux), catching breakage at the PR instead of at release time (#126).
-- **Scheduled-task mapper** — Velociraptor `TaskScheduler/Analysis` artifacts now get a dedicated `taskscheduler` kind: the timeline event reads `"Scheduled Task [Name] — command args (user, RunLevel)"` using `Mtime` as the timestamp; well-known SIDs (S-1-5-18/19/20) are shown as SYSTEM/LOCAL SERVICE/NETWORK SERVICE.
-- **MFT detection `InUse` field** — `DetectRaptor.Windows.Detection.MFT` rows now surface whether the detected file still exists on disk; description appends `[deleted]` when `InUse` is `false`.
-- **Evidence-of-download mapper** — Velociraptor `BrowserDownloads`/`EvidenceOfDownload` artifacts now get a dedicated `download` kind: the timeline event reads `"Downloaded <file> from <HostUrl>"`, and `HostUrl` + `ReferrerUrl` are added as URL IOCs (previously `HostUrl` was silently filtered from the description by the generic noise-key list).
-- **Startup-items mapper** — Velociraptor `StartupItems`/`Autorun` artifacts now get a dedicated `startup` kind: the timeline event reads `"Startup [Name] — <Details> (enabled/disabled)"`, enabled items are `Low` severity with `T1547`, disabled are `Info`; previously the `Enabled` field was silently dropped from the description.
-- **CIRCL hashlookup enrichment** — keyless known-file lookup for hash IOCs against CIRCL's hashlookup DB (NSRL-derived + distro packages); the known-good angle that complements VirusTotal/Hunting.ch (high-trust hit → harmless, low-trust → unknown, `KnownMalicious` → malicious), `external` scope (opt-in per case), base overridable via `DFIR_HASHLOOKUP_URL` (closes #154).
-- **Timeline pagination** — timeline renders 100/250/500 or all rows per page (user-selectable); page counter in the event count and prev/next controls at the bottom of the table (#125).
-- **Correlation profile** — per-case named profile (Strict/Moderate/Aggressive) exposes the cross-source event merge window in the dashboard toolbar; `PUT /cases/:id/correlation-profile`; `DFIR_CORRELATE_WINDOW_S` env override still wins when set (#125).
-- **Synthesis performance metrics** — `synth-meta.json` now records `durationMs`, `eventCount`, and `iocCount` from each synthesis run; dashboard "last synthesized" banner surfaces these, plus a ⚠ advisory when the case exceeds 5 000 events (#125).
+- **Draggable push button (extension)** — injected button can be dragged anywhere on the page; position remembered and always clamped on-screen.
+- **Security Onion adapter (extension)** — recognizes SOC event views (Alerts/Hunt/Dashboards) and SO's bundled Kibana; one-click Push of individual events (Detections/Cases excluded).
+- **Security Onion importer (companion)** — deterministic: `severity_label`→severity, ECS threat→MITRE, source/dest/dns/url/hash→IOCs; detected ahead of Velociraptor/SIEM to fix `_Source` mis-routing.
+- **Linux AppImage** — single-file build attached to every release; `DFIR_ENV_FILE` override for `.env` outside a read-only mount (#127).
+- **Update notice** — opt-in dashboard banner for newer GitHub releases; `DFIR_UPDATE_CHECK` env + Settings toggle, never auto-installs (#127).
+- **CI build + test gate** — `.github/workflows/ci.yml` runs `build + test` for `companion/` and `extension/` on every PR and push to master (#126).
+- **Scheduled-task mapper** — Velociraptor `TaskScheduler/Analysis` artifacts → `taskscheduler` kind with well-known SID expansion (SYSTEM/LOCAL SERVICE/NETWORK SERVICE).
+- **MFT detection `InUse` field** — `DetectRaptor.Windows.Detection.MFT` rows append `[deleted]` when `InUse` is false.
+- **Evidence-of-download mapper** — Velociraptor `BrowserDownloads`/`EvidenceOfDownload` → `download` kind; `HostUrl` + `ReferrerUrl` added as URL IOCs.
+- **Startup-items mapper** — Velociraptor `StartupItems`/`Autorun` → `startup` kind with T1547; enabled=Low, disabled=Info.
+- **CIRCL hashlookup enrichment** — keyless known-file lookup (NSRL-derived + distro packages); `external` scope, `DFIR_HASHLOOKUP_URL` override (closes #154).
+- **Timeline pagination** — 100/250/500/all rows per page, user-selectable (#125).
+- **Correlation profile** — per-case Strict/Moderate/Aggressive merge-window setting; `PUT /cases/:id/correlation-profile` (#125).
+- **Synthesis performance metrics** — `synth-meta.json` records `durationMs`/`eventCount`/`iocCount`; dashboard banner shows them with ⚠ advisory above 5 000 events (#125).
 
 ### Fixed
-- **Large Plaso import OOM** — a 555 MB super-timeline exceeds V8's ~512 MB max string length (it can't be held as a JS string at all, so `readFile(utf8)` throws and any string-based parse crashes the server). The Plaso path now **streams from disk** line-by-line: dashboard routes files over 200 MB to `POST /cases/:id/import-file` (server reads by path, not via the browser), which detects from a 256 KB sample and calls `pipeline.importPlasoFile` → `parsePlasoFromLines` (new `parseCsvRecordsFromLines` joins quoted embedded-newline records by quote parity with a byte cap; `createEventAggregator` collapses incrementally). A real 555 MB / 664 K-row file now imports at ~1.3 GB peak RSS (was OOMing at 8 GB). Evidence-first copy is by bytes so a >512 MB file is still persisted faithfully; non-Plaso oversized files fail with a clear 413.
-- **`DFIR_DISK_WARN_PCT=0` ignored** — setting the disk-space threshold to 0 to disable the check fell through to the default 70/85/95 thresholds; 0 now correctly disables the warning.
-- **Import progress bar** — a thin strip at the top of the dashboard now shows browser-read then server-side import progress while an import runs.
-- **Playbook task flood from burst detections** — `backfillHighSeverityFindings` now groups uncovered Critical/High events by their short title before creating auto-findings, so 30 identical Sigma/AV hits become one finding + one playbook task instead of one per event.
-- **Velociraptor pslist/pstree import** — NDJSON exports without `_Source`/`Artifact` markers (e.g. `F.<flowId>.H.json`) were mis-detected as SIEM, leaving all events undated and losing CommandLine; `CallChain`+`Pid` presence now correctly routes them to the Velociraptor importer with a dedicated `mapPslist` formatter showing `Name (pid) ← ppid: CommandLine`.
-- **Velociraptor netstat import** — `Windows.Network.Netstat` exports were mis-detected as SIEM; `Laddr`+`Lport`+`Status` presence (and artifact-name fast-path) now routes them to a dedicated `mapNetstat` formatter showing process, protocol, status, and full `src:port → dst:port` with ESTABLISHED external connections promoted to Low severity and remote IP added as an IOC.
+- **Large Plaso import OOM** — files over 200 MB now streamed line-by-line via `import-file` route + `parsePlasoFromLines`; a 555 MB file imports at ~1.3 GB peak RSS instead of OOMing.
+- **`DFIR_DISK_WARN_PCT=0` ignored** — setting to 0 now correctly disables the disk-space warning.
+- **Import progress bar** — thin strip at the top of the dashboard shows browser-read then server-side import progress.
+- **Playbook task flood from burst detections** — `backfillHighSeverityFindings` groups uncovered Critical/High events by short title before creating auto-findings.
+- **Velociraptor pslist/pstree import** — NDJSON exports without `_Source`/`Artifact` now route to the Velociraptor importer via `CallChain`+`Pid` presence.
+- **Velociraptor netstat import** — `Windows.Network.Netstat` exports now route to a dedicated `mapNetstat` formatter; ESTABLISHED external IP added as IOC.
 
 ### Changed
-- **Graph-grounded fleet-hunt suggestions** — `suggestHunts` now feeds the deterministic causal evidence graph (process spawn chains, file lineage, lateral-movement edges) into the prompt, so hunts target the *relationship* (parent→child chain, the binary/account that moved between hosts) fleet-wide instead of just the leaf indicator the flat timeline carries (#124).
+- **Graph-grounded fleet-hunt suggestions** — `suggestHunts` feeds the causal evidence graph so hunts target relationships fleet-wide, not just leaf indicators (#124).
 
 ## [0.23.0] - 2026-06-17
 
 ### Added
-- **Mattermost & Discord notifications** — two new notification channels alongside Slack/Teams/Telegram/SMTP: Mattermost (Slack-compatible coloured attachment) and Discord (rich embed, severity-coloured, clickable case link); both webhook-based, with the test button + secret redaction (closes #136).
-- **Explain This Event** — 💡 button on every forensic timeline row fires a focused AI call that explains the event in context: what happened, why it matters, normal-vs-suspicious assessment, ATT&CK mapping, 1–3 runnable pivot queries (Velociraptor VQL / KQL / SPL), and evidence for/against maliciousness; ephemeral (no state change), overlay panel with copy buttons on each query (closes #141).
-- **IP-infrastructure enrichment** — four new IP-IOC providers surface the "where from / who owns it / what's hosted" context layer as `unknown`-verdict badges: **Reverse DNS** (PTR hostnames, keyless), **WHOIS** over RDAP (`DFIR_RDAP_URL`, keyless — netblock/CIDR/country/ASN/abuse-contact), **GeoIP** (`DFIR_GEOIP_URL`/`DFIR_GEOIP_KEY`, keyless default — country/city/ASN/org), and **Shodan** host (reuses `DFIR_SHODAN_KEY` — hosted domains/ports/services/CVEs); all opt-in per case (default OFF, OPSEC-safe), cached + throttled like every provider, surfaced in IOC badges + CSV export (closes #134).
-- **Chain-of-Thought synthesis (extended thinking)** — lets the model reason step-by-step before writing findings on complex cases; maps to Anthropic extended thinking and OpenRouter's unified `reasoning` (other providers ignore it), applies to the synthesis call only, prompt-caching/OPSEC invariants intact. Enable globally via `DFIR_AI_SYNTH_THINKING_TOKENS` (≥1024) **or** per-run via the dashboard **🧠 deep** checkbox next to AI Re-synthesize / 2nd opinion (no restart; flows into both the primary and second-opinion passes) (#121, feature 1).
-- **Adversary emulation — likely next techniques** — from the matched ATT&CK groups, surfaces the techniques they're known to use that the case *hasn't* observed yet (base-level), with **human names** ("T1114.002 Remote Email Collection") and ranked by **distinctiveness** (TF-IDF: matched-group consensus × global rarity) — ubiquitous tradecraft dropped above a prevalence cap and pre-compromise (recon / resource-dev) tactics excluded — so it points at telling, huntable tradecraft (email/clipboard collection, web-service C2) not "everyone does recon". Each suggestion has a **⌖ hunt this** button that generates a runnable, fleet-wide Velociraptor VQL hunt to proactively detect it (`POST …/adversary-hints/hunt-technique`). Predictive hunt priorities, still hypothesis fuel not attribution; offline ranking/`DFIR_ADVERSARY_NEXT_MAX` (10) / `DFIR_ADVERSARY_NEXT_MAX_PREVALENCE` (0.33); dashboard *Adversary Hints* panel + report §4.6.1 (closes #121).
-- **Case lifecycle & archiving** — cases can be marked open/closed (`PATCH /cases/:id/status`); closed cases can be compressed to a ZIP archive (`POST /cases/:id/archive`) with a per-file SHA-256 manifest; disk-space warning banner in the dashboard when the cases-root filesystem reaches configurable thresholds (`DFIR_DISK_WARN_PCT`, default danger at 85%); toolbar lifecycle menu for close/reopen/archive (closes #119).
-- **Custom declarative importers** — drop a JSON importer definition in the importers folder (or paste in Settings → Importers) and a matching file auto-detects + imports like a built-in; LLM-authorable via a built-in prompt, with user-selectable built-in/custom precedence.
-- **Health / Diagnostics page** — Settings → Diagnostics surfaces operator system state in one place (disk usage, case count, capture/synthesis queue, redacted AI config + a live "Test AI connectivity" button, importer attempts 24h/7d + recent failures); fast `GET /diagnostics` (no recursive scan) with compute-on-demand `GET /diagnostics/sizes` (per-case/largest-file sizes), `POST /diagnostics/ai-test`, and a key-free copy-to-clipboard blob (closes #118).
+- **Mattermost & Discord notifications** — two new webhook channels alongside Slack/Teams/Telegram/SMTP; test button + secret redaction (closes #136).
+- **Explain This Event** — 💡 button per timeline row fires a focused AI explanation with ATT&CK mapping and 1–3 pivot queries; ephemeral, copy buttons per query (closes #141).
+- **IP-infrastructure enrichment** — four IP-only providers: Reverse DNS (keyless), WHOIS/RDAP (keyless), GeoIP (`DFIR_GEOIP_URL`), Shodan (reuses key); all opt-in, `unknown`-verdict badges (closes #134).
+- **Chain-of-Thought synthesis** — opt-in extended thinking on synthesis via `DFIR_AI_SYNTH_THINKING_TOKENS` or the 🧠 deep dashboard checkbox; applies to primary + second-opinion passes (#121).
+- **Adversary emulation — likely next techniques** — techniques matched groups use that the case hasn't observed, ranked by TF-IDF distinctiveness; ⌖ hunt this generates VQL; `DFIR_ADVERSARY_NEXT_MAX` (closes #121).
+- **Case lifecycle & archiving** — open/closed status, ZIP archive with SHA-256 manifest, disk-space banner, toolbar lifecycle menu (closes #119).
+- **Custom declarative importers** — drop a JSON importer spec to auto-detect + import like a built-in; LLM-authorable via a built-in prompt, user-selectable precedence.
+- **Health / Diagnostics page** — Settings → Diagnostics: disk usage, case count, queue, AI config, importer stats, live AI connectivity test (closes #118).
 - **OpenCTI enrichment** — local-scope IOC lookup against a self-hosted OpenCTI instance via GraphQL (closes #152).
 
 ## [0.22.0] - 2026-06-15
 
 ### Fixed
-- **Extension push button on remote / modern Kibana** — the Elastic adapter now reads the **async-search strategy** envelope (`/internal/search/ese` → hits under `response.hits.hits`, the ES `_async_search` body), which recent Kibana Discover uses; the hook intercepted the response but `extractRows` didn't recognise the shape, so the button stayed gray / "No results". Also handles the other shapes `/internal/bsearch` emits — single JSON, streamed NDJSON, and **bfetch compression** (remote/Cloud, each line `base64(deflate(JSON))`, decompressed in-browser via `DecompressionStream`) — and re-injects the floating button after React re-renders the page body (`MutationObserver`) so it survives a refresh on SPA consoles.
-- **Pushed Elastic rows from `_source`-disabled indices** — when an index has `_source` off (common for high-volume timeline data), Kibana returns docvalue `fields` (each value an array) instead of `_source`; the adapter now flattens those into scalar rows, so the import sees real fields (`@timestamp`, `desc`, …) instead of a raw hit. The generic SIEM mapper now reads `desc` as the description and summarizes **salient** fields (detections, rule hits, command lines) instead of dumping Elasticsearch metadata (`_index`/`_version`/`_ignored`) — fixing "undated" events with no meaningful description.
-- **MemProcFS `timeline_all.csv` Net IOCs** — used an invalid `"network"` IOC type (broke `tsc`; only `vitest`'s no-typecheck transpile let it pass); now correctly typed as `ip`.
+- **Extension push button on remote / modern Kibana** — handles async-search strategy envelope, bfetch shapes (NDJSON, bfetch compression), and React re-renders via MutationObserver.
+- **Pushed Elastic rows from `_source`-disabled indices** — flattens `fields` arrays; SIEM mapper now reads `desc` and summarizes salient fields instead of Elasticsearch metadata.
+- **MemProcFS `timeline_all.csv` Net IOCs** — fixed invalid `"network"` IOC type (now correctly `ip`).
 
 ### Added
-- **Second LLM opinion** — an on-demand QA cross-check that runs a *different* model independently over the same case (non-destructive re-synthesis), then a reconcile pass surfacing where it disagrees with the primary synthesis (findings it adds/drops, severity, ATT&CK technique) with a rationale + recommendation for per-item analyst accept/reject; accepted deltas are durable across re-synthesis; `DFIR_AI_SECOND_OPINION_MODEL` (off until set), `POST/GET /cases/:id/second-opinion` + `…/apply` (closes #116).
-- **Velociraptor data from Elasticsearch routes to the Velociraptor importer (JSON push + CSV export)** — when Velociraptor/DetectRaptor output is indexed into Elastic and either pushed from Kibana (JSON) or downloaded as a Discover **CSV export**, `detectImportKind` now recognises it (the `artifact_<name>` index or flattened `Detection.*`/`Artifact` columns) and routes to `importVelociraptor` for full severity + MITRE + Sigma/YARA classification, instead of the generic AI CSV / SIEM path — so it works with AI off. The importer parses the CSV (dropping Kibana's `-` empty-cell placeholder) and normalizes the ES-reshaped rows back to native form (un-flatten dotted keys, collapse `.keyword`/`.text` multi-fields, derive the artifact from the index name) — gated so native Velociraptor JSON is untouched — reads DetectRaptor keyword-hit verdicts from `Detection.StringHit`/`HitString`, and parses Kibana display-format timestamps (`May 7, 2026 @ 16:31:04.000`) to UTC ISO.
-- **MemProcFS timeline_all.csv importer** — deterministic parser for the full-system kernel timeline (Time,Type,Action,PID,Value32,Value64,Text,Pad); ShTask CRE/DEL → Medium/T1053.005|T1070, Net TCP → Low/T1071, WEB DOWNLOAD → Low/T1105, PROC → Info; NTFS CRE with exec extensions → file IOCs; 254k REG + THREAD rows dropped; auto-detected by the unified Import button.
-- **MemProcFS findevil importer** — deterministic parser for the `findevil` finding-report table; maps finding types to severity + ATT&CK (YR_HACKTOOL → Critical/T1588.002, PEB_MASQ → High/T1036.005, PE_PATCHED → High/T1055, THREAD SYSTEM_IMPERSONATION → High/T1134, etc.); groups bulk PRIVATE_RWX/PRIVATE_RX pages by process; harvests driver/module/patched-DLL paths as file IOCs; auto-detected by the unified Import button.
+- **Second LLM opinion** — on-demand non-destructive re-synthesis by a second model; per-item analyst accept/reject; accepted deltas survive re-synthesis; `DFIR_AI_SECOND_OPINION_MODEL` (closes #116).
+- **Velociraptor data from Elasticsearch** — `detectImportKind` routes `artifact_*` indices and `Detection.*` CSV columns to `importVelociraptor`; normalizes ES-reshaped rows + Kibana display-format timestamps.
+- **MemProcFS `timeline_all.csv` importer** — deterministic: ShTask/Net/PROC/WEB rows → severity + ATT&CK; auto-detected by unified Import.
+- **MemProcFS `findevil` importer** — deterministic: finding types → severity + ATT&CK (YR_HACKTOOL→Critical/T1588.002, etc.); bulk PRIVATE_RWX pages grouped; auto-detected.
 
 ## [0.21.0] - 2026-06-15
 
 ### Added
-- **GraphRAG for "Ask the case"** — the Ask prompt is now grounded with the deterministic evidence-chain graph (process spawns, file lineage, lateral movement, network flows) serialized as causal edges with backing event ids, so multi-hop questions ("trace the path from the phishing email to the Domain Controller") are answered by following real graph relationships instead of the flat timeline; edge count capped by `DFIR_ASK_GRAPH_MAX_EDGES` (default 120, highest-severity first), pure + no extra AI call (closes #98).
-- **Memory-forensics "Next-Step" agent** — when a case has Volatility 3 / Rekall output imported, one AI call reads the memory evidence (process tree, `malfind`, connections, command lines), spots anomalies (e.g. `svchost.exe` without a `services.exe` parent, injection, suspicious connections), and proposes the exact next Volatility command to run (`vol -f <image> windows.malfind --pid 1234`); a **✨ Suggest next steps** button in a *Memory Next Steps* panel shown only when memory evidence exists, ephemeral, `POST /cases/:id/memory/next-steps` (closes #101).
-- **Volatility 3 text-output import** — the memory importer now also ingests the **default `vol <plugin>` TEXT/grid renderer** (banner + TAB-separated table), not just the `-r json` renderer; `malfind`/`pstree` hexdump+disasm continuation lines are skipped and rows are parsed into the same shape as the JSON path, so `malfind.txt`/`pslist.txt` etc. import directly via the unified Import button (#101).
-- **Natural-language Query Translator** — a dashboard search bar that turns a plain-English hunting request ("PowerShell downloading a file and then executing it", "outbound RDP from this host") into a runnable query for each enabled platform — Velociraptor VQL, Defender/Sentinel KQL, Elastic ES|QL, Splunk SPL, Sigma, YARA, Suricata — grounded in each platform's real schema; one AI call, ephemeral, the Velociraptor query one-click-deploys via the existing hunt flow; platforms gated by `DFIR_HUNT_PLATFORMS`, `POST /cases/:id/translate-query` (closes #100).
-- **One-click artifact push from the browser extension** — on recognized DFIR consoles (Splunk / Velociraptor / Elastic-Kibana / CrowdStrike) the extension injects a **Push to DFIR-Companion** button that intercepts the clean JSON the tool already fetched (a MAIN-world `fetch`/`XHR` hook, injected only on recognized tools) — or scrapes the visible results table as a fallback — and POSTs it to the selected case's unified `/import` route on explicit analyst click; per-tool site adapters, no-op on unrecognized sites. Pushed artifacts trigger the same **cross-case dashboard warning** as screenshots when they land in a case the dashboard isn't viewing, and turning AI on now synthesizes evidence imported while it was off (closes #102).
-- **Timeline-gap hypotheses & shadow-artifact hunting** — for each flagged silent period, one AI call hypothesises what the attacker did during the silence (grounded in the events bracketing the gap) and pairs every gap with a deterministic catalog of *shadow artifacts* (USN Journal, SRUM, Prefetch, Amcache, ShimCache, BAM, MFT, UserAssist, LNK) — each a deployable Velociraptor collection to reconstruct the missing window; a **✨ Hypothesize gaps** button in the *Timeline Gaps* panel, ephemeral, `POST /cases/:id/timeline-gaps/hypothesize` (closes #96).
-- **Sort timeline by date or severity** — per-column ▲/▼ sort arrows in the Forensic Timeline header: sort by **date** (oldest/newest first) from the Timestamp column and by **severity** (most/least severe first) from the Message column; client-side only, persisted across reloads, no server round-trip (closes #104).
-- **Payload deobfuscation** — automatically detects and decodes base64-obfuscated PowerShell (`-enc`/`-EncodedCommand`) and `[Convert]::FromBase64String` payloads in the forensic timeline; extracts hidden IOCs (URLs, IPs, hashes, domains) from decoded content; shows an expandable **[Decoded]** block per event in the dashboard; applied deterministically (no AI) on every import and push-ingest, and on demand via `POST /cases/:id/deobfuscate` (closes #97).
-- **CISA KEV integration** — cross-reference CVEs found in the forensic timeline and IOCs against the CISA Known Exploited Vulnerabilities catalog; KEV-matched CVEs are surfaced in the synthesis context (initial-access signal) and in a new report §4.5.1; load the catalog from the CISA feed URL or a local file via Settings → KEV; deterministic, no AI, opt-in (closes #99).
-- **Import from DFIR-IRIS** — pull an existing IRIS case's assets/IOCs/timeline into a Companion case (the reverse of the push); deterministic `importIris` / `irisImport.ts` maps timeline events (severity from colour, MITRE/asset/hash from tags+content), IOCs (type from the IRIS ioc-type or value shape), and assets → evidence events; a compact **"Import case"** toolbar icon opens a chooser (Investigation snapshot or From DFIR-IRIS) + `npm run iris:import`; **Settings → DFIR-IRIS "Test / reconnect"** rebuilds the client from `.env` and pings so config (or IRIS coming back online) applies without a restart (closes #88).
-- **Webhook push ingest** — `POST /cases/:id/push` lets external tools (SIEM webhooks, custom scripts) push alerts into a case in real time; token auth (`X-DFIR-Key`: global `DFIR_PUSH_TOKEN` and/or a per-case token in Settings), `importDetect` routing, same import → diff → re-synthesize pipeline, 202-and-async (closes #84).
-- **Velociraptor live monitoring** — stream a CLIENT_EVENT artifact (e.g. `Windows.Events.ProcessCreation`) into a case as events fire, from **one endpoint or all enrolled clients**; one-click **auto-monitor** starts an all-clients monitor for every artifact already enabled in Velociraptor's Client Monitoring table; server-side poller (`DFIR_VELO_MONITOR_POLL_S`, default 30s) with a persisted cursor (`state/velo-monitor.json`) so a restart never re-ingests; Settings → Velociraptor → Live Monitoring + a 🔴 LIVE dashboard badge (closes #84).
-- **Velociraptor reconnect** — `POST /velociraptor/reconnect` (Settings → Velociraptor → **Reconnect**) re-reads `DFIR_VELOCIRAPTOR_*` from `.env`, rebuilds the client, and refreshes the inventory (the reachability probe), so configuring Velociraptor after boot — or the server coming back online — applies without a companion restart; the startup inventory refresh now **retries with backoff** so a Velociraptor that comes up shortly after boot self-heals (#84).
-- **IOC block-list export** — one-click block-list for network/firewall teams via Export → IOC block-list…; three formats: plain TXT (grouped by type), minimal CSV, and STIX-indicators-only bundle; filters by min severity (default Medium), IOC type, and verdict-confirmed-only; `GET /cases/:id/export/ioc-blocklist` (closes #87).
-- **Wazuh importer** — deterministic import of Wazuh SIEM/EDR alert exports (`alerts.json`, NDJSON, Wazuh API `{ data: { affected_items } }` envelope); `rule.level` → severity, MITRE from `rule.mitre.technique`, `agent.name` → asset, data field IOCs (IP/hash/URL); auto-detected by the unified Import button (closes #85).
-- **TheHive importer** — deterministic `importTheHive` / `theHiveImport.ts`; TheHive 5 case, alert, and observable exports → forensic events + IOCs; severity from TheHive's 1–4 scale, MITRE from ATT&CK-tagged tags, TLP/PAP labels prepended, observables mapped by `dataType`; Elasticsearch hit-wrapper guard (closes #86).
-- **Log gap analysis** — flag suspiciously long silent periods in the forensic timeline; a gap where **every source went dark** (High, earns a finding) is the classic cleared-logs/stopped-collector signature, a single tool going quiet while others log is partial (Medium). Density-aware so naturally-sparse timelines aren't noisy; optional `DFIR_GAP_ACTIVE_HOURS`. Derived on read, no AI; dashboard *Timeline Gaps* panel + report §3.3; thresholds `DFIR_GAP_MIN_MINUTES`/`DFIR_GAP_DENSITY_FACTOR` (closes #83).
-- **Beacon / C2 detection** — flag outbound connection channels (host → dest:port) whose inter-arrival intervals are too regular to be human traffic; robust **median/MAD** period estimate so a missed beacon or operator burst doesn't hide a real channel. Derived from the network timeline, severity High for public destinations, a hunting lead not a verdict. Dashboard *Beacon Candidates* panel + report §4.9; thresholds `DFIR_BEACON_MIN_COUNT`/`DFIR_BEACON_MAX_JITTER_PCT` (closes #82).
+- **GraphRAG for "Ask the case"** — evidence-chain graph serialized as causal edges grounds multi-hop answers; `DFIR_ASK_GRAPH_MAX_EDGES` (closes #98).
+- **Memory-forensics "Next-Step" agent** — AI reads Volatility evidence and proposes the exact next `vol` command; ✨ button in a *Memory Next Steps* panel (closes #101).
+- **Volatility 3 text-output import** — default `vol <plugin>` TEXT/grid renderer ingested alongside `-r json`; hexdump continuation lines skipped (#101).
+- **Natural-language Query Translator** — plain-English → VQL/KQL/ES|QL/SPL/Sigma/YARA/Suricata; VQL one-click deploys via hunt flow (closes #100).
+- **One-click artifact push from the browser extension** — MAIN-world fetch/XHR hook on recognized DFIR consoles POSTs to `/import`; cross-case dashboard warning on mismatch (closes #102).
+- **Timeline-gap hypotheses & shadow-artifact hunting** — AI hypothesizes silent periods; catalog of shadow artifacts (USN/SRUM/Prefetch/…) each deployable as a Velociraptor collection (closes #96).
+- **Sort timeline by date or severity** — per-column ▲/▼ sort arrows; client-side, persisted across reloads (closes #104).
+- **Payload deobfuscation** — auto-decodes base64/`-EncodedCommand` PowerShell; extracts hidden IOCs; expandable [Decoded] block per event (closes #97).
+- **CISA KEV integration** — cross-reference CVEs against the CISA KEV catalog; surfaces in synthesis context + report §4.5.1; opt-in (closes #99).
+- **Import from DFIR-IRIS** — pull IRIS assets/IOCs/timeline into a Companion case; toolbar chooser + `npm run iris:import`; Settings reconnect without restart (closes #88).
+- **Webhook push ingest** — `POST /cases/:id/push` with token auth; same import→diff→synthesize pipeline, 202-async (closes #84).
+- **Velociraptor live monitoring** — CLIENT_EVENT artifact stream, one endpoint or all; auto-monitor; persisted cursor; 🔴 LIVE badge (closes #84).
+- **Velociraptor reconnect** — Settings → Reconnect re-reads `DFIR_VELOCIRAPTOR_*` without restart; startup retry with backoff (#84).
+- **IOC block-list export** — plain TXT/CSV/STIX-indicators; min-severity + type filters; `GET /cases/:id/export/ioc-blocklist` (closes #87).
+- **Wazuh importer** — `rule.level`→severity, MITRE, asset, IP/hash/URL IOCs; auto-detected (closes #85).
+- **TheHive importer** — TheHive 5 case/alert/observable exports; severity from 1–4 scale, MITRE from ATT&CK tags (closes #86).
+- **Log gap analysis** — complete all-source silences flagged High, single-source gaps Medium; derived on read; `DFIR_GAP_MIN_MINUTES` (closes #83).
+- **Beacon / C2 detection** — median/MAD periodicity check on outbound connections; High for public destinations; `DFIR_BEACON_MIN_COUNT` (closes #82).
 
 ### Changed
-- **Customer Exposure shows found results only** — the dashboard panel and report §4.5 now hide clean "checked, no breach" rows (shared `hasExposureFinding` guard: keep rows with a breach, exposed data, or credential material); the providers/targets lines still record what was checked.
-- **Demo case enriched for every section** — `seed-demo` now seeds a deliberate anti-forensics blackout (cleared DC01 event logs + EDR tampering → a ~16h complete-silence gap with finding f010) so the *Timeline Gaps* panel and the new **Hypothesize gaps** (#96) feature have compelling material, plus a seeded narrative timeline and investigator-notebook entries so those sections render too.
+- **Customer Exposure shows found results only** — hides clean "no breach" rows; providers/targets summary still shown.
+- **Demo case enriched** — `seed-demo` adds a ~16h complete-silence gap + seeded narrative/notebook entries for demo coverage.
 
 ### Fixed
-- **Extension case selection saves without pressing Start** — the extension popup's case dropdown now auto-saves on change (keeping screenshot-capture state unchanged), so switching cases or clearing the case applies immediately; the floating "📤 Push" button on DFIR consoles now only appears when a case is connected and hides dynamically when the case is cleared.
-- **Demo Customer Exposure rows rendered half-empty** — `seed-demo`'s `customer-exposure.json` used a stale schema (`input`/`kind`/`breachNames`/`exposedFields`) so the dashboard (reading `target`/`targetType`/`breach`/`exposedData`) showed only `HIBP · :`; rewritten to the current `StoredCustomerExposureResult` shape (one row per HIBP breach, one per Shodan host, plus `providers`/`targets`/`errors`).
-
-### Fixed
-- **Velociraptor live-monitor discovery on real servers** — the CLIENT_EVENT artifact picker and **Auto-monitor configured events** came back empty on actual Velociraptor: the artifact `type` is now filtered in **TypeScript** (fetch all `artifact_definitions()`, normalize the type string) instead of a VQL `=~`/`lowercase()` filter that missed `CLIENT_EVENT` across versions, and the monitoring-table read returns the raw `GetClientMonitoringState()` proto and extracts names in TS (walks `artifacts.artifacts` + `specs` + `label_events`, casing-tolerant). The picker auto-populates when Velociraptor is connected; a new **`GET /velociraptor/diag`** endpoint dumps the real artifact-type counts + raw monitoring-state shape. **Auto-monitor** now uses the correct VQL function **`get_client_monitoring()`** (the previous `GetClientMonitoringState()` is the Go/gRPC name and returns null as a VQL call — confirmed against a real server via `/velociraptor/diag`); still overridable via `DFIR_VELOCIRAPTOR_MONITORED_VQL` (#84).
-- **`seed-demo` now honours `DFIR_CASES_ROOT`** — the seed script didn't load `.env` (every other script does), so it wrote the demo to `companion/cases` while the server read from the configured root, and the dashboard showed no case.
+- **Extension case selection saves without pressing Start** — case dropdown auto-saves on change; floating Push button hides when no case is connected.
+- **Demo Customer Exposure rows rendered half-empty** — `seed-demo` rewritten to current `StoredCustomerExposureResult` schema.
+- **Velociraptor live-monitor discovery on real servers** — artifact type filtering moved to TypeScript; auto-monitor uses correct VQL `get_client_monitoring()`; new `/velociraptor/diag` endpoint.
+- **`seed-demo` now honours `DFIR_CASES_ROOT`** — seed script now loads `.env` before writing the demo case.
 
 ## [0.20.0] - 2026-06-13
 
 ### Added
-- **Import undo/redo** — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before an import that floods the dashboard, and redo; restores the snapshot verbatim with no AI call. A per-case stack keeps multiple levels (`DFIR_IMPORT_UNDO_DEPTH`, default 10), surfaced as Undo/Redo buttons next to the Import button (closes #76).
-- **AI-suggested playbook hunts** — propose a Velociraptor hunt for each endpoint-related Playbook task; a task tied to one host deploys as a single-endpoint collection (`collect_client`), otherwise a fleet hunt; suggestions render inline under each task and collapse (closes #70).
-- **Velociraptor client inventory** — snapshot the enrolled fleet (host/FQDN ↔ client id) into `velociraptor/clients.json` at startup, on demand (Settings → Velociraptor → Refresh client list), and when playbook hunts are generated (so a client enrolled mid-investigation is resolvable); single-endpoint collections resolve the host from it (short-name⇄FQDN tolerant), self-healing on a miss (#70).
-- **Collection results in the dashboard** — a single-endpoint collection now pulls its rows back inline (Refresh + auto-poll, rendered as a table) like a fleet hunt, instead of only deep-linking to the Velociraptor GUI; `POST /velociraptor/collect-results` (#70).
-- **Dedicated Velociraptor hunt model** — a separate LLM just for generating Velociraptor VQL hunts (`DFIR_AI_VELO_PROVIDER`/`_MODEL`/`_KEY`/`_BASE_URL`, default `openrouter` / `anthropic/claude-haiku-4.5`), since many models botch VQL; editable in Settings → AI (#70).
-- **Persistent + incremental hunt suggestions** — generated playbook hunts survive a page refresh (`state/playbook-hunts.json`); a suggestion is kept while its task is unchanged and dropped once the task is reworded/deleted. Pressing Generate again only sends NEW or CHANGED tasks to the model, never regenerating hunts that already exist (`force:true` regenerates all) (#70).
-- **Playbook task short IDs** — each task gets a stable sequential display ID (`T001`, `T002`, …) stored in the task record; shown at the bottom-left of each card in the same blue monospace style as IOC and Finding IDs; existing tasks are back-filled on the next sync.
-- **Telegram notifications** — Telegram bot channel for findings/playbook/milestone notifications; configure via bot token + chat ID in Settings → Notifications (closes #75).
+- **Import undo/redo** — roll case state back to before an import; per-case stack (`DFIR_IMPORT_UNDO_DEPTH`, default 10); Undo/Redo buttons next to Import (closes #76).
+- **AI-suggested playbook hunts** — propose a Velociraptor hunt per endpoint-related Playbook task; host-specific → single-client collection, else fleet hunt (closes #70).
+- **Velociraptor client inventory** — enrolled fleet snapshot at startup/on-demand; single-endpoint collections resolve by hostname (#70).
+- **Collection results in the dashboard** — single-endpoint collection rows rendered inline with auto-poll, like fleet hunts (#70).
+- **Dedicated Velociraptor hunt model** — `DFIR_AI_VELO_PROVIDER`/`_MODEL` for VQL generation, separate from analysis model; configurable in Settings → AI (#70).
+- **Persistent + incremental hunt suggestions** — generated hunts survive refresh; re-generate sends only new/changed tasks; `force:true` regenerates all (#70).
+- **Playbook task short IDs** — stable `T001`/`T002` display IDs stored in the task record; existing tasks back-filled.
+- **Telegram notifications** — Telegram bot channel for findings/playbook/milestone notifications (closes #75).
 
 ### Fixed
-- **Playbook delete button for auto-derived tasks** — deleting a next-step or finding task now marks it `skipped` (persists across re-syncs) instead of silently removing it and having syncPlaybook re-add it immediately (closes #78).
-- **Playbook-hunt VQL grounded in the server's real artifacts** — the prompt now lists the Velociraptor server's actual CLIENT artifact names (fetched per generation) and forbids referencing any `Artifact.<Name>` not in that list, so the model stops inventing artifacts (e.g. `Windows.EventLogs.Sysmon`) that don't exist and fail to compile. Also: correct plugin args (`parse_evtx(filename=…)`, `handles(pid=…)`), prefer raw plugins, no SQL `JOIN` (use `foreach`), `timestamp(string=…)` for absolute times; per-call timeline trimmed (`DFIR_PBHUNT_MAX_EVENTS`/`DFIR_PBHUNT_MAX_ARTIFACTS`) (#70).
-- **Endpoint-side collection errors surfaced** — when a collection launches but its flow ends in `ERROR` (e.g. a bad plugin arg), the dashboard now shows Velociraptor's error message instead of polling "no results yet" forever; the no-flow-id error for both collections and hunts now points at the VQL (a non-existent artifact/plugin can't compile) rather than blaming the api_client role (#70).
+- **Playbook delete button for auto-derived tasks** — delete now marks task `skipped` instead of silently removing it (closes #78).
+- **Playbook-hunt VQL grounded in real artifacts** — prompt lists the server's actual CLIENT artifact names; correct plugin args; no SQL JOIN; `DFIR_PBHUNT_MAX_EVENTS` (#70).
+- **Endpoint-side collection errors surfaced** — flow `ERROR` status now shown in the dashboard instead of polling forever (#70).
 
 ## [0.19.0] - 2026-06-12
 
 ### Added
-- **Linux evidence importers** — deterministic auditd (`audit.log`/`ausearch`/`aureport`), journald (`journalctl -o json`), and sysdig/Falco (alert + `-j` event JSON) ingest, auto-detected by the unified Import button (closes #62).
-- **Mobile companion** — installable read-only PWA at `/mobile` (case status, worst findings, severe/recent timeline, IOC verdicts) for quick glances during IR; navigate directly to `http://127.0.0.1:4773/mobile`; `/cases/:id/mobile-summary` endpoint, `DFIR_MOBILE_MAX_*` caps (closes #59).
-- **AI-suggested fleet hunts** — generate proactive Velociraptor VQL hunts from the case findings, review the VQL + rationale, one-click deploy across all enrolled endpoints (closes #57).
-- **Memory forensics import** — deterministic Volatility 3 (JSON renderer) + Rekall importer: pslist/psscan/pstree → process tree, netscan → connections, malfind → injected code (T1055), cmdline/svcscan/modules → evidence (closes #61).
-- **Investigation snapshot** export/import — one shareable JSON (timeline, findings, IOCs, graph state, analyst decisions, evidence references) restores a case on another machine, with no AI keys or machine config (closes #56).
-- **Redacted case export** — shareable ZIP for external parties: report/CSVs/state tokenized (internal IPs/hosts/users/emails/paths → consistent `ANON_*`), secrets redacted, screenshot EXIF stripped + PII text blurred (OCR); AI keys/config excluded (closes #54).
-- **Dark / light theme** — full-coverage theme toggle in the dashboard header; follows the OS `prefers-color-scheme` by default, manual choice persists in `localStorage` across sessions; every panel, graph and the swimlane canvas themed via CSS variables (closes #53).
-- **Custom report templates** — global branded report layouts (accent colour, cover title/subtitle, running header/footer with `{{placeholder}}` interpolation, and per-section enable/reorder), built-ins editable in place, selected per case; flows to Markdown/HTML/Word (closes #60).
-- **Notifications** — Slack / MS Teams webhooks + SMTP email channels for new/escalated findings, playbook updates, and investigation milestones, with per-channel severity thresholds + event toggles; opt-in, secrets redacted; Settings → Notifications (closes #58).
-- **NSRL known-good hash checking** — auto-marks matching forensic events + IOCs legitimate on import (reversible) to cut false positives. Two backends: a flat hash set (paste / server file / `DFIR_NSRL_FILE`) for custom lists, and **direct query of the full NSRL RDS SQLite database** (`DFIR_NSRL_DB` or connect in-UI) — the real ~160 GB set, never loaded into memory. Keys on sha256/md5; Settings → NSRL (closes #63).
+- **Linux evidence importers** — deterministic auditd, journald, and sysdig/Falco ingest, auto-detected by the unified Import button (closes #62).
+- **Mobile companion** — installable read-only PWA at `/mobile` (findings, timeline, IOC verdicts); `/cases/:id/mobile-summary` endpoint, `DFIR_MOBILE_MAX_*` caps (closes #59).
+- **AI-suggested fleet hunts** — generate proactive Velociraptor VQL hunts from case findings; review + one-click deploy across all endpoints (closes #57).
+- **Memory forensics import** — deterministic Volatility 3 (JSON) + Rekall: pslist/pstree → process tree, netscan → connections, malfind → injected code (T1055), cmdline/svcscan → evidence (closes #61).
+- **Investigation snapshot** — one shareable JSON exports/imports the full case (timeline, findings, IOCs, analyst decisions) with no AI keys or machine config (closes #56).
+- **Redacted case export** — shareable ZIP: report/CSVs/state tokenized, secrets redacted, screenshot EXIF stripped + PII blurred (closes #54).
+- **Dark / light theme** — full-coverage theme toggle; follows OS preference by default, manual choice persists (closes #53).
+- **Custom report templates** — global branded layouts (accent colour, header/footer, section reorder); built-ins editable; selected per case; flows to Markdown/HTML/Word (closes #60).
+- **Notifications** — Slack/Teams webhooks + SMTP for findings/playbook/milestones; per-channel severity thresholds + event toggles; opt-in (closes #58).
+- **NSRL known-good hash checking** — auto-marks matching events + IOCs legitimate on import. Two backends: flat hash set and direct NSRL RDS SQLite query (`DFIR_NSRL_DB`); keys on sha256/md5 (closes #63).
 
 ### Changed
-- Dashboard: removed **Mobile** toolbar button — navigate to `/mobile` directly in your browser.
-- Dashboard: finding tag chips reordered — tag icon after comment chip, tag labels after confidence score (matches timeline layout).
-- Dashboard: case ID input fixed-width to fit `INC-YYYY-NNN`.
-- Dashboard: removed ellipsis from **Import** and **Import snapshot** button labels.
+- Dashboard: removed **Mobile** toolbar button — navigate to `/mobile` directly.
+- Dashboard: finding tag chips reordered; case ID input fixed-width; removed ellipsis from Import button labels.
 
 ## [0.18.0] - 2026-06-11
 
 ### Added
-- **MITRE ATT&CK Navigator layer** export — JSON layer, techniques colored by severity, drops into the Navigator (closes #43).
-- **STIX 2.1 bundle** export — report + IOC indicators + ATT&CK + malware/identities with `indicates` links; deterministic ids, no library; drops into any TIP (closes #45).
-- **Email / `.eml` / `.msg` import** — deterministic phishing/BEC importer: event at the message's `Date:`, severity from SPF/DKIM/DMARC + spoof heuristics, IOCs harvested (T1566) (closes #44).
-- **Adversary group hints** — known ATT&CK groups ranked by technique overlap (offline, not attribution); sub-technique-aware (exact matches weighted + highlighted); dashboard panel + report §4.6.1 (closes #46).
+- **MITRE ATT&CK Navigator layer** export — JSON layer, techniques colored by severity (closes #43).
+- **STIX 2.1 bundle** export — report + IOC indicators + ATT&CK + malware/identities; deterministic ids, no library (closes #45).
+- **Email / `.eml` / `.msg` import** — deterministic phishing/BEC importer: event at `Date:`, severity from SPF/DKIM/DMARC + spoof heuristics, IOCs (T1566) (closes #44).
+- **Adversary group hints** — known ATT&CK groups ranked by technique overlap, offline; sub-technique-aware; dashboard panel + report §4.6.1 (closes #46).
 
 ## [0.17.0] - 2026-06-11
 
 ### Added
-- Dashboard warns when screenshots are arriving for a different case than the one you're viewing (closes the case-mismatch footgun).
-- Anonymization auto-discovery now learns entities from screenshots (OCR), grouped by type; each is removable (✕ stops anonymizing it, ↺ restores).
-- Leveled logging to file — global session log + per-case audit trail; `DFIR_LOG_LEVEL` (+ live Settings toggle), `DFIR_LOG_DIR`. `debug` traces AI calls, captures, OCR, anonymization, enrichment.
-- Timeline events show the affected host chip and clickable finding links; report §3.1 gains a Host column.
-- Local OCR screenshot anonymization — Tesseract redacts matching text in-memory before sending to an external vision model (closes #19).
-- Timeline Swimlane view — interactive asset/time chart with selection, scope-to-view, and PNG/SVG export (closes #33).
+- Dashboard warns when screenshots arrive for a different case than the one you're viewing.
+- Anonymization auto-discovery learns entities from screenshots (OCR), grouped by type; each removable.
+- Leveled logging to file — global session log + per-case audit trail; `DFIR_LOG_LEVEL` + live Settings toggle.
+- Timeline events show affected host chip and clickable finding links; report §3.1 gains a Host column.
+- Local OCR screenshot anonymization — Tesseract redacts matching text before sending to the vision model (closes #19).
+- Timeline Swimlane view — interactive asset/time chart with selection, scope-to-view, PNG/SVG export (closes #33).
 - Global full-text filter + time-range filter behind a toolbar icon.
 - Analyst Notebook entries record their author; multi-investigator real-time sync over WebSocket (closes #29).
-- IOC bulk select + batch actions, an IOC whitelist (auto-mark known-good), and "⊕ N sources" corroboration badges (closes #35).
+- IOC bulk select + batch actions, IOC whitelist (auto-mark known-good), and "⊕ N sources" corroboration badges (closes #35).
 
 ### Changed
 - Anonymization modal: clearer auto-detected panel + dropped the stray scrollbar.
-- Dashboard "Search" relabelled "Filter" (it filters in place); magnifier + `/` shortcut kept.
-- Responsive toolbar — settings gear pinned top-right, action buttons auto-collapse to icons.
+- Dashboard "Search" relabelled "Filter"; responsive toolbar — settings gear pinned top-right, action buttons auto-collapse.
 
 ### Fixed
-- Duplicate detection now uses an exact SHA-256 content hash (was a fuzzy perceptual hash that collapsed different-but-similar log pages); `DFIR_DEDUP=off` disables it.
-- Search placeholder no longer truncated (full hint moved to the tooltip).
-- OCR redaction was a silent no-op (`tesseract.js` default export) — screenshots had been sent un-redacted.
+- Duplicate detection now uses exact SHA-256 content hash (was fuzzy perceptual hash); `DFIR_DEDUP=off` disables it.
+- OCR redaction was a silent no-op — screenshots had been sent un-redacted.
 - "AI on — catching up…" status no longer hangs when there's nothing to analyze.
 
 ### Security
-- Added `SECURITY.md` (localhost posture, reporting, and the deferred dev-only `vitest` audit advisories).
+- Added `SECURITY.md` (localhost posture, reporting, and deferred dev-only `vitest` audit advisories).
 
 ## [0.16.0] - 2026-06-11
 
 ### Added
-- Response Playbook — turns AI next steps + Critical/High findings into a trackable checklist; optional IR-templates expansion (issue #36).
+- Response Playbook — turns AI next steps + Critical/High findings into a trackable checklist; optional IR-templates expansion (closes #36).
 - Push the Playbook to DFIR-IRIS and to ClickUp (idempotent re-push).
 
 ### Changed
@@ -226,7 +220,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.0] - 2026-06-08
 
 ### Added
-- Customer exposure / credential-leak check (separate from IOC enrichment) — LeakCheck, HIBP, DeHashed, Shodan; strict customer-only boundary, no raw passwords stored.
+- Customer exposure / credential-leak check — LeakCheck, HIBP, DeHashed, Shodan; strict customer-only boundary, no raw passwords stored.
 - CrowdStrike Falcon threat-intel enrichment provider (Threat Intelligence only).
 - Hunting.ch (abuse.ch) enrichment — one key fans out across MalwareBazaar / ThreatFox / URLhaus / YARAify.
 - Import change tracking — "📥 last import N ago / +N events / +N IOCs" banners + `NEW` row highlights.
@@ -240,9 +234,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Sub-millisecond timestamp precision preserved through UTC conversion.
-- Hunt-pivot harvests indicators from network/IDS event text (no longer "nothing to pivot on").
+- Hunt-pivot harvests indicators from network/IDS event text.
 - CSV/log import respects the per-case "AI off" toggle.
-- Hayabusa `json-timeline` (concatenated JSON) now imports; a relative path like `Zip\7z.exe` is no longer mis-read as an account.
+- Hayabusa `json-timeline` (concatenated JSON) now imports; relative paths no longer mis-read as accounts.
 - Triage-tag icon visibility, "Mark legitimate" button on rows, and bulk-tag race fixed.
 
 ## [0.10.0] - 2026-06-06
@@ -274,7 +268,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Forensic Timeline: live event count, severity filter checkboxes, and a severity colour legend.
 
 ### Changed
-- Terminology "Attacker Path" → "Attack Path"; "Synthesize" button → "AI Re-synthesize"; "Ask the AI" → "Ask the LLM".
+- Terminology "Attacker Path" → "Attack Path"; "Synthesize" → "AI Re-synthesize"; "Ask the AI" → "Ask the LLM".
 - Velociraptor importer: verdict-first detection mapping with cleaner descriptions/timestamps.
 - README: explicit "as-is" / no-liability disclaimer.
 
