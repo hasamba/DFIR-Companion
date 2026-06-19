@@ -5,6 +5,7 @@ import { velociraptorAdapter, velociraptorSourceLabel } from "../src/adapters/ve
 import { elasticAdapter } from "../src/adapters/elastic.js";
 import { crowdstrikeAdapter } from "../src/adapters/crowdstrike.js";
 import { securityOnionAdapter } from "../src/adapters/securityonion.js";
+import { socratesAdapter } from "../src/adapters/socrates.js";
 import { parseResponseBodies, decodeCapturedBodies } from "../src/adapters/extractUtils.js";
 import { deflateSync, gzipSync } from "node:zlib";
 
@@ -56,10 +57,17 @@ describe("adapterForUrl", () => {
     expect(adapterForUrl("not a url")).toBeNull();
   });
 
-  it("adapterById resolves and the registry holds the five tools", () => {
-    expect(ADAPTERS.map((a) => a.id).sort()).toEqual(["crowdstrike", "elastic", "securityonion", "splunk", "velociraptor"]);
+  it("matches SO-CRATES by socrates.html path on any host/port", () => {
+    expect(adapterForUrl("http://localhost:9888/socrates.html?file=0f42226f5606dbd73815a49fb8184c26")?.id).toBe("socrates");
+    expect(adapterForUrl("http://localhost:8000/socrates.html")?.id).toBe("socrates");
+    expect(adapterForUrl("https://socrates.corp.local/socrates.html?pcap=abc")?.id).toBe("socrates");
+    expect(adapterForUrl("http://localhost:9888/index.html")).toBeNull();
+  });
+
+  it("adapterById resolves and the registry holds the six tools", () => {
+    expect(ADAPTERS.map((a) => a.id).sort()).toEqual(["crowdstrike", "elastic", "securityonion", "socrates", "splunk", "velociraptor"]);
     expect(adapterById("splunk")?.label).toBe("Splunk");
-    expect(adapterById("securityonion")?.label).toBe("Security Onion");
+    expect(adapterById("socrates")?.label).toBe("SO-CRATES");
     expect(adapterById("nope")).toBeNull();
   });
 });
@@ -406,5 +414,31 @@ describe("securityOnionAdapter.sourceLabel", () => {
   });
   it("returns empty when no SOC data view is in the hash", () => {
     expect(securityOnionAdapter.sourceLabel!({ apiUrl: "", pageUrl: "https://manager.example/#/grid", domInputs: [], domHeadings: [], rows: [] })).toBe("");
+  });
+});
+
+describe("socrates.extractRows / matchUrl / sourceLabel", () => {
+  it("returns the array from an /api/events body", () => {
+    const body = [
+      { event_type: "alert", timestamp: "t", alert: { signature: "ET MALWARE x" } },
+      { event_type: "dns", dns: { rrname: "evil.example" } },
+    ];
+    expect(socratesAdapter.extractRows("/api/events?md5=x&type=alert", body)).toEqual(body);
+  });
+
+  it("returns the array from an /api/sigma-alerts body", () => {
+    const body = [{ rule_title: "Suspicious PowerShell", rule_id: "r1", level: "high", mitre_techniques: "T1059.001" }];
+    expect(socratesAdapter.extractRows("/api/sigma-alerts?md5=x", body)).toEqual(body);
+  });
+
+  it("returns null for an empty array, a non-array body, and filters non-objects", () => {
+    expect(socratesAdapter.extractRows("/api/events", [])).toBeNull();
+    expect(socratesAdapter.extractRows("/api/events", { events: [] })).toBeNull();
+    expect(socratesAdapter.extractRows("/api/events", [1, "x", { event_type: "alert" }])).toEqual([{ event_type: "alert" }]);
+  });
+
+  it("sourceLabel is SO-CRATES and apiPatterns cover both feeds", () => {
+    expect(socratesAdapter.sourceLabel?.({ apiUrl: "/api/events", pageUrl: "http://x/socrates.html", domInputs: [], domHeadings: [], rows: [] })).toBe("SO-CRATES");
+    expect([...socratesAdapter.apiPatterns]).toEqual(["/api/events", "/api/sigma-alerts"]);
   });
 });
