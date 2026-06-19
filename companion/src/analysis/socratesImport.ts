@@ -14,7 +14,12 @@ import {
   addIoc,
   str,
   getCI,
+  isObject,
+  oneLine,
+  baseName,
   normalizeTime,
+  mapWindows,
+  worst,
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
@@ -112,18 +117,99 @@ function mapYara(row: Row, sink: Map<string, SiemIoc>): MappedEvent {
   };
 }
 
-// Sigma alert (from /api/sigma-alerts) → a log detection event, verdict-first.
-function mapSigma(row: Row): MappedEvent {
+// The matched log event SO-CRATES carries alongside a Sigma alert — the actual record that
+// tripped the rule (process create, network connection, …). It lives as a JSON STRING in
+// `original_log`, or (same event) under `json_data.matches[0]`. Parse whichever is present so the
+// alert event carries the real process context (CommandLine/ParentImage/…), not just the rule name.
+function parseMatchedEvent(row: Row): Row | null {
+  const ol = getCI(row, "original_log");
+  if (isObject(ol)) return ol;                       // already-parsed
+  if (typeof ol === "string" && ol.trim()) {
+    try { const o = JSON.parse(ol); if (isObject(o)) return o; } catch { /* fall through */ }
+  }
+  const jd = getCI(row, "json_data");
+  if (typeof jd === "string" && jd.trim()) {
+    try {
+      const o = JSON.parse(jd);
+      const m = isObject(o) ? getCI(o, "matches") : null;
+      if (Array.isArray(m) && isObject(m[0])) return m[0] as Row;
+    } catch { /* fall through */ }
+  }
+  return null;
+}
+
+// Salient process/network fields to surface from a matched event on the non-Windows path (the
+// Windows path renders these via mapWindows). Also harvests the event's own IOCs.
+const SIGMA_CTX_KEYS = ["Image", "CommandLine", "ParentImage", "ParentCommandLine", "CurrentDirectory", "User", "TargetFilename", "DestinationIp"];
+function evContext(ev: Row, sink: Map<string, SiemIoc>): string {
+  addHash(sink, getCI(ev, "SHA256"));
+  addHash(sink, getCI(ev, "MD5"));
+  const img = str(getCI(ev, "Image"));
+  if (img && /[\\/]/.test(img)) addFile(sink, img);
+  const proc = baseName(img);
+  if (proc) addIoc(sink, "process", proc);
+  const parts: string[] = [];
+  for (const k of SIGMA_CTX_KEYS) {
+    const v = oneLine(str(getCI(ev, k))).trim();
+    if (v && v !== "-") parts.push(`${k}=${v.slice(0, 140)}`);
+  }
+  return parts.join(" ");
+}
+
+// Sigma alert (from /api/sigma-alerts) → a log detection event, verdict-first. When the matched
+// event is a Windows/Sysmon record, reuse `mapWindows` for the rich process detail + hash/file/
+// process IOCs and OVERLAY the Sigma verdict (mirrors chainsawImport): rule title leads, the rule
+// `level` drives severity, attack tags add MITRE. `ParentCommandLine` is appended explicitly since
+// the shared Windows mapper's subject fields omit it.
+function mapSigma(row: Row, sink: Map<string, SiemIoc>): MappedEvent {
   const title = str(getCI(row, "rule_title")) || "Sigma rule";
   const level = str(getCI(row, "level")) || str(getCI(row, "severity"));
   const logsource = str(getCI(row, "logsource"));
+  const sev = sigmaSeverity(level);
+  const mitre = mitreFrom(getCI(row, "mitre_techniques"), getCI(row, "tags"));
+  const ruleKey = (str(getCI(row, "rule_id")) || title).toLowerCase();
+  const ev = parseMatchedEvent(row);
+
+  // Windows/Sysmon matched event → full process mapping + IOCs, then overlay the Sigma verdict.
+  if (ev) {
+    const host = str(getCI(ev, "Computer"));
+    const win = mapWindows({
+      event_id: getCI(ev, "EventID") ?? getCI(ev, "event_id"),
+      channel: getCI(ev, "Channel") ?? getCI(ev, "channel") ?? logsource,
+      event_data: ev,
+      "@timestamp": str(getCI(ev, "SystemTime")) || str(getCI(ev, "UtcTime")) || str(getCI(row, "timestamp")),
+    }, host, sink);
+    if (win) {
+      // mapWindows reads hashes from the combined Sysmon `Hashes` string; some matched events
+      // expose only standalone SHA256/MD5 fields — capture those defensively.
+      const sha = str(getCI(ev, "SHA256")).toLowerCase();
+      const md5 = str(getCI(ev, "MD5")).toLowerCase();
+      if (!win.sha256 && HEX_HASH.test(sha)) win.sha256 = sha;
+      addHash(sink, sha);
+      addHash(sink, md5);
+      const pcl = oneLine(str(getCI(ev, "ParentCommandLine"))).trim();
+      win.description = (`Sigma: ${title} — ${win.description}` + (pcl ? ` ParentCommandLine=${pcl.slice(0, 140)}` : "")).slice(0, 600);
+      win.severity = worst(sev, win.severity);
+      for (const m of mitre) if (!win.mitre.includes(m)) win.mitre.push(m);
+      win.sources = ["SO-CRATES", "Sigma"];
+      win.aggKey = `socrates-sigma|${ruleKey}|${win.aggKey}`.slice(0, 400);
+      return win;
+    }
+  }
+
+  // Non-Windows (or no matched event) — verdict-first from the rule, with any process context.
+  const ctx = ev ? evContext(ev, sink) : "";
+  const processName = ev ? baseName(str(getCI(ev, "Image"))) : "";
+  const parentName = ev ? baseName(str(getCI(ev, "ParentImage"))) : "";
   return {
-    timestamp: normalizeTime(str(getCI(row, "timestamp"))),
-    description: (`Sigma: ${title}` + (logsource ? ` [${logsource}]` : "")).slice(0, 600),
-    severity: sigmaSeverity(level),
-    mitre: mitreFrom(getCI(row, "mitre_techniques"), getCI(row, "tags")),
-    aggKey: `socrates-sigma|${(str(getCI(row, "rule_id")) || title).toLowerCase()}`.slice(0, 400),
+    timestamp: normalizeTime(str(getCI(row, "timestamp")) || (ev ? str(getCI(ev, "SystemTime")) : "")),
+    description: (`Sigma: ${title}` + (logsource ? ` [${logsource}]` : "") + (ctx ? ` — ${ctx}` : "")).slice(0, 600),
+    severity: sev,
+    mitre,
+    aggKey: `socrates-sigma|${ruleKey}`.slice(0, 400),
     sources: ["SO-CRATES", "Sigma"],
+    ...(processName ? { processName } : {}),
+    ...(parentName ? { parentName } : {}),
   };
 }
 
@@ -175,7 +261,7 @@ export function parseSocrates(text: string, opts: SocratesImportOptions = {}): S
   // (2) YARA filealerts + (3) Sigma alerts → map then aggregate together.
   const mapped: MappedEvent[] = [];
   for (const row of yaraRows) mapped.push(mapYara(row, iocSink));
-  for (const row of sigmaRows) mapped.push(mapSigma(row));
+  for (const row of sigmaRows) mapped.push(mapSigma(row, iocSink));
   const { events: fileEvents, groups: fileGroups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
