@@ -19,9 +19,12 @@ import type { Adapter, CapturedArtifact } from "./adapters/types.js";
 import { matrixToRows } from "./adapters/domTable.js";
 import { decodeCapturedBodies } from "./adapters/extractUtils.js";
 import { DFIR_CAPTURE_MSG, DFIR_CONFIG_MSG, DFIR_READY_MSG } from "./adapters/bridge.js";
+import { clampButtonPosition, isDrag, parseButtonPos, type ButtonPos } from "./buttonPosition.js";
 import type { EnsureHookMessage, PushArtifactMessage, PushArtifactResult } from "./types.js";
 
 const BTN_ID = "dfir-companion-push-btn";
+// chrome.storage.local key holding the analyst's dragged button position (null = default corner).
+const POS_KEY = "pushButtonPos";
 
 let activeAdapter: Adapter | null = null;
 let latest: CapturedArtifact | null = null;
@@ -29,6 +32,10 @@ let busy = false;
 // Cached case id — kept in sync so the MutationObserver below can re-inject the button
 // synchronously without an async storage read.
 let currentCaseId = "";
+// Cached dragged position, applied on every (re-)injection. null → keep the default bottom-right.
+let buttonPos: ButtonPos | null = null;
+// Set briefly after a drag so the trailing click does not fire a push.
+let suppressClick = false;
 
 export async function initArtifactCapture(): Promise<void> {
   activeAdapter = adapterForUrl(location.href);
@@ -41,8 +48,9 @@ export async function initArtifactCapture(): Promise<void> {
 
   // Only show the push button when a case is selected — so the button stays hidden when the
   // analyst is not actively investigating and hasn't connected the extension to a case.
-  const stored = await chrome.storage.local.get("settings");
+  const stored = await chrome.storage.local.get(["settings", POS_KEY]);
   currentCaseId = (stored.settings as { caseId?: string } | undefined)?.caseId ?? "";
+  buttonPos = parseButtonPos(stored[POS_KEY]);
   if (currentCaseId) ensureButton();
 
   // Kibana (and other DFIR consoles) are React SPAs — their initial render can replace the
@@ -56,6 +64,12 @@ export async function initArtifactCapture(): Promise<void> {
 
   // Dynamically show/hide when the analyst connects or disconnects from a case via the popup.
   chrome.storage.onChanged.addListener((changes) => {
+    // Sync the dragged position across already-open tabs.
+    if (changes[POS_KEY]) {
+      buttonPos = parseButtonPos(changes[POS_KEY].newValue);
+      const b = document.getElementById(BTN_ID) as HTMLButtonElement | null;
+      if (b) applyButtonPosition(b);
+    }
     if (!changes.settings) return;
     currentCaseId = (changes.settings.newValue as { caseId?: string } | undefined)?.caseId ?? "";
     if (currentCaseId) {
@@ -199,14 +213,80 @@ function ensureButton(): void {
   btn.type = "button";
   Object.assign(btn.style, {
     position: "fixed", right: "16px", bottom: "16px", zIndex: "2147483647",
-    padding: "8px 12px", borderRadius: "8px", border: "none", cursor: "pointer",
+    padding: "8px 12px", borderRadius: "8px", border: "none", cursor: "grab",
     font: "600 13px system-ui, sans-serif", color: "#fff", background: "#555",
-    boxShadow: "0 2px 8px rgba(0,0,0,.3)", maxWidth: "320px",
+    boxShadow: "0 2px 8px rgba(0,0,0,.3)", maxWidth: "320px", touchAction: "none",
   } as Partial<CSSStyleDeclaration>);
   btn.addEventListener("click", onClick);
   // The page may not have a <body> yet at document_idle on some SPAs — guard.
   (document.body || document.documentElement).appendChild(btn);
   renderButton();
+  attachDrag(btn);
+  applyButtonPosition(btn); // re-apply the saved drag position on every (re-)injection
+}
+
+// Apply the saved drag position, clamped to the current viewport (so a spot saved in a larger
+// window can't hide the button). No saved position → keep the default bottom-right corner.
+function applyButtonPosition(btn: HTMLButtonElement): void {
+  if (!buttonPos) return;
+  const rect = btn.getBoundingClientRect();
+  const pos = clampButtonPosition(
+    buttonPos,
+    { width: rect.width, height: rect.height },
+    { width: window.innerWidth, height: window.innerHeight },
+  );
+  btn.style.left = `${pos.left}px`;
+  btn.style.top = `${pos.top}px`;
+  btn.style.right = "auto";
+  btn.style.bottom = "auto";
+}
+
+// Make the button draggable. Past the drag threshold the button follows the pointer; on release the
+// position is clamped, persisted, and the trailing click is suppressed so a drag never pushes.
+function attachDrag(btn: HTMLButtonElement): void {
+  let startX = 0, startY = 0, originLeft = 0, originTop = 0, dragging = false;
+
+  btn.addEventListener("pointerdown", (e: PointerEvent) => {
+    if (e.button !== 0) return; // primary button only
+    const rect = btn.getBoundingClientRect();
+    startX = e.clientX; startY = e.clientY;
+    originLeft = rect.left; originTop = rect.top;
+    dragging = false;
+    try { btn.setPointerCapture(e.pointerId); } catch { /* capture unsupported — drag still best-effort */ }
+  });
+
+  btn.addEventListener("pointermove", (e: PointerEvent) => {
+    if (!btn.hasPointerCapture(e.pointerId)) return;
+    const dx = e.clientX - startX, dy = e.clientY - startY;
+    if (!dragging && !isDrag(dx, dy)) return;
+    dragging = true;
+    e.preventDefault();
+    btn.style.cursor = "grabbing";
+    const rect = btn.getBoundingClientRect();
+    const pos = clampButtonPosition(
+      { left: originLeft + dx, top: originTop + dy },
+      { width: rect.width, height: rect.height },
+      { width: window.innerWidth, height: window.innerHeight },
+    );
+    btn.style.left = `${pos.left}px`;
+    btn.style.top = `${pos.top}px`;
+    btn.style.right = "auto";
+    btn.style.bottom = "auto";
+  });
+
+  const end = (e: PointerEvent): void => {
+    if (btn.hasPointerCapture(e.pointerId)) btn.releasePointerCapture(e.pointerId);
+    btn.style.cursor = "grab";
+    if (!dragging) return;
+    dragging = false;
+    suppressClick = true; // swallow the click that follows this pointerup
+    window.setTimeout(() => { suppressClick = false; }, 0);
+    const rect = btn.getBoundingClientRect();
+    buttonPos = { left: rect.left, top: rect.top };
+    try { void chrome.storage.local.set({ [POS_KEY]: buttonPos }); } catch { /* storage unavailable */ }
+  };
+  btn.addEventListener("pointerup", end);
+  btn.addEventListener("pointercancel", end);
 }
 
 function renderButton(state?: { text: string; color: string }): void {
@@ -223,6 +303,7 @@ function renderButton(state?: { text: string; color: string }): void {
 }
 
 async function onClick(): Promise<void> {
+  if (suppressClick) return; // this click is the tail of a drag — don't push
   if (busy || !activeAdapter) return;
   const artifact = latest ?? scrapeVisibleTable();
   if (!artifact || !artifact.rows.length) {
