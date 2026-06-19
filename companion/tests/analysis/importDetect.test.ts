@@ -49,6 +49,20 @@ describe("detectImportKind — JSON formats", () => {
   it("NOT velociraptor: a non-artifact Elastic index (MemProcFS mp_timeline) stays SIEM", () => {
     expect(detectImportKind("mp.json", j([{ _index: "mp_timeline", "@timestamp": "t", desc: "x", action: "MOD", type: "REG" }]))).toBe("siem");
   });
+  it("securityonion: extension push (_Source 'Security Onion …') wins over the velociraptor _Source rule", () => {
+    expect(detectImportKind("so.json", j([{
+      _id: "1", _index: "so:.ds-logs-suricata-so-2026.06.19-000001", _Source: "Security Onion Alerts",
+      "@timestamp": "t", "event.module": "suricata", "event.severity_label": "high", "rule.name": "ET MALWARE x",
+    }]))).toBe("securityonion");
+  });
+  it("securityonion: raw SOC API export (SO data-stream _index, no _Source stamp)", () => {
+    expect(detectImportKind("so.json", j([{
+      _index: ".ds-logs-suricata-so-2026.06.19-000001", "@timestamp": "t", "event.module": "suricata", "rule.name": "ET SCAN x",
+    }]))).toBe("securityonion");
+  });
+  it("NOT securityonion: a generic Elastic alert without SO markers stays SIEM", () => {
+    expect(detectImportKind("e.json", j([{ _index: "logs-generic", "@timestamp": "t", "rule.name": "x", message: "y" }]))).toBe("siem");
+  });
   it("hayabusa: json-timeline", () => {
     expect(detectImportKind("hb.json", j([{ Timestamp: "t", RuleTitle: "x", Level: "high" }]))).toBe("hayabusa");
   });

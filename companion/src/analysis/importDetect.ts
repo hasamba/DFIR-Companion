@@ -14,7 +14,7 @@ import { looksLikeSysdig } from "./sysdigImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
 
 export type ImportKind =
-  | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "network"
+  | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "securityonion" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
   | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "csv" | "log" | "unknown";
 
@@ -109,6 +109,22 @@ function isArtifactMap(root: unknown): boolean {
   return entries.length > 0 &&
     entries.every(([k, v]) => Array.isArray(v) && !CONTAINER_KEYS.includes(k.toLowerCase())) &&
     entries.some(([, v]) => (v as unknown[]).some(isObject));
+}
+// Security Onion Console events (Alerts / Hunt), as the browser extension pushes them or as a raw
+// SOC API export. Claimed BEFORE isVelociraptor: the extension stamps `_Source` on every row, and
+// isVelociraptor treats any `_Source` as its own — so SO rows would otherwise mis-route there and
+// lose their `event.severity_label` verdict. Specific enough to claim ahead of the SIEM catch-all.
+function isSecurityOnion(s: Row): boolean {
+  // Extension push: every SOC row is stamped _Source "Security Onion <view>".
+  if (/^security onion\b/i.test(str(getCI(s, "_Source")))) return true;
+  // Raw SOC API export: the doc's ES index is a Security Onion data stream
+  // (.ds-logs-<module>-so-<date>, optionally cross-cluster-prefixed "so:").
+  const idx = str(getCI(s, "_index") ?? getCI(s, "source"));
+  const soIndex = /^so:/i.test(idx) || /(?:^|[.\-_])logs-[a-z0-9_]+-so[.\-]/i.test(idx);
+  if (!soIndex) return false;
+  // Require an SO/ECS alert signal so an arbitrary doc on an SO-named index isn't claimed.
+  return getCI(s, "event.module") != null || getCI(s, "rule.name") != null ||
+    getCI(s, "event.severity_label") != null || getCI(s, "event.dataset") != null;
 }
 function isHayabusaJson(s: Row): boolean {
   if (!!getCI(s, "RuleTitle")) return true;
@@ -210,6 +226,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isAzure(sample)) return "cloud";
   if (isM365(sample)) return "m365";
   if (isChainsaw(sample)) return "chainsaw";
+  if (isSecurityOnion(sample)) return "securityonion";
   if (isVelociraptor(sample, root)) return "velociraptor";
   if (isHayabusaJson(sample)) return "hayabusa";
   if (looksLikeTheHive(sample, root)) return "thehive";
