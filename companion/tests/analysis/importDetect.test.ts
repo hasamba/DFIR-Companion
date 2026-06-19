@@ -77,6 +77,18 @@ describe("detectImportKind — JSON formats", () => {
   it("NOT securityonion: a raw Suricata eve.json record still routes to the network importer", () => {
     expect(detectImportKind("eve.json", j([{ timestamp: "t", event_type: "alert", src_ip: "10.0.0.1", dest_ip: "1.2.3.4", alert: { signature: "x", severity: 1 } }]))).toBe("network");
   });
+  it("socrates: extension push stamped _Source SO-CRATES (not velociraptor)", () => {
+    expect(detectImportKind("socrates-1.json", j([{ _Source: "SO-CRATES", event_type: "alert", alert: { signature: "ET x" } }]))).toBe("socrates");
+  });
+  it("socrates: YARA filealerts record", () => {
+    expect(detectImportKind("fa.json", j([{ event_type: "filealerts", filealerts: { rule_name: "X", sha256: "a" } }]))).toBe("socrates");
+  });
+  it("socrates: Sigma alert record", () => {
+    expect(detectImportKind("sig.json", j([{ rule_title: "Suspicious PowerShell", rule_id: "r1", level: "high" }]))).toBe("socrates");
+  });
+  it("network: a plain Suricata eve.json alert (no SO-CRATES markers) stays network", () => {
+    expect(detectImportKind("eve.json", j([{ event_type: "alert", src_ip: "1.2.3.4", alert: { signature: "ET x", severity: 1 } }]))).toBe("network");
+  });
   it("hayabusa: json-timeline", () => {
     expect(detectImportKind("hb.json", j([{ Timestamp: "t", RuleTitle: "x", Level: "high" }]))).toBe("hayabusa");
   });
