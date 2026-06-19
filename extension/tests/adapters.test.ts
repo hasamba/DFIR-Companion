@@ -26,6 +26,7 @@ describe("adapterForUrl", () => {
     expect(adapterForUrl("https://logs.example.com/app/security/alerts")?.id).toBe("elastic");
     expect(adapterForUrl("http://10.0.0.3:5601/app/discover")?.id).toBe("elastic");
     expect(adapterForUrl("http://10.0.0.3:9200/myindex/_search")?.id).toBe("elastic");
+    expect(adapterForUrl("https://manager.example/kibana/app/discover")?.id).toBe("elastic");
   });
 
   it("matches CrowdStrike Falcon by host", () => {
