@@ -163,6 +163,7 @@ function mapSecurityOnionRow(row: Row, sink: Map<string, SiemIoc>): MappedEvent 
   addIp(sink, src);
   addIp(sink, dst);
   addDomain(sink, fstr(row, "dns.query"));
+  addDomain(sink, fstr(row, "dns.query_name"));
   addDomain(sink, fstr(row, "destination.domain"));
   addDomain(sink, fstr(row, "url.domain"));
   addDomain(sink, fstr(row, "server.domain"));

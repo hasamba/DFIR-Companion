@@ -115,9 +115,17 @@ function isArtifactMap(root: unknown): boolean {
 // isVelociraptor treats any `_Source` as its own — so SO rows would otherwise mis-route there and
 // lose their `event.severity_label` verdict. Specific enough to claim ahead of the SIEM catch-all.
 function isSecurityOnion(s: Row): boolean {
-  // Extension push: every SOC row is stamped _Source "Security Onion <view>".
+  // (1) Extension push from the SOC native UI: every row is stamped _Source "Security Onion <view>".
   if (/^security onion\b/i.test(str(getCI(s, "_Source")))) return true;
-  // Raw SOC API export: the doc's ES index is a Security Onion data stream
+  // (2) SO ECS alert doc (e.g. pushed from SO's bundled Kibana via the elastic adapter):
+  // `event.severity_label` is a Security Onion convention — standard ECS carries only the numeric
+  // `event.severity`, and Elastic Security alerts use `kibana.alert.severity`. Paired with a
+  // rule/module/dataset, it's an SO alert. Claimed here so its label-severity isn't lost to SIEM.
+  if (getCI(s, "event.severity_label") != null &&
+    (getCI(s, "rule.name") != null || getCI(s, "event.module") != null || getCI(s, "event.dataset") != null)) {
+    return true;
+  }
+  // (3) Raw SOC API export / Kibana doc on a Security Onion data-stream index
   // (.ds-logs-<module>-so-<date>, optionally cross-cluster-prefixed "so:").
   const idx = str(getCI(s, "_index") ?? getCI(s, "source"));
   const soIndex = /^so:/i.test(idx) || /(?:^|[.\-_])logs-[a-z0-9_]+-so[.\-]/i.test(idx);
