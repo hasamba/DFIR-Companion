@@ -14,7 +14,7 @@ import { looksLikeSysdig } from "./sysdigImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
 
 export type ImportKind =
-  | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "securityonion" | "network"
+  | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "securityonion" | "socrates" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
   | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "csv" | "log" | "unknown";
 
@@ -134,6 +134,18 @@ function isSecurityOnion(s: Row): boolean {
   return getCI(s, "event.module") != null || getCI(s, "rule.name") != null ||
     getCI(s, "event.severity_label") != null || getCI(s, "event.dataset") != null;
 }
+// SO-CRATES (dougburks/so-crates) data, as the browser extension pushes it or as a raw export.
+// Claimed BEFORE isVelociraptor: the extension stamps `_Source: "SO-CRATES"` on every row, and
+// isVelociraptor treats any `_Source` as its own. Three shapes: an extension push (any _Source
+// "SO-CRATES"), a YARA filealert (the SO-CRATES-specific synthetic eve.json `event_type`), or a
+// Sigma alert (rule_title + rule_id). A plain Suricata eve.json with no SO-CRATES marker is left
+// to isNetwork on purpose.
+function isSocrates(s: Row): boolean {
+  if (/^so-crates\b/i.test(str(getCI(s, "_Source")))) return true;
+  if (str(getCI(s, "event_type")).toLowerCase() === "filealerts" || isObject(getCI(s, "filealerts"))) return true;
+  if (!!getCI(s, "rule_title") && !!getCI(s, "rule_id")) return true;
+  return false;
+}
 function isHayabusaJson(s: Row): boolean {
   if (!!getCI(s, "RuleTitle")) return true;
   if (!!getCI(s, "Level") && (!!getCI(s, "MitreTactics") || !!getCI(s, "MitreTags"))) return true;
@@ -235,6 +247,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isM365(sample)) return "m365";
   if (isChainsaw(sample)) return "chainsaw";
   if (isSecurityOnion(sample)) return "securityonion";
+  if (isSocrates(sample)) return "socrates";
   if (isVelociraptor(sample, root)) return "velociraptor";
   if (isHayabusaJson(sample)) return "hayabusa";
   if (looksLikeTheHive(sample, root)) return "thehive";

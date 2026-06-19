@@ -449,7 +449,7 @@ export function parseHashes(rec: Row, ed: Row | undefined): { sha256?: string; m
 // GUIDs, or logon IDs, so identical events aggregate). User/domain handled by winAccounts.
 const SUBJECT_KEYS = [
   "LogonType", "IpAddress", "WorkstationName", "ServiceName", "ServiceFileName",
-  "Image", "CommandLine", "NewProcessName", "ParentImage", "SourceImage", "TargetImage",
+  "Image", "CommandLine", "NewProcessName", "ParentImage", "ParentCommandLine", "SourceImage", "TargetImage",
   "TargetFilename", "ImageLoaded", "DestinationIp", "DestinationPort", "DestinationHostname",
   "Protocol", "QueryName", "ShareName", "RelativeTargetName", "TaskName", "PipeName",
   "TargetObject", "MemberName", "Status", "SubStatus", "FailureReason",
@@ -461,7 +461,7 @@ function renderFields(ed: Row, keys: string[]): string {
     const v = str(getCI(ed, k)).trim();
     if (v && v !== "-" && v !== "%%1833") parts.push(`${k}=${oneLine(v).slice(0, 140)}`);
   }
-  return parts.join(" ");
+  return parts.join(" - ");
 }
 
 // Compose DOMAIN\user (or UPN) account references so the asset graph picks them up.
@@ -528,8 +528,8 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
   const accts = winAccounts(ed);
   const subject = renderFields(ed, SUBJECT_KEYS);
   let description = `${tool} ${def.label} (EID ${eid})`;
-  if (accts.length) description += ` — ${accts.join(", ")}`;
-  if (subject) description += ` | ${subject}`;
+  if (accts.length) description += ` - ${accts.join(", ")}`;
+  if (subject) description += ` - ${subject}`;
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
 
@@ -683,7 +683,7 @@ const SALIENT_RE = /(name|message|detection|rule|signature|title|desc|stringhit|
 function summarizePairs(pairs: [string, string][]): string {
   const meaningful = pairs.filter(([k]) => !k.startsWith("_") && !META_KEYS.has(k.toLowerCase()));
   const salient = meaningful.filter(([k]) => SALIENT_RE.test(k));
-  return (salient.length ? salient : meaningful).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
+  return (salient.length ? salient : meaningful).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" - ");
 }
 
 export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent {

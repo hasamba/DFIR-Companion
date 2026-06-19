@@ -183,7 +183,7 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     const r = parseVelociraptorJson(JSON.stringify([row]));
     const e = r.events[0];
     expect(e.description).toContain("Velociraptor detection: T1567.002-Execution of Exfiltration Programs");
-    expect(e.description).toContain("|");                         // overlaid onto the EVTX mapping
+    expect(e.description).toContain("EID");                       // EVTX event mapping overlaid after the verdict (fields joined by " - ")
     expect(e.mitreTechniques).toContain("T1567.002");            // from the verdict name
     expect(e.asset).toBe("WIN11.windomain.local");
     expect(e.severity === "Medium" || e.severity === "High").toBe(true); // ≥ Medium detection baseline
