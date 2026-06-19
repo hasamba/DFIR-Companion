@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Security Onion adapter (extension)** — the capture extension now recognizes the Security Onion Console (SOC) Alerts/Hunt views (hash-routed Vue SPA) and offers one-click **Push to DFIR-Companion** of individual events from `GET /api/events/`; SO's proxied Kibana (`/kibana/app/...`) is also recognized. Verified on SO 3.x (API-compatible with 2.4).
 - **Linux AppImage** — single-file build (Node SEA wrapped via appimagetool) attached to every release; writable `cases/` / `.env` redirect to the launch dir; new `DFIR_ENV_FILE` env override points the server at a `.env` outside a read-only mount (#127).
 - **Update notice** — opt-in, default-off check for a newer GitHub release; shows a dashboard banner linking to the release, never downloads or self-installs; env `DFIR_UPDATE_CHECK` (`0` locks it off, `1` defaults on) + Settings → Updates toggle + "Check now" (#127).
 - **CI build + test gate** — `.github/workflows/ci.yml` runs `npm ci && build && test` for `companion/` and `extension/` on every PR and push to master (clean-install, Linux), catching breakage at the PR instead of at release time (#126).

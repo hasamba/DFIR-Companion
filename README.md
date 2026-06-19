@@ -144,7 +144,7 @@ Standard DFIR questions auto-answered from the synthesized case
 
 ### Capture & ingest
 - **MV3 browser extension** — timer + event-driven capture (navigation/tab/click), `Ctrl+Shift+S` hotkey, offline queue + auto-sync, per-case Start/Stop
-- **One-click artifact push** — Splunk/Velociraptor/Kibana/CrowdStrike injects **Push to DFIR-Companion** button; intercepts API JSON or scrapes table
+- **One-click artifact push** — Splunk/Velociraptor/Kibana/Security Onion/CrowdStrike injects **Push to DFIR-Companion** button; intercepts API JSON or scrapes table
 - **Case management** — **+ New case** in dashboard (templates auto-load incident questions + import hints); captures to unknown case rejected
 - **Import screenshots** — multi-select PNG/JPEG/WebP; single **Import** button auto-detects artifact format (CSV/JSON/log)
 - **Import undo/redo** — roll back/forward to exact pre-import state (no re-synthesis); multi-level per-case stack
