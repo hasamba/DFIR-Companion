@@ -29,7 +29,7 @@ export const socratesAdapter: Adapter = {
 
   // Stamp every pushed row with _Source "SO-CRATES" — navigate-back provenance AND the detection
   // signal the companion's isSocrates() claims (placed before isVelociraptor's catch-all _Source).
-  sourceLabel(): string {
+  sourceLabel(_opts: { apiUrl: string; pageUrl: string; domInputs: readonly string[]; domHeadings: readonly string[]; rows: readonly unknown[] }): string {
     return "SO-CRATES";
   },
 
