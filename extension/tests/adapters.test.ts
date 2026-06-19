@@ -74,9 +74,60 @@ describe("adapterForUrl", () => {
 });
 
 describe("splunk.extractRows", () => {
-  it("returns the results array from the json envelope", () => {
+  it("returns the results array from the json envelope, adding Timestamp from _time when absent", () => {
     const body = { preview: false, init_offset: 0, results: [{ _time: "t1", host: "h1" }, { _time: "t2", host: "h2" }], fields: [] };
-    expect(splunkAdapter.extractRows("/services/search/v2/jobs/x/results", body)).toEqual(body.results);
+    expect(splunkAdapter.extractRows("/services/search/v2/jobs/x/results", body)).toEqual([
+      { _time: "t1", host: "h1", Timestamp: "t1" },
+      { _time: "t2", host: "h2", Timestamp: "t2" },
+    ]);
+  });
+
+  it("does not overwrite an existing Timestamp field", () => {
+    const body = { results: [{ _time: "splunk-time", Timestamp: "hayabusa-time", host: "h1" }] };
+    expect(splunkAdapter.extractRows("u", body)).toEqual([{ _time: "splunk-time", Timestamp: "hayabusa-time", host: "h1" }]);
+  });
+
+  it("extracts Details from _raw (¦ separator, CSV-quoted) when Splunk failed to extract the column", () => {
+    // Splunk's custom-csv sourcetype often drops the Details column for Hayabusa events because
+    // the value contains commas inside a quoted CSV field. _raw has the full original line.
+    const raw = '"2025-02-20 17:47:55.306 +02:00","Proc Access (Sysmon Alert)","high","win10.windomain.local","Sysmon","10","23892","SrcProc: lsass.exe ¦ TgtProc: osqueryd.exe ¦ Access: 0xffff","","R123"';
+    const body = { results: [{ _time: "2025-02-20T15:47:55.306Z", RuleTitle: "Proc Access (Sysmon Alert)", _raw: raw }] };
+    const rows = splunkAdapter.extractRows("u", body) as Record<string, unknown>[];
+    expect(rows[0].Details).toBe("SrcProc: lsass.exe ¦ TgtProc: osqueryd.exe ¦ Access: 0xffff");
+  });
+
+  it("extracts Details from _raw (| separator, older Hayabusa) when Splunk failed to extract the column", () => {
+    const raw = '"2025-02-20 17:47:55.306 +02:00","Proc Access","high","win10","Sysmon","10","23892","SrcProc: lsass.exe | TgtProc: osqueryd.exe | Access: 0xffff","","R123"';
+    const body = { results: [{ _time: "2025-02-20T15:47:55.306Z", _raw: raw }] };
+    const rows = splunkAdapter.extractRows("u", body) as Record<string, unknown>[];
+    expect(rows[0].Details).toBe("SrcProc: lsass.exe | TgtProc: osqueryd.exe | Access: 0xffff");
+  });
+
+  it("extracts Details from unquoted _raw (Splunk stripped CSV quoting)", () => {
+    const raw = "2025-02-20 17:47:55.306 +02:00,Proc Access,high,win10,Sysmon,10,23892,SrcProc: lsass.exe ¦ TgtProc: osqueryd.exe,,R123";
+    const body = { results: [{ _time: "2025-02-20T15:47:55.306Z", _raw: raw }] };
+    const rows = splunkAdapter.extractRows("u", body) as Record<string, unknown>[];
+    expect(rows[0].Details).toBe(raw);
+  });
+
+  it("does not overwrite an existing Details field extracted by Splunk", () => {
+    const body = { results: [{ _time: "t1", Details: "already-extracted", _raw: '"whatever ¦ something"' }] };
+    const rows = splunkAdapter.extractRows("u", body) as Record<string, unknown>[];
+    expect(rows[0].Details).toBe("already-extracted");
+  });
+
+  it("extracts Details when _raw is the events-endpoint OBJECT { value, … } (not a plain string)", () => {
+    // The /v2/jobs/<sid>/events endpoint returns _raw as { value, trunc, tokens, segment_tree };
+    // String(_raw) would be "[object Object]" so the separator regex must read _raw.value.
+    const line = '"2025-02-20 17:47:55.306 +02:00","Proc Access (Sysmon Alert)","high","win10.windomain.local","Sysmon","10","23892","SrcProc: lsass.exe ¦ TgtProc: osqueryd.exe ¦ Access: 0xffff","","R123"';
+    const body = {
+      results: [
+        { _time: "2025-02-20T15:47:55.306Z", RuleTitle: "Proc Access (Sysmon Alert)", _raw: { value: line, trunc: false, tokens: [], segment_tree: {} } },
+      ],
+    };
+    const rows = splunkAdapter.extractRows("/splunkd/__raw/x/v2/jobs/1781903213.27/events", body) as Record<string, unknown>[];
+    expect(rows[0].Details).toBe("SrcProc: lsass.exe ¦ TgtProc: osqueryd.exe ¦ Access: 0xffff");
+    expect(rows[0].Timestamp).toBe("2025-02-20T15:47:55.306Z");
   });
 
   it("zips the json_rows variant (fields + rows)", () => {
