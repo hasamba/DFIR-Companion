@@ -1,3 +1,6 @@
+# Vite / Vitest build + test cache (written when running vite/vitest from the repo root).
+.vite/
+
 # Forensic evidence output — never commit captured screenshots / case data.
 # The companion writes here when DFIR_CASES_ROOT points outside companion/
 # (e.g. the default-ish ../cases). Keep it out of git.
