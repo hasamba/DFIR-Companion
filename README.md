@@ -257,6 +257,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Logging** — console + global session log + per-case audit trail; `DFIR_LOG_LEVEL` live toggle; `debug` traces AI/captures/OCR/anonymization
 - **Portable Windows EXE** — unzip + double-click, no Node required
 - **Docker / Compose** — `docker compose up`; evidence on host volume, no bundled AI backend
+- **Linux AppImage** — single-file executable for any glibc distro, no Node required
+- **Update notice** — opt-in (default off) check for a newer GitHub release; dashboard banner, never auto-downloads
 - **Customizable prompts** — override prompts via env var or file; edits apply without restart
 - **Demo case** — one-click load or `npm run seed-demo` to seed GlobalTech scenario
 - **CLI scripts** — `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`
@@ -375,6 +377,32 @@ port to `127.0.0.1` on your host — so the dashboard is never exposed on your n
   uncomment `env_file: - .env` to use a `.env` file (copy `companion/.env.example`).
 - To reach an AI endpoint running on the host, use `http://host.docker.internal:<port>/v1`
   (on Linux without Docker Desktop, also uncomment the `extra_hosts` line in the compose file).
+
+## Linux (AppImage)
+
+Download `dfir-companion-<version>-x86_64.AppImage` from the
+[Releases page](https://github.com/hasamba/DFIR-Companion/releases), then:
+
+```
+chmod +x dfir-companion-*-x86_64.AppImage
+./dfir-companion-*-x86_64.AppImage      # → http://127.0.0.1:4773/dashboard
+```
+
+No Node required — it bundles the server, dashboard, and image tooling. **Your data lives in the
+directory you run it from:** `cases/` (evidence + state) and an optional `.env` (AI / threat-intel
+config) are created/read next to where you launch the AppImage. Override with `DFIR_CASES_ROOT`
+(absolute path) and `DFIR_ENV_FILE` (absolute path to a config file).
+
+### Where the data lives
+
+| Install                | Cases + state             | Config (`.env`)                  |
+| ---------------------- | ------------------------- | -------------------------------- |
+| Source / `npm run dev` | `companion/cases/`        | `companion/.env`                 |
+| Portable Windows EXE   | `cases/` next to the EXE  | `.env` next to the EXE           |
+| Linux AppImage         | `$PWD/cases` (launch dir) | `$PWD/.env` (or `DFIR_ENV_FILE`) |
+| Docker / Compose       | mounted `./cases` volume  | `environment:` / `--env-file`    |
+
+All locations are overridable with `DFIR_CASES_ROOT` (absolute path).
 
 ## Environment variables (`companion/.env`)
 

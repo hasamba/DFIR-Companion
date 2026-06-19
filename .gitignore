@@ -22,6 +22,10 @@ notifications/
 /kev/
 companion/kev/
 
+# Update-check cache (issue #127) — last GitHub release check + the opt-in toggle; runtime state, never commit.
+/updates/
+companion/updates/
+
 # Secrets / local config
 **/.env
 
@@ -34,6 +38,10 @@ dist/
 # Node SEA build outputs (single-executable Windows EXE staging).
 build-sea/
 dist-sea/
+
+# Linux AppImage build outputs (issue #127) — AppDir staging + the produced .AppImage + appimagetool.
+build-appimage/
+dist-appimage/
 
 # Docker: the pre-built browser add-on the companion container copies out for "Load unpacked".
 /addon/
