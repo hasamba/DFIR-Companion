@@ -142,7 +142,7 @@ function isSecurityOnion(s: Row): boolean {
 // to isNetwork on purpose.
 function isSocrates(s: Row): boolean {
   if (/^so-crates\b/i.test(str(getCI(s, "_Source")))) return true;
-  if (str(getCI(s, "event_type")).toLowerCase() === "filealerts" || getCI(s, "filealerts") != null) return true;
+  if (str(getCI(s, "event_type")).toLowerCase() === "filealerts" || isObject(getCI(s, "filealerts"))) return true;
   if (!!getCI(s, "rule_title") && !!getCI(s, "rule_id")) return true;
   return false;
 }
