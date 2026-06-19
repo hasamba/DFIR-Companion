@@ -171,8 +171,9 @@ function scrapeVisibleTable(): CapturedArtifact | null {
   if (!best || bestRows < 2) return null;
 
   const { headers, rows } = readTableMatrix(best);
-  const objs = matrixToRows(headers, rows);
-  if (!objs.length) return null;
+  const rawObjs = matrixToRows(headers, rows);
+  if (!rawObjs.length) return null;
+  const objs = activeAdapter.processScrapedRows ? activeAdapter.processScrapedRows(rawObjs) : rawObjs;
   const label = labelRows(objs, "");
   return { adapterId: activeAdapter.id, rows: objs, sourceUrl: location.href, via: "scrape", label };
 }

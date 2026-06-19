@@ -38,6 +38,12 @@ export interface Adapter {
    * the page's <input> values (for combo-box selectors), and the rows. Pure. Returns "" when unknown.
    */
   sourceLabel?(opts: { apiUrl: string; pageUrl: string; domInputs: readonly string[]; domHeadings: readonly string[]; rows: readonly unknown[] }): string;
+  /**
+   * Optional: post-process rows that came from a DOM table scrape (the hook-miss fallback). Allows
+   * adapters to improve list-view scrape quality — e.g. extracting Splunk selected-field key=value
+   * pairs from the raw event text column into proper field objects. Returns the processed rows.
+   */
+  processScrapedRows?(rows: unknown[]): unknown[];
 }
 
 /** A captured set of rows ready to push to the companion. */
