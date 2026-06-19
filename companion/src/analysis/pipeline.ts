@@ -64,6 +64,7 @@ import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImpor
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
+import { parseSecurityOnion, type SecurityOnionImportOptions } from "./securityOnionImport.js";
 import { parseKapeCsv, type KapeImportOptions } from "./kapeImport.js";
 import { parseCybertriage, type CybertriageImportOptions } from "./cybertriageImport.js";
 import { parseM365Audit, type M365ImportOptions } from "./m365Import.js";
@@ -1766,6 +1767,55 @@ export class AnalysisPipeline {
       threadsClosed: [],
       timelineNote: `Network import (${parsed.format}): ${parsed.kept} detection event(s) from ${parsed.total} record(s)` +
         (parsed.alerts > 0 ? `, ${parsed.alerts} alert/notice(s)` : "") +
+        `, ${parsed.iocs.length} IOC(s)` +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import Security Onion Console (SOC) events — the Alerts / Hunt views the browser extension
+  // pushes. Deterministic (no AI call), verdict-first per the post-detection principle: the
+  // event's own `event.severity_label` drives severity, `rule.name` leads the description, ECS
+  // threat fields become MITRE, and source/destination IPs + app-layer fields become IOCs.
+  // Events are tagged "Security Onion".
+  async importSecurityOnion(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;                // unique per import (e.g. "so3") so ids never collide
+      importedAt: string;
+      securityOnion?: SecurityOnionImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseSecurityOnion(text, opts.securityOnion);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Security Onion"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Security Onion import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
         `, ${parsed.iocs.length} IOC(s)` +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
       summary: "",

@@ -3,12 +3,14 @@ import { splunkAdapter } from "./splunk.js";
 import { velociraptorAdapter } from "./velociraptor.js";
 import { elasticAdapter } from "./elastic.js";
 import { crowdstrikeAdapter } from "./crowdstrike.js";
+import { securityOnionAdapter } from "./securityonion.js";
 
 // The known-tool registry. Order is significance-only (matchUrl is meant to be mutually exclusive
 // across these consoles); the first matching adapter wins.
 export const ADAPTERS: readonly Adapter[] = [
   splunkAdapter,
   velociraptorAdapter,
+  securityOnionAdapter,
   elasticAdapter,
   crowdstrikeAdapter,
 ];
