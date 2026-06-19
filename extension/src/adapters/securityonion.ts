@@ -2,10 +2,12 @@ import type { Adapter } from "./types.js";
 import { asArray, getPath, isObject } from "./extractUtils.js";
 
 // Security Onion Console (SOC) — the native Alerts / Hunt UI. SOC is a Vue SPA using hash routing
-// (createWebHashHistory), so its views live at https://<manager>/#/hunt , #/alerts , #/dashboards ,
-// #/cases , #/detections — hence matchUrl reads url.hash (robust to any host / reverse-proxy prefix).
-// Both Alerts and Hunt query ONE backend route, GET /api/events/, returning an EventSearchResults
-// envelope: { events: [{ id, source, timestamp, score, payload }], metrics, … }. `payload` is the
+// (createWebHashHistory), so its views live at https://<manager>/#/hunt , #/alerts , #/dashboards —
+// hence matchUrl reads url.hash (robust to any host / reverse-proxy prefix). These three are the
+// EVENT-bearing views (they query GET /api/events/, returning an EventSearchResults envelope:
+// { events: [{ id, source, timestamp, score, payload }], metrics, … }). We deliberately do NOT match
+// #/detections (the rule CATALOG — Sigma rule definitions, mostly disabled, not events) or #/cases
+// (case management) — pushing those pollutes the forensic timeline with non-events. `payload` is the
 // flattened ECS document (dotted keys). We flatten each event to its payload — exactly like the
 // Elastic adapter flattens hits.hits[]._source — and IGNORE `metrics` (groupby buckets carry only
 // {keys, count}, no forensic detail). API + hash routing verified identical on securityonion-soc
@@ -15,7 +17,7 @@ export const securityOnionAdapter: Adapter = {
   label: "Security Onion",
 
   matchUrl(url: URL): boolean {
-    return /^#\/(alerts|hunt|dashboards|cases|detections)\b/i.test(url.hash);
+    return /^#\/(alerts|hunt|dashboards)\b/i.test(url.hash);
   },
 
   apiPatterns: ["/api/events/"],
@@ -39,7 +41,7 @@ export const securityOnionAdapter: Adapter = {
 
   // Attribute each pushed row to the SOC view it came from (stamped as _Source for navigate-back).
   sourceLabel(opts: { apiUrl: string; pageUrl: string; domInputs: readonly string[]; domHeadings: readonly string[]; rows: readonly unknown[] }): string {
-    const m = /#\/(alerts|hunt|dashboards|cases|detections)\b/i.exec(opts.pageUrl);
+    const m = /#\/(alerts|hunt|dashboards)\b/i.exec(opts.pageUrl);
     if (!m) return "";
     const view = m[1].toLowerCase();
     return `Security Onion ${view.charAt(0).toUpperCase()}${view.slice(1)}`;
