@@ -68,4 +68,29 @@ describe("parseSocrates", () => {
     expect(r.events).toHaveLength(0);
     expect(r.total).toBe(0);
   });
+
+  it("handles a mixed feed (all three classes) → format mixed", () => {
+    const r = parseSocrates(JSON.stringify([suricataAlert, yaraFileAlert, sigmaAlert]));
+    expect(r.format).toBe("mixed");
+    expect(r.alerts).toBe(1);
+    expect(r.yara).toBe(1);
+    expect(r.sigma).toBe(1);
+    expect(r.events).toHaveLength(3);
+  });
+
+  it("falls back to the sha256 prefix + adds the md5 IOC for a YARA hit with no filename", () => {
+    const md5 = "0123456789abcdef0123456789abcdef";
+    const row = { event_type: "filealerts", timestamp: "2017-12-01T08:00:02+0000",
+      filealerts: { rule_name: "Generic_Suspicious", md5,
+        sha256: "ffeeddccbbaa00112233445566778899ffeeddccbbaa00112233445566778899" } };
+    const r = parseSocrates(JSON.stringify([row]));
+    expect(r.events[0].description).toBe("YARA: Generic_Suspicious on ffeeddccbbaa0011");
+    expect(r.iocs.some((i) => i.type === "hash" && i.value === md5)).toBe(true);
+  });
+
+  it("maps Sigma severity from the `severity` field when `level` is absent", () => {
+    const row = { timestamp: "2024-01-02T03:04:05Z", rule_title: "X", rule_id: "r2", severity: "critical" };
+    const r = parseSocrates(JSON.stringify([row]));
+    expect(r.events[0].severity).toBe("Critical");
+  });
 });

@@ -157,6 +157,7 @@ export function parseSocrates(text: string, opts: SocratesImportOptions = {}): S
 
   // (1) Suricata/Zeek detections + telemetry IOCs — reuse the network importer wholesale.
   let netEvents: SiemEvent[] = [];
+  let netGroups = 0;
   let alerts = 0;
   if (eve.length) {
     const net = parseNetworkLogs(JSON.stringify(eve), {
@@ -166,6 +167,7 @@ export function parseSocrates(text: string, opts: SocratesImportOptions = {}): S
       maxIocs,
     });
     alerts = net.alerts;
+    netGroups = net.groups;
     netEvents = net.events.map((e) => ({ ...e, sources: ["SO-CRATES", ...(e.sources ?? [])] }));
     for (const c of net.iocs) addIoc(iocSink, c.type, c.value);
   }
@@ -182,7 +184,10 @@ export function parseSocrates(text: string, opts: SocratesImportOptions = {}): S
 
   // Combine (network events are already aggregated/sorted), sort worst-first, cap.
   const combined = [...netEvents, ...fileEvents]
-    .sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || (b.count ?? 1) - (a.count ?? 1))
+    .sort((a, b) =>
+      SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+      (b.count ?? 1) - (a.count ?? 1) ||
+      (a.timestamp || "~").localeCompare(b.timestamp || "~"))
     .slice(0, maxEvents);
 
   const present: string[] = [];
@@ -198,7 +203,7 @@ export function parseSocrates(text: string, opts: SocratesImportOptions = {}): S
     total,
     kept: combined.length,
     dropped: Math.max(0, total - represented),
-    groups: netEvents.length + fileGroups,
+    groups: netGroups + fileGroups,
     alerts,
     yara: yaraRows.length,
     sigma: sigmaRows.length,
