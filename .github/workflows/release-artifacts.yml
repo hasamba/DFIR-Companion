@@ -162,7 +162,10 @@ jobs:
   release:
     name: Attach to GitHub Release
     needs: [windows-exe, linux-appimage, extension-zip]
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    # Only publish a Release for a real tag push, or a manual run that explicitly names a tag.
+    # A tagless workflow_dispatch (e.g. a branch build to test artifacts) builds + uploads them
+    # but does NOT create a junk release named after the branch.
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
