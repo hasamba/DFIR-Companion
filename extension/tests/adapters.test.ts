@@ -40,6 +40,11 @@ describe("adapterForUrl", () => {
     expect(adapterForUrl("https://10.0.0.2/#/dashboards")?.id).toBe("securityonion");
   });
 
+  it("does not match non-data SOC hash routes or near-miss view names", () => {
+    expect(adapterForUrl("https://manager.example/#/grid")).toBeNull();
+    expect(adapterForUrl("https://manager.example/#/alertsfoo")).toBeNull();
+  });
+
   it("returns null for unrecognized sites and non-http schemes", () => {
     expect(adapterForUrl("https://example.com/foo")).toBeNull();
     expect(adapterForUrl("https://news.ycombinator.com/")).toBeNull();
@@ -377,6 +382,16 @@ describe("securityonion.extractRows", () => {
     expect(securityOnionAdapter.extractRows("u", { totalEvents: 0, events: [], metrics: { "rule.name": [{ keys: ["X"], value: 5 }] } })).toBeNull();
     expect(securityOnionAdapter.extractRows("u", { metrics: {} })).toBeNull();
     expect(securityOnionAdapter.extractRows("u", "nope")).toBeNull();
+  });
+
+  it("tolerates a missing payload and passes a non-object element through", () => {
+    expect(securityOnionAdapter.extractRows("u", { events: [{ id: "a", source: "idx" }] })).toEqual([{ _id: "a", _index: "idx" }]);
+    expect(securityOnionAdapter.extractRows("u", { events: ["raw"] })).toEqual(["raw"]);
+  });
+
+  it("lets a payload field override the synthetic _id/_index metadata (spread precedence)", () => {
+    expect(securityOnionAdapter.extractRows("u", { events: [{ id: "x", source: "y", payload: { _id: "real", "rule.name": "r" } }] }))
+      .toEqual([{ _id: "real", _index: "y", "rule.name": "r" }]);
   });
 });
 
