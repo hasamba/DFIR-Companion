@@ -144,7 +144,7 @@ Standard DFIR questions auto-answered from the synthesized case
 
 ### Capture & ingest
 - **MV3 browser extension** — timer + event-driven capture (navigation/tab/click), `Ctrl+Shift+S` hotkey, offline queue + auto-sync, per-case Start/Stop
-- **One-click artifact push** — Splunk/Velociraptor/Kibana/Security Onion/CrowdStrike injects **Push to DFIR-Companion** button; intercepts API JSON or scrapes table
+- **One-click artifact push** — Splunk/Velociraptor/Kibana/Security Onion/SO-CRATES/CrowdStrike injects **Push to DFIR-Companion** button; intercepts API JSON or scrapes table
 - **Case management** — **+ New case** in dashboard (templates auto-load incident questions + import hints); captures to unknown case rejected
 - **Import screenshots** — multi-select PNG/JPEG/WebP; single **Import** button auto-detects artifact format (CSV/JSON/log)
 - **Import undo/redo** — roll back/forward to exact pre-import state (no re-synthesis); multi-level per-case stack
@@ -165,6 +165,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **THOR (Nextron)** | JSON-Lines scan output | THOR alert level |
 | **Suricata / Zeek** | `eve.json`, Zeek JSON logs; telemetry → IOCs only | Alert priority / notice severity |
 | **Security Onion** | SOC Alerts/Hunt events (ECS); pushed by the extension or a SOC API export | `event.severity_label` (Suricata/SO label) |
+| **SO-CRATES** | Suricata alerts + YARA file matches (`/api/events`) and Sigma detections (`/api/sigma-alerts`); pushed by the extension or a raw export | Suricata priority / Sigma level / YARA match |
 | **Cyber Triage** | JSONL / JSON / CSV timeline | Cyber Triage item score |
 | **M365 / Entra ID** | UAL, Entra sign-in + audit logs | BEC tradecraft table / Entra riskLevel |
 | **AWS CloudTrail** | Records JSON, NDJSON, Athena | API action table (IAM/logging/S3/secrets) |
