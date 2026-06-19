@@ -64,6 +64,7 @@ import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImpor
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
+import { parseSocrates, type SocratesImportOptions } from "./socratesImport.js";
 import { parseSecurityOnion, type SecurityOnionImportOptions } from "./securityOnionImport.js";
 import { parseKapeCsv, type KapeImportOptions } from "./kapeImport.js";
 import { parseCybertriage, type CybertriageImportOptions } from "./cybertriageImport.js";
@@ -1769,6 +1770,52 @@ export class AnalysisPipeline {
         (parsed.alerts > 0 ? `, ${parsed.alerts} alert/notice(s)` : "") +
         `, ${parsed.iocs.length} IOC(s)` +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import SO-CRATES (dougburks/so-crates) verdicts — Suricata IDS alerts, YARA file matches, and
+  // Sigma log detections — as the browser extension pushes them (or a raw export). Deterministic
+  // (no AI). Events are tagged "SO-CRATES" (+ the underlying engine) for cross-source correlation.
+  async importSocrates(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;                // unique per import (e.g. "s4") so ids never collide
+      importedAt: string;
+      socrates?: SocratesImportOptions;
+      minSeverity?: Severity;          // gate-aware import floor (unified Import button)
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseSocrates(text, opts.socrates);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["SO-CRATES"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `SO-CRATES import (${parsed.format}): ${parsed.kept} detection event(s) from ${parsed.total} record(s)` +
+        ` — ${parsed.alerts} Suricata alert(s), ${parsed.yara} YARA, ${parsed.sigma} Sigma, ${parsed.iocs.length} IOC(s)`,
       summary: "",
     };
     const delta = deltaSchema.parse(raw);
