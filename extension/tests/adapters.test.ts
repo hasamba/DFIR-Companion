@@ -67,6 +67,7 @@ describe("adapterForUrl", () => {
   it("adapterById resolves and the registry holds the six tools", () => {
     expect(ADAPTERS.map((a) => a.id).sort()).toEqual(["crowdstrike", "elastic", "securityonion", "socrates", "splunk", "velociraptor"]);
     expect(adapterById("splunk")?.label).toBe("Splunk");
+    expect(adapterById("securityonion")?.label).toBe("Security Onion");
     expect(adapterById("socrates")?.label).toBe("SO-CRATES");
     expect(adapterById("nope")).toBeNull();
   });
