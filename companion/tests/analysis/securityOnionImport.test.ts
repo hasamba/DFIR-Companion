@@ -79,6 +79,32 @@ describe("parseSecurityOnion", () => {
     expect(r.iocs.some((i) => i.type === "hash")).toBe(true);
   });
 
+  it("maps an SO bundled-Kibana ECS doc by its label, not the credential-laden message blob", () => {
+    // The real shape from SO's Kibana (elastic adapter): flat dotted ECS keys; the raw eve (incl. a
+    // captured password) lives only in `message`. Severity must come from event.severity_label, and
+    // the description must use rule.name — never the message blob.
+    const row = {
+      _id: "OHjM", _index: ".ds-logs-import-so-2026.06.07-000001", "@timestamp": "2026-02-03T16:14:02.382Z",
+      "event.module": "suricata", "event.dataset": "suricata.alert",
+      "event.severity_label": "high", "event.severity": 3, "rule.severity": 1,
+      "rule.name": "ET MALWARE Agent Tesla CnC Exfil via TCP",
+      "source.ip": "10.2.3.101", "source.port": 54050,
+      "destination.ip": "162.241.123.75", "destination.port": 47037,
+      "import.id": "0f42",
+      message: "{\"alert\":{\"severity\":1},\"payload_printable\":\"Password: hunter2\"}",
+    };
+    const r = parseSecurityOnion(JSON.stringify([row]));
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e.severity).toBe("High");                              // event.severity_label, not Info
+    expect(e.description).toContain("ET MALWARE Agent Tesla CnC Exfil via TCP");
+    expect(e.description).not.toContain("Password");              // never dump the message blob
+    expect(e.description).not.toContain("hunter2");
+    expect(e.srcIp).toBe("10.2.3.101");
+    expect(e.dstIp).toBe("162.241.123.75");
+    expect(e.sources).toEqual(["Security Onion"]);
+  });
+
   it("returns no events for an empty batch", () => {
     expect(parseSecurityOnion("[]").events).toHaveLength(0);
   });
