@@ -20,8 +20,9 @@ Verified end-to-end against the companion: live capture, offline queue/sync, das
 ## Automated artifact fetching (#102)
 
 On a recognized DFIR console the content script activates a **site adapter** and injects a floating
-**📤 Push … → DFIR-Companion** button (bottom-right). It only sends when *you* click it — explicit
-analyst intent, nothing automatic.
+**📤 Push … → DFIR-Companion** button (bottom-right by default). It only sends when *you* click it —
+explicit analyst intent, nothing automatic. **Drag the button** anywhere if a site's own UI covers
+it; the position is remembered across pages/tabs and always kept on-screen.
 
 Supported tools (matched by host / path / port — self-hosted instances on any host work):
 
