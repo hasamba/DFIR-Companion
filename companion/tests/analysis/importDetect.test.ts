@@ -49,6 +49,34 @@ describe("detectImportKind — JSON formats", () => {
   it("NOT velociraptor: a non-artifact Elastic index (MemProcFS mp_timeline) stays SIEM", () => {
     expect(detectImportKind("mp.json", j([{ _index: "mp_timeline", "@timestamp": "t", desc: "x", action: "MOD", type: "REG" }]))).toBe("siem");
   });
+  it("securityonion: extension push (_Source 'Security Onion …') wins over the velociraptor _Source rule", () => {
+    expect(detectImportKind("so.json", j([{
+      _id: "1", _index: "so:.ds-logs-suricata-so-2026.06.19-000001", _Source: "Security Onion Alerts",
+      "@timestamp": "t", "event.module": "suricata", "event.severity_label": "high", "rule.name": "ET MALWARE x",
+    }]))).toBe("securityonion");
+  });
+  it("securityonion: raw SOC API export (SO data-stream _index, no _Source stamp)", () => {
+    expect(detectImportKind("so.json", j([{
+      _index: ".ds-logs-suricata-so-2026.06.19-000001", "@timestamp": "t", "event.module": "suricata", "rule.name": "ET SCAN x",
+    }]))).toBe("securityonion");
+  });
+  it("NOT securityonion: a generic Elastic alert without SO markers stays SIEM", () => {
+    expect(detectImportKind("e.json", j([{ _index: "logs-generic", "@timestamp": "t", "rule.name": "x", message: "y" }]))).toBe("siem");
+  });
+  it("securityonion: SO bundled-Kibana push (ECS event.severity_label, no top-level event_type)", () => {
+    // The real shape pushed by the elastic adapter from SO's Kibana: flattened ECS dotted keys, the
+    // raw eve only inside a `message` string. event.severity_label is the Security Onion tell.
+    expect(detectImportKind("elastic.json", j([{
+      _id: "OHjM", _index: ".ds-logs-import-so-2026.06.07-000001", "@timestamp": "t",
+      "event.module": "suricata", "event.dataset": "suricata.alert", "event.severity_label": "high",
+      "event.severity": 3, "rule.name": "ET MALWARE Agent Tesla CnC Exfil via TCP",
+      "source.ip": "10.2.3.101", "destination.ip": "162.241.123.75", "import.id": "0f42",
+      message: "{\"event_type\":\"alert\",\"alert\":{\"severity\":1}}",
+    }]))).toBe("securityonion");
+  });
+  it("NOT securityonion: a raw Suricata eve.json record still routes to the network importer", () => {
+    expect(detectImportKind("eve.json", j([{ timestamp: "t", event_type: "alert", src_ip: "10.0.0.1", dest_ip: "1.2.3.4", alert: { signature: "x", severity: 1 } }]))).toBe("network");
+  });
   it("hayabusa: json-timeline", () => {
     expect(detectImportKind("hb.json", j([{ Timestamp: "t", RuleTitle: "x", Level: "high" }]))).toBe("hayabusa");
   });

@@ -15,7 +15,8 @@ export const elasticAdapter: Adapter = {
   matchUrl(url: URL): boolean {
     if (/(kibana|elastic)/i.test(url.hostname)) return true;
     // Kibana page paths only (API paths like /_search are handled by apiPatterns, not matchUrl).
-    if (/^\/app\/(discover|kibana|dashboards|security|fleet)/i.test(url.pathname)) return true;
+    // Kibana page paths only — also accept Security Onion's /kibana/ reverse-proxy prefix.
+    if (/^\/(kibana\/)?app\/(discover|kibana|dashboards|security|fleet)/i.test(url.pathname)) return true;
     if ((url.port === "5601" || url.port === "9200") && url.pathname !== "/") return true;
     return false;
   },
