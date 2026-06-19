@@ -43,6 +43,10 @@ describe("adapterForUrl", () => {
   it("does not match non-data SOC hash routes or near-miss view names", () => {
     expect(adapterForUrl("https://manager.example/#/grid")).toBeNull();
     expect(adapterForUrl("https://manager.example/#/alertsfoo")).toBeNull();
+    // #/detections is the rule CATALOG (Sigma rule definitions, not events); #/cases is case
+    // management — neither is event-bearing, so the push button must not appear there.
+    expect(adapterForUrl("https://manager.example/#/detections")).toBeNull();
+    expect(adapterForUrl("https://manager.example/#/cases")).toBeNull();
   });
 
   it("returns null for unrecognized sites and non-http schemes", () => {
