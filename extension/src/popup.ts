@@ -46,7 +46,7 @@ async function refreshStatus(s: Settings): Promise<void> {
 // to existing cases — they're created in the dashboard — so this is the only way to pick
 // one. On failure (companion offline, or an older server without GET /cases) fall back to
 // the last-used case id so Start can still resume an existing case.
-async function loadCases(companionUrl: string, selectedId: string): Promise<void> {
+async function loadCases(companionUrl: string, selectedId: string): Promise<boolean> {
   const sel = caseSelect();
   try {
     const res = await fetch(`${companionUrl}/cases`, { method: "GET" });
@@ -55,7 +55,7 @@ async function loadCases(companionUrl: string, selectedId: string): Promise<void
     sel.innerHTML = "";
     if (cases.length === 0) {
       sel.appendChild(new Option("(no cases — create one in the dashboard)", ""));
-      return;
+      return true;
     }
     sel.appendChild(new Option("— no case (push button hidden) —", ""));
     for (const c of cases) {
@@ -63,11 +63,13 @@ async function loadCases(companionUrl: string, selectedId: string): Promise<void
       sel.appendChild(new Option(label, c.caseId));
     }
     sel.value = cases.some((c) => c.caseId === selectedId) ? selectedId : "";
+    return true;
   } catch {
     // Offline or endpoint missing — keep the last-used case selectable so Start works.
     sel.innerHTML = "";
     if (selectedId) sel.appendChild(new Option(`${selectedId} (offline — last used)`, selectedId));
     else sel.appendChild(new Option("(companion offline — start it, then Refresh)", ""));
+    return false;
   }
 }
 
@@ -124,8 +126,8 @@ async function init() {
   // pointing Companion URL at a different instance.
   document.getElementById("refreshCases")!.onclick = async () => {
     const url = normalizeCompanionUrl($("companionUrl").value);
-    await loadCases(url, caseSelect().value);
-    statusEl().textContent = "case list refreshed";
+    const ok = await loadCases(url, caseSelect().value);
+    statusEl().textContent = ok ? "case list refreshed" : `companion offline — check URL (${url})`;
   };
   // Cases are created in the dashboard — open it in a new tab.
   document.getElementById("openDashboard")!.onclick = (e) => {
