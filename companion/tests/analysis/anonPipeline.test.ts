@@ -51,7 +51,7 @@ describe("pipeline anonymization (default on)", () => {
 
   it("when disabled, sends the real host (no tokenization)", async () => {
     const { pipeline, provider, anonStore } = await makePipeline();
-    await anonStore.save("c1", { enabled: false, categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true }, redactSecrets: true });
+    await anonStore.save("c1", { enabled: false, categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true }, redactSecrets: true });
     await pipeline.synthesize("c1", { force: true });
     expect(provider.lastReq!.userPrompt).toContain("ALCLIENT07");
     expect(provider.lastReq!.userPrompt).not.toContain("ANON_HOST_1");

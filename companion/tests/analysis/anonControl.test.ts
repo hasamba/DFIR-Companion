@@ -30,7 +30,7 @@ describe("AnonControlStore", () => {
     expect((await store.load("c1")).enabled).toBe(false);
   });
   it("round-trips a saved control and merges new categories over the default", async () => {
-    await store.save("c1", { enabled: false, categories: { IP: false, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true }, redactSecrets: false });
+    await store.save("c1", { enabled: false, categories: { IP: false, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true }, redactSecrets: false });
     const c = await store.load("c1");
     expect(c.enabled).toBe(false);
     expect(c.categories.IP).toBe(false);

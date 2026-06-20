@@ -7,7 +7,7 @@ function policy(over: Partial<AnonPolicy["categories"]> = {}, redactSecrets = fa
   return {
     enabled: true,
     redactSecrets,
-    categories: { IP: false, EMAIL: false, USER: false, HOST: false, DOMAIN: false, PATH: false, ...over },
+    categories: { IP: false, EMAIL: false, USER: false, HOST: false, DOMAIN: false, PATH: false, CMD: false, REG: false, ...over },
   };
 }
 
@@ -296,5 +296,57 @@ describe("anonymizer — discoveries()", () => {
     const a = createAnonymizer(policy({}, true), NONE);
     a.apply("password = hunter2trustno1");
     expect(a.discoveries()).toEqual([]);
+  });
+});
+
+describe("anonymizer — encoded command-line blobs (CMD)", () => {
+  const B64 = "aQBlAHgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAKQA=";
+  it("tokenizes the base64 after -enc but keeps the readable command; restore reverses", () => {
+    const a = createAnonymizer(policy({ CMD: true }), NONE);
+    const out = a.apply(`powershell -enc ${B64}`);
+    expect(out).not.toContain(B64);
+    expect(out).toMatch(/^powershell -enc ANON_CMD_1$/);
+    expect(a.restore(out)).toBe(`powershell -enc ${B64}`);
+  });
+  it("matches the -e / -ec / -EncodedCommand variants case-insensitively", () => {
+    const a = createAnonymizer(policy({ CMD: true }), NONE);
+    expect(a.apply(`pwsh -e ${B64}`)).toMatch(/-e ANON_CMD_1/);
+    expect(a.apply(`pwsh -ec ${B64}`)).toMatch(/-ec ANON_CMD_1/);
+    expect(a.apply(`pwsh -EncodedCommand ${B64}`)).toMatch(/-EncodedCommand ANON_CMD_1/);
+  });
+  it("tokenizes the blob inside FromBase64String('…')", () => {
+    const a = createAnonymizer(policy({ CMD: true }), NONE);
+    const out = a.apply(`[Convert]::FromBase64String('${B64}')`);
+    expect(out).not.toContain(B64);
+    expect(out).toMatch(/FromBase64String\('ANON_CMD_1'\)/);
+    expect(a.restore(out)).toBe(`[Convert]::FromBase64String('${B64}')`);
+  });
+  it("does NOT touch a short flag like -Encoding UTF8", () => {
+    const a = createAnonymizer(policy({ CMD: true }), NONE);
+    expect(a.apply("Out-File -Encoding UTF8 out.txt")).toBe("Out-File -Encoding UTF8 out.txt");
+  });
+  it("no-op when CMD is disabled", () => {
+    const a = createAnonymizer(policy({ CMD: false }), NONE);
+    expect(a.apply(`powershell -enc ${B64}`)).toBe(`powershell -enc ${B64}`);
+  });
+});
+
+describe("anonymizer — user SIDs (REG)", () => {
+  const SID = "S-1-5-21-1004336348-1177238915-682003330-1003";
+  it("tokenizes a machine/domain-issued SID and restores it", () => {
+    const a = createAnonymizer(policy({ REG: true }), NONE);
+    const out = a.apply(`profile ${SID} loaded`);
+    expect(out).not.toContain(SID);
+    expect(out).toMatch(/profile ANON_REG_1 loaded/);
+    expect(a.restore(out)).toBe(`profile ${SID} loaded`);
+  });
+  it("PRESERVES well-known SIDs (not victim-identifying)", () => {
+    const a = createAnonymizer(policy({ REG: true }), NONE);
+    expect(a.apply("ran as S-1-5-18")).toContain("S-1-5-18");
+    expect(a.apply("group S-1-5-32-544")).toContain("S-1-5-32-544");
+  });
+  it("no-op when REG is disabled", () => {
+    const a = createAnonymizer(policy({ REG: false }), NONE);
+    expect(a.apply(`profile ${SID}`)).toBe(`profile ${SID}`);
   });
 });

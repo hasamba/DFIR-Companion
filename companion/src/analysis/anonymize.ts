@@ -7,7 +7,7 @@ import { extractAccounts } from "./assetGraph.js";
 // walks the model's PARSED JSON response (not the raw string) so real values containing JSON
 // metacharacters — e.g. a Windows path's backslashes — never corrupt parsing.
 
-export type AnonCategory = "IP" | "EMAIL" | "USER" | "HOST" | "DOMAIN" | "PATH";
+export type AnonCategory = "IP" | "EMAIL" | "USER" | "HOST" | "DOMAIN" | "PATH" | "CMD" | "REG";
 
 // Token categories include OTHER (free-form analyst term). AnonCategory stays the 6 pattern
 // categories that drive the per-case `categories` toggle map; OTHER is token-only.
@@ -49,7 +49,7 @@ export interface Anonymizer {
 }
 
 export const SECRET_PLACEHOLDER = "[REDACTED_SECRET]";
-const TOKEN_RE = /ANON_(?:IP|EMAIL|USER|HOST|DOMAIN|PATH|OTHER)_\d+/gi;
+const TOKEN_RE = /ANON_(?:IP|EMAIL|USER|HOST|DOMAIN|PATH|CMD|REG|OTHER)_\d+/gi;
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -157,6 +157,23 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     return t.replace(USER_PATH_RE, (m, prefix: string, name: string) =>
       WELL_KNOWN_PROFILE.test(name) ? m : prefix + assign("USER", name));
   }
+  // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
+  // FromBase64String('…'). Tokenize ONLY the blob — the command verb + flag stay visible as
+  // tradecraft signal (the model still sees that an encoded command ran), and victim data embedded
+  // in the encoded payload never reaches the wire. The `=` padding is matched outside the class.
+  const ENC_CMD_RE = /(?<![A-Za-z0-9])(-(?:e|ec|enc|encodedcommand)\s+)([A-Za-z0-9+\/]{16,}={0,2})/gi;
+  const FROM_B64_RE = /(FromBase64String\(\s*["'])([A-Za-z0-9+\/]{16,}={0,2})(["'])/gi;
+  function anonEncodedCmd(t: string): string {
+    let out = t.replace(ENC_CMD_RE, (_m, flag: string, blob: string) => flag + assign("CMD", blob));
+    out = out.replace(FROM_B64_RE, (_m, a: string, blob: string, c: string) => a + assign("CMD", blob) + c);
+    return out;
+  }
+  // Machine/domain-issued user SIDs (S-1-5-21-…-RID) are victim-identifying. Well-known SIDs
+  // (S-1-5-18, S-1-5-19/20, S-1-5-32-*) lack the S-1-5-21 prefix and are preserved.
+  const SID_RE = /\bS-1-5-21(?:-\d{1,10}){4}\b/gi;
+  function anonSids(t: string): string {
+    return t.replace(SID_RE, (m) => assign("REG", m));
+  }
   function anonHosts(t: string): string {
     let out = t;
     for (const h of known.hosts) {
@@ -195,6 +212,8 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     if (policy.categories.USER) t = anonAccounts(t);
     if (policy.categories.EMAIL) t = anonEmails(t);
     if (policy.categories.PATH) t = anonUserPaths(t);
+    if (policy.categories.CMD) t = anonEncodedCmd(t);
+    if (policy.categories.REG) t = anonSids(t);
     if (policy.categories.HOST) t = anonHosts(t);
     if (policy.categories.DOMAIN) t = anonDomains(t);
     if (policy.categories.IP) t = anonInternalIps(t);
