@@ -4,7 +4,8 @@
   "details": {
     "intro": {
       "text": "intro.md",
-      "background": "background.sh"
+      "background": "background.sh",
+      "foreground": "foreground.sh"
     },
     "steps": [
       {
@@ -35,18 +36,5 @@
   },
   "backend": {
     "imageid": "ubuntu"
-  },
-  "tabs": [
-    {
-      "title": "Terminal",
-      "type": "terminal"
-    },
-    {
-      "title": "Dashboard",
-      "type": "service",
-      "hostname": "host01",
-      "path": "/dashboard",
-      "port": 4773
-    }
-  ]
+  }
 }
