@@ -1,6 +1,7 @@
 #!/bin/bash
 # Runs in the visible terminal while background.sh clones + installs + starts the server.
-echo "Setting up DFIR Companion — this takes about 2 minutes..."
+echo "Setting up DFIR Companion — npm install takes 3-4 minutes, please wait..."
+echo "To see detailed progress: tail -f /tmp/dfir-setup.log"
 echo ""
 
 SECONDS=0
