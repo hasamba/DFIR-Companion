@@ -1,0 +1,17 @@
+[build]
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "dfir-entrypoint"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+
+[[services]]
+name = "dfir-companion"
+
+[services.variables]
+DFIR_HOST = "0.0.0.0"
+DFIR_PORT = "4773"
+DFIR_CASES_ROOT = "/data/cases"
+DFIR_DEMO_MODE = "true"
+DFIR_DEMO_RESET_HOURS = "1"
