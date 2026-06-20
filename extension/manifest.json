@@ -1,13 +1,27 @@
 {
   "manifest_version": 3,
-  "name": "DFIR Capture",
+  "name": "DFIR Companion — Evidence Capture & Push",
   "version": "0.25.0",
-  "description": "Periodic + event-driven screenshot capture and one-click artifact push for forensic investigations.",
+  "description": "Capture webpage evidence and push detections from DFIR consoles (Splunk, Velociraptor, Elastic) to your local DFIR Companion.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": ["tabs", "activeTab", "webNavigation", "storage", "alarms", "scripting"],
   "host_permissions": ["<all_urls>"],
   "options_ui": { "page": "options.html", "open_in_tab": true },
   "background": { "service_worker": "serviceWorker.js", "type": "module" },
-  "action": { "default_popup": "popup.html" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
   "commands": {
     "toggle-capture": {
       "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },

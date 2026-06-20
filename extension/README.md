@@ -1,10 +1,16 @@
-# DFIR Capture Extension
+# DFIR Companion — Evidence Capture & Push (extension)
 
 MV3 extension that captures the active tab (timer + events) and sends to the companion, and
 one-click pushes structured artifacts straight from DFIR consoles (Splunk / Velociraptor / Elastic /
 CrowdStrike) into the case timeline.
 
-## Build & load
+## Install — Chrome Web Store
+
+Listed publication is set up via CI (see [Publishing](#publishing-chrome-web-store)); once the
+listing is live, install it from the Chrome Web Store for one-click setup and automatic updates.
+Until then (and for development), use the unpacked load below.
+
+## Build & load (development / unpacked)
     cd extension && npm install && npm run build
 Load `extension/dist` as an unpacked extension in Comet/Chrome.
 
@@ -53,3 +59,27 @@ extension does nothing extra — plain screenshot capture is unaffected.
 ## Capture interval note
 
 The periodic capture timer is implemented with `chrome.alarms`, which clamps `periodInMinutes` to a minimum of roughly 1 minute for packed/published extensions — so sub-minute intervals (e.g. 5 s) will only fire at that cadence in unpacked/dev loads. Event-based triggers (tab switch, navigation, and manual capture) are not subject to this floor and fire immediately regardless of the alarm schedule.
+
+## Publishing (Chrome Web Store)
+
+Privacy policy: [`PRIVACY.md`](./PRIVACY.md) — the Extension sends data only to your local
+companion (`127.0.0.1:4773`); no third-party calls. Use its raw GitHub URL as the listing's
+required privacy-policy link.
+
+Store icons live in [`icons/`](./icons) (16/32/48/128, derived from the Companion logo) and are
+wired into `manifest.json` (`icons` + `action.default_icon`); the build copies them into `dist/`.
+The toolbar icon is still drawn at runtime in `actionIcon.ts` — these statics are what Chrome and
+the store listing use.
+
+CI (`.github/workflows/release-artifacts.yml`, job **`chrome-webstore`**) uploads and **publishes**
+the built zip on every `v*` tag. It no-ops until these repo secrets are set, so the developer
+account can be created independently of merging:
+
+- `CHROME_EXTENSION_ID` — the item ID from the Web Store dashboard (after the first manual upload)
+- `CHROME_CLIENT_ID`, `CHROME_CLIENT_SECRET`, `CHROME_REFRESH_TOKEN` — Chrome Web Store API OAuth2
+  credentials (Google Cloud project + a one-time refresh-token exchange)
+
+**One-time human steps** (CI can't do these): create the $5 Chrome developer account, do the first
+upload + fill the listing (name/description/icon/screenshots/privacy policy) + data-use disclosures,
+and submit for review. With `<all_urls>` host access, expect a manual review (days) on first
+submission. After that, tagged releases publish new versions automatically.

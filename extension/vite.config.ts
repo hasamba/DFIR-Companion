@@ -25,6 +25,13 @@ export default defineConfig({
       copyFileSync(resolve(__dirname, "src/popup.html"), resolve(__dirname, "dist/popup.html"));
       copyFileSync(resolve(__dirname, "src/options.html"), resolve(__dirname, "dist/options.html"));
       copyFileSync(resolve(__dirname, "manifest.json"), resolve(__dirname, "dist/manifest.json"));
+      // Store icons referenced by manifest.icons / action.default_icon (#138). The toolbar
+      // icon is still drawn at runtime (actionIcon.ts); these are the static assets Chrome
+      // shows before the service worker runs and that the Web Store listing requires.
+      mkdirSync(resolve(__dirname, "dist/icons"), { recursive: true });
+      for (const name of ["icon16.png", "icon32.png", "icon48.png", "icon128.png"]) {
+        copyFileSync(resolve(__dirname, "icons", name), resolve(__dirname, "dist/icons", name));
+      }
     },
   }],
 });
