@@ -5452,13 +5452,42 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // IOCs immediately AND auto-enriches any IOCs added later (imports/synthesis).
   // ⚠ Enrichment sends indicators to third-party services (VirusTotal/MalwareBazaar/
   // AbuseIPDB) — that's why it is off until the analyst opts in.
+  // Full catalogue of every known enrichment provider — shown in the picker regardless of whether
+  // the key is configured, so analysts can see what's available and what env var to add.
+  const ALL_KNOWN_PROVIDERS: Array<{ name: string; scope: "local" | "external"; keyHint: string }> = [
+    { name: "VirusTotal",   scope: "external", keyHint: "DFIR_VT_KEY" },
+    { name: "Hunting.ch",   scope: "external", keyHint: "DFIR_HUNTINGCH_KEY" },
+    { name: "AbuseIPDB",    scope: "external", keyHint: "DFIR_ABUSEIPDB_KEY" },
+    { name: "CrowdStrike",  scope: "external", keyHint: "DFIR_CROWDSTRIKE_CLIENT_ID + _SECRET" },
+    { name: "RockyRaccoon", scope: "external", keyHint: "DFIR_ROCKYRACCOON_KEY" },
+    { name: "Shodan",       scope: "external", keyHint: "DFIR_SHODAN_KEY" },
+    { name: "Hashlookup",   scope: "external", keyHint: "" },
+    { name: "Reverse DNS",  scope: "external", keyHint: "" },
+    { name: "WHOIS",        scope: "external", keyHint: "" },
+    { name: "GeoIP",        scope: "external", keyHint: "" },
+    { name: "MISP",         scope: "local",    keyHint: "DFIR_MISP_URL + DFIR_MISP_KEY" },
+    { name: "YETI",         scope: "local",    keyHint: "DFIR_YETI_URL + DFIR_YETI_KEY" },
+    { name: "OpenCTI",      scope: "local",    keyHint: "DFIR_OPENCTI_URL + DFIR_OPENCTI_KEY" },
+  ];
+
   app.get("/cases/:id/enrich-control", async (req: Request, res: Response) => {
     try {
+      const configuredSet = new Set(configuredNames);
       const enabled = new Set(resolveEnabledProviders(await enrichControl.load(req.params.id), configuredNames, localNames));
       return res.status(200).json({
         anyConfigured: allProviders.length > 0,
-        // Each CONFIGURED provider with its scope (local = OPSEC-safe) and whether it's on for this case.
-        providers: allProviders.map((p) => ({ name: p.name, scope: p.scope, enabled: enabled.has(p.name) })),
+        // All known providers with scope, configured flag (key present) and enabled flag (on for this case).
+        // Configured providers are listed first within each scope group.
+        providers: [
+          ...ALL_KNOWN_PROVIDERS.filter((p) => configuredSet.has(p.name)),
+          ...ALL_KNOWN_PROVIDERS.filter((p) => !configuredSet.has(p.name)),
+        ].map((p) => ({
+          name: p.name,
+          scope: p.scope,
+          keyHint: p.keyHint,
+          configured: configuredSet.has(p.name),
+          enabled: enabled.has(p.name),
+        })),
       });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
