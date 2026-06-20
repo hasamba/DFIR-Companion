@@ -1,16 +1,23 @@
 #!/bin/bash
-# Runs in the visible terminal while background.sh installs Node.js + deps + starts server.
-echo "Setting up DFIR Companion — pulling Docker image (~1 min total)..."
-echo "Watch detailed progress: tail -f /tmp/dfir-setup.log"
+# Runs in the visible terminal — streams setup progress while background.sh pulls + starts Docker.
+echo "Setting up DFIR Companion — pulling pre-built Docker image (~1 min)..."
 echo ""
 
-SECONDS=0
-while ! curl -sf http://localhost:4773/health > /dev/null 2>&1; do
-  printf "\r  elapsed: %ds — waiting for server to start..." "$SECONDS"
+# Wait for the log file (background.sh creates it on startup)
+until [ -f /tmp/dfir-setup.log ]; do sleep 0.5; done
+
+# Stream setup log to this terminal
+tail -f /tmp/dfir-setup.log &
+TAIL_PID=$!
+
+# Wait for server to come up
+until curl -sf http://localhost:4773/health > /dev/null 2>&1; do
   sleep 3
 done
 
-echo ""
+kill "$TAIL_PID" 2>/dev/null
+wait "$TAIL_PID" 2>/dev/null
+
 echo ""
 echo "========================================="
 echo " DFIR Companion is ready!"
