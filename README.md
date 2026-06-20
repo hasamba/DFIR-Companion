@@ -125,7 +125,7 @@ Standard DFIR questions auto-answered from the synthesized case
 
 ## What it produces
 
-- **Forensic timeline** — real events with timestamps from artifacts, sortable/filterable by date/severity
+- **Forensic timeline** — real events with timestamps from artifacts, sortable/filterable by date/severity/source
 - **Findings** — per-technique analytic conclusions with severity + MITRE ATT&CK mapping
 - **IOCs, MITRE coverage, attacker-path narrative** — cross-source corroboration badges + kill chain
 - **Attack phases** — timeline grouped into activity bursts by time gap, labeled by dominant tactic (deterministic, no AI)
@@ -216,6 +216,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Scope + legitimacy** — set time window; mark findings/IOCs/events legitimate (reversible); all views re-project
 - **Freshness** — "last synthesized N ago" + diff (duration/event/IOC counts); "last import N ago" + NEW row highlights; ⚠ advisory for cases >5 000 events
 - **Timeline pagination** — 100/250/500/all rows per page (user-selectable); prev/next controls
+- **Timeline source filter** — faceted dropdown (beside the severity legend) to show/hide events by the tool/source that produced them; multi-source events stay visible unless every source is hidden
 - **Correlation profile** — per-case Strict/Moderate/Aggressive/Custom window for cross-source event merging; toolbar dropdown + `PUT /cases/:id/correlation-profile`
 
 ### Threat-intel enrichment (off by default — opt-in per case)

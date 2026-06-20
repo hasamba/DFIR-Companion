@@ -414,6 +414,27 @@
     .sev-legend .sev-dot { width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
     .sev-legend .sev-filter { width: 11px; height: 11px; margin: 0; cursor: pointer; accent-color: currentColor; flex-shrink: 0; }
     .sev-legend .sev-item:has(.sev-filter:not(:checked)) { opacity: 0.35; text-decoration: line-through; }
+    /* Source/tool filter dropdown next to the severity legend (#131 follow-up) — a faceted filter
+       built from the distinct tool names that contributed events (e.sources). */
+    .src-legend { position: relative; display: inline-flex; align-items: center; margin-left: 8px;
+      cursor: default; vertical-align: middle; }
+    .src-filter-btn { background: transparent; border: 1px solid var(--c-2a2f3a); border-radius: 4px;
+      color: var(--c-9aa4b2); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0;
+      padding: 2px 8px; cursor: pointer; }
+    .src-filter-btn:hover, .src-filter-btn.active { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); }
+    .src-filter-menu { position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 30;
+      background: var(--c-161b22, #161b22); border: 1px solid var(--c-2a2f3a); border-radius: 6px;
+      padding: 6px; min-width: 170px; max-height: 300px; overflow-y: auto;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.45); display: flex; flex-direction: column; gap: 2px; }
+    .src-filter-menu .src-item { display: flex; align-items: center; gap: 6px; font-size: 11px;
+      color: var(--c-cdd9e5); text-transform: none; letter-spacing: 0; padding: 2px 4px;
+      border-radius: 3px; cursor: pointer; white-space: nowrap; }
+    .src-filter-menu .src-item:hover { background: var(--c-1c2330); }
+    .src-filter-menu .src-filter { width: 12px; height: 12px; margin: 0; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; }
+    .src-menu-actions { display: flex; gap: 10px; padding: 2px 4px 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 3px; }
+    .src-menu-link { background: transparent; border: none; color: var(--c-6aa9ff); font-size: 10px;
+      cursor: pointer; padding: 0; text-transform: uppercase; letter-spacing: 0.3px; }
+    .src-menu-link:hover { text-decoration: underline; }
     /* Per-column sort arrows in the Forensic Timeline header (#104): ▲ asc / ▼ desc, on the
        Timestamp column (by date) and the Message column (by severity). The active direction lights up. */
     .tl-sortarrows { display: inline-flex; flex-direction: column; vertical-align: middle; margin-left: 4px; line-height: 0.8; }
@@ -2285,7 +2306,7 @@
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2>Narrative Timeline<button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
     <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings</h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div><div id="findings">—</div></section>
-    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span></h2>
+    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkLegitBtn" title="Mark all selected events as legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div style="font-size:11px; color:var(--c-9aa4b2); margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
@@ -2823,6 +2844,8 @@
       } catch { return { key: "date", dir: "asc" }; }
     })();
     let searchTerm = "";                      // active text search (lower-cased; empty = no filter)
+    let hiddenSources = new Set();            // source/tool names the user unchecked in the source filter (empty = show all)
+    let _srcMenuSig = "";                      // signature of the source-filter menu's last build (skip rebuild when unchanged)
     let filterFrom = null;                    // timeline view lower bound (ISO UTC string or null)
     let filterTo = null;                      // timeline view upper bound (ISO UTC string or null)
     let _searchDebounce = null;
@@ -7820,9 +7843,49 @@
 
     // Render the forensic timeline from a pre-scoped+legit-filtered list.
     // Called both from render() (new state) and from the severity-filter checkboxes (re-filter only).
+    // Distinct real source/tool names across the in-scope timeline (excludes the "unknown source"
+    // placeholder), sorted — the option set for the source filter.
+    function distinctSources(ft) {
+      const set = new Set();
+      for (const e of (ft || [])) for (const s of (e.sources || [])) {
+        if (s && s !== "unknown source") set.add(s);
+      }
+      return [...set].sort((a, b) => a.localeCompare(b));
+    }
+
+    // Build/refresh the source-filter dropdown from the current timeline. Hidden when there are
+    // fewer than 2 sources (nothing to filter). The menu is rebuilt only when the source set
+    // changes; otherwise we just sync checkbox state so an open menu isn't disrupted mid-use.
+    function renderSourceFilter(ft) {
+      const wrap = document.getElementById("srcLegendWrap");
+      const menu = document.getElementById("srcFilterMenu");
+      const btn = document.getElementById("srcFilterBtn");
+      if (!wrap || !menu || !btn) return;
+      const sources = distinctSources(ft);
+      // Drop any unchecked sources that no longer exist (keeps the active state honest across imports).
+      for (const s of [...hiddenSources]) if (!sources.includes(s)) hiddenSources.delete(s);
+      if (sources.length < 2) { wrap.style.display = "none"; menu.hidden = true; _srcMenuSig = ""; return; }
+      wrap.style.display = "";
+      const shown = sources.length - hiddenSources.size;
+      const active = hiddenSources.size > 0;
+      btn.classList.toggle("active", active);
+      btn.textContent = active ? `⛏ Sources (${shown}/${sources.length})` : "⛏ Sources";
+      const sig = sources.join("");
+      if (sig !== _srcMenuSig) {
+        const items = sources.map(s =>
+          `<label class="src-item"><input type="checkbox" class="src-filter" value="${escAttr(s)}"${hiddenSources.has(s) ? "" : " checked"}><span>${esc(s)}</span></label>`
+        ).join("");
+        menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-src-all="1">All</button><button type="button" class="src-menu-link" data-src-none="1">None</button></div>${items}`;
+        _srcMenuSig = sig;
+      } else {
+        menu.querySelectorAll(".src-filter").forEach(cb => { cb.checked = !hiddenSources.has(cb.value); });
+      }
+    }
+
     function renderTimelineEvents(ft) {
       if (!_tlKeepPage) tlPage = 0;
       _tlKeepPage = false;
+      renderSourceFilter(ft);
 
       const checked = document.querySelectorAll('.sev-filter:checked');
       const activeSevs = new Set([...checked].map(cb => cb.value));
@@ -7832,6 +7895,12 @@
       if (showStarredOnly) visible = visible.filter(e => starredEvents.has(String(e.id)));
       if (searchTerm) visible = visible.filter(e => _evMatchesSearch(e, searchTerm));
       if (filterFrom || filterTo) visible = visible.filter(e => _evMatchesTimeRange(e, filterFrom, filterTo));
+      const sourceFiltering = hiddenSources.size > 0;
+      if (sourceFiltering) visible = visible.filter(e => {
+        const real = (e.sources || []).filter(s => s && s !== "unknown source");
+        if (!real.length) return true;                  // sourceless events (manual, etc.) are unaffected
+        return real.some(s => !hiddenSources.has(s));    // hidden only when ALL its sources are unchecked
+      });
       visible = sortTimelineEvents(visible);
 
       const totalFiltered = visible.length;
@@ -7844,7 +7913,7 @@
       const countEl = document.getElementById('timelineCount');
       if (countEl) {
         const total = ft.length;
-        const baseText = (filtering || showStarredOnly || _hasActiveFilter())
+        const baseText = (filtering || showStarredOnly || sourceFiltering || _hasActiveFilter())
           ? `${totalFiltered} of ${total} events`
           : `${total} event${total !== 1 ? 's' : ''}`;
         countEl.textContent = (tlPageSize > 0 && totalFiltered > tlPageSize)
@@ -7857,7 +7926,7 @@
 
       if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
-          (_hasActiveFilter() && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
+          ((filtering || showStarredOnly || sourceFiltering || _hasActiveFilter()) && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
         return;
       }
 
@@ -7954,6 +8023,29 @@
     document.querySelector('.sev-legend').addEventListener('change', function(e) {
       if (e.target.classList.contains('sev-filter')) renderTimelineEvents(lastFt);
     });
+
+    // Source/tool filter dropdown (#131 follow-up). The button + menu are persistent in the DOM;
+    // the menu's checkbox list is rebuilt by renderSourceFilter, so all handlers are delegated.
+    (function () {
+      const wrap = document.getElementById("srcLegendWrap");
+      const btn = document.getElementById("srcFilterBtn");
+      const menu = document.getElementById("srcFilterMenu");
+      if (!wrap || !btn || !menu) return;
+      btn.addEventListener("click", () => { menu.hidden = !menu.hidden; });
+      menu.addEventListener("change", (e) => {
+        if (!e.target.classList.contains("src-filter")) return;
+        if (e.target.checked) hiddenSources.delete(e.target.value); else hiddenSources.add(e.target.value);
+        renderTimelineEvents(lastFt);
+      });
+      menu.addEventListener("click", (e) => {
+        if (e.target.dataset.srcAll) { hiddenSources.clear(); renderTimelineEvents(lastFt); }
+        else if (e.target.dataset.srcNone) { distinctSources(lastFt).forEach(s => hiddenSources.add(s)); renderTimelineEvents(lastFt); }
+      });
+      // Close the menu when clicking outside it (clicks inside #srcLegendWrap are stopped at the wrap).
+      document.addEventListener("click", (e) => {
+        if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
+      });
+    })();
 
     // Re-order the timeline when a column sort arrow (▲/▼) is clicked; persist the choice (#104).
     // The header is re-rendered on each render(), so delegate off the persistent #forensicTimeline.
@@ -8129,6 +8221,7 @@
       loadStarred(caseId);
       selectedEvents.clear();
       selectedIocs.clear();
+      hiddenSources.clear(); _srcMenuSig = "";
       showStarredOnly = false;
       const sfBtn = document.getElementById("evStarFilterBtn");
       if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
