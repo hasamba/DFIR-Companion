@@ -8278,7 +8278,7 @@
         if (d && d.caseId && d.caseId !== caseId && d.ageMs < 120000) showCaseMismatch(d.caseId, caseId, "Screenshots");
       }).catch(() => {});
 
-      ws = new WebSocket(`ws://${location.host}/ws?caseId=${encodeURIComponent(caseId)}`);
+      ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?caseId=${encodeURIComponent(caseId)}`);
       ws.onopen = () => document.getElementById("status").textContent = "connected (live)";
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
