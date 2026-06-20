@@ -2,7 +2,7 @@
 
 **DFIR Companion** is an open-source, localhost-first post-detection analysis tool. It ingests evidence from the tools you already run — Velociraptor, Chainsaw, Hayabusa, EDR/SIEM exports, memory forensics, network logs — correlates everything into one forensic timeline, and synthesises findings, MITRE ATT&CK techniques, and an attacker path.
 
-> **The environment is being set up in the background.** While you read this, Node.js is cloning the repo, installing dependencies, and starting the server. This takes about **3 minutes**. You can click **Start** when you're ready — the first step will verify the server is up before you proceed.
+> **The environment is being set up in the background.** While you read this, Node.js is cloning the repo, installing dependencies, and starting the server. This takes about **2 minutes**. Watch the terminal — it will print **"DFIR Companion is ready!"** when done.
 
 ---
 
@@ -38,4 +38,15 @@ This environment has a pre-loaded demo case with:
 
 ---
 
-*When the browser panel on the right shows the dashboard, you're ready to begin.*
+> ⚠️ **AI features require an API key.**
+> The demo case is fully pre-populated — findings, timeline, IOCs, and threat intel are all already there and require no AI. However, if you want to use live AI features (re-synthesise findings, "Ask the case", generate a narrative, or run a second opinion), you will need to provide your own API key:
+>
+> 1. Open the dashboard → **Settings** → **AI Provider**
+> 2. Enter your API key and select a model (OpenAI, Anthropic, or any OpenRouter-compatible provider)
+> 3. Save — AI features activate immediately, no restart needed
+>
+> Without a key, all pre-computed results remain fully visible; only the live AI buttons will return an error.
+
+---
+
+*When the terminal prints "DFIR Companion is ready!", click **Start** to begin.*
