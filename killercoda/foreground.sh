@@ -1,5 +1,5 @@
 #!/bin/bash
-set +xv
+{ set +xv; } 2>/dev/null
 clear
 echo "Setting up DFIR Companion — pulling Docker image (~1 min)..."
 echo ""
