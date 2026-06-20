@@ -1,0 +1,43 @@
+{
+  "title": "DFIR Companion: Investigate a Ransomware Incident",
+  "description": "Walk through a real BEC + ransomware-precursor case using DFIR Companion — an open-source post-detection analysis tool that correlates forensic evidence across tools into one timeline.",
+  "details": {
+    "intro": {
+      "text": "intro.md",
+      "background": "background.sh"
+    },
+    "steps": [
+      {
+        "title": "Open the Dashboard",
+        "text": "step1.md",
+        "verify": "step1/verify.sh"
+      },
+      {
+        "title": "Explore the Forensic Timeline",
+        "text": "step2.md"
+      },
+      {
+        "title": "Review Findings & MITRE ATT&CK",
+        "text": "step3.md"
+      },
+      {
+        "title": "Investigate IOCs & Threat Intel",
+        "text": "step4.md"
+      },
+      {
+        "title": "Trace the Attacker Path",
+        "text": "step5.md"
+      }
+    ],
+    "finish": {
+      "text": "finish.md"
+    }
+  },
+  "backend": {
+    "imageid": "ubuntu"
+  },
+  "interface": {
+    "layout": "terminal-browser",
+    "port": 4773
+  }
+}
