@@ -1,18 +1,26 @@
 # Step 1 — Open the Dashboard
 
-The browser panel on the right should be showing the DFIR Companion dashboard. If it's blank, the server may still be starting. Run this to check:
+The terminal should have printed **"DFIR Companion is ready!"** when setup finished. If it's still counting, wait until you see that message before continuing.
+
+Once it's ready, open the dashboard:
+
+1. Click the **traffic/ports icon** (⇒) in the top-right of the KillerCoda header
+2. Enter port **4773** and click the link that appears
+3. The DFIR Companion dashboard opens in a new browser tab
+
+Alternatively, verify the server is running from the terminal:
 
 ```
 curl -s http://localhost:4773/health | python3 -m json.tool
 ```{{exec}}
 
-You should see `"status": "ok"`. If not, wait 30 seconds and try again.
+You should see `"status": "ok"`.
 
 ---
 
 ## Load the demo case
 
-The dashboard opens to the case list. You'll see a **"Demo case"** button in the toolbar — click it to load the pre-built GlobalTech Industries investigation. Confirm the prompt.
+In the dashboard, click the **"Demo case"** button in the toolbar to load the pre-built GlobalTech Industries investigation. Confirm the prompt.
 
 The dashboard will reload showing the **GlobalTech Industries — BEC & Ransomware Precursor** case.
 
@@ -25,8 +33,6 @@ The dashboard has several panels:
 - **IOCs** — observed indicators (IPs, domains, hashes, files, processes)
 - **Attacker Path / Evidence Chain** — causal graph of the attack
 - **Adversary Hints** — which known threat groups match the observed techniques
-
-The **severity legend** at the top of the timeline shows the breakdown: Critical, High, Medium, Low, Info.
 
 ---
 
