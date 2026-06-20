@@ -35,9 +35,5 @@
   },
   "backend": {
     "imageid": "ubuntu"
-  },
-  "interface": {
-    "layout": "terminal-browser",
-    "port": 4773
   }
 }
