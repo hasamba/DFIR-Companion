@@ -4,8 +4,8 @@ The terminal should have printed **"DFIR Companion is ready!"** when setup finis
 
 Once it's ready, open the dashboard:
 
-1. Click the **traffic/ports icon** (⇒) in the top-right of the KillerCoda header
-2. Enter port **4773** and click the link that appears
+1. Click the **hamburger menu** (≡) in the top-right of the KillerCoda header → **Traffic / Ports**
+2. Enter port **4773** and press **Access**
 3. The DFIR Companion dashboard opens in a new browser tab
 
 Alternatively, verify the server is running from the terminal:

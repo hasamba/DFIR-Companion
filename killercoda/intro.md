@@ -4,7 +4,7 @@
 
 > **The environment is being set up in the background.** While you read this, Docker is pulling the pre-built DFIR Companion image and starting the server. This takes about **1 minute**. Watch the terminal — it will print **"DFIR Companion is ready!"** when done.
 >
-> Once ready, open the dashboard: click the **top-right icon (⇒) → Traffic / Ports**, enter port **4773**, and press **Access**.
+> Once ready, open the dashboard: click the **hamburger menu (≡) top-right → Traffic / Ports**, enter port **4773**, and press **Access**.
 
 ---
 
