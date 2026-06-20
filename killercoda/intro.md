@@ -2,7 +2,7 @@
 
 **DFIR Companion** is an open-source, localhost-first post-detection analysis tool. It ingests evidence from the tools you already run — Velociraptor, Chainsaw, Hayabusa, EDR/SIEM exports, memory forensics, network logs — correlates everything into one forensic timeline, and synthesises findings, MITRE ATT&CK techniques, and an attacker path.
 
-> **The environment is being set up in the background.** While you read this, Node.js is cloning the repo, installing dependencies, and starting the server. This takes about **2 minutes**. Watch the terminal — it will print **"DFIR Companion is ready!"** when done.
+> **The environment is being set up in the background.** While you read this, Docker is pulling the pre-built DFIR Companion image and starting the server. This takes about **1 minute**. Watch the terminal — it will print **"DFIR Companion is ready!"** when done.
 
 ---
 

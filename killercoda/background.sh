@@ -5,31 +5,22 @@ exec > /tmp/dfir-setup.log 2>&1
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
-log "Installing Node.js 20..."
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>&1
-apt-get install -y nodejs 2>&1
-log "Node $(node --version) / npm $(npm --version) installed."
+log "Pulling DFIR Companion image (~400 MB, ~1 min)..."
+docker pull ghcr.io/hasamba/dfir-companion:latest
 
-log "Cloning DFIR Companion..."
-cd /root
-git clone --depth 1 https://github.com/hasamba/DFIR-Companion.git dfir-companion
+log "Starting server..."
+docker run -d \
+  --name dfir \
+  -p 4773:4773 \
+  -e DFIR_HOST=0.0.0.0 \
+  ghcr.io/hasamba/dfir-companion:latest
 
-cd dfir-companion/companion
-log "Installing dependencies (3-4 min)..."
-npm ci
-
-log "Starting server with tsx..."
-DFIR_HOST=0.0.0.0 \
-DFIR_PORT=4773 \
-DFIR_CASES_ROOT=/root/dfir-companion/cases \
-node_modules/.bin/tsx src/server.ts &
-
-log "Server process launched (PID $!). Waiting for health endpoint..."
-for i in $(seq 1 80); do
+log "Waiting for health endpoint..."
+for i in $(seq 1 30); do
   if curl -sf http://localhost:4773/health > /dev/null 2>&1; then
     log "Server is up and healthy."
     exit 0
   fi
   sleep 3
 done
-log "WARNING: server did not respond after 4 min. Check for errors above."
+log "WARNING: server did not respond after 90 s. Check container logs: docker logs dfir"
