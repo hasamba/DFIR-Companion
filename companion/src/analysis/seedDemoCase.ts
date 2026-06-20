@@ -466,7 +466,7 @@ export async function seedDemoCase(
 
   await write(join(caseDir, "state", "anon-control.json"), {
     enabled: false,
-    categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true },
+    categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true },
     redactSecrets: true,
   });
 

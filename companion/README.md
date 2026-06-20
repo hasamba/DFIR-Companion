@@ -483,14 +483,17 @@ always contain the real data ("tokenize-in-transit").
 
 - **Tokenized (victim / internal):** RFC 1918 / loopback / CGNAT internal IPs, known
   hostnames / FQDNs, `DOMAIN\user` / internal-UPN accounts, internal / AD domains,
-  emails, and the username segment of user-profile paths (`C:\Users\<name>\…`).
-- **Preserved (adversary / IOC):** public IPs, malware hashes, attacker domains — so
-  threat signal and threat-intel enrichment survive with real indicators.
+  emails, the username segment of user-profile paths (`C:\Users\<name>\…`), PowerShell
+  **encoded-command blobs** (`-enc <base64>` / `FromBase64String`, leaving the command
+  verb + flag visible as tradecraft), and machine/domain **user SIDs** (`S-1-5-21-…`).
+- **Preserved (adversary / IOC):** public IPs, malware hashes, attacker domains, and
+  well-known SIDs (`S-1-5-18`, `S-1-5-32-*`) — so threat signal and threat-intel
+  enrichment survive with real indicators.
 - **Secrets** (AWS keys, JWTs, GitHub/Slack tokens, `password=` / `Authorization: Bearer …`,
   URL credentials) are **one-way redacted** (`[REDACTED_SECRET]`), never restored.
   Hashes are deliberately NOT treated as secrets.
 - **Per-case control** via the dashboard **Anon** button: enable/disable, choose which
-  of the six categories to tokenize, toggle secret redaction. Persisted in
+  of the eight categories to tokenize, toggle secret redaction. Persisted in
   `state/anon-control.json`. Toggling forces a re-synthesis so conclusions reflect the new
   wire policy.
 - **Entity list (transparency + manual additions).** The Anon modal shows the
