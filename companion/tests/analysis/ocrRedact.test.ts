@@ -23,7 +23,7 @@ function mockRunner(words: OcrWord[]): OcrRunner {
 
 const ENABLED_POLICY: AnonPolicy = {
   enabled: true,
-  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true },
+  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true },
   redactSecrets: false,
 };
 

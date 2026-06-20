@@ -189,7 +189,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Severity-aware findings** — Critical/High rows become findings; deterministic auto-creation for missed high-severity events
 - **Efficient synthesis** — live debounced re-synthesis; skip-if-unchanged; stratified event selection + asset↔IOC digest
 - **Second LLM opinion** — on-demand QA: different model re-synthesizes case, reconciles disagreements (per-item accept/reject); durable across re-synthesis
-- **AI-input anonymization** — reversibly tokenizes IPs/users/hosts/domains/emails/paths; one-way-redacts secrets (adversary IOCs preserved)
+- **AI-input anonymization** — reversibly tokenizes IPs/users/hosts/domains/emails/paths, PowerShell encoded-command blobs, and victim SIDs; one-way-redacts secrets (adversary IOCs preserved)
 
 ### Correlation & deduplication
 - **Cross-source correlation** — the same artifact seen by different tools collapses into one corroborated event (shared hash / same path in a time window / exact duplicate), tagged with the real tool names. Idempotent — re-importing never doubles the timeline.

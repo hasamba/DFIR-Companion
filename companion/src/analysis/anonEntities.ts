@@ -4,7 +4,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { AnonTokenCategory, CustomEntity } from "./anonymize.js";
 
-const VALID: readonly AnonTokenCategory[] = ["IP", "EMAIL", "USER", "HOST", "DOMAIN", "PATH", "OTHER"];
+const VALID: readonly AnonTokenCategory[] = ["IP", "EMAIL", "USER", "HOST", "DOMAIN", "PATH", "CMD", "REG", "OTHER"];
 
 // Sanitize a raw entity list: trim, drop blanks, coerce unknown categories to OTHER, dedupe by
 // value (case-insensitive, first wins), cap the count. Pure — safe to run on stored OR posted data.

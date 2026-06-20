@@ -9,7 +9,7 @@ import type { ZipEntry } from "./zipArchive.js";
 // human-readable redaction notes); the I/O orchestration lives in reports/redactedExportBuilder.ts.
 
 const ALL_CATEGORIES: Record<AnonCategory, boolean> = {
-  IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true,
+  IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true,
 };
 
 // The export always uses MAXIMUM redaction, independent of the per-case AI-anonymization toggle:

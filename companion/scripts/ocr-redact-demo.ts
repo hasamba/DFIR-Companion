@@ -30,7 +30,7 @@ const OUT_DIR = path.join(__dirname, "ocr-demo-out");
 // Same shape the case derives at runtime: enable all categories + a few known victim entities.
 const POLICY: AnonPolicy = {
   enabled: true,
-  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true },
+  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true },
   redactSecrets: false,
 };
 

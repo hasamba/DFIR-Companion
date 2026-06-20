@@ -6071,8 +6071,9 @@
     const ANON_CATEGORIES = [
       ["IP", "Internal IPs"], ["USER", "Usernames"], ["HOST", "Hostnames"],
       ["DOMAIN", "Internal domains"], ["EMAIL", "Emails"], ["PATH", "User paths"],
+      ["CMD", "Encoded commands"], ["REG", "SIDs"],
     ];
-    const ANON_ENTITY_CATEGORIES = ["HOST", "USER", "DOMAIN", "IP", "EMAIL", "PATH", "OTHER"];
+    const ANON_ENTITY_CATEGORIES = ["HOST", "USER", "DOMAIN", "IP", "EMAIL", "PATH", "CMD", "REG", "OTHER"];
     let anonControl = null;          // { enabled, categories, redactSecrets, screenshotWarning }
     let anonAuto = { hosts: [], accounts: [], internalDomains: [] };
     let anonCustom = [];             // working copy: [{ value, category }]
