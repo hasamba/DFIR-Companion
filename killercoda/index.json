@@ -35,5 +35,18 @@
   },
   "backend": {
     "imageid": "ubuntu"
-  }
+  },
+  "tabs": [
+    {
+      "title": "Terminal",
+      "type": "terminal"
+    },
+    {
+      "title": "Dashboard",
+      "type": "service",
+      "hostname": "host01",
+      "path": "/dashboard",
+      "port": 4773
+    }
+  ]
 }
