@@ -433,6 +433,10 @@ export interface AppOptions {
   updateRepo?: string;                 // default DEFAULT_UPDATE_REPO; override for forks
   updateCheckEnv?: string;             // raw DFIR_UPDATE_CHECK (passed, not read globally, for testability)
   updateFetch?: typeof fetch;          // injectable so tests never hit the network
+  // Demo mode (DFIR_DEMO_MODE): blocks all mutating routes except POST /cases/seed-demo so a
+  // public Railway/cloud deployment is safe to share. The startup seed + periodic reset live in
+  // startServer; the middleware here enforces the read-only surface at the API layer.
+  demoMode?: boolean;
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -543,6 +547,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
     next();
   });
+
+  // Demo mode guard: allow all GETs and the manual reset route; block everything else.
+  // This makes the public Railway demo safe — visitors can browse the pre-seeded case but
+  // cannot create new cases, import evidence, trigger AI calls, or change global settings.
+  if (options.demoMode) {
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.method === "GET" || req.method === "OPTIONS") return next();
+      if (req.path === "/cases/seed-demo") return next();
+      return res.status(403).json({ error: "Demo mode: this action is disabled. The demo case resets every hour." });
+    });
+  }
 
   // Log each request and its final status (useful for a local single-user tool).
   app.use((req: Request, res: Response, next: NextFunction) => {
@@ -6731,6 +6746,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
 }
 
 export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", logDir?: string): void {
+  const demoMode = process.env.DFIR_DEMO_MODE === "true" || process.env.DFIR_DEMO_MODE === "1";
   const store = new CaseStore(casesRoot);
   // File-backed logging: a fresh global SESSION log per server run (session-<ts>.log) PLUS a
   // per-CASE log (cases/<id>/logs/session-<ts>.log) — the investigation audit trail that travels
@@ -6995,6 +7011,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     appVersion,
     updateCheckEnv: process.env.DFIR_UPDATE_CHECK,
     updateRepo,
+    demoMode,
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
@@ -7065,6 +7082,22 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     const shownHost = host === "0.0.0.0" ? "127.0.0.1" : host;
     logLine(`DFIR companion on http://${shownHost}:${port} (dashboard at /dashboard)`);
   });
+
+  // Demo mode: seed the demo case immediately on startup so it's always present, then reset it
+  // on a fixed interval so visitor edits don't accumulate. Best-effort — a seed failure is logged
+  // but never fatal. The timer is .unref()'d so it doesn't block a clean process exit.
+  if (demoMode) {
+    const resetHours = Math.max(1, Number(process.env.DFIR_DEMO_RESET_HOURS) || 1);
+    const seedDemo = (): void => {
+      void seedDemoCase(store.casesRoot, { force: true })
+        .then((r) => logLine(`[demo] demo case seeded — ${r.stats.events} events, ${r.stats.findings} findings, ${r.stats.iocs} IOCs`))
+        .catch((e) => logLine(`[demo] demo case seed failed: ${(e as Error).message}`));
+    };
+    seedDemo();
+    const t = setInterval(seedDemo, resetHours * 60 * 60 * 1000);
+    t.unref();
+    logLine(`[demo] demo mode active — writes blocked, case resets every ${resetHours}h`);
+  }
 
   // Snapshot the enrolled Velociraptor fleet into the client inventory at startup (#70), so a single-
   // endpoint collection can resolve a host → client_id from the file. RETRY WITH BACKOFF: if the
