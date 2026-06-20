@@ -1,7 +1,7 @@
 #!/bin/bash
-# Runs in the visible terminal while background.sh clones + installs + starts the server.
-echo "Setting up DFIR Companion — npm install takes 3-4 minutes, please wait..."
-echo "To see detailed progress: tail -f /tmp/dfir-setup.log"
+# Runs in the visible terminal while background.sh installs Node.js + deps + starts server.
+echo "Setting up DFIR Companion — installing Node.js + dependencies (~5 min total)..."
+echo "Watch detailed progress: tail -f /tmp/dfir-setup.log"
 echo ""
 
 SECONDS=0
