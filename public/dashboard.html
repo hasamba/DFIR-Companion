@@ -6042,9 +6042,14 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) { document.getElementById("status").textContent = "connect to a case first"; return; }
       if (!enrichAvailable) return;
-      const row = p => `<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:3px 0">`
-        + `<input type="checkbox" class="enrich-cb" value="${escAttr(p.name)}" data-scope="${escAttr(p.scope)}" ${p.enabled ? "checked" : ""}> ${esc(p.name)}`
-        + `<span class="enrich-health" data-prov="${escAttr(p.name)}" title="checking reachability…" style="color:#777;font-size:11px">●</span></label>`;
+      const row = p => p.configured
+        ? `<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:3px 0">`
+            + `<input type="checkbox" class="enrich-cb" value="${escAttr(p.name)}" data-scope="${escAttr(p.scope)}" ${p.enabled ? "checked" : ""}> ${esc(p.name)}`
+            + `<span class="enrich-health" data-prov="${escAttr(p.name)}" title="checking reachability…" style="color:#777;font-size:11px">●</span></label>`
+        : `<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:3px 0;opacity:0.45;cursor:not-allowed">`
+            + `<input type="checkbox" class="enrich-cb" value="${escAttr(p.name)}" data-scope="${escAttr(p.scope)}" disabled> ${esc(p.name)}`
+            + (p.keyHint ? `<span style="color:#888;font-size:11px;font-style:italic">(key missing: ${esc(p.keyHint)})</span>` : "")
+            + `</label>`;
       const group = (label, color, arr) => arr.length
         ? `<div style="margin-bottom:8px"><div class="asset-subhead" style="margin:0 0 2px;color:${color}">${label}</div>${arr.map(row).join("")}</div>` : "";
       document.getElementById("enrichProviders").innerHTML =
