@@ -426,11 +426,13 @@
       background: var(--c-161b22, #161b22); border: 1px solid var(--c-2a2f3a); border-radius: 6px;
       padding: 6px; min-width: 170px; max-height: 300px; overflow-y: auto;
       box-shadow: 0 6px 18px rgba(0,0,0,0.45); display: flex; flex-direction: column; gap: 2px; }
+    .src-filter-menu[hidden] { display: none; }   /* explicit — the display:flex above would override the [hidden] UA rule */
     .src-filter-menu .src-item { display: flex; align-items: center; gap: 6px; font-size: 11px;
       color: var(--c-cdd9e5); text-transform: none; letter-spacing: 0; padding: 2px 4px;
       border-radius: 3px; cursor: pointer; white-space: nowrap; }
     .src-filter-menu .src-item:hover { background: var(--c-1c2330); }
     .src-filter-menu .src-filter { width: 12px; height: 12px; margin: 0; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; }
+    .src-filter-menu .src-item-none span { font-style: italic; color: var(--c-9aa4b2); }
     .src-menu-actions { display: flex; gap: 10px; padding: 2px 4px 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 3px; }
     .src-menu-link { background: transparent; border: none; color: var(--c-6aa9ff); font-size: 10px;
       cursor: pointer; padding: 0; text-transform: uppercase; letter-spacing: 0.3px; }
@@ -7843,14 +7845,22 @@
 
     // Render the forensic timeline from a pre-scoped+legit-filtered list.
     // Called both from render() (new state) and from the severity-filter checkboxes (re-filter only).
-    // Distinct real source/tool names across the in-scope timeline (excludes the "unknown source"
-    // placeholder), sorted — the option set for the source filter.
-    function distinctSources(ft) {
+    // The option set for the source filter: distinct real source/tool names across the in-scope
+    // timeline (excludes the "unknown source" placeholder), sorted, plus a trailing "(no source)"
+    // pseudo-facet when any event has no real source — so those events are controllable too and
+    // "None" truly empties the timeline.
+    const NO_SOURCE_FACET = "(no source)";
+    function sourceFacets(ft) {
       const set = new Set();
-      for (const e of (ft || [])) for (const s of (e.sources || [])) {
-        if (s && s !== "unknown source") set.add(s);
+      let hasNone = false;
+      for (const e of (ft || [])) {
+        const real = (e.sources || []).filter(s => s && s !== "unknown source");
+        if (real.length) for (const s of real) set.add(s);
+        else hasNone = true;
       }
-      return [...set].sort((a, b) => a.localeCompare(b));
+      const list = [...set].sort((a, b) => a.localeCompare(b));
+      if (hasNone) list.push(NO_SOURCE_FACET);
+      return list;
     }
 
     // Build/refresh the source-filter dropdown from the current timeline. Hidden when there are
@@ -7861,7 +7871,7 @@
       const menu = document.getElementById("srcFilterMenu");
       const btn = document.getElementById("srcFilterBtn");
       if (!wrap || !menu || !btn) return;
-      const sources = distinctSources(ft);
+      const sources = sourceFacets(ft);
       // Drop any unchecked sources that no longer exist (keeps the active state honest across imports).
       for (const s of [...hiddenSources]) if (!sources.includes(s)) hiddenSources.delete(s);
       if (sources.length < 2) { wrap.style.display = "none"; menu.hidden = true; _srcMenuSig = ""; return; }
@@ -7873,7 +7883,7 @@
       const sig = sources.join("");
       if (sig !== _srcMenuSig) {
         const items = sources.map(s =>
-          `<label class="src-item"><input type="checkbox" class="src-filter" value="${escAttr(s)}"${hiddenSources.has(s) ? "" : " checked"}><span>${esc(s)}</span></label>`
+          `<label class="src-item${s === NO_SOURCE_FACET ? " src-item-none" : ""}"><input type="checkbox" class="src-filter" value="${escAttr(s)}"${hiddenSources.has(s) ? "" : " checked"}><span>${esc(s)}</span></label>`
         ).join("");
         menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-src-all="1">All</button><button type="button" class="src-menu-link" data-src-none="1">None</button></div>${items}`;
         _srcMenuSig = sig;
@@ -7898,8 +7908,8 @@
       const sourceFiltering = hiddenSources.size > 0;
       if (sourceFiltering) visible = visible.filter(e => {
         const real = (e.sources || []).filter(s => s && s !== "unknown source");
-        if (!real.length) return true;                  // sourceless events (manual, etc.) are unaffected
-        return real.some(s => !hiddenSources.has(s));    // hidden only when ALL its sources are unchecked
+        if (!real.length) return !hiddenSources.has(NO_SOURCE_FACET);  // unsourced events ride the "(no source)" facet
+        return real.some(s => !hiddenSources.has(s));                   // hidden only when ALL its sources are unchecked
       });
       visible = sortTimelineEvents(visible);
 
@@ -8039,7 +8049,7 @@
       });
       menu.addEventListener("click", (e) => {
         if (e.target.dataset.srcAll) { hiddenSources.clear(); renderTimelineEvents(lastFt); }
-        else if (e.target.dataset.srcNone) { distinctSources(lastFt).forEach(s => hiddenSources.add(s)); renderTimelineEvents(lastFt); }
+        else if (e.target.dataset.srcNone) { sourceFacets(lastFt).forEach(s => hiddenSources.add(s)); renderTimelineEvents(lastFt); }
       });
       // Close the menu when clicking outside it (clicks inside #srcLegendWrap are stopped at the wrap).
       document.addEventListener("click", (e) => {
