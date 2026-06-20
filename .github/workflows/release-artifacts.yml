@@ -159,6 +159,52 @@ jobs:
           path: extension/${{ env.ZIP_NAME }}
           if-no-files-found: error
 
+  chrome-webstore:
+    name: Publish to Chrome Web Store
+    needs: extension-zip
+    # Same gate as the GitHub Release: a real tag, or a workflow_dispatch that names one.
+    # Runs independently of the `release` job so a Web Store hiccup never blocks the GitHub
+    # Release (and vice-versa). No-ops cleanly until the store OAuth secrets are configured,
+    # so it's safe to merge before the developer account / credentials exist (#138).
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for Web Store credentials
+        id: creds
+        env:
+          CWS_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+        run: |
+          if [ -n "$CWS_CLIENT_ID" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Chrome Web Store secrets not set (CHROME_CLIENT_ID/CHROME_CLIENT_SECRET/CHROME_REFRESH_TOKEN/CHROME_EXTENSION_ID). Skipping upload."
+          fi
+
+      - name: Download extension zip
+        if: steps.creds.outputs.configured == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: extension-zip
+          path: ext-zip
+
+      - name: Resolve zip path
+        if: steps.creds.outputs.configured == 'true'
+        id: zip
+        run: echo "path=$(ls ext-zip/*.zip | head -n1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload + publish (listed)
+        if: steps.creds.outputs.configured == 'true'
+        uses: mnao305/chrome-extension-upload@v5.0.0
+        with:
+          file-path: ${{ steps.zip.outputs.path }}
+          extension-id: ${{ secrets.CHROME_EXTENSION_ID }}
+          client-id: ${{ secrets.CHROME_CLIENT_ID }}
+          client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
+          refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          # Listed extension: submit the new version for publication after upload (#138).
+          publish: true
+
   release:
     name: Attach to GitHub Release
     needs: [windows-exe, linux-appimage, extension-zip]
