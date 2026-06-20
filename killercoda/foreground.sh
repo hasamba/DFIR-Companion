@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs in the visible terminal while background.sh installs Node.js + deps + starts server.
-echo "Setting up DFIR Companion — installing Node.js + dependencies (~5 min total)..."
+echo "Setting up DFIR Companion — pulling Docker image (~1 min total)..."
 echo "Watch detailed progress: tail -f /tmp/dfir-setup.log"
 echo ""
 
