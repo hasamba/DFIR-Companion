@@ -450,6 +450,14 @@
     .conf-high { background: var(--c-1a3a1a); color: var(--c-6bcb77); border: 1px solid var(--c-2a5a2a); }
     .conf-mid  { background: var(--c-3a2e00); color: var(--c-e0b84a); border: 1px solid var(--c-5a4800); }
     .conf-low  { background: var(--c-3a1a1a); color: var(--c-e06060); border: 1px solid var(--c-5a2a2a); }
+    /* Collapsible "Evidence" disclosure under a finding: evidence / Supporting events / Supporting IOCs. */
+    .ev-details { margin-top: 4px; }
+    .ev-details > summary { cursor: pointer; color: var(--c-6aa9ff); font-size: 12px; user-select: none; }
+    .ev-body { margin: 4px 0 2px 12px; padding: 4px 0 4px 8px; border-left: 2px solid var(--c-2a3146); }
+    .ev-body > div { margin: 2px 0; }
+    /* Supporting-event jump links under a finding (jump to the timeline row). */
+    .ev-jump { color: var(--c-6aa9ff); text-decoration: none; border-bottom: 1px dotted var(--c-6aa9ff); cursor: pointer; }
+    .ev-jump:hover { color: var(--c-9cc5ff); border-bottom-style: solid; }
     button { background: var(--c-2d6cdf); color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
     input { background: var(--c-0f1115); color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); padding: 6px; border-radius: 6px; }
     #status { font-size: 12px; color: var(--c-9aa4b2); }
@@ -6496,6 +6504,36 @@
       clearTimeout(iocSourcesTimer);
       iocSourcesTimer = setTimeout(() => loadIocSources(caseId), 800);
     }
+
+    // Collapsible "Evidence" disclosure under a finding (derived client-side, no extra request):
+    // evidence (screenshot artifacts), Supporting events (the forensic events that back it — built in
+    // render() from each event's relatedFindingIds, click to jump to the timeline row), and Supporting
+    // IOCs (the finding's own related IOCs plus any IOC value referenced by a backing event). Returns
+    // "" when there's nothing to show, so a bare finding gets no empty toggle.
+    function findingEvidenceDetails(f, caseId, screenshots, events, iocs) {
+      const rows = [];
+      const evFiles = Array.from(new Set((screenshots || []).filter(Boolean)));
+      if (caseId && evFiles.length) {
+        const links = evFiles.map(fn =>
+          `<a href="/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(fn)}" target="_blank" rel="noopener" style="color:var(--c-6aa9ff)" title="Open evidence: ${escAttr(fn)}">📎 ${esc(fn)}</a>`
+        ).join(" · ");
+        rows.push(`<div><small style="color:var(--c-9aa4b2)">evidence: ${links}</small></div>`);
+      }
+      if (events.length) {
+        const links = events.map(e => `<a class="ev-jump" data-evid="${escAttr(e.id)}" title="Jump to event ${escAttr(e.id)} in the timeline">${esc(e.id)}</a>`).join(", ");
+        rows.push(`<div><small>Supporting events: ${links}</small></div>`);
+      }
+      const byVal = new Map((iocs || []).map(i => [String(i.value).trim().toLowerCase(), i.value]));
+      const vals = new Set();
+      for (const id of (f.relatedIocs || [])) { const ioc = (iocs || []).find(x => x.id === id); if (ioc) vals.add(ioc.value); }
+      for (const e of events) for (const v of [e.sha256, e.md5, e.srcIp, e.dstIp, e.path]) {
+        if (!v) continue; const hit = byVal.get(String(v).trim().toLowerCase()); if (hit) vals.add(hit);
+      }
+      if (vals.size) rows.push(`<div><small>Supporting IOCs: ${[...vals].map(v => esc(v)).join(", ")}</small></div>`);
+      if (!rows.length) return "";
+      return `<details class="ev-details"><summary title="Show supporting evidence">🔬 Evidence</summary>` +
+        `<div class="ev-body">${rows.join("")}</div></details>`;
+    }
     // "⊕ N" corroboration badge for an IOC seen by 2+ tools (mirrors the forensic-timeline badge).
     function iocCorroBadge(iocId) {
       const src = iocSourcesById[iocId];
@@ -7295,18 +7333,56 @@
       swSelectionChanged();
     }
 
-    // Scroll the timeline table to a clicked dot's row and flash it (the reverse of the ring sync).
+    // Scroll the timeline table to a row currently in the DOM and flash it (the reverse of the ring
+    // sync). Returns true if the row was found on the visible page, false otherwise.
     function swLocateInTable(id) {
       const rows = document.querySelectorAll("#forensicTimeline .ev-row");
       for (const row of rows) {
-        if (row.getAttribute("data-evid") === id) {
+        if (row.getAttribute("data-evid") === String(id)) {
           row.scrollIntoView({ behavior: "smooth", block: "center" });
           row.classList.remove("ev-flash"); void row.offsetWidth;  // restart the animation
           row.classList.add("ev-flash");
           setTimeout(() => row.classList.remove("ev-flash"), 1600);
-          return;
+          return true;
         }
       }
+      return false;
+    }
+
+    // Reset the forensic-timeline VIEW filters (severity / source / starred / search / time range) so a
+    // targeted event can't be hidden. Used by jumpToEvent when the event isn't on the current page —
+    // only called when the row is genuinely hidden, so a no-filter view is left untouched.
+    function resetTimelineViewFilters() {
+      document.querySelectorAll(".sev-filter").forEach(cb => { cb.checked = true; });
+      hiddenSources.clear(); _srcMenuSig = "";
+      showStarredOnly = false;
+      const sfBtn = document.getElementById("evStarFilterBtn");
+      if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
+      searchTerm = ""; filterFrom = null; filterTo = null;
+      const gsEl = document.getElementById("globalSearch"); if (gsEl) gsEl.value = "";
+      const ffEl = document.getElementById("filterFrom"); if (ffEl) ffEl.value = "";
+      const ftEl = document.getElementById("filterTo"); if (ftEl) ftEl.value = "";
+      const csBtn = document.getElementById("clearSearch"); if (csBtn) csBtn.hidden = true;
+    }
+
+    // Reveal a forensic event by id and scroll+flash it — used by the Evidence panel's supporting-event
+    // links. The timeline is PAGINATED and FILTERABLE, so the target row may not be in the DOM: expand
+    // the section, and if the row isn't on the current page, clear the view filters that could hide it,
+    // page to where it lands, re-render, then locate.
+    function jumpToEvent(id) {
+      id = String(id);
+      const sec = document.getElementById("sec-timeline");
+      if (sec) sec.classList.remove("collapsed");
+      if (swLocateInTable(id)) return;                                    // already on the current page
+      const ft = lastFt || [];
+      if (!ft.some(e => String(e.id) === id)) return;                    // not in the in-scope timeline
+      resetTimelineViewFilters();                                         // unhide it if a filter excluded it
+      const sorted = sortTimelineEvents(ft.slice());                      // same order the table renders in
+      const idx = sorted.findIndex(e => String(e.id) === id);
+      if (idx >= 0 && tlPageSize > 0) tlPage = Math.floor(idx / tlPageSize);  // page the event lands on
+      _tlKeepPage = true;                                                 // don't let the re-render reset the page
+      renderTimelineEvents(ft);
+      swLocateInTable(id);
     }
 
     // Jump from a timeline event's finding link to that finding in the Findings section,
@@ -8117,9 +8193,11 @@
       // Aggregate each finding's evidence from the events that back it: synthesis-made
       // findings carry no sourceScreenshots themselves, but their events do.
       const evByFinding = {};
+      const suppEventsByFinding = {};   // finding id -> the forensic events that back it (for the support rows)
       for (const e of ft) {
         for (const fid of (e.relatedFindingIds || [])) {
           (evByFinding[fid] = evByFinding[fid] || []).push(...(e.sourceScreenshots || []));
+          (suppEventsByFinding[fid] = suppEventsByFinding[fid] || []).push(e);
         }
       }
       lastFt = ft;
@@ -8159,7 +8237,7 @@
             `<span style="color:var(--c-6aa9ff)">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
-            `${evidenceLinks(state.caseId, evidence)}</div>`;
+            `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs)}</div>`;
         }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : "—");
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
@@ -8730,6 +8808,10 @@
       // Finding reference link inside a timeline event → jump to the finding.
       const fjump = e.target.closest && e.target.closest(".finding-jump");
       if (fjump) { e.preventDefault(); jumpToFinding(fjump.getAttribute("data-fid")); return; }
+      // Supporting-event link inside a finding's Evidence panel (#139) → reveal + jump to that
+      // timeline row (handles pagination/filters so the event is found even when off-page or hidden).
+      const ejump = e.target.closest && e.target.closest(".ev-jump");
+      if (ejump) { e.preventDefault(); jumpToEvent(ejump.getAttribute("data-evid")); return; }
       const chip = e.target.closest && e.target.closest(".comment-chip");
       if (chip) { openCommentModal(chip.getAttribute("data-ct"), chip.getAttribute("data-ci")); return; }
       const tag = e.target.closest && e.target.closest(".tag-add");
