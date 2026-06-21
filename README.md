@@ -25,9 +25,9 @@ stays on disk, and the AI provider is yours to choose.
 > The value is **"so what"**, not re-deriving alerts.
 >
 
-[!tip] Demo Case: https://dfir-companion-production.up.railway.app/dashboard?caseId=demo
+> [!tip] Demo Case: https://dfir-companion-production.up.railway.app/dashboard?caseId=demo
  
-[!tip] Hands-on lab: https://killercoda.com/dfir-companion/scenario/killercoda
+> [!tip] Hands-on lab: https://killercoda.com/dfir-companion/scenario/killercoda
 
 
 
