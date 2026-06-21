@@ -24,9 +24,10 @@ stays on disk, and the AI provider is yours to choose.
 > correlates them into one forensic timeline, and synthesizes findings, attacker path, IOCs, and reports.
 > The value is **"so what"**, not re-deriving alerts.
 >
-> Demo Case: https://dfir-companion-production.up.railway.app/dashboard?caseId=demo
-> 
-> Hands-on lab: https://killercoda.com/dfir-companion/scenario/killercoda
+
+Demo Case: https://dfir-companion-production.up.railway.app/dashboard?caseId=demo
+ 
+Hands-on lab: https://killercoda.com/dfir-companion/scenario/killercoda
 
 
 
