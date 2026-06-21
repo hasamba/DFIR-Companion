@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DFIR Companion — Evidence Capture & Push",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Capture webpage evidence and push detections from DFIR consoles (Splunk, Velociraptor, Elastic) to your local DFIR Companion.",
   "icons": {
     "16": "icons/icon16.png",
