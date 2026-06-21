@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Supporting events & IOCs per finding** — each finding now lists the forensic events that back it (click to jump to the timeline row, even across pagination/filters) plus its supporting IOC values, derived client-side from the case state (part of #139).
+
 ## [0.26.0] - 2026-06-21
 
 ### Added
