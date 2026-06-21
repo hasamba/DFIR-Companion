@@ -11,7 +11,7 @@
     <packageSourceUrl>https://github.com/hasamba/DFIR-Companion/tree/master/packaging/chocolatey</packageSourceUrl>
     <owners>hasamba</owners>
 
-    <title>DFIR Companion (portable localhost server)</title>
+    <title>DFIR Companion</title>
     <authors>hasamba</authors>
     <projectUrl>https://github.com/hasamba/DFIR-Companion</projectUrl>
     <iconUrl>https://raw.githubusercontent.com/hasamba/DFIR-Companion/master/public/DFIR_Companion_favicon.png</iconUrl>
