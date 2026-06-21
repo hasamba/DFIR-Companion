@@ -105,6 +105,8 @@ import { PlaybookStore, type NewPlaybookTask, type PlaybookTaskPatch } from "./a
 import { PLAYBOOK_STATUSES, playbookStats, type PlaybookStatus, type PlaybookTask } from "./analysis/playbook.js";
 import { PlaybookHuntStore } from "./analysis/playbookHuntStore.js";
 import { selectFreshHunts, pendingHuntTasks, mergePersistedHunts, EMPTY_PERSISTED_HUNTS, PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT } from "./analysis/playbookHunt.js";
+import { HuntOutcomeStore } from "./analysis/huntOutcomeStore.js";
+import { recordDeploy, fillOutcome, buildHuntingProfile, HUNT_OUTCOME_MAX_DEFAULT, type HuntOutcomeSource, type HuntDeployInput } from "./analysis/huntOutcomes.js";
 import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
 import type { AssetType } from "./analysis/assetGraph.js";
@@ -354,6 +356,10 @@ export interface AppOptions {
   artifactBundleStore?: ArtifactBundleStore;
   veloHuntStore?: VeloHuntStore;
   onVeloHunt?: (caseId: string) => void;
+  // Hunting feedback loop (#157): per-case ledger of deployed hunts + their outcomes (hit/miss +
+  // counts). Recorded on deploy (bundle + suggested fleet/playbook/technique hunts), filled on collect,
+  // read by the suggestion routes (exclude + "PRIOR HUNTS" context) and the dashboard hunting profile.
+  huntOutcomeStore?: HuntOutcomeStore;
   // Live Velociraptor CLIENT_EVENT monitors (#84): per-case pollers that stream a client monitoring
   // artifact's new rows into the push/import pipeline. The store persists each monitor + its cursor so
   // a restart resumes without re-ingesting; onVeloMonitor broadcasts a change to the case's clients.
@@ -1832,6 +1838,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // path for a task tied to exactly one endpoint). Resolves the host → client_id from the persisted
   // INVENTORY (refreshing it once on a miss), then runs collect_client on that client; returns the
   // flow + a GUI deep link. 501 when the Velociraptor API is off; 502 when no client matches the host.
+  // Resolve a hostname → client_id from the persisted inventory (refreshing once on a miss) and launch a
+  // single-client collection. Throws when no client matches. Shared by the global /velociraptor/collect-host
+  // route and the case-scoped /cases/:id/velociraptor/deploy-hunt route (#157). Requires the API client set.
+  async function collectHostResolved(hostname: string, vql: string, description: string) {
+    const client = options.velociraptorClient!;
+    const store = options.velociraptorClientStore;
+    if (store) {
+      // Resolve from the inventory file; if the host isn't there yet, refresh once and retry (self-healing).
+      let rec = matchClient((await store.load()).clients, hostname);
+      if (!rec) { await refreshVeloClients(); rec = matchClient((await store.load()).clients, hostname); }
+      if (!rec) throw new Error(`No enrolled Velociraptor client matches host "${hostname}" — refresh the client list (Settings → Velociraptor) or run a fleet hunt instead`);
+      return await client.collectOnClient(rec.clientId, vql, description, hostname);
+    }
+    return await client.collectFromHost(hostname, vql, description);
+  }
+
   app.post("/velociraptor/collect-host", async (req: Request, res: Response) => {
     if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     const hostname = typeof req.body?.hostname === "string" ? req.body.hostname.trim() : "";
@@ -1841,17 +1863,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!vql) return res.status(400).json({ error: "vql is required" });
     try {
       logLine(`[velociraptor] collect on host ${hostname}: ${description.slice(0, 80)}`);
-      const store = options.velociraptorClientStore;
-      let result;
-      if (store) {
-        // Resolve from the inventory file; if the host isn't there yet, refresh once and retry (self-healing).
-        let rec = matchClient((await store.load()).clients, hostname);
-        if (!rec) { await refreshVeloClients(); rec = matchClient((await store.load()).clients, hostname); }
-        if (!rec) return res.status(502).json({ error: `No enrolled Velociraptor client matches host "${hostname}" — refresh the client list (Settings → Velociraptor) or run a fleet hunt instead` });
-        result = await options.velociraptorClient.collectOnClient(rec.clientId, vql, description, hostname);
-      } else {
-        result = await options.velociraptorClient.collectFromHost(hostname, vql, description);
-      }
+      const result = await collectHostResolved(hostname, vql, description);
       logLine(`[velociraptor] collection launched -> flow ${result.flowId} on ${result.clientId} (${result.hostname})`);
       return res.status(200).json(result);
     } catch (err) {
@@ -2312,6 +2324,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         } catch { /* non-fatal */ }
       }
 
+      // #157 feedback loop: fill this hunt's outcome (by huntId) — for a bundle hunt OR a deployed
+      // suggested hunt. Done regardless of importedAny so a hunt that ran and found nothing is recorded
+      // as a miss (the loop must know it ran empty so it isn't re-proposed as productive). Best-effort.
+      if (options.huntOutcomeStore) {
+        try {
+          const cur = await options.huntOutcomeStore.load(caseId);
+          await options.huntOutcomeStore.save(caseId, fillOutcome(cur, job.huntId, { addedEvents, addedIocs, collectedAt: new Date().toISOString() }));
+        } catch (e) { logLine(`[hunt-outcomes] fill failed for hunt ${job.huntId}: ${(e as Error).message}`); }
+      }
+
       job = { ...job, status: "imported", importedAt: new Date().toISOString(), importFile: lastFile, addedEvents, addedIocs, error: undefined };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
@@ -2323,6 +2345,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       } catch { /* ignore */ }
       options.onVeloHunt?.(caseId);
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: `Velociraptor hunt collect failed: ${(err as Error).message}` });
+    }
+  }
+
+  // Record a deployed hunt in the per-case hunting feedback loop ledger (#157). Best-effort + never
+  // throws — an outcome-recording failure must not break a deploy. Stamps the time here so huntOutcomes
+  // stays time-free. Re-deploying the same huntId upserts (recordDeploy dedups by id).
+  async function recordHuntDeploy(caseId: string, input: HuntDeployInput): Promise<void> {
+    if (!options.huntOutcomeStore) return;
+    try {
+      const max = Number(process.env.DFIR_HUNT_OUTCOME_MAX) || HUNT_OUTCOME_MAX_DEFAULT;
+      const cur = await options.huntOutcomeStore.load(caseId);
+      await options.huntOutcomeStore.save(caseId, recordDeploy(cur, input, max));
+    } catch (e) {
+      logLine(`[hunt-outcomes] record deploy failed: ${(e as Error).message}`);
     }
   }
 
@@ -2367,6 +2403,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       };
       // Append this hunt (concurrent hunts are kept side by side, keyed by huntId) + its own timer.
       await options.veloHuntStore.upsert(caseId, job);
+      // #157: record the bundle deploy (no VQL — bundles are artifact lists; outcome filled on collect).
+      await recordHuntDeploy(caseId, { source: "bundle", title: bundle.name, huntId: launch.huntId, deployedAt: new Date().toISOString() });
       options.onVeloHunt?.(caseId);
 
       const timer = setTimeout(() => { void importVeloHuntResults(caseId, launch.huntId); }, waitMinutes * 60_000);
@@ -2402,6 +2440,71 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!job) return res.status(404).json({ error: wantedHuntId ? `no Velociraptor hunt ${wantedHuntId} for this case` : "no Velociraptor hunt to collect for this case" });
     res.status(202).json({ accepted: true, huntId: job.huntId });
     void importVeloHuntResults(caseId, job.huntId);
+  });
+
+  // ── Hunting feedback loop (#157) ─────────────────────────────────────────────────────────────
+
+  // Deploy a SUGGESTED hunt for a case and record it in the hunting feedback loop. Two modes:
+  //  - "hunt" (default): launch a fleet HUNT + register a collectible VeloHuntJob (NO auto-collect
+  //    timer — the analyst collects when ready via "Collect now", which fills the outcome).
+  //  - "collection": run a single-host COLLECTION (the playbook per-endpoint deploy path).
+  // Either way the deployed VQL is recorded (so it's never re-proposed) and shows in the profile.
+  // Body: { vql, title, description?, source?, mitreTechniques?, mode?, hostname? }.
+  app.post("/cases/:id/velociraptor/deploy-hunt", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const caseId = req.params.id;
+    const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
+    const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+    const description = typeof req.body?.description === "string" && req.body.description.trim() ? req.body.description : title;
+    const rawSource = String(req.body?.source ?? "");
+    const allowedSources: HuntOutcomeSource[] = ["fleet", "playbook", "technique"];   // "bundle" is server-set, not client-supplied
+    const source: HuntOutcomeSource = allowedSources.includes(rawSource as HuntOutcomeSource) ? (rawSource as HuntOutcomeSource) : "fleet";
+    const mitreTechniques = toStringArray(req.body?.mitreTechniques);
+    const mode = req.body?.mode === "collection" ? "collection" : "hunt";
+    const hostname = typeof req.body?.hostname === "string" ? req.body.hostname.trim() : "";
+    if (!vql) return res.status(400).json({ error: "vql is required" });
+    if (!title) return res.status(400).json({ error: "title is required" });
+    try {
+      if (mode === "collection") {
+        if (!hostname) return res.status(400).json({ error: "hostname is required for a collection" });
+        logLine(`[velociraptor] deploy-hunt collection "${title}" on ${hostname}`);
+        const result = await collectHostResolved(hostname, vql, description);
+        // A collection is a per-host FLOW (no huntId), so its outcome isn't auto-collected — but recording
+        // the deploy still excludes it from re-proposal and surfaces it in the hunting profile.
+        await recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, deployedAt: new Date().toISOString() });
+        options.onVeloHunt?.(caseId);
+        return res.status(200).json({ mode, ...result });
+      }
+      logLine(`[velociraptor] deploy-hunt fleet "${title}"`);
+      const launch = await options.velociraptorClient.launchHunt(vql, description);
+      // Register a collectible job (no timer) so the existing "Collect now" path imports its results and
+      // fills the outcome by huntId — the same flow bundle hunts use.
+      if (options.veloHuntStore) {
+        const now = new Date().toISOString();
+        const job: VeloHuntJob = {
+          bundleId: `suggested:${source}`, bundleName: title, artifacts: launch.artifact ? [launch.artifact] : [],
+          huntId: launch.huntId, guiUrl: launch.guiUrl, launchedAt: now, waitMinutes: 0, collectAt: now, status: "running",
+        };
+        await options.veloHuntStore.upsert(caseId, job);
+      }
+      await recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, huntId: launch.huntId, deployedAt: new Date().toISOString() });
+      options.onVeloHunt?.(caseId);
+      return res.status(200).json({ mode, ...launch });
+    } catch (err) {
+      logLine(`[velociraptor] deploy-hunt ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // The per-case hunting profile (what was hunted, what hit / missed / is pending). Always 200 — an
+  // empty profile when no store / no outcomes — so the dashboard panel renders without special-casing.
+  app.get("/cases/:id/hunt-outcomes", async (req: Request, res: Response) => {
+    if (!options.huntOutcomeStore) return res.status(200).json(buildHuntingProfile([]));
+    try {
+      return res.status(200).json(buildHuntingProfile(await options.huntOutcomeStore.load(req.params.id)));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // ── Live Velociraptor CLIENT_EVENT monitoring (#84) ───────────────────────────────────────────
@@ -6768,6 +6871,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     correlationProfileStore: new CorrelationProfileStore(params.store),
     notebookStore: new NotebookStore(params.store),
     aiControlStore: new AiControlStore(params.store),
+    huntOutcomeStore: new HuntOutcomeStore(params.store),   // #157 hunting feedback loop
     ocrRunner: params.ocrRunner,
     logger: params.logger,
     kevStore: params.kevStore,
@@ -6868,6 +6972,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // Deep-link notifications back to the dashboard. Override the host/port guess with DFIR_PUBLIC_URL.
   const dashboardBaseUrl = (process.env.DFIR_PUBLIC_URL || `http://${host}:${port}`).replace(/\/+$/, "");
   const veloHuntStore = new VeloHuntStore(store);
+  const huntOutcomeStore = new HuntOutcomeStore(store);   // #157 hunting feedback loop ledger
   // Live Velociraptor CLIENT_EVENT monitors + generic push ingest (#84). The monitor store persists
   // each poller's cursor (resumed on restart); the push token store holds per-case secrets, and
   // DFIR_PUSH_TOKEN is the global one. Push is OFF until a token is configured (see pushAuth.ts).
@@ -7008,6 +7113,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     nsrlDbEnvManaged,
     kevStore,
     veloHuntStore,
+    huntOutcomeStore,
     onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),
     veloMonitorStore,
     onVeloMonitor: (caseId) => hub.broadcastTo(caseId, { type: "velo_monitor_changed" }),
