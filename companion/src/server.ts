@@ -2445,11 +2445,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // ── Hunting feedback loop (#157) ─────────────────────────────────────────────────────────────
 
   // Deploy a SUGGESTED hunt for a case and record it in the hunting feedback loop. Two modes:
-  //  - "hunt" (default): launch a fleet HUNT + register a collectible VeloHuntJob (NO auto-collect
-  //    timer — the analyst collects when ready via "Collect now", which fills the outcome).
+  //  - "hunt" (default): launch a fleet HUNT, register a VeloHuntJob, and schedule auto-collect after
+  //    DFIR_VELO_HUNT_WAIT_MIN (like a bundle) so the outcome fills on its own; "Collect now" pulls early.
   //  - "collection": run a single-host COLLECTION (the playbook per-endpoint deploy path).
   // Either way the deployed VQL is recorded (so it's never re-proposed) and shows in the profile.
-  // Body: { vql, title, description?, source?, mitreTechniques?, mode?, hostname? }.
+  // Body: { vql, title, description?, source?, mitreTechniques?, mode?, hostname?, waitMinutes? }.
   app.post("/cases/:id/velociraptor/deploy-hunt", async (req: Request, res: Response) => {
     if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     const caseId = req.params.id;
@@ -2477,19 +2477,26 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
       logLine(`[velociraptor] deploy-hunt fleet "${title}"`);
       const launch = await options.velociraptorClient.launchHunt(vql, description);
-      // Register a collectible job (no timer) so the existing "Collect now" path imports its results and
-      // fills the outcome by huntId — the same flow bundle hunts use.
+      // Register a collectible job AND schedule auto-collect (the same flow bundle hunts use) so the
+      // outcome fills by huntId without the analyst remembering to collect — fleet hunt results trickle
+      // in as clients check in, so we pull after the wait (and "Collect now" can pull early / re-pull).
+      const reqWait = Number(req.body?.waitMinutes);
+      const waitMinutes = Math.min(1440, Math.max(1, Number.isFinite(reqWait) && reqWait > 0 ? reqWait : (Number(process.env.DFIR_VELO_HUNT_WAIT_MIN) || 10)));
       if (options.veloHuntStore) {
-        const now = new Date().toISOString();
+        const now = new Date();
         const job: VeloHuntJob = {
           bundleId: `suggested:${source}`, bundleName: title, artifacts: launch.artifact ? [launch.artifact] : [],
-          huntId: launch.huntId, guiUrl: launch.guiUrl, launchedAt: now, waitMinutes: 0, collectAt: now, status: "running",
+          huntId: launch.huntId, guiUrl: launch.guiUrl, launchedAt: now.toISOString(), waitMinutes,
+          collectAt: new Date(now.getTime() + waitMinutes * 60_000).toISOString(), status: "running",
         };
         await options.veloHuntStore.upsert(caseId, job);
+        const timer = setTimeout(() => { void importVeloHuntResults(caseId, launch.huntId); }, waitMinutes * 60_000);
+        timer.unref?.();
+        veloHuntTimers.set(launch.huntId, timer);
       }
       await recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, huntId: launch.huntId, deployedAt: new Date().toISOString() });
       options.onVeloHunt?.(caseId);
-      return res.status(200).json({ mode, ...launch });
+      return res.status(200).json({ mode, waitMinutes, ...launch });
     } catch (err) {
       logLine(`[velociraptor] deploy-hunt ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });

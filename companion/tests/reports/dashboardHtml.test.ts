@@ -157,6 +157,7 @@ describe("dashboard.html", () => {
     expect(html).toContain("loadHuntProfile");
     expect(html).toContain("/hunt-outcomes");          // GET the per-case profile
     expect(html).toContain("/velociraptor/deploy-hunt"); // suggested-hunt deploys are recorded
+    expect(html).toContain("hp-collect");              // pending hunts offer a "Collect now" affordance
   });
 
   it("offers zoom in/out/fit buttons and mouse-wheel zoom for the graph", async () => {
