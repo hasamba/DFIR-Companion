@@ -2,24 +2,27 @@
 //
 // The committed package under packaging/chocolatey/ is a TEMPLATE: the nuspec carries a
 // __VERSION__ placeholder and tools/chocolateyinstall.ps1 + tools/VERIFICATION.txt carry
-// __URL64__ / __CHECKSUM64__. This script copies the template into companion/dist-choco/,
-// substitutes those three values, and (optionally) runs `choco pack` to produce the .nupkg.
+// __URL64__ / __CHECKSUM64__ (portable build) plus __EXT_URL64__ / __EXT_CHECKSUM64__ (the
+// bundled capture extension). This script copies the template into companion/dist-choco/,
+// substitutes those values, and (optionally) runs `choco pack` to produce the .nupkg.
 //
 // Run with:
-//   node scripts/build-choco.mjs --version 0.25.0 --checksum <sha256> [--pack]
-//   node scripts/build-choco.mjs --zip path/to/dfir-companion-v0.25.0-win-x64.zip --pack
+//   node scripts/build-choco.mjs --version 0.25.0 --checksum <sha256> --ext-checksum <sha256> [--pack]
+//   node scripts/build-choco.mjs --zip <win-x64.zip> --ext-zip <extension.zip> --pack
 //
 // Args:
-//   --version <X.Y.Z>   Package version. A leading "v" is stripped. Default: companion/package.json.
-//   --url <url>         Download URL embedded in the install script. Default: the GitHub release
-//                       asset URL for the resolved version.
-//   --checksum <sha256> SHA256 of the download. Required unless --zip is given.
-//   --zip <path>        Local copy of the release zip; its SHA256 is computed and used.
-//   --out <dir>         Output directory. Default: companion/dist-choco.
-//   --pack              Run `choco pack` after templating (needs the Chocolatey CLI on PATH).
+//   --version <X.Y.Z>     Package version. A leading "v" is stripped. Default: companion/package.json.
+//   --url <url>           Portable-build download URL. Default: the GitHub release asset URL.
+//   --checksum <sha256>   SHA256 of the portable build. Required unless --zip is given.
+//   --zip <path>          Local copy of the portable zip; its SHA256 is computed and used.
+//   --ext-url <url>       Extension download URL. Default: the GitHub release asset URL.
+//   --ext-checksum <sha>  SHA256 of the extension zip. Required unless --ext-zip is given.
+//   --ext-zip <path>      Local copy of the extension zip; its SHA256 is computed and used.
+//   --out <dir>           Output directory. Default: companion/dist-choco.
+//   --pack                Run `choco pack` after templating (needs the Chocolatey CLI on PATH).
 //
-// CI passes --checksum (the hash the windows-exe job already computed for the same zip), so no
-// network or local build is required here.
+// CI passes --checksum + --ext-checksum (the hashes the windows-exe and extension-zip jobs
+// already computed for the same assets), so no network or local build is required here.
 
 import { mkdir, rm, readFile, writeFile, readdir, copyFile } from "node:fs/promises";
 import { existsSync, createReadStream } from "node:fs";
@@ -87,6 +90,22 @@ function applyReplacements(text, repl) {
   return out;
 }
 
+// Resolve a SHA256: prefer the explicit value, else compute it from a local zip. `flag` is the
+// CLI prefix ("" for the portable build, "ext-" for the extension) so error messages name the
+// right options.
+async function resolveChecksum(explicit, zipPath, flag) {
+  let cs = explicit;
+  if (!cs && zipPath) {
+    if (!existsSync(zipPath)) fail(`--${flag}zip path not found: ${zipPath}`);
+    console.log(`[choco] computing SHA256 of ${basename(zipPath)} …`);
+    cs = await sha256File(zipPath);
+  }
+  if (!cs) fail(`no ${flag || "build "}checksum: pass --${flag}checksum <sha256> or --${flag}zip <path>.`);
+  cs = String(cs).toLowerCase().trim();
+  if (!/^[0-9a-f]{64}$/.test(cs)) fail(`--${flag}checksum "${cs}" is not a 64-char hex SHA256.`);
+  return cs;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
@@ -96,35 +115,28 @@ async function main() {
   }
 
   const owner = "hasamba";
-  const url =
-    args.url ??
-    `https://github.com/${owner}/DFIR-Companion/releases/download/v${version}/dfir-companion-v${version}-win-x64.zip`;
+  const releaseBase = `https://github.com/${owner}/DFIR-Companion/releases/download/v${version}`;
+  const url = args.url ?? `${releaseBase}/dfir-companion-v${version}-win-x64.zip`;
+  const extUrl = args["ext-url"] ?? `${releaseBase}/dfir-capture-extension-v${version}.zip`;
 
-  let checksum = args.checksum;
-  if (!checksum && args.zip) {
-    if (!existsSync(args.zip)) fail(`--zip path not found: ${args.zip}`);
-    console.log(`[choco] computing SHA256 of ${basename(args.zip)} …`);
-    checksum = await sha256File(args.zip);
-  }
-  if (!checksum) {
-    fail("no checksum: pass --checksum <sha256> or --zip <path-to-release-zip>.");
-  }
-  checksum = String(checksum).toLowerCase().trim();
-  if (!/^[0-9a-f]{64}$/.test(checksum)) {
-    fail(`checksum "${checksum}" is not a 64-char hex SHA256.`);
-  }
+  const checksum = await resolveChecksum(args.checksum, args.zip, "");
+  const extChecksum = await resolveChecksum(args["ext-checksum"], args["ext-zip"], "ext-");
 
   const outDir = args.out ? resolve(String(args.out)) : DEFAULT_OUT;
   const repl = {
     __VERSION__: version,
     __URL64__: url,
     __CHECKSUM64__: checksum,
+    __EXT_URL64__: extUrl,
+    __EXT_CHECKSUM64__: extChecksum,
   };
 
-  console.log(`[choco] version:  ${version}`);
-  console.log(`[choco] url:      ${url}`);
-  console.log(`[choco] checksum: ${checksum}`);
-  console.log(`[choco] out:      ${outDir}`);
+  console.log(`[choco] version:      ${version}`);
+  console.log(`[choco] url:          ${url}`);
+  console.log(`[choco] checksum:     ${checksum}`);
+  console.log(`[choco] ext url:      ${extUrl}`);
+  console.log(`[choco] ext checksum: ${extChecksum}`);
+  console.log(`[choco] out:          ${outDir}`);
 
   // Fresh output tree.
   await rm(outDir, { recursive: true, force: true });

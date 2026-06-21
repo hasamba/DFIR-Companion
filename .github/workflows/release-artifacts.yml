@@ -124,6 +124,10 @@ jobs:
   extension-zip:
     name: Build extension zip
     runs-on: ubuntu-latest
+    outputs:
+      # SHA256 of the extension zip, consumed by the `chocolatey` job which bundles it for
+      # offline "Load unpacked".
+      sha256: ${{ steps.zip.outputs.sha256 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -148,6 +152,7 @@ jobs:
         run: npm run build
 
       - name: Zip dist
+        id: zip
         working-directory: extension
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
@@ -156,8 +161,10 @@ jobs:
           cd dist
           zip -r "../${ZIP_NAME}" .
           cd ..
-          sha256sum "${ZIP_NAME}"
+          SHA=$(sha256sum "${ZIP_NAME}" | awk '{print $1}')
+          echo "SHA256: ${SHA}"
           echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -244,10 +251,11 @@ jobs:
 
   chocolatey:
     name: Publish Chocolatey package
-    # Runs after the release asset exists (so first-install moderation can fetch it) and reads
-    # the portable zip's SHA256 from the windows-exe job. Same tag gate as the release; the push
-    # is a no-op until the CHOCOLATEY_API_KEY secret is set, so it's safe to merge beforehand (#137).
-    needs: [windows-exe, release]
+    # Runs after the release assets exist (so first-install moderation can fetch them) and reads
+    # the portable zip's + extension zip's SHA256 from the windows-exe and extension-zip jobs.
+    # Same tag gate as the release; the push is a no-op until the CHOCOLATEY_API_KEY secret is
+    # set, so it's safe to merge beforehand (#137).
+    needs: [windows-exe, extension-zip, release]
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
     runs-on: windows-latest
     steps:
@@ -274,6 +282,7 @@ jobs:
           node scripts/build-choco.mjs `
             --version "${{ steps.ver.outputs.version }}" `
             --checksum "${{ needs.windows-exe.outputs.sha256 }}" `
+            --ext-checksum "${{ needs.extension-zip.outputs.sha256 }}" `
             --out dist-choco `
             --pack
 

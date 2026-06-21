@@ -63,10 +63,30 @@ if (-not (Select-String -Path $envFile -Pattern '^\s*DFIR_CASES_ROOT\s*=' -Quiet
 # The only persistent env var: where to find the .env above.
 Install-ChocolateyEnvironmentVariable -VariableName 'DFIR_ENV_FILE' -VariableValue $envFile -VariableType 'User'
 
+# --- Bundle the capture extension (offline "Load unpacked") ----------------------------------
+# The browser extension can't be auto-installed into Chrome/Comet portably, but shipping the
+# built files on disk gives air-gapped/forensic workstations (no Web Store access) a one-folder
+# "Load unpacked" target. We download the same dfir-capture-extension zip the release publishes,
+# verify its own SHA256, and unpack it into the user data dir. The extension subtree is fully
+# app-managed (not evidence), so we clear it first to avoid stale files across upgrades.
+$extDir = Join-Path $dataDir 'extension'
+$extZip = Join-Path $env:TEMP 'dfir-capture-extension.zip'
+
+Get-ChocolateyWebFile -PackageName "$packageName-extension" -FileFullPath $extZip `
+  -Url64bit '__EXT_URL64__' -Checksum64 '__EXT_CHECKSUM64__' -ChecksumType64 'sha256'
+if (Test-Path $extDir) { Remove-Item -Path $extDir -Recurse -Force }
+Get-ChocolateyUnzip -FileFullPath $extZip -Destination $extDir -PackageName "$packageName-extension"
+Remove-Item -Path $extZip -Force -ErrorAction SilentlyContinue
+
 Write-Host ''
 Write-Host 'DFIR Companion installed.' -ForegroundColor Green
 Write-Host '  Run:    dfir-companion        (then open http://127.0.0.1:4773/dashboard)'
 Write-Host "  Cases:  $casesDir"
 Write-Host "  Config: $envFile   (edit to set AI provider / threat-intel keys; all optional)"
 Write-Host '  The server binds 127.0.0.1 only — no firewall rule is created or needed.'
+Write-Host ''
+Write-Host 'Capture extension (optional) bundled for offline install:' -ForegroundColor Green
+Write-Host "  $extDir"
+Write-Host '  Load it via chrome://extensions -> Developer mode -> Load unpacked -> that folder.'
+Write-Host '  (Or install it from the Chrome Web Store once published.)'
 Write-Host ''
