@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Supporting events & IOCs per finding** — each finding now lists the forensic events that back it (click to jump to the timeline row, even across pagination/filters) plus its supporting IOC values, derived client-side from the case state (part of #139).
 - **Hunting feedback loop** — deployed hunts now record their outcome per case (found new evidence yes/no + counts, survives restart); hunt suggestions exclude a VQL that already ran and pivot on what a productive hunt surfaced, and a dashboard "Hunting Profile" panel shows what was hunted / hit / missed, with auto-collect + a per-hunt "Collect now" so pending outcomes fill (closes #157).
+- **Regenerate a suggested fleet hunt** — each AI fleet-hunt card gets a per-card ↻ Regenerate (like playbook hunts) to get a different VQL when one is bad/won't compile (part of #57).
 
 ### Fixed
 - **Hunt VQL `hash()` signature** — the fleet/playbook hunt prompts now teach the real `hash(path=…).SHA256` form (no invented `hashselect=` arg, which fails to compile) and to avoid full-disk globs, cutting "Velociraptor did not launch the hunt" errors (part of #57/#70).

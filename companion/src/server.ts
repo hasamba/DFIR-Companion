@@ -1905,7 +1905,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   app.post("/cases/:id/velociraptor/suggest-hunts", async (req: Request, res: Response) => {
     if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
     try {
-      const suggestions = await options.pipeline.suggestHunts(req.params.id);
+      // Optional excludeVql → regenerate a DIFFERENT take (the per-card ↻ Regenerate button), mirroring
+      // the playbook-hunt regen. Absent → a normal full suggestion pass.
+      const excludeVql = typeof req.body?.excludeVql === "string" && req.body.excludeVql.trim() ? req.body.excludeVql : undefined;
+      const suggestions = await options.pipeline.suggestHunts(req.params.id, excludeVql ? { excludeVql } : undefined);
       logLine(`[velociraptor] suggested ${suggestions.length} fleet-hunt(s) for ${req.params.id}`);
       return res.status(200).json({ suggestions });
     } catch (err) {

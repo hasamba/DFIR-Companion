@@ -2545,6 +2545,7 @@
         <div id="customerExposure">—</div>
       </div></section>
     <section id="sec-questions" style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
+    <section id="sec-huntprofile" style="grid-column: 1 / -1"><h2>Hunting Profile<span class="ev-sub">What has been hunted in this case and whether it found anything</span></h2><div id="huntProfile">—</div></section>
     <section id="sec-threads"><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
     <section id="sec-adversary" style="grid-column: 1 / -1"><h2>Adversary Hints<span class="ev-sub">known ATT&amp;CK groups by technique overlap + their likely next techniques — hypothesis fuel, not attribution (derived, no AI)</span></h2><div id="adversaryHints">—</div></section>
@@ -2582,7 +2583,6 @@
       #sec-adversary .adv-next-ds{color:var(--c-9aa4b2);font-size:11px;margin:2px 0 0 4px;font-style:italic}
     </style>
     <section id="sec-velohunts" style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="veloHuntSuggest">—</div></section>
-    <section id="sec-huntprofile" style="grid-column: 1 / -1"><h2>Hunting Profile<span class="ev-sub">What has been hunted in this case and whether it found anything — the hunt feedback loop (#157)</span></h2><div id="huntProfile">—</div></section>
     <style>
       #sec-velohunts .vhs-empty{color:var(--c-9aa4b2);font-size:12px}
       #sec-velohunts .vhs-caveat{color:var(--c-ffb454);font-size:12px;margin-bottom:8px}
@@ -2601,6 +2601,8 @@
       #sec-velohunts .vhs-copy.copied{background:var(--c-2f8f4e)}
       #sec-velohunts .vhs-deploy{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
       #sec-velohunts .vhs-deploy:disabled{opacity:.6;cursor:default}
+      #sec-velohunts .vhs-regen{background:var(--c-2a2f3a);border:1px solid var(--c-3a4150);color:var(--c-c9d1db);border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #sec-velohunts .vhs-regen:disabled{opacity:.6;cursor:default}
       #sec-velohunts .vhs-res{margin-top:6px}
       #sec-huntprofile .hp-empty{color:var(--c-9aa4b2);font-size:12px}
       #sec-huntprofile .hp-tally{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:var(--c-c9d1db)}
@@ -7047,6 +7049,9 @@
     // the right source in the feedback loop (#157). "fleet" for findings-driven hunts, "technique" for
     // an adversary-emulation "hunt this technique".
     let vhsSource = "fleet";
+    // The currently-rendered fleet-hunt suggestions (sorted), kept at module scope so a per-card
+    // ↻ Regenerate can swap one entry and re-render (#157 — mirrors the playbook pbHuntFlat pattern).
+    let vhsFlat = [];
 
     // ── Hunting Profile (#157) ────────────────────────────────────────────────────────────
     // The per-case hunt feedback loop, surfaced read-only: every hunt deployed in this case (fleet /
@@ -7151,7 +7156,8 @@
         el.innerHTML = `<div class="vhs-empty">No fleet-hunts proposed. The AI found nothing fleet-wide to hunt for — try after running synthesis so findings exist, or add more evidence.</div>`;
         return;
       }
-      const ordered = [...suggestions].sort((a, b) => (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9));
+      vhsFlat = [...suggestions].sort((a, b) => (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9));
+      const ordered = vhsFlat;
       const caveat = `<div class="vhs-caveat">⚠ AI-generated VQL — review each query before deploying. Deploying launches a hunt across ALL enrolled endpoints.${veloEnabled ? "" : " The Velociraptor API is not configured, so Deploy is disabled — copy the VQL to run it yourself."}</div>`;
       const cards = ordered.map((s, idx) => {
         const sev = s.severity || "Medium";
@@ -7165,12 +7171,17 @@
         const deployBtn = veloEnabled
           ? `<button class="vhs-deploy" data-idx="${idx}" title="Launch this hunt across ALL enrolled Velociraptor clients">▶ Deploy hunt (all clients)</button>`
           : `<button class="vhs-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">▶ Deploy hunt (all clients)</button>`;
+        // Per-card regenerate (fleet hunts only — technique hunts come from the adversary panel's "hunt
+        // this"): ask the AI for a DIFFERENT take when this VQL is bad/won't compile. Mirrors the playbook.
+        const regenBtn = vhsSource === "fleet"
+          ? `<button class="vhs-regen" data-idx="${idx}" title="Ask the AI for a different hunt for this finding (e.g. if this VQL won't compile)">↻ Regenerate</button>`
+          : "";
         return `<div class="vhs-card">`
           + `<div class="vhs-head"><span class="vhs-title">${esc(s.title)}</span>${sevBadge}</div>`
           + rationale
           + (techs ? `<div class="vhs-techs">${techs}</div>` : "")
           + `<textarea class="vhs-vql" id="vhsQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
-          + `<div class="vhs-actions"><button class="vhs-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}</div>`
+          + `<div class="vhs-actions"><button class="vhs-copy" data-idx="${idx}">Copy VQL</button>${regenBtn}${deployBtn}</div>`
           + `<div class="vhs-res" id="vhsRes${idx}"></div>`
           + `</div>`;
       }).join("");
@@ -7191,6 +7202,33 @@
         const caseId = document.getElementById("caseId").value.trim();
         launchHuntInto(q ? q.value : "", title, document.getElementById("vhsRes" + idx), b, { caseId, title, source: vhsSource, mitre });   // #157 record the deploy
       });
+      el.querySelectorAll(".vhs-regen").forEach((b) => b.onclick = () => regenVeloHunt(b.dataset.idx, b));
+    }
+
+    // Regenerate ONE fleet-hunt suggestion — asks the AI for a different VQL (excluding the current,
+    // bad one), swaps it into vhsFlat, and re-renders. Mirrors the playbook hunt regen (#157 / #57).
+    function regenVeloHunt(idx, btn) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const cur = vhsFlat[idx];
+      if (!caseId || !cur) return;
+      const q = document.getElementById("vhsQ" + idx);
+      const excludeVql = (q && q.value.trim()) ? q.value : cur.vql;
+      const msg = document.getElementById("suggestHuntsMsg");
+      const orig = btn.textContent;
+      btn.disabled = true; btn.textContent = "⏳ thinking…";
+      if (msg) { msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "regenerating one hunt… (one AI call)"; }
+      fetch(`/cases/${caseId}/velociraptor/suggest-hunts`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ excludeVql }) })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { if (msg) { msg.style.color = "var(--c-ff9f43)"; msg.textContent = "regen failed: " + (j.error || "unknown error"); } btn.disabled = false; btn.textContent = orig; return; }
+          const sugs = (j.suggestions || []).filter(Boolean);
+          const replacement = sugs.find((s) => (s.vql || "").trim() !== excludeVql.trim()) || sugs[0];
+          if (!replacement) { if (msg) { msg.style.color = "var(--c-ff9f43)"; msg.textContent = "no alternative hunt generated — edit the VQL by hand"; } btn.disabled = false; btn.textContent = orig; return; }
+          vhsFlat[idx] = replacement;
+          renderVeloHuntSuggest(vhsFlat);   // re-render (vhsSource unchanged → regen buttons stay)
+          if (msg) { msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "regenerated one hunt"; }
+        })
+        .catch((e) => { if (msg) { msg.style.color = "var(--c-ff9f43)"; msg.textContent = "regen failed: " + e.message; } btn.disabled = false; btn.textContent = orig; });
     }
 
     // ── Timeline Swimlane ───────────────────────────────────────────────────────────────

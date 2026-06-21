@@ -2801,7 +2801,7 @@ export class AnalysisPipeline {
   // Single text-only AI call; EPHEMERAL like ask()/executiveSummary() — it does NOT mutate state.
   // The analyst reviews each hunt's VQL + rationale, then one-click deploys it through the existing
   // launchHunt flow (POST /velociraptor/hunt). Returns [] without an AI call on an empty case.
-  async suggestHunts(caseId: string): Promise<HuntSuggestion[]> {
+  async suggestHunts(caseId: string, opts?: { excludeVql?: string }): Promise<HuntSuggestion[]> {
     const provider = this.opts.velociraptorProvider ?? this.opts.synthesisProvider ?? this.requireProvider("hunt suggestions");
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasHuntMaterial(loaded)) return [];   // nothing to pivot on — don't spend a call
@@ -2840,6 +2840,11 @@ export class AnalysisPipeline {
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
 
+    // Regenerate hook (mirrors suggestPlaybookHunts): when the analyst asks for a DIFFERENT take on a
+    // hunt whose VQL was bad/unwanted, the excluded query is shown so the model varies the approach.
+    const excludeNote = opts?.excludeVql
+      ? `ALREADY SUGGESTED (this VQL was already shown to the analyst — generate something DIFFERENT that investigates from a different angle or uses different VQL plugins):\n${opts.excludeVql}\n\n`
+      : "";
     const userPrompt =
       priorHuntsBlock +
       contextBlock +
@@ -2849,6 +2854,7 @@ export class AnalysisPipeline {
       `FINDINGS:\n${findingsText}\n\n` +
       `PIVOTABLE INDICATORS:\n${iocText}\n\n` +
       `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
+      excludeNote +
       `Propose the fleet-hunts as JSON.`;
 
     const limit = Number(process.env.DFIR_HUNT_SUGGEST_MAX) || HUNT_SUGGEST_MAX_DEFAULT;
