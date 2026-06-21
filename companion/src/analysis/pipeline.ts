@@ -107,6 +107,13 @@ import {
   type PlaybookHuntSuggestion,
 } from "./playbookHunt.js";
 import {
+  deployedFingerprints,
+  renderPriorHuntsBlock,
+  vqlFingerprint,
+  type HuntOutcome,
+} from "./huntOutcomes.js";
+import type { HuntOutcomeStore } from "./huntOutcomeStore.js";
+import {
   memoryNextStepResponseSchema,
   sanitizeMemoryNextSteps,
   renderMemoryEvidence,
@@ -1032,6 +1039,11 @@ export interface PipelineOptions {
   // so the analyst can pin a known-good one just for suggestHunts/suggestPlaybookHunts. Falls back
   // to synthesisProvider, then the main provider.
   velociraptorProvider?: AIProvider;
+  // Per-case hunt outcomes (#157) — the hunting feedback loop. When set, suggestHunts /
+  // suggestTechniqueHunts / suggestPlaybookHunts read prior-hunt outcomes to (a) drop a suggestion
+  // whose VQL already ran and (b) feed a "PRIOR HUNTS" context block so the model pivots on what hit.
+  // Server-only (absent in scripts/* like the other Velociraptor features) → loop simply off.
+  huntOutcomeStore?: HuntOutcomeStore;
   // Client-confirmed legitimate findings/IOCs to exclude from synthesis.
   legitimateStore?: LegitimateStore;
   // Optional investigation time-window — events outside it are excluded.
@@ -2753,6 +2765,26 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
+  // The hunting feedback loop's prior-hunt outcomes for a case (#157) — [] when no store is wired
+  // (scripts/*) or the file is absent/corrupt, so the loop simply stays off without ever throwing.
+  private async loadHuntOutcomes(caseId: string): Promise<HuntOutcome[]> {
+    if (!this.opts.huntOutcomeStore) return [];
+    try {
+      return await this.opts.huntOutcomeStore.load(caseId);
+    } catch {
+      return [];
+    }
+  }
+
+  // Drop any suggestion whose VQL was already deployed in this case (#157) — the deterministic guarantee
+  // that a hunt the analyst already ran is never re-proposed (the "PRIOR HUNTS" prompt block is the soft
+  // signal; this is the hard one). Bundles contribute no fingerprint, so they never exclude a suggestion.
+  private excludeDeployedHunts<T extends { vql: string }>(suggestions: T[], outcomes: readonly HuntOutcome[]): T[] {
+    const fps = deployedFingerprints(outcomes);
+    if (!fps.size) return suggestions;
+    return suggestions.filter((s) => !fps.has(vqlFingerprint(s.vql)));
+  }
+
   // Propose proactive Velociraptor VQL fleet-hunts from the synthesized findings (issue #57).
   // Single text-only AI call; EPHEMERAL like ask()/executiveSummary() — it does NOT mutate state.
   // The analyst reviews each hunt's VQL + rationale, then one-click deploys it through the existing
@@ -2783,14 +2815,21 @@ export class AnalysisPipeline {
     // Capped at the shared default (the timeline trim below absorbs the block into the prompt budget).
     const graphBlock = buildGraphContext({ ...loaded, forensicTimeline: scopedEvents }, { maxEdges: DEFAULT_MAX_GRAPH_EDGES });
 
+    // Feedback loop (#157): the prior hunts already run in this case (what hit / what missed), so the
+    // model proposes follow-ups that pivot on productive hunts and avoids repeating dead ones. "" when
+    // there are no recorded outcomes (or no store wired). Also drives the deterministic exclusion below.
+    const outcomes = await this.loadHuntOutcomes(caseId);
+    const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
+
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getHuntSuggestPrompt())
-      + estimateTokens(contextBlock + graphBlock + findingsText + iocText + techText + (loaded.attackerPath || "")) + 300;
+      + estimateTokens(priorHuntsBlock + contextBlock + graphBlock + findingsText + iocText + techText + (loaded.attackerPath || "")) + 300;
     const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
 
     const userPrompt =
+      priorHuntsBlock +
       contextBlock +
       graphBlock +
       `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
@@ -2804,7 +2843,7 @@ export class AnalysisPipeline {
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "suggest-hunts");
       const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
-      return sanitizeHuntSuggestions(suggestions, limit);
+      return this.excludeDeployedHunts(sanitizeHuntSuggestions(suggestions, limit), outcomes);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
@@ -2821,7 +2860,10 @@ export class AnalysisPipeline {
     const loaded = await this.opts.stateStore.load(caseId);
     const iocText = renderHuntIocs(loaded.iocs);
     const label = techniqueName ? `${id} (${techniqueName})` : id;
+    const outcomes = await this.loadHuntOutcomes(caseId);   // #157 feedback loop (exclude + prior-hunts context)
+    const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
     const userPrompt =
+      priorHuntsBlock +
       `Focus EXCLUSIVELY on ONE ATT&CK technique the analyst wants to hunt for proactively across the fleet:\n` +
       `  ${label}\n\n` +
       `This technique has NOT yet been observed in this case. A group whose tradecraft resembles this case is known ` +
@@ -2834,7 +2876,7 @@ export class AnalysisPipeline {
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "hunt-technique");
       const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
-      return sanitizeHuntSuggestions(suggestions, limit);
+      return this.excludeDeployedHunts(sanitizeHuntSuggestions(suggestions, limit), outcomes);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
@@ -2988,10 +3030,12 @@ export class AnalysisPipeline {
     const findingsText = renderHuntFindings(loaded.findings);
     const kevCatalog = await this.getKevCatalog();
     const contextBlock = buildSynthesisContext(loaded, scopedEvents, kevCatalog);
+    const outcomes = await this.loadHuntOutcomes(caseId);   // #157 feedback loop (exclude + prior-hunts context)
+    const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getPlaybookHuntPrompt())
-      + estimateTokens(contextBlock + tasksText + endpointsText + artifactsText + findingsText + (loaded.attackerPath || "")) + 300;
+      + estimateTokens(priorHuntsBlock + contextBlock + tasksText + endpointsText + artifactsText + findingsText + (loaded.attackerPath || "")) + 300;
     const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
@@ -3000,6 +3044,7 @@ export class AnalysisPipeline {
       ? `ALREADY SUGGESTED (this VQL was already shown to the analyst — generate something DIFFERENT that investigates from a different angle or uses different VQL plugins):\n${opts.excludeVql}\n\n`
       : "";
     const userPrompt =
+      priorHuntsBlock +
       contextBlock +
       `KNOWN ENDPOINTS (hosts — pick a targetHost ONLY from these): ${endpointsText}\n\n` +
       `AVAILABLE VELOCIRAPTOR ARTIFACTS (reference Artifact.<Name> ONLY if <Name> is in this list — else use a raw plugin):\n${artifactsText}\n\n` +
@@ -3014,7 +3059,7 @@ export class AnalysisPipeline {
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getPlaybookHuntPrompt(), userPrompt, images: [] }, "suggest-playbook-hunts");
       const { suggestions } = playbookHuntResponseSchema.parse(parsed);
-      return sanitizePlaybookHuntSuggestions(suggestions, endpointsByTaskId, endpoints, limit);
+      return this.excludeDeployedHunts(sanitizePlaybookHuntSuggestions(suggestions, endpointsByTaskId, endpoints, limit), outcomes);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
