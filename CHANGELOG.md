@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-06-21
+
 ### Added
 - **Chocolatey package** — `choco install dfir-companion` installs the portable Windows build and bundles the capture extension on disk for offline "Load unpacked"; `packaging/chocolatey/` template + `build-choco.mjs` fill in both download URLs + SHA256s, data is redirected to `%LOCALAPPDATA%\DFIR-Companion`, and a CI `chocolatey` job packs + attaches the `.nupkg` and pushes once `CHOCOLATEY_API_KEY` is set (part of #137).
 - **Chrome Web Store packaging (extension)** — static store icons (16/32/48/128 from the Companion logo) wired into the manifest, a `PRIVACY.md` policy, and a CI `chrome-webstore` job that publishes the built zip on each `v*` tag once OAuth secrets are set (part of #138).
@@ -379,7 +381,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.23.0...v0.25.0
 [0.23.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.21.0...v0.22.0
