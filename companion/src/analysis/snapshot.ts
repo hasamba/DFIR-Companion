@@ -34,6 +34,7 @@ export const SNAPSHOT_STATE_FILES = [
   "customer-exposure.json", // exposure summary (already password-stripped at write time)
   "synth-meta.json",        // when synthesis last ran + findings diff (investigation history)
   "import-meta.json",       // when the last import ran + timeline/IOC diff (investigation history)
+  "hunt-outcomes.json",     // #157 per-case hunting profile (what was hunted, what hit/missed) — investigation data
 ] as const;
 
 // Documented for intent: these state files exist but are DELIBERATELY excluded from a snapshot
