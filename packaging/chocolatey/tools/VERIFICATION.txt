@@ -3,26 +3,30 @@ VERIFICATION
 Verification is intended to assist the Chocolatey moderators and any user in verifying
 that this package's contents are authentic.
 
-This package downloads the portable Windows build that is published as an official asset
-on the project's GitHub Releases page. The publisher (hasamba) and the package maintainer
-are the same party.
+This package downloads two official assets from the project's GitHub Releases page: the
+portable Windows build, and the browser capture extension (bundled for offline "Load
+unpacked"). The publisher (hasamba) and the package maintainer are the same party.
 
-Download URL (x64):
-  __URL64__
+(1) Portable Windows build (x64):
 
-Expected SHA256 (x64):
-  __CHECKSUM64__
+  URL:    __URL64__
+  SHA256: __CHECKSUM64__
 
-To verify manually, download the file above and compare its hash:
+(2) Capture extension (browser-independent):
+
+  URL:    __EXT_URL64__
+  SHA256: __EXT_CHECKSUM64__
+
+To verify manually, download each file above and compare its hash:
 
   PowerShell:  Get-FileHash <downloaded.zip> -Algorithm SHA256
 
-The hash must equal the "Expected SHA256" value embedded in
-tools\chocolateyinstall.ps1 (which is the same value shown above). The same checksum is
-listed in the GitHub Release notes for the corresponding version tag:
+Each hash must equal the corresponding "SHA256" value embedded in
+tools\chocolateyinstall.ps1 (the same values shown above). The same checksums are listed in
+the GitHub Release notes for the corresponding version tag:
 
   https://github.com/hasamba/DFIR-Companion/releases
 
-The portable build is produced from source by the project's CI
+Both assets are produced from source by the project's CI
 (.github/workflows/release-artifacts.yml) — there is no separately distributed,
 unverifiable binary.

@@ -259,7 +259,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Health / Diagnostics** — **Settings → Diagnostics** one-page operator view: disk usage, case count, capture/synthesis queue, redacted AI config + live *Test AI connectivity*, importer attempts (24h/7d) + recent failures; compute-on-demand case sizes; key-free copy-to-clipboard
 - **Logging** — console + global session log + per-case audit trail; `DFIR_LOG_LEVEL` live toggle; `debug` traces AI/captures/OCR/anonymization
 - **Portable Windows EXE** — unzip + double-click, no Node required
-- **Chocolatey package** — `choco install dfir-companion`; downloads + verifies the portable build, data in `%LOCALAPPDATA%`
+- **Chocolatey package** — `choco install dfir-companion`; downloads + verifies the portable build + bundles the capture extension, data in `%LOCALAPPDATA%`
 - **Docker / Compose** — `docker compose up`; evidence on host volume, no bundled AI backend
 - **Linux AppImage** — single-file executable for any glibc distro, no Node required
 - **Update notice** — opt-in (default off) check for a newer GitHub release; dashboard banner, never auto-downloads
@@ -402,6 +402,11 @@ SHA256.
 (seeded from the example; edit it for AI / threat-intel keys — all optional). Uninstall
 **keeps** that folder so evidence is never deleted. No firewall rule is created — the server
 binds `127.0.0.1` only.
+
+The **capture extension** is bundled on disk at `%LOCALAPPDATA%\DFIR-Companion\extension` for
+offline install (handy on air-gapped workstations) — load it via `chrome://extensions` →
+Developer mode → **Load unpacked** → that folder, or install it from the Chrome Web Store once
+published. It is not auto-installed into the browser.
 
 > Not yet on the Chocolatey community repo? Until it's published there, grab the
 > `dfir-companion.<version>.nupkg` from the release and `choco install dfir-companion --source .`

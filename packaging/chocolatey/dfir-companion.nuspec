@@ -53,6 +53,14 @@ The companion binds **127.0.0.1 only** (never your network). On a Chocolatey ins
 * **Cases + state** → `%LOCALAPPDATA%\DFIR-Companion\cases` (written as `DFIR_CASES_ROOT` in
   that `.env`, so evidence is never written to the admin-owned install dir).
 
+### Capture extension (optional)
+
+The browser capture extension is bundled on disk at
+`%LOCALAPPDATA%\DFIR-Companion\extension` for **offline install** — handy on air-gapped /
+forensic workstations with no Chrome Web Store access. Load it via `chrome://extensions` →
+Developer mode → **Load unpacked** → that folder. (Or install it from the Chrome Web Store
+once published.) It is not auto-installed into the browser.
+
 ### Upgrade / uninstall
 
 * `choco upgrade dfir-companion` pulls the next release.
