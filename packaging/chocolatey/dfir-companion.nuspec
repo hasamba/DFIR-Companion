@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  This is a TEMPLATE. The version below is filled in by companion/scripts/build-choco.mjs,
+  which materializes a packable copy under companion/dist-choco/ (and substitutes the download
+  URL + SHA256 in tools/chocolateyinstall.ps1). Do NOT `choco pack` this file directly.
+-->
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>dfir-companion</id>
+    <version>__VERSION__</version>
+    <packageSourceUrl>https://github.com/hasamba/DFIR-Companion/tree/master/packaging/chocolatey</packageSourceUrl>
+    <owners>hasamba</owners>
+
+    <title>DFIR Companion (portable localhost server)</title>
+    <authors>hasamba</authors>
+    <projectUrl>https://github.com/hasamba/DFIR-Companion</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/hasamba/DFIR-Companion/master/public/DFIR_Companion_favicon.png</iconUrl>
+    <copyright>Copyright (c) hasamba</copyright>
+    <licenseUrl>https://github.com/hasamba/DFIR-Companion/blob/master/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/hasamba/DFIR-Companion</projectSourceUrl>
+    <docsUrl>https://github.com/hasamba/DFIR-Companion/blob/master/README.md</docsUrl>
+    <bugTrackerUrl>https://github.com/hasamba/DFIR-Companion/issues</bugTrackerUrl>
+    <tags>dfir forensics incident-response security velociraptor mitre-attack timeline blue-team admin</tags>
+    <summary>Post-detection DFIR analysis layer: correlate your tools' verdicts into one timeline, findings, attacker path, and report — all on localhost.</summary>
+    <description><![CDATA[
+## DFIR Companion
+
+A **localhost** DFIR analysis tool. It is a *post-detection analysis layer*, **not** a
+detection engine — it ingests the verdicts/hits your existing tools already produce
+(Velociraptor, Security Onion, Chainsaw, Hayabusa, THOR, EDR/SIEM, KAPE, Volatility,
+CloudTrail, M365, email, sandbox reports, …), correlates them across tools into **one
+forensic timeline**, and synthesizes findings, MITRE ATT&CK mapping, the attacker path,
+and a court-ready report — the "so what" layer.
+
+This package installs the **portable Windows build** (a Node single-executable; no Node.js
+install required). After install, run it from any console:
+
+```
+dfir-companion
+```
+
+then open **http://127.0.0.1:4773/dashboard**.
+
+### Where your data lives
+
+The companion binds **127.0.0.1 only** (never your network). On a Chocolatey install:
+
+* **Config** → `%LOCALAPPDATA%\DFIR-Companion\.env` (seeded from the bundled example; the
+  installer points the server at it via the `DFIR_ENV_FILE` environment variable). Edit it to
+  configure the AI provider/model/key and threat-intel keys (all optional — capture and the
+  deterministic importers work with AI off).
+* **Cases + state** → `%LOCALAPPDATA%\DFIR-Companion\cases` (written as `DFIR_CASES_ROOT` in
+  that `.env`, so evidence is never written to the admin-owned install dir).
+
+### Capture extension (optional)
+
+The browser capture extension is bundled on disk at
+`%LOCALAPPDATA%\DFIR-Companion\extension` for **offline install** — handy on air-gapped /
+forensic workstations with no Chrome Web Store access. Load it via `chrome://extensions` →
+Developer mode → **Load unpacked** → that folder. (Or install it from the Chrome Web Store
+once published.) It is not auto-installed into the browser.
+
+### Upgrade / uninstall
+
+* `choco upgrade dfir-companion` pulls the next release.
+* `choco uninstall dfir-companion` removes the binary, shim, and the environment variables.
+  **Your cases and config are left in place** at `%LOCALAPPDATA%\DFIR-Companion` — delete
+  that folder by hand if you no longer need the evidence.
+
+### Notes
+
+* No inbound firewall rule is created or needed — the server is localhost-only by design.
+* The companion does **not** send anything externally unless you opt in to threat-intel
+  enrichment per case.
+]]></description>
+    <releaseNotes>https://github.com/hasamba/DFIR-Companion/blob/master/CHANGELOG.md</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>
