@@ -150,6 +150,15 @@ describe("dashboard.html", () => {
     expect(html).toContain("saveCaseTemplate");
   });
 
+  it("wires the hunting-profile panel + records suggested-hunt deploys via deploy-hunt (#157)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="sec-huntprofile"');
+    expect(html).toContain('id="huntProfile"');
+    expect(html).toContain("loadHuntProfile");
+    expect(html).toContain("/hunt-outcomes");          // GET the per-case profile
+    expect(html).toContain("/velociraptor/deploy-hunt"); // suggested-hunt deploys are recorded
+  });
+
   it("offers zoom in/out/fit buttons and mouse-wheel zoom for the graph", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="assetZoomIn"');
