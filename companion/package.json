@@ -27,7 +27,8 @@
     "data:update-attack": "tsx scripts/update-attack-groups.ts",
     "icons": "tsx scripts/make-icons.ts",
     "package:sea": "node scripts/build-sea.mjs",
-    "package:appimage": "node scripts/build-appimage.mjs"
+    "package:appimage": "node scripts/build-appimage.mjs",
+    "package:choco": "node scripts/build-choco.mjs"
   },
   "dependencies": {
     "docx": "^9.7.1",

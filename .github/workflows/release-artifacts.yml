@@ -22,6 +22,10 @@ jobs:
   windows-exe:
     name: Build Windows EXE (Node SEA)
     runs-on: windows-latest
+    outputs:
+      # SHA256 of the portable zip, consumed by the `chocolatey` job so its package embeds the
+      # exact checksum of the same artifact the release publishes.
+      sha256: ${{ steps.zip.outputs.sha256 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,6 +52,7 @@ jobs:
         run: npm run package:sea
 
       - name: Zip dist-sea
+        id: zip
         working-directory: companion
         shell: pwsh
         run: |
@@ -55,8 +60,10 @@ jobs:
           $tag = $tag -replace '/', '-'   # branch refs (workflow_dispatch) contain slashes; tags don't
           $zipName = "dfir-companion-$tag-win-x64.zip"
           Compress-Archive -Path dist-sea\* -DestinationPath $zipName -Force
-          Get-FileHash $zipName -Algorithm SHA256 | Format-List
+          $sha = (Get-FileHash $zipName -Algorithm SHA256).Hash.ToLower()
+          Write-Host "SHA256: $sha"
           "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "sha256=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -234,3 +241,76 @@ jobs:
           # Don't auto-create; the release is published manually per CLAUDE.md.
           draft: false
           prerelease: false
+
+  chocolatey:
+    name: Publish Chocolatey package
+    # Runs after the release asset exists (so first-install moderation can fetch it) and reads
+    # the portable zip's SHA256 from the windows-exe job. Same tag gate as the release; the push
+    # is a no-op until the CHOCOLATEY_API_KEY secret is set, so it's safe to merge beforehand (#137).
+    needs: [windows-exe, release]
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build + pack package
+        working-directory: companion
+        shell: pwsh
+        run: |
+          node scripts/build-choco.mjs `
+            --version "${{ steps.ver.outputs.version }}" `
+            --checksum "${{ needs.windows-exe.outputs.sha256 }}" `
+            --out dist-choco `
+            --pack
+
+      - name: Upload nupkg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chocolatey-nupkg
+          path: companion/dist-choco/*.nupkg
+          if-no-files-found: error
+
+      - name: Attach nupkg to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: companion/dist-choco/*.nupkg
+          draft: false
+          prerelease: false
+
+      - name: Check for Chocolatey API key
+        id: creds
+        env:
+          CHOCO_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        shell: pwsh
+        run: |
+          if ($env:CHOCO_KEY) {
+            "configured=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            "configured=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Host "::notice::CHOCOLATEY_API_KEY secret not set — skipping push to the Chocolatey community repo. The .nupkg is still attached to the release."
+          }
+
+      - name: Push to Chocolatey community repo
+        if: steps.creds.outputs.configured == 'true'
+        working-directory: companion
+        shell: pwsh
+        env:
+          CHOCO_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          $pkg = Get-ChildItem dist-choco\*.nupkg | Select-Object -First 1
+          choco push $pkg.FullName --source https://push.chocolatey.org/ --api-key $env:CHOCO_KEY
