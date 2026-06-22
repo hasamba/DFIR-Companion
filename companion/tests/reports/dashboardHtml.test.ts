@@ -173,4 +173,17 @@ describe("dashboard.html", () => {
     expect(html).toContain('id="assetZoomReset"');
     expect(html).toContain('addEventListener("wheel"');
   });
+
+  it("has the hypotheses panel (#140) with CRUD wiring and the notebook→hypothesis bridge", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="sec-hypotheses"');
+    expect(html).toContain('id="hypList"');
+    expect(html).toContain('id="hypAddBtn"');
+    expect(html).toContain("loadHypotheses");
+    expect(html).toContain("/hypotheses");            // CRUD endpoint
+    expect(html).toContain("hypPatch");               // inline status/assignee/notes PATCH
+    expect(html).toContain("hypDelete");
+    expect(html).toContain("hypotheses_changed");      // WS refresh
+    expect(html).toContain("promoteToHypothesis");     // notebook → hypothesis bridge
+  });
 });
