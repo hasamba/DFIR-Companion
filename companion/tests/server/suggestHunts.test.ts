@@ -59,4 +59,12 @@ describe("POST /cases/:id/velociraptor/suggest-hunts", () => {
     const res = await request(app).post("/cases/c1/velociraptor/suggest-hunts").send({});
     expect(res.status).toBe(501);
   });
+
+  it("accepts an excludeVql for per-card regenerate (#157)", async () => {
+    const { app, stateStore } = await makeApp(new MockProvider("mock", cannedSuggestions));
+    await seedFinding(stateStore);
+    const res = await request(app).post("/cases/c1/velociraptor/suggest-hunts").send({ excludeVql: "SELECT * FROM pslist()" });
+    expect(res.status).toBe(200);
+    expect(res.body.suggestions).toHaveLength(1);   // regen still returns a suggestion (the model is asked to vary it)
+  });
 });

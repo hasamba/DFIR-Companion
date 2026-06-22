@@ -218,6 +218,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Velociraptor triage bundles** — browse artifacts → save bundles → run as hunts (label/OS/min-severity) → auto-collect + import
 - **AI-suggested fleet hunts** — AI proposes proactive hunts to sweep fleet for case tradecraft (grounded in the causal evidence graph — spawn chains, file lineage, lateral movement — so hunts target the relationship, not just the leaf indicator)
 - **AI-suggested playbook hunts** — AI proposes hunts per endpoint-related task (single-endpoint collection or fleet hunt)
+- **Hunting feedback loop** — records each deployed hunt's outcome (found new evidence + counts) per case; suggestions skip a query that already ran and pivot on what hit, with a dashboard *Hunting Profile* of what's been hunted / hit / missed
 - **Webhook push ingest** (opt-in, token) — external tools push alerts via `POST /cases/:id/push` (SIEM webhook, Velociraptor monitor, scripts)
 - **Velociraptor live monitoring** (opt-in) — stream CLIENT_EVENT artifacts (e.g., ProcessCreation) as events fire; auto-collect on interval; one-click auto-monitor for all enabled artifacts
 - **Scope + legitimacy** — set time window; mark findings/IOCs/events legitimate (reversible); all views re-project

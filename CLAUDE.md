@@ -306,7 +306,7 @@ same caching/anonymization invariants as synthesis. Server-only (no `scripts/*` 
 which **retries the rename through a transient `EPERM`/`EBUSY`/`EACCES` lock**, since `cases/` may live
 in a synced folder where Dropbox/OneDrive/AV briefly locks the file mid-rename; route every new store's
 save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
-`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `SecondOpinionStore`, `ImportMetaStore`, `PlaybookStore`, `PlaybookControlStore`, `ReportTemplateControlStore` (`state/report-template.json` `{ templateId }`). Pure filters/transforms live next to
+`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `SecondOpinionStore`, `ImportMetaStore`, `PlaybookStore`, `PlaybookControlStore`, `HuntOutcomeStore` (`state/hunt-outcomes.json` — see the hunting feedback loop below; **IN `SNAPSHOT_STATE_FILES`**), `ReportTemplateControlStore` (`state/report-template.json` `{ templateId }`). Pure filters/transforms live next to
 them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`, `diffFindings`, `diffTimeline`, `diffIocs`, `buildSecondOpinionDeltas`, `applyAcceptedSecondOpinion`) and are unit-tested independently of I/O.
 
@@ -552,6 +552,29 @@ SAME path as the `/import` route (evidence-first persist → `importVelociraptor
 `POST /cases/:id/velociraptor/run-bundle` + `…/hunt-jobs` (list) + `…/collect` (`{huntId}`); `onVeloHunt` WS-broadcasts `velo_hunt_changed`.
 Server-only (no `scripts/*` pipeline wiring). When you add hunt-condition options, keep the label/name sanitization
 in `velociraptorApi.ts` (no VQL-string injection — names match `ARTIFACT_RE`, labels stripped to a safe charset).
+
+**Hunting feedback loop (#157).** Closes the open-loop hunt suggestions WITHIN a case: record what was hunted +
+whether it hit, refine the next suggestions, surface a per-case hunting profile. The pure core is `analysis/huntOutcomes.ts`
+(a `HuntOutcome` carries `vqlFingerprint` (FNV-1a — the dedup key), source, title, huntId, status, and on-collect
+foundEvidence/resultRows/added*/resultSummary): `recordDeploy`/`fillOutcome`/`deployedFingerprints`/`renderPriorHuntsBlock` (the
+lenient *PRIOR HUNTS* prompt block)/`buildHuntingProfile` — all I/O-free + unit-tested. **`fillOutcome` is non-downgrading +
+mixed-accumulation:** `resultRows` (rows the hunt RETURNED — what the analyst sees; a hunt that re-confirms known-bad is a
+HIT even with 0 new) takes the MAX across re-collects, `addedEvents`/`addedIocs` (NEW-to-case after dedup) ACCUMULATE, and a
+hit is never flipped to a miss (fleet results trickle in → re-collect pulls stragglers, and a re-collect of imported rows
+dedups to a 0 delta). Persisted by `HuntOutcomeStore`
+(`state/hunt-outcomes.json`, **IN `SNAPSHOT_STATE_FILES`** — investigation data; unlike `VeloHuntStore` which is capped/
+machine-specific/snapshot-excluded). Recording is server-only: bundle deploys (`run-bundle`) + suggested fleet/playbook/
+technique deploys (the NEW case-scoped `POST /cases/:id/velociraptor/deploy-hunt`, which `launchHunt`s + registers a
+collectible `VeloHuntJob` that auto-collects after `DFIR_VELO_HUNT_WAIT_MIN` like a bundle) → `recordDeploy`;
+`importVeloHuntResults` → `fillOutcome` by hunt id (passing the raw `totalRows` as `resultRows`, so a hunt that ran empty
+is a recorded miss, not silence). The single Custom.Hunt artifact stores rows under NAMED sources (Pivot0…), so collect
+maps `{ artifact: job.sources }` into `huntResultsByArtifact` to read `artifact/source` (else 0 rows → false "no evidence").
+The pipeline gets `huntOutcomeStore` (wired in `buildRuntimePipeline`); `suggestHunts`/`suggestTechniqueHunts`/`suggestPlaybookHunts`
+prepend the PRIOR HUNTS block AND drop any suggestion whose fingerprint is already deployed (generalizes `excludeVql`).
+`GET /cases/:id/hunt-outcomes` → `buildHuntingProfile` feeds the dashboard *Hunting Profile* panel (rows re-pressable to
+re-collect + expandable to view results via `POST /cases/:id/velociraptor/hunt-rows`, which resolves the job and reads its
+rows on demand); `onVeloHunt` refreshes it. Collection-mode (`collect-host`) deploys are recorded but NOT auto-filled
+(per-host flows aren't collected via hunt id). Cap `DFIR_HUNT_OUTCOME_MAX` (default 50). Server-only (no `scripts/*` wiring).
 
 **Real-time push ingest + Velociraptor live monitoring (#84).** Two ways to stream alerts into a case as they
 happen, both routed through the SAME `importDetect` → import → diff → re-synthesize pipeline as the Import button,

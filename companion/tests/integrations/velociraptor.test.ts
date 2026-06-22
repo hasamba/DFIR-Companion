@@ -7,6 +7,8 @@ import {
   extractMonitoredArtifacts,
   loadVelociraptorConfig,
   buildVelociraptorClient,
+  retryTransientSpawn,
+  spawnErrorMessage,
   matchClient,
   normalizeClientRow,
   type VeloClientRecord,
@@ -550,6 +552,69 @@ describe("VelociraptorClient.huntResultsByArtifact", () => {
     await expect(c.huntResultsByArtifact("bad id", ["Windows.System.Pslist"])).rejects.toThrow(/invalid hunt id/);
     const { results } = await c.huntResultsByArtifact("H.OK1", ["bad name", "Windows.System.Pslist"]);
     expect(Object.keys(results)).toEqual(["Windows.System.Pslist"]);
+  });
+
+  it("reads a fleet-hunt artifact's NAMED sources as artifact/source (#157 — else 0 rows / false 'no evidence')", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ a: 1 }], raw: "" }; };
+    const { results } = await new VelociraptorClient(cfg, runner).huntResultsByArtifact(
+      "H.OK1", ["Custom.Hunt.Companion.x"], undefined, { "Custom.Hunt.Companion.x": ["Pivot0"] });
+    expect(program).toContain("artifact='Custom.Hunt.Companion.x/Pivot0'");
+    expect(results["Custom.Hunt.Companion.x"]).toHaveLength(1);
+  });
+});
+
+describe("retryTransientSpawn", () => {
+  const noSleep = async () => {};
+  const launchErr = (code: string) => Object.assign(new Error(`spawn ${code}`), { spawnCode: code });
+
+  it("retries a transient spawn lock (EPERM) then succeeds", async () => {
+    let calls = 0;
+    const out = await retryTransientSpawn(async () => {
+      calls++;
+      if (calls < 3) throw launchErr("EPERM");
+      return "ok";
+    }, { sleep: noSleep });
+    expect(out).toBe("ok");
+    expect(calls).toBe(3);
+  });
+
+  it("does NOT retry a query failure (no spawnCode)", async () => {
+    let calls = 0;
+    await expect(retryTransientSpawn(async () => { calls++; throw new Error("velociraptor exited with code 1"); }, { sleep: noSleep }))
+      .rejects.toThrow(/exited with code 1/);
+    expect(calls).toBe(1);
+  });
+
+  it("does NOT retry a non-transient launch failure (ENOENT — wrong binary path)", async () => {
+    let calls = 0;
+    await expect(retryTransientSpawn(async () => { calls++; throw launchErr("ENOENT"); }, { sleep: noSleep }))
+      .rejects.toThrow(/ENOENT/);
+    expect(calls).toBe(1);
+  });
+
+  it("rethrows the transient error after exhausting the retry budget", async () => {
+    let calls = 0;
+    await expect(retryTransientSpawn(async () => { calls++; throw launchErr("EPERM"); }, { retries: 2, sleep: noSleep }))
+      .rejects.toThrow(/EPERM/);
+    expect(calls).toBe(3);   // initial + 2 retries
+  });
+});
+
+describe("spawnErrorMessage", () => {
+  it("adds AV/EDR + GUI guidance for a persistent EPERM/EACCES block", () => {
+    const m = spawnErrorMessage("velociraptor.exe", { message: "spawn EPERM", code: "EPERM" });
+    expect(m).toContain('velociraptor.exe');
+    expect(m).toContain("spawn EPERM");
+    expect(m).toMatch(/antivirus\/EDR/i);
+    expect(m).toMatch(/lsass\.dmp/);
+    expect(m).toMatch(/Velociraptor GUI/);
+    expect(spawnErrorMessage("v", { message: "x", code: "EACCES" })).toMatch(/exclusion/);
+  });
+
+  it("stays terse for other codes (e.g. ENOENT — wrong path)", () => {
+    const m = spawnErrorMessage("nope.exe", { message: "spawn ENOENT", code: "ENOENT" });
+    expect(m).toBe('Failed to run velociraptor binary "nope.exe": spawn ENOENT');
   });
 });
 
