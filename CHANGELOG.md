@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Regenerate a suggested fleet hunt** — each AI fleet-hunt card gets a per-card ↻ Regenerate (like playbook hunts) to get a different VQL when one is bad/won't compile (part of #57).
 
 ### Fixed
+- **Asset↔IoC over-linking on IP substrings** — the asset graph's description scan now matches IP IOCs with a digit/dot boundary, so `1.1.1.1` no longer links inside `11.1.1.10` (nor `192.168.1.1` inside `192.168.1.10`), preventing inflated asset IoC/severity associations (same class as the geo-map fix, #133).
 - **Hunt VQL `hash()` signature** — the fleet/playbook hunt prompts now teach the real `hash(path=…).SHA256` form (no invented `hashselect=` arg, which fails to compile) and to avoid full-disk globs, cutting "Velociraptor did not launch the hunt" errors (part of #57/#70).
 - **`spawn EPERM` launching a hunt** — the velociraptor binary launch now retries a transient Windows lock (AV / sync client / concurrent spawn), so deploying a second hunt no longer fails with "spawn EPERM" (`DFIR_VELOCIRAPTOR_SPAWN_RETRIES`, default 6); a *persistent* EPERM/EACCES (antivirus/EDR blocking the process for a hunt whose VQL command line carries credential-dump indicators like `lsass.dmp`) now reports an actionable message — add an AV exclusion for the velociraptor binary, or run that hunt's VQL from the Velociraptor GUI.
 

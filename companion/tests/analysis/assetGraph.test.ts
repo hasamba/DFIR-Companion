@@ -69,6 +69,29 @@ describe("buildAssetGraph", () => {
     expect(acct.iocIds).toContain("i1");                      // account linked to the IP in its event
   });
 
+  it("links an IP IoC referenced only in the description, with boundary-aware matching", () => {
+    const s = emptyState("c1");
+    s.iocs.push(
+      { id: "i1", type: "ip", value: "192.168.1.1", firstSeen: "" },   // the gateway
+      { id: "i2", type: "ip", value: "1.1.1.1", firstSeen: "" },        // shorter prefix of a longer IP
+    );
+    s.forensicTimeline.push(
+      // i1 appears ONLY in free text (no structured field, no finding) → must still link.
+      { id: "e1", timestamp: "", description: "outbound beacon to 192.168.1.1 observed",
+        severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "HOST-A" },
+      // Mentions 192.168.1.10 / 11.1.1.10 only — must NOT link i1 (192.168.1.1) or i2 (1.1.1.1).
+      { id: "e2", timestamp: "", description: "scan from 192.168.1.10 and 11.1.1.10",
+        severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "HOST-B" },
+    );
+
+    const g = buildAssetGraph(s);
+    const a = g.assets.find((x) => x.name === "HOST-A")!;
+    const b = g.assets.find((x) => x.name === "HOST-B")!;
+    expect(a.iocIds).toContain("i1");                                   // (1) IP-only-in-description is linked
+    expect(b.iocIds).not.toContain("i1");                              // (2) 192.168.1.1 NOT inside 192.168.1.10
+    expect(b.iocIds).not.toContain("i2");                              //     1.1.1.1 NOT inside 11.1.1.10
+  });
+
   it("connects one IoC to multiple assets", () => {
     const s = emptyState("c1");
     s.iocs.push({ id: "i1", type: "ip", value: "8.8.8.8", firstSeen: "" });

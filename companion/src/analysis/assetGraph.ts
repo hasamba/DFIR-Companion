@@ -40,6 +40,34 @@ export interface AssetGraph {
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 function worse(a: Severity, b: Severity): Severity { return SEV_RANK[b] < SEV_RANK[a] ? b : a; }
 
+// Dotted-quad shape (loose — any 4 dot-separated 1-3 digit groups). Used only to decide whether an
+// IOC value needs boundary-aware description matching, not to validate octet ranges.
+const IPV4_SHAPE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Per-IOC predicate for "does this IOC value appear in an event description". For IP-shaped values
+// a raw substring match over-links — IOC `1.1.1.1` matches inside `11.1.1.10` and `192.168.1.1`
+// inside `192.168.1.10` — so we use a digit/dot-boundary regex `(?<![\d.])<ip>(?![\d.])` (mirrors the
+// geographic-map fix, #133, and the boundary-aware token match in iocCorroboration.ts). Non-IP values
+// keep the cheap substring test. Compiled once per case (not per event).
+interface DescMatcher { ioc: IOC; test: (descLower: string) => boolean; }
+function buildDescMatchers(iocs: readonly IOC[]): DescMatcher[] {
+  const out: DescMatcher[] = [];
+  for (const i of iocs) {
+    const v = i.value.toLowerCase();
+    if (v.length < 4) continue;
+    if (IPV4_SHAPE.test(v)) {
+      const re = new RegExp(`(?<![\\d.])${escapeRegExp(v)}(?![\\d.])`);
+      out.push({ ioc: i, test: (d) => re.test(d) });
+    } else {
+      out.push({ ioc: i, test: (d) => d.includes(v) });
+    }
+  }
+  return out;
+}
+
 function basename(p: string): string {
   return (p.split(/[\\/]/).pop() || p).toLowerCase();
 }
@@ -82,6 +110,7 @@ export function buildAssetGraph(state: InvestigationState): AssetGraph {
   const byValue = new Map<string, IOC>();
   for (const i of iocs) byValue.set(i.value.toLowerCase(), i);
   const findingById = new Map(state.findings.map((f) => [f.id, f] as const));
+  const descMatchers = buildDescMatchers(iocs);
 
   const assetMap = new Map<string, GraphAsset>();
   const edgeSet = new Set<string>();
@@ -118,9 +147,8 @@ export function buildAssetGraph(state: InvestigationState): AssetGraph {
       if (f) for (const iid of f.relatedIocs) add(byId.get(iid));
     }
     const desc = e.description.toLowerCase();
-    for (const i of iocs) {
-      const v = i.value.toLowerCase();
-      if (v.length >= 4 && desc.includes(v)) add(i);
+    for (const m of descMatchers) {
+      if (m.test(desc)) add(m.ioc);
     }
     return [...found.values()];
   }
