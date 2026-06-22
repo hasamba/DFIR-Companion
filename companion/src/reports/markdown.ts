@@ -15,6 +15,7 @@ import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis
 import { hasExposureFinding, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
+import type { Hypothesis } from "../analysis/hypothesis.js";
 import { playbookStats, type PlaybookStatus, type PlaybookTask } from "../analysis/playbook.js";
 import {
   DEFAULT_COVER_TITLE,
@@ -658,15 +659,40 @@ function playbookSection(tasks: PlaybookTask[], lines: string[]): void {
   lines.push("");
 }
 
+function hypothesesSection(hypotheses: Hypothesis[], lines: string[]): void {
+  lines.push("## Hypotheses", "");
+  lines.push(
+    "_What we investigated and concluded. Each hypothesis is a testable claim about the incident, " +
+    "tracked from open to supported / refuted / unknown — a lead to test, not a verdict._",
+    "",
+  );
+  const STATUS_LABEL: Record<Hypothesis["status"], string> = {
+    supported: "Supported", refuted: "Refuted", open: "Open", unknown: "Unknown",
+  };
+  // Concluded hypotheses first (supported, then refuted), then the outstanding ones (open, unknown).
+  const order: Hypothesis["status"][] = ["supported", "refuted", "open", "unknown"];
+  const sorted = [...hypotheses].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
+  for (const h of sorted) {
+    lines.push(`### ${h.title} — ${STATUS_LABEL[h.status] ?? h.status}`, "");
+    if (h.description) lines.push(h.description, "");
+    if (h.expectedOutcome) lines.push(`**Expected outcome (what would prove or disprove this):** ${h.expectedOutcome}`, "");
+    const bits: string[] = [];
+    if (h.relatedTechniques.length) bits.push(`ATT&CK: ${h.relatedTechniques.join(", ")}`);
+    if (h.relatedEventIds.length) bits.push(`${h.relatedEventIds.length} supporting event${h.relatedEventIds.length === 1 ? "" : "s"}`);
+    if (h.relatedIocIds.length) bits.push(`${h.relatedIocIds.length} related IOC${h.relatedIocIds.length === 1 ? "" : "s"}`);
+    if (bits.length) lines.push(`_${bits.join(" · ")}._`, "");
+    if (h.notes) lines.push(`**Analyst notes:** ${h.notes}`, "");
+  }
+}
+
 function analystNotebook(entries: NotebookEntry[], lines: string[]): void {
   lines.push("## Analyst Notebook", "");
-  lines.push("_Investigator working notes — hypotheses, open questions, and observations recorded during the investigation._", "");
+  lines.push("_Investigator working notes and open questions recorded during the investigation. Tracked hypotheses are in the Hypotheses section._", "");
   if (!entries.length) {
     lines.push("_(no notebook entries)_", "");
     return;
   }
   const TYPE_LABEL: Record<NotebookEntry["type"], string> = {
-    hypothesis: "Hypothesis",
     note: "Note",
     question: "Question",
   };
@@ -688,6 +714,7 @@ export function renderMarkdownReport(
   playbookTasks?: PlaybookTask[],
   template: ReportTemplate = defaultReportTemplate(),
   kevCatalog?: KevCatalog,
+  hypotheses?: Hypothesis[],
 ): string {
   const lines: string[] = [];
   const ctx = buildBrandingContext(state, meta);
@@ -724,6 +751,9 @@ export function renderMarkdownReport(
     },
     investigation: () => investigation(state, lines, exposure, assetGraph, kevCatalog),
     conclusions: () => conclusions(state, meta, lines),
+    hypotheses: () => {
+      if (hypotheses && hypotheses.length > 0) hypothesesSection(hypotheses, lines);
+    },
     playbook: () => {
       if (playbookTasks && playbookTasks.length > 0) playbookSection(playbookTasks, lines);
     },
