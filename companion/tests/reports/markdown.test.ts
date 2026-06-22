@@ -431,4 +431,66 @@ describe("renderMarkdownReport", () => {
   it("omits the Hypotheses section when there are none", () => {
     expect(renderMarkdownReport(emptyState("c1"))).not.toContain("## Hypotheses");
   });
+
+  describe("geographic distribution section (#133)", () => {
+    it("renders a §4.10 table for geo-located IPs", () => {
+      const s = emptyState("c1");
+      s.iocs.push({
+        id: "i1",
+        type: "ip",
+        value: "8.8.8.8",
+        firstSeen: "2026-01-01T00:00:00Z",
+        enrichments: [{
+          source: "GeoIP",
+          verdict: "unknown",
+          fetchedAt: "2026-01-01T00:00:00Z",
+          lat: 37.4,
+          lon: -122.1,
+          country: "US",
+          city: "Mountain View",
+          tags: ["AS15169"],
+        }],
+      });
+      s.forensicTimeline.push({
+        id: "e1",
+        timestamp: "2026-01-02T10:00:00Z",
+        description: "Suspicious outbound connection to 8.8.8.8",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        dstIp: "8.8.8.8",
+        sources: ["Suricata"],
+      });
+      const md = renderMarkdownReport(s);
+      expect(md).toContain("### 4.10 Geographic distribution");
+      expect(md).toContain("8.8.8.8");
+      expect(md).toContain("US");
+    });
+
+    it("renders a placeholder when there are no geo-located IPs", () => {
+      const md = renderMarkdownReport(emptyState("c1"));
+      expect(md).toContain("### 4.10 Geographic distribution");
+      expect(md).toContain("No geo-located IP addresses");
+    });
+
+    it("renders country-level in the City cell for an approximate (no city) marker", () => {
+      const s = emptyState("c1");
+      s.iocs.push({
+        id: "i1",
+        type: "ip",
+        value: "1.2.3.4",
+        firstSeen: "2026-01-01T00:00:00Z",
+        enrichments: [{
+          source: "GeoIP",
+          verdict: "unknown",
+          fetchedAt: "2026-01-01T00:00:00Z",
+          country: "DE",
+        }],
+      });
+      const md = renderMarkdownReport(s);
+      expect(md).toContain("### 4.10 Geographic distribution");
+      expect(md).toContain("country-level");
+    });
+  });
 });

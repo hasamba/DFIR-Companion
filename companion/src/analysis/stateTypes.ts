@@ -13,6 +13,12 @@ export interface IocEnrichment {
   tags?: string[];                                             // malware family / classification labels
   link?: string;                                               // permalink to the report
   fetchedAt: string;                                           // ISO time the lookup was made
+  // Geo coordinates (#133): set by the GeoIP provider so the map can plot the IOC. Optional —
+  // older enrichments without them still validate; nothing else needs wiring.
+  lat?: number;
+  lon?: number;
+  country?: string;
+  city?: string;
 }
 
 export interface IOC {

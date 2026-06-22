@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "../../src/reports/csv.js";
+import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv, geoMapCsv } from "../../src/reports/csv.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import type { GeoMapData } from "../../src/analysis/geoMap.js";
 
 describe("CSV renderers", () => {
   it("findingsCsv has a header and one row per finding, escaping commas/quotes", () => {
@@ -44,5 +45,38 @@ describe("CSV renderers", () => {
     expect(rows[1]).toContain(`,"1",`);   // default count = 1 when absent
     expect(rows[2]).toContain("later");
     expect(rows[2]).toContain(`,"12",`);  // aggregated count surfaced
+  });
+});
+
+describe("geoMapCsv (#133)", () => {
+  it("emits a header and one row per marker", () => {
+    const data: GeoMapData = {
+      markers: [
+        { iocId: "i1", ip: "8.8.8.8", lat: 37.4, lon: -122.1, country: "US", city: "Mountain View", asn: "AS15169", severity: "High", color: "red", verdict: "malicious", internal: false, legitimate: false, eventCount: 2, sources: ["Suricata"] },
+      ],
+      flows: [],
+      countries: [],
+      stats: { totalIps: 1, resolved: 1, unresolved: 0, internal: 0, external: 1, distinctCountries: 1, distinctAsns: 1 },
+    };
+    const csv = geoMapCsv(data);
+    const [header, row] = csv.trim().split("\n");
+    expect(header).toBe("ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate");
+    expect(row).toContain("8.8.8.8");
+    expect(row).toContain("Mountain View");
+    expect(row).toContain("AS15169");
+    expect(row).toContain('"no"');   // approximate undefined → "no"
+  });
+
+  it("emits approximate:yes for a country-level marker", () => {
+    const data: GeoMapData = {
+      markers: [
+        { iocId: "i2", ip: "1.2.3.4", lat: 51.17, lon: 10.45, country: "Germany", asn: undefined, severity: "Info", color: "gray", verdict: undefined, internal: false, legitimate: false, eventCount: 0, sources: [], approximate: true },
+      ],
+      flows: [],
+      countries: [],
+      stats: { totalIps: 1, resolved: 1, unresolved: 0, internal: 0, external: 1, distinctCountries: 1, distinctAsns: 0 },
+    };
+    const [, row] = geoMapCsv(data).trim().split("\n");
+    expect(row).toContain('"yes"');
   });
 });
