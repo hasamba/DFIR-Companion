@@ -8,6 +8,7 @@ import {
   loadVelociraptorConfig,
   buildVelociraptorClient,
   retryTransientSpawn,
+  spawnErrorMessage,
   matchClient,
   normalizeClientRow,
   type VeloClientRecord,
@@ -597,6 +598,23 @@ describe("retryTransientSpawn", () => {
     await expect(retryTransientSpawn(async () => { calls++; throw launchErr("EPERM"); }, { retries: 2, sleep: noSleep }))
       .rejects.toThrow(/EPERM/);
     expect(calls).toBe(3);   // initial + 2 retries
+  });
+});
+
+describe("spawnErrorMessage", () => {
+  it("adds AV/EDR + GUI guidance for a persistent EPERM/EACCES block", () => {
+    const m = spawnErrorMessage("velociraptor.exe", { message: "spawn EPERM", code: "EPERM" });
+    expect(m).toContain('velociraptor.exe');
+    expect(m).toContain("spawn EPERM");
+    expect(m).toMatch(/antivirus\/EDR/i);
+    expect(m).toMatch(/lsass\.dmp/);
+    expect(m).toMatch(/Velociraptor GUI/);
+    expect(spawnErrorMessage("v", { message: "x", code: "EACCES" })).toMatch(/exclusion/);
+  });
+
+  it("stays terse for other codes (e.g. ENOENT — wrong path)", () => {
+    const m = spawnErrorMessage("nope.exe", { message: "spawn ENOENT", code: "ENOENT" });
+    expect(m).toBe('Failed to run velociraptor binary "nope.exe": spawn ENOENT');
   });
 });
 
