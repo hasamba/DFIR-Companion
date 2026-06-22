@@ -37,11 +37,38 @@ interface GeoResponse {
   as?: string;              // ip-api.com, e.g. "AS15169 Google LLC"
   org?: string;             // ip-api ("Google Public DNS") | ipinfo ("AS15169 Google LLC")
   isp?: string;
+  loc?: string;             // ipinfo: "lat,lon"
+  lat?: number;             // ip-api.com
+  lon?: number;             // ip-api.com
+  latitude?: number;        // ipwho.is
+  longitude?: number;       // ipwho.is
 }
 
 function firstStr(...vals: Array<string | undefined>): string | undefined {
   for (const v of vals) if (typeof v === "string" && v.trim()) return v.trim();
   return undefined;
+}
+
+function asNum(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+// Coordinates from whichever backend shape is present (ipinfo `loc`, ip-api `lat`/`lon`,
+// ipwho.is `latitude`/`longitude`). Returns undefined for missing/out-of-range/null-island.
+function parseGeoCoords(json: GeoResponse): { lat: number; lon: number } | undefined {
+  let lat: number | undefined;
+  let lon: number | undefined;
+  if (typeof json.loc === "string" && json.loc.includes(",")) {
+    const [a, b] = json.loc.split(",", 2).map((s) => Number(s.trim()));
+    if (Number.isFinite(a)) lat = a;
+    if (Number.isFinite(b)) lon = b;
+  }
+  if (lat === undefined) lat = asNum(json.lat) ?? asNum(json.latitude);
+  if (lon === undefined) lon = asNum(json.lon) ?? asNum(json.longitude);
+  if (lat === undefined || lon === undefined) return undefined;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return undefined;
+  if (lat === 0 && lon === 0) return undefined; // null island = unknown
+  return { lat, lon };
 }
 
 const DEFAULT_URL = "https://ipinfo.io/{ip}/json";
@@ -112,11 +139,17 @@ export class GeoIpProvider implements EnrichmentProvider {
 
     const countryLabel = country ? (code ? `${country} (${code})` : country) : code;
     const scoreParts = [countryLabel, asn && org ? `${asn} ${org}` : asn ?? org].filter(Boolean);
+    const coords = parseGeoCoords(json);
+    const cityName = firstStr(json.city);
+    const countryField = country ?? code; // human name if present, else 2-letter code
     return {
       source: this.name,
       verdict: "unknown",
       score: scoreParts.length ? scoreParts.join(" · ") : undefined,
       tags,
+      ...(coords ? { lat: coords.lat, lon: coords.lon } : {}),
+      ...(countryField ? { country: countryField } : {}),
+      ...(cityName ? { city: cityName } : {}),
     };
   }
 }
