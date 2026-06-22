@@ -79,6 +79,18 @@ export const deltaSchema = z.object({
     rationale: z.string().default(""),
     pointer: z.string().default(""),
   })).optional(),
+  // Candidate explanations for the observed activity (issue #140 — hypothesis-driven mode). Title is
+  // NOT .min(1) so a blank one doesn't reject the whole array — sanitizeHypotheses drops it. These are
+  // merged into the per-case HypothesisStore (refresh-pristine / freeze-touched), not InvestigationState.
+  hypotheses: z.array(z.object({
+    title: z.string().default(""),
+    description: z.string().default("").catch(""),
+    expectedOutcome: z.string().default("").catch(""),
+    status: z.enum(["open", "supported", "refuted", "unknown"]).default("open").catch("open"),
+    relatedTechniques: z.array(z.string()).default([]).catch([]),
+    relatedEventIds: z.array(z.string()).default([]).catch([]),
+    relatedIocIds: z.array(z.string()).default([]).catch([]),
+  })).optional(),
 });
 
 export type AnalysisDelta = z.infer<typeof deltaSchema>;
