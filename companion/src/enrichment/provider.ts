@@ -14,6 +14,12 @@ export interface EnrichmentResult {
   total?: number;
   tags?: string[];
   link?: string;
+  // Geo context (set only by GeoIpProvider, #133). Optional so other providers are unaffected;
+  // carried onto the stored IocEnrichment by enrichService's spread, then read by the geo map.
+  lat?: number;
+  lon?: number;
+  country?: string;
+  city?: string;
 }
 
 // "local" = the analyst's OWN self-hosted instance (MISP / YETI) — querying it does NOT
