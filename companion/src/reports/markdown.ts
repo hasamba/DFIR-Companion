@@ -6,6 +6,7 @@ import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
+import { buildGeoMap } from "../analysis/geoMap.js";
 import { detectTimelineGaps, gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDetect.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
@@ -520,6 +521,7 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
 
   chainOfEvidence(state, lines);
   beaconCandidates(state, lines);
+  geographicDistribution(state, lines);
 }
 
 // 4.9 Beacon candidates — outbound connection channels (source host → destination IP:port) whose
@@ -544,6 +546,37 @@ function beaconCandidates(state: InvestigationState, lines: string[]): void {
     lines.push(
       `| ${b.severity}${b.external ? " (external)" : ""} | ${cellMd(b.source)} | ${cellMd(dest)} | ` +
         `~${b.intervalSeconds}s | ±${b.jitterSeconds}s (${b.jitterPct}%) | ${b.eventCount} | ${cellMd(when)} |`,
+    );
+  }
+  lines.push("");
+}
+
+// §4.10 Geographic distribution (#133): a textual companion to the dashboard's interactive map —
+// top countries and a per-IP table. Always rendered (placeholder when empty) so section numbering
+// stays stable. The live map lives in the dashboard; the report carries the data.
+function geographicDistribution(state: InvestigationState, lines: string[]): void {
+  lines.push("### 4.10 Geographic distribution", "");
+  const geo = buildGeoMap(state);
+  if (geo.markers.length === 0) {
+    lines.push("_No geo-located IP addresses — enrich IP IOCs with the GeoIP provider to populate this._", "");
+    return;
+  }
+  const s = geo.stats;
+  lines.push(
+    `${s.resolved} of ${s.totalIps} IP indicator(s) geo-located across ${s.distinctCountries} ` +
+      `countr${s.distinctCountries === 1 ? "y" : "ies"} (${s.external} external, ${s.internal} internal).`,
+    "",
+  );
+  if (geo.countries.length > 0) {
+    lines.push("**Top countries.**", "", "| Country | IPs | Worst severity |", "| --- | --- | --- |");
+    for (const c of geo.countries) lines.push(`| ${cellMd(c.country)} | ${c.count} | ${c.severity} |`);
+    lines.push("");
+  }
+  lines.push("| IP | Country | City | ASN | Severity | Verdict |", "| --- | --- | --- | --- | --- | --- |");
+  for (const m of geo.markers) {
+    lines.push(
+      `| ${cellMd(m.ip)} | ${cellMd(m.country ?? "—")} | ${cellMd(m.city ?? "—")} | ` +
+        `${cellMd(m.asn ?? "—")} | ${m.severity}${m.legitimate ? " (legit)" : ""} | ${cellMd(m.verdict ?? "—")} |`,
     );
   }
   lines.push("");
