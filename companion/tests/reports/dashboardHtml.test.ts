@@ -185,5 +185,8 @@ describe("dashboard.html", () => {
     expect(html).toContain("hypDelete");
     expect(html).toContain("hypotheses_changed");      // WS refresh
     expect(html).toContain("promoteToHypothesis");     // notebook → hypothesis bridge
+    // The promote bridge must surface success/failure, never swallow it silently (a stale-server
+    // 404 would otherwise look like a dead button).
+    expect(html).toContain("promote failed:");
   });
 });

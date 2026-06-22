@@ -4027,17 +4027,22 @@
     function promoteToHypothesis(id) {
       const caseId = document.getElementById("caseId").value.trim();
       const entry = notebookEntries.find(e => e.id === id);
+      const msg = document.getElementById("nbMsg");
       if (!caseId || !entry) return;
+      if (msg) msg.textContent = "promoting…";
       fetch(`/cases/${caseId}/hypotheses`, { method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: entry.text.slice(0, 200), description: entry.text.length > 200 ? entry.text : "", author: investigatorName() }) })
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
         .then(() => {
+          if (msg) msg.textContent = "promoted ✓ — see the Hypotheses panel";
           loadHypotheses(caseId);
           const sec = document.getElementById("sec-hypotheses");
           if (sec) { sec.classList.remove("collapsed"); sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
         })
-        .catch(() => {});
+        // Never swallow silently — a 404 here means a stale server (the #1 gotcha), and the analyst
+        // must see why nothing happened instead of a dead button.
+        .catch(e => { if (msg) msg.textContent = "promote failed: " + e.message + " — restart the companion server if this 404s"; });
     }
 
     // --- Playbook (issue #36) -----------------------------------------------------
