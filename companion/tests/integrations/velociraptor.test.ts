@@ -7,6 +7,7 @@ import {
   extractMonitoredArtifacts,
   loadVelociraptorConfig,
   buildVelociraptorClient,
+  retryTransientSpawn,
   matchClient,
   normalizeClientRow,
   type VeloClientRecord,
@@ -559,6 +560,43 @@ describe("VelociraptorClient.huntResultsByArtifact", () => {
       "H.OK1", ["Custom.Hunt.Companion.x"], undefined, { "Custom.Hunt.Companion.x": ["Pivot0"] });
     expect(program).toContain("artifact='Custom.Hunt.Companion.x/Pivot0'");
     expect(results["Custom.Hunt.Companion.x"]).toHaveLength(1);
+  });
+});
+
+describe("retryTransientSpawn", () => {
+  const noSleep = async () => {};
+  const launchErr = (code: string) => Object.assign(new Error(`spawn ${code}`), { spawnCode: code });
+
+  it("retries a transient spawn lock (EPERM) then succeeds", async () => {
+    let calls = 0;
+    const out = await retryTransientSpawn(async () => {
+      calls++;
+      if (calls < 3) throw launchErr("EPERM");
+      return "ok";
+    }, { sleep: noSleep });
+    expect(out).toBe("ok");
+    expect(calls).toBe(3);
+  });
+
+  it("does NOT retry a query failure (no spawnCode)", async () => {
+    let calls = 0;
+    await expect(retryTransientSpawn(async () => { calls++; throw new Error("velociraptor exited with code 1"); }, { sleep: noSleep }))
+      .rejects.toThrow(/exited with code 1/);
+    expect(calls).toBe(1);
+  });
+
+  it("does NOT retry a non-transient launch failure (ENOENT — wrong binary path)", async () => {
+    let calls = 0;
+    await expect(retryTransientSpawn(async () => { calls++; throw launchErr("ENOENT"); }, { sleep: noSleep }))
+      .rejects.toThrow(/ENOENT/);
+    expect(calls).toBe(1);
+  });
+
+  it("rethrows the transient error after exhausting the retry budget", async () => {
+    let calls = 0;
+    await expect(retryTransientSpawn(async () => { calls++; throw launchErr("EPERM"); }, { retries: 2, sleep: noSleep }))
+      .rejects.toThrow(/EPERM/);
+    expect(calls).toBe(3);   // initial + 2 retries
   });
 });
 
