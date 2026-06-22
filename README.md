@@ -263,6 +263,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Notifications** — Slack/MS Teams/Mattermost/Discord/Telegram/SMTP for findings/playbook/milestones; per-channel threshold + toggles
 - **Report templates** — global branded layouts (accent, header/footer, section order); pick per case
 - **Mobile companion** — read-only PWA (`/mobile`) for findings/timeline/IOCs with verdicts; offline app-shell
+- **🌍 Geographic IP map** — plot geo-located IP IOCs on an interactive world map (Leaflet),
+  color-coded by severity, with victim→attacker flows, country statistics, filtering, and CSV
+  export. Coordinates come from the (opt-in) GeoIP enrichment; offline-friendly (tiles overridable).
 
 ### Ops
 - **Health / Diagnostics** — **Settings → Diagnostics** one-page operator view: disk usage, case count, capture/synthesis queue, redacted AI config + live *Test AI connectivity*, importer attempts (24h/7d) + recent failures; compute-on-demand case sizes; key-free copy-to-clipboard
