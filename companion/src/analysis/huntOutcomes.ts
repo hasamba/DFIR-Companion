@@ -30,10 +30,11 @@ export interface HuntOutcome {
   huntId?: string;            // Velociraptor hunt id when known (links to a VeloHuntJob for collection)
   deployedAt: string;         // ISO
   status: HuntOutcomeStatus;
-  foundEvidence?: boolean;    // collected: did it add any new events or IOCs
-  addedEvents?: number;       // collected
-  addedIocs?: number;         // collected
-  resultSummary?: string;     // collected: compact, e.g. "+12 events, +3 IOCs" / "no new evidence"
+  foundEvidence?: boolean;    // collected: did the hunt return ANY rows / add any new events or IOCs
+  resultRows?: number;        // collected: total rows the hunt returned (what the analyst sees) — a snapshot, not cumulative
+  addedEvents?: number;       // collected: events NEW to the case after dedup (cumulative across re-collects)
+  addedIocs?: number;         // collected: IOCs new to the case (cumulative)
+  resultSummary?: string;     // collected: compact, e.g. "10 results, +1 new event" / "no results"
   collectedAt?: string;       // collected: ISO
 }
 
@@ -107,27 +108,35 @@ export function recordDeploy(
   return [entry, ...rest].slice(0, capMax(max));
 }
 
-// The collection result for a deployed hunt — the import delta the server already computes.
+// The collection result for a deployed hunt — what the server computes after reading + importing the
+// hunt's rows. `resultRows` is the TOTAL rows the hunt returned (what the analyst sees in the table);
+// `addedEvents`/`addedIocs` are what was NEW to the case after dedup (a hunt that only re-confirms
+// already-known artifacts returns rows but adds 0 new events — still a hit, not a miss).
 export interface HuntCollectResult {
+  resultRows?: number;
   addedEvents: number;
   addedIocs: number;
   collectedAt: string;        // ISO
 }
 
-// Compact human summary of a collected hunt's delta.
-function summarizeResult(found: boolean, addedEvents: number, addedIocs: number): string {
-  if (!found) return "no new evidence";
+// Compact human summary of a collected hunt. Leads with the rows the hunt RETURNED (the count that
+// matches the results table), then the delta NEW to the case so "10 results, +1 new event" reads
+// clearly instead of a bare "+1 event" that looks wrong next to 10 rows.
+function summarizeResult(resultRows: number, addedEvents: number, addedIocs: number): string {
   const parts: string[] = [];
-  if (addedEvents > 0) parts.push(`+${addedEvents} event${addedEvents === 1 ? "" : "s"}`);
-  if (addedIocs > 0) parts.push(`+${addedIocs} IOC${addedIocs === 1 ? "" : "s"}`);
-  return parts.length ? parts.join(", ") : "new evidence";
+  if (resultRows > 0) parts.push(`${resultRows} result${resultRows === 1 ? "" : "s"}`);
+  if (addedEvents > 0) parts.push(`+${addedEvents} new event${addedEvents === 1 ? "" : "s"}`);
+  if (addedIocs > 0) parts.push(`+${addedIocs} new IOC${addedIocs === 1 ? "" : "s"}`);
+  if (parts.length) return parts.join(", ");
+  return (resultRows > 0 || addedEvents > 0 || addedIocs > 0) ? "new evidence" : "no results";
 }
 
-// Mark the outcome(s) matching `huntId` as collected, deriving foundEvidence + the summary from the
-// import delta. CUMULATIVE + NON-DOWNGRADING: counts ACCUMULATE across collects and a hit is never
-// flipped back to a miss. This matters because fleet-hunt results trickle in — the analyst re-collects
-// to pull stragglers, and a re-collect of already-imported rows yields a 0 delta (dedup); without this,
-// that second collect would wrongly overwrite a real "hit" with "no new evidence". No-op (returns a
+// Mark the outcome(s) matching `huntId` as collected, deriving foundEvidence + the summary. counts that
+// are CUMULATIVE deltas (addedEvents/addedIocs) ACCUMULATE across collects; resultRows is a SNAPSHOT
+// total so it takes the MAX (a later re-collect reads ALL current rows, not an increment). NON-
+// DOWNGRADING: a hit is never flipped back to a miss — fleet-hunt results trickle in, so the analyst
+// re-collects to pull stragglers, and a re-collect of already-imported rows yields a 0 event-delta
+// (dedup); without this that second collect would wrongly overwrite a real "hit". No-op (returns a
 // copy) when huntId is blank or no entry matches. Pure.
 export function fillOutcome(
   outcomes: readonly HuntOutcome[],
@@ -138,18 +147,21 @@ export function fillOutcome(
   if (!hid) return [...outcomes];
   const deltaEvents = Math.max(0, Math.floor(result.addedEvents || 0));
   const deltaIocs = Math.max(0, Math.floor(result.addedIocs || 0));
+  const newRows = Math.max(0, Math.floor(result.resultRows || 0));
   return outcomes.map((o) => {
     if (o.huntId !== hid) return o;
     const addedEvents = (o.addedEvents || 0) + deltaEvents;   // cumulative across re-collects (re-reads dedup to 0)
     const addedIocs = (o.addedIocs || 0) + deltaIocs;
-    const found = o.foundEvidence === true || addedEvents > 0 || addedIocs > 0;   // a hit stays a hit
+    const resultRows = Math.max(o.resultRows || 0, newRows);  // snapshot total — keep the largest seen
+    const found = o.foundEvidence === true || resultRows > 0 || addedEvents > 0 || addedIocs > 0;   // returned rows = hit; a hit stays a hit
     return {
       ...o,
       status: "collected" as const,
       foundEvidence: found,
+      resultRows,
       addedEvents,
       addedIocs,
-      resultSummary: summarizeResult(found, addedEvents, addedIocs),
+      resultSummary: summarizeResult(resultRows, addedEvents, addedIocs),
       collectedAt: result.collectedAt,
     };
   });
