@@ -9,7 +9,7 @@ import { renderMarkdownReport } from "./markdown.js";
 import { renderHtmlReport } from "./html.js";
 import { renderDocxReport } from "./docx.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
-import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
+import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv, geoMapCsv } from "./csv.js";
 import { buildAttackLayer, type NavigatorLayer } from "./attackLayer.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
@@ -21,6 +21,7 @@ import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../a
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { buildMobileSummary, mobileSummaryEnvOptions, type MobileCaseSummary } from "../analysis/mobileSummary.js";
+import { buildGeoMap, geoMapEnvOptions, type GeoMapData } from "../analysis/geoMap.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import { buildStixBundle, type StixBundle } from "./stix.js";
 import {
@@ -236,6 +237,25 @@ export class ReportWriter {
     const state = await this.loadFilteredState(caseId);
     const meta = await this.cases.getCaseMeta(caseId);
     return buildMobileSummary(state, { ...mobileSummaryEnvOptions(), caseName: meta?.name });
+  }
+
+  // Geographic IP map (#133): markers for the case's geo-located IP IOCs (derived on read).
+  // Scope filter + legitimate-EVENT filter applied, but legitimate IOCs are KEPT and rendered
+  // gray (so whitelisted infra still shows). Coordinates come from the opt-in GeoIP enrichment.
+  async geoMap(caseId: string): Promise<GeoMapData> {
+    const loaded = await this.state.load(caseId);
+    const scoped = projectScope(loaded, this.scope ? await this.scope.load(caseId) : NO_SCOPE);
+    const markers = this.legitimate ? await this.legitimate.load(caseId) : [];
+    const legitimateValues = markers.filter((m) => m.kind === "ioc").map((m) => m.ref);
+    const state: InvestigationState = {
+      ...scoped,
+      forensicTimeline: filterLegitimateEvents(scoped.forensicTimeline, markers),
+    };
+    return buildGeoMap(state, { ...geoMapEnvOptions(), legitimateValues });
+  }
+
+  async geoMapCsv(caseId: string): Promise<string> {
+    return geoMapCsv(await this.geoMap(caseId));
   }
 
   // Build a clean IOC block-list for network/firewall teams (same scope/legitimate filtering as
