@@ -33,6 +33,8 @@ import {
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
+import type { HypothesisStore } from "../analysis/hypothesisStore.js";
+import type { Hypothesis } from "../analysis/hypothesis.js";
 import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
@@ -68,6 +70,7 @@ export class ReportWriter {
     private readonly reportTemplates?: ReportTemplateStore,
     private readonly reportTemplateControl?: ReportTemplateControlStore,
     private readonly kevStore?: KevStore,
+    private readonly hypothesisStore?: HypothesisStore,
   ) {}
 
   // Resolve the report template selected for the case (issue #60). Falls back to the default
@@ -104,6 +107,12 @@ export class ReportWriter {
     if (!this.playbook) return undefined;
     const tasks = await this.playbook.load(caseId);
     return tasks.length ? tasks : undefined;
+  }
+
+  private async loadHypotheses(caseId: string): Promise<Hypothesis[] | undefined> {
+    if (!this.hypothesisStore) return undefined;
+    const list = await this.hypothesisStore.load(caseId);
+    return list.length ? list : undefined;
   }
 
   // Build the Word (.docx) export on demand. Uses the same scope/legitimate filtering as
@@ -272,10 +281,11 @@ export class ReportWriter {
     playbookTasks: PlaybookTask[] | undefined,
     template: ReportTemplate = defaultReportTemplate(),
     kevCatalog?: KevCatalog,
+    hypotheses?: Hypothesis[],
   ): RedactedReportContents {
     return {
-      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog),
-      html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template),
+      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses),
+      html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, hypotheses),
       findingsCsv: findingsCsv(state),
       iocsCsv: iocsCsv(state),
       timelineCsv: timelineCsv(state),
@@ -300,11 +310,12 @@ export class ReportWriter {
     const exposure = await this.loadExposure(caseId);
     const notebookEntries = await this.loadNotebook(caseId);
     const playbookTasks = await this.loadPlaybook(caseId);
+    const hypotheses = await this.loadHypotheses(caseId);
     const template = await this.loadTemplate(caseId);
     const overrides = this.assetOverrides ? await this.assetOverrides.load(caseId) : emptyOverrides();
     const graph = applyAssetOverrides(buildAssetGraph(state), overrides);
     const kevCatalog = await this.loadKevCatalog();
-    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog);
+    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses);
     await writeFile(paths.markdown, c.markdown, "utf8");
     await writeFile(paths.html, c.html, "utf8");
     await writeFile(paths.findingsCsv, c.findingsCsv, "utf8");
@@ -328,6 +339,7 @@ export class ReportWriter {
     const exposure = applyAnonDeep(await this.loadExposure(caseId), redact);
     const notebookEntries = applyAnonDeep(await this.loadNotebook(caseId), redact);
     const playbookTasks = applyAnonDeep(await this.loadPlaybook(caseId), redact);
+    const hypotheses = applyAnonDeep(await this.loadHypotheses(caseId), redact);
     const overrides = applyAnonDeep(
       this.assetOverrides ? await this.assetOverrides.load(caseId) : emptyOverrides(),
       redact,
@@ -336,6 +348,6 @@ export class ReportWriter {
     // The redacted export honors the per-case report template too (branding/section layout).
     const template = await this.loadTemplate(caseId);
     const kevCatalog = await this.loadKevCatalog();
-    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog);
+    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses);
   }
 }

@@ -30,6 +30,7 @@ export const REPORT_SECTION_DEFS = [
   { key: "timeline", label: "3 · Timeline of events" },
   { key: "investigation", label: "4 · Investigation (findings, IOCs, MITRE, chain of evidence)" },
   { key: "conclusions", label: "5 · Conclusions & recommendations" },
+  { key: "hypotheses", label: "Hypotheses (what we investigated & concluded)" },
   { key: "playbook", label: "Response Playbook" },
   { key: "notebook", label: "Analyst Notebook" },
 ] as const;
@@ -166,6 +167,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "timeline", enabled: false },
       { key: "investigation", enabled: false },
       { key: "conclusions", enabled: true },
+      { key: "hypotheses", enabled: false },
       { key: "playbook", enabled: false },
       { key: "notebook", enabled: false },
     ],
@@ -190,6 +192,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "timeline", enabled: true },
       { key: "investigation", enabled: true },
       { key: "conclusions", enabled: true },
+      { key: "hypotheses", enabled: true },
       { key: "playbook", enabled: true },
       { key: "notebook", enabled: true },
     ],

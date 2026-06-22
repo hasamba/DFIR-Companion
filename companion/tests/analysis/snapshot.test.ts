@@ -137,4 +137,8 @@ describe("allowlist / exclusion sets are disjoint", () => {
   it("includes hunt-outcomes.json (investigation data travels with the case) (#157)", () => {
     expect(new Set<string>(SNAPSHOT_STATE_FILES).has("hunt-outcomes.json")).toBe(true);
   });
+
+  it("includes hypotheses.json (investigation data travels with the case) (#140)", () => {
+    expect(new Set<string>(SNAPSHOT_STATE_FILES).has("hypotheses.json")).toBe(true);
+  });
 });
