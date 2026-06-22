@@ -177,4 +177,12 @@ describe("buildGeoMap (#133)", () => {
     const g = buildGeoMap(s);
     expect(g.markers).toHaveLength(0);
   });
+
+  it("resolves country from the GeoIP score leading token when no field/tags/coords", () => {
+    const s = state([ip("i1", "203.0.113.9", { score: "DE · AS60729 Example" })]);
+    const m = buildGeoMap(s).markers[0];
+    expect(m).toBeTruthy();
+    expect(m.approximate).toBe(true);
+    expect(m.lat).toBeCloseTo(51.17, 1);   // Germany centroid
+  });
 });
