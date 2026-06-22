@@ -189,4 +189,13 @@ describe("dashboard.html", () => {
     // 404 would otherwise look like a dead button).
     expect(html).toContain("promote failed:");
   });
+
+  it("includes the geo panel, loader, leaflet include, and focus hook (#133)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="sec-geomap"');
+    expect(html).toContain("function loadGeoMap");
+    expect(html).toContain("/vendor/leaflet/leaflet.js");
+    expect(html).toContain("function geoFocusIp");
+    expect(html).toContain("/geo-map");
+  });
 });
