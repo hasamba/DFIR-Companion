@@ -113,4 +113,24 @@ describe("buildGeoMap (#133)", () => {
     expect(g.markers).toHaveLength(0);
     expect(g.stats.totalIps).toBe(0);
   });
+
+  it("matches an IP referenced only in the event description", () => {
+    const s = state(
+      [ip("i1", "203.0.113.7", { lat: 5, lon: 5 })],
+      [ev({ id: "e1", description: "outbound to 203.0.113.7 detected", severity: "High" })],
+    );
+    const m = buildGeoMap(s).markers[0];
+    expect(m.eventCount).toBe(1);
+    expect(m.severity).toBe("High");
+  });
+
+  it("does not substring-match a different IP with a shared prefix", () => {
+    const s = state(
+      [ip("i1", "192.168.1.1", { lat: 5, lon: 5 })],
+      [ev({ id: "e1", description: "alert on 192.168.1.10", severity: "Critical" })], // different host
+    );
+    const m = buildGeoMap(s).markers[0];
+    expect(m.eventCount).toBe(0);     // 192.168.1.1 was NOT referenced
+    expect(m.severity).toBe("Info");
+  });
 });
