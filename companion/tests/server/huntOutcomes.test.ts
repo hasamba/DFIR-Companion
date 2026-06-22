@@ -84,6 +84,18 @@ describe("hunting feedback loop — routes (#157)", () => {
     expect(hunt?.foundEvidence).toBe(true);
     const profile = (await request(app).get("/cases/c1/hunt-outcomes")).body;
     expect(profile).toMatchObject({ hit: 1, pending: 0 });
+    expect(profile.hunts[0].resultRows).toBe(1);          // the row the hunt returned is surfaced
+    expect(profile.hunts[0].resultSummary).toContain("result");
+  });
+
+  it("hunt-rows returns a tracked hunt's result rows on demand, 404s for an unknown hunt", async () => {
+    const { app } = await makeApp();
+    await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql: "SELECT * FROM pslist()", title: "ps hunt", source: "fleet" });
+    const ok = await request(app).post("/cases/c1/velociraptor/hunt-rows").send({ huntId: "H.DEPLOY1" });
+    expect(ok.status).toBe(200);
+    expect(ok.body.rows).toHaveLength(1);
+    const missing = await request(app).post("/cases/c1/velociraptor/hunt-rows").send({ huntId: "H.NOPE" });
+    expect(missing.status).toBe(404);
   });
 
   it("deploy-hunt validates vql/title and collection-mode hostname", async () => {

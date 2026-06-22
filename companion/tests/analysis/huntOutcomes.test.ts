@@ -117,26 +117,40 @@ describe("fillOutcome", () => {
   const deployed = recordDeploy([], { source: "fleet", title: "webshell hunt", vql: "SELECT 1", huntId: "H.1", deployedAt: T0 });
 
   it("marks collected + computes foundEvidence/summary from the delta", () => {
-    const out = fillOutcome(deployed, "H.1", { addedEvents: 12, addedIocs: 3, collectedAt: T1 });
+    const out = fillOutcome(deployed, "H.1", { resultRows: 10, addedEvents: 12, addedIocs: 3, collectedAt: T1 });
     expect(out[0]).toMatchObject({
       status: "collected",
       foundEvidence: true,
+      resultRows: 10,
       addedEvents: 12,
       addedIocs: 3,
-      resultSummary: "+12 events, +3 IOCs",
+      resultSummary: "10 results, +12 new events, +3 new IOCs",
       collectedAt: T1,
     });
   });
 
-  it("records a miss as 'no new evidence'", () => {
-    const out = fillOutcome(deployed, "H.1", { addedEvents: 0, addedIocs: 0, collectedAt: T1 });
+  it("leads the summary with the rows the hunt RETURNED, then the new-to-case delta", () => {
+    // The reported case: 10 rows returned but only 1 new after dedup — must not read as a bare "+1 event".
+    const out = fillOutcome(deployed, "H.1", { resultRows: 10, addedEvents: 1, addedIocs: 0, collectedAt: T1 });
+    expect(out[0].resultSummary).toBe("10 results, +1 new event");
+    expect(out[0].foundEvidence).toBe(true);
+  });
+
+  it("a hunt that returns rows is a HIT even when nothing is new to the case (all already known)", () => {
+    const out = fillOutcome(deployed, "H.1", { resultRows: 8, addedEvents: 0, addedIocs: 0, collectedAt: T1 });
+    expect(out[0].foundEvidence).toBe(true);
+    expect(out[0].resultSummary).toBe("8 results");
+  });
+
+  it("records a miss as 'no results' when the hunt returned nothing", () => {
+    const out = fillOutcome(deployed, "H.1", { resultRows: 0, addedEvents: 0, addedIocs: 0, collectedAt: T1 });
     expect(out[0].foundEvidence).toBe(false);
-    expect(out[0].resultSummary).toBe("no new evidence");
+    expect(out[0].resultSummary).toBe("no results");
   });
 
   it("singularizes counts of one", () => {
-    const out = fillOutcome(deployed, "H.1", { addedEvents: 1, addedIocs: 1, collectedAt: T1 });
-    expect(out[0].resultSummary).toBe("+1 event, +1 IOC");
+    const out = fillOutcome(deployed, "H.1", { resultRows: 1, addedEvents: 1, addedIocs: 1, collectedAt: T1 });
+    expect(out[0].resultSummary).toBe("1 result, +1 new event, +1 new IOC");
   });
 
   it("is a no-op for a blank or unmatched huntId", () => {
@@ -145,31 +159,32 @@ describe("fillOutcome", () => {
   });
 
   it("clamps negative/garbage counts to zero", () => {
-    const out = fillOutcome(deployed, "H.1", { addedEvents: -3, addedIocs: 0, collectedAt: T1 });
+    const out = fillOutcome(deployed, "H.1", { resultRows: 0, addedEvents: -3, addedIocs: 0, collectedAt: T1 });
     expect(out[0].addedEvents).toBe(0);
     expect(out[0].foundEvidence).toBe(false);
   });
 
-  it("accumulates counts across re-collects (stragglers add up)", () => {
-    let out = fillOutcome(deployed, "H.1", { addedEvents: 5, addedIocs: 0, collectedAt: T1 });
-    out = fillOutcome(out, "H.1", { addedEvents: 3, addedIocs: 1, collectedAt: T2 });
-    expect(out[0]).toMatchObject({ addedEvents: 8, addedIocs: 1, foundEvidence: true, collectedAt: T2 });
-    expect(out[0].resultSummary).toBe("+8 events, +1 IOC");
+  it("accumulates new-event deltas but keeps resultRows as the max snapshot across re-collects", () => {
+    let out = fillOutcome(deployed, "H.1", { resultRows: 10, addedEvents: 5, addedIocs: 0, collectedAt: T1 });
+    out = fillOutcome(out, "H.1", { resultRows: 12, addedEvents: 3, addedIocs: 1, collectedAt: T2 });   // 2 stragglers arrived
+    expect(out[0]).toMatchObject({ resultRows: 12, addedEvents: 8, addedIocs: 1, foundEvidence: true, collectedAt: T2 });
+    expect(out[0].resultSummary).toBe("12 results, +8 new events, +1 new IOC");
   });
 
   it("never downgrades a hit when a re-collect adds nothing (dedup → 0 delta)", () => {
-    let out = fillOutcome(deployed, "H.1", { addedEvents: 5, addedIocs: 0, collectedAt: T1 }); // hit
-    out = fillOutcome(out, "H.1", { addedEvents: 0, addedIocs: 0, collectedAt: T2 });           // re-pull, nothing new
+    let out = fillOutcome(deployed, "H.1", { resultRows: 10, addedEvents: 5, addedIocs: 0, collectedAt: T1 }); // hit
+    out = fillOutcome(out, "H.1", { resultRows: 10, addedEvents: 0, addedIocs: 0, collectedAt: T2 });          // re-pull, nothing new
     expect(out[0].foundEvidence).toBe(true);
     expect(out[0].addedEvents).toBe(5);
-    expect(out[0].resultSummary).toBe("+5 events");
+    expect(out[0].resultRows).toBe(10);
+    expect(out[0].resultSummary).toBe("10 results, +5 new events");
   });
 
-  it("recovers a prior false 'no evidence' once results finally collect", () => {
-    let out = fillOutcome(deployed, "H.1", { addedEvents: 0, addedIocs: 0, collectedAt: T1 }); // collected too early
+  it("recovers a prior false miss once results finally collect", () => {
+    let out = fillOutcome(deployed, "H.1", { resultRows: 0, addedEvents: 0, addedIocs: 0, collectedAt: T1 }); // collected too early
     expect(out[0].foundEvidence).toBe(false);
-    out = fillOutcome(out, "H.1", { addedEvents: 4, addedIocs: 0, collectedAt: T2 });           // re-collect after rows arrive
-    expect(out[0]).toMatchObject({ foundEvidence: true, addedEvents: 4 });
+    out = fillOutcome(out, "H.1", { resultRows: 4, addedEvents: 4, addedIocs: 0, collectedAt: T2 });          // re-collect after rows arrive
+    expect(out[0]).toMatchObject({ foundEvidence: true, resultRows: 4, addedEvents: 4 });
   });
 });
 
@@ -198,12 +213,12 @@ describe("renderPriorHuntsBlock", () => {
     let out = recordDeploy([], { source: "fleet", title: "webshell", vql: "SELECT 1", huntId: "H.1", deployedAt: T0, mitreTechniques: ["T1505.003"] });
     out = recordDeploy(out, { source: "fleet", title: "lolbin", vql: "SELECT 2", huntId: "H.2", deployedAt: T1 });
     out = recordDeploy(out, { source: "fleet", title: "persistence", vql: "SELECT 3", huntId: "H.3", deployedAt: T2 });
-    out = fillOutcome(out, "H.1", { addedEvents: 12, addedIocs: 3, collectedAt: T2 });
-    out = fillOutcome(out, "H.2", { addedEvents: 0, addedIocs: 0, collectedAt: T2 });
+    out = fillOutcome(out, "H.1", { resultRows: 10, addedEvents: 12, addedIocs: 3, collectedAt: T2 });
+    out = fillOutcome(out, "H.2", { resultRows: 0, addedEvents: 0, addedIocs: 0, collectedAt: T2 });
     const block = renderPriorHuntsBlock(out);
     expect(block).toContain("PRIOR HUNTS");
-    expect(block).toContain('"webshell" — +12 events, +3 IOCs  (T1505.003)');
-    expect(block).toContain('"lolbin" — no new evidence');
+    expect(block).toContain('"webshell" — 10 results, +12 new events, +3 new IOCs  (T1505.003)');
+    expect(block).toContain('"lolbin" — no results');
     expect(block).toContain('"persistence" — results not yet collected');
     expect(block.endsWith("\n\n")).toBe(true);
   });

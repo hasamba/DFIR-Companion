@@ -2620,6 +2620,9 @@
       #sec-huntprofile .hp-collect{margin-left:auto;background:var(--c-2d6cdf);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer}
       #sec-huntprofile .hp-collect:disabled{opacity:.6;cursor:default}
       #sec-huntprofile .hp-collect-err{background:var(--c-ff9f43);color:#1a1f29}
+      #sec-huntprofile .hp-item{display:flex;flex-direction:column;gap:4px}
+      #sec-huntprofile .hp-toggle{background:transparent;border:1px solid var(--c-3a4150);color:var(--c-9aa4b2);border-radius:4px;padding:0 6px;font-size:10px;cursor:pointer}
+      #sec-huntprofile .hp-detail{margin:0 0 2px 4px}
       /* ── Query Translator (NL → hunt queries, #100) ── */
       #sec-nlquery .nlq-empty{color:var(--c-9aa4b2);font-size:12px}
       #sec-nlquery .nlq-platforms{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
@@ -7084,12 +7087,12 @@
       const tally = `<div class="hp-tally">`
         + `<span><b>${profile.total}</b> hunted</span>`
         + `<span style="color:#6bcb77"><b>${profile.hit}</b> hit</span>`
-        + `<span><b>${profile.missed}</b> no evidence</span>`
+        + `<span><b>${profile.missed}</b> no results</span>`
         + `<span style="color:#6aa9ff"><b>${profile.pending}</b> pending</span>`
         + `</div>`;
-      const rows = hunts.map((h) => {
+      const rows = hunts.map((h, i) => {
         const st = h.status === "collected" ? (h.foundEvidence ? HP_STATUS.collectedHit : HP_STATUS.collectedMiss) : HP_STATUS.pending;
-        const result = h.status === "collected" ? (h.resultSummary || (h.foundEvidence ? "new evidence" : "no new evidence")) : "results not yet collected";
+        const result = h.status === "collected" ? (h.resultSummary || (h.foundEvidence ? "new evidence" : "no results")) : "results not yet collected";
         const techs = (h.mitreTechniques || []).map((t) => {
           const u = attackUrl(t);
           return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="hp-tech">${esc(t)}</a>` : `<span class="hp-tech">${esc(t)}</span>`;
@@ -7101,13 +7104,22 @@
         const collectBtn = h.huntId
           ? ` <button class="hp-collect" data-hid="${escAttr(h.huntId)}" title="Pull this hunt's results now and record what it found (re-pulls stragglers; results trickle in as endpoints check in)">${collectLabel}</button>`
           : "";
-        return `<div class="hp-row">`
+        // Expand to view the hunt's actual result rows on demand (fetched from the persisted job) — so the
+        // persistent profile can show what a hunt found even after the ephemeral suggestion card is gone.
+        const resultsToggle = h.huntId
+          ? ` <button class="hp-toggle" data-hid="${escAttr(h.huntId)}" data-idx="${i}" title="Show this hunt's result rows">▸ results</button>`
+          : "";
+        return `<div class="hp-item">`
+          + `<div class="hp-row">`
           + `<span class="hp-status ${st.cls}">${st.label}</span>`
           + `<span class="hp-src">${esc(h.source || "")}</span>`
           + `<span class="hp-title">${esc(h.title || "(untitled hunt)")}</span>`
           + `<span class="hp-result">— ${esc(result)}</span>`
           + (techs ? ` ${techs}` : "")
+          + resultsToggle
           + collectBtn
+          + `</div>`
+          + `<div class="hp-detail" id="hpDetail${i}" hidden></div>`
           + `</div>`;
       }).join("");
       el.innerHTML = tally + `<div class="hp-list">${rows}</div>`;
@@ -7124,6 +7136,23 @@
             if (!ok) { b.disabled = false; b.textContent = label; b.title = (j && j.error) || "collect failed — the hunt may have aged out of Velociraptor's job list"; b.classList.add("hp-collect-err"); }
           })
           .catch((e) => { b.disabled = false; b.textContent = label; b.title = "collect failed: " + e.message; b.classList.add("hp-collect-err"); });
+      });
+      el.querySelectorAll(".hp-toggle").forEach((b) => b.onclick = () => {
+        const detail = document.getElementById("hpDetail" + b.dataset.idx);
+        if (!detail) return;
+        if (!detail.hasAttribute("hidden")) { detail.setAttribute("hidden", ""); b.textContent = "▸ results"; return; }
+        detail.removeAttribute("hidden"); b.textContent = "▾ results";
+        if (detail.dataset.loaded) return;   // fetched already this render — don't re-pull on every toggle
+        if (!caseId) return;
+        detail.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>loading results…</div>";
+        fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/hunt-rows`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId: b.dataset.hid }) })
+          .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+          .then(({ ok, j }) => {
+            if (!ok || j.error) { detail.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">${esc(j.error || "could not load results")}</div>`; return; }
+            detail.innerHTML = (j.rows && j.rows.length) ? renderVqlRows(j) : "<div style='color:var(--c-9aa4b2);font-size:12px'>no rows (the hunt may still be collecting, or returned nothing)</div>";
+            detail.dataset.loaded = "1";
+          })
+          .catch((e) => { detail.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">error: ${esc(e.message)} — restart the companion server if this 404s</div>`; });
       });
     }
 

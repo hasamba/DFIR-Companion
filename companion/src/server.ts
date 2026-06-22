@@ -2336,7 +2336,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (options.huntOutcomeStore) {
         try {
           const cur = await options.huntOutcomeStore.load(caseId);
-          await options.huntOutcomeStore.save(caseId, fillOutcome(cur, job.huntId, { addedEvents, addedIocs, collectedAt: new Date().toISOString() }));
+          // resultRows = the rows the hunt RETURNED (what the analyst sees); addedEvents = new-to-case
+          // after dedup. Showing both stops "+1 event" reading as wrong next to a 10-row result table.
+          await options.huntOutcomeStore.save(caseId, fillOutcome(cur, job.huntId, { resultRows: totalRows, addedEvents, addedIocs, collectedAt: new Date().toISOString() }));
         } catch (e) { logLine(`[hunt-outcomes] fill failed for hunt ${job.huntId}: ${(e as Error).message}`); }
       }
 
@@ -2518,6 +2520,27 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json(buildHuntingProfile(await options.huntOutcomeStore.load(req.params.id)));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Read a recorded hunt's result rows ON DEMAND for the Hunting Profile's expandable view (#157) —
+  // resolves the hunt's artifact(s)+sources from the persisted job (the profile only carries the hunt
+  // id), so the analyst can review what a hunt found from the persistent profile after the ephemeral
+  // suggestion card is gone. 404 when the job aged out of the (capped) list; 501 without the API.
+  app.post("/cases/:id/velociraptor/hunt-rows", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.veloHuntStore) return res.status(501).json({ error: "hunt store not configured" });
+    const huntId = String(req.body?.huntId ?? "").trim();
+    if (!huntId) return res.status(400).json({ error: "huntId is required" });
+    try {
+      const job = await options.veloHuntStore.get(req.params.id, huntId);
+      if (!job) return res.status(404).json({ error: "this hunt is no longer tracked (it aged out of the job list) — re-run it to see results" });
+      const sourcesByArtifact = (job.sources?.length && job.artifacts.length === 1) ? { [job.artifacts[0]]: job.sources } : undefined;
+      const { results } = await options.velociraptorClient.huntResultsByArtifact(job.huntId, job.artifacts, job.filters, sourcesByArtifact);
+      const rows = Object.values(results).flat();
+      return res.status(200).json({ rows, total: rows.length, artifacts: Object.keys(results) });
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
     }
   });
 
