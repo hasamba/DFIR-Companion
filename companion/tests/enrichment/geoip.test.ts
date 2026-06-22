@@ -39,4 +39,18 @@ describe("GeoIpProvider coordinates (#133)", () => {
     expect(r!.lat).toBeUndefined();
     expect(r!.lon).toBeUndefined();
   });
+
+  it("rejects out-of-range coordinates", async () => {
+    const p = new GeoIpProvider({ fetchFn: mockFetch({ country: "US", loc: "200,1" }) });
+    const r = await p.lookup("ip", "9.9.9.9");
+    expect(r!.lat).toBeUndefined();
+    expect(r!.lon).toBeUndefined();
+  });
+
+  it("rejects a partial loc string (no bogus lon=0)", async () => {
+    const p = new GeoIpProvider({ fetchFn: mockFetch({ country: "US", loc: "37.4," }) });
+    const r = await p.lookup("ip", "9.9.9.9");
+    expect(r!.lat).toBeUndefined();
+    expect(r!.lon).toBeUndefined();
+  });
 });

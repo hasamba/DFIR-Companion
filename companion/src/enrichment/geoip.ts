@@ -59,9 +59,11 @@ function parseGeoCoords(json: GeoResponse): { lat: number; lon: number } | undef
   let lat: number | undefined;
   let lon: number | undefined;
   if (typeof json.loc === "string" && json.loc.includes(",")) {
-    const [a, b] = json.loc.split(",", 2).map((s) => Number(s.trim()));
-    if (Number.isFinite(a)) lat = a;
-    if (Number.isFinite(b)) lon = b;
+    const [sa, sb] = json.loc.split(",", 2).map((s) => s.trim());
+    const a = Number(sa);
+    const b = Number(sb);
+    if (sa !== "" && Number.isFinite(a)) lat = a;
+    if (sb !== "" && Number.isFinite(b)) lon = b;
   }
   if (lat === undefined) lat = asNum(json.lat) ?? asNum(json.latitude);
   if (lon === undefined) lon = asNum(json.lon) ?? asNum(json.longitude);
