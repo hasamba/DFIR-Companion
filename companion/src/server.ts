@@ -616,7 +616,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked, geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" });
   });
 
   // ── Update check (opt-in "newer release available" notice; NEVER downloads) ──────────────
@@ -1391,6 +1391,32 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       return res.status(200).json(await options.reportWriter.mobileSummary(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Geographic IP map (#133): markers for the case's geo-located IP IOCs, derived on demand with
+  // the same scope filtering as the report (legit IOCs kept + rendered gray). Coordinates come
+  // from the opt-in GeoIP enrichment, so the map is empty until IP IOCs are enriched.
+  app.get("/cases/:id/geo-map", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.geoMap(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // IP + geolocation CSV export for the map panel (#133) — for external OSINT tooling.
+  app.get("/cases/:id/geo-map.csv", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const csv = await options.reportWriter.geoMapCsv(req.params.id);
+      res.type("text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="geo-map.csv"');
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(csv);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -6642,6 +6668,23 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
   // tests and embeddings that don't use monitoring.
   void resumeVeloMonitors();
+
+  // Vendored client libraries (Leaflet for the Geographic map, #133). Whitelisted filenames only.
+  // Registered inside createApp so the routes are available in tests (startServer calls createApp).
+  const vendorFiles: Record<string, string> = {
+    "/vendor/leaflet/leaflet.js": "application/javascript; charset=utf-8",
+    "/vendor/leaflet/leaflet.css": "text/css; charset=utf-8",
+  };
+  for (const [route, type] of Object.entries(vendorFiles)) {
+    app.get(route, async (_req, res) => {
+      try {
+        const buf = await readPublicAsset(route.slice(1)); // strip leading "/"
+        res.type(type).set("Cache-Control", "public, max-age=86400").send(buf);
+      } catch {
+        res.status(404).end();
+      }
+    });
+  }
 
   return app;
 }
