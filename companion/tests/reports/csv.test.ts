@@ -60,9 +60,23 @@ describe("geoMapCsv (#133)", () => {
     };
     const csv = geoMapCsv(data);
     const [header, row] = csv.trim().split("\n");
-    expect(header).toBe("ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount");
+    expect(header).toBe("ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate");
     expect(row).toContain("8.8.8.8");
     expect(row).toContain("Mountain View");
     expect(row).toContain("AS15169");
+    expect(row).toContain('"no"');   // approximate undefined → "no"
+  });
+
+  it("emits approximate:yes for a country-level marker", () => {
+    const data: GeoMapData = {
+      markers: [
+        { iocId: "i2", ip: "1.2.3.4", lat: 51.17, lon: 10.45, country: "Germany", asn: undefined, severity: "Info", color: "gray", verdict: undefined, internal: false, legitimate: false, eventCount: 0, sources: [], approximate: true },
+      ],
+      flows: [],
+      countries: [],
+      stats: { totalIps: 1, resolved: 1, unresolved: 0, internal: 0, external: 1, distinctCountries: 1, distinctAsns: 0 },
+    };
+    const [, row] = geoMapCsv(data).trim().split("\n");
+    expect(row).toContain('"yes"');
   });
 });

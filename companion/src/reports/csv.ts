@@ -56,11 +56,12 @@ export function forensicTimelineCsv(state: InvestigationState): string {
 
 // IP + geolocation export for the Geographic map panel (#133) — for external OSINT tooling.
 export function geoMapCsv(data: GeoMapData): string {
-  const header = "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount";
+  const header = "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate";
   const rows = data.markers.map((m) =>
     row([
       m.ip, m.country ?? "", m.city ?? "", String(m.lat), String(m.lon), m.asn ?? "",
       m.severity, m.verdict ?? "", m.internal ? "yes" : "no", String(m.eventCount),
+      m.approximate ? "yes" : "no",
     ]),
   );
   return [header, ...rows].join("\n") + "\n";
