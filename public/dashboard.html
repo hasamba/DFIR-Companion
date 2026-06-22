@@ -2619,6 +2619,7 @@
       #sec-huntprofile .hp-tech{color:var(--c-6aa9ff);font-size:11px}
       #sec-huntprofile .hp-collect{margin-left:auto;background:var(--c-2d6cdf);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer}
       #sec-huntprofile .hp-collect:disabled{opacity:.6;cursor:default}
+      #sec-huntprofile .hp-collect-err{background:var(--c-ff9f43);color:#1a1f29}
       /* ── Query Translator (NL → hunt queries, #100) ── */
       #sec-nlquery .nlq-empty{color:var(--c-9aa4b2);font-size:12px}
       #sec-nlquery .nlq-platforms{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
@@ -7093,10 +7094,12 @@
           const u = attackUrl(t);
           return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="hp-tech">${esc(t)}</a>` : `<span class="hp-tech">${esc(t)}</span>`;
         }).join(" ");
-        // A pending hunt with a Velociraptor hunt id can be collected NOW (fleet/bundle hunts auto-collect
-        // after their wait, but this pulls early / re-pulls stragglers and fills the outcome immediately).
-        const collectBtn = (h.status !== "collected" && h.huntId)
-          ? ` <button class="hp-collect" data-hid="${escAttr(h.huntId)}" title="Pull this hunt's results now and record what it found">↻ Collect now</button>`
+        // Any hunt with a Velociraptor hunt id stays collectible — fleet results trickle in as clients
+        // check in, so the button REMAINS after a collect so the analyst can re-pull stragglers (counts
+        // accumulate; a hit is never downgraded). Pending → "Collect now"; collected → "Re-collect".
+        const collectLabel = h.status === "collected" ? "↻ Re-collect" : "↻ Collect now";
+        const collectBtn = h.huntId
+          ? ` <button class="hp-collect" data-hid="${escAttr(h.huntId)}" title="Pull this hunt's results now and record what it found (re-pulls stragglers; results trickle in as endpoints check in)">${collectLabel}</button>`
           : "";
         return `<div class="hp-row">`
           + `<span class="hp-status ${st.cls}">${st.label}</span>`
@@ -7111,10 +7114,16 @@
       const caseId = document.getElementById("caseId").value.trim();
       el.querySelectorAll(".hp-collect").forEach((b) => b.onclick = () => {
         if (!caseId) return;
+        const label = b.textContent;
         b.disabled = true; b.textContent = "collecting…";
         fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/collect`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId: b.dataset.hid }) })
-          .then((r) => { if (!r.ok) throw new Error("collect failed"); })   // velo_hunt_changed will refresh the panel when the import finishes
-          .catch((e) => { b.disabled = false; b.textContent = "↻ Collect now"; console.warn(e); });
+          .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+          .then(({ ok, j }) => {
+            // 202 → collecting in the background; velo_hunt_changed refreshes the panel when done. A 404
+            // means the hunt job aged out of the (capped) job list — surface it instead of failing silently.
+            if (!ok) { b.disabled = false; b.textContent = label; b.title = (j && j.error) || "collect failed — the hunt may have aged out of Velociraptor's job list"; b.classList.add("hp-collect-err"); }
+          })
+          .catch((e) => { b.disabled = false; b.textContent = label; b.title = "collect failed: " + e.message; b.classList.add("hp-collect-err"); });
       });
     }
 

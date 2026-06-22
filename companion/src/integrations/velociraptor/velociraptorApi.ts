@@ -714,7 +714,7 @@ export class VelociraptorClient {
   // aborting the whole collection — so a bundle with a heavy artifact (Hayabusa) still imports the rest.
   // Only artifacts that returned rows are in `results` (empty ones are dropped; clients may not have
   // checked in yet, and the artifact-map needs non-empty arrays).
-  async huntResultsByArtifact(huntId: string, artifacts: string[], filters?: Record<string, string>): Promise<{ results: Record<string, unknown[]>; skipped: string[] }> {
+  async huntResultsByArtifact(huntId: string, artifacts: string[], filters?: Record<string, string>, sourcesByArtifact?: Record<string, string[]>): Promise<{ results: Record<string, unknown[]>; skipped: string[] }> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     const results: Record<string, unknown[]> = {};
     const skipped: string[] = [];
@@ -722,7 +722,10 @@ export class VelociraptorClient {
       const name = String(artifact ?? "").trim();
       if (!ARTIFACT_RE.test(name)) continue;   // skip invalid names rather than fail the whole collect
       try {
-        const res = await this.huntResults(huntId, name, [], filters?.[name]);   // per-artifact WHERE filter
+        // Named sources are addressed as `artifact/source`. Bundle artifacts use a default source (empty
+        // sources is correct); a Companion-launched fleet-hunt artifact stores its rows under named sources
+        // (Pivot0…), so its results are 0 unless we pass them (the cause of false "no evidence", #157).
+        const res = await this.huntResults(huntId, name, sourcesByArtifact?.[name] ?? [], filters?.[name]);
         if (res.rows.length) results[name] = res.rows;
       } catch {
         skipped.push(name);   // oversized / slow / failed — keep going (the caller logs the skips)
