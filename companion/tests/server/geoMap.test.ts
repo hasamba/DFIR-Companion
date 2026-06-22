@@ -5,6 +5,7 @@ import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { LegitimateStore } from "../../src/analysis/legitimate.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
@@ -74,7 +75,77 @@ describe("GET /cases/:id/geo-map (#133)", () => {
     expect(Array.isArray(res.body.markers)).toBe(true);
     expect(res.body.markers).toHaveLength(1);
     expect(res.body.markers[0].ip).toBe("8.8.8.8");
+    expect(res.body.markers[0].severity).toBe("High");
+    expect(res.body.markers[0].color).toBe("red");
+    expect(res.body.markers[0].eventCount).toBe(1);
     expect(res.body.stats.resolved).toBe(1);
+  });
+
+  it("renders a legitimate IOC as gray with eventCount 0", async () => {
+    // Build a new root with the same case but wired with a LegitimateStore that marks
+    // 8.8.8.8 as a legitimate IOC. The marker should make the IP render gray, and the
+    // legitimated event should no longer count toward eventCount.
+    const root2 = await mkdtemp(join(tmpdir(), "dfir-geomap-legit-"));
+    const cases2 = new CaseStore(root2);
+    await cases2.createCase({ caseId: "c1", name: "Geo Legit Test", investigator: "analyst", aiProvider: null });
+    const stateStore2 = new StateStore(cases2);
+    await stateStore2.save({
+      ...emptyState("c1"),
+      iocs: [
+        {
+          id: "i1",
+          type: "ip",
+          value: "8.8.8.8",
+          firstSeen: "2026-01-01T00:00:00Z",
+          enrichments: [
+            {
+              source: "GeoIP",
+              verdict: "unknown",
+              fetchedAt: "2026-01-01T00:00:00Z",
+              lat: 37.4,
+              lon: -122.1,
+              country: "US",
+              city: "Mountain View",
+              tags: ["US", "AS15169"],
+            },
+          ],
+        },
+      ],
+      forensicTimeline: [
+        {
+          id: "e1",
+          timestamp: "2026-01-02T10:00:00Z",
+          description: "Connection to 8.8.8.8",
+          severity: "High",
+          dstIp: "8.8.8.8",
+          mitreTechniques: [],
+          relatedFindingIds: [],
+          sourceScreenshots: [],
+          sources: ["Suricata"],
+        },
+      ],
+    });
+    const legitStore2 = new LegitimateStore(cases2);
+    await legitStore2.save("c1", [
+      {
+        id: "ioc:8.8.8.8",
+        kind: "ioc",
+        ref: "8.8.8.8",
+        note: "Google DNS — confirmed legitimate",
+        markedAt: "2026-01-01T00:00:00Z",
+      },
+    ]);
+    const app2 = createApp(cases2, {
+      stateStore: stateStore2,
+      reportWriter: new ReportWriter(cases2, stateStore2, undefined, legitStore2),
+    });
+
+    const res = await request(app2).get("/cases/c1/geo-map");
+    expect(res.status).toBe(200);
+    expect(res.body.markers).toHaveLength(1);
+    expect(res.body.markers[0].ip).toBe("8.8.8.8");
+    expect(res.body.markers[0].legitimate).toBe(true);
+    expect(res.body.markers[0].color).toBe("gray");
   });
 
   it("returns 501 when the report writer is not configured", async () => {
