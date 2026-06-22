@@ -101,14 +101,13 @@ function colorFor(sev: Severity, legit: boolean): GeoColor {
 
 // Extract a country signal from a GeoIP-ish enrichment (handles old data without structured country).
 function enrichmentCountry(i: IOC): string | undefined {
-  const ens = i.enrichments ?? [];
-  const isGeo = (e: typeof ens[number]) => /geoip/i.test(e.source) || /geoip/i.test(e.provider ?? "");
-  const ordered = [...ens.filter(isGeo), ...ens];
-  for (const e of ordered) if (e.country && e.country.trim()) return e.country.trim();   // new structured field (code or name)
-  for (const e of ordered) {
-    if (!isGeo(e)) continue;
-    for (const t of e.tags ?? []) if (/^[A-Za-z]{2}$/.test(t.trim())) return t.trim().toUpperCase();  // GeoIP puts the 2-letter code in tags
-    const head = e.score?.split(/[·|,;]/)[0]?.trim();                                                  // or the leading token of "DE · AS60729 ..."
+  const geo = (i.enrichments ?? []).filter(
+    (e) => /geoip/i.test(e.source) || /geoip/i.test(e.provider ?? ""),
+  );
+  for (const e of geo) if (e.country && e.country.trim()) return e.country.trim();   // structured field (code or name)
+  for (const e of geo) {
+    for (const t of e.tags ?? []) if (/^[A-Za-z]{2}$/.test(t.trim())) return t.trim().toUpperCase();
+    const head = e.score?.split(/[·|,;]/)[0]?.trim();
     if (head && /^[A-Za-z]{2}$/.test(head)) return head.toUpperCase();
   }
   return undefined;
