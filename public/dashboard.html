@@ -7194,6 +7194,7 @@
     // The Leaflet map is LAZY: tiles load only when the analyst clicks "Show map" (ensureGeoMap).
     const GEO_COLOR = { red: "#ff5c5c", orange: "#ff9f43", yellow: "#ffd93b", gray: "#8a93a3" };
     let geoMapData = null, geoMap = null, geoLayer = null, geoFlowLayer = null, geoMapTimer = null;
+    let geoMapInitializing = false;
     let geoTileUrl = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 
     function geoSevColor(sev) {
@@ -7230,7 +7231,7 @@
       if (!statsEl) return;
       const d = geoMapData;
       if (!d || !d.markers.length) {
-        statsEl.innerHTML = `<div class="adv-empty">No geo-located IPs yet. Enable GeoIP enrichment (Settings → Enrichment), then enrich your IP IOCs.</div>`;
+        statsEl.innerHTML = `<div class="adv-empty" style="color:var(--c-9aa4b2)">No geo-located IPs yet. Enable GeoIP enrichment (Settings → Enrichment), then enrich your IP IOCs.</div>`;
         document.getElementById("geoControls").style.display = "none";
         document.getElementById("geoMapWrap").style.display = "none";
         return;
@@ -7245,7 +7246,7 @@
       const s = d.stats;
       const countries = (d.countries || []).map(c => `<span class="geo-chip" style="border-left:3px solid ${GEO_COLOR[geoSevColor(c.severity)]};padding-left:6px;margin-right:10px">${esc(c.country)} <b>${esc(c.count)}</b></span>`).join("");
       const topIps = geoFilteredMarkers().slice(0, 10).map(m =>
-        `<li style="cursor:pointer" onclick="geoFocusIp('${escAttr(m.ip)}')" title="focus on map"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${GEO_COLOR[m.color]};margin-right:6px"></span>${esc(m.ip)} <span style="color:var(--c-9aa4b2)">${esc([m.city, m.country].filter(Boolean).join(", ") || "—")} · ${esc(m.eventCount)} ev</span></li>`).join("");
+        `<li style="cursor:pointer" onclick="geoFocusIp('${escAttr(m.ip)}')" title="focus on map"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${GEO_COLOR[m.color] || GEO_COLOR.gray};margin-right:6px"></span>${esc(m.ip)} <span style="color:var(--c-9aa4b2)">${esc([m.city, m.country].filter(Boolean).join(", ") || "—")} · ${esc(m.eventCount)} ev</span></li>`).join("");
       statsEl.innerHTML =
         `<div style="margin-bottom:4px">${esc(s.resolved)} mapped / ${esc(s.totalIps)} IPs · ${esc(s.external)} external · ${esc(s.internal)} internal · ${esc(s.distinctCountries)} countries · ${esc(s.distinctAsns)} ASNs${s.markerCap ? ` · showing first ${esc(s.markerCap)}` : ""}</div>` +
         (countries ? `<div style="margin-bottom:4px"><b>Top countries:</b> ${countries}</div>` : "") +
@@ -7255,7 +7256,9 @@
     // Lazily create the Leaflet map (first tile fetch happens HERE), then run cb.
     function ensureGeoMap(cb) {
       if (geoMap) { if (cb) cb(); return; }
+      if (geoMapInitializing) return;
       if (typeof L === "undefined") { alert("Map library not loaded — restart the companion server."); return; }
+      geoMapInitializing = true;
       document.getElementById("geoMap").style.display = "";
       document.getElementById("geoShowMapBtn").style.display = "none";
       fetch("/health").then(r => r.json()).then(h => { if (h && h.geoMapTileUrl) geoTileUrl = h.geoMapTileUrl; }).catch(() => {}).finally(() => {
@@ -7264,6 +7267,7 @@
         geoLayer = L.layerGroup().addTo(geoMap);
         geoFlowLayer = L.layerGroup().addTo(geoMap);
         renderGeoMarkers();
+        geoMapInitializing = false;
         if (cb) cb();
       });
     }
@@ -7273,7 +7277,7 @@
       const markers = geoFilteredMarkers();
       const bounds = [], byIp = {};
       for (const m of markers) {
-        const cm = L.circleMarker([m.lat, m.lon], { radius: 7, color: "#0d1117", weight: 1, fillColor: GEO_COLOR[m.color], fillOpacity: 0.85 });
+        const cm = L.circleMarker([m.lat, m.lon], { radius: 7, color: "#0d1117", weight: 1, fillColor: GEO_COLOR[m.color] || GEO_COLOR.gray, fillOpacity: 0.85 });
         const verdict = m.verdict && m.verdict !== "unknown" ? ` · ${esc(m.verdict)}` : "";
         cm.bindPopup(`<b>${esc(m.ip)}</b>${m.legitimate ? " (legit)" : ""}<br>${esc([m.city, m.country].filter(Boolean).join(", ") || "unknown location")}<br>${esc(m.asn || "")}<br>${esc(m.severity)}${verdict} · ${esc(m.eventCount)} event(s)`);
         cm.addTo(geoLayer);
