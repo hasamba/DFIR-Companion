@@ -1,5 +1,6 @@
 import type { InvestigationState, IOC, ForensicEvent, Severity } from "./stateTypes.js";
 import { isInternalIp } from "./anonymize.js";
+import { countryCentroid } from "./countryCentroids.js";
 
 // Geographic IP map (#133): derived ON READ from the (filtered) case state — never persisted.
 // Markers come from IP IOCs that carry GeoIP coordinates (set by GeoIpProvider). Severity is the
@@ -25,6 +26,7 @@ export interface GeoMarker {
   sources: string[];
   firstSeen?: string;
   lastSeen?: string;
+  approximate?: boolean;
 }
 
 export interface GeoFlow {
@@ -97,12 +99,32 @@ function colorFor(sev: Severity, legit: boolean): GeoColor {
   return "gray";
 }
 
-// Coordinates from the first enrichment that carries them.
-export function iocGeo(i: IOC): { lat: number; lon: number; country?: string; city?: string } | undefined {
+// Extract a country signal from a GeoIP-ish enrichment (handles old data without structured country).
+function enrichmentCountry(i: IOC): string | undefined {
+  const ens = i.enrichments ?? [];
+  const isGeo = (e: typeof ens[number]) => /geoip/i.test(e.source) || /geoip/i.test(e.provider ?? "");
+  const ordered = [...ens.filter(isGeo), ...ens];
+  for (const e of ordered) if (e.country && e.country.trim()) return e.country.trim();   // new structured field (code or name)
+  for (const e of ordered) {
+    if (!isGeo(e)) continue;
+    for (const t of e.tags ?? []) if (/^[A-Za-z]{2}$/.test(t.trim())) return t.trim().toUpperCase();  // GeoIP puts the 2-letter code in tags
+    const head = e.score?.split(/[·|,;]/)[0]?.trim();                                                  // or the leading token of "DE · AS60729 ..."
+    if (head && /^[A-Za-z]{2}$/.test(head)) return head.toUpperCase();
+  }
+  return undefined;
+}
+
+// Coordinates from the first enrichment that carries them; falls back to country centroid.
+export function iocGeo(i: IOC): { lat: number; lon: number; country?: string; city?: string; approximate: boolean } | undefined {
   for (const e of i.enrichments ?? []) {
     if (typeof e.lat === "number" && typeof e.lon === "number" && Number.isFinite(e.lat) && Number.isFinite(e.lon)) {
-      return { lat: e.lat, lon: e.lon, country: e.country, city: e.city };
+      return { lat: e.lat, lon: e.lon, country: e.country, city: e.city, approximate: false };
     }
+  }
+  const country = enrichmentCountry(i);
+  if (country) {
+    const c = countryCentroid(country);
+    if (c) return { lat: c.lat, lon: c.lon, country: c.name, city: undefined, approximate: true };
   }
   return undefined;
 }
@@ -208,6 +230,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
       sources: a ? [...a.sources].sort() : [],
       firstSeen: a?.first,
       lastSeen: a?.last,
+      approximate: geo.approximate,
     });
     coordsByIp.set(i.value.trim().toLowerCase(), { lat: geo.lat, lon: geo.lon });
   }
