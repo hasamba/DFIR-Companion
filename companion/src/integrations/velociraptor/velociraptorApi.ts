@@ -105,6 +105,25 @@ const TRANSIENT_SPAWN = new Set(["EPERM", "EBUSY", "EACCES", "ETXTBSY"]);
 // retried; a query/exit failure (the binary ran, then errored) carries no spawnCode and is never retried.
 interface SpawnLaunchError extends Error { spawnCode?: string }
 
+// Build the message for a spawn-launch failure. EPERM/EACCES on a binary that otherwise runs fine is
+// almost always the OS security stack denying CreateProcess — and when it's PERSISTENT for only SPECIFIC
+// hunts (works for others, survives the retries below), it's antivirus/EDR blocking the velociraptor
+// process because that hunt's VQL command line carries credential-dump indicators (e.g. `lsass.dmp`),
+// which trips command-line heuristics. Retrying can't clear a policy block, so point the analyst at the
+// real remedy. Pure + exported for unit testing. (A genuinely transient lock — sync client / AV file
+// scan — is retried automatically by retryTransientSpawn before this surfaces.)
+export function spawnErrorMessage(binary: string, err: { message?: string; code?: string }): string {
+  const base = `Failed to run velociraptor binary "${binary}": ${err?.message ?? "spawn failed"}`;
+  if (err?.code === "EPERM" || err?.code === "EACCES") {
+    return base +
+      " — the OS denied launching it. If this happens only for SPECIFIC hunts (others deploy fine), your" +
+      " antivirus/EDR is most likely blocking the velociraptor process because that hunt's VQL command line" +
+      " contains credential-dump indicators (e.g. lsass.dmp). Fix: add an exclusion for the velociraptor" +
+      " binary in your AV/EDR, or copy the VQL and run that hunt from the Velociraptor GUI.";
+  }
+  return base;
+}
+
 // Retry an attempt while it fails with a TRANSIENT spawn-launch error; rethrow anything else (a real
 // ENOENT/bad-config or a query failure) immediately. Exported + injectable sleep so the backoff logic
 // is unit-tested without spawning a process. Mirrors atomicWrite's linear backoff (capped 500ms).
@@ -133,8 +152,9 @@ function spawnVqlOnce(config: VelociraptorApiConfig, statements: string[], opts:
   return new Promise<VqlRunResult>((resolve, reject) => {
     const args = ["--api_config", config.apiConfigPath, "query", "--format", "jsonl", ...statements];
     const launchFailed = (e: unknown): void => {
-      const err = new Error(`Failed to run velociraptor binary "${config.binary}": ${(e as Error).message}`) as SpawnLaunchError;
-      err.spawnCode = (e as NodeJS.ErrnoException).code || "ESPAWN";
+      const code = (e as NodeJS.ErrnoException).code || "ESPAWN";
+      const err = new Error(spawnErrorMessage(config.binary, { message: (e as Error).message, code })) as SpawnLaunchError;
+      err.spawnCode = code;
       reject(err);
     };
     let child;
