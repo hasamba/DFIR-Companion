@@ -500,9 +500,15 @@ export async function seedDemoCase(
   ]);
 
   await write(join(caseDir, "state", "notebook.json"), [
-    { id: "nb001", timestamp: "2026-05-22T10:35:00.000Z", type: "hypothesis", text: "Working theory: single actor, ALPHV/BlackCat affiliate. Web exploitation of WEB01 (CVE-2021-41773 + Log4Shell) and the phishing email both landed on May 15 within the hour — likely the same operator using two access vectors in parallel to guarantee a foothold.", author: "Demo Analyst", linkedEntityIds: ["f003", "f009"] },
     { id: "nb002", timestamp: "2026-05-22T11:10:00.000Z", type: "note",       text: "DC01 has a ~16h logging blackout on May 16 (10:13 → 02:15) right after the Mimikatz dump — wevtutil cl + Falcon sensor stop. Need to pull USN journal, SRUM, Prefetch and Amcache from DC01 to reconstruct what ran during the gap.", author: "Demo Analyst", linkedEntityIds: ["f010"] },
     { id: "nb003", timestamp: "2026-05-22T11:45:00.000Z", type: "question",   text: "Open question: was the 847 MB exfil the only data movement, or did the attacker also stage data during the DC01 blackout window? SRUM per-app network bytes on DC01 would settle it.", author: "Demo Analyst", linkedEntityIds: ["f005", "f010"] },
+  ]);
+
+  // Tracked hypotheses (#140) — the working theory + the open staging question, as status-bearing
+  // hypotheses in their own panel. The OPEN one also steers the next synthesis.
+  await write(join(caseDir, "state", "hypotheses.json"), [
+    { id: "hyp001", title: "Initial access was a parallel web-exploit + phishing op by one ALPHV/BlackCat affiliate", description: "Web exploitation of WEB01 (CVE-2021-41773 + Log4Shell) and the phishing email both landed on May 15 within the hour — likely the same operator using two access vectors in parallel to guarantee a foothold.", expectedOutcome: "shared source infrastructure/tooling across both vectors, or overlapping timing on WEB01 and the mail gateway", status: "supported", relatedTechniques: ["T1190", "T1566.001"], relatedEventIds: [], relatedIocIds: [], assignee: "", notes: "Both vectors corroborated by the May 15 timeline.", source: "analyst", analystTouched: true, author: "Demo Analyst", createdAt: "2026-05-22T10:35:00.000Z", updatedAt: "2026-05-22T10:35:00.000Z" },
+    { id: "hyp002", title: "The attacker staged data during the DC01 logging blackout", description: "DC01 went dark for ~16h on May 16 right after the Mimikatz dump (wevtutil cl + Falcon stop) — classic anti-forensics around a staging window.", expectedOutcome: "SRUM per-app network bytes, or USN-journal archive (.7z/.zip) writes on DC01 inside the 10:13 → 02:15 window", status: "open", relatedTechniques: ["T1070.001", "T1562.001", "T1074"], relatedEventIds: [], relatedIocIds: [], assignee: "", notes: "", source: "analyst", analystTouched: true, author: "Demo Analyst", createdAt: "2026-05-22T11:10:00.000Z", updatedAt: "2026-05-22T11:10:00.000Z" },
   ]);
 
   await write(join(caseDir, "state", "report-meta.json"), {

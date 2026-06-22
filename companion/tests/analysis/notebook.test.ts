@@ -29,13 +29,18 @@ describe("NotebookStore", () => {
     expect(list[0]).toMatchObject({ type: "note", text: "suspect lateral movement" });
   });
 
-  it("adds a hypothesis and a question", async () => {
-    await store.add("c1", { type: "hypothesis", text: "initial access via phishing" });
+  it("adds a note and a question", async () => {
+    await store.add("c1", { type: "note", text: "initial access via phishing" });
     await store.add("c1", { type: "question", text: "when was the first execution?" });
     const list = await store.load("c1");
     expect(list).toHaveLength(2);
-    expect(list[0].type).toBe("hypothesis");
+    expect(list[0].type).toBe("note");
     expect(list[1].type).toBe("question");
+  });
+
+  it("coerces the removed 'hypothesis' type to note (#140 — hypotheses moved to their own panel)", async () => {
+    const e = await store.add("c1", { type: "hypothesis" as never, text: "initial access via phishing" });
+    expect(e.type).toBe("note");
   });
 
   it("trims text on add", async () => {
@@ -68,7 +73,7 @@ describe("NotebookStore", () => {
   });
 
   it("stores linkedEntityIds when provided", async () => {
-    const e = await store.add("c1", { type: "hypothesis", text: "related to event", linkedEntityIds: ["e1", "e2"] });
+    const e = await store.add("c1", { type: "question", text: "related to event", linkedEntityIds: ["e1", "e2"] });
     expect(e.linkedEntityIds).toEqual(["e1", "e2"]);
   });
 
@@ -79,10 +84,10 @@ describe("NotebookStore", () => {
 
   it("updates text and type of an existing entry", async () => {
     const e = await store.add("c1", { type: "note", text: "original" });
-    const updated = await store.update("c1", e.id, { text: "revised", type: "hypothesis" });
+    const updated = await store.update("c1", e.id, { text: "revised", type: "question" });
     expect(updated).not.toBeNull();
     expect(updated!.text).toBe("revised");
-    expect(updated!.type).toBe("hypothesis");
+    expect(updated!.type).toBe("question");
     const list = await store.load("c1");
     expect(list[0].text).toBe("revised");
   });
@@ -107,7 +112,7 @@ describe("NotebookStore", () => {
 
   it("persists multiple entries across reloads", async () => {
     await store.add("c1", { type: "note", text: "a" });
-    await store.add("c1", { type: "hypothesis", text: "b" });
+    await store.add("c1", { type: "note", text: "b" });
     await store.add("c1", { type: "question", text: "c" });
     const list = await store.load("c1");
     expect(list).toHaveLength(3);

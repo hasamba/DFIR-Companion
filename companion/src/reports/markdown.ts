@@ -687,13 +687,12 @@ function hypothesesSection(hypotheses: Hypothesis[], lines: string[]): void {
 
 function analystNotebook(entries: NotebookEntry[], lines: string[]): void {
   lines.push("## Analyst Notebook", "");
-  lines.push("_Investigator working notes — hypotheses, open questions, and observations recorded during the investigation._", "");
+  lines.push("_Investigator working notes and open questions recorded during the investigation. Tracked hypotheses are in the Hypotheses section._", "");
   if (!entries.length) {
     lines.push("_(no notebook entries)_", "");
     return;
   }
   const TYPE_LABEL: Record<NotebookEntry["type"], string> = {
-    hypothesis: "Hypothesis",
     note: "Note",
     question: "Question",
   };
