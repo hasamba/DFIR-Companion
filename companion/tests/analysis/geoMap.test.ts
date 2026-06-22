@@ -133,4 +133,48 @@ describe("buildGeoMap (#133)", () => {
     expect(m.eventCount).toBe(0);     // 192.168.1.1 was NOT referenced
     expect(m.severity).toBe("Info");
   });
+
+  // ── F1.2: country-centroid fallback ──────────────────────────────────────────────────────────
+
+  it("F1.2: IOC with country:'DE' and no lat/lon → approximate marker at Germany centroid", () => {
+    // source:"GeoIP" so enrichmentCountry picks it up as a GeoIP signal
+    const s = state([ip("i1", "1.2.3.4", { country: "DE" })]);
+    const g = buildGeoMap(s);
+    expect(g.markers).toHaveLength(1);
+    const m = g.markers[0];
+    expect(m.approximate).toBe(true);
+    expect(m.lat).toBeCloseTo(51.17, 0);   // Germany centroid ~51.165691
+    expect(m.lon).toBeCloseTo(10.45, 0);   // Germany centroid ~10.451526
+    expect(m.country).toBe("Germany");     // resolved to full name via centroid
+  });
+
+  it("F1.2: IOC with tags:['IL'] (no country, no lat/lon) → approximate marker at Israel centroid", () => {
+    const s = state([ip("i1", "1.2.3.5", { tags: ["IL"] })]);
+    const g = buildGeoMap(s);
+    expect(g.markers).toHaveLength(1);
+    const m = g.markers[0];
+    expect(m.approximate).toBe(true);
+    // Israel centroid: lat ~31.5, lon ~34.75
+    expect(m.lat).toBeGreaterThan(29);
+    expect(m.lat).toBeLessThan(34);
+    expect(m.lon).toBeGreaterThan(33);
+    expect(m.lon).toBeLessThan(36);
+  });
+
+  it("F1.2: IOC with precise lat/lon → approximate:false (precise wins even with country present)", () => {
+    const s = state([ip("i1", "5.6.7.8", { lat: 5, lon: 6, country: "US" })]);
+    const g = buildGeoMap(s);
+    expect(g.markers).toHaveLength(1);
+    const m = g.markers[0];
+    expect(m.approximate).toBe(false);
+    expect(m.lat).toBe(5);
+    expect(m.lon).toBe(6);
+  });
+
+  it("F1.2: IOC with neither coords nor resolvable country → no marker", () => {
+    // score only, no country, no lat/lon — enrichmentCountry should return undefined
+    const s = state([ip("i1", "9.9.9.9", { score: "no country here" })]);
+    const g = buildGeoMap(s);
+    expect(g.markers).toHaveLength(0);
+  });
 });
