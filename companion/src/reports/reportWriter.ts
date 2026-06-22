@@ -240,17 +240,22 @@ export class ReportWriter {
   }
 
   // Geographic IP map (#133): markers for the case's geo-located IP IOCs (derived on read).
-  // Scope filter + legitimate-EVENT filter applied, but legitimate IOCs are KEPT and rendered
-  // gray (so whitelisted infra still shows). Coordinates come from the opt-in GeoIP enrichment.
+  // Scope filter + legitimate-EVENT + legitimate-FINDING filters applied, but legitimate IOCs
+  // are KEPT and rendered gray (so whitelisted infra still shows). This prevents a legitimated
+  // Critical/High finding from inflating a whitelisted IP's severity label on the map.
   async geoMap(caseId: string): Promise<GeoMapData> {
     const loaded = await this.state.load(caseId);
     const scoped = projectScope(loaded, this.scope ? await this.scope.load(caseId) : NO_SCOPE);
     const markers = this.legitimate ? await this.legitimate.load(caseId) : [];
     const legitimateValues = markers.filter((m) => m.kind === "ioc").map((m) => m.ref);
-    const state: InvestigationState = {
-      ...scoped,
-      forensicTimeline: filterLegitimateEvents(scoped.forensicTimeline, markers),
-    };
+    // applyLegitimate drops legit events (via the timeline we pass) + legit findings + legit IOCs.
+    // We then RESTORE the scoped IOCs so whitelisted IPs still appear — rendered gray by
+    // `legitimateValues` — instead of vanishing. (Their severity no longer reflects a legit finding.)
+    const filtered = applyLegitimate(
+      { ...scoped, forensicTimeline: filterLegitimateEvents(scoped.forensicTimeline, markers) },
+      markers,
+    );
+    const state: InvestigationState = { ...filtered, iocs: scoped.iocs };
     return buildGeoMap(state, { ...geoMapEnvOptions(), legitimateValues });
   }
 
