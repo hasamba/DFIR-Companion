@@ -345,6 +345,23 @@ updates the catalog.
 **Opt-in by design:** the catalog starts empty. A KEV match is a strong hypothesis (the CVE is actively
 exploited), not proof of exploitation in this specific case — the AI is told this explicitly.
 
+## Geographic IP map (#133)
+
+The dashboard **🌍 Geographic Map** panel plots the case's geo-located IP IOCs on an interactive world map (Leaflet 1.9.4, vendored locally), with severity-colored markers, hover detail popups, victim→attacker flow lines, country statistics, per-severity/source/time filters, timeline→map sync (📍 on forensic-timeline rows that carry a source/destination IP), and a **⬇ CSV** export for external OSINT tooling. The report gains a **§4.10 Geographic distribution** table (always rendered — placeholder when empty — so section numbering stays stable).
+
+**Coordinates come from the opt-in GeoIP enrichment.** The map is empty until IP IOCs are enriched; enable GeoIP under **Settings → Enrichment** (it is keyless by default — uses ipinfo.io), then click **Enrich** on the case. Legitimate / whitelisted IPs render gray instead of being hidden, so known infrastructure still appears on the map for spatial context.
+
+**OPSEC:** the Leaflet JS/CSS is vendored at `/vendor/leaflet/` (served locally, no CDN). The only external touch is **OpenStreetMap tile requests**, which load lazily only when the analyst clicks **🗺 Show map** — not on dashboard load. Point `DFIR_GEOMAP_TILE_URL` at an internal tile server for fully air-gapped / on-prem operation.
+
+**Environment knobs** (all optional, defaults shown):
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `DFIR_GEOMAP_TILE_URL` | `https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png` | Tile URL template; `{s}`/`{z}`/`{x}`/`{y}` substituted by Leaflet. Override with an internal server for on-prem. |
+| `DFIR_GEOMAP_MAX_MARKERS` | `2000` | Cap on map markers (worst-severity-first). |
+| `DFIR_GEOMAP_MAX_FLOWS` | `500` | Cap on flow lines. |
+| `DFIR_GEOMAP_TOP_COUNTRIES` | `10` | Countries shown in the stats bar. |
+
 ## Custom (declarative) importers
 
 Beyond the built-in importers, you can teach the Companion a new file format **without writing
