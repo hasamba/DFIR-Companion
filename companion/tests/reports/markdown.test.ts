@@ -473,5 +473,24 @@ describe("renderMarkdownReport", () => {
       expect(md).toContain("### 4.10 Geographic distribution");
       expect(md).toContain("No geo-located IP addresses");
     });
+
+    it("renders country-level in the City cell for an approximate (no city) marker", () => {
+      const s = emptyState("c1");
+      s.iocs.push({
+        id: "i1",
+        type: "ip",
+        value: "1.2.3.4",
+        firstSeen: "2026-01-01T00:00:00Z",
+        enrichments: [{
+          source: "GeoIP",
+          verdict: "unknown",
+          fetchedAt: "2026-01-01T00:00:00Z",
+          country: "DE",
+        }],
+      });
+      const md = renderMarkdownReport(s);
+      expect(md).toContain("### 4.10 Geographic distribution");
+      expect(md).toContain("country-level");
+    });
   });
 });

@@ -575,7 +575,7 @@ function geographicDistribution(state: InvestigationState, lines: string[]): voi
   lines.push("| IP | Country | City | ASN | Severity | Verdict |", "| --- | --- | --- | --- | --- | --- |");
   for (const m of geo.markers) {
     lines.push(
-      `| ${cellMd(m.ip)} | ${cellMd(m.country ?? "—")} | ${cellMd(m.city ?? "—")} | ` +
+      `| ${cellMd(m.ip)} | ${cellMd(m.country ?? "—")} | ${cellMd(m.city ?? (m.approximate ? "— (country-level)" : "—"))} | ` +
         `${cellMd(m.asn ?? "—")} | ${m.severity}${m.legitimate ? " (legit)" : ""} | ${cellMd(m.verdict ?? "—")} |`,
     );
   }
