@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Supporting events & IOCs per finding** — each finding now lists the forensic events that back it (click to jump to the timeline row, even across pagination/filters) plus its supporting IOC values, derived client-side from the case state (part of #139).
+- **Hunting feedback loop** — deployed hunts now record their outcome per case (found new evidence yes/no + counts, survives restart); hunt suggestions exclude a VQL that already ran and pivot on what a productive hunt surfaced, and a dashboard "Hunting Profile" panel shows what was hunted / hit / missed — each row reporting the rows the hunt RETURNED (a hunt that re-confirms known-bad is a hit, not a miss) and expandable to view those results on demand, with auto-collect + a per-hunt "Collect now"/"Re-collect" so pending outcomes fill (closes #157).
+- **Regenerate a suggested fleet hunt** — each AI fleet-hunt card gets a per-card ↻ Regenerate (like playbook hunts) to get a different VQL when one is bad/won't compile (part of #57).
+
+### Fixed
+- **Hunt VQL `hash()` signature** — the fleet/playbook hunt prompts now teach the real `hash(path=…).SHA256` form (no invented `hashselect=` arg, which fails to compile) and to avoid full-disk globs, cutting "Velociraptor did not launch the hunt" errors (part of #57/#70).
+- **`spawn EPERM` launching a hunt** — the velociraptor binary launch now retries a transient Windows lock (AV / sync client / concurrent spawn), so deploying a second hunt no longer fails with "spawn EPERM" (`DFIR_VELOCIRAPTOR_SPAWN_RETRIES`, default 6); a *persistent* EPERM/EACCES (antivirus/EDR blocking the process for a hunt whose VQL command line carries credential-dump indicators like `lsass.dmp`) now reports an actionable message — add an AV exclusion for the velociraptor binary, or run that hunt's VQL from the Velociraptor GUI.
 
 ## [0.26.0] - 2026-06-21
 

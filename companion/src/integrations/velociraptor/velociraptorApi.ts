@@ -95,50 +95,119 @@ export function splitVqlStatements(vql: string): string[] {
     .filter(Boolean);
 }
 
-// The real runner: spawn the velociraptor binary with the api config, no shell (each statement is a
-// single argv element — no command injection). Uses jsonl output so multiple queries parse robustly.
-// Kills the child on timeout or if output blows the cap.
-export function spawnVqlRunner(config: VelociraptorApiConfig): VqlRunner {
-  return (statements, opts) =>
-    new Promise<VqlRunResult>((resolve, reject) => {
-      if (statements.length === 0) {
-        reject(new Error("No runnable VQL found (the query is empty or only comments)"));
-        return;
-      }
-      const args = ["--api_config", config.apiConfigPath, "query", "--format", "jsonl", ...statements];
-      const child = spawn(config.binary, args, { windowsHide: true });
-      let out = "";
-      let err = "";
-      let killed = false;
-      const timer = setTimeout(() => {
+// Transient process-spawn failures: the velociraptor binary is briefly locked when we try to launch it
+// — antivirus real-time scan, a syncing client (Dropbox/OneDrive), or a concurrent spawn of the same
+// exe — so spawn() throws EPERM/EBUSY/EACCES/ETXTBSY even though the binary is fine. (Same class
+// atomicWrite retries for file renames; here the symptom is "error: spawn EPERM" deploying a 2nd hunt.)
+const TRANSIENT_SPAWN = new Set(["EPERM", "EBUSY", "EACCES", "ETXTBSY"]);
+
+// An Error tagged with the OS code of a spawn-LAUNCH failure (binary couldn't start). Only these are
+// retried; a query/exit failure (the binary ran, then errored) carries no spawnCode and is never retried.
+interface SpawnLaunchError extends Error { spawnCode?: string }
+
+// Build the message for a spawn-launch failure. EPERM/EACCES on a binary that otherwise runs fine is
+// almost always the OS security stack denying CreateProcess — and when it's PERSISTENT for only SPECIFIC
+// hunts (works for others, survives the retries below), it's antivirus/EDR blocking the velociraptor
+// process because that hunt's VQL command line carries credential-dump indicators (e.g. `lsass.dmp`),
+// which trips command-line heuristics. Retrying can't clear a policy block, so point the analyst at the
+// real remedy. Pure + exported for unit testing. (A genuinely transient lock — sync client / AV file
+// scan — is retried automatically by retryTransientSpawn before this surfaces.)
+export function spawnErrorMessage(binary: string, err: { message?: string; code?: string }): string {
+  const base = `Failed to run velociraptor binary "${binary}": ${err?.message ?? "spawn failed"}`;
+  if (err?.code === "EPERM" || err?.code === "EACCES") {
+    return base +
+      " — the OS denied launching it. If this happens only for SPECIFIC hunts (others deploy fine), your" +
+      " antivirus/EDR is most likely blocking the velociraptor process because that hunt's VQL command line" +
+      " contains credential-dump indicators (e.g. lsass.dmp). Fix: add an exclusion for the velociraptor" +
+      " binary in your AV/EDR, or copy the VQL and run that hunt from the Velociraptor GUI.";
+  }
+  return base;
+}
+
+// Retry an attempt while it fails with a TRANSIENT spawn-launch error; rethrow anything else (a real
+// ENOENT/bad-config or a query failure) immediately. Exported + injectable sleep so the backoff logic
+// is unit-tested without spawning a process. Mirrors atomicWrite's linear backoff (capped 500ms).
+export async function retryTransientSpawn<T>(
+  attempt: () => Promise<T>,
+  opts: { retries?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<T> {
+  const retries = opts.retries ?? 6;
+  const sleep = opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let i = 0; ; i++) {
+    try {
+      return await attempt();
+    } catch (e) {
+      const code = (e as SpawnLaunchError).spawnCode;
+      if (i >= retries || !code || !TRANSIENT_SPAWN.has(code)) throw e;
+      await sleep(Math.min(500, 40 * (i + 1)));
+    }
+  }
+}
+
+// One spawn attempt. A LAUNCH failure (spawn threw synchronously — which Windows does for EPERM, so the
+// 'error' event never fires — OR the async 'error' event) rejects with `spawnCode` set so the caller can
+// retry a transient one. A timeout / output-cap / non-zero exit rejects WITHOUT spawnCode (the binary
+// ran; retrying would just repeat the failure).
+function spawnVqlOnce(config: VelociraptorApiConfig, statements: string[], opts: { timeoutMs: number; maxOutputBytes: number }): Promise<VqlRunResult> {
+  return new Promise<VqlRunResult>((resolve, reject) => {
+    const args = ["--api_config", config.apiConfigPath, "query", "--format", "jsonl", ...statements];
+    const launchFailed = (e: unknown): void => {
+      const code = (e as NodeJS.ErrnoException).code || "ESPAWN";
+      const err = new Error(spawnErrorMessage(config.binary, { message: (e as Error).message, code })) as SpawnLaunchError;
+      err.spawnCode = code;
+      reject(err);
+    };
+    let child;
+    try {
+      child = spawn(config.binary, args, { windowsHide: true });
+    } catch (e) {
+      launchFailed(e);   // Windows throws EPERM synchronously — not via the 'error' event
+      return;
+    }
+    let out = "";
+    let err = "";
+    let killed = false;
+    const timer = setTimeout(() => {
+      killed = true;
+      child.kill();
+      reject(new Error(`Velociraptor query timed out after ${opts.timeoutMs}ms`));
+    }, opts.timeoutMs);
+    child.stdout.on("data", (d: Buffer) => {
+      out += d.toString();
+      if (out.length > opts.maxOutputBytes) {
         killed = true;
         child.kill();
-        reject(new Error(`Velociraptor query timed out after ${opts.timeoutMs}ms`));
-      }, opts.timeoutMs);
-      child.stdout.on("data", (d: Buffer) => {
-        out += d.toString();
-        if (out.length > opts.maxOutputBytes) {
-          killed = true;
-          child.kill();
-          clearTimeout(timer);
-          reject(new Error(`Velociraptor query output exceeded ${opts.maxOutputBytes} bytes — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT (collection) / DFIR_VELOCIRAPTOR_MAX_OUTPUT, or narrow the query`));
-        }
-      });
-      child.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-      child.on("error", (e) => {
         clearTimeout(timer);
-        reject(new Error(`Failed to run velociraptor binary "${config.binary}": ${(e as Error).message}`));
-      });
-      child.on("close", (code) => {
-        if (killed) return;
-        clearTimeout(timer);
-        if (code !== 0) {
-          reject(new Error(err.trim() || `velociraptor exited with code ${code}`));
-          return;
-        }
-        resolve({ rows: parseVqlOutput(out), raw: out });
-      });
+        reject(new Error(`Velociraptor query output exceeded ${opts.maxOutputBytes} bytes — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT (collection) / DFIR_VELOCIRAPTOR_MAX_OUTPUT, or narrow the query`));
+      }
     });
+    child.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    child.on("error", (e) => {
+      if (killed) return;
+      clearTimeout(timer);
+      launchFailed(e);   // async spawn failure (e.g. ENOENT) — tagged so a transient one is retried
+    });
+    child.on("close", (code) => {
+      if (killed) return;
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(err.trim() || `velociraptor exited with code ${code}`));
+        return;
+      }
+      resolve({ rows: parseVqlOutput(out), raw: out });
+    });
+  });
+}
+
+// The real runner: spawn the velociraptor binary with the api config, no shell (each statement is a
+// single argv element — no command injection). Uses jsonl output so multiple queries parse robustly.
+// Kills the child on timeout or if output blows the cap, and retries a transient spawn-launch lock.
+export function spawnVqlRunner(config: VelociraptorApiConfig): VqlRunner {
+  const retries = Number(process.env.DFIR_VELOCIRAPTOR_SPAWN_RETRIES);
+  return (statements, opts) => {
+    if (statements.length === 0) return Promise.reject(new Error("No runnable VQL found (the query is empty or only comments)"));
+    return retryTransientSpawn(() => spawnVqlOnce(config, statements, opts), { retries: Number.isFinite(retries) && retries >= 0 ? retries : undefined });
+  };
 }
 
 export interface VelociraptorRunResult {
@@ -714,7 +783,7 @@ export class VelociraptorClient {
   // aborting the whole collection — so a bundle with a heavy artifact (Hayabusa) still imports the rest.
   // Only artifacts that returned rows are in `results` (empty ones are dropped; clients may not have
   // checked in yet, and the artifact-map needs non-empty arrays).
-  async huntResultsByArtifact(huntId: string, artifacts: string[], filters?: Record<string, string>): Promise<{ results: Record<string, unknown[]>; skipped: string[] }> {
+  async huntResultsByArtifact(huntId: string, artifacts: string[], filters?: Record<string, string>, sourcesByArtifact?: Record<string, string[]>): Promise<{ results: Record<string, unknown[]>; skipped: string[] }> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     const results: Record<string, unknown[]> = {};
     const skipped: string[] = [];
@@ -722,7 +791,10 @@ export class VelociraptorClient {
       const name = String(artifact ?? "").trim();
       if (!ARTIFACT_RE.test(name)) continue;   // skip invalid names rather than fail the whole collect
       try {
-        const res = await this.huntResults(huntId, name, [], filters?.[name]);   // per-artifact WHERE filter
+        // Named sources are addressed as `artifact/source`. Bundle artifacts use a default source (empty
+        // sources is correct); a Companion-launched fleet-hunt artifact stores its rows under named sources
+        // (Pivot0…), so its results are 0 unless we pass them (the cause of false "no evidence", #157).
+        const res = await this.huntResults(huntId, name, sourcesByArtifact?.[name] ?? [], filters?.[name]);
         if (res.rows.length) results[name] = res.rows;
       } catch {
         skipped.push(name);   // oversized / slow / failed — keep going (the caller logs the skips)

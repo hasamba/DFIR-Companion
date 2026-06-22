@@ -2545,6 +2545,7 @@
         <div id="customerExposure">—</div>
       </div></section>
     <section id="sec-questions" style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
+    <section id="sec-huntprofile" style="grid-column: 1 / -1"><h2>Hunting Profile<span class="ev-sub">What has been hunted in this case and whether it found anything</span></h2><div id="huntProfile">—</div></section>
     <section id="sec-threads"><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
     <section id="sec-adversary" style="grid-column: 1 / -1"><h2>Adversary Hints<span class="ev-sub">known ATT&amp;CK groups by technique overlap + their likely next techniques — hypothesis fuel, not attribution (derived, no AI)</span></h2><div id="adversaryHints">—</div></section>
@@ -2600,7 +2601,31 @@
       #sec-velohunts .vhs-copy.copied{background:var(--c-2f8f4e)}
       #sec-velohunts .vhs-deploy{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
       #sec-velohunts .vhs-deploy:disabled{opacity:.6;cursor:default}
+      #sec-velohunts .vhs-regen{background:var(--c-2a2f3a);border:1px solid var(--c-3a4150);color:var(--c-c9d1db);border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+      #sec-velohunts .vhs-regen:disabled{opacity:.6;cursor:default}
       #sec-velohunts .vhs-res{margin-top:6px}
+      #sec-huntprofile .hp-empty{color:var(--c-9aa4b2);font-size:12px}
+      #sec-huntprofile .hp-tally{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:var(--c-c9d1db)}
+      #sec-huntprofile .hp-tally b{color:var(--c-d6deea)}
+      #sec-huntprofile .hp-list{display:flex;flex-direction:column;gap:6px}
+      #sec-huntprofile .hp-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;background:var(--c-161b22);border:1px solid var(--c-232a33);border-radius:5px;padding:5px 8px;font-size:12px}
+      #sec-huntprofile .hp-status{border-radius:3px;padding:0 6px;font-size:10px;font-weight:bold;white-space:nowrap}
+      #sec-huntprofile .hp-hit{background:#2f8f4e22;color:#6bcb77;border:1px solid #2f8f4e55}
+      #sec-huntprofile .hp-miss{background:#9aa4b222;color:#9aa4b2;border:1px solid #9aa4b255}
+      #sec-huntprofile .hp-pending{background:#6aa9ff22;color:#6aa9ff;border:1px solid #6aa9ff55}
+      #sec-huntprofile .hp-title{color:var(--c-d6deea);font-weight:bold}
+      #sec-huntprofile .hp-src{color:var(--c-9aa4b2);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+      #sec-huntprofile .hp-result{color:var(--c-c9d1db)}
+      #sec-huntprofile .hp-tech{color:var(--c-6aa9ff);font-size:11px}
+      #sec-huntprofile .hp-collect{margin-left:auto;background:var(--c-2d6cdf);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer}
+      #sec-huntprofile .hp-collect:disabled{opacity:.6;cursor:default}
+      #sec-huntprofile .hp-collect-err{background:var(--c-ff9f43);color:#1a1f29}
+      #sec-huntprofile .hp-item{display:flex;flex-direction:column;gap:4px}
+      #sec-huntprofile .hp-toggle{background:transparent;border:1px solid var(--c-3a4150);color:var(--c-9aa4b2);border-radius:4px;padding:0 6px;font-size:10px;cursor:pointer}
+      #sec-huntprofile .hp-detail{margin:0 0 2px 4px}
+      #sec-huntprofile .hp-preview-note{color:var(--c-ffb454);font-size:11px;margin:0 0 4px 0}
+      #sec-huntprofile .hp-collect-inline{background:var(--c-2d6cdf);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer}
+      #sec-huntprofile .hp-collect-inline:disabled{opacity:.6;cursor:default}
       /* ── Query Translator (NL → hunt queries, #100) ── */
       #sec-nlquery .nlq-empty{color:var(--c-9aa4b2);font-size:12px}
       #sec-nlquery .nlq-platforms{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
@@ -4152,8 +4177,9 @@
         const vql = q ? q.value : "";
         const desc = s.title || "DFIR playbook hunt";
         const res = document.getElementById("pbhRes" + idx);
-        if (s.mode === "collection" && s.targetHost) collectHostInto(s.targetHost, vql, desc, res, b);
-        else launchHuntInto(vql, desc, res, b);
+        const ctx = { caseId: pbCaseId(), title: s.title || "DFIR playbook hunt", source: "playbook", mitre: s.mitreTechniques || [] };   // #157 record the deploy
+        if (s.mode === "collection" && s.targetHost) collectHostInto(s.targetHost, vql, desc, res, b, ctx);
+        else launchHuntInto(vql, desc, res, b, ctx);
       });
       container.querySelectorAll(".pbh-regen").forEach((b) => b.onclick = (e) => {
         e.stopPropagation();
@@ -4194,11 +4220,19 @@
     // Launch a single-endpoint COLLECTION (the collection-mode deploy). Mirrors launchHuntInto():
     // shows the flow + GUI deep link AND pulls the results back into the dashboard with a Refresh
     // button + auto-poll (results arrive as the endpoint checks in), rendered as a table like a hunt.
-    function collectHostInto(hostname, vql, description, res, btn) {
+    function collectHostInto(hostname, vql, description, res, btn, ctx) {
       if (!res) return;
       res.innerHTML = `<div style='color:var(--c-9aa4b2);font-size:12px'>launching collection on ${esc(hostname)}…</div>`;
       if (btn) btn.disabled = true;
-      fetch("/velociraptor/collect-host", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hostname, vql, description: description || "DFIR collection" }) })
+      // Like launchHuntInto: a recorded SUGGESTION deploy (ctx with a caseId) routes through the
+      // case-scoped /deploy-hunt in collection mode so the deploy is logged in the feedback loop (#157);
+      // a bare collection uses the global /velociraptor/collect-host.
+      const recorded = ctx && ctx.caseId;
+      const url = recorded ? `/cases/${encodeURIComponent(ctx.caseId)}/velociraptor/deploy-hunt` : "/velociraptor/collect-host";
+      const body = recorded
+        ? { mode: "collection", hostname, vql, title: ctx.title || description || "DFIR collection", description: description || "DFIR collection", source: ctx.source || "playbook", mitreTechniques: ctx.mitre || [] }
+        : { hostname, vql, description: description || "DFIR collection" };
+      fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { res.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">error: ${esc(j.error || "collection failed")}</div>`; return; }
@@ -4711,13 +4745,20 @@
       launchHuntInto(huntText(idx), huntLabel, document.getElementById("huntRunRes" + idx), document.querySelector('.hunt-run[data-idx="' + idx + '"]'));
     }
     // Shared launch+poll for any VQL hunt (the per-entity hunt modal AND the AI-suggested fleet
-    // hunts both deploy through the same POST /velociraptor/hunt → launchHunt path). `res` is the
-    // element to render status into; `btn` (optional) is disabled while in flight.
-    function launchHuntInto(vql, description, res, btn) {
+    // hunts both deploy through the same launchHunt path). `res` is the element to render status into;
+    // `btn` (optional) is disabled while in flight. When `ctx` ({caseId,title,source,mitre}) is given
+    // — i.e. deploying an AI SUGGESTION — it routes through the case-scoped /deploy-hunt so the hunt is
+    // recorded in the feedback loop (#157); the bare per-entity hunt uses the global /velociraptor/hunt.
+    function launchHuntInto(vql, description, res, btn, ctx) {
       if (!res) return;
       res.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>launching hunt on all clients…</div>";
       if (btn) btn.disabled = true;
-      fetch("/velociraptor/hunt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vql, description: description || "DFIR hunt" }) })
+      const recorded = ctx && ctx.caseId;
+      const url = recorded ? `/cases/${encodeURIComponent(ctx.caseId)}/velociraptor/deploy-hunt` : "/velociraptor/hunt";
+      const body = recorded
+        ? { vql, title: ctx.title || description || "DFIR fleet hunt", description: description || "DFIR hunt", source: ctx.source || "fleet", mitreTechniques: ctx.mitre || [] }
+        : { vql, description: description || "DFIR hunt" };
+      fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { res.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">error: ${esc(j.error || "hunt failed")}</div>`; return; }
@@ -6983,6 +7024,7 @@
       const panel = document.getElementById("veloHuntSuggest");
       if (btn) { btn.disabled = true; btn.textContent = "⌖ hunting…"; }
       if (msg) msg.textContent = `generating a hunt for ${techId}… (one AI call)`;
+      vhsSource = "technique";   // #157 adversary-emulation technique hunt
       fetch(`/cases/${caseId}/adversary-hints/hunt-technique`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ techniqueId: techId, techniqueName })
@@ -7010,6 +7052,123 @@
     // fleet via the shared launchHuntInto() (POST /velociraptor/hunt). Ephemeral — not persisted.
     const VHS_SEV_COLOR = { Critical:"#ff5c5c", High:"#ff9f43", Medium:"#ffd93b", Low:"#6bcb77", Info:"#6aa9ff" };
     const VHS_SEV_RANK = { Critical:0, High:1, Medium:2, Low:3, Info:4 };
+    // Which kind of suggestion the shared veloHuntSuggest panel currently shows — so a Deploy records
+    // the right source in the feedback loop (#157). "fleet" for findings-driven hunts, "technique" for
+    // an adversary-emulation "hunt this technique".
+    let vhsSource = "fleet";
+    // The currently-rendered fleet-hunt suggestions (sorted), kept at module scope so a per-card
+    // ↻ Regenerate can swap one entry and re-render (#157 — mirrors the playbook pbHuntFlat pattern).
+    let vhsFlat = [];
+
+    // ── Hunting Profile (#157) ────────────────────────────────────────────────────────────
+    // The per-case hunt feedback loop, surfaced read-only: every hunt deployed in this case (fleet /
+    // playbook / technique / bundle) with whether it found new evidence. Auto-loaded on case open and
+    // refreshed on the velo_hunt_changed WS event (deploy + collect both broadcast it). GET returns
+    // buildHuntingProfile(): { total, hit, missed, pending, hunts[] }.
+    const HP_STATUS = {
+      collectedHit: { cls: "hp-hit", label: "hit" },
+      collectedMiss: { cls: "hp-miss", label: "no evidence" },
+      pending: { cls: "hp-pending", label: "pending" },
+    };
+    function loadHuntProfile(caseId) {
+      const el = document.getElementById("huntProfile");
+      if (!el) return;
+      if (!caseId) { el.innerHTML = `<div class="hp-empty">—</div>`; return; }
+      fetch(`/cases/${encodeURIComponent(caseId)}/hunt-outcomes`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((p) => renderHuntProfile(p))
+        .catch(() => { el.innerHTML = `<div class="hp-empty" style="color:var(--c-ff9f43)">could not load the hunting profile — restart the companion server if this 404s</div>`; });
+    }
+    function renderHuntProfile(profile) {
+      const el = document.getElementById("huntProfile");
+      if (!el) return;
+      const hunts = (profile && Array.isArray(profile.hunts)) ? profile.hunts : [];
+      if (!hunts.length) {
+        el.innerHTML = `<div class="hp-empty">No hunts deployed in this case yet. Deploy a suggested fleet/playbook hunt or run a triage bundle, then collect its results — outcomes show here and feed the next round of suggestions.</div>`;
+        return;
+      }
+      const tally = `<div class="hp-tally">`
+        + `<span><b>${profile.total}</b> hunted</span>`
+        + `<span style="color:#6bcb77"><b>${profile.hit}</b> hit</span>`
+        + `<span><b>${profile.missed}</b> no results</span>`
+        + `<span style="color:#6aa9ff"><b>${profile.pending}</b> pending</span>`
+        + `</div>`;
+      const rows = hunts.map((h, i) => {
+        const st = h.status === "collected" ? (h.foundEvidence ? HP_STATUS.collectedHit : HP_STATUS.collectedMiss) : HP_STATUS.pending;
+        // "not collected yet" not "results not yet collected": ▸ results can show LIVE rows from Velociraptor
+        // before the hunt is imported, and "results not yet collected" read as a contradiction next to them.
+        const result = h.status === "collected" ? (h.resultSummary || (h.foundEvidence ? "new evidence" : "no results")) : "not collected yet";
+        const techs = (h.mitreTechniques || []).map((t) => {
+          const u = attackUrl(t);
+          return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="hp-tech">${esc(t)}</a>` : `<span class="hp-tech">${esc(t)}</span>`;
+        }).join(" ");
+        // Any hunt with a Velociraptor hunt id stays collectible — fleet results trickle in as clients
+        // check in, so the button REMAINS after a collect so the analyst can re-pull stragglers (counts
+        // accumulate; a hit is never downgraded). Pending → "Collect now"; collected → "Re-collect".
+        const collectLabel = h.status === "collected" ? "↻ Re-collect" : "↻ Collect now";
+        const collectBtn = h.huntId
+          ? ` <button class="hp-collect" data-hid="${escAttr(h.huntId)}" title="Pull this hunt's results now and record what it found (re-pulls stragglers; results trickle in as endpoints check in)">${collectLabel}</button>`
+          : "";
+        // Expand to view the hunt's actual result rows on demand (fetched from the persisted job) — so the
+        // persistent profile can show what a hunt found even after the ephemeral suggestion card is gone.
+        const resultsToggle = h.huntId
+          ? ` <button class="hp-toggle" data-hid="${escAttr(h.huntId)}" data-idx="${i}"${h.status === "collected" ? "" : ' data-pending="1"'} title="Show this hunt's result rows">▸ results</button>`
+          : "";
+        return `<div class="hp-item">`
+          + `<div class="hp-row">`
+          + `<span class="hp-status ${st.cls}">${st.label}</span>`
+          + `<span class="hp-src">${esc(h.source || "")}</span>`
+          + `<span class="hp-title">${esc(h.title || "(untitled hunt)")}</span>`
+          + `<span class="hp-result">— ${esc(result)}</span>`
+          + (techs ? ` ${techs}` : "")
+          + resultsToggle
+          + collectBtn
+          + `</div>`
+          + `<div class="hp-detail" id="hpDetail${i}" hidden></div>`
+          + `</div>`;
+      }).join("");
+      el.innerHTML = tally + `<div class="hp-list">${rows}</div>`;
+      const caseId = document.getElementById("caseId").value.trim();
+      // Collect (import) a hunt's results into the case + record the outcome. On success (202) the
+      // velo_hunt_changed WS event re-renders the panel; only an error restores the button + flags it.
+      const collectHunt = (huntId, btn) => {
+        if (!caseId || !huntId) return;
+        const label = btn.textContent;
+        btn.disabled = true; btn.textContent = "collecting…";
+        fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/collect`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId }) })
+          .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+          .then(({ ok, j }) => { if (!ok) { btn.disabled = false; btn.textContent = label; btn.title = (j && j.error) || "collect failed — the hunt may have aged out of Velociraptor's job list"; btn.classList.add("hp-collect-err"); } })
+          .catch((e) => { btn.disabled = false; btn.textContent = label; btn.title = "collect failed: " + e.message; btn.classList.add("hp-collect-err"); });
+      };
+      el.querySelectorAll(".hp-collect").forEach((b) => b.onclick = () => collectHunt(b.dataset.hid, b));
+      el.querySelectorAll(".hp-toggle").forEach((b) => b.onclick = () => {
+        const detail = document.getElementById("hpDetail" + b.dataset.idx);
+        if (!detail) return;
+        if (!detail.hasAttribute("hidden")) { detail.setAttribute("hidden", ""); b.textContent = "▸ results"; return; }
+        detail.removeAttribute("hidden"); b.textContent = "▾ results";
+        if (detail.dataset.loaded) return;   // fetched already this render — don't re-pull on every toggle
+        if (!caseId) return;
+        const hid = b.dataset.hid;
+        const pending = !!b.dataset.pending;   // hunt not imported into the case yet
+        detail.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>loading results…</div>";
+        fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/hunt-rows`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId: hid }) })
+          .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+          .then(({ ok, j }) => {
+            if (!ok || j.error) { detail.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">${esc(j.error || "could not load results")}</div>`; return; }
+            const n = (j.rows || []).length;
+            // These rows are read LIVE from Velociraptor — they are NOT in the case until collected. When the
+            // hunt is still pending, say so + offer an inline Collect so the live preview ≠ "imported" is clear.
+            const note = (pending && n)
+              ? `<div class="hp-preview-note">⚠ Live preview from Velociraptor — these ${n} result(s) are <b>not imported into the case yet</b>. <button class="hp-collect-inline" data-hid="${escAttr(hid)}">↻ Collect now to import</button></div>`
+              : "";
+            detail.innerHTML = note + (n ? renderVqlRows(j) : "<div style='color:var(--c-9aa4b2);font-size:12px'>no rows (the hunt may still be collecting, or returned nothing)</div>");
+            const ib = detail.querySelector(".hp-collect-inline");
+            if (ib) ib.onclick = () => collectHunt(ib.dataset.hid, ib);
+            detail.dataset.loaded = "1";
+          })
+          .catch((e) => { detail.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">error: ${esc(e.message)} — restart the companion server if this 404s</div>`; });
+      });
+    }
 
     function resetVeloHuntSuggest() {
       const el = document.getElementById("veloHuntSuggest");
@@ -7026,6 +7185,7 @@
       const el = document.getElementById("veloHuntSuggest");
       if (btn) btn.disabled = true;
       if (msg) msg.textContent = "thinking… (one AI call over the findings)";
+      vhsSource = "fleet";   // #157 findings-driven hunts
       fetch(`/cases/${caseId}/velociraptor/suggest-hunts`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
@@ -7048,7 +7208,8 @@
         el.innerHTML = `<div class="vhs-empty">No fleet-hunts proposed. The AI found nothing fleet-wide to hunt for — try after running synthesis so findings exist, or add more evidence.</div>`;
         return;
       }
-      const ordered = [...suggestions].sort((a, b) => (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9));
+      vhsFlat = [...suggestions].sort((a, b) => (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9));
+      const ordered = vhsFlat;
       const caveat = `<div class="vhs-caveat">⚠ AI-generated VQL — review each query before deploying. Deploying launches a hunt across ALL enrolled endpoints.${veloEnabled ? "" : " The Velociraptor API is not configured, so Deploy is disabled — copy the VQL to run it yourself."}</div>`;
       const cards = ordered.map((s, idx) => {
         const sev = s.severity || "Medium";
@@ -7062,12 +7223,17 @@
         const deployBtn = veloEnabled
           ? `<button class="vhs-deploy" data-idx="${idx}" title="Launch this hunt across ALL enrolled Velociraptor clients">▶ Deploy hunt (all clients)</button>`
           : `<button class="vhs-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">▶ Deploy hunt (all clients)</button>`;
+        // Per-card regenerate (fleet hunts only — technique hunts come from the adversary panel's "hunt
+        // this"): ask the AI for a DIFFERENT take when this VQL is bad/won't compile. Mirrors the playbook.
+        const regenBtn = vhsSource === "fleet"
+          ? `<button class="vhs-regen" data-idx="${idx}" title="Ask the AI for a different hunt for this finding (e.g. if this VQL won't compile)">↻ Regenerate</button>`
+          : "";
         return `<div class="vhs-card">`
           + `<div class="vhs-head"><span class="vhs-title">${esc(s.title)}</span>${sevBadge}</div>`
           + rationale
           + (techs ? `<div class="vhs-techs">${techs}</div>` : "")
           + `<textarea class="vhs-vql" id="vhsQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
-          + `<div class="vhs-actions"><button class="vhs-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}</div>`
+          + `<div class="vhs-actions"><button class="vhs-copy" data-idx="${idx}">Copy VQL</button>${regenBtn}${deployBtn}</div>`
           + `<div class="vhs-res" id="vhsRes${idx}"></div>`
           + `</div>`;
       }).join("");
@@ -7084,8 +7250,37 @@
         const idx = b.dataset.idx;
         const q = document.getElementById("vhsQ" + idx);
         const title = (ordered[idx] && ordered[idx].title) || "DFIR fleet hunt";
-        launchHuntInto(q ? q.value : "", title, document.getElementById("vhsRes" + idx), b);
+        const mitre = (ordered[idx] && ordered[idx].mitreTechniques) || [];
+        const caseId = document.getElementById("caseId").value.trim();
+        launchHuntInto(q ? q.value : "", title, document.getElementById("vhsRes" + idx), b, { caseId, title, source: vhsSource, mitre });   // #157 record the deploy
       });
+      el.querySelectorAll(".vhs-regen").forEach((b) => b.onclick = () => regenVeloHunt(b.dataset.idx, b));
+    }
+
+    // Regenerate ONE fleet-hunt suggestion — asks the AI for a different VQL (excluding the current,
+    // bad one), swaps it into vhsFlat, and re-renders. Mirrors the playbook hunt regen (#157 / #57).
+    function regenVeloHunt(idx, btn) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const cur = vhsFlat[idx];
+      if (!caseId || !cur) return;
+      const q = document.getElementById("vhsQ" + idx);
+      const excludeVql = (q && q.value.trim()) ? q.value : cur.vql;
+      const msg = document.getElementById("suggestHuntsMsg");
+      const orig = btn.textContent;
+      btn.disabled = true; btn.textContent = "⏳ thinking…";
+      if (msg) { msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "regenerating one hunt… (one AI call)"; }
+      fetch(`/cases/${caseId}/velociraptor/suggest-hunts`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ excludeVql }) })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { if (msg) { msg.style.color = "var(--c-ff9f43)"; msg.textContent = "regen failed: " + (j.error || "unknown error"); } btn.disabled = false; btn.textContent = orig; return; }
+          const sugs = (j.suggestions || []).filter(Boolean);
+          const replacement = sugs.find((s) => (s.vql || "").trim() !== excludeVql.trim()) || sugs[0];
+          if (!replacement) { if (msg) { msg.style.color = "var(--c-ff9f43)"; msg.textContent = "no alternative hunt generated — edit the VQL by hand"; } btn.disabled = false; btn.textContent = orig; return; }
+          vhsFlat[idx] = replacement;
+          renderVeloHuntSuggest(vhsFlat);   // re-render (vhsSource unchanged → regen buttons stay)
+          if (msg) { msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "regenerated one hunt"; }
+        })
+        .catch((e) => { if (msg) { msg.style.color = "var(--c-ff9f43)"; msg.textContent = "regen failed: " + e.message; } btn.disabled = false; btn.textContent = orig; });
     }
 
     // ── Timeline Swimlane ───────────────────────────────────────────────────────────────
@@ -8336,6 +8531,7 @@
       loadCustomerExposure(caseId);
       loadCaseLifecycle(caseId);
       loadVeloTriage(caseId);
+      loadHuntProfile(caseId);  // #157 hunting feedback loop — what's been hunted, what hit/missed
       resetVeloHuntSuggest();   // clear AI-suggested fleet hunts; analyst regenerates per case on demand
       resetPlaybookHuntSuggest();   // clear AI-suggested playbook hunts (#70) too
       resetGapHypotheses();     // clear AI gap hypotheses (#96); analyst regenerates per case on demand
@@ -8391,7 +8587,7 @@
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
         else if (msg.type === "import_undo_changed") loadUndoStack(caseId);
-        else if (msg.type === "velo_hunt_changed") loadVeloHuntJobs(caseId);
+        else if (msg.type === "velo_hunt_changed") { loadVeloHuntJobs(caseId); loadHuntProfile(caseId); }
         else if (msg.type === "velo_monitor_changed") loadVeloMonitors(caseId);
         else if (msg.type === "push_token_changed") loadPushToken(caseId);
         else if (msg.type === "importers_changed") { if (document.getElementById("stab-importers")) loadImporters(); }

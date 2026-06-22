@@ -107,6 +107,13 @@ import {
   type PlaybookHuntSuggestion,
 } from "./playbookHunt.js";
 import {
+  deployedFingerprints,
+  renderPriorHuntsBlock,
+  vqlFingerprint,
+  type HuntOutcome,
+} from "./huntOutcomes.js";
+import type { HuntOutcomeStore } from "./huntOutcomeStore.js";
+import {
   memoryNextStepResponseSchema,
   sanitizeMemoryNextSteps,
   renderMemoryEvidence,
@@ -697,6 +704,12 @@ export const HUNT_SUGGEST_PROMPT = [
   "  `SELECT FullPath, read_file(filenames=[FullPath])[0].Data AS Content FROM glob(globs='...')`.",
   "- VQL has NO SQL `JOIN`. Use inline function calls (e.g. read_file above) or",
   "  `foreach(row={SELECT … FROM a()}, query={SELECT … FROM b()})` to correlate two plugins.",
+  "- hash() takes ONLY `path=` and returns an object with `.MD5` / `.SHA1` / `.SHA256` — there is NO",
+  "  `hashselect`/`algorithm`/`type` argument (inventing one fails to COMPILE, so the hunt never starts).",
+  "  Get a file's SHA256 as `hash(path=FullPath).SHA256`, computed ONCE as a column, not repeatedly in WHERE:",
+  "  `SELECT FullPath, hash(path=FullPath).SHA256 AS SHA256 FROM glob(globs='…/*.exe') WHERE SHA256 IN (…)`.",
+  "- NEVER hash with a full-disk glob like 'C:/**/*.exe' — it walks every file on the volume and times out.",
+  "  Scope globs to the directories the tradecraft uses (web roots, %TEMP%, Downloads, a service path).",
   "- PREFER raw VQL plugins — pslist(), netstat(), glob(), stat(), read_file(), hash(), yara() — over",
   "  `Artifact.<Name>()` references: a hallucinated Artifact.<Name> fails to COMPILE and the hunt never",
   "  starts. Network connections → netstat(); processes → pslist(); files → glob(). Only reference an",
@@ -764,6 +777,12 @@ export const PLAYBOOK_HUNT_PROMPT = [
   "  `SELECT FullPath, read_file(filenames=[FullPath])[0].Data AS Content FROM glob(globs='...')`.",
   "- VQL has NO SQL `JOIN`. Use inline function calls (e.g. read_file above) or",
   "  `foreach(row={SELECT … FROM a()}, query={SELECT … FROM b()})` to correlate two plugins.",
+  "- hash() takes ONLY `path=` and returns an object with `.MD5` / `.SHA1` / `.SHA256` — there is NO",
+  "  `hashselect`/`algorithm`/`type` argument (inventing one fails to COMPILE, so the hunt never starts).",
+  "  Get a file's SHA256 as `hash(path=FullPath).SHA256`, computed ONCE as a column, not repeatedly in WHERE:",
+  "  `SELECT FullPath, hash(path=FullPath).SHA256 AS SHA256 FROM glob(globs='…/*.exe') WHERE SHA256 IN (…)`.",
+  "- NEVER hash with a full-disk glob like 'C:/**/*.exe' — it walks every file on the volume and times out.",
+  "  Scope globs to the directories the tradecraft uses (web roots, %TEMP%, Downloads, a service path).",
   "- For an ABSOLUTE time use timestamp(string='2025-03-14T22:00:00Z'); epoch= takes unix SECONDS (a number).",
   "- Velociraptor VQL has NO duration-suffix literals. Do NOT write `30d`, `7h`, `2w`. Use seconds",
   "  arithmetic: `now() - 30 * 86400` (30 days), `now() - 3600` (1 hour). Wrap in `timestamp(epoch=...)`",
@@ -1032,6 +1051,11 @@ export interface PipelineOptions {
   // so the analyst can pin a known-good one just for suggestHunts/suggestPlaybookHunts. Falls back
   // to synthesisProvider, then the main provider.
   velociraptorProvider?: AIProvider;
+  // Per-case hunt outcomes (#157) — the hunting feedback loop. When set, suggestHunts /
+  // suggestTechniqueHunts / suggestPlaybookHunts read prior-hunt outcomes to (a) drop a suggestion
+  // whose VQL already ran and (b) feed a "PRIOR HUNTS" context block so the model pivots on what hit.
+  // Server-only (absent in scripts/* like the other Velociraptor features) → loop simply off.
+  huntOutcomeStore?: HuntOutcomeStore;
   // Client-confirmed legitimate findings/IOCs to exclude from synthesis.
   legitimateStore?: LegitimateStore;
   // Optional investigation time-window — events outside it are excluded.
@@ -2753,11 +2777,31 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
+  // The hunting feedback loop's prior-hunt outcomes for a case (#157) — [] when no store is wired
+  // (scripts/*) or the file is absent/corrupt, so the loop simply stays off without ever throwing.
+  private async loadHuntOutcomes(caseId: string): Promise<HuntOutcome[]> {
+    if (!this.opts.huntOutcomeStore) return [];
+    try {
+      return await this.opts.huntOutcomeStore.load(caseId);
+    } catch {
+      return [];
+    }
+  }
+
+  // Drop any suggestion whose VQL was already deployed in this case (#157) — the deterministic guarantee
+  // that a hunt the analyst already ran is never re-proposed (the "PRIOR HUNTS" prompt block is the soft
+  // signal; this is the hard one). Bundles contribute no fingerprint, so they never exclude a suggestion.
+  private excludeDeployedHunts<T extends { vql: string }>(suggestions: T[], outcomes: readonly HuntOutcome[]): T[] {
+    const fps = deployedFingerprints(outcomes);
+    if (!fps.size) return suggestions;
+    return suggestions.filter((s) => !fps.has(vqlFingerprint(s.vql)));
+  }
+
   // Propose proactive Velociraptor VQL fleet-hunts from the synthesized findings (issue #57).
   // Single text-only AI call; EPHEMERAL like ask()/executiveSummary() — it does NOT mutate state.
   // The analyst reviews each hunt's VQL + rationale, then one-click deploys it through the existing
   // launchHunt flow (POST /velociraptor/hunt). Returns [] without an AI call on an empty case.
-  async suggestHunts(caseId: string): Promise<HuntSuggestion[]> {
+  async suggestHunts(caseId: string, opts?: { excludeVql?: string }): Promise<HuntSuggestion[]> {
     const provider = this.opts.velociraptorProvider ?? this.opts.synthesisProvider ?? this.requireProvider("hunt suggestions");
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasHuntMaterial(loaded)) return [];   // nothing to pivot on — don't spend a call
@@ -2783,14 +2827,26 @@ export class AnalysisPipeline {
     // Capped at the shared default (the timeline trim below absorbs the block into the prompt budget).
     const graphBlock = buildGraphContext({ ...loaded, forensicTimeline: scopedEvents }, { maxEdges: DEFAULT_MAX_GRAPH_EDGES });
 
+    // Feedback loop (#157): the prior hunts already run in this case (what hit / what missed), so the
+    // model proposes follow-ups that pivot on productive hunts and avoids repeating dead ones. "" when
+    // there are no recorded outcomes (or no store wired). Also drives the deterministic exclusion below.
+    const outcomes = await this.loadHuntOutcomes(caseId);
+    const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
+
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getHuntSuggestPrompt())
-      + estimateTokens(contextBlock + graphBlock + findingsText + iocText + techText + (loaded.attackerPath || "")) + 300;
+      + estimateTokens(priorHuntsBlock + contextBlock + graphBlock + findingsText + iocText + techText + (loaded.attackerPath || "")) + 300;
     const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
 
+    // Regenerate hook (mirrors suggestPlaybookHunts): when the analyst asks for a DIFFERENT take on a
+    // hunt whose VQL was bad/unwanted, the excluded query is shown so the model varies the approach.
+    const excludeNote = opts?.excludeVql
+      ? `ALREADY SUGGESTED (this VQL was already shown to the analyst — generate something DIFFERENT that investigates from a different angle or uses different VQL plugins):\n${opts.excludeVql}\n\n`
+      : "";
     const userPrompt =
+      priorHuntsBlock +
       contextBlock +
       graphBlock +
       `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
@@ -2798,13 +2854,14 @@ export class AnalysisPipeline {
       `FINDINGS:\n${findingsText}\n\n` +
       `PIVOTABLE INDICATORS:\n${iocText}\n\n` +
       `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
+      excludeNote +
       `Propose the fleet-hunts as JSON.`;
 
     const limit = Number(process.env.DFIR_HUNT_SUGGEST_MAX) || HUNT_SUGGEST_MAX_DEFAULT;
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "suggest-hunts");
       const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
-      return sanitizeHuntSuggestions(suggestions, limit);
+      return this.excludeDeployedHunts(sanitizeHuntSuggestions(suggestions, limit), outcomes);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
@@ -2821,7 +2878,10 @@ export class AnalysisPipeline {
     const loaded = await this.opts.stateStore.load(caseId);
     const iocText = renderHuntIocs(loaded.iocs);
     const label = techniqueName ? `${id} (${techniqueName})` : id;
+    const outcomes = await this.loadHuntOutcomes(caseId);   // #157 feedback loop (exclude + prior-hunts context)
+    const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
     const userPrompt =
+      priorHuntsBlock +
       `Focus EXCLUSIVELY on ONE ATT&CK technique the analyst wants to hunt for proactively across the fleet:\n` +
       `  ${label}\n\n` +
       `This technique has NOT yet been observed in this case. A group whose tradecraft resembles this case is known ` +
@@ -2834,7 +2894,7 @@ export class AnalysisPipeline {
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "hunt-technique");
       const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
-      return sanitizeHuntSuggestions(suggestions, limit);
+      return this.excludeDeployedHunts(sanitizeHuntSuggestions(suggestions, limit), outcomes);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
@@ -2988,10 +3048,12 @@ export class AnalysisPipeline {
     const findingsText = renderHuntFindings(loaded.findings);
     const kevCatalog = await this.getKevCatalog();
     const contextBlock = buildSynthesisContext(loaded, scopedEvents, kevCatalog);
+    const outcomes = await this.loadHuntOutcomes(caseId);   // #157 feedback loop (exclude + prior-hunts context)
+    const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getPlaybookHuntPrompt())
-      + estimateTokens(contextBlock + tasksText + endpointsText + artifactsText + findingsText + (loaded.attackerPath || "")) + 300;
+      + estimateTokens(priorHuntsBlock + contextBlock + tasksText + endpointsText + artifactsText + findingsText + (loaded.attackerPath || "")) + 300;
     const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
@@ -3000,6 +3062,7 @@ export class AnalysisPipeline {
       ? `ALREADY SUGGESTED (this VQL was already shown to the analyst — generate something DIFFERENT that investigates from a different angle or uses different VQL plugins):\n${opts.excludeVql}\n\n`
       : "";
     const userPrompt =
+      priorHuntsBlock +
       contextBlock +
       `KNOWN ENDPOINTS (hosts — pick a targetHost ONLY from these): ${endpointsText}\n\n` +
       `AVAILABLE VELOCIRAPTOR ARTIFACTS (reference Artifact.<Name> ONLY if <Name> is in this list — else use a raw plugin):\n${artifactsText}\n\n` +
@@ -3014,7 +3077,7 @@ export class AnalysisPipeline {
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getPlaybookHuntPrompt(), userPrompt, images: [] }, "suggest-playbook-hunts");
       const { suggestions } = playbookHuntResponseSchema.parse(parsed);
-      return sanitizePlaybookHuntSuggestions(suggestions, endpointsByTaskId, endpoints, limit);
+      return this.excludeDeployedHunts(sanitizePlaybookHuntSuggestions(suggestions, endpointsByTaskId, endpoints, limit), outcomes);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
