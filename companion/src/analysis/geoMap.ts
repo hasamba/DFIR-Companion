@@ -72,6 +72,10 @@ export interface GeoMapOptions {
 }
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 function worse(a: Severity, b: Severity): Severity {
   return SEV_RANK[b] < SEV_RANK[a] ? b : a;
 }
@@ -129,6 +133,12 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
   const byValue = new Map<string, IOC>();
   for (const i of ipIocs) byValue.set(i.value.trim().toLowerCase(), i);
 
+  // Boundary-aware description matchers (so "1.1.1.1" does NOT match inside "11.1.1.10").
+  const descMatchers = ipIocs.map((i) => ({
+    ioc: i,
+    re: new RegExp(`(?<![\\d.])${escapeRegExp(i.value.trim().toLowerCase())}(?![\\d.])`),
+  }));
+
   // Accumulate per-IOC severity / eventCount / sources / first-last from referencing events.
   const agg = new Map<string, Agg>();
   const ensure = (id: string): Agg => {
@@ -150,10 +160,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
     add(e.srcIp);
     add(e.dstIp);
     const desc = e.description.toLowerCase();
-    for (const i of ipIocs) {
-      const v = i.value.trim().toLowerCase();
-      if (v.length >= 7 && desc.includes(v)) out.set(i.id, i); // 7 = shortest plausible IPv4 "1.1.1.1"
-    }
+    for (const { ioc, re } of descMatchers) if (re.test(desc)) out.set(ioc.id, ioc);
     return [...out.values()];
   }
 
@@ -238,7 +245,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
       const direction: GeoFlow["direction"] = si && !di ? "outgoing" : !si && di ? "incoming" : "lateral";
       return { srcIp: s, dstIp: d, srcLat: sc.lat, srcLon: sc.lon, dstLat: dc.lat, dstLon: dc.lon, direction, count: fa.count, severity: fa.sev };
     })
-    .sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || b.count - a.count);
+    .sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || b.count - a.count || a.srcIp.localeCompare(b.srcIp) || a.dstIp.localeCompare(b.dstIp));
   const flows = allFlows.slice(0, maxFlows);
 
   // Country aggregation over all resolved markers.
