@@ -5,14 +5,19 @@ import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 
-// Per-case analyst notebook: free-form hypotheses, notes, and open questions the
-// investigator writes as they work through the case. Kept in `state/notebook.json`
-// — NOT in InvestigationState, so synthesis never wipes it. Entries are optionally
-// included in the holistic synthesis prompt when the analyst opts in via
-// `ai-control.json` (includeNotebook: true), giving the AI context about current
-// investigator thinking. Survives synthesis resets, like comments and tags.
+// Per-case analyst notebook: free-form notes and open questions the investigator writes as they
+// work through the case. Kept in `state/notebook.json` — NOT in InvestigationState, so synthesis
+// never wipes it. Entries are optionally included in the holistic synthesis prompt when the
+// analyst opts in via `ai-control.json` (includeNotebook: true), giving the AI context about
+// current investigator thinking. Survives synthesis resets, like comments and tags.
+//
+// NOTE: the notebook is for observations + open questions. Testable, status-tracked HYPOTHESES
+// have their own home — the Hypotheses panel (#140, `hypothesisStore`). The old "hypothesis"
+// entry type was removed to avoid two competing "hypothesis" surfaces; any legacy `hypothesis`
+// entry loads as a plain "note" (the enum `.catch("note")`), and a note can be promoted into a
+// tracked hypothesis from the dashboard.
 
-export const NOTEBOOK_ENTRY_TYPES = ["hypothesis", "note", "question"] as const;
+export const NOTEBOOK_ENTRY_TYPES = ["note", "question"] as const;
 export type NotebookEntryType = (typeof NOTEBOOK_ENTRY_TYPES)[number];
 
 export const notebookEntrySchema = z.object({

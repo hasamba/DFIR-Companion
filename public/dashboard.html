@@ -547,13 +547,11 @@
     .tag-current-pill .tag-del { background: transparent; border: 0; color: inherit; cursor: pointer; font-size: 12px; padding: 0 2px; opacity: .7; }
     /* Analyst notebook */
     .nb-entry { border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: var(--c-0f1115); }
-    .nb-entry.hypothesis { border-left: 3px solid var(--c-6aa9ff); }
     .nb-entry.note { border-left: 3px solid var(--c-7ec8a4); }
     .nb-entry.question { border-left: 3px solid var(--c-ffd93b); }
     .nb-entry-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; color: var(--c-9aa4b2); }
     .nb-type-badge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
       border-radius: 4px; padding: 1px 6px; }
-    .nb-type-badge.hypothesis { background: var(--c-11202e); color: var(--c-6aa9ff); }
     .nb-type-badge.note { background: var(--c-0d1f18); color: var(--c-7ec8a4); }
     .nb-type-badge.question { background: var(--c-221f0d); color: var(--c-ffd93b); }
     .nb-entry-text { font-size: 13px; white-space: pre-wrap; word-break: break-word; }
@@ -2795,21 +2793,20 @@
     </section>
     <section id="sec-notebook" style="grid-column: 1 / -1" class="collapsed">
       <h2>Analyst Notebook</h2>
-      <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Free-form hypotheses, notes, and open questions. Entries survive synthesis and are never wiped. Optionally included in AI synthesis context (opt-in below).</p>
+      <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Free-form notes and open questions. Entries survive synthesis and are never wiped. Optionally included in AI synthesis context (opt-in below). Got a testable claim? Use <em>→ Hypothesis</em> to track it in the Hypotheses panel above.</p>
       <div class="nb-ai-row">
         <input type="checkbox" id="nbAiToggle" />
         <label for="nbAiToggle">Include notebook in AI synthesis context</label>
-        <span style="color:var(--c-52617a);font-size:11px" id="nbAiHint">(gives the AI your current hypotheses and questions)</span>
+        <span style="color:var(--c-52617a);font-size:11px" id="nbAiHint">(gives the AI your current notes and open questions)</span>
       </div>
       <div id="nbList" style="margin-top:12px">—</div>
       <div class="nb-add-form">
         <div class="nb-add-row">
           <select id="nbType">
             <option value="note">Note</option>
-            <option value="hypothesis">Hypothesis</option>
             <option value="question">Question</option>
           </select>
-          <textarea id="nbText" placeholder="Write a note, hypothesis, or open question…" rows="3"></textarea>
+          <textarea id="nbText" placeholder="Write a note or an open question…" rows="3"></textarea>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
           <button id="nbAddBtn">Add entry</button>
@@ -3865,9 +3862,7 @@
       el.innerHTML = notebookEntries.map(e => {
         const who = e.author ? `<span style="font-size:10px;color:var(--c-cbd3df);font-weight:600">${esc(e.author)}</span>` : "";
         const ts = e.timestamp ? `<span style="margin-left:auto;font-size:10px;color:var(--c-52617a)">${esc(e.timestamp.slice(0,16).replace('T',' '))} UTC</span>` : "";
-        const promote = e.type === "hypothesis"
-          ? `<button class="nb-action-btn" onclick="promoteToHypothesis('${escAttr(e.id)}')" title="Track this as a status-bearing hypothesis (Hypotheses panel)">→ Hypothesis</button>`
-          : "";
+        const promote = `<button class="nb-action-btn" onclick="promoteToHypothesis('${escAttr(e.id)}')" title="Track this as a status-bearing hypothesis (Hypotheses panel)">→ Hypothesis</button>`;
         return `<div class="nb-entry ${escAttr(e.type)}" data-id="${escAttr(e.id)}">` +
           `<div class="nb-entry-header"><span class="nb-type-badge ${escAttr(e.type)}">${esc(e.type)}</span>${who}${ts}</div>` +
           `<div class="nb-entry-text">${esc(e.text)}</div>` +

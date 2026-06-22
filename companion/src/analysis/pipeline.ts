@@ -3242,10 +3242,32 @@ export class AnalysisPipeline {
         const notebookEntries = await this.opts.notebookStore.load(caseId);
         if (notebookEntries.length) {
           notebookBlock =
-            "ANALYST NOTEBOOK (investigator hypotheses, notes, and open questions — take these into account when synthesizing findings and the attacker path):\n" +
+            "ANALYST NOTEBOOK (investigator notes and open questions — take these into account when synthesizing findings and the attacker path):\n" +
             notebookEntries.map((e) => `[${e.type.toUpperCase()}] ${e.text}`).join("\n") +
             "\n\n";
         }
+      }
+    }
+
+    // Analyst hypotheses as steering (issue #140): feed the investigator's OPEN, analyst-owned
+    // hypotheses into the prompt so the model actively hunts evidence to support/refute them and
+    // reflects it in findings/events + its own hypotheses output. We do NOT ask it to flip the
+    // analyst's hypothesis status — those are frozen by mergeHypotheses (the analyst stays in
+    // control); the steering shows up as findings/events the analyst then uses to judge. Only
+    // analyst-authored or analyst-touched OPEN ones (pure inputs, never rewritten by synthesis),
+    // so including them in the hash below can't cause a re-synthesis loop. Bounded for prompt size.
+    let analystHypothesesBlock = "";
+    if (this.opts.hypothesisStore) {
+      const open = (await this.opts.hypothesisStore.load(caseId))
+        .filter((h) => h.status === "open" && (h.source === "analyst" || h.analystTouched))
+        .slice(0, 15);
+      if (open.length) {
+        analystHypothesesBlock =
+          "ANALYST HYPOTHESES TO TEST (the investigator proposed these — actively look for evidence that " +
+          "SUPPORTS or REFUTES each and surface it in findings/events; you may add a corroborating hypothesis, " +
+          "but do NOT mark the analyst's own hypothesis resolved):\n" +
+          open.map((h) => `- ${h.title}${h.expectedOutcome ? ` (decided by: ${h.expectedOutcome})` : ""}`).join("\n") +
+          "\n\n";
       }
     }
 
@@ -3260,6 +3282,7 @@ export class AnalysisPipeline {
       io: state.iocs.map((i) => [i.id, i.value, (i.enrichments ?? []).map((e) => e.verdict).join(",")]),
       sc: scope, lg: markers.map((m) => m.id),
       nb: notebookBlock,
+      hy: analystHypothesesBlock,
     })).digest("hex");
     if (!opts.force && !opts.dryRun && this.lastSynthHash.get(caseId) === synthHash) return loaded;
 
@@ -3295,7 +3318,7 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + notebookBlock + pinnedBlock + existingFindings + openThreads + legitimateBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + existingFindings + openThreads + legitimateBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -3307,6 +3330,7 @@ export class AnalysisPipeline {
       scopeNote +
       contextBlock +
       notebookBlock +
+      analystHypothesesBlock +
       pinnedBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
