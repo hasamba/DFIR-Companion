@@ -16,6 +16,8 @@ import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity
 import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, type AskAnswer, type ExecSummary, type ExplainEventResult } from "./responseSchema.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
+import type { StateLock } from "./stateLock.js";
+import { sortByEventTime } from "./forensicSort.js";
 import { applySeverityFloor } from "./severityFloor.js";
 import { EXAMPLE_IMPORTER_SPEC } from "./importerSpec.js";
 import type { ExternalImporter } from "./declarativeImporter.js";
@@ -1109,6 +1111,10 @@ export interface PipelineOptions {
   // vs "gpt-4o"). Fall back to the provider name when absent.
   synthesisModelLabel?: string;
   secondOpinionModelLabel?: string;
+  // Per-case mutex serializing load->save critical sections (manual adds, background
+  // enrichment, synthesis) so concurrent state writes cannot clobber each other (lost update).
+  // Absent -> no locking (CLI scripts/tests).
+  stateLock?: StateLock;
 }
 
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
@@ -3374,7 +3380,38 @@ export class AnalysisPipeline {
       next = applyAcceptedSecondOpinion(next, await this.opts.secondOpinionStore.load(caseId));
     }
 
-    await this.opts.stateStore.save(next);
+    // Lost-update guard (mirrors the pinned-questions re-load above): a manual event/IOC/thread
+    // added DURING the seconds-long AI call would otherwise be clobbered by this write, because
+    // `next` was derived from the snapshot taken before the call. Re-read the LATEST state and
+    // carry forward only items NEW since that snapshot (by id/value), so synthesis's conclusions
+    // and its correlation/legitimate work on the snapshot timeline are preserved while concurrent
+    // analyst additions survive. Reference the RAW snapshot (`loaded`), not the in-memory
+    // correlated `state`, so events deduped by correlateEvents aren't re-added.
+    const persistLatest = async () => {
+      const latest = await this.opts.stateStore.load(caseId);
+      const snapEventIds = new Set(loaded.forensicTimeline.map((e) => e.id));
+      const nextEventIds = new Set(next.forensicTimeline.map((e) => e.id));
+      const addedEvents = latest.forensicTimeline.filter((e) => !snapEventIds.has(e.id) && !nextEventIds.has(e.id));
+      const snapIocVals = new Set(loaded.iocs.map((i) => i.value.toLowerCase()));
+      const nextIocVals = new Set(next.iocs.map((i) => i.value.toLowerCase()));
+      const latestIocByVal = new Map(latest.iocs.map((i) => [i.value.toLowerCase(), i]));
+      const mergedIocs = [
+        ...next.iocs.map((i) => latestIocByVal.get(i.value.toLowerCase()) ?? i),
+        ...latest.iocs.filter((i) => !snapIocVals.has(i.value.toLowerCase()) && !nextIocVals.has(i.value.toLowerCase())),
+      ];
+      const snapThreadIds = new Set(loaded.openThreads.map((t) => t.id));
+      const nextThreadIds = new Set(next.openThreads.map((t) => t.id));
+      const addedThreads = latest.openThreads.filter((t) => !snapThreadIds.has(t.id) && !nextThreadIds.has(t.id));
+      next = {
+        ...next,
+        forensicTimeline: addedEvents.length ? sortByEventTime([...next.forensicTimeline, ...addedEvents]) : next.forensicTimeline,
+        iocs: mergedIocs,
+        openThreads: addedThreads.length ? [...next.openThreads, ...addedThreads] : next.openThreads,
+      };
+      await this.opts.stateStore.save(next);
+    };
+    if (this.opts.stateLock) await this.opts.stateLock.runExclusive(caseId, persistLatest);
+    else await persistLatest();
     this.lastSynthHash.set(caseId, synthHash);   // remember these inputs so an identical re-run skips the AI call
     // Record what this run changed (diff vs the findings that existed before the AI call) and
     // when it ran — surfaced on the dashboard. Only reached on a real run; skips return early above.

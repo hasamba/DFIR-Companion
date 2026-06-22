@@ -130,6 +130,7 @@ import {
 } from "./analysis/updateCheck.js";
 import { UpdateCheckStore } from "./analysis/updateCheckStore.js";
 import { performUpdateCheck } from "./analysis/updateCheckRun.js";
+import { StateLock } from "./analysis/stateLock.js";
 import { NsrlDb, loadNsrlDbPath, saveNsrlDbPath, removeNsrlDbPath } from "./analysis/nsrlDb.js";
 import { applyDeobfuscation } from "./analysis/applyDeobfuscation.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
@@ -221,6 +222,9 @@ export interface AiStatusEvent {
 
 export interface AppOptions {
   pipeline?: AnalysisPipeline;
+  // Per-case mutex serializing load->save critical sections so concurrent state writes
+  // (manual adds vs background enrichment/synthesis) cannot clobber each other.
+  stateLock?: StateLock;
   aiConfigured?: boolean;
   windowSize?: number;
   // Safety-net flush interval. A `timer`/`click` capture buffers until `windowSize`
@@ -507,6 +511,11 @@ function toStringArray(v: unknown): string[] {
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const app = express();
   const hasAiProvider = (): boolean => options.aiConfigured ?? Boolean(options.pipeline?.hasAiProvider());
+  // Serialize the load->save critical section for a case's investigation.json so concurrent
+  // mutations (a manual event/IOC add while background enrichment or re-synthesis saves)
+  // cannot clobber each other (lost update). No-op when no StateLock is wired (tests).
+  const runStateExclusive = <T>(caseId: string, fn: () => Promise<T>): Promise<T> =>
+    options.stateLock ? options.stateLock.runExclusive(caseId, fn) : fn();
 
   // ── Diagnostics runtime state (#118) ─────────────────────────────────────────────────
   // In-memory, best-effort rings powering the Health/Diagnostics page. They reset on restart
@@ -3383,8 +3392,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // couldn't finish, so retry it on recovery; if all reachable, drop any stale pending mark.
       if (summary.unavailable.length) enrichPending.add(caseId);
       else enrichPending.delete(caseId);
+      const { chainSummary } = await runStateExclusive(caseId, async () => {
       // Re-load + write only the iocs so we don't clobber a concurrent state change.
-      const latest = await options.stateStore!.load(caseId);
+        const latest = await options.stateStore!.load(caseId);
       const byValue = new Map(iocs.map((i) => [i.value, i]));
       let merged = { ...latest, iocs: latest.iocs.map((i) => byValue.get(i.value) ?? i), updatedAt: new Date().toISOString() };
 
@@ -3405,8 +3415,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         chainSummary = cs;
       }
 
-      await options.stateStore!.save(merged);
-      options.onState?.(merged);
+        await options.stateStore!.save(merged);
+        options.onState?.(merged);
+        return { chainSummary };
+      });
       const chainNote = chainSummary ? `; chains ${chainSummary.anomalies} anomalous/${chainSummary.checked}` : "";
       const skipNote = summary.unavailable.length ? `; skipped ${summary.unavailable.join(", ")} (unreachable — will retry)` : "";
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}${skipNote}` });
@@ -3572,11 +3584,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const caseId = req.params.id;
     try {
       const event = buildManualEvent(req.body);
-      const state = await options.stateStore.load(caseId);
-      const forensicTimeline = [...state.forensicTimeline, event].sort(byEventTime);
-      const next = { ...state, forensicTimeline, updatedAt: new Date().toISOString() };
-      await options.stateStore.save(next);
-      options.onState?.(next);
+      const stateStore = options.stateStore;
+      await runStateExclusive(caseId, async () => {
+        const state = await stateStore.load(caseId);
+        const forensicTimeline = [...state.forensicTimeline, event].sort(byEventTime);
+        const next = { ...state, forensicTimeline, updatedAt: new Date().toISOString() };
+        await stateStore.save(next);
+        options.onState?.(next);
+      });
       resynthesizeInBackground(caseId);
       logLine(`[manual] ${caseId} added event ${event.id} (${event.severity})`);
       return res.status(201).json(event);
@@ -3593,13 +3608,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const caseId = req.params.id;
     try {
       const ioc = buildManualIoc(req.body);
-      const state = await options.stateStore.load(caseId);
-      if (state.iocs.some((i) => i.value.toLowerCase() === ioc.value.toLowerCase())) {
-        return res.status(409).json({ error: `IOC already exists: ${ioc.value}` });
-      }
-      const next = { ...state, iocs: [...state.iocs, ioc], updatedAt: new Date().toISOString() };
-      await options.stateStore.save(next);
-      options.onState?.(next);
+      const stateStore = options.stateStore;
+      let conflict = false;
+      await runStateExclusive(caseId, async () => {
+        const state = await stateStore.load(caseId);
+        if (state.iocs.some((i) => i.value.toLowerCase() === ioc.value.toLowerCase())) { conflict = true; return; }
+        const next = { ...state, iocs: [...state.iocs, ioc], updatedAt: new Date().toISOString() };
+        await stateStore.save(next);
+        options.onState?.(next);
+      });
+      if (conflict) return res.status(409).json({ error: `IOC already exists: ${ioc.value}` });
       autoEnrichIfEnabled(caseId);
       logLine(`[manual] ${caseId} added ioc ${ioc.id} (${ioc.type})`);
       return res.status(201).json(ioc);
@@ -6884,6 +6902,7 @@ export interface RuntimePipelineParams {
   secondOpinionStore?: SecondOpinionStore;
   synthesisModelLabel?: string;
   secondOpinionModelLabel?: string;
+  stateLock?: StateLock;
 }
 
 export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
@@ -6895,6 +6914,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     secondOpinionStore: params.secondOpinionStore,
     synthesisModelLabel: params.synthesisModelLabel,
     secondOpinionModelLabel: params.secondOpinionModelLabel,
+    stateLock: params.stateLock,
     stateStore: params.stateStore,
     legitimateStore: new LegitimateStore(params.store),
     scopeStore: new ScopeStore(params.store),
@@ -6935,6 +6955,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   });
   setServerLogger(logger);
   logLine(`[DFIR] session log: ${join(globalLogDir, `session-${sessionStamp}.log`)}`);
+  const stateLock = new StateLock();
   const stateStore = new StateStoreImpl(store);
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
@@ -7055,7 +7076,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const visionIsLocalForPipeline = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
   const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
   const wiredPipeline = buildRuntimePipeline({
-    provider, synthesisProvider, velociraptorProvider, stateStore, store, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore,
+    provider, synthesisProvider, velociraptorProvider, stateStore, store, stateLock, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore,
     secondOpinionProvider, secondOpinionStore, synthesisModelLabel, secondOpinionModelLabel,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
     // Fully guarded — notifications are a side channel and must NEVER break synthesis.
@@ -7087,6 +7108,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     aiConfigured: Boolean(provider),
     flushIntervalMs,
     stateStore,
+    stateLock,
     reportWriter,
     // The redacted-export route needs OCR even when the vision model is local (the pipeline's
     // ocrRunner is undefined in that case), so give createApp its own always-available runner.
