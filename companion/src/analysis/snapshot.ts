@@ -26,6 +26,7 @@ export const SNAPSHOT_STATE_FILES = [
   "comments.json",          // investigator comments on entities
   "tags.json",              // analyst triage labels
   "notebook.json",          // analyst notebook (hypotheses, notes)
+  "hypotheses.json",        // #140 status-tracked investigative hypotheses (analyst + auto-generated) — investigation data
   "report-meta.json",       // human-authored report sections (title page, distribution, BIA, glossary…)
   "playbook.json",          // response playbook (tracked checklist)
   "playbook-control.json",  // per-case IR-templates toggle

@@ -204,6 +204,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 ### Investigation workflow
 - **Explain This Event** — 💡 per-row AI button explains any forensic event in context: what happened, why it matters, normal-vs-suspicious, ATT&CK mapping, 1–3 runnable pivot queries (VQL/KQL/SPL), evidence for/against; ephemeral overlay
 - **Ask the case (GraphRAG)** — free-form Q&A grounded in timeline + deterministic evidence-chain graph; multi-hop questions answered via real relationships
+- **Hypothesis-driven mode** — status-tracked investigative hypotheses (open / supported / refuted / unknown) auto-generated on synthesis + analyst-authored, with evidence/technique links and a report section; open analyst hypotheses steer the next synthesis, any notebook note/question promotes into one, auto ones refresh on re-synthesis but freeze once edited, survive synthesis, travel in snapshots
 - **Response Playbook** — trackable checklist (status/priority/assignee/due/custom tasks); opt-in IR-templates expand findings into Contain→Investigate→Eradicate→Recover
 - **Triage tags & comments** — label entities + attach notes; live WebSocket sync; survive synthesis
 - **Bulk actions** — multi-select events/IOCs: star/tag/mark-legitimate/enrich/copy

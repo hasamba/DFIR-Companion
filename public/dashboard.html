@@ -547,13 +547,11 @@
     .tag-current-pill .tag-del { background: transparent; border: 0; color: inherit; cursor: pointer; font-size: 12px; padding: 0 2px; opacity: .7; }
     /* Analyst notebook */
     .nb-entry { border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: var(--c-0f1115); }
-    .nb-entry.hypothesis { border-left: 3px solid var(--c-6aa9ff); }
     .nb-entry.note { border-left: 3px solid var(--c-7ec8a4); }
     .nb-entry.question { border-left: 3px solid var(--c-ffd93b); }
     .nb-entry-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; color: var(--c-9aa4b2); }
     .nb-type-badge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
       border-radius: 4px; padding: 1px 6px; }
-    .nb-type-badge.hypothesis { background: var(--c-11202e); color: var(--c-6aa9ff); }
     .nb-type-badge.note { background: var(--c-0d1f18); color: var(--c-7ec8a4); }
     .nb-type-badge.question { background: var(--c-221f0d); color: var(--c-ffd93b); }
     .nb-entry-text { font-size: 13px; white-space: pre-wrap; word-break: break-word; }
@@ -569,6 +567,31 @@
     #nbType { background: var(--c-0f1115); color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 4px 6px; font-size: 12px; }
     .nb-ai-row { font-size: 12px; color: var(--c-9aa4b2); display: flex; align-items: center; gap: 6px; margin-top: 4px; }
     .nb-ai-row label { cursor: pointer; user-select: none; }
+    /* Hypotheses (#140) */
+    .hyp { border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: var(--c-0f1115); border-left: 3px solid var(--c-9aa4b2); }
+    .hyp.open { border-left-color: var(--c-6aa9ff); }
+    .hyp.supported { border-left-color: var(--c-7ec8a4); }
+    .hyp.refuted { border-left-color: var(--c-ff7a7a); }
+    .hyp.unknown { border-left-color: var(--c-ffd93b); }
+    .hyp-row1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .hyp-status { background: var(--c-0f1115); color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 2px 6px; font-size: 12px; }
+    .hyp-title { font-size: 13px; font-weight: 600; flex: 1; word-break: break-word; }
+    .hyp-src { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border-radius: 4px; padding: 1px 6px; color: var(--c-9aa4b2); border: 1px solid var(--c-2a2f3a); }
+    .hyp-src.synthesis { background: var(--c-11202e); color: var(--c-6aa9ff); border-color: transparent; }
+    .hyp-outcome { font-size: 12px; color: var(--c-cbd3df); margin-top: 6px; }
+    .hyp-outcome b { color: var(--c-9aa4b2); font-weight: 600; }
+    .hyp-desc { font-size: 12px; color: var(--c-9aa4b2); margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+    .hyp-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; align-items: center; }
+    .hyp-chip { font-size: 10px; border: 1px solid var(--c-2a2f3a); border-radius: 4px; padding: 1px 6px; color: var(--c-9aa4b2); }
+    .hyp-row2 { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+    .hyp-assignee, .hyp-notes { background: var(--c-0f1115); color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit; }
+    .hyp-assignee { width: 130px; }
+    .hyp-notes { flex: 1; resize: vertical; min-height: 28px; }
+    .hyp-del { background: transparent; border: 1px solid var(--c-2a2f3a); border-radius: 4px; color: var(--c-9aa4b2); cursor: pointer; font-size: 11px; padding: 2px 8px; }
+    .hyp-del:hover { border-color: var(--c-ff7a7a); color: var(--c-ff7a7a); }
+    .hyp-grouphdr { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--c-52617a); margin: 12px 0 6px; }
+    .hyp-add-form { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+    .hyp-add-form input, .hyp-add-form select { background: var(--c-0f1115); color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 6px 8px; font-size: 13px; font-family: inherit; }
     .tag-current-pill .tag-del:hover { opacity: 1; }
     #tagInput { background: var(--c-0f1115); color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 6px; font-family: inherit; }
     /* Hunt-pivot query generator (Velociraptor / KQL / ES|QL / Splunk / Sigma / YARA / Suricata templates from an entity) */
@@ -2749,23 +2772,41 @@
         <span id="pbMsg" class="manual-msg"></span>
       </div>
     </section>
+    <section id="sec-hypotheses" style="grid-column: 1 / -1" class="collapsed">
+      <h2>Hypotheses<span class="ev-sub" id="hypBadge"></span></h2>
+      <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Testable explanations for the observed activity — track each from <em>open</em> to <em>supported</em> / <em>refuted</em> / <em>unknown</em>. Auto-generated on synthesis (badged <span class="hyp-src synthesis">auto</span>) and analyst-authored; both survive synthesis and are never wiped. A hypothesis is a lead to test, not a verdict.</p>
+      <div id="hypList">—</div>
+      <div class="hyp-add-form">
+        <input id="hypTitle" placeholder="Hypothesis (a testable claim, e.g. 'Initial access was phishing')" />
+        <input id="hypOutcome" placeholder="Expected outcome — what would prove or disprove it (optional)" />
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="hypStatus">
+            <option value="open">Open</option>
+            <option value="supported">Supported</option>
+            <option value="refuted">Refuted</option>
+            <option value="unknown">Unknown</option>
+          </select>
+          <button id="hypAddBtn">Add hypothesis</button>
+          <span id="hypMsg" class="manual-msg"></span>
+        </div>
+      </div>
+    </section>
     <section id="sec-notebook" style="grid-column: 1 / -1" class="collapsed">
       <h2>Analyst Notebook</h2>
-      <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Free-form hypotheses, notes, and open questions. Entries survive synthesis and are never wiped. Optionally included in AI synthesis context (opt-in below).</p>
+      <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Free-form notes and open questions. Entries survive synthesis and are never wiped. Optionally included in AI synthesis context (opt-in below). Got a testable claim? Use <em>→ Hypothesis</em> to track it in the Hypotheses panel above.</p>
       <div class="nb-ai-row">
         <input type="checkbox" id="nbAiToggle" />
         <label for="nbAiToggle">Include notebook in AI synthesis context</label>
-        <span style="color:var(--c-52617a);font-size:11px" id="nbAiHint">(gives the AI your current hypotheses and questions)</span>
+        <span style="color:var(--c-52617a);font-size:11px" id="nbAiHint">(gives the AI your current notes and open questions)</span>
       </div>
       <div id="nbList" style="margin-top:12px">—</div>
       <div class="nb-add-form">
         <div class="nb-add-row">
           <select id="nbType">
             <option value="note">Note</option>
-            <option value="hypothesis">Hypothesis</option>
             <option value="question">Question</option>
           </select>
-          <textarea id="nbText" placeholder="Write a note, hypothesis, or open question…" rows="3"></textarea>
+          <textarea id="nbText" placeholder="Write a note or an open question…" rows="3"></textarea>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
           <button id="nbAddBtn">Add entry</button>
@@ -3821,10 +3862,12 @@
       el.innerHTML = notebookEntries.map(e => {
         const who = e.author ? `<span style="font-size:10px;color:var(--c-cbd3df);font-weight:600">${esc(e.author)}</span>` : "";
         const ts = e.timestamp ? `<span style="margin-left:auto;font-size:10px;color:var(--c-52617a)">${esc(e.timestamp.slice(0,16).replace('T',' '))} UTC</span>` : "";
+        const promote = `<button class="nb-action-btn" onclick="promoteToHypothesis('${escAttr(e.id)}')" title="Track this as a status-bearing hypothesis (Hypotheses panel)">→ Hypothesis</button>`;
         return `<div class="nb-entry ${escAttr(e.type)}" data-id="${escAttr(e.id)}">` +
           `<div class="nb-entry-header"><span class="nb-type-badge ${escAttr(e.type)}">${esc(e.type)}</span>${who}${ts}</div>` +
           `<div class="nb-entry-text">${esc(e.text)}</div>` +
           `<div class="nb-entry-actions">` +
+          promote +
           `<button class="nb-action-btn" onclick="nbStartEdit('${escAttr(e.id)}')">Edit</button>` +
           `<button class="nb-action-btn del" onclick="nbDelete('${escAttr(e.id)}')">Delete</button>` +
           `</div></div>`;
@@ -3886,6 +3929,116 @@
         body: JSON.stringify({ enabled: aiEnabled, includeNotebook: this.checked }) })
         .catch(() => { this.checked = !this.checked; });
     });
+
+    // --- Hypotheses (issue #140) --------------------------------------------------
+    // Status-tracked investigative hypotheses. Auto-generated on synthesis (source "synthesis") +
+    // analyst-authored. A PATCH freezes a synthesis hypothesis from auto-refresh (server-side). The
+    // panel groups by status and survives synthesis (never wiped).
+    let hypotheses = [];
+    const HYP_STATUS = [["open", "Open"], ["supported", "Supported"], ["refuted", "Refuted"], ["unknown", "Unknown"]];
+
+    function loadHypotheses(caseId) {
+      fetch(`/cases/${caseId}/hypotheses`).then(r => r.json()).then(list => {
+        hypotheses = Array.isArray(list) ? list : [];
+        renderHypotheses();
+      }).catch(() => {});
+    }
+
+    function renderHypotheses() {
+      const el = document.getElementById("hypList");
+      if (!el) return;
+      const badge = document.getElementById("hypBadge");
+      if (badge) {
+        const counts = HYP_STATUS.map(([v, l]) => { const n = hypotheses.filter(h => h.status === v).length; return n ? `${n} ${v}` : null; }).filter(Boolean);
+        badge.textContent = hypotheses.length ? " — " + counts.join(" · ") : "";
+      }
+      if (!hypotheses.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No hypotheses yet — run synthesis to auto-generate, or add one below.</div>"; return; }
+      let html = "";
+      for (const [v, label] of HYP_STATUS) {
+        const group = hypotheses.filter(h => h.status === v);
+        if (!group.length) continue;
+        html += `<div class="hyp-grouphdr">${esc(label)} (${group.length})</div>`;
+        html += group.map(renderHypCard).join("");
+      }
+      el.innerHTML = html;
+    }
+
+    function renderHypCard(h) {
+      const opts = HYP_STATUS.map(([v, l]) => `<option value="${v}" ${h.status === v ? "selected" : ""}>${l}</option>`).join("");
+      const src = h.source === "synthesis" ? `<span class="hyp-src synthesis" title="Auto-generated on synthesis">auto</span>` : `<span class="hyp-src" title="Analyst-authored">analyst</span>`;
+      const outcome = h.expectedOutcome ? `<div class="hyp-outcome"><b>Expected:</b> ${esc(h.expectedOutcome)}</div>` : "";
+      const desc = h.description ? `<div class="hyp-desc">${esc(h.description)}</div>` : "";
+      const chips = [];
+      (h.relatedTechniques || []).forEach(t => chips.push(`<span class="hyp-chip">${esc(t)}</span>`));
+      if ((h.relatedEventIds || []).length) chips.push(`<span class="hyp-chip" title="supporting forensic events">↳ ${h.relatedEventIds.length} event${h.relatedEventIds.length === 1 ? "" : "s"}</span>`);
+      if ((h.relatedIocIds || []).length) chips.push(`<span class="hyp-chip" title="implicated IOCs">${h.relatedIocIds.length} IOC${h.relatedIocIds.length === 1 ? "" : "s"}</span>`);
+      const meta = chips.length ? `<div class="hyp-meta">${chips.join("")}</div>` : "";
+      const id = escAttr(h.id);
+      return `<div class="hyp ${escAttr(h.status)}" data-id="${id}">` +
+        `<div class="hyp-row1">` +
+          `<select class="hyp-status" onchange="hypPatch('${id}',{status:this.value})">${opts}</select>` +
+          `<span class="hyp-title">${esc(h.title)}</span>${src}` +
+          `<button class="hyp-del" onclick="hypDelete('${id}')" title="Delete">✕</button>` +
+        `</div>${outcome}${desc}${meta}` +
+        `<div class="hyp-row2">` +
+          `<input class="hyp-assignee" placeholder="assignee" value="${escAttr(h.assignee || "")}" onchange="hypPatch('${id}',{assignee:this.value})" />` +
+          `<input class="hyp-notes" placeholder="notes" value="${escAttr(h.notes || "")}" onchange="hypPatch('${id}',{notes:this.value})" />` +
+        `</div>` +
+      `</div>`;
+    }
+
+    function hypPatch(id, patch) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      fetch(`/cases/${caseId}/hypotheses/${encodeURIComponent(id)}`, { method: "PATCH",
+        headers: { "content-type": "application/json" }, body: JSON.stringify(patch) })
+        .then(() => loadHypotheses(caseId)).catch(() => {});
+    }
+
+    function hypDelete(id) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      fetch(`/cases/${caseId}/hypotheses/${encodeURIComponent(id)}`, { method: "DELETE" })
+        .then(() => loadHypotheses(caseId)).catch(() => {});
+    }
+
+    document.getElementById("hypAddBtn").onclick = function() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const title = document.getElementById("hypTitle").value.trim();
+      const expectedOutcome = document.getElementById("hypOutcome").value.trim();
+      const status = document.getElementById("hypStatus").value;
+      const msg = document.getElementById("hypMsg");
+      if (!caseId || !title) { msg.textContent = "title required"; return; }
+      msg.textContent = "adding…";
+      fetch(`/cases/${caseId}/hypotheses`, { method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title, expectedOutcome, status, author: investigatorName() }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => { document.getElementById("hypTitle").value = ""; document.getElementById("hypOutcome").value = ""; msg.textContent = ""; loadHypotheses(caseId); })
+        .catch(e => { msg.textContent = "failed: " + e.message + " — restart the companion server if this 404s"; });
+    };
+
+    // Promote a notebook hypothesis entry into a tracked hypothesis (the notebook→hypothesis bridge).
+    function promoteToHypothesis(id) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const entry = notebookEntries.find(e => e.id === id);
+      const msg = document.getElementById("nbMsg");
+      if (!caseId || !entry) return;
+      if (msg) msg.textContent = "promoting…";
+      fetch(`/cases/${caseId}/hypotheses`, { method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: entry.text.slice(0, 200), description: entry.text.length > 200 ? entry.text : "", author: investigatorName() }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(() => {
+          if (msg) msg.textContent = "promoted ✓ — see the Hypotheses panel";
+          loadHypotheses(caseId);
+          const sec = document.getElementById("sec-hypotheses");
+          if (sec) { sec.classList.remove("collapsed"); sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
+        })
+        // Never swallow silently — a 404 here means a stale server (the #1 gotcha), and the analyst
+        // must see why nothing happened instead of a dead button.
+        .catch(e => { if (msg) msg.textContent = "promote failed: " + e.message + " — restart the companion server if this 404s"; });
+    }
 
     // --- Playbook (issue #36) -----------------------------------------------------
     // Trackable checklist auto-derived (server-side) from the case's next steps + Critical/High
@@ -8505,6 +8658,7 @@
       loadTags(caseId);
       loadNotebook(caseId);
       loadNbAiToggle(caseId);
+      loadHypotheses(caseId);
       loadPlaybook(caseId);
       loadStarred(caseId);
       selectedEvents.clear();
@@ -8565,7 +8719,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAdversaryHintsReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAdversaryHintsReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "capture_ingest") {
@@ -8583,6 +8737,7 @@
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
+        else if (msg.type === "hypotheses_changed") loadHypotheses(caseId);
         else if (msg.type === "playbook_changed") loadPlaybook(caseId);
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
@@ -10007,6 +10162,7 @@
       { id: "sec-mitre",        label: "MITRE ATT&CK" },
       { id: "sec-adversary",    label: "Adversary Hints" },
       { id: "sec-legitimate",   label: "Confirmed Legitimate" },
+      { id: "sec-hypotheses",   label: "Hypotheses" },
       { id: "sec-notebook",     label: "Analyst Notebook" },
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-case-details", label: "Case Details" },
@@ -10323,6 +10479,7 @@
       ["timeline", "3 · Timeline of events"],
       ["investigation", "4 · Investigation"],
       ["conclusions", "5 · Conclusions & recommendations"],
+      ["hypotheses", "Hypotheses"],
       ["playbook", "Response Playbook"],
       ["notebook", "Analyst Notebook"],
     ];

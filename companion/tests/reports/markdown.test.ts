@@ -405,4 +405,30 @@ describe("renderMarkdownReport", () => {
     expect(mdWithNarrative).toContain("At 09:00 UTC the attacker sent a phishing email.");
     expect(mdWithNarrative).not.toContain("_Narrative not yet generated");
   });
+
+  it("renders the Hypotheses section when hypotheses are passed (#140), concluded ones first", () => {
+    const s = emptyState("c1");
+    const now = "2026-06-22T00:00:00.000Z";
+    const hyp = [
+      { id: "h1", title: "Open lead", description: "", expectedOutcome: "proxy logs showing a click",
+        status: "open" as const, relatedTechniques: ["T1566"], relatedEventIds: ["e1"], relatedIocIds: [],
+        assignee: "", notes: "", source: "analyst" as const, analystTouched: true, createdAt: now, updatedAt: now },
+      { id: "h2", title: "Initial access was phishing", description: "macro-laden attachment",
+        expectedOutcome: "", status: "supported" as const, relatedTechniques: [], relatedEventIds: ["e2", "e3"],
+        relatedIocIds: ["i1"], assignee: "", notes: "confirmed via prefetch", source: "synthesis" as const,
+        analystTouched: false, sourceKey: "synth:abc", createdAt: now, updatedAt: now },
+    ];
+    const md = renderMarkdownReport(s, undefined, undefined, undefined, undefined, undefined, undefined, undefined, hyp);
+    expect(md).toContain("## Hypotheses");
+    expect(md).toContain("### Initial access was phishing — Supported");
+    expect(md).toContain("**Expected outcome (what would prove or disprove this):** proxy logs showing a click");
+    expect(md).toContain("**Analyst notes:** confirmed via prefetch");
+    expect(md).toContain("2 supporting events");
+    // Concluded (supported) hypothesis is rendered before the still-open one.
+    expect(md.indexOf("Initial access was phishing")).toBeLessThan(md.indexOf("Open lead"));
+  });
+
+  it("omits the Hypotheses section when there are none", () => {
+    expect(renderMarkdownReport(emptyState("c1"))).not.toContain("## Hypotheses");
+  });
 });

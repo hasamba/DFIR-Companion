@@ -138,6 +138,8 @@ import type { PlaybookTask } from "./playbook.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
+import type { HypothesisStore } from "./hypothesisStore.js";
+import { sanitizeHypotheses } from "./hypothesis.js";
 import { ocrRedactImage, type OcrRunner } from "./ocrRedact.js";
 
 // Write a redacted screenshot copy to DFIR_OCR_DEBUG_DIR for visual inspection. The redacted
@@ -493,6 +495,14 @@ export const SYNTHESIS_PROMPT = [
   "  artifact/host/finding to act on or data to collect (e.g. 'pull Security.evtx 4624/4672 on ALClient07',",
   "  'sandbox-detonate Bubeus.exe', 'check web proxy logs for the C2 domain'). Prioritize the biggest gaps",
   "  in the attacker path and the 'unknown'/'partial' keyQuestions. Return 3-7 steps.",
+  "- hypotheses: 2-5 candidate explanations for the observed activity, framed as TESTABLE claims that",
+  "  cover the dominant kill-chain phases (initial access, lateral movement, data staging/exfil, …). For",
+  "  EACH give a 'title' (a falsifiable statement, e.g. 'Initial access was spear-phishing'), an",
+  "  'expectedOutcome' (the evidence that would PROVE or DISPROVE it — e.g. 'an .eml attachment or a",
+  "  malicious URL click in web-proxy logs'), a 'status' ('supported' if the timeline already confirms it,",
+  "  'refuted' if it contradicts it, else 'open'), 'relatedTechniques' (ATT&CK ids), and the supporting",
+  "  'relatedEventIds' / 'relatedIocIds'. Propose hypotheses even for gaps the evidence does NOT yet",
+  "  resolve (status 'open') — those drive the next collection. Use the event/ioc ids shown below.",
   "",
   "Return ONLY raw JSON (no markdown fences). Set forensicEvents to [] and timelineNote to \"\".",
   "Every finding/ioc/technique/thread/question MUST be an object, never a bare string.",
@@ -518,6 +528,10 @@ export const SYNTHESIS_PROMPT = [
       nextSteps: [
         { id: "n1", priority: "critical", action: "Pull Security.evtx (4624/4672/4688) on ALClient07 and timeline ±15m around the first execution", rationale: "Confirms the initial access vector and whether lateral movement preceded execution", pointer: "event e3 / finding f1; collect from ALClient07" },
         { id: "n2", priority: "high", action: "Sandbox-detonate Bubeus.exe and capture network IOCs", rationale: "Establishes C2 infrastructure still unknown in the timeline", pointer: "ioc i2; submit hash, watch for the C2 domain" },
+      ],
+      hypotheses: [
+        { title: "Initial access was spear-phishing", expectedOutcome: "an .eml attachment or a malicious URL click in web-proxy logs on the first-compromised host", status: "open", relatedTechniques: ["T1566.001"], relatedEventIds: ["e3"], relatedIocIds: ["i1"] },
+        { title: "Data was staged before exfiltration", expectedOutcome: "an archive (.zip/.7z/.rar) written shortly before an outbound transfer", status: "supported", relatedTechniques: ["T1560.001"], relatedEventIds: ["e7"], relatedIocIds: [] },
       ],
       forensicEvents: [],
       timelineNote: "",
@@ -1115,6 +1129,9 @@ export interface PipelineOptions {
   // enrichment, synthesis) so concurrent state writes cannot clobber each other (lost update).
   // Absent -> no locking (CLI scripts/tests).
   stateLock?: StateLock;
+  // Per-case hypothesis store (issue #140). When set, synthesis merges the model's auto-generated
+  // hypotheses into it (refresh-pristine / freeze-touched). Absent → no auto-generation (CLI/tests).
+  hypothesisStore?: HypothesisStore;
 }
 
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
@@ -3225,10 +3242,32 @@ export class AnalysisPipeline {
         const notebookEntries = await this.opts.notebookStore.load(caseId);
         if (notebookEntries.length) {
           notebookBlock =
-            "ANALYST NOTEBOOK (investigator hypotheses, notes, and open questions — take these into account when synthesizing findings and the attacker path):\n" +
+            "ANALYST NOTEBOOK (investigator notes and open questions — take these into account when synthesizing findings and the attacker path):\n" +
             notebookEntries.map((e) => `[${e.type.toUpperCase()}] ${e.text}`).join("\n") +
             "\n\n";
         }
+      }
+    }
+
+    // Analyst hypotheses as steering (issue #140): feed the investigator's OPEN, analyst-owned
+    // hypotheses into the prompt so the model actively hunts evidence to support/refute them and
+    // reflects it in findings/events + its own hypotheses output. We do NOT ask it to flip the
+    // analyst's hypothesis status — those are frozen by mergeHypotheses (the analyst stays in
+    // control); the steering shows up as findings/events the analyst then uses to judge. Only
+    // analyst-authored or analyst-touched OPEN ones (pure inputs, never rewritten by synthesis),
+    // so including them in the hash below can't cause a re-synthesis loop. Bounded for prompt size.
+    let analystHypothesesBlock = "";
+    if (this.opts.hypothesisStore) {
+      const open = (await this.opts.hypothesisStore.load(caseId))
+        .filter((h) => h.status === "open" && (h.source === "analyst" || h.analystTouched))
+        .slice(0, 15);
+      if (open.length) {
+        analystHypothesesBlock =
+          "ANALYST HYPOTHESES TO TEST (the investigator proposed these — actively look for evidence that " +
+          "SUPPORTS or REFUTES each and surface it in findings/events; you may add a corroborating hypothesis, " +
+          "but do NOT mark the analyst's own hypothesis resolved):\n" +
+          open.map((h) => `- ${h.title}${h.expectedOutcome ? ` (decided by: ${h.expectedOutcome})` : ""}`).join("\n") +
+          "\n\n";
       }
     }
 
@@ -3243,6 +3282,7 @@ export class AnalysisPipeline {
       io: state.iocs.map((i) => [i.id, i.value, (i.enrichments ?? []).map((e) => e.verdict).join(",")]),
       sc: scope, lg: markers.map((m) => m.id),
       nb: notebookBlock,
+      hy: analystHypothesesBlock,
     })).digest("hex");
     if (!opts.force && !opts.dryRun && this.lastSynthHash.get(caseId) === synthHash) return loaded;
 
@@ -3278,7 +3318,7 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + notebookBlock + pinnedBlock + existingFindings + openThreads + legitimateBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + existingFindings + openThreads + legitimateBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -3290,6 +3330,7 @@ export class AnalysisPipeline {
       scopeNote +
       contextBlock +
       notebookBlock +
+      analystHypothesesBlock +
       pinnedBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
@@ -3412,6 +3453,19 @@ export class AnalysisPipeline {
     };
     if (this.opts.stateLock) await this.opts.stateLock.runExclusive(caseId, persistLatest);
     else await persistLatest();
+
+    // Auto-generate hypotheses (issue #140). Merge the model's hypotheses into the per-case store,
+    // refreshing pristine auto ones and FREEZING any the analyst touched (see mergeHypotheses). Only
+    // when the model actually returned some — an omitted field must never prune the analyst's set.
+    // Sanitized against the FINAL event/IOC ids so evidence links can't dangle. Side store, not
+    // InvestigationState; runs after the state is persisted so a failure here can't lose the synthesis.
+    if (this.opts.hypothesisStore && delta.hypotheses && delta.hypotheses.length) {
+      const validEventIds = new Set(next.forensicTimeline.map((e) => e.id));
+      const validIocIds = new Set(next.iocs.map((i) => i.id));
+      const seeds = sanitizeHypotheses(delta.hypotheses, validEventIds, validIocIds);
+      await this.opts.hypothesisStore.applyAutoGenerated(caseId, seeds, new Date().toISOString());
+    }
+
     this.lastSynthHash.set(caseId, synthHash);   // remember these inputs so an identical re-run skips the AI call
     // Record what this run changed (diff vs the findings that existed before the AI call) and
     // when it ran — surfaced on the dashboard. Only reached on a real run; skips return early above.

@@ -29,6 +29,7 @@ import { AnonControlStore } from "../src/analysis/anonControl.js";
 import { CustomEntitiesStore } from "../src/analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../src/analysis/anonDiscovered.js";
 import { SynthMetaStore } from "../src/analysis/synthMeta.js";
+import { HypothesisStore } from "../src/analysis/hypothesisStore.js";
 import { buildProviderFrom } from "../src/server.js";
 import type { CaptureMetadata } from "../src/types.js";
 
@@ -80,7 +81,7 @@ async function main(): Promise<void> {
 
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
-  const pipeline = new AnalysisPipeline({ provider, synthesisProvider, stateStore, legitimateStore: new LegitimateStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), anonStore: new AnonControlStore(store), customEntitiesStore: new CustomEntitiesStore(store), discoveredStore: new DiscoveredEntitiesStore(store), synthMetaStore: new SynthMetaStore(store) });
+  const pipeline = new AnalysisPipeline({ provider, synthesisProvider, stateStore, legitimateStore: new LegitimateStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), anonStore: new AnonControlStore(store), customEntitiesStore: new CustomEntitiesStore(store), discoveredStore: new DiscoveredEntitiesStore(store), synthMetaStore: new SynthMetaStore(store), hypothesisStore: new HypothesisStore(store) });
 
   const logText = await readFile(store.capturesLogPath(caseId), "utf8");
   const all: CaptureMetadata[] = logText.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
