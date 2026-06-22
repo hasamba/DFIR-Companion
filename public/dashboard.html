@@ -7248,7 +7248,7 @@
       const topIps = geoFilteredMarkers().slice(0, 10).map(m =>
         `<li style="cursor:pointer" onclick="geoFocusIp('${escAttr(m.ip)}')" title="focus on map"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${GEO_COLOR[m.color] || GEO_COLOR.gray};margin-right:6px"></span>${esc(m.ip)} <span style="color:var(--c-9aa4b2)">${esc([m.city, m.country].filter(Boolean).join(", ") || "—")} · ${esc(m.eventCount)} ev</span></li>`).join("");
       statsEl.innerHTML =
-        `<div style="margin-bottom:4px">${esc(s.resolved)} mapped / ${esc(s.totalIps)} IPs · ${esc(s.external)} external · ${esc(s.internal)} internal · ${esc(s.distinctCountries)} countries · ${esc(s.distinctAsns)} ASNs${s.markerCap ? ` · showing first ${esc(s.markerCap)}` : ""}</div>` +
+        `<div style="margin-bottom:4px">${esc(s.resolved)} mapped / ${esc(s.totalIps)} IPs · ${esc(s.external)} external · ${esc(s.internal)} internal · ${esc(s.distinctCountries)} countries · ${esc(s.distinctAsns)} ASNs${s.markerCap ? ` · showing first ${esc(s.markerCap)}` : ""}<span style="color:var(--c-9aa4b2)"> · dashed = country-level (approx)</span></div>` +
         (countries ? `<div style="margin-bottom:4px"><b>Top countries:</b> ${countries}</div>` : "") +
         (topIps ? `<div><b>Top IPs:</b><ul style="margin:4px 0;padding-left:18px">${topIps}</ul></div>` : "");
       if (geoMap) renderGeoMarkers();
@@ -7277,9 +7277,12 @@
       const markers = geoFilteredMarkers();
       const bounds = [], byIp = {};
       for (const m of markers) {
-        const cm = L.circleMarker([m.lat, m.lon], { radius: 7, color: "#0d1117", weight: 1, fillColor: GEO_COLOR[m.color] || GEO_COLOR.gray, fillOpacity: 0.85 });
+        const opts = { radius: 7, color: "#0d1117", weight: 1, fillColor: GEO_COLOR[m.color] || GEO_COLOR.gray, fillOpacity: m.approximate ? 0.45 : 0.85 };
+        if (m.approximate) opts.dashArray = "2,3";
+        const cm = L.circleMarker([m.lat, m.lon], opts);
         const verdict = m.verdict && m.verdict !== "unknown" ? ` · ${esc(m.verdict)}` : "";
-        cm.bindPopup(`<b>${esc(m.ip)}</b>${m.legitimate ? " (legit)" : ""}<br>${esc([m.city, m.country].filter(Boolean).join(", ") || "unknown location")}<br>${esc(m.asn || "")}<br>${esc(m.severity)}${verdict} · ${esc(m.eventCount)} event(s)`);
+        const approxNote = m.approximate ? " · <em>country-level (approx)</em>" : "";
+        cm.bindPopup(`<b>${esc(m.ip)}</b>${m.legitimate ? " (legit)" : ""}<br>${esc([m.city, m.country].filter(Boolean).join(", ") || "unknown location")}${approxNote}<br>${esc(m.asn || "")}<br>${esc(m.severity)}${verdict} · ${esc(m.eventCount)} event(s)`);
         cm.addTo(geoLayer);
         bounds.push([m.lat, m.lon]);
         byIp[m.ip.toLowerCase()] = cm;
