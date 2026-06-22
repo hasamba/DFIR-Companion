@@ -18,6 +18,7 @@ export interface VeloHuntJob {
   bundleId: string;
   bundleName: string;
   artifacts: string[];
+  sources?: string[];     // named sources for a single-artifact fleet-hunt (Companion launchHunt → Pivot0…); collect reads `artifact/source`
   huntId: string;
   guiUrl?: string;
   launchedAt: string;     // ISO

@@ -2275,7 +2275,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // 1) Result ROWS → the Velociraptor importer (detections + telemetry). Resilient: an artifact
       // whose output is too large to fetch is skipped (logged), not fatal — the rest still import, and
       // its uploaded JSON (if any) is still picked up in step 2.
-      const { results: map, skipped } = await client.huntResultsByArtifact(job.huntId, job.artifacts, job.filters);
+      // For a suggested fleet hunt the single Custom.Hunt artifact stores rows under named sources
+      // (Pivot0…); map them so collect reads `artifact/source` (else 0 rows → false "no evidence", #157).
+      const sourcesByArtifact = (job.sources?.length && job.artifacts.length === 1) ? { [job.artifacts[0]]: job.sources } : undefined;
+      const { results: map, skipped } = await client.huntResultsByArtifact(job.huntId, job.artifacts, job.filters, sourcesByArtifact);
       if (skipped.length) logLine(`[velociraptor] hunt ${job.huntId}: skipped ${skipped.length} oversized/failed artifact(s): ${skipped.join(", ")} — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT / DFIR_VELOCIRAPTOR_MAX_ROWS to include them`);
       const totalRows = Object.values(map).reduce((n, rows) => n + rows.length, 0);
       if (totalRows > 0) {
@@ -2489,6 +2492,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         const now = new Date();
         const job: VeloHuntJob = {
           bundleId: `suggested:${source}`, bundleName: title, artifacts: launch.artifact ? [launch.artifact] : [],
+          sources: launch.sources,   // #157: the Custom.Hunt artifact's named sources (Pivot0…) so collect reads `artifact/source`
           huntId: launch.huntId, guiUrl: launch.guiUrl, launchedAt: now.toISOString(), waitMinutes,
           collectAt: new Date(now.getTime() + waitMinutes * 60_000).toISOString(), status: "running",
         };

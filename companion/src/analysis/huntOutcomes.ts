@@ -124,7 +124,11 @@ function summarizeResult(found: boolean, addedEvents: number, addedIocs: number)
 }
 
 // Mark the outcome(s) matching `huntId` as collected, deriving foundEvidence + the summary from the
-// import delta. No-op (returns a copy) when huntId is blank or no entry matches. Pure.
+// import delta. CUMULATIVE + NON-DOWNGRADING: counts ACCUMULATE across collects and a hit is never
+// flipped back to a miss. This matters because fleet-hunt results trickle in — the analyst re-collects
+// to pull stragglers, and a re-collect of already-imported rows yields a 0 delta (dedup); without this,
+// that second collect would wrongly overwrite a real "hit" with "no new evidence". No-op (returns a
+// copy) when huntId is blank or no entry matches. Pure.
 export function fillOutcome(
   outcomes: readonly HuntOutcome[],
   huntId: string,
@@ -132,22 +136,23 @@ export function fillOutcome(
 ): HuntOutcome[] {
   const hid = String(huntId ?? "").trim();
   if (!hid) return [...outcomes];
-  const addedEvents = Math.max(0, Math.floor(result.addedEvents || 0));
-  const addedIocs = Math.max(0, Math.floor(result.addedIocs || 0));
-  const found = addedEvents > 0 || addedIocs > 0;
-  return outcomes.map((o) =>
-    o.huntId === hid
-      ? {
-          ...o,
-          status: "collected" as const,
-          foundEvidence: found,
-          addedEvents,
-          addedIocs,
-          resultSummary: summarizeResult(found, addedEvents, addedIocs),
-          collectedAt: result.collectedAt,
-        }
-      : o,
-  );
+  const deltaEvents = Math.max(0, Math.floor(result.addedEvents || 0));
+  const deltaIocs = Math.max(0, Math.floor(result.addedIocs || 0));
+  return outcomes.map((o) => {
+    if (o.huntId !== hid) return o;
+    const addedEvents = (o.addedEvents || 0) + deltaEvents;   // cumulative across re-collects (re-reads dedup to 0)
+    const addedIocs = (o.addedIocs || 0) + deltaIocs;
+    const found = o.foundEvidence === true || addedEvents > 0 || addedIocs > 0;   // a hit stays a hit
+    return {
+      ...o,
+      status: "collected" as const,
+      foundEvidence: found,
+      addedEvents,
+      addedIocs,
+      resultSummary: summarizeResult(found, addedEvents, addedIocs),
+      collectedAt: result.collectedAt,
+    };
+  });
 }
 
 // The set of VQL fingerprints already deployed — the deterministic exclusion list for new suggestions

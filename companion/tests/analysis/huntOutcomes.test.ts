@@ -149,6 +149,28 @@ describe("fillOutcome", () => {
     expect(out[0].addedEvents).toBe(0);
     expect(out[0].foundEvidence).toBe(false);
   });
+
+  it("accumulates counts across re-collects (stragglers add up)", () => {
+    let out = fillOutcome(deployed, "H.1", { addedEvents: 5, addedIocs: 0, collectedAt: T1 });
+    out = fillOutcome(out, "H.1", { addedEvents: 3, addedIocs: 1, collectedAt: T2 });
+    expect(out[0]).toMatchObject({ addedEvents: 8, addedIocs: 1, foundEvidence: true, collectedAt: T2 });
+    expect(out[0].resultSummary).toBe("+8 events, +1 IOC");
+  });
+
+  it("never downgrades a hit when a re-collect adds nothing (dedup → 0 delta)", () => {
+    let out = fillOutcome(deployed, "H.1", { addedEvents: 5, addedIocs: 0, collectedAt: T1 }); // hit
+    out = fillOutcome(out, "H.1", { addedEvents: 0, addedIocs: 0, collectedAt: T2 });           // re-pull, nothing new
+    expect(out[0].foundEvidence).toBe(true);
+    expect(out[0].addedEvents).toBe(5);
+    expect(out[0].resultSummary).toBe("+5 events");
+  });
+
+  it("recovers a prior false 'no evidence' once results finally collect", () => {
+    let out = fillOutcome(deployed, "H.1", { addedEvents: 0, addedIocs: 0, collectedAt: T1 }); // collected too early
+    expect(out[0].foundEvidence).toBe(false);
+    out = fillOutcome(out, "H.1", { addedEvents: 4, addedIocs: 0, collectedAt: T2 });           // re-collect after rows arrive
+    expect(out[0]).toMatchObject({ foundEvidence: true, addedEvents: 4 });
+  });
 });
 
 describe("deployedFingerprints", () => {

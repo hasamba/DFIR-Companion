@@ -551,6 +551,15 @@ describe("VelociraptorClient.huntResultsByArtifact", () => {
     const { results } = await c.huntResultsByArtifact("H.OK1", ["bad name", "Windows.System.Pslist"]);
     expect(Object.keys(results)).toEqual(["Windows.System.Pslist"]);
   });
+
+  it("reads a fleet-hunt artifact's NAMED sources as artifact/source (#157 — else 0 rows / false 'no evidence')", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ a: 1 }], raw: "" }; };
+    const { results } = await new VelociraptorClient(cfg, runner).huntResultsByArtifact(
+      "H.OK1", ["Custom.Hunt.Companion.x"], undefined, { "Custom.Hunt.Companion.x": ["Pivot0"] });
+    expect(program).toContain("artifact='Custom.Hunt.Companion.x/Pivot0'");
+    expect(results["Custom.Hunt.Companion.x"]).toHaveLength(1);
+  });
 });
 
 describe("VelociraptorClient.huntUploads", () => {
