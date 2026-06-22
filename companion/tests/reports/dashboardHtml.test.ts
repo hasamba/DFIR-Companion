@@ -160,6 +160,8 @@ describe("dashboard.html", () => {
     expect(html).toContain("hp-collect");              // pending hunts offer a "Collect now" affordance
     expect(html).toContain("hp-toggle");               // profile rows expand to show the hunt's result rows
     expect(html).toContain("/velociraptor/hunt-rows");  // on-demand results fetch for the profile
+    expect(html).toContain("hp-collect-inline");        // live-preview banner offers Collect when not yet imported
+    expect(html).toContain("not imported into the case yet");
     expect(html).toContain("vhs-regen");               // fleet hunts offer a per-card Regenerate (like playbook)
     expect(html).toContain("regenVeloHunt");
   });

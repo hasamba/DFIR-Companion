@@ -2623,6 +2623,9 @@
       #sec-huntprofile .hp-item{display:flex;flex-direction:column;gap:4px}
       #sec-huntprofile .hp-toggle{background:transparent;border:1px solid var(--c-3a4150);color:var(--c-9aa4b2);border-radius:4px;padding:0 6px;font-size:10px;cursor:pointer}
       #sec-huntprofile .hp-detail{margin:0 0 2px 4px}
+      #sec-huntprofile .hp-preview-note{color:var(--c-ffb454);font-size:11px;margin:0 0 4px 0}
+      #sec-huntprofile .hp-collect-inline{background:var(--c-2d6cdf);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer}
+      #sec-huntprofile .hp-collect-inline:disabled{opacity:.6;cursor:default}
       /* ── Query Translator (NL → hunt queries, #100) ── */
       #sec-nlquery .nlq-empty{color:var(--c-9aa4b2);font-size:12px}
       #sec-nlquery .nlq-platforms{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
@@ -7092,7 +7095,9 @@
         + `</div>`;
       const rows = hunts.map((h, i) => {
         const st = h.status === "collected" ? (h.foundEvidence ? HP_STATUS.collectedHit : HP_STATUS.collectedMiss) : HP_STATUS.pending;
-        const result = h.status === "collected" ? (h.resultSummary || (h.foundEvidence ? "new evidence" : "no results")) : "results not yet collected";
+        // "not collected yet" not "results not yet collected": ▸ results can show LIVE rows from Velociraptor
+        // before the hunt is imported, and "results not yet collected" read as a contradiction next to them.
+        const result = h.status === "collected" ? (h.resultSummary || (h.foundEvidence ? "new evidence" : "no results")) : "not collected yet";
         const techs = (h.mitreTechniques || []).map((t) => {
           const u = attackUrl(t);
           return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="hp-tech">${esc(t)}</a>` : `<span class="hp-tech">${esc(t)}</span>`;
@@ -7107,7 +7112,7 @@
         // Expand to view the hunt's actual result rows on demand (fetched from the persisted job) — so the
         // persistent profile can show what a hunt found even after the ephemeral suggestion card is gone.
         const resultsToggle = h.huntId
-          ? ` <button class="hp-toggle" data-hid="${escAttr(h.huntId)}" data-idx="${i}" title="Show this hunt's result rows">▸ results</button>`
+          ? ` <button class="hp-toggle" data-hid="${escAttr(h.huntId)}" data-idx="${i}"${h.status === "collected" ? "" : ' data-pending="1"'} title="Show this hunt's result rows">▸ results</button>`
           : "";
         return `<div class="hp-item">`
           + `<div class="hp-row">`
@@ -7124,19 +7129,18 @@
       }).join("");
       el.innerHTML = tally + `<div class="hp-list">${rows}</div>`;
       const caseId = document.getElementById("caseId").value.trim();
-      el.querySelectorAll(".hp-collect").forEach((b) => b.onclick = () => {
-        if (!caseId) return;
-        const label = b.textContent;
-        b.disabled = true; b.textContent = "collecting…";
-        fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/collect`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId: b.dataset.hid }) })
+      // Collect (import) a hunt's results into the case + record the outcome. On success (202) the
+      // velo_hunt_changed WS event re-renders the panel; only an error restores the button + flags it.
+      const collectHunt = (huntId, btn) => {
+        if (!caseId || !huntId) return;
+        const label = btn.textContent;
+        btn.disabled = true; btn.textContent = "collecting…";
+        fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/collect`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId }) })
           .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
-          .then(({ ok, j }) => {
-            // 202 → collecting in the background; velo_hunt_changed refreshes the panel when done. A 404
-            // means the hunt job aged out of the (capped) job list — surface it instead of failing silently.
-            if (!ok) { b.disabled = false; b.textContent = label; b.title = (j && j.error) || "collect failed — the hunt may have aged out of Velociraptor's job list"; b.classList.add("hp-collect-err"); }
-          })
-          .catch((e) => { b.disabled = false; b.textContent = label; b.title = "collect failed: " + e.message; b.classList.add("hp-collect-err"); });
-      });
+          .then(({ ok, j }) => { if (!ok) { btn.disabled = false; btn.textContent = label; btn.title = (j && j.error) || "collect failed — the hunt may have aged out of Velociraptor's job list"; btn.classList.add("hp-collect-err"); } })
+          .catch((e) => { btn.disabled = false; btn.textContent = label; btn.title = "collect failed: " + e.message; btn.classList.add("hp-collect-err"); });
+      };
+      el.querySelectorAll(".hp-collect").forEach((b) => b.onclick = () => collectHunt(b.dataset.hid, b));
       el.querySelectorAll(".hp-toggle").forEach((b) => b.onclick = () => {
         const detail = document.getElementById("hpDetail" + b.dataset.idx);
         if (!detail) return;
@@ -7144,12 +7148,22 @@
         detail.removeAttribute("hidden"); b.textContent = "▾ results";
         if (detail.dataset.loaded) return;   // fetched already this render — don't re-pull on every toggle
         if (!caseId) return;
+        const hid = b.dataset.hid;
+        const pending = !!b.dataset.pending;   // hunt not imported into the case yet
         detail.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>loading results…</div>";
-        fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/hunt-rows`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId: b.dataset.hid }) })
+        fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/hunt-rows`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId: hid }) })
           .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
           .then(({ ok, j }) => {
             if (!ok || j.error) { detail.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">${esc(j.error || "could not load results")}</div>`; return; }
-            detail.innerHTML = (j.rows && j.rows.length) ? renderVqlRows(j) : "<div style='color:var(--c-9aa4b2);font-size:12px'>no rows (the hunt may still be collecting, or returned nothing)</div>";
+            const n = (j.rows || []).length;
+            // These rows are read LIVE from Velociraptor — they are NOT in the case until collected. When the
+            // hunt is still pending, say so + offer an inline Collect so the live preview ≠ "imported" is clear.
+            const note = (pending && n)
+              ? `<div class="hp-preview-note">⚠ Live preview from Velociraptor — these ${n} result(s) are <b>not imported into the case yet</b>. <button class="hp-collect-inline" data-hid="${escAttr(hid)}">↻ Collect now to import</button></div>`
+              : "";
+            detail.innerHTML = note + (n ? renderVqlRows(j) : "<div style='color:var(--c-9aa4b2);font-size:12px'>no rows (the hunt may still be collecting, or returned nothing)</div>");
+            const ib = detail.querySelector(".hp-collect-inline");
+            if (ib) ib.onclick = () => collectHunt(ib.dataset.hid, ib);
             detail.dataset.loaded = "1";
           })
           .catch((e) => { detail.innerHTML = `<div style="color:var(--c-ff9f43);font-size:12px">error: ${esc(e.message)} — restart the companion server if this 404s</div>`; });
