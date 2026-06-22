@@ -6,6 +6,8 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <script defer src="/vendor/leaflet/leaflet.js"></script>
   <script>
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
        explicit localStorage choice, else the OS preference. */
@@ -2535,6 +2537,29 @@
     </section>
 
     <section id="sec-beacons" style="grid-column: 1 / -1"><h2>Beacon Candidates<span class="ev-sub">periodic outbound channels — too regular to be human traffic (derived, no AI); a hunting lead, not a verdict</span></h2><div id="beacons">—</div></section>
+    <section id="sec-geomap" style="grid-column: 1 / -1">
+      <h2>🌍 Geographic Map<span class="ev-sub">imported IPs geolocated from GeoIP enrichment — markers colored by severity (derived; OpenStreetMap tiles load on demand when you open the map)</span></h2>
+      <div id="geoStats" class="geo-stats">—</div>
+      <div id="geoControls" class="geo-controls" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0;font-size:12px;color:var(--c-9aa4b2)">
+        <span class="sev-legend" title="Show/hide markers by severity">
+          <label class="sev-item sev-Critical"><input type="checkbox" class="geo-sev-filter" value="Critical" checked onchange="renderGeoView()"><span class="sev-dot"></span>Critical</label>
+          <label class="sev-item sev-High"><input type="checkbox" class="geo-sev-filter" value="High" checked onchange="renderGeoView()"><span class="sev-dot"></span>High</label>
+          <label class="sev-item sev-Medium"><input type="checkbox" class="geo-sev-filter" value="Medium" checked onchange="renderGeoView()"><span class="sev-dot"></span>Medium</label>
+          <label class="sev-item sev-Low"><input type="checkbox" class="geo-sev-filter" value="Low" checked onchange="renderGeoView()"><span class="sev-dot"></span>Low</label>
+          <label class="sev-item sev-Info"><input type="checkbox" class="geo-sev-filter" value="Info" checked onchange="renderGeoView()"><span class="sev-dot"></span>Info</label>
+        </span>
+        <label>Source <select id="geoSrcFilter" onchange="renderGeoView()" style="font-size:12px"><option value="">all</option></select></label>
+        <label>From <input type="date" id="geoFrom" onchange="renderGeoView()"></label>
+        <label>To <input type="date" id="geoTo" onchange="renderGeoView()"></label>
+        <label><input type="checkbox" id="geoFlows" onchange="renderGeoMarkers()"> Flows</label>
+        <button type="button" onclick="geoDownloadCsv()" title="Download IPs + geolocation as CSV">⬇ CSV</button>
+      </div>
+      <div id="geoMapWrap" style="display:none;position:relative">
+        <div id="geoMap" style="height:440px;border-radius:6px;display:none"></div>
+        <button type="button" id="geoShowMapBtn" onclick="ensureGeoMap()" style="padding:8px 14px">🗺 Show map (loads tiles from OpenStreetMap)</button>
+      </div>
+    </section>
+
     <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
@@ -7164,6 +7189,123 @@
       el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>` + next;
     }
 
+    // ── Geographic Map (#133) ───────────────────────────────────────────────────────────────
+    // Derived server-side (GET /cases/:id/geo-map) from IP IOCs that carry GeoIP coordinates.
+    // The Leaflet map is LAZY: tiles load only when the analyst clicks "Show map" (ensureGeoMap).
+    const GEO_COLOR = { red: "#ff5c5c", orange: "#ff9f43", yellow: "#ffd93b", gray: "#8a93a3" };
+    let geoMapData = null, geoMap = null, geoLayer = null, geoFlowLayer = null, geoMapTimer = null;
+    let geoTileUrl = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+
+    function geoSevColor(sev) {
+      return sev === "Critical" || sev === "High" ? "red" : sev === "Medium" ? "orange" : sev === "Low" ? "yellow" : "gray";
+    }
+    function loadGeoMap(caseId) {
+      fetch(`/cases/${caseId}/geo-map`).then(r => r.json()).then(d => {
+        geoMapData = (d && typeof d === "object" && Array.isArray(d.markers)) ? d : null;
+        renderGeoView();
+      }).catch(() => {});
+    }
+    function scheduleGeoMapReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(geoMapTimer);
+      geoMapTimer = setTimeout(() => loadGeoMap(caseId), 800);
+    }
+    function geoFilteredMarkers() {
+      if (!geoMapData) return [];
+      const sevOn = new Set([...document.querySelectorAll(".geo-sev-filter:checked")].map(x => x.value));
+      const src = document.getElementById("geoSrcFilter").value;
+      const from = document.getElementById("geoFrom").value, to = document.getElementById("geoTo").value;
+      return geoMapData.markers.filter(m => {
+        if (sevOn.size && !sevOn.has(m.severity)) return false;
+        if (src && !(m.sources || []).includes(src)) return false;
+        if (from && m.lastSeen && m.lastSeen.slice(0, 10) < from) return false;
+        if (to && m.firstSeen && m.firstSeen.slice(0, 10) > to) return false;
+        return true;
+      });
+    }
+    // Render the stats/controls (and refresh markers if the map is already open).
+    function renderGeoView() {
+      const statsEl = document.getElementById("geoStats");
+      if (!statsEl) return;
+      const d = geoMapData;
+      if (!d || !d.markers.length) {
+        statsEl.innerHTML = `<div class="adv-empty">No geo-located IPs yet. Enable GeoIP enrichment (Settings → Enrichment), then enrich your IP IOCs.</div>`;
+        document.getElementById("geoControls").style.display = "none";
+        document.getElementById("geoMapWrap").style.display = "none";
+        return;
+      }
+      document.getElementById("geoControls").style.display = "flex";
+      document.getElementById("geoMapWrap").style.display = "";
+      const srcSel = document.getElementById("geoSrcFilter");
+      if (srcSel.options.length <= 1) {
+        const srcs = [...new Set(d.markers.flatMap(m => m.sources || []))].sort();
+        srcSel.innerHTML = `<option value="">all</option>` + srcs.map(s => `<option value="${escAttr(s)}">${esc(s)}</option>`).join("");
+      }
+      const s = d.stats;
+      const countries = (d.countries || []).map(c => `<span class="geo-chip" style="border-left:3px solid ${GEO_COLOR[geoSevColor(c.severity)]};padding-left:6px;margin-right:10px">${esc(c.country)} <b>${esc(c.count)}</b></span>`).join("");
+      const topIps = geoFilteredMarkers().slice(0, 10).map(m =>
+        `<li style="cursor:pointer" onclick="geoFocusIp('${escAttr(m.ip)}')" title="focus on map"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${GEO_COLOR[m.color]};margin-right:6px"></span>${esc(m.ip)} <span style="color:var(--c-9aa4b2)">${esc([m.city, m.country].filter(Boolean).join(", ") || "—")} · ${esc(m.eventCount)} ev</span></li>`).join("");
+      statsEl.innerHTML =
+        `<div style="margin-bottom:4px">${esc(s.resolved)} mapped / ${esc(s.totalIps)} IPs · ${esc(s.external)} external · ${esc(s.internal)} internal · ${esc(s.distinctCountries)} countries · ${esc(s.distinctAsns)} ASNs${s.markerCap ? ` · showing first ${esc(s.markerCap)}` : ""}</div>` +
+        (countries ? `<div style="margin-bottom:4px"><b>Top countries:</b> ${countries}</div>` : "") +
+        (topIps ? `<div><b>Top IPs:</b><ul style="margin:4px 0;padding-left:18px">${topIps}</ul></div>` : "");
+      if (geoMap) renderGeoMarkers();
+    }
+    // Lazily create the Leaflet map (first tile fetch happens HERE), then run cb.
+    function ensureGeoMap(cb) {
+      if (geoMap) { if (cb) cb(); return; }
+      if (typeof L === "undefined") { alert("Map library not loaded — restart the companion server."); return; }
+      document.getElementById("geoMap").style.display = "";
+      document.getElementById("geoShowMapBtn").style.display = "none";
+      fetch("/health").then(r => r.json()).then(h => { if (h && h.geoMapTileUrl) geoTileUrl = h.geoMapTileUrl; }).catch(() => {}).finally(() => {
+        geoMap = L.map("geoMap", { worldCopyJump: true }).setView([20, 0], 2);
+        L.tileLayer(geoTileUrl, { maxZoom: 18, attribution: "© OpenStreetMap · Leaflet · Geo: ipinfo.io" }).addTo(geoMap);
+        geoLayer = L.layerGroup().addTo(geoMap);
+        geoFlowLayer = L.layerGroup().addTo(geoMap);
+        renderGeoMarkers();
+        if (cb) cb();
+      });
+    }
+    function renderGeoMarkers() {
+      if (!geoMap || !geoMapData) return;
+      geoLayer.clearLayers(); geoFlowLayer.clearLayers();
+      const markers = geoFilteredMarkers();
+      const bounds = [], byIp = {};
+      for (const m of markers) {
+        const cm = L.circleMarker([m.lat, m.lon], { radius: 7, color: "#0d1117", weight: 1, fillColor: GEO_COLOR[m.color], fillOpacity: 0.85 });
+        const verdict = m.verdict && m.verdict !== "unknown" ? ` · ${esc(m.verdict)}` : "";
+        cm.bindPopup(`<b>${esc(m.ip)}</b>${m.legitimate ? " (legit)" : ""}<br>${esc([m.city, m.country].filter(Boolean).join(", ") || "unknown location")}<br>${esc(m.asn || "")}<br>${esc(m.severity)}${verdict} · ${esc(m.eventCount)} event(s)`);
+        cm.addTo(geoLayer);
+        bounds.push([m.lat, m.lon]);
+        byIp[m.ip.toLowerCase()] = cm;
+      }
+      geoMap._geoByIp = byIp;
+      if (document.getElementById("geoFlows").checked) {
+        const onIps = new Set(markers.map(m => m.ip.toLowerCase()));
+        for (const f of (geoMapData.flows || [])) {
+          if (!onIps.has(f.srcIp.toLowerCase()) || !onIps.has(f.dstIp.toLowerCase())) continue;
+          const col = f.direction === "incoming" ? "#ff5c5c" : f.direction === "outgoing" ? "#6aa9ff" : "#b083f0";
+          L.polyline([[f.srcLat, f.srcLon], [f.dstLat, f.dstLon]], { color: col, weight: 1.5, opacity: 0.6 }).addTo(geoFlowLayer);
+        }
+      }
+      if (bounds.length) geoMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 6 });
+    }
+    // Open the panel, ensure the map exists, then zoom to + open the popup for an IP.
+    function geoFocusIp(ip) {
+      const sec = document.getElementById("sec-geomap");
+      if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+      ensureGeoMap(() => {
+        const cm = geoMap._geoByIp && geoMap._geoByIp[(ip || "").toLowerCase()];
+        if (cm) { geoMap.setView(cm.getLatLng(), 6); cm.openPopup(); }
+      });
+    }
+    function geoDownloadCsv() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (caseId) window.location = `/cases/${encodeURIComponent(caseId)}/geo-map.csv`;
+    }
+    window.geoFocusIp = geoFocusIp;
+
     // Adversary emulation (#121): turn a "likely next technique" into a runnable, fleet-wide
     // Velociraptor VQL hunt (one AI call). Results render in the Suggested Fleet Hunts panel below,
     // reusing its review + deploy flow. The technique name is looked up from the loaded data (not
@@ -8440,6 +8582,7 @@
           + `<input type="checkbox" class="ev-checkbox ev-row-cb" data-evid="${escAttr(id)}" ${isSelected ? "checked" : ""} title="Select event" />`
           + `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>`
           + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)}`
+          + ((e.srcIp || e.dstIp) ? `<button type="button" class="ev-geo" title="Show this event's IP on the map" onclick="geoFocusIp('${escAttr(e.dstIp || e.srcIp)}')" style="background:none;border:none;cursor:pointer;font-size:12px;padding:0 4px">📍</button>` : "")
           + `</div>`
           + `<div class="ev-col-time"><span class="sev-${esc(e.severity)}">${span}</span></div>`
           + `<div class="ev-col-content">${tagPills("event", e.id)}${newBadge}${badge}${corro}${chain}${host} ${descHtml(desc, e.id)} ${legitBtn("event", e.id, desc)}`
@@ -8652,6 +8795,7 @@
       loadTimelineGaps(caseId);
       loadBeacons(caseId);
       loadAdversaryHints(caseId);
+      loadGeoMap(caseId);
       loadSwimlane(caseId);
       loadIocSources(caseId);
       loadComments(caseId);
@@ -8719,7 +8863,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAdversaryHintsReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAdversaryHintsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "capture_ingest") {
