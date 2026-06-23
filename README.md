@@ -262,7 +262,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Notion export** — managed page block; your notes outside it untouched
 - **ClickUp export** — Response Playbook as tasks; re-push updates in place
 - **Notifications** — Slack/MS Teams/Mattermost/Discord/Telegram/SMTP for findings/playbook/milestones; per-channel threshold + toggles
-- **Report templates** — global branded layouts (accent, header/footer, section order); pick per case
+- **Report templates** — global branded layouts (accent, header/footer, section order); pick per case. A section disabled here skips its AI generation (executive summary, narrative) to save tokens (#168)
 - **Mobile companion** — read-only PWA (`/mobile`) for findings/timeline/IOCs with verdicts; offline app-shell
 - **🌍 Geographic IP map** — plot geo-located IP IOCs on an interactive world map (Leaflet),
   color-coded by severity, with victim→attacker flows, country statistics, filtering, and CSV
