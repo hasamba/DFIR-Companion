@@ -5615,12 +5615,21 @@
     function genExecSummary() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
+      // A hidden dashboard panel must not spend tokens generating AI content (issue #168).
+      if (!isSectionVisible("sec-exec", loadSectionsVis())) return;
       const btn = document.getElementById("genExecBtn");
       const msg = document.getElementById("genExecMsg");
       const out = document.getElementById("execGenResult");
       btn.disabled = true; msg.textContent = "generating… (one AI call)"; out.innerHTML = "";
       fetch(`/cases/${caseId}/executive-summary`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(async r => {
+          const d = await r.json().catch(() => ({}));
+          // 409 + sectionDisabled: the report's Executive summary section is off, so the server
+          // skipped the AI call to save tokens. Surface why instead of a generic failure.
+          if (r.status === 409 && d.sectionDisabled) { const e = new Error(d.error || "section disabled"); e.sectionDisabled = true; throw e; }
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return d;
+        })
         .then(d => {
           msg.textContent = "";
           const text = d.summary || "(no summary returned)";
@@ -5637,7 +5646,12 @@
             document.getElementById("execSaveBtn").disabled = true;
           };
         })
-        .catch(e => { msg.textContent = ""; out.innerHTML = `<div style="color:var(--c-ff9f43);margin-top:8px">generate failed: ${esc(e.message)} — restart the companion server if this 404s</div>`; })
+        .catch(e => {
+          msg.textContent = "";
+          out.innerHTML = e.sectionDisabled
+            ? `<div style="color:var(--c-9aa4b2);margin-top:8px">${esc(e.message)}</div>`
+            : `<div style="color:var(--c-ff9f43);margin-top:8px">generate failed: ${esc(e.message)} — restart the companion server if this 404s</div>`;
+        })
         .finally(() => { btn.disabled = false; });
     }
 
@@ -5649,14 +5663,25 @@
       const msg = document.getElementById("genNarrativeMsg");
       btn.disabled = true; msg.textContent = "generating… (one AI call)";
       fetch(`/cases/${caseId}/narrative`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(async r => {
+          const d = await r.json().catch(() => ({}));
+          // 409 + sectionDisabled: the report's Timeline section (which holds the narrative) is off,
+          // so the server skipped the AI call to save tokens (issue #168). Surface why, not a failure.
+          if (r.status === 409 && d.sectionDisabled) { const e = new Error(d.error || "section disabled"); e.sectionDisabled = true; throw e; }
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return d;
+        })
         .then(d => {
           if (d.error) { msg.textContent = "error: " + esc(d.error); return; }
           msg.textContent = "generated and saved ✓";
           document.getElementById("narrativeView").textContent = d.narrativeTimeline || "—";
           setTimeout(() => { msg.textContent = ""; }, 3000);
         })
-        .catch(e => { msg.textContent = "generate failed: " + esc(e.message) + " — restart the companion server if this 404s"; })
+        .catch(e => {
+          msg.textContent = e.sectionDisabled
+            ? esc(e.message)
+            : "generate failed: " + esc(e.message) + " — restart the companion server if this 404s";
+        })
         .finally(() => { btn.disabled = false; });
     }
     document.getElementById("genNarrativeBtn").addEventListener("click", (e) => { e.stopPropagation(); genNarrative(); });

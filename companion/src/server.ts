@@ -97,6 +97,7 @@ import type { IocBlocklistFormat, IocBlocklistOptions, BlocklistIocType } from "
 import { ReportMetaStore } from "./reports/reportMeta.js";
 import { ReportTemplateStore } from "./reports/reportTemplateStore.js";
 import { ReportTemplateControlStore } from "./reports/reportTemplateControl.js";
+import { defaultReportTemplate, isReportSectionEnabled, type ReportSectionKey } from "./reports/reportTemplate.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore, type Tag } from "./analysis/tags.js";
@@ -517,6 +518,21 @@ function toStringArray(v: unknown): string[] {
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const app = express();
   const hasAiProvider = (): boolean => options.aiConfigured ?? Boolean(options.pipeline?.hasAiProvider());
+  // Resolve the report template selected for a case (mirrors ReportWriter.loadTemplate) and report
+  // whether a given canonical section is enabled — used to gate the per-section AI generators so a
+  // section the analyst disabled in their report template never spends tokens on content that
+  // won't be rendered (issue #168). Conservative: only returns false when we positively know the
+  // section is off; an unwired store, a dangling id, or any error never blocks generation.
+  const reportSectionEnabled = async (caseId: string, key: ReportSectionKey): Promise<boolean> => {
+    if (!options.reportTemplateStore || !options.reportTemplateControlStore) return true;
+    try {
+      const { templateId } = await options.reportTemplateControlStore.load(caseId);
+      const tpl = (await options.reportTemplateStore.get(templateId)) ?? defaultReportTemplate();
+      return isReportSectionEnabled(tpl, key);
+    } catch {
+      return true;
+    }
+  };
   // Serialize the load->save critical section for a case's investigation.json so concurrent
   // mutations (a manual event/IOC add while background enrichment or re-synthesis saves)
   // cannot clobber each other (lost update). No-op when no StateLock is wired (tests).
@@ -5908,6 +5924,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // overrides the auto-derived summary in the generated report.
   app.post("/cases/:id/executive-summary", async (req: Request, res: Response) => {
     if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for executive summary" });
+    if (!(await reportSectionEnabled(req.params.id, "executiveSummary")))
+      return res.status(409).json({ error: "The Executive summary section is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "executiveSummary" });
     try {
       const result = await options.pipeline.executiveSummary(req.params.id);
       return res.status(200).json(result);
@@ -5920,6 +5938,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Saves the result to state.narrativeTimeline so it persists and appears in the report/dashboard.
   app.post("/cases/:id/narrative", async (req: Request, res: Response) => {
     if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for narrative generation" });
+    // The narrative timeline renders under report section 3.2, inside the "Timeline of events"
+    // major section — so a disabled `timeline` section means the narrative won't appear; skip its
+    // AI call to save tokens (issue #168). The analyst's already-saved narrative is left intact.
+    if (!(await reportSectionEnabled(req.params.id, "timeline")))
+      return res.status(409).json({ error: "The Timeline section (which contains the narrative) is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "timeline" });
     try {
       const result = await options.pipeline.generateNarrative(req.params.id);
       return res.status(200).json(result);
