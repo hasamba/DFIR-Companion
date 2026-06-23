@@ -214,6 +214,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **CISA KEV integration** (Settings) — cross-reference CVEs against CISA catalog; strong initial-access signal
 - **IOC corroboration** — ⊕ N badge shows how many tools observed each indicator
 - **IOC flagged-only filter** — hide everything except threat-intel-confirmed indicators
+- **IOC type filter** — faceted dropdown (ip/domain/url/hash/file/process/other) with per-type counts; composes with the flagged-only + search filters
 - **Hunt-pivot generator** — one-click emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries
 - **Query Translator** — plain English → runnable queries (NL: "PowerShell downloading then executing") across all enabled platforms; one-click-deploy VQL hunts
 - **Velociraptor triage bundles** — browse artifacts → save bundles → run as hunts (label/OS/min-severity) → auto-collect + import

@@ -433,7 +433,7 @@
       color: var(--c-cdd9e5); text-transform: none; letter-spacing: 0; padding: 2px 4px;
       border-radius: 3px; cursor: pointer; white-space: nowrap; }
     .src-filter-menu .src-item:hover { background: var(--c-1c2330); }
-    .src-filter-menu .src-filter { width: 12px; height: 12px; margin: 0; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; }
+    .src-filter-menu .src-filter, .src-filter-menu .ioc-type-cb { width: 12px; height: 12px; margin: 0; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; }
     .src-filter-menu .src-item-none span { font-style: italic; color: var(--c-9aa4b2); }
     .src-menu-actions { display: flex; gap: 10px; padding: 2px 4px 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 3px; }
     .src-menu-link { background: transparent; border: none; color: var(--c-6aa9ff); font-size: 10px;
@@ -2560,7 +2560,7 @@
       </div>
     </section>
 
-    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
@@ -2947,6 +2947,8 @@
     let searchTerm = "";                      // active text search (lower-cased; empty = no filter)
     let hiddenSources = new Set();            // source/tool names the user unchecked in the source filter (empty = show all)
     let _srcMenuSig = "";                      // signature of the source-filter menu's last build (skip rebuild when unchanged)
+    let hiddenIocTypes = new Set();           // IOC types the user unchecked in the IOC type filter (#169; empty = show all)
+    let _iocTypeMenuSig = "";                  // signature of the IOC-type-filter menu's last build (skip rebuild when unchanged)
     let filterFrom = null;                    // timeline view lower bound (ISO UTC string or null)
     let filterTo = null;                      // timeline view upper bound (ISO UTC string or null)
     let _searchDebounce = null;
@@ -8346,15 +8348,17 @@
     function renderIocs(iocs) {
       const el = document.getElementById("iocs");
       if (!el) return;
+      renderIocTypeFilter(iocs);
       const flaggedTotal = iocs.filter(iocFlagged).length;
       const cnt = document.getElementById("iocFlaggedCount");
       if (cnt) cnt.textContent = flaggedTotal ? ` (${flaggedTotal} flagged)` : "";
       let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
       if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
+      if (hiddenIocTypes.size > 0) visible = visible.filter(i => !hiddenIocTypes.has(i.type || "other"));
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div style='color:var(--c-9aa4b2)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : searchTerm && iocs.length > 0 ? "<div style='color:var(--c-9aa4b2)'>No IOCs match the filter.</div>"
+          : (searchTerm || hiddenIocTypes.size > 0) && iocs.length > 0 ? "<div style='color:var(--c-9aa4b2)'>No IOCs match the filter.</div>"
           : "<div style='color:var(--c-9aa4b2)'>No IOCs yet</div>";
         updateIocBulkBar();
         return;
@@ -8384,6 +8388,46 @@
       const selAll = document.getElementById("iocSelectAll");
       if (selAll && someSel && !allSel) selAll.indeterminate = true;
       updateIocBulkBar();
+    }
+
+    // IOC type filter (#169) — mirrors the timeline's source-filter dropdown. The facet set is the
+    // distinct IOC types PRESENT in the current case, in a stable display order (so empty types never
+    // show). Pure: returns a new array.
+    const IOC_TYPE_ORDER = ["ip", "domain", "url", "hash", "file", "process", "other"];
+    function iocTypeFacets(iocs) {
+      const present = new Set((iocs || []).map(i => (i && i.type) || "other"));
+      return IOC_TYPE_ORDER.filter(t => present.has(t));
+    }
+
+    // Build/refresh the IOC-type-filter dropdown from the current (full, pre-filter) IOC list. Hidden
+    // when fewer than 2 types exist (nothing to filter). The menu is rebuilt only when the type set or
+    // its per-type counts change; otherwise we just sync checkbox state so an open menu isn't disrupted.
+    function renderIocTypeFilter(iocs) {
+      const wrap = document.getElementById("iocTypeLegendWrap");
+      const menu = document.getElementById("iocTypeFilterMenu");
+      const btn = document.getElementById("iocTypeFilterBtn");
+      if (!wrap || !menu || !btn) return;
+      const types = iocTypeFacets(iocs);
+      // Drop any unchecked types that no longer exist (keeps the active state honest across imports).
+      for (const t of [...hiddenIocTypes]) if (!types.includes(t)) hiddenIocTypes.delete(t);
+      if (types.length < 2) { wrap.style.display = "none"; menu.hidden = true; _iocTypeMenuSig = ""; return; }
+      wrap.style.display = "";
+      const shown = types.length - hiddenIocTypes.size;
+      const active = hiddenIocTypes.size > 0;
+      btn.classList.toggle("active", active);
+      btn.textContent = active ? `▾ Types (${shown}/${types.length})` : "▾ Types";
+      const counts = {};
+      for (const i of iocs) { const t = (i && i.type) || "other"; counts[t] = (counts[t] || 0) + 1; }
+      const sig = types.map(t => `${t}:${counts[t]}`).join(",");
+      if (sig !== _iocTypeMenuSig) {
+        const items = types.map(t =>
+          `<label class="src-item"><input type="checkbox" class="ioc-type-cb" value="${escAttr(t)}"${hiddenIocTypes.has(t) ? "" : " checked"}><span>${esc(t)} <span style="color:var(--c-9aa4b2)">(${counts[t]})</span></span></label>`
+        ).join("");
+        menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-ioctype-all="1">All</button><button type="button" class="src-menu-link" data-ioctype-none="1">None</button></div>${items}`;
+        _iocTypeMenuSig = sig;
+      } else {
+        menu.querySelectorAll(".ioc-type-cb").forEach(cb => { cb.checked = !hiddenIocTypes.has(cb.value); });
+      }
     }
 
     // Order the (already filtered) timeline rows per the per-column sort arrows (#104). Pure —
@@ -8636,6 +8680,31 @@
       });
     })();
 
+    // IOC type filter dropdown (#169). Mirrors the source filter; handlers are scoped to the IOC
+    // menu element so they never collide with the timeline's source filter. Re-renders the IOC list
+    // off the same scoped list render() uses, so the facets/filter stay consistent under a scope.
+    (function () {
+      const wrap = document.getElementById("iocTypeLegendWrap");
+      const btn = document.getElementById("iocTypeFilterBtn");
+      const menu = document.getElementById("iocTypeFilterMenu");
+      if (!wrap || !btn || !menu) return;
+      const scopedIocs = () => (lastState ? (projectScope(lastState).iocs || []) : []);
+      const rerender = () => renderIocs(scopedIocs());
+      btn.addEventListener("click", () => { menu.hidden = !menu.hidden; });
+      menu.addEventListener("change", (e) => {
+        if (!e.target.classList.contains("ioc-type-cb")) return;
+        if (e.target.checked) hiddenIocTypes.delete(e.target.value); else hiddenIocTypes.add(e.target.value);
+        rerender();
+      });
+      menu.addEventListener("click", (e) => {
+        if (e.target.dataset.ioctypeAll) { hiddenIocTypes.clear(); rerender(); }
+        else if (e.target.dataset.ioctypeNone) { iocTypeFacets(scopedIocs()).forEach(t => hiddenIocTypes.add(t)); rerender(); }
+      });
+      document.addEventListener("click", (e) => {
+        if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
+      });
+    })();
+
     // Re-order the timeline when a column sort arrow (▲/▼) is clicked; persist the choice (#104).
     // The header is re-rendered on each render(), so delegate off the persistent #forensicTimeline.
     document.getElementById('forensicTimeline').addEventListener('click', function(e) {
@@ -8821,6 +8890,7 @@
       showFlaggedIocsOnly = false;
       const ifBtn = document.getElementById("iocFlaggedBtn");
       if (ifBtn) ifBtn.classList.remove("active");
+      hiddenIocTypes.clear(); _iocTypeMenuSig = "";
       searchTerm = ""; filterFrom = null; filterTo = null;
       const gsEl = document.getElementById("globalSearch"); if (gsEl) gsEl.value = "";
       const ffEl = document.getElementById("filterFrom"); if (ffEl) ffEl.value = "";
