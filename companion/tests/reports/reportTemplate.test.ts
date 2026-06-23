@@ -6,6 +6,7 @@ import {
   DEFAULT_COVER_TITLE,
   buildBrandingContext,
   defaultReportTemplate,
+  isReportSectionEnabled,
   normalizeHexColor,
   normalizeReportTemplate,
   normalizeSections,
@@ -101,6 +102,25 @@ describe("built-in templates", () => {
       "businessImpact",
       "conclusions",
     ]);
+  });
+});
+
+describe("isReportSectionEnabled", () => {
+  it("is true for every section of the default template", () => {
+    const std = defaultReportTemplate();
+    for (const key of ALL_SECTION_KEYS) expect(isReportSectionEnabled(std, key)).toBe(true);
+  });
+
+  it("is false for a section explicitly disabled, true for an unlisted (defaulted) one", () => {
+    const t = normalizeReportTemplate({ sections: [{ key: "executiveSummary", enabled: false }] });
+    expect(isReportSectionEnabled(t, "executiveSummary")).toBe(false);
+    expect(isReportSectionEnabled(t, "timeline")).toBe(true); // unlisted ⇒ enabled by default
+  });
+
+  it("reflects the executive-brief built-in (summary on, timeline off)", () => {
+    const brief = BUILT_IN_REPORT_TEMPLATES.find((t) => t.id === "executive-brief")!;
+    expect(isReportSectionEnabled(brief, "executiveSummary")).toBe(true);
+    expect(isReportSectionEnabled(brief, "timeline")).toBe(false);
   });
 });
 

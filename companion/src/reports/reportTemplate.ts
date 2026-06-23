@@ -117,6 +117,14 @@ export function orderedEnabledSections(template: ReportTemplate): ReportSectionK
     .map((s) => s.key);
 }
 
+// Whether a given canonical section is enabled in this template. Used to gate the per-section AI
+// generators (executive summary, narrative) so a section the analyst disabled in their report
+// template never spends tokens synthesizing content that won't be rendered (issue #168). Pure;
+// a key missing from the saved sections defaults to enabled (via normalizeSections).
+export function isReportSectionEnabled(template: ReportTemplate, key: ReportSectionKey): boolean {
+  return orderedEnabledSections(template).includes(key);
+}
+
 // Coerce untrusted input (a file's contents or a POST body) into a valid ReportTemplate. Unknown
 // keys are dropped, wrong-typed fields fall back to their default, sections get full coverage,
 // and the trimmable text fields are trimmed. Never throws.
