@@ -8391,12 +8391,18 @@
     }
 
     // IOC type filter (#169) — mirrors the timeline's source-filter dropdown. The facet set is the
-    // distinct IOC types PRESENT in the current case, in a stable display order (so empty types never
-    // show). Pure: returns a new array.
-    const IOC_TYPE_ORDER = ["ip", "domain", "url", "hash", "file", "process", "other"];
+    // distinct IOC types PRESENT in the current case (so empty types never show). It is DATA-DRIVEN,
+    // never a fixed allowlist: well-known types render in this preferred order, then any other present
+    // type (e.g. "vulnerability" from the demo case / a CVE, or a custom importer's type) is appended
+    // sorted — so every type gets a filterable facet — with the "other" catch-all pinned last. Pure.
+    const IOC_TYPE_ORDER = ["ip", "domain", "url", "hash", "file", "process"];
     function iocTypeFacets(iocs) {
       const present = new Set((iocs || []).map(i => (i && i.type) || "other"));
-      return IOC_TYPE_ORDER.filter(t => present.has(t));
+      const known = IOC_TYPE_ORDER.filter(t => present.has(t));
+      const extra = [...present].filter(t => !IOC_TYPE_ORDER.includes(t) && t !== "other").sort();
+      const out = [...known, ...extra];
+      if (present.has("other")) out.push("other");
+      return out;
     }
 
     // Build/refresh the IOC-type-filter dropdown from the current (full, pre-filter) IOC list. Hidden
