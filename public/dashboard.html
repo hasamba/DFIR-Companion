@@ -5659,6 +5659,8 @@
     function genNarrative() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
+      // A hidden dashboard panel must not spend tokens generating AI content (issue #168).
+      if (!isSectionVisible("sec-narrative", loadSectionsVis())) return;
       const btn = document.getElementById("genNarrativeBtn");
       const msg = document.getElementById("genNarrativeMsg");
       btn.disabled = true; msg.textContent = "generating… (one AI call)";
@@ -10394,6 +10396,7 @@
       { id: "sec-exec",         label: "Executive Summary" },
       { id: "sec-playbook",     label: "Playbook" },
       { id: "sec-attack-path",  label: "Attack Path" },
+      { id: "sec-narrative",    label: "Narrative Timeline" },
       { id: "sec-findings",     label: "Findings" },
       // Recommended Next Steps is hidden by default — the Playbook (above) supersedes it for
       // action-tracking. Its data still feeds the Playbook, report, and exports; re-enable it
