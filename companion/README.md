@@ -576,6 +576,18 @@ event timestamps. It is NOT the analyst's work log — the act of operating Velo
 accessed") belongs in the Investigation Log, not here. The prompts exclude tool-usage
 events; for timelines built before that fix, `npm run clean-timeline` strips them.
 
+**Case memory (#165).** Each import already writes a line to the Investigation Log; synthesis
+now does too (`Synthesis: N finding(s) (X new, Y reclassified), …`), giving the case a durable,
+cross-session history that survives restarts and travels in snapshots (it lives in
+`investigation.json` and is never wiped by synthesis). Synthesis and the hunt-suggestion prompts
+are also grounded in what's MISSING via a **known-unknowns** block — timeline coverage gaps,
+uncovered ATT&CK phases (a real case with no finding explaining initial access / persistence /
+lateral movement / …), and the matched actors' likely-next techniques — capped by
+`DFIR_SYNTH_KNOWN_UNKNOWNS_MAX` (default 10). Optionally (`DFIR_SYNTH_ADVERSARY_HINTS`, **off by
+default**) the candidate threat actors from the §4.6.1 overlap hints are fed into the synthesis
+prompt as clearly-labelled hypotheses; it's opt-in because feeding model-derived attribution back
+into the model is a confirmation-bias loop. All three are pure/offline — no new AI call.
+
 ### Text readability / OCR accuracy
 
 Screenshots are captured **lossless** (PNG) at the browser's full viewport resolution

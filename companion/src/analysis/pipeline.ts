@@ -12,7 +12,7 @@ import type { CustomEntitiesStore } from "./anonEntities.js";
 import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
-import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity } from "./stateTypes.js";
+import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity, TimelineEntry } from "./stateTypes.js";
 import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, type AskAnswer, type ExecSummary, type ExplainEventResult } from "./responseSchema.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
@@ -40,6 +40,9 @@ import {
 } from "./gapHypothesis.js";
 import { SHADOW_ARTIFACTS } from "./shadowArtifacts.js";
 import { diffFindings, type FindingsDiff } from "./findingsDiff.js";
+import { buildKnownUnknowns } from "./knownUnknowns.js";
+import { buildAdversaryHintsResult } from "./adversaryHints.js";
+import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "./adversaryGroupsData.js";
 import type { SynthMetaStore } from "./synthMeta.js";
 import { CorrelationProfileStore } from "./correlationProfile.js";
 import type { SecondOpinionStore } from "./secondOpinionStore.js";
@@ -2811,6 +2814,40 @@ export class AnalysisPipeline {
     }
   }
 
+  // Known-unknowns preamble (#165): the gaps in the story (silent windows, uncovered ATT&CK phases,
+  // the matched actors' likely-next techniques) so synthesis + hunts treat what's MISSING as open
+  // questions, not just what the evidence shows. Pure block; the offline adversary dataset is cached.
+  // Wrapped defensively — a known-unknowns failure must never break synthesis or hunt suggestions.
+  private knownUnknownsBlock(state: InvestigationState, scopedEvents: ForensicEvent[]): string {
+    try {
+      const max = Math.max(0, Number(process.env.DFIR_SYNTH_KNOWN_UNKNOWNS_MAX) || 10);
+      const hints = buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
+      return buildKnownUnknowns(state, scopedEvents, {
+        gapOptions: gapEnvOptions(),
+        nextTechniques: hints.nextTechniques,
+        max,
+      });
+    } catch {
+      return "";
+    }
+  }
+
+  // Candidate-threat-actor preamble (#165), OFF by default (DFIR_SYNTH_ADVERSARY_HINTS). Feeds the
+  // technique-overlap hints (already shown in the report) into synthesis as LOW-CONFIDENCE candidates.
+  // Gated because feeding model-derived attribution back into the model is a confirmation-bias loop;
+  // labelled "NOT attribution". Pure + cached dataset; defensive — never breaks synthesis.
+  private adversaryHintBlock(state: InvestigationState): string {
+    if (!/^(1|true|on|yes)$/i.test(process.env.DFIR_SYNTH_ADVERSARY_HINTS ?? "")) return "";
+    try {
+      const r = buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
+      if (!r.hints.length) return "";
+      const top = r.hints.slice(0, 5).map((h) => `${h.name} (${h.overlapCount}/${h.groupTechniqueCount} techniques)`).join(", ");
+      return `CANDIDATE THREAT ACTORS (technique-overlap hypothesis, NOT attribution — ${r.caveat}): ${top}\n\n`;
+    } catch {
+      return "";
+    }
+  }
+
   // Drop any suggestion whose VQL was already deployed in this case (#157) — the deterministic guarantee
   // that a hunt the analyst already ran is never re-proposed (the "PRIOR HUNTS" prompt block is the soft
   // signal; this is the hard one). Bundles contribute no fingerprint, so they never exclude a suggestion.
@@ -2855,10 +2892,13 @@ export class AnalysisPipeline {
     // there are no recorded outcomes (or no store wired). Also drives the deterministic exclusion below.
     const outcomes = await this.loadHuntOutcomes(caseId);
     const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
+    // Known unknowns (#165): the gaps in the story (silent windows, uncovered ATT&CK phases, likely-
+    // next techniques) so suggested hunts target what's MISSING, not just re-confirm what's known.
+    const knownUnknownsBlock = this.knownUnknownsBlock(loaded, scopedEvents);
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getHuntSuggestPrompt())
-      + estimateTokens(priorHuntsBlock + contextBlock + graphBlock + findingsText + iocText + techText + (loaded.attackerPath || "")) + 300;
+      + estimateTokens(priorHuntsBlock + contextBlock + knownUnknownsBlock + graphBlock + findingsText + iocText + techText + (loaded.attackerPath || "")) + 300;
     const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
@@ -2871,6 +2911,7 @@ export class AnalysisPipeline {
     const userPrompt =
       priorHuntsBlock +
       contextBlock +
+      knownUnknownsBlock +
       graphBlock +
       `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
       `ATT&CK TECHNIQUES: ${techText}\n\n` +
@@ -3301,6 +3342,12 @@ export class AnalysisPipeline {
     // so the model grounds findings/attacker-path in structure instead of inferring blind.
     const kevCatalog = await this.getKevCatalog();
     const contextBlock = buildSynthesisContext(state, scopedEvents, kevCatalog);
+    // Known unknowns (#165): the gaps in the story (silent windows, uncovered ATT&CK phases, likely-
+    // next techniques) so the model builds on what's MISSING instead of glossing over it. Plus the
+    // (env-gated, default OFF) candidate-actor block. Both DERIVED — computed AFTER the skip-hash
+    // above, so they never affect skip-if-unchanged.
+    const knownUnknownsBlock = this.knownUnknownsBlock(state, scopedEvents);
+    const adversaryBlock = this.adversaryHintBlock(state);
     // Analyst-pinned open questions: tell the model to address each (answer when the evidence
     // now supports it) and keep them. They're re-merged into the output below so they persist.
     const pinnedQuestions = state.keyQuestions.filter((q) => q.pinned);
@@ -3318,7 +3365,7 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + existingFindings + openThreads + legitimateBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + existingFindings + openThreads + legitimateBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -3329,6 +3376,8 @@ export class AnalysisPipeline {
     const userPrompt =
       scopeNote +
       contextBlock +
+      knownUnknownsBlock +
+      adversaryBlock +
       notebookBlock +
       analystHypothesesBlock +
       pinnedBlock +
@@ -3421,6 +3470,11 @@ export class AnalysisPipeline {
       next = applyAcceptedSecondOpinion(next, await this.opts.secondOpinionStore.load(caseId));
     }
 
+    // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest
+    // nor the hypothesis auto-gen below touch them — so it's computed once and reused for the
+    // Investigation-Log entry (#165), the synth-meta record, and the notify hook.
+    const findingsDiff = diffFindings(loaded.findings, next.findings);
+
     // Lost-update guard (mirrors the pinned-questions re-load above): a manual event/IOC/thread
     // added DURING the seconds-long AI call would otherwise be clobbered by this write, because
     // `next` was derived from the snapshot taken before the call. Re-read the LATEST state and
@@ -3443,12 +3497,31 @@ export class AnalysisPipeline {
       const snapThreadIds = new Set(loaded.openThreads.map((t) => t.id));
       const nextThreadIds = new Set(next.openThreads.map((t) => t.id));
       const addedThreads = latest.openThreads.filter((t) => !snapThreadIds.has(t.id) && !nextThreadIds.has(t.id));
+      // Investigation Log (#165): carry forward any timeline line a CONCURRENT import appended during
+      // the AI call (dedupe by timestamp+sequence+text), so the synthesis write doesn't clobber it.
+      const tlKey = (t: TimelineEntry) => `${t.timestamp}|${t.windowSequence}|${t.description}`;
+      const snapTimeline = new Set(loaded.timeline.map(tlKey));
+      const nextTimeline = new Set(next.timeline.map(tlKey));
+      const addedTimeline = latest.timeline.filter((t) => !snapTimeline.has(tlKey(t)) && !nextTimeline.has(tlKey(t)));
       next = {
         ...next,
         forensicTimeline: addedEvents.length ? sortByEventTime([...next.forensicTimeline, ...addedEvents]) : next.forensicTimeline,
         iocs: mergedIocs,
         openThreads: addedThreads.length ? [...next.openThreads, ...addedThreads] : next.openThreads,
+        timeline: addedTimeline.length ? [...next.timeline, ...addedTimeline] : next.timeline,
       };
+      // Record THIS synthesis run as a durable, cross-session Investigation-Log line (#165) — imports
+      // already log via timelineNote; synthesis didn't. Final merged counts; one entry per real run.
+      const synthLogEntry: TimelineEntry = {
+        timestamp: new Date().toISOString(),
+        windowSequence: 0,
+        description:
+          `Synthesis: ${next.findings.length} finding(s) (${findingsDiff.added.length} new, ` +
+          `${findingsDiff.severityChanged.length} reclassified), ${next.forensicTimeline.length} event(s), ` +
+          `${next.iocs.length} IOC(s)`,
+        sourceScreenshots: [],
+      };
+      next = { ...next, timeline: [...next.timeline, synthLogEntry] };
       await this.opts.stateStore.save(next);
     };
     if (this.opts.stateLock) await this.opts.stateLock.runExclusive(caseId, persistLatest);
@@ -3467,9 +3540,8 @@ export class AnalysisPipeline {
     }
 
     this.lastSynthHash.set(caseId, synthHash);   // remember these inputs so an identical re-run skips the AI call
-    // Record what this run changed (diff vs the findings that existed before the AI call) and
-    // when it ran — surfaced on the dashboard. Only reached on a real run; skips return early above.
-    const findingsDiff = diffFindings(loaded.findings, next.findings);
+    // Record what this run changed (findingsDiff computed above) and when it ran — surfaced on the
+    // dashboard. Only reached on a real run; skips return early above.
     await this.opts.synthMetaStore?.record(caseId, findingsDiff, new Date().toISOString(), {
       durationMs: Date.now() - synthStart,
       eventCount: next.forensicTimeline.length,
