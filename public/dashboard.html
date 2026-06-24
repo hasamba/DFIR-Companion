@@ -2603,7 +2603,7 @@
     </style>
     <section id="sec-swimlane" style="grid-column: 1 / -1">
       <h2>Timeline Swimlane<span class="ev-sub" id="swimlaneSub">visual chart — Y-axis: assets · X-axis: time · color: severity (derived, no AI)</span></h2>
-      <div class="swimlane-hint">💡 <strong>Click</strong> a dot for details and to flash its row in the Forensic Timeline · <strong>Shift-click</strong> a dot (or <strong>Shift-drag</strong> a box) to select events, then <strong>⚑ Mark Legitimate</strong></div>
+      <div class="swimlane-hint">💡 <strong>Click</strong> a dot for details and to flash its row in the Forensic Timeline · <strong>Shift-click</strong> a dot (or <strong>Shift-drag</strong> a box) to select events, then <strong>⚑ Mark Legitimate</strong> · <strong>Drag the time axis</strong> (bottom bar) to filter the Forensic Timeline to that range</div>
       <div class="swimlane-controls">
         <span>Group by:</span>
         <select id="swimlaneGroupBy" title="Choose the Y-axis grouping for the swimlane">
@@ -2711,6 +2711,8 @@
               <span class="ev-leg-line ev-leg-file"></span>file lineage
               <span class="ev-leg-line ev-leg-net"></span>network flow</span>
             <span class="asset-ctrl-sep"></span>
+            <label title="Hide nodes below this severity to reduce clutter on large graphs">Sev <select id="evMinSev"><option value="Info">All</option><option value="Medium">≥ Med</option><option value="High">≥ High</option><option value="Critical">Crit only</option></select></label>
+            <span class="asset-ctrl-sep"></span>
             <button id="evZoomOut" type="button" title="Zoom out">−</button>
             <span id="evZoomLevel" title="Zoom level (scroll the mouse wheel over the graph to zoom)">100%</span>
             <button id="evZoomIn" type="button" title="Zoom in">+</button>
@@ -2718,6 +2720,7 @@
             <span class="asset-ctrl-sep"></span>
             <button id="evFullscreen" type="button" title="Enlarge the graph to full screen">⤢ Fullscreen</button>
             <button id="evResetLayout" type="button" title="Clear manual node positions — back to the auto layout">↺ Reset layout</button>
+            <button id="evExportSvg" type="button" title="Download the evidence graph as an SVG file">⬇ SVG</button>
             <span class="ev-drag-hint">drag nodes to rearrange</span>
             <span id="evFocusHint" class="asset-hint"></span>
           </div>
@@ -3674,6 +3677,8 @@
     const evTypesEnabled = new Set(
       [...document.querySelectorAll(".ev-type-toggle")].filter(cb => cb.checked).map(cb => cb.value)
     );
+    const evMinSevRank = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+    let evMinSev = "Info";  // show nodes at this severity or above; "Info" = show all
     // Drag-to-reposition state. evPos = effective id→{x,y} for the current draw (auto layout
     // with any manual overrides applied); evPosOverride = the persisted manual positions.
     let evPos = new Map(), evNodes = [], evEdges = [];
@@ -3791,8 +3796,14 @@
       evEdges = evGraphData.edges.filter(e =>
         evTypesEnabled.has(e.type) || (e.type === "ran_on" && evTypesEnabled.has("spawned")));
       const keep = new Set(evEdges.flatMap(e => [e.source, e.target]));
-      evNodes = evGraphData.nodes.filter(n => keep.has(n.id));
-      if (!evEdges.length) { el.innerHTML = "<div style='padding:16px;color:var(--c-9aa4b2)'>No links of the selected type(s).</div>"; evNodes = []; evDims = { W: 0, H: 0 }; updateEvZoomLabel(); return; }
+      // Severity filter: hide low-severity nodes then drop orphaned edges.
+      const minRank = evMinSevRank[evMinSev] ?? 4;
+      evNodes = evGraphData.nodes.filter(n =>
+        keep.has(n.id) &&
+        (evMinSevRank[n.maxSeverity] ?? 4) <= minRank);
+      const visibleIds = new Set(evNodes.map(n => n.id));
+      evEdges = evEdges.filter(e => visibleIds.has(e.source) && visibleIds.has(e.target));
+      if (!evEdges.length) { el.innerHTML = "<div style='padding:16px;color:var(--c-9aa4b2)'>No links match the current type / severity filters.</div>"; evNodes = []; evDims = { W: 0, H: 0 }; updateEvZoomLabel(); return; }
 
       const { pos } = evLayout(evNodes, evEdges);
       // Effective position = auto layout, with a saved manual override taking precedence.
@@ -3864,6 +3875,16 @@
         const cur = evPos.get(id);
         evDrag = { id, startX: ev.clientX, startY: ev.clientY, origX: cur.x, origY: cur.y, scale, moved: false };
       }));
+    }
+
+    function evExportSvg() {
+      const svg = document.querySelector("#evGraph svg");
+      if (!svg) return;
+      const svgStr = '<?xml version="1.0" encoding="utf-8"?>\n' + new XMLSerializer().serializeToString(svg);
+      const blob = new Blob([svgStr], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "evidence-graph.svg"; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     // --- Investigator comments (collaboration) -----------------------------------
@@ -7827,6 +7848,7 @@
     let swDrag = false, swDragMoved = false, swDragStartX = 0, swDragViewStart = 0;
     let swHoverEvId = null, swSelEvId = null, swTimer = null;
     let swRubber = null;       // {x0,y0,x1,y1} canvas-px rect while Shift-dragging a selection box
+    let swTimeBrush = null;    // {x0,x1} canvas-px while dragging the time axis to filter the timeline
     // Multi-select reuses the timeline table's shared `selectedEvents` Set (declared above), so
     // selection is bidirectional: dots ringed here ⇄ rows checked there ⇄ the bulk-action bars.
 
@@ -7958,6 +7980,15 @@
         const rw = Math.abs(swRubber.x1 - swRubber.x0), rh = Math.abs(swRubber.y1 - swRubber.y0);
         ctx.fillStyle = "rgba(106,169,255,0.15)"; ctx.fillRect(rx, ry, rw, rh);
         ctx.strokeStyle = themeColor("--c-6aa9ff"); ctx.lineWidth = 1; ctx.strokeRect(rx+.5, ry+.5, rw, rh);
+      }
+      // Time-brush overlay (while dragging the time axis)
+      if (swTimeBrush) {
+        const bx0 = Math.min(swTimeBrush.x0, swTimeBrush.x1);
+        const bx1 = Math.max(swTimeBrush.x0, swTimeBrush.x1);
+        ctx.fillStyle = "rgba(255,217,59,0.12)"; ctx.fillRect(bx0, 0, bx1 - bx0, axY);
+        ctx.strokeStyle = "#ffd93b"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(bx0 + .5, 0); ctx.lineTo(bx0 + .5, axY); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(bx1 + .5, 0); ctx.lineTo(bx1 + .5, axY); ctx.stroke();
       }
     }
 
@@ -8176,19 +8207,28 @@
         swUpdateZoomLabel(); swRenderCanvas();
       }, { passive: false });
 
-      // Pan via drag — OR start a Shift-drag rubber-band selection box.
+      // Pan via drag — OR Shift-drag rubber-band selection — OR drag the time axis to filter the timeline.
       canvas.addEventListener("mousedown", function(e) {
+        const p = swCanvasXY(e, canvas);
+        const axY = swLanes.length * SW_LANE_H;
+        if (!e.shiftKey && p.y >= axY) {
+          swTimeBrush = { x0: p.x, x1: p.x };
+          swDrag = false; e.preventDefault(); return;
+        }
         if (e.shiftKey) {
-          const p = swCanvasXY(e, canvas);
           swRubber = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
-          swDrag = false; e.preventDefault();
-          return;
+          swDrag = false; e.preventDefault(); return;
         }
         swDrag = true; swDragMoved = false;
         swDragStartX = e.clientX; swDragViewStart = swViewStartMs;
         canvas.style.cursor = "grabbing";
       });
       window.addEventListener("mousemove", function(e) {
+        if (swTimeBrush) {
+          const p = swCanvasXY(e, canvas);
+          swTimeBrush.x1 = Math.max(0, Math.min(canvas.width, p.x));
+          swRenderCanvas(); return;
+        }
         if (swRubber) {
           const p = swCanvasXY(e, canvas);
           swRubber.x1 = Math.max(0, Math.min(canvas.width, p.x));
@@ -8230,6 +8270,24 @@
         }
       });
       window.addEventListener("mouseup", function() {
+        if (swTimeBrush) {
+          const tb = swTimeBrush; swTimeBrush = null;
+          const x0 = Math.min(tb.x0, tb.x1), x1 = Math.max(tb.x0, tb.x1);
+          if (x1 - x0 > 4) {
+            const ms0 = swXToTs(x0, canvas.width), ms1 = swXToTs(x1, canvas.width);
+            const ff = document.getElementById("filterFrom"), ft = document.getElementById("filterTo");
+            const cfBtn = document.getElementById("clearFiltersBtn");
+            if (ff) ff.value = isoToUtcInput(new Date(ms0).toISOString());
+            if (ft) ft.value = isoToUtcInput(new Date(ms1).toISOString());
+            filterFrom = new Date(ms0).toISOString();
+            filterTo = new Date(ms1).toISOString();
+            if (cfBtn) cfBtn.hidden = false;
+            renderTimelineEvents(lastFt);
+            const sec = document.getElementById("sec-timeline");
+            if (sec && sec.classList.contains("collapsed")) sec.classList.remove("collapsed");
+          }
+          swRenderCanvas(); return;
+        }
         if (swRubber) { swFinishRubber(); swRubber = null; swRenderCanvas(); return; }
         if (swDrag) { swDrag = false; canvas.style.cursor = "crosshair"; }
       });
@@ -9508,6 +9566,8 @@
       if (cb.checked) evTypesEnabled.add(cb.value); else evTypesEnabled.delete(cb.value);
       evFocus = null; renderEvidenceGraph();
     });
+    document.getElementById("evMinSev").onchange = function() { evMinSev = this.value; evFocus = null; renderEvidenceGraph(); };
+    document.getElementById("evExportSvg").onclick = evExportSvg;
     document.getElementById("evZoomIn").onclick = () => setEvZoom(evZoom * 1.25);
     document.getElementById("evZoomOut").onclick = () => setEvZoom(evZoom / 1.25);
     document.getElementById("evZoomReset").onclick = () => fitEvZoom();
