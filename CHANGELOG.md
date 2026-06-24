@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-06-24
+
 ### Added
 - **Timeline brushing + evidence-graph filters** — drag a time-range on the swimlane to scope correlated events; evidence graph gains a severity floor + SVG export to declutter/share large graphs (#122).
 - **Dashboard view presets** — a toolbar ⊞ view button (popover menu) with built-in Analyst / Lead / Executive (role) and Triage / Report / Deep-Dive / Hunt-Prep (phase) layouts that show/hide/reorder existing panels (reusing the section machinery), apply a per-view severity floor + top-N cap to findings and the timeline, and link each to a matching report template; remembered per-case. Views are **fully editable** — built-ins editable in place + create/delete custom ones in Settings → Dashboard Views (GLOBAL store beside `cases/`, mirrors report templates) (closes #142).
@@ -402,7 +404,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.23.0...v0.25.0
 [0.23.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.22.0...v0.23.0
