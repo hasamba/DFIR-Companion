@@ -2712,11 +2712,6 @@
               <span class="ev-leg-line ev-leg-net"></span>network flow</span>
             <span class="asset-ctrl-sep"></span>
             <label title="Hide nodes below this severity to reduce clutter on large graphs">Sev <select id="evMinSev"><option value="Info">All</option><option value="Medium">≥ Med</option><option value="High">≥ High</option><option value="Critical">Crit only</option></select></label>
-            <label title="Show process nodes"><input type="checkbox" class="ev-kind-toggle" value="process" checked> proc</label>
-            <label title="Show host nodes"><input type="checkbox" class="ev-kind-toggle" value="host" checked> host</label>
-            <label title="Show account nodes"><input type="checkbox" class="ev-kind-toggle" value="account" checked> acct</label>
-            <label title="Show file artifact nodes"><input type="checkbox" class="ev-kind-toggle" value="file" checked> file</label>
-            <label title="Show network endpoint nodes"><input type="checkbox" class="ev-kind-toggle" value="network" checked> net</label>
             <span class="asset-ctrl-sep"></span>
             <button id="evZoomOut" type="button" title="Zoom out">−</button>
             <span id="evZoomLevel" title="Zoom level (scroll the mouse wheel over the graph to zoom)">100%</span>
@@ -3684,7 +3679,6 @@
     );
     const evMinSevRank = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
     let evMinSev = "Info";  // show nodes at this severity or above; "Info" = show all
-    const evKindsEnabled = new Set(["process", "host", "account", "file", "network"]);
     // Drag-to-reposition state. evPos = effective id→{x,y} for the current draw (auto layout
     // with any manual overrides applied); evPosOverride = the persisted manual positions.
     let evPos = new Map(), evNodes = [], evEdges = [];
@@ -3802,15 +3796,14 @@
       evEdges = evGraphData.edges.filter(e =>
         evTypesEnabled.has(e.type) || (e.type === "ran_on" && evTypesEnabled.has("spawned")));
       const keep = new Set(evEdges.flatMap(e => [e.source, e.target]));
-      // Severity + node kind filters: hide low-severity / unchecked-kind nodes then drop orphaned edges.
+      // Severity filter: hide low-severity nodes then drop orphaned edges.
       const minRank = evMinSevRank[evMinSev] ?? 4;
       evNodes = evGraphData.nodes.filter(n =>
         keep.has(n.id) &&
-        (evMinSevRank[n.maxSeverity] ?? 4) <= minRank &&
-        evKindsEnabled.has(n.kind));
+        (evMinSevRank[n.maxSeverity] ?? 4) <= minRank);
       const visibleIds = new Set(evNodes.map(n => n.id));
       evEdges = evEdges.filter(e => visibleIds.has(e.source) && visibleIds.has(e.target));
-      if (!evEdges.length) { el.innerHTML = "<div style='padding:16px;color:var(--c-9aa4b2)'>No links match the current type / severity / kind filters.</div>"; evNodes = []; evDims = { W: 0, H: 0 }; updateEvZoomLabel(); return; }
+      if (!evEdges.length) { el.innerHTML = "<div style='padding:16px;color:var(--c-9aa4b2)'>No links match the current type / severity filters.</div>"; evNodes = []; evDims = { W: 0, H: 0 }; updateEvZoomLabel(); return; }
 
       const { pos } = evLayout(evNodes, evEdges);
       // Effective position = auto layout, with a saved manual override taking precedence.
@@ -9574,10 +9567,6 @@
       evFocus = null; renderEvidenceGraph();
     });
     document.getElementById("evMinSev").onchange = function() { evMinSev = this.value; evFocus = null; renderEvidenceGraph(); };
-    document.querySelectorAll(".ev-kind-toggle").forEach(cb => cb.onchange = () => {
-      if (cb.checked) evKindsEnabled.add(cb.value); else evKindsEnabled.delete(cb.value);
-      evFocus = null; renderEvidenceGraph();
-    });
     document.getElementById("evExportSvg").onclick = evExportSvg;
     document.getElementById("evZoomIn").onclick = () => setEvZoom(evZoom * 1.25);
     document.getElementById("evZoomOut").onclick = () => setEvZoom(evZoom / 1.25);
