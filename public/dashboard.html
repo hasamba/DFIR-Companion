@@ -1475,6 +1475,47 @@
           <div class="sfield"><label>Bind host<span class="sfield-hint">DFIR_HOST — keep 127.0.0.1 (localhost only) unless you know what you're doing</span></label><input id="env-DFIR_HOST" placeholder="127.0.0.1" /></div>
           <div class="sfield"><label>Port<span class="sfield-hint">DFIR_PORT — the dashboard moves with it; reopen on the new port</span></label><input id="env-DFIR_PORT" placeholder="4773" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Custom importers dir<span class="sfield-hint">DFIR_IMPORTERS_DIR — folder of *.json declarative importer specs; blank = importers/ beside cases root</span></label><input id="env-DFIR_IMPORTERS_DIR" placeholder="(importers/ beside cases root)" /></div>
+          <div class="sfield"><label>Import undo depth<span class="sfield-hint">DFIR_IMPORT_UNDO_DEPTH — import undo levels kept per case (default 10)</span></label><input id="env-DFIR_IMPORT_UNDO_DEPTH" placeholder="10" /></div>
+        </div>
+        <div class="settings-group-head">Beacon / C2 detection</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Min connection count<span class="sfield-hint">DFIR_BEACON_MIN_COUNT — min outbound events before a channel is considered (default 5)</span></label><input id="env-DFIR_BEACON_MIN_COUNT" placeholder="5" /></div>
+          <div class="sfield"><label>Max jitter (%)<span class="sfield-hint">DFIR_BEACON_MAX_JITTER_PCT — max interval jitter (stddev % of mean) to flag a channel as a beacon (default 20)</span></label><input id="env-DFIR_BEACON_MAX_JITTER_PCT" placeholder="20" /></div>
+        </div>
+        <div class="settings-group-head">Timeline gap detection</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Min silence (min)<span class="sfield-hint">DFIR_GAP_MIN_MINUTES — shortest gap to flag (default 30)</span></label><input id="env-DFIR_GAP_MIN_MINUTES" placeholder="30" /></div>
+          <div class="sfield"><label>Density factor<span class="sfield-hint">DFIR_GAP_DENSITY_FACTOR — gap must be ≥ N× the median inter-event interval (default 4; 0 = floor only)</span></label><input id="env-DFIR_GAP_DENSITY_FACTOR" placeholder="4" /></div>
+          <div class="sfield"><label>Max gap findings<span class="sfield-hint">DFIR_GAP_MAX_FINDINGS — cap on complete-silence gaps escalated to a finding (default 5)</span></label><input id="env-DFIR_GAP_MAX_FINDINGS" placeholder="5" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Active hours (UTC)<span class="sfield-hint">DFIR_GAP_ACTIVE_HOURS — only flag gaps overlapping these hours, e.g. 8-18; blank = disable expected-hours filter</span></label><input id="env-DFIR_GAP_ACTIVE_HOURS" placeholder="(optional, e.g. 8-18)" /></div>
+        </div>
+        <div class="settings-group-head">ATT&amp;CK / Adversary hints</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>ATT&amp;CK Navigator version<span class="sfield-hint">DFIR_ATTACK_VERSION — version stamped in exported Navigator layers (default tracks current release)</span></label><input id="env-DFIR_ATTACK_VERSION" placeholder="19" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Min group overlap<span class="sfield-hint">DFIR_ADVERSARY_MIN_OVERLAP — min overlapping techniques to surface a group (default 3)</span></label><input id="env-DFIR_ADVERSARY_MIN_OVERLAP" placeholder="3" /></div>
+          <div class="sfield"><label>Top N groups<span class="sfield-hint">DFIR_ADVERSARY_TOP_N — max adversary groups shown (default 5)</span></label><input id="env-DFIR_ADVERSARY_TOP_N" placeholder="5" /></div>
+          <div class="sfield"><label>Next techniques cap<span class="sfield-hint">DFIR_ADVERSARY_NEXT_MAX — "likely next techniques" list cap (default 10)</span></label><input id="env-DFIR_ADVERSARY_NEXT_MAX" placeholder="10" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Next tech prevalence cutoff<span class="sfield-hint">DFIR_ADVERSARY_NEXT_MAX_PREVALENCE — drop suggestions used by more than this fraction of all groups (default 0.33)</span></label><input id="env-DFIR_ADVERSARY_NEXT_MAX_PREVALENCE" placeholder="0.33" /></div>
+        </div>
+        <div class="settings-group-head">Case memory / synthesis grounding</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Known-unknowns max<span class="sfield-hint">DFIR_SYNTH_KNOWN_UNKNOWNS_MAX — coverage-gap bullets injected into synthesis + hunt prompts (default 10; 0 = disable)</span></label><input id="env-DFIR_SYNTH_KNOWN_UNKNOWNS_MAX" placeholder="10" /></div>
+          <div class="sfield"><label>Feed adversary hints to synthesis<span class="sfield-hint">DFIR_SYNTH_ADVERSARY_HINTS — on/off; feeds matched threat actors into the synthesis prompt as hypotheses (default off — can bias the model)</span></label><input id="env-DFIR_SYNTH_ADVERSARY_HINTS" placeholder="off" /></div>
+        </div>
+        <div class="settings-group-head">Mobile companion</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Max findings<span class="sfield-hint">DFIR_MOBILE_MAX_FINDINGS — findings shown in the mobile PWA (default 50)</span></label><input id="env-DFIR_MOBILE_MAX_FINDINGS" placeholder="50" /></div>
+          <div class="sfield"><label>Max events<span class="sfield-hint">DFIR_MOBILE_MAX_EVENTS — timeline events shown in the mobile PWA (default 50)</span></label><input id="env-DFIR_MOBILE_MAX_EVENTS" placeholder="50" /></div>
+          <div class="sfield"><label>Max IOCs<span class="sfield-hint">DFIR_MOBILE_MAX_IOCS — IOCs shown in the mobile PWA (default 100)</span></label><input id="env-DFIR_MOBILE_MAX_IOCS" placeholder="100" /></div>
+        </div>
       </div>
 
       <!-- AI -->
@@ -1599,6 +1640,37 @@
         <div class="sfield-row">
           <div class="sfield"><label>Fleet-hunts prompt file<span class="sfield-hint">DFIR_AI_HUNTS_PROMPT_FILE — Suggested Fleet Hunts (#57)</span></label><input id="env-DFIR_AI_HUNTS_PROMPT_FILE" placeholder="path/to/hunts.txt" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Playbook-hunts prompt file<span class="sfield-hint">DFIR_AI_PBHUNTS_PROMPT_FILE — per-task VQL hunts from the playbook (#70)</span></label><input id="env-DFIR_AI_PBHUNTS_PROMPT_FILE" placeholder="path/to/pbhunts.txt" /></div>
+          <div class="sfield"><label>Gap-hypothesis prompt file<span class="sfield-hint">DFIR_AI_GAPHYP_PROMPT_FILE — AI hypotheses for timeline gaps</span></label><input id="env-DFIR_AI_GAPHYP_PROMPT_FILE" placeholder="path/to/gap-hypothesis.txt" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Memory next-step prompt file<span class="sfield-hint">DFIR_AI_MEMNEXT_PROMPT_FILE — memory forensics next-step agent</span></label><input id="env-DFIR_AI_MEMNEXT_PROMPT_FILE" placeholder="path/to/memory-next-step.txt" /></div>
+          <div class="sfield"><label>Query-translate prompt file<span class="sfield-hint">DFIR_AI_QUERYXLATE_PROMPT_FILE — natural-language → VQL/KQL/Sigma/… (#100)</span></label><input id="env-DFIR_AI_QUERYXLATE_PROMPT_FILE" placeholder="path/to/query-translate.txt" /></div>
+          <div class="sfield"><label>Reconcile prompt file<span class="sfield-hint">DFIR_AI_RECONCILE_PROMPT_FILE — 2nd-opinion reconcile pass (#116)</span></label><input id="env-DFIR_AI_RECONCILE_PROMPT_FILE" placeholder="path/to/reconcile.txt" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Importer-gen prompt file<span class="sfield-hint">DFIR_AI_IMPORTGEN_PROMPT_FILE — custom-importer authoring prompt</span></label><input id="env-DFIR_AI_IMPORTGEN_PROMPT_FILE" placeholder="path/to/importgen.txt" /></div>
+        </div>
+        <div class="settings-group-head">AI analysis parameters</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Synthesis thinking tokens<span class="sfield-hint">DFIR_AI_SYNTH_THINKING_TOKENS — extended-thinking budget for synthesis (≥1024 to engage; 0 = off; Anthropic / reasoning-capable models only)</span></label><input id="env-DFIR_AI_SYNTH_THINKING_TOKENS" placeholder="0 (off)" /></div>
+          <div class="sfield"><label>Ask graph max edges<span class="sfield-hint">DFIR_ASK_GRAPH_MAX_EDGES — max causal edges fed into "Ask the case" prompt via GraphRAG (default 120)</span></label><input id="env-DFIR_ASK_GRAPH_MAX_EDGES" placeholder="120" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Fleet-hunt max suggestions<span class="sfield-hint">DFIR_HUNT_SUGGEST_MAX — max AI-suggested fleet hunts per generation (default 8)</span></label><input id="env-DFIR_HUNT_SUGGEST_MAX" placeholder="8" /></div>
+          <div class="sfield"><label>Hunt outcome history<span class="sfield-hint">DFIR_HUNT_OUTCOME_MAX — deployed-hunt outcomes retained per case for the feedback loop (default 50)</span></label><input id="env-DFIR_HUNT_OUTCOME_MAX" placeholder="50" /></div>
+          <div class="sfield"><label>Playbook-hunt max<span class="sfield-hint">DFIR_PBHUNT_SUGGEST_MAX — max per-playbook-task hunts per generation (default 30)</span></label><input id="env-DFIR_PBHUNT_SUGGEST_MAX" placeholder="30" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Playbook-hunt context events<span class="sfield-hint">DFIR_PBHUNT_MAX_EVENTS — timeline events fed to the playbook-hunt prompt (default 120)</span></label><input id="env-DFIR_PBHUNT_MAX_EVENTS" placeholder="120" /></div>
+          <div class="sfield"><label>Playbook-hunt artifacts cap<span class="sfield-hint">DFIR_PBHUNT_MAX_ARTIFACTS — max Velociraptor artifact names in the playbook-hunt prompt (default 150)</span></label><input id="env-DFIR_PBHUNT_MAX_ARTIFACTS" placeholder="150" /></div>
+          <div class="sfield"><label>Memory next-step max<span class="sfield-hint">DFIR_MEMORY_NEXTSTEP_MAX — max AI-suggested memory forensics next-steps per call (default 8)</span></label><input id="env-DFIR_MEMORY_NEXTSTEP_MAX" placeholder="8" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Gap hypothesis max<span class="sfield-hint">DFIR_GAP_HYPOTHESIS_MAX — max gaps hypothesized per "Hypothesize gaps" call (default 5, worst-first)</span></label><input id="env-DFIR_GAP_HYPOTHESIS_MAX" placeholder="5" /></div>
+          <div class="sfield"><label>Gap hypothesis context<span class="sfield-hint">DFIR_GAP_HYPOTHESIS_CONTEXT — events on each side of a gap fed to the hypothesis prompt (default 8)</span></label><input id="env-DFIR_GAP_HYPOTHESIS_CONTEXT" placeholder="8" /></div>
+        </div>
       </div>
 
       <!-- Enrichment -->
@@ -1666,6 +1738,28 @@
         <div class="sfield-row">
           <div class="sfield"><label>Malicious score threshold<span class="sfield-hint">DFIR_OPENCTI_MALICIOUS_SCORE — x_opencti_score ≥ this → malicious (default 75)</span></label><input id="env-DFIR_OPENCTI_MALICIOUS_SCORE" placeholder="75" /></div>
         </div>
+        <div class="settings-group-head">CIRCL hashlookup (keyless hash → known-good)</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Base URL<span class="sfield-hint">DFIR_HASHLOOKUP_URL — override for a self-hosted mirror (default https://hashlookup.circl.lu)</span></label><input id="env-DFIR_HASHLOOKUP_URL" placeholder="https://hashlookup.circl.lu" /></div>
+        </div>
+        <div class="settings-group-head">IP infrastructure context (Reverse DNS / WHOIS / GeoIP / Shodan)</div>
+        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">These providers are keyless by default and always-on — they return infrastructure context (PTR hostnames, WHOIS netblock/country, GeoIP city/ASN) rather than a reputation verdict, so they never send IOCs to a third-party threat-intel service. Shodan (Exposed Hosts) requires an API key set on the Exposure tab.</p>
+        <div class="sfield-row">
+          <div class="sfield"><label>WHOIS / RDAP base URL<span class="sfield-hint">DFIR_RDAP_URL — WHOIS-over-RDAP endpoint (default https://rdap.org)</span></label><input id="env-DFIR_RDAP_URL" placeholder="https://rdap.org" /></div>
+          <div class="sfield"><label>GeoIP URL template<span class="sfield-hint">DFIR_GEOIP_URL — {ip} is substituted; default uses ipinfo.io/{ip}/json (no key required); supports ip-api.com and ipwho.is shapes too</span></label><input id="env-DFIR_GEOIP_URL" placeholder="https://ipinfo.io/{ip}/json" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>GeoIP API key<span class="sfield-hint">DFIR_GEOIP_KEY — optional; appended as ?token= or substituted as {key} for paid / self-hosted backends</span></label><input id="env-DFIR_GEOIP_KEY" type="password" placeholder="(optional)" autocomplete="new-password" /></div>
+        </div>
+        <div class="settings-group-head">GeoIP map</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Tile server URL<span class="sfield-hint">DFIR_GEOMAP_TILE_URL — OpenStreetMap-compatible tile URL; override for an offline/internal tile server</span></label><input id="env-DFIR_GEOMAP_TILE_URL" placeholder="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Max markers<span class="sfield-hint">DFIR_GEOMAP_MAX_MARKERS — max IP pins rendered on the map (default 2000)</span></label><input id="env-DFIR_GEOMAP_MAX_MARKERS" placeholder="2000" /></div>
+          <div class="sfield"><label>Max flows<span class="sfield-hint">DFIR_GEOMAP_MAX_FLOWS — max flow lines on the map (default 500)</span></label><input id="env-DFIR_GEOMAP_MAX_FLOWS" placeholder="500" /></div>
+          <div class="sfield"><label>Top countries<span class="sfield-hint">DFIR_GEOMAP_TOP_COUNTRIES — country breakdown count (default 10)</span></label><input id="env-DFIR_GEOMAP_TOP_COUNTRIES" placeholder="10" /></div>
+        </div>
         <div class="settings-group-head">Throttling</div>
         <div class="sfield-row3">
           <div class="sfield"><label>Enrich delay (ms)<span class="sfield-hint">DFIR_ENRICH_DELAY_MS</span></label><input id="env-DFIR_ENRICH_DELAY_MS" placeholder="1500" /></div>
@@ -1689,6 +1783,14 @@
         <div class="sfield-row">
           <div class="sfield"><label>RockyRaccoon<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_ROCKYRACCOON</span></label><input id="env-DFIR_ENRICH_DELAY_MS_ROCKYRACCOON" placeholder="(optional)" /></div>
           <div class="sfield"><label>OpenCTI<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_OPENCTI</span></label><input id="env-DFIR_ENRICH_DELAY_MS_OPENCTI" placeholder="(optional)" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Reverse DNS<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_REVERSE_DNS — PTR lookup delay (default 0; keyless, no rate-limit)</span></label><input id="env-DFIR_ENRICH_DELAY_MS_REVERSE_DNS" placeholder="0" /></div>
+          <div class="sfield"><label>WHOIS / RDAP<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_WHOIS — RDAP lookup delay (default 0; keyless)</span></label><input id="env-DFIR_ENRICH_DELAY_MS_WHOIS" placeholder="0" /></div>
+          <div class="sfield"><label>GeoIP<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_GEOIP — GeoIP lookup delay (default 0; keyless)</span></label><input id="env-DFIR_ENRICH_DELAY_MS_GEOIP" placeholder="0" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Shodan (Exposed Hosts)<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_SHODAN — Shodan lookup delay (default 1000)</span></label><input id="env-DFIR_ENRICH_DELAY_MS_SHODAN" placeholder="1000" /></div>
         </div>
       </div>
 
@@ -1791,7 +1893,14 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Live monitor poll (sec)<span class="sfield-hint">DFIR_VELO_MONITOR_POLL_S — default 30 (CLIENT_EVENT poller)</span></label><input id="env-DFIR_VELO_MONITOR_POLL_S" placeholder="30" /></div>
-          <div class="sfield"><label>Monitor read VQL override<span class="sfield-hint">DFIR_VELOCIRAPTOR_MONITOR_VQL — version-specific; blank = default source()</span></label><input id="env-DFIR_VELOCIRAPTOR_MONITOR_VQL" placeholder="(optional)" /></div>
+          <div class="sfield"><label>Monitor read VQL override<span class="sfield-hint">DFIR_VELOCIRAPTOR_MONITOR_VQL — per-client monitor source VQL; version-specific; blank = default source()</span></label><input id="env-DFIR_VELOCIRAPTOR_MONITOR_VQL" placeholder="(optional)" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>All-clients monitor VQL<span class="sfield-hint">DFIR_VELOCIRAPTOR_MONITOR_ALL_VQL — all-clients variant (foreach(clients())+source()); __ARTIFACT__/__START__/__END__/__LIMIT__ substituted; blank = default</span></label><input id="env-DFIR_VELOCIRAPTOR_MONITOR_ALL_VQL" placeholder="(optional)" /></div>
+          <div class="sfield"><label>Monitored artifacts VQL<span class="sfield-hint">DFIR_VELOCIRAPTOR_MONITORED_VQL — returns "artifact" column listing already-enabled CLIENT_EVENT artifacts; used by auto-monitor; blank = default</span></label><input id="env-DFIR_VELOCIRAPTOR_MONITORED_VQL" placeholder="(optional)" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Binary spawn retries<span class="sfield-hint">DFIR_VELOCIRAPTOR_SPAWN_RETRIES — retries on transient EPERM/EBUSY lock when spawning the velociraptor binary (default 6)</span></label><input id="env-DFIR_VELOCIRAPTOR_SPAWN_RETRIES" placeholder="6" /></div>
         </div>
 
         <!-- Push ingest (#84) -->
@@ -1809,6 +1918,15 @@
           </div>
           <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:8px">Example — POST a Velociraptor monitoring batch / SIEM alert:</div>
           <pre id="pushCurl" style="white-space:pre-wrap;word-break:break-all;background:var(--c-11151f);border:1px solid var(--c-2a3146);border-radius:6px;padding:8px;font-size:11px;color:var(--c-cdd6e4);margin:4px 0 0">connect to a case to see the curl example</pre>
+        </div>
+
+        <!-- Notifications global settings (#58) -->
+        <div class="settings-group-head">Notifications (global)</div>
+        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">These settings apply to all notification channels (Slack, Teams, Mattermost, Discord, Telegram, SMTP). Channel credentials and thresholds are managed on the <strong>Notifications</strong> tab.</p>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Public base URL<span class="sfield-hint">DFIR_PUBLIC_URL — base URL used in notification deep-links back to the case (default derived from host:port)</span></label><input id="env-DFIR_PUBLIC_URL" placeholder="http://127.0.0.1:4773" /></div>
+          <div class="sfield"><label>Webhook CA bundle<span class="sfield-hint">DFIR_NOTIFY_CA — CA bundle path for self-hosted webhook endpoints (Mattermost, etc.)</span></label><input id="env-DFIR_NOTIFY_CA" placeholder="path/to/ca.pem" /></div>
+          <div class="sfield"><label>Skip webhook TLS verify<span class="sfield-hint">DFIR_NOTIFY_INSECURE — true to accept self-signed certs on webhook endpoints (lab only)</span></label><input id="env-DFIR_NOTIFY_INSECURE" placeholder="false" /></div>
         </div>
 
       </div>
@@ -2154,6 +2272,9 @@
             <span id="updMsg" class="manual-msg"></span>
           </div>
         </div>
+        <div class="sfield-row" style="margin-top:10px">
+          <div class="sfield"><label>Update repo<span class="sfield-hint">DFIR_UPDATE_REPO — GitHub owner/repo to check for releases (default hasamba/DFIR-Companion; set for forks)</span></label><input id="env-DFIR_UPDATE_REPO" placeholder="hasamba/DFIR-Companion" /></div>
+        </div>
       </div>
 
       <!-- Notifications (issue #58) — Slack / MS Teams / SMTP email channels for critical findings,
@@ -2338,6 +2459,9 @@
           Operator-facing system state for troubleshooting ingestion / AI problems. Read-only and
           <strong>redacted</strong> (no API keys or evidence content). The summary loads fast; per-case
           disk sizes are computed on demand.
+        </div>
+        <div class="sfield-row" style="margin-bottom:10px">
+          <div class="sfield"><label>Size scan file limit<span class="sfield-hint">DFIR_DIAG_MAX_FILES — max files visited by "Compute case sizes" before stopping (default 100000)</span></label><input id="env-DFIR_DIAG_MAX_FILES" placeholder="100000" /></div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
           <button id="diagRefreshBtn" type="button">↻ Refresh</button>
@@ -10483,12 +10607,15 @@
       { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
       { id: "sec-evidence",     label: "Evidence Chain" },
       { id: "sec-beacons",      label: "Beacon Candidates" },
+      { id: "sec-geomap",       label: "GeoIP Map" },
       { id: "sec-iocs",         label: "IOCs" },
       { id: "sec-exposure",     label: "Customer Exposure" },
       { id: "sec-questions",    label: "Key Investigative Questions" },
+      { id: "sec-huntprofile",  label: "Hunting Profile" },
       { id: "sec-threads",      label: "Investigation Threads" },
       { id: "sec-mitre",        label: "MITRE ATT&CK" },
       { id: "sec-adversary",    label: "Adversary Hints" },
+      { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
       { id: "sec-legitimate",   label: "Confirmed Legitimate" },
       { id: "sec-hypotheses",   label: "Hypotheses" },
       { id: "sec-notebook",     label: "Analyst Notebook" },
