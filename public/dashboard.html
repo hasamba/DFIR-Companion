@@ -387,6 +387,19 @@
     /* Drag-to-reorder sections (grip in each header; order persists in localStorage). */
     .drag-grip { cursor: grab; color: var(--c-6aa9ff); margin-right: 2px; font-size: 13px; user-select: none; }
     .drag-grip:active { cursor: grabbing; }
+    /* Dashboard view-preset picker (toolbar icon button + popover menu, #142). */
+    #dashViewBtn.dv-on { color: var(--c-ffd93b); }
+    .dv-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; min-width: 210px;
+      background: var(--c-161b22); border: 1px solid var(--c-2a2f3a); border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.4); padding: 5px; font-size: 13px; }
+    .dv-item { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 5px;
+      cursor: pointer; color: var(--c-c9d1db); white-space: nowrap; }
+    .dv-item:hover { background: var(--c-232a33); }
+    .dv-item .dv-tick { width: 14px; flex: 0 0 14px; color: var(--c-6bcb77); }
+    .dv-item.dv-active { color: var(--c-d6deea); font-weight: bold; }
+    .dv-item small { color: var(--c-9aa4b2); font-weight: normal; }
+    .dv-item-action { color: var(--c-6aa9ff); }
+    .dv-sep { height: 1px; background: var(--c-2a2f3a); margin: 5px 2px; }
     section.dragging { opacity: 0.45; }
     section.drop-target { outline: 2px dashed var(--c-6aa9ff); outline-offset: -2px; }
     h2 .chev { font-size: 10px; color: var(--c-6aa9ff); transition: transform .12s; }
@@ -1080,6 +1093,12 @@
       <option value="">Push to…</option>
     </select>
     <span id="reportLinks" class="report-links"></span>
+    <span id="dashViewWrap" style="position:relative;display:inline-flex;align-items:center">
+      <button id="dashViewBtn" type="button" aria-haspopup="true" aria-expanded="false" data-tip="Dashboard view — switch the panel layout + severity filter for a role (Analyst / Lead / Executive) or phase (Triage / Report / Deep-Dive / Hunt-Prep), or edit your own. Remembered per-case.">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+      </button>
+      <div id="dashViewMenu" class="dv-menu" style="display:none"></div>
+    </span>
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
     <button id="toggleSearchBar" type="button" aria-label="Filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Filter events, findings and IOCs by text and time range (press /)">Filter</button>
     <span id="status">disconnected</span>
@@ -1397,6 +1416,7 @@
         <button class="stab" data-stab="importers">Importers</button>
         <button class="stab" data-stab="kev">KEV</button>
         <button class="stab" data-stab="reports">Report Templates</button>
+        <button class="stab" data-stab="dashboard-views">Dashboard Views</button>
         <button class="stab" data-stab="notifications">Notifications</button>
         <button class="stab" data-stab="updates">Updates</button>
         <button class="stab" data-stab="diagnostics">Diagnostics</button>
@@ -2266,6 +2286,52 @@
         </div>
       </div>
 
+      <!-- Dashboard Views (#142) — global panel-layout presets -->
+      <div class="stab-pane" id="stab-dashboard-views">
+        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+          Panel-layout presets for the dashboard — <strong>which sections show (and their order)</strong>, an
+          optional <strong>severity floor + top-N cap</strong> on findings &amp; timeline, and a <strong>matching
+          report template</strong>. Global (shared across cases); pick one from the toolbar <strong>⊞ view</strong>
+          button. Built-ins are editable in place — <em>Reset</em> restores the shipped default.
+        </div>
+        <div class="sfield">
+          <label>View <span class="sfield-hint" style="display:inline">— pick one to edit, or create a new one</span></label>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <select id="dvPicker" style="flex:1 1 220px"></select>
+            <button id="dvNewBtn" type="button" style="background:#2a2f3a">✚ New</button>
+          </div>
+        </div>
+        <div class="rm-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px 12px;margin:8px 0">
+          <label>Name <input id="dvName" placeholder="My layout" /></label>
+          <label>Description <input id="dvDescription" placeholder="What this view is for" /></label>
+        </div>
+        <div class="rm-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px 12px;margin:8px 0">
+          <label>Min severity
+            <select id="dvMinSeverity">
+              <option value="">(all severities)</option>
+              <option value="Critical">Critical only</option>
+              <option value="High">High &amp; up</option>
+              <option value="Medium">Medium &amp; up</option>
+              <option value="Low">Low &amp; up</option>
+              <option value="Info">Info &amp; up</option>
+            </select>
+          </label>
+          <label>Top-N findings <input id="dvTopN" type="number" min="0" placeholder="(no cap)" /></label>
+          <label>Matching report
+            <select id="dvReportTemplate"><option value="">(none)</option></select>
+          </label>
+        </div>
+        <div class="sfield">
+          <label>Sections <span class="sfield-hint" style="display:inline">— check to show in this view · ▲▼ to reorder</span></label>
+          <div id="dvSections" style="max-height:230px;overflow:auto;border:1px solid #2a2f3a;border-radius:6px;padding:4px"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+          <button id="dvSaveBtn" type="button">Save view</button>
+          <button id="dvDeleteBtn" type="button" style="background:#5a2a2a">Delete</button>
+          <span id="dvMsg" class="manual-msg"></span>
+        </div>
+      </div>
+
       <!-- Diagnostics (#118) -->
       <div class="stab-pane" id="stab-diagnostics">
         <div class="sfield-hint" style="display:block;margin-bottom:8px">
@@ -2927,6 +2993,8 @@
     requestAnimationFrame(() => document.documentElement.classList.add("theme-anim"));
 
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
+    let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views
+    let activeView = null;                     // the currently-applied view (null = Custom / no preset)
     let ws = null;
     let countTimer = null;
     let countUpdate = null;   // current capture-count poll fn (set by pollCount)
@@ -8566,6 +8634,8 @@
         if (!real.length) return !hiddenSources.has(NO_SOURCE_FACET);  // unsourced events ride the "(no source)" facet
         return real.some(s => !hiddenSources.has(s));                   // hidden only when ALL its sources are unchecked
       });
+      const viewSevFiltering = !!(activeView && activeView.filters && activeView.filters.minSeverity);
+      if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity));   // dashboard-view severity floor (#142)
       visible = sortTimelineEvents(visible);
 
       const totalFiltered = visible.length;
@@ -8578,7 +8648,7 @@
       const countEl = document.getElementById('timelineCount');
       if (countEl) {
         const total = ft.length;
-        const baseText = (filtering || showStarredOnly || sourceFiltering || _hasActiveFilter())
+        const baseText = (filtering || showStarredOnly || sourceFiltering || viewSevFiltering || _hasActiveFilter())
           ? `${totalFiltered} of ${total} events`
           : `${total} event${total !== 1 ? 's' : ''}`;
         countEl.textContent = (tlPageSize > 0 && totalFiltered > tlPageSize)
@@ -8591,7 +8661,7 @@
 
       if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
-          ((filtering || showStarredOnly || sourceFiltering || _hasActiveFilter()) && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
+          ((filtering || showStarredOnly || sourceFiltering || viewSevFiltering || _hasActiveFilter()) && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
         return;
       }
 
@@ -8818,9 +8888,11 @@
       const minConf = parseInt(document.getElementById("confFilter").value, 10) || 0;
       const filtered = sorted.filter(f =>
         (f.confidence === undefined || f.confidence >= minConf) &&
-        (!searchTerm || _findingMatchesSearch(f, searchTerm)));
+        (!searchTerm || _findingMatchesSearch(f, searchTerm)) &&
+        viewMeetsMinSev(f.severity));   // dashboard-view severity floor (#142)
+      const capped = viewTopN() > 0 ? filtered.slice(0, viewTopN()) : filtered;   // view top-N cap
       document.getElementById("findings").innerHTML =
-        filtered.map(f => {
+        capped.map(f => {
           const evidence = [...(f.sourceScreenshots || []), ...(evByFinding[f.id] || [])];
           // Auto-flagged findings (from a Critical/High artifact row synthesis didn't cover)
           // carry the f-auto- id prefix — badge them so the analyst knows to review/refine.
@@ -8838,7 +8910,7 @@
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs)}</div>`;
-        }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : "—");
+        }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
@@ -8897,6 +8969,7 @@
       loadCorrProfile(caseId);
       loadReportMeta(caseId);
       loadCaseTemplatePicker(caseId);
+      applySavedViewForCase();   // restore this case's dashboard-view preset (#142)
       loadAssetGraph(caseId);
       loadAssetOverrides(caseId);
       loadEvidenceGraph(caseId);
@@ -10510,6 +10583,163 @@
       });
     }
 
+    // ── Dashboard view presets (#142) ─────────────────────────────────────────
+    // Named role/phase layouts fetched from the server (GET /dashboard-views). Picking one
+    // re-arranges panels (reusing the section show/hide + order machinery above) and applies a
+    // severity / top-N filter to the findings list and forensic timeline. The choice is remembered
+    // per-case in this browser. "Custom" = no preset (your own layout, no view filter).
+    // (DASHBOARD_VIEWS / activeView are declared with the other render-state globals up top.)
+    const RT_FRIENDLY = { "standard": "Standard report", "executive-brief": "Executive Brief", "technical-detailed": "Technical Detailed" };
+    function viewStorageKey() {
+      const c = (document.getElementById("caseId").value || "").trim();
+      return c ? "dfir.dashView." + c : "";
+    }
+    function viewFilters() { return (activeView && activeView.filters) || {}; }
+    // True when a severity is at or above the active view's threshold. Fails OPEN (unknown
+    // severity / no threshold → shown) — missing a real finding is worse than one extra row.
+    function viewMeetsMinSev(sev) {
+      const min = viewFilters().minSeverity;
+      if (!min) return true;
+      const mi = SEV.indexOf(min); if (mi < 0) return true;
+      const si = SEV.indexOf(sev); if (si < 0) return true;
+      return si <= mi;
+    }
+    function viewTopN() { const n = viewFilters().topN; return (typeof n === "number" && n > 0) ? n : 0; }
+
+    // Friendly label for the active view's matching report template (built-in names; custom ids show raw).
+    function dashViewReportLabel() {
+      if (!activeView || !activeView.reportTemplateId) return "";
+      return RT_FRIENDLY[activeView.reportTemplateId] || "matching report";
+    }
+    function updateDashViewButton() {
+      const btn = document.getElementById("dashViewBtn");
+      if (!btn) return;
+      const on = !!activeView;
+      btn.classList.toggle("dv-on", on);
+      btn.title = on
+        ? `Dashboard view: ${activeView.name} — click to switch or edit`
+        : "Dashboard view: Custom — click to choose a layout preset";
+    }
+    function closeDashViewMenu() {
+      const m = document.getElementById("dashViewMenu");
+      if (m) m.style.display = "none";
+      const b = document.getElementById("dashViewBtn");
+      if (b) b.setAttribute("aria-expanded", "false");
+    }
+    // Build the popover: Custom + every view (active ticked), then a divider, the matching-report
+    // action (only when the active view has one), and "Edit views…".
+    function renderDashViewMenu() {
+      const m = document.getElementById("dashViewMenu");
+      if (!m) return;
+      const tick = on => `<span class="dv-tick">${on ? "✓" : ""}</span>`;
+      const rows = [];
+      rows.push(`<div class="dv-item ${!activeView ? "dv-active" : ""}" data-view="">${tick(!activeView)}Custom <small>(your layout)</small></div>`);
+      for (const v of DASHBOARD_VIEWS) {
+        const active = !!activeView && activeView.id === v.id;
+        const tag = v.customized ? " <small>(edited)</small>" : v.builtIn ? "" : " <small>(custom)</small>";
+        rows.push(`<div class="dv-item ${active ? "dv-active" : ""}" data-view="${escAttr(v.id)}" title="${escAttr(v.description || "")}">${tick(active)}${esc(v.name)}${tag}</div>`);
+      }
+      rows.push(`<div class="dv-sep"></div>`);
+      const repLabel = dashViewReportLabel();
+      if (repLabel) rows.push(`<div class="dv-item dv-item-action" data-action="report">↳ Generate ${esc(repLabel)}</div>`);
+      rows.push(`<div class="dv-item dv-item-action" data-action="edit">✎ Edit views…</div>`);
+      m.innerHTML = rows.join("");
+      m.querySelectorAll(".dv-item").forEach(el => el.addEventListener("click", () => {
+        const action = el.dataset.action;
+        if (action === "edit") { closeDashViewMenu(); openDashViewEditor(); return; }
+        if (action === "report") { closeDashViewMenu(); generateViewReport(); return; }
+        const id = el.dataset.view;
+        const v = id ? DASHBOARD_VIEWS.find(x => x.id === id) : null;
+        closeDashViewMenu();
+        applyDashboardView(v, { persist: true, rerender: true });
+      }));
+    }
+    function openDashViewEditor() {
+      const b = document.getElementById("settingsBtn"); if (b) b.click();
+      const t = document.querySelector('.stab[data-stab="dashboard-views"]'); if (t) t.click();
+    }
+    // Set the per-case report template to the active view's match, then fire the normal report export.
+    async function generateViewReport() {
+      if (!activeView || !activeView.reportTemplateId) return;
+      const c = (document.getElementById("caseId").value || "").trim();
+      if (!c) return;
+      try {
+        await fetch(`/cases/${encodeURIComponent(c)}/report-template`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ templateId: activeView.reportTemplateId }) });
+      } catch {}
+      const tsel = document.getElementById("rm-reportTemplate"); if (tsel) tsel.value = activeView.reportTemplateId;
+      const ex = document.getElementById("exportSelect");
+      if (ex) { ex.value = "report"; ex.dispatchEvent(new Event("change")); }
+    }
+
+    // Apply a view's curated layout: its `sections` list = the VISIBLE sections (in order),
+    // everything else hidden. We write the SAME localStorage keys the Settings → sections editor
+    // uses, so the two stay in sync and the layout survives reloads / re-renders.
+    function applyViewLayout(view) {
+      if (!view || !Array.isArray(view.sections) || !view.sections.length) return;
+      const want = view.sections.filter(id => SECTION_DEFS.some(d => d.id === id));
+      const wantSet = new Set(want);
+      const vis = {};
+      SECTION_DEFS.forEach(({ id }) => { vis[id] = wantSet.has(id); });
+      // Order: the view's visible sections first (in its order), then the rest (hidden) in their
+      // canonical order so re-enabling one later lands it somewhere sensible.
+      const order = [...want, ...SECTION_DEFS.map(d => d.id).filter(id => !wantSet.has(id))];
+      localStorage.setItem(SECTIONS_VIS_KEY, JSON.stringify(vis));
+      localStorage.setItem(SECTIONS_ORDER_KEY, JSON.stringify(order));
+      applySectionsVis();
+      renderSecChecks();   // keep the Settings checkboxes in sync if the modal is open
+    }
+
+    function applyDashboardView(view, opts) {
+      opts = opts || {};
+      activeView = view || null;
+      if (view) applyViewLayout(view);
+      updateDashViewButton();
+      renderDashViewMenu();
+      if (opts.persist !== false) {
+        const k = viewStorageKey();
+        if (k) { if (view) localStorage.setItem(k, view.id); else localStorage.removeItem(k); }
+      }
+      if (opts.rerender !== false && lastState) render(lastState);
+    }
+
+    // Re-apply the per-case saved view (no persist, no forced re-render — the caller's state fetch
+    // renders shortly and picks up the filter; we just set activeView + section visibility now).
+    function applySavedViewForCase() {
+      const k = viewStorageKey();
+      if (!k || !DASHBOARD_VIEWS.length) return;
+      const id = localStorage.getItem(k);
+      const view = id ? DASHBOARD_VIEWS.find(v => v.id === id) : null;
+      applyDashboardView(view, { persist: false, rerender: false });
+    }
+
+    function loadDashboardViews() {
+      return fetch("/dashboard-views").then(r => r.ok ? r.json() : { views: [] }).then(j => {
+        DASHBOARD_VIEWS = Array.isArray(j.views) ? j.views : [];
+        applySavedViewForCase();
+        renderDashViewMenu();
+        updateDashViewButton();
+      }).catch(() => {});
+    }
+
+    {
+      const btn = document.getElementById("dashViewBtn");
+      const menu = document.getElementById("dashViewMenu");
+      if (btn && menu) {
+        btn.addEventListener("click", e => {
+          e.stopPropagation();
+          if (menu.style.display !== "none") { closeDashViewMenu(); return; }
+          renderDashViewMenu();
+          menu.style.display = "block";
+          btn.setAttribute("aria-expanded", "true");
+        });
+        document.addEventListener("click", e => {
+          if (menu.style.display !== "none" && !menu.contains(e.target) && !btn.contains(e.target)) closeDashViewMenu();
+        });
+        document.addEventListener("keydown", e => { if (e.key === "Escape") closeDashViewMenu(); });
+      }
+    }
+    loadDashboardViews();
+
     async function fetchEnvSettings() {
       try {
         const r = await fetch("/settings/env");
@@ -10638,6 +10868,12 @@
     document.getElementById("rtAccent").addEventListener("change", e => { try { document.getElementById("rtAccentPick").value = e.target.value.trim(); } catch (err) {} });
     document.getElementById("rm-reportTemplate").addEventListener("change", saveCaseTemplate);
 
+    // Dashboard Views editor wiring (#142)
+    document.getElementById("dvPicker").addEventListener("change", e => dvFillEditor(e.target.value));
+    document.getElementById("dvNewBtn").addEventListener("click", () => { document.getElementById("dvPicker").value = ""; dvFillEditor(""); document.getElementById("dvName").focus(); });
+    document.getElementById("dvSaveBtn").addEventListener("click", dvSave);
+    document.getElementById("dvDeleteBtn").addEventListener("click", dvDelete);
+
     document.getElementById("wlAddBtn").addEventListener("click", wlAddRule);
     document.getElementById("wlPattern").addEventListener("keydown", e => { if (e.key === "Enter") wlAddRule(); });
     document.getElementById("wlImportBtn").addEventListener("click", wlImport);
@@ -10714,6 +10950,7 @@
         if (tab === "importers") loadImporters();
         if (tab === "kev") loadKev();
         if (tab === "reports") loadReportTemplates();
+        if (tab === "dashboard-views") loadDashboardViewsEditor();
         if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
         if (tab === "updates") loadUpdateCheck();
         if (tab === "diagnostics") loadDiagnostics();
@@ -10844,6 +11081,115 @@
       msg.textContent = "…";
       fetch("/report-templates/" + encodeURIComponent(rtCurrentId), { method: "DELETE" })
         .then(r => { if (!r.ok && r.status !== 204) throw new Error("HTTP " + r.status); rtCurrentId = ""; loadReportTemplates(); refreshCaseTemplatePicker(); msg.textContent = ""; })
+        .catch(e => msg.textContent = "failed: " + e.message);
+    }
+
+    // --- Dashboard Views (#142) — global panel-layout presets, Settings → Dashboard Views ----------
+    let dvViews = [];          // last fetched list of views (with builtIn/customized flags)
+    let dvCurrentId = "";      // id of the view being edited ("" = new/unsaved)
+    let dvEditSections = [];   // [{ id, enabled }] over all sections, ordered (enabled = visible in this view)
+
+    function loadDashboardViewsEditor(selectId) {
+      // Populate the report-template choices FIRST (so dvFillEditor's value sticks), then the views.
+      return fetch("/report-templates").then(r => r.ok ? r.json() : []).then(list => {
+        const sel = document.getElementById("dvReportTemplate");
+        if (sel) sel.innerHTML = `<option value="">(none)</option>` +
+          (Array.isArray(list) ? list : []).map(t => `<option value="${escAttr(t.id)}">${esc(t.name || t.id)}</option>`).join("");
+      }).catch(() => {}).then(() => fetch("/dashboard-views").then(r => r.ok ? r.json() : { views: [] })).then(j => {
+        dvViews = Array.isArray(j.views) ? j.views : [];
+        const picker = document.getElementById("dvPicker");
+        picker.innerHTML = dvViews.map(v =>
+          `<option value="${escAttr(v.id)}">${esc(v.name || v.id)}${v.builtIn ? (v.customized ? " (built-in, edited)" : " (built-in)") : ""}</option>`
+        ).join("") + `<option value="">✚ New custom view…</option>`;
+        const pick = selectId !== undefined ? selectId : (dvViews.some(v => v.id === dvCurrentId) ? dvCurrentId : (dvViews[0] ? dvViews[0].id : ""));
+        picker.value = pick;
+        dvFillEditor(pick);
+      }).catch(() => {});
+    }
+
+    function dvFindView(id) { return dvViews.find(v => v.id === id); }
+    function dvSectionLabel(id) { const d = SECTION_DEFS.find(s => s.id === id); return d ? d.label : id; }
+
+    function dvFillEditor(id) {
+      const v = dvFindView(id);
+      dvCurrentId = v ? v.id : "";
+      const set = (elId, val) => { const el = document.getElementById(elId); if (el) el.value = val == null ? "" : val; };
+      set("dvName", v ? v.name : "");
+      set("dvDescription", v ? v.description : "");
+      set("dvMinSeverity", (v && v.filters && v.filters.minSeverity) || "");
+      set("dvTopN", (v && v.filters && v.filters.topN) || "");
+      set("dvReportTemplate", (v && v.reportTemplateId) || "");
+      // Sections: the view's visible ids first (enabled, in order), then the rest (disabled) in canonical order.
+      const visible = (v && Array.isArray(v.sections)) ? v.sections.filter(sid => SECTION_DEFS.some(d => d.id === sid)) : [];
+      const visibleSet = new Set(visible);
+      dvEditSections = visible.map(sid => ({ id: sid, enabled: true }));
+      for (const d of SECTION_DEFS) if (!visibleSet.has(d.id)) dvEditSections.push({ id: d.id, enabled: false });
+      const del = document.getElementById("dvDeleteBtn");
+      del.textContent = v && v.builtIn ? "Reset to default" : "Delete";
+      del.style.display = v ? "" : "none";
+      document.getElementById("dvSaveBtn").textContent = v && v.builtIn ? "Save (override built-in)" : "Save view";
+      document.getElementById("dvMsg").textContent = "";
+      dvRenderSections();
+    }
+
+    function dvRenderSections() {
+      const el = document.getElementById("dvSections");
+      el.innerHTML = dvEditSections.map((s, i) =>
+        `<div style="display:flex;align-items:center;gap:8px;padding:3px 4px;border-bottom:1px solid #1a1f28;font-size:12px">`
+        + `<input type="checkbox" class="dv-sec-en" data-i="${i}" ${s.enabled ? "checked" : ""} style="width:auto;margin:0" />`
+        + `<span style="flex:1;${s.enabled ? "" : "color:#7e8aa0"}">${esc(dvSectionLabel(s.id))}</span>`
+        + `<button type="button" class="dv-sec-up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""} style="background:#2a2f3a;border:none;color:#cbd3df;border-radius:4px;padding:0 7px;cursor:pointer">▲</button>`
+        + `<button type="button" class="dv-sec-down" data-i="${i}" title="Move down" ${i === dvEditSections.length - 1 ? "disabled" : ""} style="background:#2a2f3a;border:none;color:#cbd3df;border-radius:4px;padding:0 7px;cursor:pointer">▼</button>`
+        + `</div>`
+      ).join("");
+      el.querySelectorAll(".dv-sec-en").forEach(cb => cb.addEventListener("change", e => {
+        dvEditSections[+e.target.dataset.i].enabled = e.target.checked; dvRenderSections();
+      }));
+      el.querySelectorAll(".dv-sec-up").forEach(b => b.addEventListener("click", e => dvMoveSection(+e.currentTarget.dataset.i, -1)));
+      el.querySelectorAll(".dv-sec-down").forEach(b => b.addEventListener("click", e => dvMoveSection(+e.currentTarget.dataset.i, 1)));
+    }
+
+    function dvMoveSection(i, dir) {
+      const j = i + dir;
+      if (j < 0 || j >= dvEditSections.length) return;
+      const tmp = dvEditSections[i]; dvEditSections[i] = dvEditSections[j]; dvEditSections[j] = tmp;
+      dvRenderSections();
+    }
+
+    function dvSave() {
+      const name = document.getElementById("dvName").value.trim();
+      const msg = document.getElementById("dvMsg");
+      if (!name) { msg.textContent = "name is required"; return; }
+      const sections = dvEditSections.filter(s => s.enabled).map(s => s.id);
+      if (!sections.length) { msg.textContent = "select at least one section to show"; return; }
+      const minSeverity = document.getElementById("dvMinSeverity").value || undefined;
+      const topNraw = parseInt(document.getElementById("dvTopN").value, 10);
+      const topN = (Number.isFinite(topNraw) && topNraw > 0) ? topNraw : undefined;
+      const reportTemplateId = document.getElementById("dvReportTemplate").value || undefined;
+      const body = {
+        id: dvCurrentId || undefined,
+        name,
+        description: document.getElementById("dvDescription").value.trim(),
+        sections,
+        filters: { minSeverity, topN },
+        reportTemplateId,
+      };
+      msg.textContent = "saving…";
+      fetch("/dashboard-views", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(saved => { msg.textContent = "saved ✓"; setTimeout(() => msg.textContent = "", 2000); loadDashboardViewsEditor(saved.id); loadDashboardViews(); })
+        .catch(e => msg.textContent = "save failed: " + e.message + " — restart the companion server if this 404s");
+    }
+
+    function dvDelete() {
+      if (!dvCurrentId) return;
+      const v = dvFindView(dvCurrentId);
+      const msg = document.getElementById("dvMsg");
+      const verb = v && v.builtIn ? "Reset this built-in view to its shipped default?" : "Delete this view?";
+      if (!confirm(verb)) return;
+      msg.textContent = "…";
+      fetch("/dashboard-views/" + encodeURIComponent(dvCurrentId), { method: "DELETE" })
+        .then(r => { if (!r.ok && r.status !== 204) throw new Error("HTTP " + r.status); dvCurrentId = ""; loadDashboardViewsEditor(); loadDashboardViews(); msg.textContent = ""; })
         .catch(e => msg.textContent = "failed: " + e.message);
     }
 
