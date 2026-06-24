@@ -256,7 +256,9 @@ jobs:
     # Same tag gate as the release; the push is a no-op until the CHOCOLATEY_API_KEY secret is
     # set, so it's safe to merge beforehand (#137).
     needs: [windows-exe, extension-zip, release]
-    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    # TEMPORARY: Chocolatey publish disabled for this tag. REVERT to the line below after the release.
+    # if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    if: false
     runs-on: windows-latest
     steps:
       - name: Checkout
