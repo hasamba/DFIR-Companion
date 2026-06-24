@@ -8,6 +8,7 @@
 // not listed is hidden. Every id must be in `DASHBOARD_SECTION_IDS`, and every `reportTemplateId`
 // must be a built-in report template id — both are asserted by the unit test.
 
+import { z } from "zod";
 import { BUILT_IN_REPORT_TEMPLATES } from "../reports/reportTemplate.js";
 
 /** Severity labels, most→least severe. Mirrors the dashboard's `SEV` constant. */
@@ -220,4 +221,57 @@ export function meetsMinSeverity(sev: string, min?: string): boolean {
 /** Built-in report template ids — the set a view's `reportTemplateId` may reference. */
 export function builtInReportTemplateIds(): string[] {
   return BUILT_IN_REPORT_TEMPLATES.map((t) => t.id);
+}
+
+const VALID_SECTION_IDS = new Set<string>(DASHBOARD_SECTION_IDS);
+
+// Every field is lenient (`.catch`) so a partial / hand-edited file or POST body normalizes instead
+// of rejecting — same philosophy as the report-template + AI response schemas.
+export const dashboardViewSchema = z.object({
+  id: z.string().catch(""),
+  name: z.string().catch(""),
+  description: z.string().catch(""),
+  sections: z.array(z.string()).catch([]),
+  filters: z
+    .object({
+      minSeverity: z.enum(["Critical", "High", "Medium", "Low", "Info"]).optional().catch(undefined),
+      topN: z.number().int().positive().max(1000).optional().catch(undefined),
+    })
+    .catch({}),
+  defaultSort: z.enum(["time", "severity"]).catch("severity"),
+  reportTemplateId: z.string().optional().catch(undefined),
+});
+
+/**
+ * Coerce untrusted input (a saved file's contents or a POST body) into a valid DashboardView. Unknown
+ * keys are dropped, wrong-typed fields fall back to defaults, and `sections` is filtered to the known
+ * section ids (deduped, order preserved) so a bad id can never reach the dashboard. Never throws.
+ * NOTE: unlike report templates, omitted sections are NOT back-filled — a view's `sections` list IS
+ * exactly what it shows; everything else is hidden by design.
+ */
+export function normalizeDashboardView(input: unknown): DashboardView {
+  const parsed = dashboardViewSchema.safeParse(input ?? {});
+  const t = parsed.success ? parsed.data : dashboardViewSchema.parse({});
+  const seen = new Set<string>();
+  const sections: string[] = [];
+  for (const raw of t.sections) {
+    const id = typeof raw === "string" ? raw.trim() : "";
+    if (!VALID_SECTION_IDS.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    sections.push(id);
+  }
+  const filters: DashboardViewFilters = {};
+  if (t.filters?.minSeverity) filters.minSeverity = t.filters.minSeverity;
+  if (typeof t.filters?.topN === "number") filters.topN = t.filters.topN;
+  const id = t.id.trim();
+  const reportTemplateId = (t.reportTemplateId ?? "").trim();
+  return {
+    id,
+    name: t.name.trim() || id || "Untitled view",
+    description: t.description.trim(),
+    sections,
+    filters: filters.minSeverity || filters.topN ? filters : undefined,
+    defaultSort: t.defaultSort,
+    reportTemplateId: reportTemplateId || undefined,
+  };
 }
