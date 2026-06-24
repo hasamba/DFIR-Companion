@@ -1080,6 +1080,11 @@
       <option value="">Push to…</option>
     </select>
     <span id="reportLinks" class="report-links"></span>
+    <label id="dashViewWrap" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap" data-tip="Dashboard view preset — re-arranges panels and filters them for a role (Analyst / Lead / Executive) or investigation phase (Triage / Report / Deep-Dive / Hunt Prep). Remembered per-case in this browser. Pick ‘Custom’ to keep your own layout.">
+      <span style="color:var(--c-cbd3df)">View:</span>
+      <select id="dashViewSel" class="toolbar-select"><option value="">Custom</option></select>
+      <a href="#" id="dashViewReport" style="display:none;font-size:11px;color:var(--c-6aa9ff);text-decoration:none"></a>
+    </label>
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
     <button id="toggleSearchBar" type="button" aria-label="Filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Filter events, findings and IOCs by text and time range (press /)">Filter</button>
     <span id="status">disconnected</span>
@@ -2927,6 +2932,8 @@
     requestAnimationFrame(() => document.documentElement.classList.add("theme-anim"));
 
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
+    let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views
+    let activeView = null;                     // the currently-applied view (null = Custom / no preset)
     let ws = null;
     let countTimer = null;
     let countUpdate = null;   // current capture-count poll fn (set by pollCount)
@@ -8566,6 +8573,8 @@
         if (!real.length) return !hiddenSources.has(NO_SOURCE_FACET);  // unsourced events ride the "(no source)" facet
         return real.some(s => !hiddenSources.has(s));                   // hidden only when ALL its sources are unchecked
       });
+      const viewSevFiltering = !!(activeView && activeView.filters && activeView.filters.minSeverity);
+      if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity));   // dashboard-view severity floor (#142)
       visible = sortTimelineEvents(visible);
 
       const totalFiltered = visible.length;
@@ -8578,7 +8587,7 @@
       const countEl = document.getElementById('timelineCount');
       if (countEl) {
         const total = ft.length;
-        const baseText = (filtering || showStarredOnly || sourceFiltering || _hasActiveFilter())
+        const baseText = (filtering || showStarredOnly || sourceFiltering || viewSevFiltering || _hasActiveFilter())
           ? `${totalFiltered} of ${total} events`
           : `${total} event${total !== 1 ? 's' : ''}`;
         countEl.textContent = (tlPageSize > 0 && totalFiltered > tlPageSize)
@@ -8591,7 +8600,7 @@
 
       if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
-          ((filtering || showStarredOnly || sourceFiltering || _hasActiveFilter()) && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
+          ((filtering || showStarredOnly || sourceFiltering || viewSevFiltering || _hasActiveFilter()) && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
         return;
       }
 
@@ -8818,9 +8827,11 @@
       const minConf = parseInt(document.getElementById("confFilter").value, 10) || 0;
       const filtered = sorted.filter(f =>
         (f.confidence === undefined || f.confidence >= minConf) &&
-        (!searchTerm || _findingMatchesSearch(f, searchTerm)));
+        (!searchTerm || _findingMatchesSearch(f, searchTerm)) &&
+        viewMeetsMinSev(f.severity));   // dashboard-view severity floor (#142)
+      const capped = viewTopN() > 0 ? filtered.slice(0, viewTopN()) : filtered;   // view top-N cap
       document.getElementById("findings").innerHTML =
-        filtered.map(f => {
+        capped.map(f => {
           const evidence = [...(f.sourceScreenshots || []), ...(evByFinding[f.id] || [])];
           // Auto-flagged findings (from a Critical/High artifact row synthesis didn't cover)
           // carry the f-auto- id prefix — badge them so the analyst knows to review/refine.
@@ -8838,7 +8849,7 @@
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs)}</div>`;
-        }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : "—");
+        }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
       document.getElementById("timeline").innerHTML =
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
@@ -8897,6 +8908,7 @@
       loadCorrProfile(caseId);
       loadReportMeta(caseId);
       loadCaseTemplatePicker(caseId);
+      applySavedViewForCase();   // restore this case's dashboard-view preset (#142)
       loadAssetGraph(caseId);
       loadAssetOverrides(caseId);
       loadEvidenceGraph(caseId);
@@ -10509,6 +10521,119 @@
         });
       });
     }
+
+    // ── Dashboard view presets (#142) ─────────────────────────────────────────
+    // Named role/phase layouts fetched from the server (GET /dashboard-views). Picking one
+    // re-arranges panels (reusing the section show/hide + order machinery above) and applies a
+    // severity / top-N filter to the findings list and forensic timeline. The choice is remembered
+    // per-case in this browser. "Custom" = no preset (your own layout, no view filter).
+    // (DASHBOARD_VIEWS / activeView are declared with the other render-state globals up top.)
+    const RT_FRIENDLY = { "standard": "Standard report", "executive-brief": "Executive Brief", "technical-detailed": "Technical Detailed" };
+    function viewStorageKey() {
+      const c = (document.getElementById("caseId").value || "").trim();
+      return c ? "dfir.dashView." + c : "";
+    }
+    function viewFilters() { return (activeView && activeView.filters) || {}; }
+    // True when a severity is at or above the active view's threshold. Fails OPEN (unknown
+    // severity / no threshold → shown) — missing a real finding is worse than one extra row.
+    function viewMeetsMinSev(sev) {
+      const min = viewFilters().minSeverity;
+      if (!min) return true;
+      const mi = SEV.indexOf(min); if (mi < 0) return true;
+      const si = SEV.indexOf(sev); if (si < 0) return true;
+      return si <= mi;
+    }
+    function viewTopN() { const n = viewFilters().topN; return (typeof n === "number" && n > 0) ? n : 0; }
+
+    function renderDashViewReportLink() {
+      const a = document.getElementById("dashViewReport");
+      if (!a) return;
+      if (activeView && activeView.reportTemplateId) {
+        const label = RT_FRIENDLY[activeView.reportTemplateId] || "matching report";
+        a.textContent = "↳ " + label;
+        a.title = `Generate this case's report with the ${label} layout that pairs with the ${activeView.name} view`;
+        a.style.display = "";
+      } else {
+        a.style.display = "none";
+      }
+    }
+
+    // Apply a view's curated layout: its `sections` list = the VISIBLE sections (in order),
+    // everything else hidden. We write the SAME localStorage keys the Settings → sections editor
+    // uses, so the two stay in sync and the layout survives reloads / re-renders.
+    function applyViewLayout(view) {
+      if (!view || !Array.isArray(view.sections) || !view.sections.length) return;
+      const want = view.sections.filter(id => SECTION_DEFS.some(d => d.id === id));
+      const wantSet = new Set(want);
+      const vis = {};
+      SECTION_DEFS.forEach(({ id }) => { vis[id] = wantSet.has(id); });
+      // Order: the view's visible sections first (in its order), then the rest (hidden) in their
+      // canonical order so re-enabling one later lands it somewhere sensible.
+      const order = [...want, ...SECTION_DEFS.map(d => d.id).filter(id => !wantSet.has(id))];
+      localStorage.setItem(SECTIONS_VIS_KEY, JSON.stringify(vis));
+      localStorage.setItem(SECTIONS_ORDER_KEY, JSON.stringify(order));
+      applySectionsVis();
+      renderSecChecks();   // keep the Settings checkboxes in sync if the modal is open
+    }
+
+    function applyDashboardView(view, opts) {
+      opts = opts || {};
+      activeView = view || null;
+      const sel = document.getElementById("dashViewSel");
+      if (sel) sel.value = view ? view.id : "";
+      if (view) applyViewLayout(view);
+      renderDashViewReportLink();
+      if (opts.persist !== false) {
+        const k = viewStorageKey();
+        if (k) { if (view) localStorage.setItem(k, view.id); else localStorage.removeItem(k); }
+      }
+      if (opts.rerender !== false && lastState) render(lastState);
+    }
+
+    // Re-apply the per-case saved view (no persist, no forced re-render — the caller's state fetch
+    // renders shortly and picks up the filter; we just set activeView + section visibility now).
+    function applySavedViewForCase() {
+      const k = viewStorageKey();
+      if (!k || !DASHBOARD_VIEWS.length) return;
+      const id = localStorage.getItem(k);
+      const view = id ? DASHBOARD_VIEWS.find(v => v.id === id) : null;
+      applyDashboardView(view, { persist: false, rerender: false });
+    }
+
+    function loadDashboardViews() {
+      return fetch("/dashboard-views").then(r => r.ok ? r.json() : { views: [] }).then(j => {
+        DASHBOARD_VIEWS = Array.isArray(j.views) ? j.views : [];
+        const sel = document.getElementById("dashViewSel");
+        if (sel) {
+          sel.innerHTML = '<option value="">Custom</option>' +
+            DASHBOARD_VIEWS.map(v => `<option value="${esc(v.id)}" title="${esc(v.description || "")}">${esc(v.name)}</option>`).join("");
+        }
+        applySavedViewForCase();
+      }).catch(() => {});
+    }
+
+    {
+      const sel = document.getElementById("dashViewSel");
+      if (sel) sel.addEventListener("change", e => {
+        const v = DASHBOARD_VIEWS.find(x => x.id === e.target.value) || null;
+        applyDashboardView(v, { persist: true, rerender: true });
+      });
+      const rep = document.getElementById("dashViewReport");
+      if (rep) rep.addEventListener("click", async e => {
+        e.preventDefault();
+        if (!activeView || !activeView.reportTemplateId) return;
+        const c = (document.getElementById("caseId").value || "").trim();
+        if (!c) return;
+        // Set the per-case report template to this view's match, then fire the normal report export.
+        try {
+          await fetch(`/cases/${encodeURIComponent(c)}/report-template`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ templateId: activeView.reportTemplateId }) });
+        } catch {}
+        const tsel = document.getElementById("rm-reportTemplate"); if (tsel) tsel.value = activeView.reportTemplateId;
+        const ex = document.getElementById("exportSelect");
+        if (ex) { ex.value = "report"; ex.dispatchEvent(new Event("change")); }
+      });
+    }
+    loadDashboardViews();
 
     async function fetchEnvSettings() {
       try {

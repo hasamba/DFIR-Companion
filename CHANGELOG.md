@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Dashboard view presets** — a "View:" picker with built-in Analyst / Lead / Executive (role) and Triage / Report / Deep-Dive / Hunt-Prep (phase) layouts that show/hide/reorder existing panels (reusing the section machinery), apply a per-view severity floor + top-N cap to findings and the timeline, and link each to its matching report template; remembered per-case in the browser (closes #142).
 - **Persistent case memory** — synthesis now logs each run to the Investigation Log (durable, cross-session, never wiped); a *known-unknowns* block (timeline gaps, uncovered ATT&CK phases, lookalike actors' likely-next techniques) grounds synthesis + hunt suggestions in what's MISSING; opt-in `DFIR_SYNTH_ADVERSARY_HINTS` feeds candidate threat actors into the synthesis prompt as labelled hypotheses (closes #165).
 - **Skip AI for disabled report sections** — the Executive summary and narrative generators no longer spend tokens when their section is disabled in the case's report template (the route returns a 409 with the reason instead of generating); a hidden dashboard Executive Summary panel also won't generate. Already-saved content is preserved (closes #168).
 - **IOC filter by type** — the dashboard IOC panel gets a "▾ Types" facet dropdown (ip/domain/url/hash/file/process/other) with per-type counts, composing with the existing flagged-only + search filters; client-side only, mirrors the timeline's source filter (closes #169).

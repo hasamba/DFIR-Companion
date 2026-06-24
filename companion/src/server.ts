@@ -98,6 +98,7 @@ import { ReportMetaStore } from "./reports/reportMeta.js";
 import { ReportTemplateStore } from "./reports/reportTemplateStore.js";
 import { ReportTemplateControlStore } from "./reports/reportTemplateControl.js";
 import { defaultReportTemplate, isReportSectionEnabled, type ReportSectionKey } from "./reports/reportTemplate.js";
+import { BUILT_IN_DASHBOARD_VIEWS } from "./analysis/dashboardViews.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore, type Tag } from "./analysis/tags.js";
@@ -1666,6 +1667,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // Dashboard view presets (#142) — built-in, role/phase-keyed layouts the dashboard applies
+  // client-side (section show/hide/reorder + a per-view severity/top-N filter + a matching report
+  // template). Static config; no store needed.
+  app.get("/dashboard-views", (_req: Request, res: Response) => {
+    return res.status(200).json({ views: BUILT_IN_DASHBOARD_VIEWS });
   });
 
   // Delete a custom template, OR reset an edited built-in back to its shipped default (idempotent for
