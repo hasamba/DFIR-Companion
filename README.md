@@ -145,6 +145,7 @@ Standard DFIR questions auto-answered from the synthesized case
 - **Compromised assets** — victim hosts/accounts + interactive asset↔IOC graph
 - **Key investigative questions** — answered with pointers to evidence or next steps to collect
 - **Investigation threads** — open/resolved leads
+- **Dashboard view presets** — one-click Analyst / Lead / Executive (role) and Triage / Report / Deep-Dive / Hunt-Prep (phase) layouts that re-arrange panels and filter findings + timeline by severity, each paired with a matching report template; remembered per-case and **fully editable** (edit built-ins or create your own in Settings → Dashboard Views)
 - **Reports** — Markdown, HTML, PDF, Word (.docx), CSVs, JSON exports
 
 ## Features

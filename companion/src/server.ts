@@ -98,6 +98,8 @@ import { ReportMetaStore } from "./reports/reportMeta.js";
 import { ReportTemplateStore } from "./reports/reportTemplateStore.js";
 import { ReportTemplateControlStore } from "./reports/reportTemplateControl.js";
 import { defaultReportTemplate, isReportSectionEnabled, type ReportSectionKey } from "./reports/reportTemplate.js";
+import { BUILT_IN_DASHBOARD_VIEWS } from "./analysis/dashboardViews.js";
+import { DashboardViewStore } from "./analysis/dashboardViewStore.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore, type Tag } from "./analysis/tags.js";
@@ -249,6 +251,9 @@ export interface AppOptions {
   reportTemplateStore?: ReportTemplateStore;
   reportTemplateControlStore?: ReportTemplateControlStore;
   onReportTemplate?: (caseId: string) => void;
+  // Dashboard view presets (#142): GLOBAL role/phase layouts (sections + severity/top-N filter +
+  // matching report template) the dashboard applies. Built-ins editable in place, custom via CRUD.
+  dashboardViewStore?: DashboardViewStore;
   // Investigator comments on case entities (collaboration). onComments pings dashboard
   // clients over the WS to re-fetch when a comment is added/removed.
   commentsStore?: CommentsStore;
@@ -1663,6 +1668,59 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (!name) return res.status(400).json({ error: "name is required" });
       const saved = await options.reportTemplateStore.save(req.body);
       return res.status(201).json(saved);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Dashboard view presets (#142) — built-in + custom, role/phase-keyed layouts the dashboard applies
+  // client-side (section show/hide/reorder + a per-view severity/top-N filter + a matching report
+  // template). GLOBAL store beside cases/ (mirrors report templates): built-ins editable in place,
+  // custom views via POST, reset/delete via DELETE.
+  app.get("/dashboard-views", async (_req: Request, res: Response) => {
+    if (!options.dashboardViewStore) return res.status(200).json({ views: BUILT_IN_DASHBOARD_VIEWS });
+    try {
+      return res.status(200).json({ views: await options.dashboardViewStore.list() });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/dashboard-views/:id", async (req: Request, res: Response) => {
+    if (!options.dashboardViewStore) return res.status(501).json({ error: "dashboard views not configured" });
+    try {
+      const view = await options.dashboardViewStore.get(req.params.id);
+      if (!view) return res.status(404).json({ error: `dashboard view "${req.params.id}" not found` });
+      return res.status(200).json(view);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/dashboard-views", async (req: Request, res: Response) => {
+    if (!options.dashboardViewStore) return res.status(501).json({ error: "dashboard views not configured" });
+    try {
+      const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+      if (!name) return res.status(400).json({ error: "name is required" });
+      const sections = Array.isArray(req.body?.sections) ? req.body.sections : [];
+      if (!sections.length) return res.status(400).json({ error: "at least one visible section is required" });
+      const saved = await options.dashboardViewStore.save(req.body);
+      return res.status(201).json(saved);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Delete a custom view, OR reset an edited built-in back to its shipped default (idempotent for a
+  // pristine built-in). 404 only for an unknown non-built-in id.
+  app.delete("/dashboard-views/:id", async (req: Request, res: Response) => {
+    if (!options.dashboardViewStore) return res.status(501).json({ error: "dashboard views not configured" });
+    try {
+      const removed = await options.dashboardViewStore.delete(req.params.id);
+      if (!removed && !options.dashboardViewStore.isBuiltIn(req.params.id)) {
+        return res.status(404).json({ error: `dashboard view "${req.params.id}" not found` });
+      }
+      return res.status(204).send();
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -7111,6 +7169,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
   // Report templates are GLOBAL like case templates/bundles — a dedicated subdir beside cases/.
   const reportTemplateStore = new ReportTemplateStore(join(dirname(casesRoot), "report-templates"));
+  // Dashboard view presets (#142) — GLOBAL like report templates, its own subdir beside cases/.
+  const dashboardViewStore = new DashboardViewStore(join(dirname(casesRoot), "dashboard-views"));
   // A dedicated subdir (mirrors bundles/templates) rather than a loose file beside cases/, because
   // when DFIR_CASES_ROOT is a drive root child (e.g. C:\cases) the sibling is C:\ — and Windows
   // forbids creating files directly in a drive root. A subdir is always creatable + writable.
@@ -7267,6 +7327,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     reportMetaStore,
     reportTemplateStore,
     reportTemplateControlStore,
+    dashboardViewStore,
     onReportTemplate: (caseId) => hub.broadcastTo(caseId, { type: "report_template_changed" }),
     commentsStore,
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
