@@ -10048,6 +10048,9 @@
           }
           const jr = await r.json().catch(() => ({}));
           if (r.status === 423) { hideImportProgress(); statusEl.textContent = jr.error || "Case is closed — reopen it to import evidence"; e.target.value = ""; return; }
+          // The case doesn't exist (Connect attaches without creating). All files in the batch would
+          // hit the same wall, so abort with the actionable reason instead of a generic "failed".
+          if (r.status === 404) { hideImportProgress(); statusEl.textContent = jr.error || `Case "${caseId}" does not exist — create it first with “＋ New case”`; e.target.value = ""; return; }
           if (!r.ok) throw new Error(jr.error || ("HTTP " + r.status));
           // CSV/log need the LLM to interpret them; with AI off the server saves the evidence but
           // skips analysis (jr.analyzed === false). Surface that honestly instead of "analyzing".
