@@ -4427,6 +4427,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (caseMeta?.status === "closed") {
       return res.status(423).json({ error: `Case "${caseId}" is closed — reopen it before importing evidence` });
     }
+    // Same evidence-first guard as POST /import + /captures + /state: never ingest into a case that
+    // doesn't exist (it would write an orphaned, case-meta-less import on disk).
+    if (!(await store.caseExists(caseId))) {
+      return res.status(404).json({ error: `case ${caseId} does not exist — create it in the dashboard first` });
+    }
     const filePath = typeof req.body?.path === "string" ? req.body.path.trim() : "";
     if (!filePath) return res.status(400).json({ error: "path is required (absolute path to a file on the server)" });
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
