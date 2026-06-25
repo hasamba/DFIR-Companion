@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -100,5 +100,17 @@ describe("POST /cases/:id/import — case existence guard", () => {
 
     // The deterministic import actually lands the event.
     expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
+  });
+
+  it("404s a server-side import-file into a case that does not exist", async () => {
+    const { app, store } = await makeApp();
+    const dir = await mkdtemp(join(tmpdir(), "dfir-import-file-"));
+    const path = join(dir, "hunt.json");
+    await writeFile(path, JSON.stringify(CHAINSAW_HUNT), "utf8");
+
+    const res = await request(app).post("/cases/does-not-exist/import-file").send({ path });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/does not exist/i);
+    expect(await store.caseExists("does-not-exist")).toBe(false);
   });
 });

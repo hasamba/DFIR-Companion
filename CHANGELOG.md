@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **Import into a non-existent case silently dropped evidence** — `POST /cases/:id/import` now returns 404 for a missing case (parity with `/captures` + `/state`) instead of 202-"accepting" and orphaning the bytes on disk; the dashboard surfaces the "create the case first" reason instead of a generic "unrecognized".
+- **Import into a non-existent case silently dropped evidence** — the `import` + server-side `import-file` routes now return 404 for a missing case (parity with `/captures` + `/state`) instead of 202-"accepting" and orphaning the bytes on disk; the dashboard surfaces the "create the case first" reason instead of a generic "unrecognized".
 
 ## [0.27.0] - 2026-06-24
 
