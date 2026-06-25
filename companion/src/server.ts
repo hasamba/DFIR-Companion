@@ -4293,6 +4293,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (caseMeta?.status === "closed") {
       return res.status(423).json({ error: `Case "${caseId}" is closed — reopen it before importing evidence` });
     }
+    // Evidence-first parity with POST /captures + GET /state: never silently accept evidence for a
+    // case that doesn't exist. "Connect" attaches without creating, so a typo'd / never-created case
+    // id would otherwise 202-"accept" the import and orphan it on disk (no case meta, invisible in the
+    // case list) — silent loss of forensic evidence. Fail loud so the analyst creates the case first.
+    if (!(await store.caseExists(caseId))) {
+      return res.status(404).json({ error: `case ${caseId} does not exist — create it in the dashboard first` });
+    }
     const text = typeof req.body?.text === "string" ? req.body.text
       : typeof req.body?.json === "string" ? req.body.json
       : typeof req.body?.csv === "string" ? req.body.csv : "";
