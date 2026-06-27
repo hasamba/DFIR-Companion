@@ -7,6 +7,10 @@ live dashboard. Paired with the MV3 capture extension in `../extension`.
 
 ## Quick start
 
+> **Prerequisite:** [Node.js](https://nodejs.org/) **20 or later**. The optional **NSRL RDS
+> SQLite backend** needs **Node 22.5+** (for the built-in `node:sqlite` module); everything else
+> runs on Node 20. The full test suite also expects 22.5+ — two NSRL DB tests `import node:sqlite`.
+
     cd companion
     npm install
     cp .env.example .env        # then edit .env (cases root, AI provider/model/key)

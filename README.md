@@ -335,6 +335,8 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
 
 > **Prerequisite:** [Node.js](https://nodejs.org/) **20 or later** (which ships with `npm`).
 > Check with `node --version`. Everything below uses `npm`, so no other runtime is needed.
+> One optional feature — the **NSRL RDS SQLite backend** — needs **Node 22.5+** for the
+> built-in `node:sqlite` module; everything else (including the flat NSRL hash list) runs on Node 20.
 
 1. **Companion** (the server):
 
