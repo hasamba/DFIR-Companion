@@ -176,7 +176,7 @@ export async function seedDemoCase(
         "Cobalt Strike beacon. The enumeration identified DC01 as the domain controller, leading " +
         "directly to the PsExec lateral movement 21 hours later.",
       relatedIocs: ["ioc008"],
-      sourceScreenshots: [], mitreTechniques: ["T1016", "T1018", "T1069.002"],
+      sourceScreenshots: [], mitreTechniques: ["T1016", "T1018", "T1069.002", "T1087.001", "T1087.002", "T1482"],
       firstSeen: ts(15, 11, 30), lastUpdated: ts(22, 8, 0), status: "confirmed",
     },
     {
@@ -305,6 +305,37 @@ export async function seedDemoCase(
     action: "network_send" as const,
   }));
 
+  // Hands-on-keyboard AD enumeration burst on DC01 (May 16 09:00–09:54) — the window between the
+  // Mimikatz credential dump (08:45) and the log-clearing / EDR kill (10:12). With stolen DA creds
+  // the operator "goes loud", running SharpHound + net/nltest recon: ~10 events on DC01 in one hour
+  // while every other host stays quiet. This is the per-asset event-rate spike the Timeline Anomalies
+  // panel flags (DC01 ≫ the per-hour median of the other hosts) — and a realistic one.
+  const dc01EnumBurst = [
+    { m: 2,  sev: "Medium" as const, mitre: ["T1087.002"], desc: "SharpHound collection launched on DC01 under the PSEXESVC SYSTEM context — LDAP bind, BloodHound 'All' collection method started." },
+    { m: 5,  sev: "Low"    as const, mitre: ["T1087.002"], desc: "LDAP query from DC01: enumerate all domain user objects (objectClass=user) — 1,284 accounts returned." },
+    { m: 9,  sev: "Low"    as const, mitre: ["T1018"],     desc: "LDAP query from DC01: enumerate all domain computer objects (objectClass=computer) — 312 hosts returned." },
+    { m: 14, sev: "Medium" as const, mitre: ["T1069.002"], desc: "LDAP query from DC01: 'Domain Admins', 'Enterprise Admins', and 'Schema Admins' group membership collected for attack-path mapping." },
+    { m: 19, sev: "Medium" as const, mitre: ["T1069.002"], desc: "SharpHound ACL collection on DC01: AdminSDHolder and GPO delegation rights enumerated to identify privilege-escalation paths." },
+    { m: 26, sev: "Low"    as const, mitre: ["T1018"],     desc: "net view /domain executed on DC01 — domain host inventory and shared resources enumerated." },
+    { m: 33, sev: "Low"    as const, mitre: ["T1087.001"], desc: "net localgroup administrators executed on DC01 — local administrator membership listed." },
+    { m: 40, sev: "Medium" as const, mitre: ["T1482"],     desc: "nltest /domain_trusts /all_trusts executed on DC01 — domain trust relationships mapped." },
+    { m: 47, sev: "Medium" as const, mitre: ["T1087.002"], desc: "LDAP query from DC01 for accounts with servicePrincipalName set (Kerberoasting target discovery) — 12 service accounts identified." },
+    { m: 54, sev: "Low"    as const, mitre: ["T1087.002"], desc: "SharpHound collection completed on DC01 — results written to C:\\Windows\\Temp\\20260516.bin (BloodHound JSON archive)." },
+  ].map((t, i) => ({
+    id: `e${String(50 + i).padStart(3, "0")}`,
+    timestamp: ts(16, 9, t.m),
+    description: t.desc,
+    severity: t.sev,
+    mitreTechniques: t.mitre,
+    relatedFindingIds: ["f008"],
+    sourceScreenshots: [],
+    asset: "DC01",
+    sources: ["Velociraptor"],
+    processName: "SharpHound.exe",
+    parentName: "PSEXESVC.exe",
+    action: "execute" as const,
+  }));
+
   const forensicTimeline = [
     { id: "e001", timestamp: ts(15, 9, 14),  severity: "High",     mitreTechniques: ["T1566.001"], relatedFindingIds: ["f003"], sourceScreenshots: [], asset: "WKSTN-JSMITH", description: "Phishing email received: 'Q1-2026 Invoice — Action Required' from accounts@globaltech-vendor.com with attachment Q1-2026-Invoice.xlsm (22 KB). Spoofed sender; SPF/DKIM failed." },
     { id: "e002", timestamp: ts(15, 9, 47),  severity: "High",     mitreTechniques: ["T1204.002"], relatedFindingIds: ["f003"], sourceScreenshots: [], asset: "WKSTN-JSMITH", processName: "EXCEL.EXE",     parentName: "explorer.exe",    action: "execute" as const, description: "Excel opened Q1-2026-Invoice.xlsm; user clicked 'Enable Content' to run macro. Excel spawned cmd.exe (pid 4812)." },
@@ -342,6 +373,11 @@ export async function seedDemoCase(
     { id: "e039", timestamp: ts(15, 8, 30),  severity: "High",     mitreTechniques: ["T1190"], relatedFindingIds: ["f009"], sourceScreenshots: [], asset: "WEB01", sources: ["Suricata"], srcIp: "185.220.101.47", dstIp: "10.10.20.40", port: 8080, action: "network_receive" as const, count: 14, description: "Suricata IDS alert: Apache path traversal exploitation attempt (CVE-2021-41773) from 185.220.101.47 targeting WEB01:8080 — 14 requests in 60 s matching ET WEB_SERVER Apache 2.4.49 Path Traversal rule." },
     { id: "e040", timestamp: ts(15, 8, 40),  severity: "Critical", mitreTechniques: ["T1190", "T1059.001"], relatedFindingIds: ["f009", "f001"], sourceScreenshots: [], asset: "WEB01", sources: ["CrowdStrike Falcon"], processName: "cmd.exe", parentName: "httpd.exe", chainCheck: { observed: false, note: "httpd.exe → cmd.exe NOT in behavioral baseline — classic CVE-2021-41773 mod_cgi shell spawn", checkedAt: "2026-05-22T11:00:00.000Z" }, description: "CVE-2021-41773 RCE confirmed on WEB01: Apache httpd (pid 3341) spawned cmd.exe (pid 3342) via mod_cgi path traversal. Alternate initial access via web exploitation confirmed independent of the phishing email." },
     { id: "e041", timestamp: ts(15, 8, 55),  severity: "Critical", mitreTechniques: ["T1190"], relatedFindingIds: ["f009"], sourceScreenshots: [], asset: "WEB01", sources: ["SIEM", "Suricata"], srcIp: "10.10.20.40", dstIp: "185.220.101.47", port: 1389, action: "network_send" as const, description: "SIEM alert: JNDI LDAP callback from WEB01 Java process (Tomcat 9, pid 2018) to 185.220.101.47:1389 — matches Log4Shell exploitation pattern (CVE-2021-44228, CVSS 10.0). WEB01 Tomcat application uses Log4j 2.14.1 (unpatched)." },
+    // Quiet baseline on two other hosts during the DC01 enumeration burst hour (May 16 09:xx), so the
+    // per-hour median across assets stays at 1 and DC01's spike reads as a true rate anomaly.
+    { id: "e060", timestamp: ts(16, 9, 22), severity: "Medium", mitreTechniques: ["T1021.002"], relatedFindingIds: ["f004"], sourceScreenshots: [], asset: "FS01",  sources: ["Velociraptor"], srcIp: "10.10.20.15", dstIp: "10.10.20.30", port: 445, action: "network_send" as const, description: "DC01 admin session test-mounted \\\\FS01\\Finance$ over SMB to verify access ahead of data staging — single authenticated share connect (EventID 5140)." },
+    { id: "e061", timestamp: ts(16, 9, 41), severity: "Low",    mitreTechniques: ["T1071.001"], relatedFindingIds: ["f001", "f009"], sourceScreenshots: [], asset: "WEB01", srcIp: "10.10.20.40", dstIp: "185.220.101.47", port: 443, action: "network_send" as const, description: "Secondary Cobalt Strike beacon on WEB01 (from the CVE-2021-41773 foothold) checked in to 185.220.101.47:443 — single periodic callback." },
+    ...dc01EnumBurst,
     ...beaconCheckIns,
   ];
 
@@ -408,6 +444,9 @@ export async function seedDemoCase(
       { id: "T1016",     name: "System Network Configuration Discovery", findingIds: ["f008"] },
       { id: "T1018",     name: "Remote System Discovery",               findingIds: ["f008"] },
       { id: "T1069.002", name: "Domain Groups",                         findingIds: ["f008"] },
+      { id: "T1087.001", name: "Account Discovery: Local Account",      findingIds: ["f008"] },
+      { id: "T1087.002", name: "Account Discovery: Domain Account",     findingIds: ["f008"] },
+      { id: "T1482",     name: "Domain Trust Discovery",                findingIds: ["f008"] },
       { id: "T1486",     name: "Data Encrypted for Impact",             findingIds: ["f007"] },
       { id: "T1190",     name: "Exploit Public-Facing Application",     findingIds: ["f009"] },
       { id: "T1070.001", name: "Indicator Removal: Clear Windows Event Logs", findingIds: ["f010"] },
