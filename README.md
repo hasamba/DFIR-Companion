@@ -273,6 +273,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 ### Ops
 - **Health / Diagnostics** — **Settings → Diagnostics** one-page operator view: disk usage, case count, capture/synthesis queue, redacted AI config + live *Test AI connectivity*, importer attempts (24h/7d) + recent failures; compute-on-demand case sizes; key-free copy-to-clipboard
 - **Logging** — console + global session log + per-case audit trail; `DFIR_LOG_LEVEL` live toggle; `debug` traces AI/captures/OCR/anonymization
+- **Chrome extension** — install from the [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf); connects to the local server, no standalone function
 - **Portable Windows EXE** — unzip + double-click, no Node required
 - **Chocolatey package** — `choco install dfir-companion`; downloads + verifies the portable build + bundles the capture extension, data in `%LOCALAPPDATA%`
 - **Docker / Compose** — `docker compose up`; evidence on host volume, no bundled AI backend
@@ -332,6 +333,10 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
 
 2. **Extension** (capture):
 
+   **Easiest:** install directly from the
+   [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf).
+
+   Or build from source:
    ```
    cd DFIR-Companion/extension
    npm install
