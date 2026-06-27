@@ -11264,6 +11264,13 @@
           F("DFIR_NSRL_DB", "RDS SQLite DB path", { hint: "RDS_*.db queried on demand (needs Node 22.5+)." }),
           F("DFIR_NSRL_FILE", "Hash file path(s)", { hint: "NSRLFile.txt / hashdeep / plain hash list; ;-separated; preloaded at startup." }),
         ] },
+      // Notifications are stored in a GLOBAL config file (not .env), so this step uses the dedicated
+      // /notifications API (add channel → test), NOT /settings/env. The wizard handles the common
+      // webhook case (Slack/Teams/Mattermost/Discord — one URL); email/Telegram (multi-field) stay in
+      // Settings → Notifications. kind:"notifications" routes to its own handler.
+      { id: "notifications", icon: "🔔", label: "Notifications", status: "notifications", kind: "notifications",
+        blurb: "Get a Slack / Teams / Mattermost / Discord ping on new findings, playbook updates, and milestones.",
+        note: "Adds a webhook channel + sends a test message. Email & Telegram (more fields) live in Settings → Notifications." },
     ];
     // Step ids in rail order (AI is the implicit first step, rendered statically).
     const WIZ_ORDER = ["ai", ...WIZARD_STEPS.map(s => s.id)];
@@ -11325,6 +11332,19 @@
       }).join("");
     }
     function wizRenderStep(step) {
+      if (step.kind === "notifications") {
+        return '<h3>' + step.icon + ' ' + esc(step.label) + '</h3>' +
+          '<p class="wiz-sub">' + esc(step.blurb) + '</p>' +
+          (step.note ? '<div class="wiz-note">🔔 ' + esc(step.note) + '</div>' : '') +
+          '<div class="wiz-field"><label>Channel type<span class="wiz-hint">Slack / Teams / Mattermost / Discord — all use an incoming-webhook URL.</span></label>' +
+          '<select id="wizNotifType"><option value="slack">Slack</option><option value="teams">MS Teams</option><option value="mattermost">Mattermost</option><option value="discord">Discord</option></select></div>' +
+          '<div class="wiz-field"><label>Webhook URL</label><input id="wizNotifUrl" placeholder="https://hooks.slack.com/services/…" autocomplete="off" /></div>' +
+          '<div class="wiz-field"><label>Minimum severity<span class="wiz-hint">Only findings at or above this severity notify (milestones always do).</span></label>' +
+          '<select id="wizNotifSev"><option value="Critical">Critical</option><option value="High" selected>High</option><option value="Medium">Medium</option><option value="Low">Low</option><option value="Info">Info</option></select></div>' +
+          '<div class="wiz-actions"><button class="wiz-btn" id="wizNotifSaveBtn">Add &amp; send test</button>' +
+          '<span style="font-size:11px;color:var(--c-9aa4b2)">Adds a channel + posts a test message. Manage all channels in Settings → Notifications.</span></div>' +
+          '<div id="wizNotifResult" class="wiz-result"></div>';
+      }
       if (step.kind === "providers") {
         const cards = step.providers.map(p => {
           const ok = (wizStatus[step.status] || {})[p.id];
@@ -11410,11 +11430,44 @@
           const res = pane.querySelector('[data-res-prov="' + p.id + '"]');
           if (btn) btn.onclick = () => wizSaveAndTestGeneric(p.fields, p.reload, null, res, btn);
         });
+      } else if (step.kind === "notifications") {
+        const btn = wizEl("wizNotifSaveBtn");
+        if (btn) btn.onclick = wizSaveNotification;
       } else {
         const btn = wizEl("wizStepSaveBtn"), res = wizEl("wizStepResult");
         if (btn) btn.onclick = () => wizSaveAndTestGeneric(step.fields, step.reload, step.test, res, btn);
       }
       wizRenderRail(); wizUpdateNav();
+    }
+
+    // Notifications step: add a webhook channel via the dedicated /notifications API (NOT /settings/env —
+    // notifications live in a global config file), then send a test message to it. On 501 the feature is
+    // off (no notificationStore); surface that. Refreshes /setup/status so the rail flips ✓.
+    async function wizSaveNotification() {
+      const type = wizEl("wizNotifType").value;
+      const url = wizEl("wizNotifUrl").value.trim();
+      const minSeverity = wizEl("wizNotifSev").value;
+      const res = wizEl("wizNotifResult"), btn = wizEl("wizNotifSaveBtn");
+      if (!/^https?:\/\//i.test(url)) { res.style.color = "#ffb05a"; res.textContent = "Enter the incoming-webhook URL (https://…)."; return; }
+      btn.disabled = true; res.style.color = "#9aa4b2"; res.textContent = "Adding channel…";
+      let channelId;
+      try {
+        const add = await fetch("/notifications", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, webhookUrl: url, minSeverity }) });
+        const body = await add.json().catch(() => ({}));
+        if (add.status === 501) { res.style.color = "#ffb05a"; res.textContent = "Notifications aren't enabled on this server."; btn.disabled = false; return; }
+        if (!add.ok) { res.style.color = "#ff9f9f"; res.textContent = "Could not add channel: " + esc(body.error || ("HTTP " + add.status)); btn.disabled = false; return; }
+        channelId = body.id;
+      } catch (e) { res.style.color = "#ff9f9f"; res.textContent = "Could not reach the server: " + esc(e.message); btn.disabled = false; return; }
+      res.textContent = "Sending a test message…";
+      try {
+        const t = await fetch("/notifications/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channelId }) });
+        const tb = await t.json().catch(() => ({}));
+        const r0 = Array.isArray(tb.results) ? tb.results[0] : null;
+        if (t.ok && r0 && r0.ok !== false && !r0.error) { res.style.color = "#5ad17a"; res.innerHTML = "✓ Channel added — test message sent to <strong>" + esc(type) + "</strong>. Check the channel."; }
+        else { res.style.color = "#ffb05a"; res.innerHTML = "Channel added, but the test failed: " + esc((r0 && r0.error) || tb.error || "no response") + ". Edit it in Settings → Notifications."; }
+      } catch (e) { res.style.color = "#ffb05a"; res.textContent = "Channel added, but the test request failed: " + esc(e.message); }
+      btn.disabled = false;
+      await wizRefreshStatus();
     }
 
     // Left rail: one row per step, with a ✓ (configured) / ○ (optional) dot.

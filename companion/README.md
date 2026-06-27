@@ -42,12 +42,14 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 >   OpenCTI, RockyRaccoon, GeoIP) and **customer-exposure** (LeakCheck, HIBP, DeHashed) — per-provider
 >   key entry. These only *enable* a source; nothing is sent externally until you opt in per case.
 > - **Push ingest**, **NSRL** known-good hashes.
+> - **Notifications** — add a Slack / Teams / Mattermost / Discord webhook channel and send a test
+>   message (these are stored in a global config file, not `.env`; email & Telegram stay in Settings →
+>   Notifications).
 >
-> Each step saves to `.env` and applies live via `POST /settings/reload`; a left rail shows ✓ configured
+> Most steps save to `.env` and apply live via `POST /settings/reload`; a left rail shows ✓ configured
 > / ○ not-set per step (from `GET /setup/status`). Everything is optional and the wizard is fully
 > dismissible (capture + imports work with none of it). AI analysis needs a server restart after saving;
-> the integrations apply immediately via their reconnect. (Notifications stay in **Settings →
-> Notifications** — they're stored separately from `.env`.)
+> the integrations apply immediately via their reconnect.
 
 | Variable | Meaning |
 | --- | --- |
