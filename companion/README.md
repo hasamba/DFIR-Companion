@@ -29,6 +29,28 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 
 ## Configuration (`companion/.env`, gitignored)
 
+> **First run? Use the Setup wizard** instead of editing `.env` by hand. It auto-opens on first load
+> when no AI provider is set, and is always available from **Settings → General → ⚙️ Open setup wizard**
+> (or **Settings → AI → Re-run the setup wizard**). It's a guided, multi-step flow covering everything
+> here that has no default and won't work until set:
+>
+> - **AI** — provider, model (cheap/strong suggestions per provider), key, optional base URL; **Save &
+>   test** runs a live `/diagnostics/ai-test` probe.
+> - **Integrations** — Velociraptor, DFIR-IRIS, Timesketch, Notion, ClickUp — each saves + reconnects
+>   live (no restart) and reports connected/unreachable.
+> - **Threat-intel enrichment** (VirusTotal, AbuseIPDB, Hunting.ch, CrowdStrike, Shodan, MISP, YETI,
+>   OpenCTI, RockyRaccoon, GeoIP) and **customer-exposure** (LeakCheck, HIBP, DeHashed) — per-provider
+>   key entry. These only *enable* a source; nothing is sent externally until you opt in per case.
+> - **Push ingest**, **NSRL** known-good hashes.
+> - **Notifications** — add a Slack / Teams / Mattermost / Discord webhook channel and send a test
+>   message (these are stored in a global config file, not `.env`; email & Telegram stay in Settings →
+>   Notifications).
+>
+> Most steps save to `.env` and apply live via `POST /settings/reload`; a left rail shows ✓ configured
+> / ○ not-set per step (from `GET /setup/status`). Everything is optional and the wizard is fully
+> dismissible (capture + imports work with none of it). AI analysis needs a server restart after saving;
+> the integrations apply immediately via their reconnect.
+
 | Variable | Meaning |
 | --- | --- |
 | `DFIR_CASES_ROOT` | Case folder location (relative to `companion/`) |

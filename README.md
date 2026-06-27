@@ -168,6 +168,9 @@ Standard DFIR questions auto-answered from the synthesized case
 
 ## Features
 
+### Onboarding
+- **Setup wizard** — guided multi-step dashboard overlay (auto-shown first-run; also in Settings → General / AI) to configure AI, the integrations (Velociraptor, DFIR-IRIS, Timesketch, Notion, ClickUp), threat-intel enrichment + customer-exposure providers, push ingest, NSRL, and a notification webhook (Slack/Teams/Mattermost/Discord) — each with Save → apply-live → connection/status test, and a ✓/○ progress rail. Everything is optional and dismissible
+
 ### Capture & ingest
 - **MV3 browser extension** — timer + event-driven capture (navigation/tab/click), `Ctrl+Shift+S` hotkey, offline queue + auto-sync, per-case Start/Stop
 - **One-click artifact push** — Splunk/Velociraptor/Kibana/Security Onion/SO-CRATES/CrowdStrike injects **Push to DFIR-Companion** button; intercepts API JSON or scrapes table
@@ -209,6 +212,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Generic logs** | Firewall, syslog, VPN; repetitive lines → counted patterns | AI-triaged |
 
 ### AI analysis
+- **Guided AI setup** — the Setup wizard's first step picks provider → model (cheap/strong suggestions) → key → optional base URL, then runs a live connectivity test before you leave
 - **Two-phase** — cheap per-window vision (extraction) + strong text-only synthesis (findings/IOCs/MITRE/attacker path)
 - **Providers** — OpenAI, OpenRouter, Ollama, LiteLLM, Gemini; optional two-tier (cheap extract + strong synth) with context budgeting
 - **EDR/SIEM consoles as evidence** — detections extracted; analyst navigation filtered (real detections never dropped)
