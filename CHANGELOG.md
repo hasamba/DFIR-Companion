@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Declared Node engine requirement** — `companion/package.json` now has `engines.node: ">=20"`; READMEs note the **NSRL RDS SQLite backend** (and full test suite) need Node 22.5+ for `node:sqlite`, the rest runs on Node 20 (closes #185).
 - **Full-pipeline integration test** — new `companion/tests/fullPipeline.test.ts` exercises capture → artifact import → synthesis → enrichment → report → snapshot export → snapshot restore, with mocked AI and enrichment providers so the suite runs offline and in CI (addresses #182).
 
 ### Fixed
