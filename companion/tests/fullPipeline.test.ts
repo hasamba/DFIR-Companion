@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -54,12 +54,21 @@ function buildPipeline(stateStore: StateStore) {
   });
 }
 
+// Track temp cases roots so each run cleans up after itself (issue #182 AC: "Cleans up
+// temporary cases root after running") instead of leaving dfir-full-pipeline-* dirs behind.
+const tempRoots: string[] = [];
+
 beforeEach(async () => {
   _resetDedupCache();
 });
 
+afterEach(async () => {
+  await Promise.all(tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
 async function freshFullPipelineApp() {
   const root = await mkdtemp(join(tmpdir(), "dfir-full-pipeline-"));
+  tempRoots.push(root);
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const reportMetaStore = new ReportMetaStore(store);
@@ -219,9 +228,6 @@ describe("full-pipeline integration (capture → import → synthesis → report
     const evidence = await request(app).get(`/cases/pipeline-1/evidence/${screenshotFile}`);
     expect(evidence.status).toBe(200);
     expect(evidence.headers["content-type"]).toContain("image/");
-
-    const auditLog = await readFile(store.importsLogPath("pipeline-1"), "utf8");
-    expect(auditLog.trim().split("\n").length).toBeGreaterThanOrEqual(1);
 
     const importFiles = (await readFile(store.importsLogPath("pipeline-1"), "utf8"))
       .trim()
