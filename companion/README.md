@@ -80,7 +80,7 @@ via an injected undici dispatcher; VirusTotal/AbuseIPDB and the AI calls keep th
 | --- | --- |
 | `npm run dev` | Start the server (reads `.env`). |
 | `npm run build` | Type-check / compile with `tsc`. |
-| `npm test` | Run the full vitest suite. |
+| `npm test` | Run the full vitest suite. `tests/fullPipeline.test.ts` exercises the complete capture → import → synthesis → enrichment → report → snapshot-restore lifecycle with mocked AI and enrichment. |
 | `npm run verify:ai -- [caseId]` | One-call smoke test: confirms the configured model returns schema-valid JSON and prints findings / forensic events / attacker path. Samples screenshots from the middle of the case (default `test1`). |
 | `npm run coverage -- [caseId]` | Reports how many of a case's screenshots were actually analyzed vs. skipped (duplicates) vs. never analyzed. |
 | `npm run reanalyze -- <caseId> [flags]` | Re-run AI analysis over already-captured screenshots, rebuilding the investigation state, then synthesize conclusions. See flags below. |
