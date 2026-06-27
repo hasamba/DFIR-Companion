@@ -415,6 +415,10 @@ export interface AppOptions {
   // options (base URL for the sketch link, managed timeline name).
   timesketchClient?: TimesketchClient;
   timesketchOptions?: TimesketchPushOptions;
+  // Rebuild the Timesketch client at runtime so POST /timesketch/reconnect can apply newly-saved
+  // DFIR_TIMESKETCH_* (or recover a server that came back online) WITHOUT the #1-gotcha restart.
+  // Defaults to the env-based buildTimesketchClient; tests inject a stub (no network).
+  rebuildTimesketchClient?: () => TimesketchClient | undefined;
   // Case templates: built-in + user-saved templates selectable at case creation.
   templateStore?: TemplateStore;
   // MISP export: a configured client (when DFIR_MISP_URL/KEY are set) + push options
@@ -637,7 +641,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked, geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, irisEnabled: !!irisClient, timesketchEnabled: !!options.timesketchClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked, geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" });
   });
 
   // ── Update check (opt-in "newer release available" notice; NEVER downloads) ──────────────
@@ -2962,9 +2966,36 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // The active Timesketch client. Mutable: POST /timesketch/reconnect can rebuild it at runtime
+  // (config saved via Settings, or Timesketch coming back online) without a restart. Routes read
+  // options.timesketchClient at call time, so the reconnect reassigns that field (mirrors velo).
+  const rebuildTimesketch = options.rebuildTimesketchClient ?? buildTimesketchClient;
+
   // Whether a Timesketch push target is configured (so the dashboard can show/hide the button).
   app.get("/timesketch/status", (_req: Request, res: Response) => {
     res.status(200).json({ configured: !!options.timesketchClient, baseUrl: options.timesketchOptions?.baseUrl });
+  });
+
+  // Re-read DFIR_TIMESKETCH_* from .env (Settings only writes the file), rebuild the client, and log
+  // in to verify connectivity — so the Setup wizard / Settings can connect after configuring Timesketch
+  // (or after it comes back online) WITHOUT the #1-gotcha restart. Mirrors /iris/reconnect. Always 200;
+  // the body says whether it's configured and reachable.
+  app.post("/timesketch/reconnect", async (_req: Request, res: Response) => {
+    try {
+      await reloadEnvPrefix("DFIR_TIMESKETCH_");
+      options.timesketchClient = rebuildTimesketch();
+      if (!options.timesketchClient) {
+        return res.status(200).json({ configured: false, ok: false, error: "DFIR_TIMESKETCH_URL, DFIR_TIMESKETCH_USER and DFIR_TIMESKETCH_PASSWORD are not all set" });
+      }
+      try {
+        await options.timesketchClient.login();
+        return res.status(200).json({ configured: true, ok: true, baseUrl: process.env.DFIR_TIMESKETCH_URL });
+      } catch (err) {
+        return res.status(200).json({ configured: true, ok: false, baseUrl: process.env.DFIR_TIMESKETCH_URL, error: (err as Error).message });
+      }
+    } catch (err) {
+      return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });
+    }
   });
 
   // Push a case to Timesketch: log in, find-or-create the sketch by name (= the Companion case id),
@@ -6771,6 +6802,67 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Generic counterpart of /settings/ai-reload for the comprehensive Setup wizard (#181): apply a
+  // just-saved DFIR_<PREFIX>_* group from .env into process.env without a restart, so a "Save & test"
+  // step sees the new config. ALLOWLISTED — the prefix must be a known integration group, so a request
+  // can't reload arbitrary env (and the route never reads/returns secret VALUES, only the applied keys).
+  const RELOADABLE_PREFIXES = new Set([
+    "DFIR_AI_", "DFIR_IRIS_", "DFIR_VELOCIRAPTOR_", "DFIR_TIMESKETCH_", "DFIR_NOTION_", "DFIR_CLICKUP_",
+    "DFIR_VT_", "DFIR_ABUSEIPDB_", "DFIR_HUNTINGCH_", "DFIR_MB_", "DFIR_CROWDSTRIKE_", "DFIR_SHODAN_",
+    "DFIR_MISP_", "DFIR_YETI_", "DFIR_OPENCTI_", "DFIR_ROCKYRACCOON_", "DFIR_GEOIP_",
+    "DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_PUSH_TOKEN", "DFIR_NSRL_",
+  ]);
+  app.post("/settings/reload", async (req: Request, res: Response) => {
+    try {
+      const prefix = typeof req.body?.prefix === "string" ? req.body.prefix.trim() : "";
+      if (!prefix) return res.status(400).json({ error: "prefix is required" });
+      if (!RELOADABLE_PREFIXES.has(prefix)) {
+        return res.status(400).json({ error: `prefix not in the reloadable allowlist: ${prefix}` });
+      }
+      const applied = await reloadEnvPrefix(prefix);
+      return res.json({ ok: true, applied });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Aggregate "is this integration configured?" status for the Setup wizard's progress (✓/○) — derived
+  // live from process.env so it reflects values just saved+reloaded (no restart). Required-config groups
+  // only: each entry is configured when its mandatory key(s) are present. No external calls, no secret
+  // values — only booleans. (Per-feature deep status/connectivity lives in /iris/status etc.)
+  app.get("/setup/status", (_req: Request, res: Response) => {
+    const has = (k: string): boolean => !!(process.env[k] && process.env[k]!.trim());
+    res.status(200).json({
+      ai: !!hasAiProvider() || has("DFIR_AI_PROVIDER"),
+      velociraptor: !!options.velociraptorClient || has("DFIR_VELOCIRAPTOR_API_CONFIG"),
+      iris: !!irisClient || (has("DFIR_IRIS_URL") && has("DFIR_IRIS_KEY")),
+      timesketch: !!options.timesketchClient || (has("DFIR_TIMESKETCH_URL") && has("DFIR_TIMESKETCH_USER") && has("DFIR_TIMESKETCH_PASSWORD")),
+      notion: !!options.notionClient || has("DFIR_NOTION_TOKEN"),
+      clickup: !!options.clickupClient || has("DFIR_CLICKUP_TOKEN"),
+      push: !!options.pushTokenStore || has("DFIR_PUSH_TOKEN"),
+      notifications: !!options.notificationStore,
+      enrichment: {
+        virustotal: has("DFIR_VT_KEY"),
+        abuseipdb: has("DFIR_ABUSEIPDB_KEY"),
+        huntingch: has("DFIR_HUNTINGCH_KEY") || has("DFIR_MB_KEY"),
+        crowdstrike: has("DFIR_CROWDSTRIKE_CLIENT_ID") && has("DFIR_CROWDSTRIKE_CLIENT_SECRET"),
+        shodan: has("DFIR_SHODAN_KEY"),
+        misp: has("DFIR_MISP_URL") && has("DFIR_MISP_KEY"),
+        yeti: has("DFIR_YETI_URL") && has("DFIR_YETI_KEY"),
+        opencti: has("DFIR_OPENCTI_URL") && has("DFIR_OPENCTI_KEY"),
+        rockyraccoon: has("DFIR_ROCKYRACCOON_KEY"),
+        geoip: has("DFIR_GEOIP_KEY"),
+      },
+      exposure: {
+        leakcheck: has("DFIR_LEAKCHECK_KEY"),
+        hibp: has("DFIR_HIBP_KEY"),
+        dehashed: has("DFIR_DEHASHED_KEY"),
+        shodan: has("DFIR_SHODAN_KEY"),
+      },
+      nsrl: has("DFIR_NSRL_DB") || has("DFIR_NSRL_FILE") || !!options.nsrlStore,
+    });
+  });
+
   // Re-arm any persisted live Velociraptor monitors so streaming survives a restart (#84). Fire-and-
   // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
   // tests and embeddings that don't use monitoring.
@@ -7425,6 +7517,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     irisOptions: irisPushOptions(),
     timesketchClient: buildTimesketchClient(),
     timesketchOptions: timesketchPushOptions(),
+    rebuildTimesketchClient: buildTimesketchClient,
     templateStore,
     mispPushClient: buildMispPushClient(),
     mispPushOptions: mispPushOptions(),
