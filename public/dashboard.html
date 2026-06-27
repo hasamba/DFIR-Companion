@@ -582,6 +582,32 @@
     .wiz-modelhint code { background: var(--c-0f1115); border: 1px solid var(--c-2a2f3a); border-radius: 4px;
       padding: 0 4px; cursor: pointer; }
     .wiz-modelhint code:hover { border-color: var(--c-2d6cdf); color: var(--c-e6e6e6); }
+    /* Comprehensive multi-step Setup wizard (#181) — left rail of steps + a body pane. Reuses the
+       .wiz-* field styles above. The single-pane AI wizard is now step 1 of this stepped shell. */
+    .wiz-modal.stepped { width: min(880px, 96vw); padding: 0; display: flex; flex-direction: column; }
+    .wiz-head { padding: 16px 22px 10px; border-bottom: 1px solid var(--c-2a2f3a); }
+    .wiz-head h2 { margin: 0; }
+    .wiz-body-wrap { display: flex; min-height: 0; flex: 1; }
+    .wiz-rail { width: 210px; flex: 0 0 210px; border-right: 1px solid var(--c-2a2f3a); padding: 10px 0;
+      overflow-y: auto; max-height: calc(92vh - 130px); }
+    .wiz-rail-item { display: flex; align-items: center; gap: 8px; padding: 7px 16px; font-size: 12.5px;
+      color: var(--c-cbd3df); cursor: pointer; border-left: 2px solid transparent; }
+    .wiz-rail-item:hover { background: var(--c-1b212b); }
+    .wiz-rail-item.active { background: var(--c-1b212b); border-left-color: var(--c-2d6cdf); color: #fff; }
+    .wiz-rail-item .wiz-rail-dot { font-size: 12px; width: 16px; text-align: center; }
+    .wiz-rail-item.done .wiz-rail-dot { color: #5ad17a; }
+    .wiz-rail-item.optional .wiz-rail-label small { color: var(--c-9aa4b2); font-size: 10px; display: block; }
+    .wiz-pane { flex: 1; padding: 16px 22px; overflow-y: auto; max-height: calc(92vh - 130px); min-width: 0; }
+    .wiz-pane h3 { margin: 0 0 4px; font-size: 15px; color: var(--c-e6e6e6); }
+    .wiz-foot { display: flex; align-items: center; gap: 10px; padding: 12px 22px; border-top: 1px solid var(--c-2a2f3a); }
+    .wiz-foot .wiz-spacer { flex: 1; }
+    .wiz-prov-list { display: flex; flex-direction: column; gap: 10px; }
+    .wiz-prov { border: 1px solid var(--c-2a2f3a); border-radius: 8px; padding: 10px 12px; background: var(--c-0f1115); }
+    .wiz-prov-head { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--c-cbd3df); font-weight: 600; margin-bottom: 6px; }
+    .wiz-prov-head .wiz-scope { font-size: 10px; font-weight: 400; border: 1px solid var(--c-2a2f3a); border-radius: 8px; padding: 0 6px; color: var(--c-9aa4b2); }
+    .wiz-prov-head .wiz-scope.local { color: #5ad17a; border-color: #2f5d3f; }
+    .wiz-prov-head .wiz-scope.external { color: #ffb05a; border-color: #6b5326; }
+    .wiz-prov-head .wiz-ok { margin-left: auto; font-size: 11px; }
     /* Analyst triage tags (hand labels — confirmed-malicious, false-positive, key-evidence, …) */
     .tag-pill { display: inline-block; border: 1px solid; border-radius: 9px; padding: 0 7px;
       font-size: 10px; line-height: 16px; margin-left: 4px; vertical-align: middle; background: var(--c-0f1115); }
@@ -1458,6 +1484,11 @@
 
       <!-- General -->
       <div class="stab-pane active" id="stab-general">
+        <div class="sfield">
+          <label>Guided setup</label>
+          <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 6px">Configure AI + integrations + enrichment in one guided flow, each with a built-in connection test (#181).</p>
+          <button type="button" id="openSetupWizard" style="background:var(--c-2d6cdf);color:#fff;border:0;border-radius:6px;padding:6px 14px;font-size:13px;cursor:pointer">⚙️ Open setup wizard</button>
+        </div>
         <div class="sfield">
           <label>Investigator name</label>
           <input id="settingsInvestigator" placeholder="your name" />
@@ -2515,54 +2546,70 @@
     </div>
   </div>
 
-  <!-- First-run AI setup wizard (#181) — shown once when no AI provider is configured. Saves via the
-       existing /settings/env API, reloads DFIR_AI_* into the live process, then runs the lightweight
-       /diagnostics/ai-test probe. Fully dismissible (AI is optional — capture/imports work without it). -->
+  <!-- Comprehensive Setup wizard (#181) — a multi-step onboarding overlay covering every config that
+       has no default and won't work until set: AI, the integrations (Velociraptor, DFIR-IRIS,
+       Timesketch, Notion, ClickUp), threat-intel enrichment + customer-exposure providers, push ingest,
+       and NSRL. Step 1 (AI) keeps the original #181 element IDs so its save→reload→/diagnostics/ai-test
+       flow is unchanged; the other steps' fields are rendered into #wizPane by JS from WIZARD_STEPS.
+       Each step saves via /settings/env, applies live via /settings/reload, and tests via the relevant
+       reconnect/status route. Fully dismissible — every step is optional. -->
   <div id="wizOverlay" class="wiz-overlay" role="dialog" aria-modal="true" aria-labelledby="wizTitle">
-    <div class="wiz-modal">
-      <h2 id="wizTitle">👋 Set up AI analysis</h2>
-      <p class="wiz-sub">DFIR Companion uses an AI provider to read screenshots and synthesize findings. Configure it here, or skip and do it later in Settings → AI.</p>
-      <div class="wiz-note">✅ <strong>AI is optional.</strong> Evidence capture and all artifact imports (CSV, EVTX, THOR, SIEM, Velociraptor, memory dumps…) work without it. You can add or change a provider anytime.</div>
-      <div class="wiz-field">
-        <label>Provider
-          <span class="wiz-hint">Pick where your AI model runs. Ollama / LiteLLM are local; the rest are hosted APIs.</span>
-        </label>
-        <select id="wizProvider">
-          <option value="">— choose a provider —</option>
-          <option value="openai">OpenAI</option>
-          <option value="openrouter">OpenRouter</option>
-          <option value="ollama">Ollama (local)</option>
-          <option value="litellm">LiteLLM (local proxy)</option>
-          <option value="gemini">Gemini</option>
-          <option value="anthropic">Anthropic</option>
-        </select>
+    <div class="wiz-modal stepped">
+      <div class="wiz-head">
+        <h2 id="wizTitle">⚙️ Set up DFIR Companion</h2>
+        <p class="wiz-sub" style="margin:4px 0 0">Configure the providers and integrations you want. Everything here is optional — capture and artifact imports work without any of it. Each step saves to your local <code>.env</code> (gitignored) and can be tested right away.</p>
       </div>
-      <div class="wiz-row">
-        <div class="wiz-field">
-          <label>Extraction model
-            <span class="wiz-hint">Must support vision (reads screenshots).</span>
-          </label>
-          <input id="wizModel" placeholder="e.g. gpt-4o-mini" autocomplete="off" />
-          <div id="wizModelHint" class="wiz-modelhint"></div>
+      <div class="wiz-body-wrap">
+        <div class="wiz-rail" id="wizRail"></div>
+        <div class="wiz-pane" id="wizPane">
+          <!-- AI step body (step 1) — static so the #181 IDs/logic are preserved verbatim. -->
+          <div id="wizPaneAi">
+            <h3>👋 AI analysis</h3>
+            <p class="wiz-sub">An AI provider reads screenshots and synthesizes findings. Skippable — analysis is the only thing that needs it.</p>
+            <div class="wiz-note">✅ <strong>AI is optional.</strong> Evidence capture and all artifact imports (CSV, EVTX, THOR, SIEM, Velociraptor, memory dumps…) work without it.</div>
+            <div class="wiz-field">
+              <label>Provider<span class="wiz-hint">Ollama / LiteLLM are local; the rest are hosted APIs.</span></label>
+              <select id="wizProvider">
+                <option value="">— choose a provider —</option>
+                <option value="openai">OpenAI</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="ollama">Ollama (local)</option>
+                <option value="litellm">LiteLLM (local proxy)</option>
+                <option value="gemini">Gemini</option>
+                <option value="anthropic">Anthropic</option>
+              </select>
+            </div>
+            <div class="wiz-row">
+              <div class="wiz-field">
+                <label>Extraction model<span class="wiz-hint">Must support vision (reads screenshots).</span></label>
+                <input id="wizModel" placeholder="e.g. gpt-4o-mini" autocomplete="off" />
+                <div id="wizModelHint" class="wiz-modelhint"></div>
+              </div>
+              <div class="wiz-field">
+                <label>API key<span class="wiz-hint">Stored only in your local .env (gitignored).</span></label>
+                <input id="wizKey" type="password" placeholder="(not set)" autocomplete="new-password" />
+              </div>
+            </div>
+            <div class="wiz-field" id="wizBaseUrlField" style="display:none">
+              <label>Base URL override<span class="wiz-hint">For a local proxy / self-hosted endpoint.</span></label>
+              <input id="wizBaseUrl" placeholder="e.g. http://localhost:11434/v1" autocomplete="off" />
+            </div>
+            <div class="wiz-actions">
+              <button id="wizTestSaveBtn" class="wiz-btn">Save &amp; test connection</button>
+            </div>
+            <div id="wizResult" class="wiz-result"></div>
+          </div>
+          <!-- Dynamic step bodies (every non-AI step) render here. -->
+          <div id="wizPaneDynamic" style="display:none"></div>
         </div>
-        <div class="wiz-field">
-          <label>API key
-            <span class="wiz-hint">Stored only in your local .env (gitignored).</span>
-          </label>
-          <input id="wizKey" type="password" placeholder="(not set)" autocomplete="new-password" />
-        </div>
       </div>
-      <div class="wiz-field" id="wizBaseUrlField" style="display:none">
-        <label>Base URL override
-          <span class="wiz-hint">For a local proxy / self-hosted endpoint.</span>
-        </label>
-        <input id="wizBaseUrl" placeholder="e.g. http://localhost:11434/v1" autocomplete="off" />
+      <div class="wiz-foot">
+        <button id="wizBackBtn" class="wiz-btn secondary">‹ Back</button>
+        <button id="wizNextBtn" class="wiz-btn secondary">Next ›</button>
+        <span class="wiz-spacer"></span>
+        <button id="wizDoneBtn" class="wiz-btn">Done</button>
+        <button id="wizDismissBtn" class="wiz-dismiss">Skip setup — I'll edit .env myself</button>
       </div>
-      <div class="wiz-actions">
-        <button id="wizTestSaveBtn" class="wiz-btn">Save &amp; test connection</button>
-        <button id="wizDismissBtn" class="wiz-dismiss">Skip — I'll configure .env myself</button>
-      </div>
-      <div id="wizResult" class="wiz-result"></div>
     </div>
   </div>
 
@@ -11117,14 +11164,13 @@
     document.getElementById("settingsSaveBtn").onclick = saveSettings;
     document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
 
-    // ── First-run AI setup wizard (#181) ───────────────────────────────────────────────────
-    // A friendly onboarding overlay shown once when no AI provider is configured. It writes the
-    // four DFIR_AI_* extraction vars via the existing /settings/env API, applies them live with
-    // /settings/ai-reload, then probes connectivity with /diagnostics/ai-test — so the analyst gets
-    // a green ✓ (or an actionable error) before leaving. Dismissible + re-runnable from Settings → AI.
-    const WIZ_DISMISS_KEY = "dfir.aiWizardDismissed";
-    // Provider-specific model suggestions (cheap extraction + a stronger synthesis pair where it helps).
-    // Each <code> is click-to-fill. Vision-capable extraction models only (the wizard configures extraction).
+    // ── Comprehensive Setup wizard (#181) ───────────────────────────────────────────────────
+    // A multi-step onboarding overlay covering every config that has no default and won't work
+    // until set. Step 1 (AI) keeps its original #181 element IDs + save→/settings/ai-reload→
+    // /diagnostics/ai-test flow. Every other step is data-driven from WIZARD_STEPS: its fields
+    // render into #wizPaneDynamic, "Save & test" writes via /settings/env, applies live via
+    // /settings/reload, and tests via the step's reconnect/status route. Dismissible + re-runnable.
+    const WIZ_DISMISS_KEY = "dfir.aiWizardDismissed";   // kept for back-compat with #181
     const WIZ_MODEL_HINTS = {
       openai:     'Try <code>gpt-4o-mini</code> (cheap) or <code>gpt-4o</code> (stronger).',
       openrouter: 'Try <code>openai/gpt-4o-mini</code> or <code>anthropic/claude-3.5-sonnet</code>.',
@@ -11134,133 +11180,302 @@
       anthropic:  'Try <code>claude-haiku-4-5</code> (cheap) or <code>claude-sonnet-4-6</code>.',
     };
     const LOCAL_PROVIDERS = new Set(["ollama", "litellm"]);
-
     function wizEl(id) { return document.getElementById(id); }
 
-    function openAiWizard() {
-      // Reset the form each open (the wizard never pre-fills a key — secrets are write-only).
-      wizEl("wizProvider").value = "";
-      wizEl("wizModel").value = "";
-      wizEl("wizKey").value = "";
-      wizEl("wizBaseUrl").value = "";
-      wizEl("wizResult").textContent = "";
-      wizEl("wizModelHint").innerHTML = "";
-      wizEl("wizBaseUrlField").style.display = "none";
-      wizEl("wizTestSaveBtn").disabled = false;
-      wizEl("wizOverlay").classList.add("open");
-    }
-    function closeAiWizard() { wizEl("wizOverlay").classList.remove("open"); }
+    // The data model for every NON-AI step. Each step: a rail label, a status key (matching
+    // /setup/status), the .env fields to save, optional reload prefix (apply live), and a test
+    // descriptor (a reconnect/status route → ok/error). `scope` external = third-party SaaS.
+    // `kind:"providers"` renders a list of sub-providers (enrichment/exposure), each its own card.
+    const F = (key, label, opts) => Object.assign({ key, label }, opts || {});
+    const WIZARD_STEPS = [
+      { id: "velociraptor", icon: "🦖", label: "Velociraptor", status: "velociraptor",
+        blurb: "Endpoint visibility, hunts, and live monitoring across your fleet.",
+        reload: "DFIR_VELOCIRAPTOR_", test: { method: "POST", url: "/velociraptor/reconnect" },
+        fields: [
+          F("DFIR_VELOCIRAPTOR_API_CONFIG", "API config path", { hint: "Path to the velociraptor --api_config YAML (api_client.yaml)." }),
+          F("DFIR_VELOCIRAPTOR_BINARY", "velociraptor binary", { hint: "Path to the velociraptor executable (optional if on PATH)." }),
+          F("DFIR_VELOCIRAPTOR_GUI_URL", "GUI URL", { hint: "Base URL for client links (optional)." }),
+        ] },
+      { id: "iris", icon: "🔎", label: "DFIR-IRIS", status: "iris",
+        blurb: "Push / import cases to a DFIR-IRIS case-management instance.",
+        reload: "DFIR_IRIS_", test: { method: "POST", url: "/iris/reconnect" },
+        fields: [
+          F("DFIR_IRIS_URL", "IRIS URL", { hint: "https://iris.example.com" }),
+          F("DFIR_IRIS_KEY", "API key", { secret: true }),
+          F("DFIR_IRIS_CUSTOMER_ID", "Customer ID", { hint: "Numeric (optional)." }),
+          F("DFIR_IRIS_CLASSIFICATION_ID", "Classification ID", { hint: "Numeric (optional)." }),
+        ] },
+      { id: "timesketch", icon: "📆", label: "Timesketch", status: "timesketch",
+        blurb: "Push the forensic timeline to a Timesketch instance.",
+        reload: "DFIR_TIMESKETCH_", test: { method: "POST", url: "/timesketch/reconnect" },
+        fields: [
+          F("DFIR_TIMESKETCH_URL", "Timesketch URL", { hint: "https://timesketch.example.com" }),
+          F("DFIR_TIMESKETCH_USER", "Username"),
+          F("DFIR_TIMESKETCH_PASSWORD", "Password", { secret: true }),
+        ] },
+      { id: "enrichment", icon: "🧪", label: "Threat-intel enrichment", status: "enrichment",
+        blurb: "Look up IOCs against threat-intel sources. OFF by default — external sources are opt-in per case (OPSEC).",
+        kind: "providers", note: "Saving a key only enables a source — nothing is sent externally until you opt in per case.",
+        providers: [
+          { id: "virustotal", label: "VirusTotal", scope: "external", reload: "DFIR_VT_", fields: [F("DFIR_VT_KEY", "API key", { secret: true })] },
+          { id: "abuseipdb", label: "AbuseIPDB", scope: "external", reload: "DFIR_ABUSEIPDB_", fields: [F("DFIR_ABUSEIPDB_KEY", "API key", { secret: true })] },
+          { id: "huntingch", label: "Hunting.ch (abuse.ch)", scope: "external", reload: "DFIR_HUNTINGCH_", fields: [F("DFIR_HUNTINGCH_KEY", "Auth-Key", { secret: true })] },
+          { id: "crowdstrike", label: "CrowdStrike Intel", scope: "external", reload: "DFIR_CROWDSTRIKE_", fields: [F("DFIR_CROWDSTRIKE_CLIENT_ID", "Client ID"), F("DFIR_CROWDSTRIKE_CLIENT_SECRET", "Client secret", { secret: true })] },
+          { id: "shodan", label: "Shodan", scope: "external", reload: "DFIR_SHODAN_", fields: [F("DFIR_SHODAN_KEY", "API key", { secret: true })] },
+          { id: "misp", label: "MISP", scope: "local", reload: "DFIR_MISP_", fields: [F("DFIR_MISP_URL", "URL"), F("DFIR_MISP_KEY", "API key", { secret: true })] },
+          { id: "yeti", label: "YETI", scope: "local", reload: "DFIR_YETI_", fields: [F("DFIR_YETI_URL", "URL"), F("DFIR_YETI_KEY", "API key", { secret: true })] },
+          { id: "opencti", label: "OpenCTI", scope: "local", reload: "DFIR_OPENCTI_", fields: [F("DFIR_OPENCTI_URL", "URL"), F("DFIR_OPENCTI_KEY", "API key", { secret: true })] },
+          { id: "rockyraccoon", label: "RockyRaccoon", scope: "external", reload: "DFIR_ROCKYRACCOON_", fields: [F("DFIR_ROCKYRACCOON_KEY", "API key", { secret: true })] },
+          { id: "geoip", label: "GeoIP (ipinfo key, optional)", scope: "external", reload: "DFIR_GEOIP_", fields: [F("DFIR_GEOIP_KEY", "API key", { secret: true })] },
+        ] },
+      { id: "exposure", icon: "🔓", label: "Customer exposure", status: "exposure",
+        blurb: "Check the VICTIM org's own domains/emails against breach DBs (separate from IOC enrichment).",
+        kind: "providers", note: "Only the customer's own domains are ever sent — never adversary/IOC domains.",
+        providers: [
+          { id: "leakcheck", label: "LeakCheck", scope: "external", reload: "DFIR_LEAKCHECK_", fields: [F("DFIR_LEAKCHECK_KEY", "API key", { secret: true })] },
+          { id: "hibp", label: "Have I Been Pwned", scope: "external", reload: "DFIR_HIBP_", fields: [F("DFIR_HIBP_KEY", "API key", { secret: true })] },
+          { id: "dehashed", label: "DeHashed", scope: "external", reload: "DFIR_DEHASHED_", fields: [F("DFIR_DEHASHED_KEY", "API key", { secret: true })] },
+        ] },
+      { id: "notion", icon: "📝", label: "Notion export", status: "notion",
+        blurb: "Export a case into a Notion page.",
+        reload: "DFIR_NOTION_", test: { method: "GET", url: "/notion/status" },
+        fields: [
+          F("DFIR_NOTION_TOKEN", "Integration token", { secret: true }),
+          F("DFIR_NOTION_DATABASE_ID", "Database ID", { hint: "For new pages from a template (optional)." }),
+          F("DFIR_NOTION_PARENT_PAGE_ID", "Parent page ID", { hint: "Parent for new child pages (optional)." }),
+        ] },
+      { id: "clickup", icon: "✅", label: "ClickUp export", status: "clickup",
+        blurb: "Push the Response Playbook to a ClickUp list as tasks.",
+        reload: "DFIR_CLICKUP_", test: { method: "GET", url: "/clickup/status" },
+        fields: [
+          F("DFIR_CLICKUP_TOKEN", "API token", { secret: true }),
+          F("DFIR_CLICKUP_LIST_ID", "Default list ID", { hint: "Optional — can be chosen at push time." }),
+        ] },
+      { id: "push", icon: "📡", label: "Push ingest", status: "push",
+        blurb: "Let an external tool stream alerts into a case via POST /cases/:id/push.",
+        reload: "DFIR_PUSH_TOKEN", test: { method: "GET", url: "/setup/status", statusKey: "push" },
+        fields: [
+          F("DFIR_PUSH_TOKEN", "Push token", { secret: true, hint: "Senders include it as the X-DFIR-Key header. OFF until set." }),
+        ] },
+      { id: "nsrl", icon: "🗄️", label: "NSRL known-good", status: "nsrl",
+        blurb: "Auto-mark known-software hashes legitimate. Flat hash file and/or an RDS SQLite DB.",
+        reload: "DFIR_NSRL_", test: { method: "GET", url: "/setup/status", statusKey: "nsrl" },
+        fields: [
+          F("DFIR_NSRL_DB", "RDS SQLite DB path", { hint: "RDS_*.db queried on demand (needs Node 22.5+)." }),
+          F("DFIR_NSRL_FILE", "Hash file path(s)", { hint: "NSRLFile.txt / hashdeep / plain hash list; ;-separated; preloaded at startup." }),
+        ] },
+    ];
+    // Step ids in rail order (AI is the implicit first step, rendered statically).
+    const WIZ_ORDER = ["ai", ...WIZARD_STEPS.map(s => s.id)];
+    const WIZARD_BY_ID = Object.fromEntries(WIZARD_STEPS.map(s => [s.id, s]));
+    let wizCurrent = "ai";          // active step id
+    let wizStatus = {};             // last /setup/status snapshot (drives ✓/○)
 
-    // Update the model hint + reveal the base-URL field for local providers as the provider changes.
+    // ── AI step logic (#181, preserved) ──
+    function wizResetAiStep() {
+      wizEl("wizProvider").value = ""; wizEl("wizModel").value = ""; wizEl("wizKey").value = "";
+      wizEl("wizBaseUrl").value = ""; wizEl("wizResult").textContent = ""; wizEl("wizModelHint").innerHTML = "";
+      wizEl("wizBaseUrlField").style.display = "none"; wizEl("wizTestSaveBtn").disabled = false;
+    }
     wizEl("wizProvider").addEventListener("change", e => {
-      const p = e.target.value;
-      const hint = wizEl("wizModelHint");
+      const p = e.target.value, hint = wizEl("wizModelHint");
       hint.innerHTML = WIZ_MODEL_HINTS[p] || "";
-      // Wire click-to-fill on each suggested model code.
-      hint.querySelectorAll("code").forEach(c => {
-        c.title = "Click to use this model";
-        c.onclick = () => { wizEl("wizModel").value = c.textContent; };
-      });
+      hint.querySelectorAll("code").forEach(c => { c.title = "Click to use this model"; c.onclick = () => { wizEl("wizModel").value = c.textContent; }; });
       wizEl("wizBaseUrlField").style.display = LOCAL_PROVIDERS.has(p) ? "" : "none";
     });
-
-    function wizDismiss() {
-      try { localStorage.setItem(WIZ_DISMISS_KEY, "1"); } catch {}
-      closeAiWizard();
-    }
-
-    async function wizSaveAndTest() {
-      const provider = wizEl("wizProvider").value;
-      const model = wizEl("wizModel").value.trim();
-      const key = wizEl("wizKey").value.trim();
-      const baseUrl = wizEl("wizBaseUrl").value.trim();
-      const result = wizEl("wizResult");
-      const local = LOCAL_PROVIDERS.has(provider);
+    async function wizSaveAndTestAi() {
+      const provider = wizEl("wizProvider").value, model = wizEl("wizModel").value.trim();
+      const key = wizEl("wizKey").value.trim(), baseUrl = wizEl("wizBaseUrl").value.trim();
+      const result = wizEl("wizResult"), local = LOCAL_PROVIDERS.has(provider);
       if (!provider) { result.style.color = "#ffb05a"; result.textContent = "Pick a provider first."; return; }
       if (!model) { result.style.color = "#ffb05a"; result.textContent = "Enter an extraction model."; return; }
-      // Local providers (Ollama/LiteLLM) often need no API key; hosted ones do.
       if (!key && !local) { result.style.color = "#ffb05a"; result.textContent = "Enter an API key (or pick a local provider)."; return; }
-
-      const btn = wizEl("wizTestSaveBtn");
-      btn.disabled = true;
-      result.style.color = "#9aa4b2";
-      result.textContent = "Saving configuration…";
-
-      // 1. Persist to .env. updateEnv skips empty values, so a blank key/base-URL is simply not written.
+      const btn = wizEl("wizTestSaveBtn"); btn.disabled = true;
+      result.style.color = "#9aa4b2"; result.textContent = "Saving configuration…";
       const updates = { DFIR_AI_PROVIDER: provider, DFIR_AI_MODEL: model };
       if (key) updates.DFIR_AI_KEY = key;
       if (baseUrl) updates.DFIR_AI_BASE_URL = baseUrl;
       try {
-        const save = await fetch("/settings/env", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ updates }),
-        });
-        if (!save.ok) {
-          const j = await save.json().catch(() => ({}));
-          result.style.color = "#ff9f9f";
-          result.textContent = "Could not save: " + esc(j.error || ("HTTP " + save.status)) + " — restart the companion server if this 404s.";
-          btn.disabled = false; return;
-        }
-      } catch (e) {
-        result.style.color = "#ff9f9f";
-        result.textContent = "Could not reach the server: " + esc(e.message);
-        btn.disabled = false; return;
-      }
-
-      // 2. Apply the saved DFIR_AI_* values into the live process so the probe sees them without a restart.
+        const save = await fetch("/settings/env", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ updates }) });
+        if (!save.ok) { const j = await save.json().catch(() => ({})); result.style.color = "#ff9f9f"; result.textContent = "Could not save: " + esc(j.error || ("HTTP " + save.status)) + " — restart the companion server if this 404s."; btn.disabled = false; return; }
+      } catch (e) { result.style.color = "#ff9f9f"; result.textContent = "Could not reach the server: " + esc(e.message); btn.disabled = false; return; }
       result.textContent = "Applying & testing the connection…";
       await fetch("/settings/ai-reload", { method: "POST" }).catch(() => {});
-
-      // 3. Probe connectivity with the lightweight image-free AI test.
       try {
         const r = await fetch("/diagnostics/ai-test", { method: "POST" });
         const body = await r.json().catch(() => ({}));
-        if (r.status === 501) {
-          result.style.color = "#ffb05a";
-          result.textContent = "Saved, but " + esc(body.error || "the provider isn't configured yet") + ".";
-        } else if (body.ok) {
-          result.style.color = "#5ad17a";
-          result.innerHTML = "✓ <strong>" + esc(body.provider) + "</strong> responded in " + body.latencyMs + " ms. " +
-            "Saved to .env — <strong>restart the companion server</strong> to enable AI analysis.";
-          try { localStorage.setItem(WIZ_DISMISS_KEY, "1"); } catch {}
-        } else {
-          result.style.color = "#ff9f9f";
-          result.innerHTML = "✗ Saved, but the test failed — <strong>" + esc(body.kind || "error") + "</strong>: " +
-            esc(body.error || "unknown") + ". Fix the value above and test again.";
-        }
-      } catch (e) {
-        result.style.color = "#ff9f9f";
-        result.textContent = "Saved, but the test request failed: " + esc(e.message);
-      } finally {
-        btn.disabled = false;
+        if (r.status === 501) { result.style.color = "#ffb05a"; result.textContent = "Saved, but " + esc(body.error || "the provider isn't configured yet") + "."; }
+        else if (body.ok) { result.style.color = "#5ad17a"; result.innerHTML = "✓ <strong>" + esc(body.provider) + "</strong> responded in " + body.latencyMs + " ms. Saved to .env — <strong>restart the companion server</strong> to enable AI analysis."; }
+        else { result.style.color = "#ff9f9f"; result.innerHTML = "✗ Saved, but the test failed — <strong>" + esc(body.kind || "error") + "</strong>: " + esc(body.error || "unknown") + ". Fix the value above and test again."; }
+      } catch (e) { result.style.color = "#ff9f9f"; result.textContent = "Saved, but the test request failed: " + esc(e.message); }
+      finally { btn.disabled = false; await wizRefreshStatus(); }
+    }
+    wizEl("wizTestSaveBtn").onclick = wizSaveAndTestAi;
+
+    // ── Generic step rendering (every non-AI step) ──
+    function wizFieldId(envKey) { return "wizf-" + envKey; }
+    function wizRenderFields(fields) {
+      return fields.map(f => {
+        const id = wizFieldId(f.key);
+        const ph = f.secret ? "(not set)" : (f.hint ? "" : "");
+        const type = f.secret ? 'type="password" autocomplete="new-password"' : 'autocomplete="off"';
+        return '<div class="wiz-field"><label>' + esc(f.label) +
+          (f.hint ? '<span class="wiz-hint">' + esc(f.hint) + '</span>' : '') +
+          '</label><input id="' + id + '" ' + type + ' placeholder="' + esc(ph) + '" /></div>';
+      }).join("");
+    }
+    function wizRenderStep(step) {
+      if (step.kind === "providers") {
+        const cards = step.providers.map(p => {
+          const ok = (wizStatus[step.status] || {})[p.id];
+          return '<div class="wiz-prov" data-prov="' + p.id + '">' +
+            '<div class="wiz-prov-head">' + esc(p.label) +
+            '<span class="wiz-scope ' + p.scope + '">' + p.scope + '</span>' +
+            '<span class="wiz-ok">' + (ok ? '<span style="color:#5ad17a">✓ configured</span>' : '<span style="color:#9aa4b2">○ not set</span>') + '</span></div>' +
+            wizRenderFields(p.fields) +
+            '<div class="wiz-actions"><button class="wiz-btn" data-save-prov="' + p.id + '">Save</button>' +
+            '<span class="wiz-result" data-res-prov="' + p.id + '"></span></div></div>';
+        }).join("");
+        return '<h3>' + step.icon + ' ' + esc(step.label) + '</h3>' +
+          '<p class="wiz-sub">' + esc(step.blurb) + '</p>' +
+          (step.note ? '<div class="wiz-note">🛡️ ' + esc(step.note) + '</div>' : '') +
+          '<div class="wiz-prov-list">' + cards + '</div>';
       }
+      return '<h3>' + step.icon + ' ' + esc(step.label) + '</h3>' +
+        '<p class="wiz-sub">' + esc(step.blurb) + '</p>' +
+        (step.note ? '<div class="wiz-note">🛡️ ' + esc(step.note) + '</div>' : '') +
+        wizRenderFields(step.fields) +
+        '<div class="wiz-actions"><button class="wiz-btn" id="wizStepSaveBtn">Save &amp; test</button>' +
+        '<span style="font-size:11px;color:var(--c-9aa4b2)">Saved to your local .env (gitignored).</span></div>' +
+        '<div id="wizStepResult" class="wiz-result"></div>';
+    }
+    // Collect non-empty field values for a set of fields → { ENVKEY: value }.
+    function wizCollect(fields) {
+      const updates = {};
+      fields.forEach(f => { const el = wizEl(wizFieldId(f.key)); if (el && el.value.trim()) updates[f.key] = el.value.trim(); });
+      return updates;
+    }
+    // Save → reload (live) → test. resultEl shows progress/outcome. Returns nothing.
+    async function wizSaveAndTestGeneric(fields, reloadPrefix, test, resultEl, btn) {
+      const updates = wizCollect(fields);
+      if (Object.keys(updates).length === 0) { resultEl.style.color = "#ffb05a"; resultEl.textContent = "Enter at least one value first."; return; }
+      if (btn) btn.disabled = true;
+      resultEl.style.color = "#9aa4b2"; resultEl.textContent = "Saving…";
+      try {
+        const save = await fetch("/settings/env", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ updates }) });
+        if (!save.ok) { const j = await save.json().catch(() => ({})); resultEl.style.color = "#ff9f9f"; resultEl.textContent = "Could not save: " + esc(j.error || ("HTTP " + save.status)); if (btn) btn.disabled = false; return; }
+      } catch (e) { resultEl.style.color = "#ff9f9f"; resultEl.textContent = "Could not reach the server: " + esc(e.message); if (btn) btn.disabled = false; return; }
+      if (reloadPrefix) { resultEl.textContent = "Applying…"; await fetch("/settings/reload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prefix: reloadPrefix }) }).catch(() => {}); }
+      if (test) {
+        resultEl.textContent = "Testing the connection…";
+        try {
+          const r = await fetch(test.url, { method: test.method });
+          const body = await r.json().catch(() => ({}));
+          // statusKey form: a /setup/status field tells us configured (no reachability probe).
+          if (test.statusKey) {
+            const ok = !!body[test.statusKey];
+            resultEl.style.color = ok ? "#5ad17a" : "#ffb05a";
+            resultEl.textContent = ok ? "✓ Saved & configured." : "Saved, but not detected as configured yet.";
+          } else if (body.ok || (body.configured && body.ok !== false)) {
+            resultEl.style.color = "#5ad17a";
+            resultEl.innerHTML = "✓ Saved & connected" + (body.baseUrl ? " (" + esc(body.baseUrl) + ")" : "") + ".";
+          } else if (body.configured === false) {
+            resultEl.style.color = "#ffb05a";
+            resultEl.textContent = "Saved, but " + esc(body.error || "still not fully configured") + ".";
+          } else {
+            resultEl.style.color = "#ff9f9f";
+            resultEl.innerHTML = "✗ Saved, but the test failed: " + esc(body.error || "unreachable") + ".";
+          }
+        } catch (e) { resultEl.style.color = "#ff9f9f"; resultEl.textContent = "Saved, but the test failed: " + esc(e.message); }
+      } else {
+        resultEl.style.color = "#5ad17a"; resultEl.textContent = "✓ Saved.";
+      }
+      if (btn) btn.disabled = false;
+      await wizRefreshStatus();
     }
 
-    wizEl("wizTestSaveBtn").onclick = wizSaveAndTest;
-    wizEl("wizDismissBtn").onclick = wizDismiss;
-    // Settings → AI "Re-run the setup wizard" link — close Settings, clear the dismissal, reopen the wizard.
-    const rerunLink = document.getElementById("rerunAiWizard");
-    if (rerunLink) rerunLink.onclick = (e) => {
-      e.preventDefault();
-      try { localStorage.removeItem(WIZ_DISMISS_KEY); } catch {}
-      closeSettingsModal();
-      openAiWizard();
-    };
-    // Escape closes the wizard (treated as a skip, but NOT permanently dismissed — so it can reappear).
-    wizEl("wizOverlay").addEventListener("keydown", e => { if (e.key === "Escape") closeAiWizard(); });
+    // Render the dynamic pane for a step + wire its buttons.
+    function wizShowStep(stepId) {
+      wizCurrent = stepId;
+      const isAi = stepId === "ai";
+      wizEl("wizPaneAi").style.display = isAi ? "" : "none";
+      wizEl("wizPaneDynamic").style.display = isAi ? "none" : "";
+      if (isAi) { wizRenderRail(); wizUpdateNav(); return; }
+      const step = WIZARD_BY_ID[stepId];
+      const pane = wizEl("wizPaneDynamic");
+      pane.innerHTML = wizRenderStep(step);
+      if (step.kind === "providers") {
+        step.providers.forEach(p => {
+          const btn = pane.querySelector('[data-save-prov="' + p.id + '"]');
+          const res = pane.querySelector('[data-res-prov="' + p.id + '"]');
+          if (btn) btn.onclick = () => wizSaveAndTestGeneric(p.fields, p.reload, null, res, btn);
+        });
+      } else {
+        const btn = wizEl("wizStepSaveBtn"), res = wizEl("wizStepResult");
+        if (btn) btn.onclick = () => wizSaveAndTestGeneric(step.fields, step.reload, step.test, res, btn);
+      }
+      wizRenderRail(); wizUpdateNav();
+    }
 
-    // Show the wizard once on first dashboard load if no AI provider is configured and the user
-    // hasn't dismissed it. /health.aiEnabled reflects the live server config (false until a provider
-    // is set + the server restarted). Best-effort — never blocks the dashboard.
-    function maybeShowAiWizard() {
+    // Left rail: one row per step, with a ✓ (configured) / ○ (optional) dot.
+    function wizRenderRail() {
+      const rail = wizEl("wizRail");
+      rail.innerHTML = WIZ_ORDER.map(id => {
+        const label = id === "ai" ? "AI analysis" : WIZARD_BY_ID[id].label;
+        const icon = id === "ai" ? "👋" : WIZARD_BY_ID[id].icon;
+        let done = false;
+        if (id === "ai") done = !!wizStatus.ai;
+        else { const st = wizStatus[WIZARD_BY_ID[id].status]; done = (typeof st === "object") ? Object.values(st || {}).some(Boolean) : !!st; }
+        const cls = "wiz-rail-item" + (id === wizCurrent ? " active" : "") + (done ? " done" : "");
+        return '<div class="' + cls + '" data-step="' + id + '"><span class="wiz-rail-dot">' + (done ? "✓" : "○") + '</span>' +
+          '<span class="wiz-rail-label">' + icon + " " + esc(label) + '</span></div>';
+      }).join("");
+      rail.querySelectorAll(".wiz-rail-item").forEach(el => { el.onclick = () => wizShowStep(el.getAttribute("data-step")); });
+    }
+    function wizUpdateNav() {
+      const i = WIZ_ORDER.indexOf(wizCurrent);
+      wizEl("wizBackBtn").disabled = i <= 0;
+      wizEl("wizNextBtn").disabled = i >= WIZ_ORDER.length - 1;
+    }
+    async function wizRefreshStatus() {
+      try { wizStatus = await (await fetch("/setup/status")).json(); } catch { wizStatus = {}; }
+      wizRenderRail();
+    }
+
+    function openSetupWizard() {
+      wizResetAiStep();
+      wizCurrent = "ai";
+      wizEl("wizPaneAi").style.display = "";
+      wizEl("wizPaneDynamic").style.display = "none";
+      wizEl("wizOverlay").classList.add("open");
+      wizRefreshStatus();   // fills the rail ✓/○, async
+      wizRenderRail(); wizUpdateNav();
+    }
+    function closeSetupWizard() { wizEl("wizOverlay").classList.remove("open"); }
+    function wizDismiss() { try { localStorage.setItem(WIZ_DISMISS_KEY, "1"); } catch {} closeSetupWizard(); }
+
+    wizEl("wizDismissBtn").onclick = wizDismiss;
+    wizEl("wizDoneBtn").onclick = closeSetupWizard;
+    wizEl("wizBackBtn").onclick = () => { const i = WIZ_ORDER.indexOf(wizCurrent); if (i > 0) wizShowStep(WIZ_ORDER[i - 1]); };
+    wizEl("wizNextBtn").onclick = () => { const i = WIZ_ORDER.indexOf(wizCurrent); if (i < WIZ_ORDER.length - 1) wizShowStep(WIZ_ORDER[i + 1]); };
+    wizEl("wizOverlay").addEventListener("keydown", e => { if (e.key === "Escape") closeSetupWizard(); });
+
+    // Settings → AI "Re-run the setup wizard" link (#181) — now opens the full Setup wizard.
+    const rerunLink = document.getElementById("rerunAiWizard");
+    if (rerunLink) rerunLink.onclick = (e) => { e.preventDefault(); try { localStorage.removeItem(WIZ_DISMISS_KEY); } catch {} closeSettingsModal(); openSetupWizard(); };
+    // Settings gear → "⚙ Setup wizard" launcher (added in Settings → General).
+    const setupLauncher = document.getElementById("openSetupWizard");
+    if (setupLauncher) setupLauncher.onclick = (e) => { e.preventDefault(); closeSettingsModal(); openSetupWizard(); };
+
+    // First-run: open the wizard once if AI isn't configured AND the user hasn't dismissed it.
+    // (AI is the headline gap; the other steps are opt-in so we don't nag for them.)
+    function maybeShowSetupWizard() {
       let dismissed = false;
       try { dismissed = localStorage.getItem(WIZ_DISMISS_KEY) === "1"; } catch {}
       if (dismissed) return;
-      fetch("/health").then(r => r.json()).then(h => {
-        if (h && h.aiEnabled === false) openAiWizard();
-      }).catch(() => {});
+      fetch("/health").then(r => r.json()).then(h => { if (h && h.aiEnabled === false) openSetupWizard(); }).catch(() => {});
     }
-    maybeShowAiWizard();
+    maybeShowSetupWizard();
 
     // Live log-verbosity control (no restart — server + pipeline share one logger).
     async function fetchLogLevel() {
