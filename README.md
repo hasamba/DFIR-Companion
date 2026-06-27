@@ -162,7 +162,7 @@ Standard DFIR questions auto-answered from the synthesized case
 - **Compromised assets** — victim hosts/accounts + interactive asset↔IOC graph
 - **Key investigative questions** — answered with pointers to evidence or next steps to collect
 - **Investigation threads** — open/resolved leads
-- **Dashboard view presets** — one-click Analyst / Lead / Executive (role) and Triage / Report / Deep-Dive / Hunt-Prep (phase) layouts that re-arrange panels and filter findings + timeline by severity, each paired with a matching report template; remembered per-case and **fully editable** (edit built-ins or create your own in Settings → Dashboard Views)
+- **Dashboard view presets** — one-click Analyst/Lead/Executive (role) + Triage/Report/Deep-Dive/Hunt-Prep (phase) layouts that re-arrange panels, filter by severity, and pair a report template; per-case, fully editable
 - **Reports** — Markdown, HTML, PDF, Word (.docx), CSVs, JSON exports
 
 ## Features
@@ -222,8 +222,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 ### Investigation workflow
 - **Explain This Event** — 💡 per-row AI button explains any forensic event in context: what happened, why it matters, normal-vs-suspicious, ATT&CK mapping, 1–3 runnable pivot queries (VQL/KQL/SPL), evidence for/against; ephemeral overlay
 - **Ask the case (GraphRAG)** — free-form Q&A grounded in timeline + deterministic evidence-chain graph; multi-hop questions answered via real relationships
-- **Hypothesis-driven mode** — status-tracked investigative hypotheses (open / supported / refuted / unknown) auto-generated on synthesis + analyst-authored, with evidence/technique links and a report section; open analyst hypotheses steer the next synthesis, any notebook note/question promotes into one, auto ones refresh on re-synthesis but freeze once edited, survive synthesis, travel in snapshots
-- **Case memory** — synthesis logs each run to the durable, never-wiped Investigation Log (cross-session history); a *known unknowns* block (timeline gaps, uncovered ATT&CK phases, lookalike actors' likely-next techniques) grounds synthesis + hunt suggestions in what's missing; opt-in candidate-actor hypotheses (`DFIR_SYNTH_ADVERSARY_HINTS`) feed the synthesis prompt
+- **Hypothesis-driven mode** — status-tracked hypotheses (open/supported/refuted/unknown), auto-generated + analyst-authored, with evidence/technique links + a report section; open ones steer synthesis, notebook notes promote in, survive synthesis + snapshots
+- **Case memory** — synthesis logs each run to a durable, never-wiped Investigation Log; a *known unknowns* block (timeline gaps, uncovered ATT&CK phases, lookalike actors' next techniques) grounds synthesis + hunt suggestions; opt-in candidate-actor hypotheses (`DFIR_SYNTH_ADVERSARY_HINTS`)
 - **Response Playbook** — trackable checklist (status/priority/assignee/due/custom tasks); opt-in IR-templates expand findings into Contain→Investigate→Eradicate→Recover
 - **Triage tags & comments** — label entities + attach notes; live WebSocket sync; survive synthesis
 - **Bulk actions** — multi-select events/IOCs: star/tag/mark-legitimate/enrich/copy
@@ -237,9 +237,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Hunt-pivot generator** — one-click emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries
 - **Query Translator** — plain English → runnable queries (NL: "PowerShell downloading then executing") across all enabled platforms; one-click-deploy VQL hunts
 - **Velociraptor triage bundles** — browse artifacts → save bundles → run as hunts (label/OS/min-severity) → auto-collect + import
-- **AI-suggested fleet hunts** — AI proposes proactive hunts to sweep fleet for case tradecraft (grounded in the causal evidence graph — spawn chains, file lineage, lateral movement — so hunts target the relationship, not just the leaf indicator)
+- **AI-suggested fleet hunts** — AI proposes proactive fleet-sweep hunts grounded in the causal evidence graph (spawn chains, file lineage, lateral movement), so hunts target the relationship, not just the leaf indicator
 - **AI-suggested playbook hunts** — AI proposes hunts per endpoint-related task (single-endpoint collection or fleet hunt)
-- **Hunting feedback loop** — records each deployed hunt's outcome (found new evidence + counts) per case; suggestions skip a query that already ran and pivot on what hit, with a dashboard *Hunting Profile* of what's been hunted / hit / missed
+- **Hunting feedback loop** — records each deployed hunt's outcome (new evidence + counts) per case; suggestions skip an already-run query and pivot on what hit, with a *Hunting Profile* of hunted/hit/missed
 - **Webhook push ingest** (opt-in, token) — external tools push alerts via `POST /cases/:id/push` (SIEM webhook, Velociraptor monitor, scripts)
 - **Velociraptor live monitoring** (opt-in) — stream CLIENT_EVENT artifacts (e.g., ProcessCreation) as events fire; auto-collect on interval; one-click auto-monitor for all enabled artifacts
 - **Scope + legitimacy** — set time window; mark findings/IOCs/events legitimate (reversible); all views re-project
@@ -283,9 +283,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Notifications** — Slack/MS Teams/Mattermost/Discord/Telegram/SMTP for findings/playbook/milestones; per-channel threshold + toggles
 - **Report templates** — global branded layouts (accent, header/footer, section order); pick per case. A section disabled here skips its AI generation (executive summary, narrative) to save tokens (#168)
 - **Mobile companion** — read-only PWA (`/mobile`) for findings/timeline/IOCs with verdicts; offline app-shell
-- **🌍 Geographic IP map** — plot geo-located IP IOCs on an interactive world map (Leaflet),
-  color-coded by severity, with victim→attacker flows, country statistics, filtering, and CSV
-  export. Coordinates come from the (opt-in) GeoIP enrichment; offline-friendly (tiles overridable).
+- **🌍 Geographic IP map** — plot geo-located IP IOCs on an interactive Leaflet world map (severity colors, victim→attacker flows, country stats, filtering, CSV export); coordinates from the opt-in GeoIP enrichment, offline-friendly (tiles overridable)
 
 ### Ops
 - **Health / Diagnostics** — **Settings → Diagnostics** one-page operator view: disk usage, case count, capture/synthesis queue, redacted AI config + live *Test AI connectivity*, importer attempts (24h/7d) + recent failures; compute-on-demand case sizes; key-free copy-to-clipboard
