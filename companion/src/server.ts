@@ -6757,6 +6757,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Apply the just-saved DFIR_AI_* values from .env into process.env WITHOUT a full restart, so the
+  // first-run wizard (#181) can save → reload → POST /diagnostics/ai-test in one flow (buildProvider()
+  // reads process.env live). This does NOT rebuild the analysis pipeline — /health.aiEnabled stays
+  // false until a restart — it only lets the live connectivity probe see the new config. Mirrors the
+  // IRIS/Velociraptor reconnect routes' reloadEnvPrefix pattern.
+  app.post("/settings/ai-reload", async (_req: Request, res: Response) => {
+    try {
+      const applied = await reloadEnvPrefix("DFIR_AI_");
+      return res.json({ ok: true, applied });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Re-arm any persisted live Velociraptor monitors so streaming survives a restart (#84). Fire-and-
   // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
   // tests and embeddings that don't use monitoring.

@@ -208,6 +208,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Generic logs** | Firewall, syslog, VPN; repetitive lines → counted patterns | AI-triaged |
 
 ### AI analysis
+- **First-run setup wizard** — dashboard overlay (shown when no provider is configured, dismissible + re-runnable from Settings → AI): pick provider → model → key → optional base URL, saves to `.env` and runs a live connection test in one click
 - **Two-phase** — cheap per-window vision (extraction) + strong text-only synthesis (findings/IOCs/MITRE/attacker path)
 - **Providers** — OpenAI, OpenRouter, Ollama, LiteLLM, Gemini; optional two-tier (cheap extract + strong synth) with context budgeting
 - **EDR/SIEM consoles as evidence** — detections extracted; analyst navigation filtered (real detections never dropped)

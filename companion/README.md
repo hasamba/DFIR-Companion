@@ -29,6 +29,13 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 
 ## Configuration (`companion/.env`, gitignored)
 
+> **First run?** When no AI provider is configured, the dashboard shows a **setup wizard**: pick a
+> provider, enter a model (it suggests cheap/strong options per provider) + API key, optionally a base
+> URL for a local proxy, then **Save & test** — it writes the `DFIR_AI_*` vars below to `.env` and runs a
+> live connectivity probe. AI is optional (capture + imports work without it), so the wizard is fully
+> dismissible, and re-runnable anytime from **Settings → AI → Re-run the setup wizard**. Restart the
+> server after saving to enable AI analysis.
+
 | Variable | Meaning |
 | --- | --- |
 | `DFIR_CASES_ROOT` | Case folder location (relative to `companion/`) |

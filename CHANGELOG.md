@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **First-run AI setup wizard** — a dismissible dashboard overlay shown when no AI provider is configured: pick provider → model (with per-provider suggestions) → key → optional base URL, then it saves to `.env` and runs the live `/diagnostics/ai-test` probe in one click; new `POST /settings/ai-reload` applies the saved `DFIR_AI_*` so the test reflects them without a restart; re-runnable from Settings → AI (closes #181).
 - **Declared Node engine requirement** — `companion/package.json` now has `engines.node: ">=20"`; READMEs note the **NSRL RDS SQLite backend** (and full test suite) need Node 22.5+ for `node:sqlite`, the rest runs on Node 20 (closes #185).
 - **Full-pipeline integration test** — new `companion/tests/fullPipeline.test.ts` exercises capture → artifact import → synthesis → enrichment → report → snapshot export → snapshot restore, with mocked AI and enrichment providers so the suite runs offline and in CI (addresses #182).
 

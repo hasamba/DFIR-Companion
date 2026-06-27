@@ -548,6 +548,40 @@
     .comment-del { background: transparent; border: 0; color: var(--c-ff7a7a); cursor: pointer; font-size: 11px; padding: 0 4px; }
     #commentText { width: 100%; box-sizing: border-box; background: var(--c-0f1115); color: var(--c-e6e6e6);
       border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 6px; font-family: inherit; resize: vertical; }
+    /* First-run AI setup wizard (#181) — a friendly onboarding overlay shown once when no AI provider
+       is configured. Reuses the comment-overlay backdrop; its own roomier modal + stepped layout. */
+    .wiz-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; z-index: 60; }
+    .wiz-overlay.open { display: block; }
+    .wiz-modal { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      width: min(620px, 94vw); max-height: 92vh; overflow: auto; background: var(--c-161a22);
+      border: 1px solid var(--c-2a2f3a); border-radius: 12px; padding: 22px 24px; box-shadow: 0 10px 40px rgba(0,0,0,.6); }
+    .wiz-modal h2 { margin: 0 0 4px; font-size: 18px; color: var(--c-e6e6e6); }
+    .wiz-modal .wiz-sub { color: var(--c-9aa4b2); font-size: 12.5px; margin: 0 0 14px; line-height: 1.5; }
+    .wiz-note { background: var(--c-0f1115); border: 1px solid var(--c-2a2f3a); border-left: 3px solid #5ad17a;
+      border-radius: 6px; padding: 8px 11px; font-size: 12px; color: var(--c-cbd3df); margin: 0 0 16px; line-height: 1.5; }
+    .wiz-field { margin: 0 0 12px; }
+    .wiz-field label { display: block; font-size: 12px; color: var(--c-cbd3df); margin: 0 0 4px; font-weight: 600; }
+    .wiz-field .wiz-hint { display: block; font-size: 11px; color: var(--c-9aa4b2); font-weight: 400; margin-top: 2px; }
+    .wiz-modal input, .wiz-modal select { width: 100%; box-sizing: border-box; background: var(--c-0f1115);
+      color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 7px 8px; font-size: 13px; }
+    .wiz-modal select option { background: var(--c-161a22); }
+    .wiz-row { display: flex; gap: 12px; }
+    .wiz-row > .wiz-field { flex: 1; }
+    .wiz-actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+    .wiz-btn { background: var(--c-2d6cdf); color: #fff; border: 0; border-radius: 7px; padding: 8px 16px;
+      font-size: 13px; cursor: pointer; }
+    .wiz-btn:hover { background: #3a78e8; }
+    .wiz-btn[disabled] { opacity: .55; cursor: default; }
+    .wiz-btn.secondary { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-cbd3df); }
+    .wiz-btn.secondary:hover { border-color: var(--c-4a5466); }
+    .wiz-dismiss { background: transparent; border: 0; color: var(--c-9aa4b2); cursor: pointer; font-size: 12px;
+      margin-left: auto; text-decoration: underline; }
+    .wiz-dismiss:hover { color: var(--c-cbd3df); }
+    .wiz-result { font-size: 12.5px; margin: 12px 0 0; min-height: 18px; line-height: 1.5; }
+    .wiz-modelhint { font-size: 11px; color: var(--c-9aa4b2); margin-top: 5px; line-height: 1.5; }
+    .wiz-modelhint code { background: var(--c-0f1115); border: 1px solid var(--c-2a2f3a); border-radius: 4px;
+      padding: 0 4px; cursor: pointer; }
+    .wiz-modelhint code:hover { border-color: var(--c-2d6cdf); color: var(--c-e6e6e6); }
     /* Analyst triage tags (hand labels — confirmed-malicious, false-positive, key-evidence, …) */
     .tag-pill { display: inline-block; border: 1px solid; border-radius: 9px; padding: 0 7px;
       font-size: 10px; line-height: 16px; margin-left: 4px; vertical-align: middle; background: var(--c-0f1115); }
@@ -1521,6 +1555,7 @@
       <!-- AI -->
       <div class="stab-pane" id="stab-ai">
         <div class="srestart-note">⚠ All AI settings require a server restart to take effect</div>
+        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">New here? <a href="#" id="rerunAiWizard" style="color:var(--c-2d6cdf)">Re-run the setup wizard</a> for a guided provider/model/key flow with a built-in connection test (#181).</p>
         <div class="sfield-row">
           <div class="sfield">
             <label>Provider<span class="sfield-hint">DFIR_AI_PROVIDER</span></label>
@@ -2477,6 +2512,57 @@
         <button id="settingsCloseBtn" style="background:var(--c-2a2f3a);">Close</button>
         <span id="settingsSaveMsg" class="settings-msg"></span>
       </div>
+    </div>
+  </div>
+
+  <!-- First-run AI setup wizard (#181) — shown once when no AI provider is configured. Saves via the
+       existing /settings/env API, reloads DFIR_AI_* into the live process, then runs the lightweight
+       /diagnostics/ai-test probe. Fully dismissible (AI is optional — capture/imports work without it). -->
+  <div id="wizOverlay" class="wiz-overlay" role="dialog" aria-modal="true" aria-labelledby="wizTitle">
+    <div class="wiz-modal">
+      <h2 id="wizTitle">👋 Set up AI analysis</h2>
+      <p class="wiz-sub">DFIR Companion uses an AI provider to read screenshots and synthesize findings. Configure it here, or skip and do it later in Settings → AI.</p>
+      <div class="wiz-note">✅ <strong>AI is optional.</strong> Evidence capture and all artifact imports (CSV, EVTX, THOR, SIEM, Velociraptor, memory dumps…) work without it. You can add or change a provider anytime.</div>
+      <div class="wiz-field">
+        <label>Provider
+          <span class="wiz-hint">Pick where your AI model runs. Ollama / LiteLLM are local; the rest are hosted APIs.</span>
+        </label>
+        <select id="wizProvider">
+          <option value="">— choose a provider —</option>
+          <option value="openai">OpenAI</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="ollama">Ollama (local)</option>
+          <option value="litellm">LiteLLM (local proxy)</option>
+          <option value="gemini">Gemini</option>
+          <option value="anthropic">Anthropic</option>
+        </select>
+      </div>
+      <div class="wiz-row">
+        <div class="wiz-field">
+          <label>Extraction model
+            <span class="wiz-hint">Must support vision (reads screenshots).</span>
+          </label>
+          <input id="wizModel" placeholder="e.g. gpt-4o-mini" autocomplete="off" />
+          <div id="wizModelHint" class="wiz-modelhint"></div>
+        </div>
+        <div class="wiz-field">
+          <label>API key
+            <span class="wiz-hint">Stored only in your local .env (gitignored).</span>
+          </label>
+          <input id="wizKey" type="password" placeholder="(not set)" autocomplete="new-password" />
+        </div>
+      </div>
+      <div class="wiz-field" id="wizBaseUrlField" style="display:none">
+        <label>Base URL override
+          <span class="wiz-hint">For a local proxy / self-hosted endpoint.</span>
+        </label>
+        <input id="wizBaseUrl" placeholder="e.g. http://localhost:11434/v1" autocomplete="off" />
+      </div>
+      <div class="wiz-actions">
+        <button id="wizTestSaveBtn" class="wiz-btn">Save &amp; test connection</button>
+        <button id="wizDismissBtn" class="wiz-dismiss">Skip — I'll configure .env myself</button>
+      </div>
+      <div id="wizResult" class="wiz-result"></div>
     </div>
   </div>
 
@@ -11030,6 +11116,152 @@
     document.getElementById("settingsBtn").onclick = openSettingsModal;
     document.getElementById("settingsSaveBtn").onclick = saveSettings;
     document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
+
+    // ── First-run AI setup wizard (#181) ───────────────────────────────────────────────────
+    // A friendly onboarding overlay shown once when no AI provider is configured. It writes the
+    // four DFIR_AI_* extraction vars via the existing /settings/env API, applies them live with
+    // /settings/ai-reload, then probes connectivity with /diagnostics/ai-test — so the analyst gets
+    // a green ✓ (or an actionable error) before leaving. Dismissible + re-runnable from Settings → AI.
+    const WIZ_DISMISS_KEY = "dfir.aiWizardDismissed";
+    // Provider-specific model suggestions (cheap extraction + a stronger synthesis pair where it helps).
+    // Each <code> is click-to-fill. Vision-capable extraction models only (the wizard configures extraction).
+    const WIZ_MODEL_HINTS = {
+      openai:     'Try <code>gpt-4o-mini</code> (cheap) or <code>gpt-4o</code> (stronger).',
+      openrouter: 'Try <code>openai/gpt-4o-mini</code> or <code>anthropic/claude-3.5-sonnet</code>.',
+      ollama:     'Try <code>llama3.2-vision</code> or <code>llava</code> (must support vision).',
+      litellm:    'Use your proxy\'s model name, e.g. <code>gpt-4o-mini</code>. Set the base URL below.',
+      gemini:     'Try <code>gemini-2.0-flash</code> (cheap) or <code>gemini-1.5-pro</code>.',
+      anthropic:  'Try <code>claude-haiku-4-5</code> (cheap) or <code>claude-sonnet-4-6</code>.',
+    };
+    const LOCAL_PROVIDERS = new Set(["ollama", "litellm"]);
+
+    function wizEl(id) { return document.getElementById(id); }
+
+    function openAiWizard() {
+      // Reset the form each open (the wizard never pre-fills a key — secrets are write-only).
+      wizEl("wizProvider").value = "";
+      wizEl("wizModel").value = "";
+      wizEl("wizKey").value = "";
+      wizEl("wizBaseUrl").value = "";
+      wizEl("wizResult").textContent = "";
+      wizEl("wizModelHint").innerHTML = "";
+      wizEl("wizBaseUrlField").style.display = "none";
+      wizEl("wizTestSaveBtn").disabled = false;
+      wizEl("wizOverlay").classList.add("open");
+    }
+    function closeAiWizard() { wizEl("wizOverlay").classList.remove("open"); }
+
+    // Update the model hint + reveal the base-URL field for local providers as the provider changes.
+    wizEl("wizProvider").addEventListener("change", e => {
+      const p = e.target.value;
+      const hint = wizEl("wizModelHint");
+      hint.innerHTML = WIZ_MODEL_HINTS[p] || "";
+      // Wire click-to-fill on each suggested model code.
+      hint.querySelectorAll("code").forEach(c => {
+        c.title = "Click to use this model";
+        c.onclick = () => { wizEl("wizModel").value = c.textContent; };
+      });
+      wizEl("wizBaseUrlField").style.display = LOCAL_PROVIDERS.has(p) ? "" : "none";
+    });
+
+    function wizDismiss() {
+      try { localStorage.setItem(WIZ_DISMISS_KEY, "1"); } catch {}
+      closeAiWizard();
+    }
+
+    async function wizSaveAndTest() {
+      const provider = wizEl("wizProvider").value;
+      const model = wizEl("wizModel").value.trim();
+      const key = wizEl("wizKey").value.trim();
+      const baseUrl = wizEl("wizBaseUrl").value.trim();
+      const result = wizEl("wizResult");
+      const local = LOCAL_PROVIDERS.has(provider);
+      if (!provider) { result.style.color = "#ffb05a"; result.textContent = "Pick a provider first."; return; }
+      if (!model) { result.style.color = "#ffb05a"; result.textContent = "Enter an extraction model."; return; }
+      // Local providers (Ollama/LiteLLM) often need no API key; hosted ones do.
+      if (!key && !local) { result.style.color = "#ffb05a"; result.textContent = "Enter an API key (or pick a local provider)."; return; }
+
+      const btn = wizEl("wizTestSaveBtn");
+      btn.disabled = true;
+      result.style.color = "#9aa4b2";
+      result.textContent = "Saving configuration…";
+
+      // 1. Persist to .env. updateEnv skips empty values, so a blank key/base-URL is simply not written.
+      const updates = { DFIR_AI_PROVIDER: provider, DFIR_AI_MODEL: model };
+      if (key) updates.DFIR_AI_KEY = key;
+      if (baseUrl) updates.DFIR_AI_BASE_URL = baseUrl;
+      try {
+        const save = await fetch("/settings/env", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ updates }),
+        });
+        if (!save.ok) {
+          const j = await save.json().catch(() => ({}));
+          result.style.color = "#ff9f9f";
+          result.textContent = "Could not save: " + esc(j.error || ("HTTP " + save.status)) + " — restart the companion server if this 404s.";
+          btn.disabled = false; return;
+        }
+      } catch (e) {
+        result.style.color = "#ff9f9f";
+        result.textContent = "Could not reach the server: " + esc(e.message);
+        btn.disabled = false; return;
+      }
+
+      // 2. Apply the saved DFIR_AI_* values into the live process so the probe sees them without a restart.
+      result.textContent = "Applying & testing the connection…";
+      await fetch("/settings/ai-reload", { method: "POST" }).catch(() => {});
+
+      // 3. Probe connectivity with the lightweight image-free AI test.
+      try {
+        const r = await fetch("/diagnostics/ai-test", { method: "POST" });
+        const body = await r.json().catch(() => ({}));
+        if (r.status === 501) {
+          result.style.color = "#ffb05a";
+          result.textContent = "Saved, but " + esc(body.error || "the provider isn't configured yet") + ".";
+        } else if (body.ok) {
+          result.style.color = "#5ad17a";
+          result.innerHTML = "✓ <strong>" + esc(body.provider) + "</strong> responded in " + body.latencyMs + " ms. " +
+            "Saved to .env — <strong>restart the companion server</strong> to enable AI analysis.";
+          try { localStorage.setItem(WIZ_DISMISS_KEY, "1"); } catch {}
+        } else {
+          result.style.color = "#ff9f9f";
+          result.innerHTML = "✗ Saved, but the test failed — <strong>" + esc(body.kind || "error") + "</strong>: " +
+            esc(body.error || "unknown") + ". Fix the value above and test again.";
+        }
+      } catch (e) {
+        result.style.color = "#ff9f9f";
+        result.textContent = "Saved, but the test request failed: " + esc(e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    wizEl("wizTestSaveBtn").onclick = wizSaveAndTest;
+    wizEl("wizDismissBtn").onclick = wizDismiss;
+    // Settings → AI "Re-run the setup wizard" link — close Settings, clear the dismissal, reopen the wizard.
+    const rerunLink = document.getElementById("rerunAiWizard");
+    if (rerunLink) rerunLink.onclick = (e) => {
+      e.preventDefault();
+      try { localStorage.removeItem(WIZ_DISMISS_KEY); } catch {}
+      closeSettingsModal();
+      openAiWizard();
+    };
+    // Escape closes the wizard (treated as a skip, but NOT permanently dismissed — so it can reappear).
+    wizEl("wizOverlay").addEventListener("keydown", e => { if (e.key === "Escape") closeAiWizard(); });
+
+    // Show the wizard once on first dashboard load if no AI provider is configured and the user
+    // hasn't dismissed it. /health.aiEnabled reflects the live server config (false until a provider
+    // is set + the server restarted). Best-effort — never blocks the dashboard.
+    function maybeShowAiWizard() {
+      let dismissed = false;
+      try { dismissed = localStorage.getItem(WIZ_DISMISS_KEY) === "1"; } catch {}
+      if (dismissed) return;
+      fetch("/health").then(r => r.json()).then(h => {
+        if (h && h.aiEnabled === false) openAiWizard();
+      }).catch(() => {});
+    }
+    maybeShowAiWizard();
+
     // Live log-verbosity control (no restart — server + pipeline share one logger).
     async function fetchLogLevel() {
       try {
