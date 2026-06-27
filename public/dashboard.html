@@ -7127,7 +7127,7 @@
         const sevColor = KC_SEV_COLOR[a.severity] || "var(--c-2a2f3a)";
         const window = `${esc(a.bucketStart || "")} → ${esc(a.bucketEnd || "")}`;
         const evLink = a.eventIds && a.eventIds.length
-          ? `<a href="#" onclick="event.preventDefault();jumpToEvent(${JSON.stringify(a.eventIds[0])})" style="font-size:11px;color:var(--c-6aa9ff);margin-left:6px" title="Jump to first event in this bucket in the timeline">view ${a.eventIds.length} event${a.eventIds.length !== 1 ? "s" : ""}</a>`
+          ? `<a href="#" class="ev-jump" data-evid="${escAttr(a.eventIds[0])}" style="font-size:11px;color:var(--c-6aa9ff);margin-left:6px" title="Jump to the first event in this bucket in the timeline">view ${a.eventIds.length} event${a.eventIds.length !== 1 ? "s" : ""}</a>`
           : "";
         return `<tr>` +
           `<td><span class="sev-${esc(a.severity)}" style="color:${sevColor};font-weight:bold">${esc(a.severity)}</span></td>` +

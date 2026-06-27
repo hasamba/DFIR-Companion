@@ -290,7 +290,9 @@ export async function seedDemoCase(
     { h: 18, m: 51, s: 27 },
     { h: 19, m: 51, s: 15 },
   ].map((t, i) => ({
-    id: `e${String(32 + i).padStart(3, "0")}`,
+    // e070+ to stay clear of every explicit event id (…e061) — the old e032+ base collided with the
+    // explicit web-exploit events e039/e040/e041, producing duplicate ids that break jump/star/select.
+    id: `e${String(70 + i).padStart(3, "0")}`,
     timestamp: ts(15, t.h, t.m, t.s),
     description: `Cobalt Strike beacon check-in: HTTPS GET to 185.220.101.47:443 (cobaltkit.xyz), ~4 KB response. Routine periodic callback (sleep≈60m, JA3 matches CobaltStrike default).`,
     severity: "Low" as const,
