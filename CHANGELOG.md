@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Declared Node engine requirement** — `companion/package.json` now has `engines.node: ">=20"`; READMEs note the **NSRL RDS SQLite backend** (and full test suite) need Node 22.5+ for `node:sqlite`, the rest runs on Node 20 (closes #185).
 - **Full-pipeline integration test** — new `companion/tests/fullPipeline.test.ts` exercises capture → artifact import → synthesis → enrichment → report → snapshot export → snapshot restore, with mocked AI and enrichment providers so the suite runs offline and in CI (addresses #182).
+- **Timeline Anomalies panel** — deterministic, AI-free per-asset event-rate spike detection; assets whose bucket count exceeds N× the per-bucket median are ranked by severity and linked back to their events in the timeline; configurable via `DFIR_ANOMALY_BUCKET_MINUTES` / `_SPIKE_FACTOR` / `_MIN_EVENTS`; surfaced in the dashboard, report §3.4, and `GET /cases/:id/anomalies` (closes #175).
+
+### Changed
+- **Demo case** — added a realistic DC01 AD-enumeration burst (May 16 09:00, between the Mimikatz dump and the log-clearing) so the new Timeline Anomalies panel shows a Critical event-rate spike out of the box (part of #175).
 
 ### Fixed
 - **Import into a non-existent case** — the `import` + `import-file` routes now 404 a missing case (parity with `/captures`/`/state`) instead of orphaning the bytes; dashboard shows "create the case first".

@@ -8,6 +8,7 @@ import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.
 import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
 import { buildGeoMap } from "../analysis/geoMap.js";
 import { detectTimelineGaps, gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDetect.js";
+import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timelineAnomalies.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
@@ -289,6 +290,37 @@ function timelineCoverage(state: InvestigationState, lines: string[]): void {
     lines.push(
       `| ${g.severity} (${kind}) | ${cellMd(`${g.startTimestamp} → ${g.endTimestamp}`)} | ${cellMd(g.durationLabel)} | ` +
       `${cellMd(silent)} | ${cellMd(active)} |`,
+    );
+  }
+  lines.push("");
+}
+
+// 3.4 — timeline anomalies: per-asset event-rate spikes relative to the per-bucket median across all
+// assets. Flags the "host that went crazy" signal in large timelines. Deterministic, no AI. Thresholds:
+// DFIR_ANOMALY_BUCKET_MINUTES / DFIR_ANOMALY_SPIKE_FACTOR / DFIR_ANOMALY_MIN_EVENTS.
+function timelineAnomalies(state: InvestigationState, lines: string[]): void {
+  lines.push("### 3.4 Timeline anomalies", "");
+  lines.push(
+    "_Per-asset event-rate spikes: assets whose event count in a time bucket exceeds the spike-factor × median across all assets. A lead, not proof — verify each anomaly against the raw timeline._",
+    "",
+  );
+  const result = detectTimelineAnomalies(state.forensicTimeline, anomalyEnvOptions());
+  if (result.assetCount < 2) {
+    lines.push("_Not enough assets in the timeline to compute a baseline (need ≥ 2)._", "");
+    return;
+  }
+  if (result.anomalies.length === 0) {
+    lines.push(
+      `_No asset-rate spikes detected (bucket ${result.bucketMinutes} min, threshold ${result.spikeFactor}×)._`,
+      "",
+    );
+    return;
+  }
+  lines.push("| Severity | Asset | Bucket | Events | Median | Ratio |", "| --- | --- | --- | --- | --- | --- |");
+  for (const a of result.anomalies) {
+    const window = `${a.bucketStart} → ${a.bucketEnd}`;
+    lines.push(
+      `| ${a.severity} | ${cellMd(a.asset)} | ${cellMd(window)} | ${a.eventCount} | ${a.medianCount} | ${a.ratio}× |`,
     );
   }
   lines.push("");
@@ -781,6 +813,7 @@ export function renderMarkdownReport(
       narrativeTimeline(state, lines);
       attackPhases(state, lines);
       timelineCoverage(state, lines);
+      timelineAnomalies(state, lines);
     },
     investigation: () => investigation(state, lines, exposure, assetGraph, kevCatalog),
     conclusions: () => conclusions(state, meta, lines),

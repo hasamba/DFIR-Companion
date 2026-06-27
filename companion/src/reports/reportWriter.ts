@@ -22,6 +22,7 @@ import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { buildMobileSummary, mobileSummaryEnvOptions, type MobileCaseSummary } from "../analysis/mobileSummary.js";
 import { buildGeoMap, geoMapEnvOptions, type GeoMapData } from "../analysis/geoMap.js";
+import { detectTimelineAnomalies, anomalyEnvOptions, type TimelineAnomalyResult } from "../analysis/timelineAnomalies.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import { buildStixBundle, type StixBundle } from "./stix.js";
 import {
@@ -204,6 +205,14 @@ export class ReportWriter {
   async timelineGaps(caseId: string): Promise<TimelineGap[]> {
     const state = await this.loadFilteredState(caseId);
     return detectTimelineGaps(state.forensicTimeline, gapEnvOptions());
+  }
+
+  // Timeline anomalies (#175): per-asset event-rate spikes relative to the per-bucket median.
+  // Derived on demand with the same scope/legitimate filtering as the report. Thresholds from
+  // DFIR_ANOMALY_BUCKET_MINUTES / DFIR_ANOMALY_SPIKE_FACTOR / DFIR_ANOMALY_MIN_EVENTS.
+  async anomalies(caseId: string): Promise<TimelineAnomalyResult> {
+    const state = await this.loadFilteredState(caseId);
+    return detectTimelineAnomalies(state.forensicTimeline, anomalyEnvOptions());
   }
 
   // Swimlane data for the visual timeline chart — events grouped into lanes by the chosen
