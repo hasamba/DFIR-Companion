@@ -1364,6 +1364,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Timeline anomalies (#175): per-asset event-rate spikes — assets whose event count in a time
+  // bucket exceeds N× the median across all assets in that bucket. Derived on demand, no AI, same
+  // scope/legitimate filtering as the report. Thresholds DFIR_ANOMALY_BUCKET_MINUTES / _SPIKE_FACTOR
+  // / _MIN_EVENTS. Powers the dashboard Timeline Anomalies panel.
+  app.get("/cases/:id/anomalies", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.anomalies(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // AI hypothesis generation for timeline gaps (#96): for each flagged silent period, hypothesise the
   // attacker activity that fits the surrounding events, and pair each gap with the deterministic
   // SHADOW-ARTIFACT collections (USN journal, SRUM, Prefetch, Amcache, …) that reconstruct the missing

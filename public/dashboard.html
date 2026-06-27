@@ -2730,6 +2730,7 @@
     </section>
 
     <section id="sec-beacons" style="grid-column: 1 / -1"><h2>Beacon Candidates<span class="ev-sub">periodic outbound channels — too regular to be human traffic (derived, no AI); a hunting lead, not a verdict</span></h2><div id="beacons">—</div></section>
+    <section id="sec-anomalies" style="grid-column: 1 / -1"><h2>Timeline Anomalies<span class="ev-sub">assets whose event rate in a time bucket spikes above the per-bucket median of all assets (derived, no AI); a triage lead, not a verdict</span></h2><div id="anomalies">—</div></section>
     <section id="sec-geomap" style="grid-column: 1 / -1">
       <h2>🌍 Geographic Map<span class="ev-sub">imported IPs geolocated from GeoIP enrichment — markers colored by severity (derived; OpenStreetMap tiles load on demand when you open the map)</span></h2>
       <div id="geoStats" class="geo-stats">—</div>
@@ -7090,6 +7091,60 @@
         `</tr></thead><tbody>${rows}</tbody></table></div>`;
     }
 
+    // ── Timeline Anomalies (#175) ─────────────────────────────────────────────────────────
+    // Per-asset event-rate spikes: assets whose count in a time bucket exceeds spikeFactor × the
+    // per-bucket median across all assets. Derived server-side (GET /cases/:id/anomalies) from the
+    // in-scope timeline; re-derived (debounced) on each state change, like the phases/gaps panels.
+    // Clicking an asset row scrolls the forensic-timeline filter to that asset's events.
+    let anomaliesData = null;
+    let anomaliesTimer = null;
+    function loadAnomalies(caseId) {
+      fetch(`/cases/${caseId}/anomalies`).then(r => r.json()).then(d => {
+        anomaliesData = (d && typeof d === "object") ? d : null;
+        renderAnomalies();
+      }).catch(() => {});
+    }
+    function scheduleAnomaliesReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(anomaliesTimer);
+      anomaliesTimer = setTimeout(() => loadAnomalies(caseId), 800);
+    }
+    function renderAnomalies() {
+      const el = document.getElementById("anomalies");
+      if (!el) return;
+      const d = anomaliesData;
+      if (!d) { el.innerHTML = "<span style='color:var(--c-9aa4b2)'>—</span>"; return; }
+      if (d.assetCount < 2) {
+        el.innerHTML = "<span style='color:var(--c-9aa4b2)'>Not enough assets in the timeline to compute a baseline (need ≥ 2).</span>";
+        return;
+      }
+      if (!d.anomalies || !d.anomalies.length) {
+        el.innerHTML = `<span style='color:var(--c-9aa4b2)'>No asset-rate spikes detected (bucket ${esc(String(d.bucketMinutes))} min, threshold ${esc(String(d.spikeFactor))}×).</span>`;
+        return;
+      }
+      const rows = d.anomalies.map(a => {
+        const sevColor = KC_SEV_COLOR[a.severity] || "var(--c-2a2f3a)";
+        const window = `${esc(a.bucketStart || "")} → ${esc(a.bucketEnd || "")}`;
+        const evLink = a.eventIds && a.eventIds.length
+          ? `<a href="#" onclick="event.preventDefault();jumpToEvent(${JSON.stringify(a.eventIds[0])})" style="font-size:11px;color:var(--c-6aa9ff);margin-left:6px" title="Jump to first event in this bucket in the timeline">view ${a.eventIds.length} event${a.eventIds.length !== 1 ? "s" : ""}</a>`
+          : "";
+        return `<tr>` +
+          `<td><span class="sev-${esc(a.severity)}" style="color:${sevColor};font-weight:bold">${esc(a.severity)}</span></td>` +
+          `<td><strong>${esc(a.asset)}</strong>${evLink}</td>` +
+          `<td style="color:var(--c-9aa4b2);font-size:11px">${window}</td>` +
+          `<td title="events in this bucket for this asset">${esc(String(a.eventCount))}</td>` +
+          `<td title="median count across all assets in this bucket">${esc(String(a.medianCount))}</td>` +
+          `<td title="eventCount ÷ median"><strong>${esc(String(a.ratio))}×</strong></td>` +
+          `</tr>`;
+      }).join("");
+      el.innerHTML =
+        `<div style="color:var(--c-9aa4b2);font-size:11px;margin-bottom:6px">An event-rate spike is a triage lead — a host flooding logs can be an attacker running recon, ransomware encrypting, or a noisy EDR rule. Verify each anomaly against the raw timeline. Suppress false-positive events with the <em>false-positive</em> tag to exclude them from the baseline. Bucket: ${esc(String(d.bucketMinutes))} min · threshold: ${esc(String(d.spikeFactor))}×.</div>` +
+        `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
+        `<th>Severity</th><th>Asset</th><th>Bucket</th><th>Events</th><th>Median</th><th>Ratio</th>` +
+        `</tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+
     // ── Timeline Gaps (#83) ───────────────────────────────────────────────────────────────
     // Suspiciously long silent periods in the forensic timeline. A COMPLETE gap (every source dark)
     // is the classic signature of cleared logs / a stopped collector → High; a PARTIAL gap is one tool
@@ -9158,6 +9213,7 @@
       loadPhases(caseId);
       loadTimelineGaps(caseId);
       loadBeacons(caseId);
+      loadAnomalies(caseId);
       loadAdversaryHints(caseId);
       loadGeoMap(caseId);
       loadSwimlane(caseId);
@@ -9228,7 +9284,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAdversaryHintsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "capture_ingest") {
@@ -10670,6 +10726,7 @@
       { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
       { id: "sec-evidence",     label: "Evidence Chain" },
       { id: "sec-beacons",      label: "Beacon Candidates" },
+      { id: "sec-anomalies",    label: "Timeline Anomalies" },
       { id: "sec-geomap",       label: "GeoIP Map" },
       { id: "sec-iocs",         label: "IOCs" },
       { id: "sec-exposure",     label: "Customer Exposure" },
