@@ -29,7 +29,24 @@ Demo Case: https://dfir-companion-production.up.railway.app/dashboard?caseId=dem
  
 Hands-on lab: https://killercoda.com/dfir-companion/scenario/killercoda
 
+## Table of contents
 
+- [Screenshots](#screenshots)
+- [What it produces](#what-it-produces)
+- [Features](#features)
+- [Repository layout](#repository-layout)
+- [How the pieces fit](#how-the-pieces-fit)
+- [Quick start](#quick-start)
+- [Docker / Docker Compose](#docker--docker-compose)
+- [Windows (Chocolatey)](#windows-chocolatey)
+- [Linux (AppImage)](#linux-appimage)
+- [Environment variables (`companion/.env`)](#environment-variables-companionenv)
+- [npm scripts — full CLI reference](#npm-scripts--full-cli-reference)
+- [Recommended workflows](#recommended-workflows)
+- [Roadmap](#roadmap)
+- [Tests](#tests)
+- [Disclaimer](#disclaimer)
+- [License](#license)
 
 ## Screenshots
 
