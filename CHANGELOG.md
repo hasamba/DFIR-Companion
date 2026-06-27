@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Full-pipeline integration test** — new `companion/tests/fullPipeline.test.ts` exercises capture → artifact import → synthesis → enrichment → report → snapshot export → snapshot restore, with mocked AI and enrichment providers so the suite runs offline and in CI (addresses #182).
+
 ### Fixed
 - **Import into a non-existent case** — the `import` + `import-file` routes now 404 a missing case (parity with `/captures`/`/state`) instead of orphaning the bytes; dashboard shows "create the case first".
 
