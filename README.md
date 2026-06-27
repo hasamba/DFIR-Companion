@@ -31,15 +31,15 @@ Hands-on lab: https://killercoda.com/dfir-companion/scenario/killercoda
 
 ## Table of contents
 
+- [Quick start](#quick-start)
+- [Docker / Docker Compose](#docker--docker-compose)
+- [Windows (Chocolatey)](#windows-chocolatey)
+- [Linux (AppImage)](#linux-appimage)
 - [Screenshots](#screenshots)
 - [What it produces](#what-it-produces)
 - [Features](#features)
 - [Repository layout](#repository-layout)
 - [How the pieces fit](#how-the-pieces-fit)
-- [Quick start](#quick-start)
-- [Docker / Docker Compose](#docker--docker-compose)
-- [Windows (Chocolatey)](#windows-chocolatey)
-- [Linux (AppImage)](#linux-appimage)
 - [Environment variables (`companion/.env`)](#environment-variables-companionenv)
 - [npm scripts — full CLI reference](#npm-scripts--full-cli-reference)
 - [Recommended workflows](#recommended-workflows)
