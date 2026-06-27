@@ -11507,6 +11507,21 @@
     function closeSetupWizard() { wizEl("wizOverlay").classList.remove("open"); }
     function wizDismiss() { try { localStorage.setItem(WIZ_DISMISS_KEY, "1"); } catch {} closeSetupWizard(); }
 
+    // True when the user has NOTHING meaningfully configured — a genuinely fresh install. The wizard
+    // auto-shows in this case even if previously dismissed (so emptying .env re-surfaces it). Once
+    // anything is configured, the sticky dismissal flag is respected so we don't nag.
+    // NOTE: push/notifications/nsrl are excluded — their /setup/status is "store exists" (always true,
+    // built unconditionally at startup), NOT "user configured something". Emptiness keys off the
+    // genuinely env-derived signals (AI + the connection-based integrations + enrichment/exposure keys).
+    function wizConfigIsEmpty(status) {
+      if (!status || typeof status !== "object") return false;
+      const meaningful = ["ai", "velociraptor", "iris", "timesketch", "notion", "clickup"]
+        .some(k => !!status[k]);
+      const anyProvider = ["enrichment", "exposure"].some(g =>
+        status[g] && typeof status[g] === "object" && Object.values(status[g]).some(Boolean));
+      return !meaningful && !anyProvider;
+    }
+
     wizEl("wizDismissBtn").onclick = wizDismiss;
     wizEl("wizDoneBtn").onclick = closeSetupWizard;
     wizEl("wizBackBtn").onclick = () => { const i = WIZ_ORDER.indexOf(wizCurrent); if (i > 0) wizShowStep(WIZ_ORDER[i - 1]); };
@@ -11520,13 +11535,21 @@
     const setupLauncher = document.getElementById("openSetupWizard");
     if (setupLauncher) setupLauncher.onclick = (e) => { e.preventDefault(); closeSettingsModal(); openSetupWizard(); };
 
-    // First-run: open the wizard once if AI isn't configured AND the user hasn't dismissed it.
-    // (AI is the headline gap; the other steps are opt-in so we don't nag for them.)
+    // First-run: open the wizard automatically when setup is needed. AI being unconfigured is the
+    // headline trigger; but if NOTHING at all is configured (a genuinely fresh install / emptied .env),
+    // we re-show even if previously dismissed — so the wizard reappears exactly when it's truly needed.
+    // Once anything is configured, the sticky dismissal flag is respected (no nagging on capture-only).
     function maybeShowSetupWizard() {
       let dismissed = false;
       try { dismissed = localStorage.getItem(WIZ_DISMISS_KEY) === "1"; } catch {}
-      if (dismissed) return;
-      fetch("/health").then(r => r.json()).then(h => { if (h && h.aiEnabled === false) openSetupWizard(); }).catch(() => {});
+      Promise.all([
+        fetch("/health").then(r => r.json()).catch(() => ({})),
+        fetch("/setup/status").then(r => r.json()).catch(() => ({})),
+      ]).then(([h, status]) => {
+        if (!h || h.aiEnabled !== false) return;       // AI already set up → nothing to nag about
+        if (wizConfigIsEmpty(status)) { openSetupWizard(); return; }  // truly fresh → always show
+        if (!dismissed) openSetupWizard();             // some config exists → respect a past Skip
+      });
     }
     maybeShowSetupWizard();
 
