@@ -11252,10 +11252,11 @@
           F("DFIR_CLICKUP_LIST_ID", "Default list ID", { hint: "Optional — can be chosen at push time." }),
         ] },
       { id: "push", icon: "📡", label: "Push ingest", status: "push",
-        blurb: "Let an external tool stream alerts into a case via POST /cases/:id/push.",
+        blurb: "OPTIONAL — only needed if an external tool (SIEM webhook, EDR/Velociraptor poller, a custom script) should stream alerts straight into a case as they happen. For manual work (screenshots + the Import button) you can skip this.",
+        note: "There's nothing to look up — you INVENT a secret token here (treat it like a password), then configure your tool to send it as the X-DFIR-Key header when it POSTs to /cases/<id>/push. Push is OFF until a token is set. Not using an external pusher? Leave it blank and skip.",
         reload: "DFIR_PUSH_TOKEN", test: { method: "GET", url: "/setup/status", statusKey: "push" },
         fields: [
-          F("DFIR_PUSH_TOKEN", "Push token", { secret: true, hint: "Senders include it as the X-DFIR-Key header. OFF until set." }),
+          F("DFIR_PUSH_TOKEN", "Push token (you choose this)", { secret: true, hint: "A random secret you make up — e.g. a 32-char string from a password manager. Senders must send the SAME value as their X-DFIR-Key header." }),
         ] },
       { id: "nsrl", icon: "🗄️", label: "NSRL known-good", status: "nsrl",
         blurb: "Auto-mark known-software hashes legitimate. Flat hash file and/or an RDS SQLite DB.",
@@ -11504,26 +11505,16 @@
       wizRefreshStatus();   // fills the rail ✓/○, async
       wizRenderRail(); wizUpdateNav();
     }
+    // Mark the wizard as dismissed so it does NOT auto-show again on refresh. Both "Done" and "Skip"
+    // mean "I'm finished with this for now" — the ONLY way it reappears afterwards is an explicit
+    // launch from Settings (which clears this flag). Escape just closes the overlay without dismissing.
+    function wizMarkDismissed() { try { localStorage.setItem(WIZ_DISMISS_KEY, "1"); } catch {} }
     function closeSetupWizard() { wizEl("wizOverlay").classList.remove("open"); }
-    function wizDismiss() { try { localStorage.setItem(WIZ_DISMISS_KEY, "1"); } catch {} closeSetupWizard(); }
-
-    // True when the user has NOTHING meaningfully configured — a genuinely fresh install. The wizard
-    // auto-shows in this case even if previously dismissed (so emptying .env re-surfaces it). Once
-    // anything is configured, the sticky dismissal flag is respected so we don't nag.
-    // NOTE: push/notifications/nsrl are excluded — their /setup/status is "store exists" (always true,
-    // built unconditionally at startup), NOT "user configured something". Emptiness keys off the
-    // genuinely env-derived signals (AI + the connection-based integrations + enrichment/exposure keys).
-    function wizConfigIsEmpty(status) {
-      if (!status || typeof status !== "object") return false;
-      const meaningful = ["ai", "velociraptor", "iris", "timesketch", "notion", "clickup"]
-        .some(k => !!status[k]);
-      const anyProvider = ["enrichment", "exposure"].some(g =>
-        status[g] && typeof status[g] === "object" && Object.values(status[g]).some(Boolean));
-      return !meaningful && !anyProvider;
-    }
+    function wizDone() { wizMarkDismissed(); closeSetupWizard(); }
+    function wizDismiss() { wizMarkDismissed(); closeSetupWizard(); }
 
     wizEl("wizDismissBtn").onclick = wizDismiss;
-    wizEl("wizDoneBtn").onclick = closeSetupWizard;
+    wizEl("wizDoneBtn").onclick = wizDone;
     wizEl("wizBackBtn").onclick = () => { const i = WIZ_ORDER.indexOf(wizCurrent); if (i > 0) wizShowStep(WIZ_ORDER[i - 1]); };
     wizEl("wizNextBtn").onclick = () => { const i = WIZ_ORDER.indexOf(wizCurrent); if (i < WIZ_ORDER.length - 1) wizShowStep(WIZ_ORDER[i + 1]); };
     wizEl("wizOverlay").addEventListener("keydown", e => { if (e.key === "Escape") closeSetupWizard(); });
@@ -11531,25 +11522,19 @@
     // Settings → AI "Re-run the setup wizard" link (#181) — now opens the full Setup wizard.
     const rerunLink = document.getElementById("rerunAiWizard");
     if (rerunLink) rerunLink.onclick = (e) => { e.preventDefault(); try { localStorage.removeItem(WIZ_DISMISS_KEY); } catch {} closeSettingsModal(); openSetupWizard(); };
-    // Settings gear → "⚙ Setup wizard" launcher (added in Settings → General).
+    // Settings → General "⚙ Open setup wizard" launcher. Clears the dismissal flag (an explicit launch
+    // means the user wants the wizard again) so closing with Escape later behaves predictably.
     const setupLauncher = document.getElementById("openSetupWizard");
-    if (setupLauncher) setupLauncher.onclick = (e) => { e.preventDefault(); closeSettingsModal(); openSetupWizard(); };
+    if (setupLauncher) setupLauncher.onclick = (e) => { e.preventDefault(); try { localStorage.removeItem(WIZ_DISMISS_KEY); } catch {} closeSettingsModal(); openSetupWizard(); };
 
-    // First-run: open the wizard automatically when setup is needed. AI being unconfigured is the
-    // headline trigger; but if NOTHING at all is configured (a genuinely fresh install / emptied .env),
-    // we re-show even if previously dismissed — so the wizard reappears exactly when it's truly needed.
-    // Once anything is configured, the sticky dismissal flag is respected (no nagging on capture-only).
+    // First-run: auto-show the wizard ONCE when AI isn't configured and the user hasn't dismissed it.
+    // After a Done/Skip the dismissal flag is set and the wizard never auto-shows again (even on refresh
+    // or an emptied .env) — it returns ONLY via the Settings launchers, which clear the flag.
     function maybeShowSetupWizard() {
       let dismissed = false;
       try { dismissed = localStorage.getItem(WIZ_DISMISS_KEY) === "1"; } catch {}
-      Promise.all([
-        fetch("/health").then(r => r.json()).catch(() => ({})),
-        fetch("/setup/status").then(r => r.json()).catch(() => ({})),
-      ]).then(([h, status]) => {
-        if (!h || h.aiEnabled !== false) return;       // AI already set up → nothing to nag about
-        if (wizConfigIsEmpty(status)) { openSetupWizard(); return; }  // truly fresh → always show
-        if (!dismissed) openSetupWizard();             // some config exists → respect a past Skip
-      });
+      if (dismissed) return;
+      fetch("/health").then(r => r.json()).then(h => { if (h && h.aiEnabled === false) openSetupWizard(); }).catch(() => {});
     }
     maybeShowSetupWizard();
 
