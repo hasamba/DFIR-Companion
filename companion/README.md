@@ -29,12 +29,25 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 
 ## Configuration (`companion/.env`, gitignored)
 
-> **First run?** When no AI provider is configured, the dashboard shows a **setup wizard**: pick a
-> provider, enter a model (it suggests cheap/strong options per provider) + API key, optionally a base
-> URL for a local proxy, then **Save & test** — it writes the `DFIR_AI_*` vars below to `.env` and runs a
-> live connectivity probe. AI is optional (capture + imports work without it), so the wizard is fully
-> dismissible, and re-runnable anytime from **Settings → AI → Re-run the setup wizard**. Restart the
-> server after saving to enable AI analysis.
+> **First run? Use the Setup wizard** instead of editing `.env` by hand. It auto-opens on first load
+> when no AI provider is set, and is always available from **Settings → General → ⚙️ Open setup wizard**
+> (or **Settings → AI → Re-run the setup wizard**). It's a guided, multi-step flow covering everything
+> here that has no default and won't work until set:
+>
+> - **AI** — provider, model (cheap/strong suggestions per provider), key, optional base URL; **Save &
+>   test** runs a live `/diagnostics/ai-test` probe.
+> - **Integrations** — Velociraptor, DFIR-IRIS, Timesketch, Notion, ClickUp — each saves + reconnects
+>   live (no restart) and reports connected/unreachable.
+> - **Threat-intel enrichment** (VirusTotal, AbuseIPDB, Hunting.ch, CrowdStrike, Shodan, MISP, YETI,
+>   OpenCTI, RockyRaccoon, GeoIP) and **customer-exposure** (LeakCheck, HIBP, DeHashed) — per-provider
+>   key entry. These only *enable* a source; nothing is sent externally until you opt in per case.
+> - **Push ingest**, **NSRL** known-good hashes.
+>
+> Each step saves to `.env` and applies live via `POST /settings/reload`; a left rail shows ✓ configured
+> / ○ not-set per step (from `GET /setup/status`). Everything is optional and the wizard is fully
+> dismissible (capture + imports work with none of it). AI analysis needs a server restart after saving;
+> the integrations apply immediately via their reconnect. (Notifications stay in **Settings →
+> Notifications** — they're stored separately from `.env`.)
 
 | Variable | Meaning |
 | --- | --- |
