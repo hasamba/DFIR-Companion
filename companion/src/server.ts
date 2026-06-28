@@ -1591,6 +1591,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // ATT&CK Mitigations (#178): concrete, actionable mitigations (M-codes) recommended for the case's
+  // identified techniques, ranked by coverage. Offline, derived on read.
+  app.get("/cases/:id/attack-mitigations", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.attackMitigations(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Mobile companion summary (#59): a compact, READ-ONLY projection of the case for the phone PWA
   // (/mobile) — case status, worst findings, most severe/recent events, IOC list with verdicts.
   // Same scope/legitimate filtering as the report, so the phone view agrees with the dashboard.
@@ -6256,6 +6267,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(409).json({ error: "The Executive summary section is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "executiveSummary" });
     try {
       const result = await options.pipeline.executiveSummary(req.params.id);
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Generate an incident-specific remediation plan (#178) — one text-only AI call, grounded in the
+  // case's findings + the deterministic ATT&CK mitigations. Ephemeral (no state change); the
+  // dashboard renders it under the Mitigation & Defensive Countermeasures panel.
+  app.post("/cases/:id/remediation-plan", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for remediation plan" });
+    try {
+      const result = await options.pipeline.remediationPlan(req.params.id);
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

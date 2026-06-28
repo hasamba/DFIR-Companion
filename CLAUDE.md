@@ -275,7 +275,20 @@ report render it with plain-language labels (`D3FEND_ACTION_INFO`: Harden→"Pre
 raw D3FEND jargon. A per-technique breakdown (`techniques[]`, capped by `DFIR_D3FEND_MAX_PER_TECHNIQUE`, default 12) is
 also returned. **No AI, no runtime network** — suggested countermeasures (D3FEND relationships are INFERRED), NOT a
 guaranteed or complete list, with that note shown everywhere. `ReportWriter.d3fendCountermeasures` →
-`GET /cases/:id/d3fend-countermeasures`, dashboard *Defensive Countermeasures* panel + the toggleable `d3fend` report section. The **mobile companion summary**
+`GET /cases/:id/d3fend-countermeasures`, dashboard *Defensive Countermeasures* panel + the toggleable `d3fend` report section. **ATT&CK Mitigations** (`analysis/attackMitigations.ts`, pure, #178) are the ACTIONABLE
+counterpart that leads the same panel: D3FEND names defensive *techniques/sensors* (a taxonomy), so the panel now opens
+with the concrete **MITRE ATT&CK Mitigations** (M-codes) recommended for the case's techniques — a bundled OFFLINE dataset
+(`data/attack-mitigations.json`, loaded by `attackMitigationsData.ts`; regenerate via `npm run data:update-attack-mitigations`
+→ `scripts/update-attack-mitigations.ts`, the only network touch — it slims the STIX `course-of-action` objects + `mitigates`
+relationships, keeping each link's technique-SPECIFIC detail). `buildMitigationsResult`'s PRIMARY output is `byMitigation`
+**ranked by coverage** (the one mitigation that addresses the most of the case's techniques first = "start here"), plus a
+per-technique breakdown; bidirectional sub/base matching like D3FEND. No AI, no runtime network.
+`ReportWriter.attackMitigations` → `GET /cases/:id/attack-mitigations`, dashboard *Mitigation & Defensive Countermeasures*
+panel (mitigations on top, D3FEND below) + report. On top of that, an **AI remediation plan** (`AnalysisPipeline.remediationPlan`,
+`REMEDIATION_PROMPT`): one text-only call → an incident-SPECIFIC, prioritized plan (Contain/Eradicate/Harden/Recover/Verify),
+**grounded in the deterministic ATT&CK mitigations** (fed into the prompt so the model writes concrete steps referencing the
+real hosts/CVEs/IOCs instead of hallucinating). Ephemeral (no state change), gated on an AI provider (501 otherwise):
+`POST /cases/:id/remediation-plan`, dashboard *✨ Generate remediation plan* button. The **mobile companion summary**
 (`analysis/mobileSummary.ts`, pure) is the same shape: a compact, READ-ONLY projection of the (scope/legit-filtered)
 state for the phone PWA — findings worst-first, events most-severe-then-most-recent, IOCs flagged-first with their
 worst threat-intel verdict, plus severity/entity counts; heavy lists capped (`DFIR_MOBILE_MAX_FINDINGS`/`_EVENTS`/`_IOCS`)
@@ -662,8 +675,8 @@ deep-links back to the case; `DFIR_NOTIFY_CA`/`_INSECURE` for a self-hosted webh
 `scripts/*` pipeline wiring — `onSynth` is optional, so CLI synthesize/reanalyze just omit it).
 
 **Customizable prompts.** The prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
-consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`/`getNarrativePrompt()`/`getHuntSuggestPrompt()`/`getPlaybookHuntPrompt()`/`getGapHypothesisPrompt()`/`getMemoryNextStepPrompt()`/`getQueryTranslatePrompt()`/`getReconcilePrompt()` (the `RECONCILE_PROMPT` lives in `analysis/secondOpinion.ts`),
-which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC|NARRATIVE|HUNTS|PBHUNTS|GAPHYP|MEMNEXT|QUERYXLATE|RECONCILE>_PROMPT` inline, or `…_PROMPT_FILE` —
+consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`/`getNarrativePrompt()`/`getHuntSuggestPrompt()`/`getPlaybookHuntPrompt()`/`getGapHypothesisPrompt()`/`getMemoryNextStepPrompt()`/`getQueryTranslatePrompt()`/`getReconcilePrompt()`/`getRemediationPrompt()` (the `RECONCILE_PROMPT` lives in `analysis/secondOpinion.ts`),
+which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC|NARRATIVE|HUNTS|PBHUNTS|GAPHYP|MEMNEXT|QUERYXLATE|RECONCILE|REMEDIATION>_PROMPT` inline, or `…_PROMPT_FILE` —
 re-read each call, so file edits apply with no restart; bad file → warn + fall back to default).
 When you change a prompt's wording, keep the example JSON shape it dictates in sync with `responseSchema.ts`.
 When you add a prompt, also add its `<NAME>` token to `resolvePrompt`'s union type.

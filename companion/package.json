@@ -29,6 +29,7 @@
     "seed-demo": "tsx scripts/seed-demo-case.ts",
     "data:update-attack": "tsx scripts/update-attack-groups.ts",
     "data:update-d3fend": "tsx scripts/update-d3fend.ts",
+    "data:update-attack-mitigations": "tsx scripts/update-attack-mitigations.ts",
     "data:update-geo": "tsx scripts/update-country-centroids.ts",
     "icons": "tsx scripts/make-icons.ts",
     "package:sea": "node scripts/build-sea.mjs",

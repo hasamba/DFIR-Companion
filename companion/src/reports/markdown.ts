@@ -16,6 +16,8 @@ import { ADVERSARY_EMULATION_CAVEAT } from "../analysis/adversaryEmulation.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import { buildD3fendResult, D3FEND_ACTION_INFO } from "../analysis/d3fendMap.js";
 import { loadD3fendDataset, d3fendEnvOptions } from "../analysis/d3fendData.js";
+import { buildMitigationsResult } from "../analysis/attackMitigations.js";
+import { loadMitigationsDataset } from "../analysis/attackMitigationsData.js";
 import { hasExposureFinding, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
@@ -709,12 +711,48 @@ const PLAYBOOK_STATUS_LABEL: Record<PlaybookStatus, string> = {
   skipped: "Skipped",
 };
 
+// ATT&CK Mitigations (#178) — the actionable layer: the concrete mitigations MITRE ATT&CK
+// recommends for the case's techniques, ranked by how many techniques each addresses (so the
+// highest-leverage actions lead), each with its technique-specific detail. Offline (no AI).
+function mitigationsReportBlock(state: InvestigationState, lines: string[]): void {
+  lines.push("### Recommended mitigations (MITRE ATT&CK)", "");
+  const result = buildMitigationsResult(state, loadMitigationsDataset());
+  lines.push(`_${result.note}_`, "");
+  if (!result.mitigationCount) {
+    lines.push("_ATT&CK mitigations not available — run `npm run data:update-attack-mitigations`._", "");
+    return;
+  }
+  if (!result.coveredTechniqueCount) {
+    lines.push("_No identified technique has a mapped ATT&CK mitigation yet._", "");
+    return;
+  }
+  lines.push(
+    `${result.byMitigation.length} mitigation(s) cover ${result.coveredTechniqueCount} of ` +
+      `${result.caseTechniqueCount} identified technique(s) (MITRE ATT&CK v${result.attackVersion}), ` +
+      `ordered by how many of this case's techniques each one addresses — start at the top.`,
+    "",
+  );
+  // Top-leverage mitigations: the general action, then per-technique specifics.
+  for (const m of result.byMitigation) {
+    lines.push(`#### [${m.id} · ${m.name}](${m.url}) — covers ${m.techniques.length} technique(s)`, "");
+    if (m.description) lines.push(m.description, "");
+    const tech = result.techniques.find((t) => t.mitigations.some((x) => x.id === m.id));
+    const detail = tech?.mitigations.find((x) => x.id === m.id)?.detail;
+    if (detail && detail !== m.description) lines.push(`_Specifics:_ ${detail}`, "");
+    lines.push(`_Applies to:_ ${m.techniques.join(", ")}`, "");
+  }
+}
+
 // Defensive countermeasures (#178) — for each identified ATT&CK technique, the MITRE D3FEND
 // countermeasures that harden against / detect / isolate it. Offline + deterministic (no AI),
 // resolved from the bundled D3FEND mapping. Turns the incident's technique list into concrete
 // hardening guidance for the defensive team — a toggleable appendix section.
 function d3fendSection(state: InvestigationState, lines: string[]): void {
-  lines.push("## Defensive countermeasures (D3FEND)", "");
+  lines.push("## Mitigation & defensive countermeasures", "");
+  // The actionable layer first: concrete ATT&CK mitigations ranked by coverage.
+  mitigationsReportBlock(state, lines);
+  // Then the D3FEND defensive-technique catalog (sensors / hardening categories).
+  lines.push("### Defensive techniques & sensors (D3FEND)", "");
   const result = buildD3fendResult(state, loadD3fendDataset(), d3fendEnvOptions());
   lines.push(`_${result.note}_`, "");
   if (!result.mappedTechniqueCount) {

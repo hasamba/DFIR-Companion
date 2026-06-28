@@ -2992,8 +2992,30 @@
       #sec-adversary .adv-next-hunt:disabled{opacity:.6;cursor:default}
       #sec-adversary .adv-next-ds{color:var(--c-9aa4b2);font-size:11px;margin:2px 0 0 4px;font-style:italic}
     </style>
-    <section id="sec-d3fend" style="grid-column: 1 / -1"><h2>Defensive Countermeasures<span class="ev-sub">what to do about the attacker's techniques — MITRE D3FEND steps grouped by defensive action (Prevent · Detect · Contain · …); offline, no AI</span></h2><div id="d3fendPanel">—</div></section>
+    <section id="sec-d3fend" style="grid-column: 1 / -1"><h2>Mitigation &amp; Defensive Countermeasures<span class="ev-sub">concrete MITRE ATT&amp;CK mitigations to apply for this incident's techniques, plus D3FEND defensive techniques — offline, no AI</span><button id="remediationBtn" type="button" onclick="generateRemediation(this)" title="Ask the AI to write a concrete, incident-specific remediation plan from this case's findings + ATT&CK mitigations (one AI call)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate remediation plan</button><span id="remediationMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="remediationPlan"></div><div id="mitigationsPanel">—</div><div id="d3fendPanel">—</div></section>
     <style>
+      #sec-d3fend .rem-h{font-size:13px;font-weight:bold;color:var(--c-c79bff);margin:0 0 6px}
+      #sec-d3fend .rem-sub{font-size:11px;font-weight:400;color:var(--c-9aa4b2);margin-left:6px}
+      #sec-d3fend #remediationPlan ol,#sec-d3fend #remediationPlan ul{margin:4px 0 8px;padding-left:20px}
+      #sec-d3fend #remediationPlan li{margin:2px 0}
+      #sec-d3fend #remediationPlan p{margin:4px 0}
+      #sec-d3fend .mit-h{font-size:13px;font-weight:bold;color:var(--c-ff9f43);margin:0 0 4px}
+      #sec-d3fend .mit-meta{color:var(--c-9aa4b2);font-size:11px;margin-bottom:8px}
+      #sec-d3fend .mit-list{display:flex;flex-direction:column;gap:7px}
+      #sec-d3fend .mit-row{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-ff9f43);border-radius:6px;padding:7px 10px}
+      #sec-d3fend .mit-row-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+      #sec-d3fend .mit-name{color:var(--c-ff9f43);font-weight:bold;text-decoration:none;font-size:12px}
+      #sec-d3fend .mit-name:hover{text-decoration:underline}
+      #sec-d3fend .mit-cov{margin-left:auto;color:var(--c-ff9f43);font-size:11px;font-weight:bold;background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:10px;padding:0 7px;white-space:nowrap}
+      #sec-d3fend .mit-desc{color:var(--c-c9d1db);font-size:11px;margin:4px 0 4px;line-height:1.4}
+      #sec-d3fend .mit-techs{color:var(--c-9aa4b2);font-size:10px;display:flex;flex-wrap:wrap;gap:4px;align-items:baseline}
+      #sec-d3fend .mit-tech{color:var(--c-6aa9ff);background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px;text-decoration:none}
+      #sec-d3fend .mit-tech:hover{text-decoration:underline}
+      #sec-d3fend .mit-more{color:var(--c-9aa4b2);cursor:help}
+      #sec-d3fend .d3f-section-h{font-size:13px;font-weight:bold;color:var(--c-6bcb77);margin:16px 0 6px;padding-top:10px;border-top:1px solid var(--c-232a33)}
+      #sec-d3fend #remediationPlan:not(:empty){background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-c79bff);border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:12px;line-height:1.5;color:var(--c-c9d1db)}
+      #sec-d3fend #remediationPlan h1,#sec-d3fend #remediationPlan h2,#sec-d3fend #remediationPlan h3{color:var(--c-d6deea);font-size:13px;margin:8px 0 4px}
+      #sec-d3fend #remediationPlan code{background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 4px}
       #sec-d3fend .d3f-note{color:var(--c-ffb454);font-size:12px;margin-bottom:6px}
       #sec-d3fend .d3f-meta{color:var(--c-9aa4b2);font-size:11px;margin-bottom:10px}
       #sec-d3fend .d3f-empty{color:var(--c-9aa4b2)}
@@ -7680,6 +7702,94 @@
       el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>` + next;
     }
 
+    // ── ATT&CK Mitigations (#178) — the concrete "what to do" layer above D3FEND ───────────────
+    // For each identified technique, the MITRE ATT&CK mitigations (M-codes) recommended for it,
+    // ranked by how many of the case's techniques each one addresses (highest-leverage first).
+    // Each carries a concrete, technique-specific action. Offline; derived server-side.
+    let mitigationsData = null;
+    let mitigationsTimer = null;
+    function loadAttackMitigations(caseId) {
+      fetch(`/cases/${caseId}/attack-mitigations`).then(r => r.json()).then(d => {
+        mitigationsData = (d && typeof d === "object") ? d : null;
+        renderMitigations();
+      }).catch(() => {});
+    }
+    function scheduleAttackMitigationsReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(mitigationsTimer);
+      mitigationsTimer = setTimeout(() => loadAttackMitigations(caseId), 800);
+    }
+    function renderMitigations() {
+      const el = document.getElementById("mitigationsPanel");
+      if (!el) return;
+      const d = mitigationsData;
+      // Stay quiet (let the D3FEND block below carry the empty/where-to-get-data messaging) unless
+      // there are actual mitigations to show — this block is the "do this" highlight.
+      if (!d || !d.mappedTechniqueCount || !d.caseTechniqueCount || !d.coveredTechniqueCount) { el.innerHTML = ""; return; }
+      const head = `<div class="mit-h">🎯 Recommended mitigations — concrete ATT&CK actions, highest-leverage first</div>`;
+      const meta = `<div class="mit-meta">${esc(d.byMitigation.length)} mitigation(s) covering ${esc(d.coveredTechniqueCount)} of ${esc(d.caseTechniqueCount)} identified technique(s) · MITRE ATT&CK v${esc(d.attackVersion)} · ordered by how many of this case's techniques each one addresses</div>`;
+      const COV = 8;
+      const rows = (d.byMitigation || []).map(m => {
+        const techs = m.techniques || [];
+        const shown = techs.slice(0, COV).map(t => {
+          const u = attackUrl(t);
+          return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="mit-tech">${esc(t)}</a>` : `<span class="mit-tech">${esc(t)}</span>`;
+        }).join("");
+        const moreN = techs.length - COV;
+        const more = moreN > 0 ? `<span class="mit-more" title="${escAttr(techs.join(", "))}">+${esc(moreN)}</span>` : "";
+        const name = m.url
+          ? `<a href="${escAttr(m.url)}" target="_blank" rel="noopener" class="mit-name">${esc(m.id)} · ${esc(m.name)}</a>`
+          : `<span class="mit-name">${esc(m.id)} · ${esc(m.name)}</span>`;
+        const desc = m.description ? `<div class="mit-desc">${esc(m.description)}</div>` : "";
+        return `<div class="mit-row"><div class="mit-row-h">${name}<span class="mit-cov" title="how many of this case's techniques this single mitigation addresses">covers ${esc(techs.length)}</span></div>${desc}<div class="mit-techs">applies to: ${shown}${more}</div></div>`;
+      }).join("");
+      el.innerHTML = head + meta + `<div class="mit-list">${rows}</div>`;
+    }
+
+    // Minimal, safe Markdown → HTML (headings, ordered/unordered lists, bold, inline code, paras).
+    // HTML is escaped first, so AI output can't inject markup.
+    function mdToHtml(src) {
+      const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const inline = s => esc(s).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>");
+      let html = "", list = null;
+      const close = () => { if (list) { html += "</" + list + ">"; list = null; } };
+      for (const raw of String(src || "").split(/\r?\n/)) {
+        const line = raw.replace(/\s+$/, "");
+        let m;
+        if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { close(); const h = Math.min(5, m[1].length + 1); html += "<h" + h + ">" + inline(m[2]) + "</h" + h + ">"; continue; }
+        if ((m = line.match(/^\s*\d+\.\s+(.*)$/))) { if (list !== "ol") { close(); html += "<ol>"; list = "ol"; } html += "<li>" + inline(m[1]) + "</li>"; continue; }
+        if ((m = line.match(/^\s*[-*]\s+(.*)$/))) { if (list !== "ul") { close(); html += "<ul>"; list = "ul"; } html += "<li>" + inline(m[1]) + "</li>"; continue; }
+        if (line.trim() === "") { close(); continue; }
+        close(); html += "<p>" + inline(line) + "</p>";
+      }
+      close();
+      return html;
+    }
+
+    // AI remediation plan (#178): one text-only call → an incident-specific, prioritized action list,
+    // grounded in the case's findings + the deterministic ATT&CK mitigations. Ephemeral (no save).
+    function generateRemediation(btn) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const msg = document.getElementById("remediationMsg");
+      const out = document.getElementById("remediationPlan");
+      btn.disabled = true;
+      msg.textContent = "generating… (one AI call)";
+      fetch(`/cases/${caseId}/remediation-plan`, { method: "POST" }).then(async r => {
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          msg.textContent = j.error || (r.status === 501 ? "AI provider not configured — set one up in Settings → AI." : "Failed (restart the companion server if this endpoint 404s).");
+          out.innerHTML = "";
+          return;
+        }
+        msg.textContent = "";
+        out.innerHTML = (j.plan && j.plan.trim())
+          ? `<div class="rem-h">✨ Incident remediation plan <span class="rem-sub">AI-generated from this case — review before acting</span></div>` + mdToHtml(j.plan)
+          : `<p style="color:var(--c-9aa4b2)">No plan returned.</p>`;
+      }).catch(e => { msg.textContent = "error: " + e.message; }).finally(() => { btn.disabled = false; });
+    }
+
     // ── Defensive Countermeasures (D3FEND, #178) ─────────────────────────────────────────────
     // For each ATT&CK technique the case identified, the MITRE D3FEND countermeasures that harden
     // against / detect / isolate it. Offline + deterministic (no AI). Derived server-side
@@ -7702,7 +7812,10 @@
       const el = document.getElementById("d3fendPanel");
       if (!el) return;
       const d = d3fendData;
-      const note = `<div class="d3f-note">🛡 ${esc((d && d.note) || "Suggested D3FEND countermeasures — review for fit, not a complete or guaranteed list.")}</div>`;
+      // This block is the SECONDARY layer (defensive techniques / sensors); the actionable ATT&CK
+      // mitigations render above it in #mitigationsPanel.
+      const secHdr = `<div class="d3f-section-h">🛡 Defensive techniques &amp; sensors (D3FEND) — detection &amp; hardening categories</div>`;
+      const note = secHdr + `<div class="d3f-note">${esc((d && d.note) || "Suggested D3FEND countermeasures — review for fit, not a complete or guaranteed list.")}</div>`;
       if (!d || !d.mappedTechniqueCount) {
         el.innerHTML = note + `<div class="d3f-empty">D3FEND mapping not available — run <code>npm run data:update-d3fend</code>.</div>`;
         return;
@@ -9498,6 +9611,7 @@
       loadAnomalies(caseId);
       loadAdversaryHints(caseId);
       loadD3fend(caseId);
+      loadAttackMitigations(caseId);
       loadGeoMap(caseId);
       loadSwimlane(caseId);
       loadIocSources(caseId);
@@ -9567,7 +9681,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleD3fendReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "capture_ingest") {
@@ -11018,7 +11132,7 @@
       { id: "sec-threads",      label: "Investigation Threads" },
       { id: "sec-mitre",        label: "MITRE ATT&CK" },
       { id: "sec-adversary",    label: "Adversary Hints" },
-      { id: "sec-d3fend",       label: "Defensive Countermeasures" },
+      { id: "sec-d3fend",       label: "Mitigation & Defensive Countermeasures" },
       { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
       { id: "sec-legitimate",   label: "Confirmed Legitimate" },
       { id: "sec-hypotheses",   label: "Hypotheses" },
@@ -11911,7 +12025,7 @@
       ["conclusions", "5 · Conclusions & recommendations"],
       ["hypotheses", "Hypotheses"],
       ["playbook", "Response Playbook"],
-      ["d3fend", "Defensive countermeasures (D3FEND)"],
+      ["d3fend", "Mitigation & defensive countermeasures (ATT&CK + D3FEND)"],
       ["notebook", "Analyst Notebook"],
     ];
     const RT_LABELS = Object.fromEntries(RT_SECTIONS);

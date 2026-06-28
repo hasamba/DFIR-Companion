@@ -32,7 +32,7 @@ export const REPORT_SECTION_DEFS = [
   { key: "conclusions", label: "5 · Conclusions & recommendations" },
   { key: "hypotheses", label: "Hypotheses (what we investigated & concluded)" },
   { key: "playbook", label: "Response Playbook" },
-  { key: "d3fend", label: "Defensive countermeasures (D3FEND)" },
+  { key: "d3fend", label: "Mitigation & defensive countermeasures (ATT&CK + D3FEND)" },
   { key: "notebook", label: "Analyst Notebook" },
 ] as const;
 
