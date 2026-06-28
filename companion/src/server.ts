@@ -6,6 +6,7 @@ import { writeFile, readFile, rm, readdir, stat, open, copyFile, mkdir } from "n
 import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
+import { atomicWrite } from "./storage/atomicWrite.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { AnonControlStore, type AnonControl } from "./analysis/anonControl.js";
@@ -1118,10 +1119,33 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // ── Startup pre-flight (#179) ─────────────────────────────────────────────────────────
   // Results are cached for PREFLIGHT_TTL_MS so opening the dashboard repeatedly is cheap.
   // A POST re-runs the checks immediately (the "Re-run" button in Settings → Diagnostics).
+  // The user can disable checks entirely via POST /diagnostics/preflight/control { disabled:true }
+  // (persisted in {casesRoot}/preflight/control.json so the setting survives restarts).
   const PREFLIGHT_TTL_MS = 30_000;
   let preflightCache: { report: PreflightReport; at: number } | null = null;
 
+  const preflightControlPath = join(store.casesRoot, "preflight", "control.json");
+  async function readPreflightDisabled(): Promise<boolean> {
+    try {
+      const raw = await readFile(preflightControlPath, "utf-8");
+      return !!(JSON.parse(raw)?.disabled);
+    } catch {
+      return false;
+    }
+  }
+  async function writePreflightControl(ctrl: { disabled: boolean }): Promise<void> {
+    await mkdir(join(store.casesRoot, "preflight"), { recursive: true });
+    await atomicWrite(preflightControlPath, JSON.stringify(ctrl, null, 2));
+  }
+
   async function runPreflightChecks(): Promise<PreflightReport> {
+    // Honour the persistent disable flag — return an empty disabled report immediately.
+    if (await readPreflightDisabled()) {
+      const report = buildPreflightReport([], new Date().toISOString(), 0, true);
+      preflightCache = { report, at: Date.now() };
+      return report;
+    }
+
     const startedAt = Date.now();
     const items: PreflightItem[] = [];
 
@@ -1192,6 +1216,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // Read / toggle the persistent disable flag.
+  app.get("/diagnostics/preflight/control", async (_req: Request, res: Response) => {
+    const disabled = await readPreflightDisabled().catch(() => false);
+    return res.status(200).json({ disabled });
+  });
+  app.post("/diagnostics/preflight/control", async (req: Request, res: Response) => {
+    const { disabled } = req.body as { disabled?: boolean };
+    if (typeof disabled !== "boolean") return res.status(400).json({ error: "disabled must be boolean" });
+    await writePreflightControl({ disabled });
+    preflightCache = null;
+    return res.status(200).json({ disabled });
   });
 
   // Hand the run function to startServer so it can fire it after app.listen().
@@ -7817,6 +7854,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // and local enrichment servers. Best-effort — a failure is logged, never fatal.
     if (scheduledPreflight) {
       void scheduledPreflight().then((r) => {
+        if (r.disabled) { logLine("[preflight] checks disabled"); return; }
         const status = r.anyCriticalFailed ? "CRITICAL" : r.anyFailed ? "WARN" : "OK";
         logLine(`[preflight] ${status} (${r.durationMs}ms) — ${r.items.map((i) => `${i.name}:${i.ok ? "ok" : "FAIL"}`).join(", ")}`);
         if (r.anyCriticalFailed) {

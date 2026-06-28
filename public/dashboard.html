@@ -2541,8 +2541,9 @@
         <div style="margin-bottom:12px;padding:10px;background:var(--c-161a22);border:1px solid var(--c-2a2f3a);border-radius:6px">
           <div style="font-weight:600;color:var(--c-9aa4b2);font-size:12.5px;margin-bottom:6px">Pre-flight checks</div>
           <div id="preflightStatus" style="font-size:12.5px;color:var(--c-cbd3df);margin-bottom:8px">Loading…</div>
-          <div style="display:flex;gap:8px;align-items:center">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button id="preflightRerunBtn" type="button">↻ Re-run</button>
+            <button id="preflightToggleBtn" type="button">Disable checks</button>
             <span id="preflightRerunMsg" class="manual-msg"></span>
           </div>
         </div>
@@ -11710,6 +11711,21 @@
         .catch(e => { if (msg) { msg.style.color = "#ff9f9f"; msg.textContent = "failed: " + e.message; } })
         .finally(() => { if (btn) btn.disabled = false; });
     });
+    document.getElementById("preflightToggleBtn").addEventListener("click", () => {
+      const msg = document.getElementById("preflightRerunMsg");
+      const toggleBtn = document.getElementById("preflightToggleBtn");
+      const currentlyDisabled = toggleBtn.textContent.trim() === "Enable checks";
+      const next = !currentlyDisabled;
+      fetch("/diagnostics/preflight/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ disabled: next }) })
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(String(r.status))))
+        .then(() => fetch("/diagnostics/preflight", { method: "POST" }))
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(String(r.status))))
+        .then(d => {
+          renderPreflightStatus(d.report);
+          if (msg) { msg.style.color = "#5ad17a"; msg.textContent = next ? "Checks disabled." : "Checks enabled."; setTimeout(() => { if (msg) msg.textContent = ""; }, 3000); }
+        })
+        .catch(e => { if (msg) { msg.style.color = "#ff9f9f"; msg.textContent = "failed: " + e.message; } });
+    });
     // The AI-test button is re-rendered with the diagnostics body, so delegate from the pane.
     document.getElementById("diagBody").addEventListener("click", e => { if (e.target.closest("#diagAiTestBtn")) diagAiTest(); });
     // Case backup restore (#180) — load button is static; restore buttons are in the dynamically rendered list.
@@ -12465,7 +12481,14 @@
     // Pre-flight status panel inside Settings → Diagnostics (#179).
     function renderPreflightStatus(report) {
       const el = document.getElementById("preflightStatus");
+      const btn = document.getElementById("preflightToggleBtn");
       if (!el || !report) return;
+      if (report.disabled) {
+        el.innerHTML = '<span style="color:#7e8aa0">⊘ Checks disabled — no probes run on startup.</span>';
+        if (btn) btn.textContent = "Enable checks";
+        return;
+      }
+      if (btn) btn.textContent = "Disable checks";
       const status = report.anyCriticalFailed ? '<span style="color:#ff5c5c">✗ CRITICAL</span>'
                    : report.anyFailed         ? '<span style="color:#ffb05a">⚠ WARN</span>'
                                               : '<span style="color:#5ad17a">✓ OK</span>';
@@ -12792,21 +12815,22 @@
     // ── Startup pre-flight banner (#179) ───────────────────────────────────
     // Fetches /diagnostics/preflight once on load (cached 30s server-side).
     // Shows a red banner only when a CRITICAL check (AI provider) failed.
-    // Dismissed for the page session; the analyst can re-run from Settings → Diagnostics.
+    // "Disable checks" persists the setting so the banner never reappears.
     let preflightDismissed = false;
     function loadPreflightBanner() {
       if (preflightDismissed) return;
       fetch("/diagnostics/preflight")
         .then(r => r.ok ? r.json() : null)
         .then(d => {
-          if (!d || !d.report || !d.report.anyCriticalFailed) return;
+          if (!d || !d.report || d.report.disabled || !d.report.anyCriticalFailed) return;
           const banner = document.getElementById("preflightBanner");
           if (!banner || banner.__preflightShown) return;
           banner.__preflightShown = true;
           const failed = d.report.items.filter(i => !i.ok && i.critical);
           const details = failed.map(i => esc(i.name) + ': ' + esc(i.detail)).join(' &bull; ');
           const span = document.createElement('span');
-          span.innerHTML = '⚠ Pre-flight check failed — ' + details;
+          span.innerHTML = '⚠ Pre-flight check failed — ' + details +
+            ' &nbsp;<span style="color:#ffaaaa;font-size:11px">You can disable these checks in Settings → Diagnostics.</span>';
           const openBtn = document.createElement('button');
           openBtn.type = 'button';
           openBtn.style.cssText = 'margin-left:10px';
@@ -12815,14 +12839,23 @@
             document.getElementById('settingsBtn')?.click();
             document.querySelector('.stab[data-stab="diagnostics"]')?.click();
           };
+          const disableBtn = document.createElement('button');
+          disableBtn.type = 'button';
+          disableBtn.textContent = 'Disable checks';
+          disableBtn.onclick = () => {
+            fetch('/diagnostics/preflight/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ disabled: true }) })
+              .then(() => { preflightDismissed = true; banner.hidden = true; })
+              .catch(() => {});
+          };
           const btn = document.createElement('button');
           btn.type = 'button';
-          btn.title = 'Dismiss';
+          btn.title = 'Dismiss for this session';
           btn.textContent = '✕';
           btn.onclick = () => { preflightDismissed = true; banner.hidden = true; };
           banner.innerHTML = '';
           banner.appendChild(span);
           banner.appendChild(openBtn);
+          banner.appendChild(disableBtn);
           banner.appendChild(btn);
           banner.hidden = false;
         })

@@ -149,3 +149,41 @@ describe("POST /diagnostics/preflight", () => {
     expect(typeof res.body.text).toBe("string");
   });
 });
+
+describe("GET+POST /diagnostics/preflight/control", () => {
+  it("GET returns disabled:false by default", async () => {
+    const app = createApp(store, {});
+    const res = await request(app).get("/diagnostics/preflight/control");
+    expect(res.status).toBe(200);
+    expect(res.body.disabled).toBe(false);
+  });
+
+  it("POST sets disabled:true and GET /preflight returns disabled report", async () => {
+    const app = createApp(store, { aiTestProvider: () => fakeAi({ ok: true }) });
+    const set = await request(app).post("/diagnostics/preflight/control").send({ disabled: true });
+    expect(set.status).toBe(200);
+    expect(set.body.disabled).toBe(true);
+
+    const res = await request(app).get("/diagnostics/preflight");
+    expect(res.status).toBe(200);
+    expect(res.body.report.disabled).toBe(true);
+    expect(res.body.report.items).toHaveLength(0);
+    expect(res.body.report.anyCriticalFailed).toBe(false);
+  });
+
+  it("POST re-enables checks", async () => {
+    const app = createApp(store, { aiTestProvider: () => fakeAi({ ok: true }) });
+    await request(app).post("/diagnostics/preflight/control").send({ disabled: true });
+    await request(app).post("/diagnostics/preflight/control").send({ disabled: false });
+
+    const res = await request(app).get("/diagnostics/preflight");
+    expect(res.body.report.disabled).toBeFalsy();
+    expect(res.body.report.items.length).toBeGreaterThan(0);
+  });
+
+  it("POST rejects non-boolean disabled", async () => {
+    const app = createApp(store, {});
+    const res = await request(app).post("/diagnostics/preflight/control").send({ disabled: "yes" });
+    expect(res.status).toBe(400);
+  });
+});

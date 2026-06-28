@@ -27,19 +27,23 @@ export interface PreflightReport {
   anyFailed: boolean;
   /** True if a CRITICAL check (i.e. AI provider) failed. */
   anyCriticalFailed: boolean;
+  /** True when the user has disabled pre-flight checks; items will be empty. */
+  disabled?: boolean;
 }
 
 export function buildPreflightReport(
   items: PreflightItem[],
   ranAt: string,
   durationMs: number,
+  disabled?: boolean,
 ): PreflightReport {
   return {
     ranAt,
     durationMs,
     items,
-    anyFailed: items.some((i) => !i.ok),
-    anyCriticalFailed: items.some((i) => !i.ok && i.critical),
+    anyFailed: !disabled && items.some((i) => !i.ok),
+    anyCriticalFailed: !disabled && items.some((i) => !i.ok && i.critical),
+    ...(disabled ? { disabled: true } : {}),
   };
 }
 
