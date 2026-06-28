@@ -1065,6 +1065,16 @@
     #diskWarnBanner button { background: rgba(0,0,0,0.3); color: inherit; border: 1px solid rgba(255,255,255,0.2);
       border-radius: 5px; cursor: pointer; padding: 2px 8px; font-size: 12px; }
     #diskWarnBanner button:hover { background: rgba(0,0,0,0.5); }
+    /* Pre-flight warning banner (#179). */
+    #preflightBanner { display: flex; align-items: flex-start; gap: 10px; padding: 7px 16px;
+      background: #3a0000; color: #ff5c5c; border-bottom: 1px solid #7a0000; font-size: 12.5px; }
+    #preflightBanner[hidden] { display: none; }
+    #preflightBanner span { flex: 1; }
+    #preflightBanner a { color: #ffaaaa; }
+    #preflightBanner button { background: rgba(0,0,0,0.3); color: inherit;
+      border: 1px solid rgba(255,255,255,0.2); border-radius: 5px;
+      cursor: pointer; padding: 2px 8px; font-size: 12px; white-space: nowrap; }
+    #preflightBanner button:hover { background: rgba(0,0,0,0.5); }
     /* Case lifecycle button and dropdown. */
     #lifecycleBtn { padding: 4px 7px; cursor: pointer; background: transparent;
       border: 1px solid var(--c-30363d); border-radius: 4px;
@@ -2519,13 +2529,25 @@
         </div>
       </div>
 
-      <!-- Diagnostics (#118) -->
+      <!-- Diagnostics (#118, #179) -->
       <div class="stab-pane" id="stab-diagnostics">
         <div class="sfield-hint" style="display:block;margin-bottom:8px">
           Operator-facing system state for troubleshooting ingestion / AI problems. Read-only and
           <strong>redacted</strong> (no API keys or evidence content). The summary loads fast; per-case
           disk sizes are computed on demand.
         </div>
+
+        <!-- Pre-flight (#179) -->
+        <div style="margin-bottom:12px;padding:10px;background:var(--c-161a22);border:1px solid var(--c-2a2f3a);border-radius:6px">
+          <div style="font-weight:600;color:var(--c-9aa4b2);font-size:12.5px;margin-bottom:6px">Pre-flight checks</div>
+          <div id="preflightStatus" style="font-size:12.5px;color:var(--c-cbd3df);margin-bottom:8px">Loading…</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="preflightRerunBtn" type="button">↻ Re-run</button>
+            <button id="preflightToggleBtn" type="button">Disable checks</button>
+            <span id="preflightRerunMsg" class="manual-msg"></span>
+          </div>
+        </div>
+
         <div class="sfield-row" style="margin-bottom:10px">
           <div class="sfield"><label>Size scan file limit<span class="sfield-hint">DFIR_DIAG_MAX_FILES — max files visited by "Compute case sizes" before stopping (default 100000)</span></label><input id="env-DFIR_DIAG_MAX_FILES" placeholder="100000" /></div>
         </div>
@@ -2643,6 +2665,9 @@
     <span id="diskWarnText"></span>
     <button id="diskWarnDismiss" type="button" title="Dismiss">✕</button>
   </div>
+
+  <!-- Pre-flight warning (#179): shown when a critical check fails at startup. -->
+  <div id="preflightBanner" hidden></div>
 
   <!-- Cross-case warning: shown when screenshots arrive for a case other than the one being viewed. -->
   <div id="caseMismatchBanner" hidden>
@@ -11675,6 +11700,32 @@
     document.getElementById("diagRefreshBtn").addEventListener("click", loadDiagnostics);
     document.getElementById("diagCopyBtn").addEventListener("click", diagCopy);
     document.getElementById("diagSizesBtn").addEventListener("click", diagComputeSizes);
+    document.getElementById("preflightRerunBtn").addEventListener("click", () => {
+      const msg = document.getElementById("preflightRerunMsg");
+      const btn = document.getElementById("preflightRerunBtn");
+      if (msg) { msg.style.color = "#9aa4b2"; msg.textContent = "running…"; }
+      if (btn) btn.disabled = true;
+      fetch("/diagnostics/preflight", { method: "POST" })
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(String(r.status))))
+        .then(d => { renderPreflightStatus(d.report); if (msg) { msg.style.color = ""; msg.textContent = ""; } })
+        .catch(e => { if (msg) { msg.style.color = "#ff9f9f"; msg.textContent = "failed: " + e.message; } })
+        .finally(() => { if (btn) btn.disabled = false; });
+    });
+    document.getElementById("preflightToggleBtn").addEventListener("click", () => {
+      const msg = document.getElementById("preflightRerunMsg");
+      const toggleBtn = document.getElementById("preflightToggleBtn");
+      const currentlyDisabled = toggleBtn.textContent.trim() === "Enable checks";
+      const next = !currentlyDisabled;
+      fetch("/diagnostics/preflight/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ disabled: next }) })
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(String(r.status))))
+        .then(() => fetch("/diagnostics/preflight", { method: "POST" }))
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(String(r.status))))
+        .then(d => {
+          renderPreflightStatus(d.report);
+          if (msg) { msg.style.color = "#5ad17a"; msg.textContent = next ? "Checks disabled." : "Checks enabled."; setTimeout(() => { if (msg) msg.textContent = ""; }, 3000); }
+        })
+        .catch(e => { if (msg) { msg.style.color = "#ff9f9f"; msg.textContent = "failed: " + e.message; } });
+    });
     // The AI-test button is re-rendered with the diagnostics body, so delegate from the pane.
     document.getElementById("diagBody").addEventListener("click", e => { if (e.target.closest("#diagAiTestBtn")) diagAiTest(); });
     // Case backup restore (#180) — load button is static; restore buttons are in the dynamically rendered list.
@@ -11724,7 +11775,7 @@
         if (tab === "dashboard-views") loadDashboardViewsEditor();
         if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
         if (tab === "updates") loadUpdateCheck();
-        if (tab === "diagnostics") loadDiagnostics();
+        if (tab === "diagnostics") { loadPreflightStatus(); loadDiagnostics(); }
       });
     });
 
@@ -12427,6 +12478,36 @@
       const footer = `<div style="font-size:11px;color:#7e8aa0;margin-top:4px">generated ${esc((report.generatedAt || "").replace("T", " ").slice(0, 19))} · uptime ${diagFmtAge(report.uptimeMs)}</div>`;
       return disk + cases + queue + aiCard + importers + backupsCard + `<div id="diagSizes"></div>` + footer;
     }
+    // Pre-flight status panel inside Settings → Diagnostics (#179).
+    function renderPreflightStatus(report) {
+      const el = document.getElementById("preflightStatus");
+      const btn = document.getElementById("preflightToggleBtn");
+      if (!el || !report) return;
+      if (report.disabled) {
+        el.innerHTML = '<span style="color:#7e8aa0">⊘ Checks disabled — no probes run on startup.</span>';
+        if (btn) btn.textContent = "Enable checks";
+        return;
+      }
+      if (btn) btn.textContent = "Disable checks";
+      const status = report.anyCriticalFailed ? '<span style="color:#ff5c5c">✗ CRITICAL</span>'
+                   : report.anyFailed         ? '<span style="color:#ffb05a">⚠ WARN</span>'
+                                              : '<span style="color:#5ad17a">✓ OK</span>';
+      const rows = (report.items || []).map(i => {
+        const icon = i.ok ? '<span style="color:#5ad17a">✓</span>'
+                   : i.critical ? '<span style="color:#ff5c5c">✗</span>'
+                                : '<span style="color:#ffb05a">⚠</span>';
+        return `<div style="margin:2px 0">${icon} <strong>${esc(i.name)}</strong>: ${esc(i.detail)}</div>`;
+      }).join("");
+      el.innerHTML = `<div style="margin-bottom:4px">Status: ${status} &nbsp;<span style="color:#7e8aa0;font-size:11px">${esc(report.ranAt || "")} (${report.durationMs || 0}ms)</span></div>${rows}`;
+    }
+    function loadPreflightStatus() {
+      const el = document.getElementById("preflightStatus");
+      if (el) el.textContent = "Loading…";
+      fetch("/diagnostics/preflight")
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(String(r.status))))
+        .then(d => renderPreflightStatus(d.report))
+        .catch(e => { if (el) el.textContent = "Could not load pre-flight: " + e.message; });
+    }
     function loadDiagnostics() {
       const body = document.getElementById("diagBody");
       const msg = document.getElementById("diagMsg");
@@ -12730,6 +12811,57 @@
     }
     const diskWarnDismissBtn = document.getElementById("diskWarnDismiss");
     if (diskWarnDismissBtn) diskWarnDismissBtn.onclick = () => { diskWarnDismissed = true; hideDiskWarn(); };
+
+    // ── Startup pre-flight banner (#179) ───────────────────────────────────
+    // Fetches /diagnostics/preflight once on load (cached 30s server-side).
+    // Shows a red banner only when a CRITICAL check (AI provider) failed.
+    // "Disable checks" persists the setting so the banner never reappears.
+    let preflightDismissed = false;
+    function loadPreflightBanner() {
+      if (preflightDismissed) return;
+      fetch("/diagnostics/preflight")
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d || !d.report || d.report.disabled || !d.report.anyCriticalFailed) return;
+          const banner = document.getElementById("preflightBanner");
+          if (!banner || banner.__preflightShown) return;
+          banner.__preflightShown = true;
+          const failed = d.report.items.filter(i => !i.ok && i.critical);
+          const details = failed.map(i => esc(i.name) + ': ' + esc(i.detail)).join(' &bull; ');
+          const span = document.createElement('span');
+          span.innerHTML = '⚠ Pre-flight check failed — ' + details +
+            ' &nbsp;<span style="color:#ffaaaa;font-size:11px">You can disable these checks in Settings → Diagnostics.</span>';
+          const openBtn = document.createElement('button');
+          openBtn.type = 'button';
+          openBtn.style.cssText = 'margin-left:10px';
+          openBtn.textContent = 'Open Diagnostics';
+          openBtn.onclick = () => {
+            document.getElementById('settingsBtn')?.click();
+            document.querySelector('.stab[data-stab="diagnostics"]')?.click();
+          };
+          const disableBtn = document.createElement('button');
+          disableBtn.type = 'button';
+          disableBtn.textContent = 'Disable checks';
+          disableBtn.onclick = () => {
+            fetch('/diagnostics/preflight/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ disabled: true }) })
+              .then(() => { preflightDismissed = true; banner.hidden = true; })
+              .catch(() => {});
+          };
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.title = 'Dismiss for this session';
+          btn.textContent = '✕';
+          btn.onclick = () => { preflightDismissed = true; banner.hidden = true; };
+          banner.innerHTML = '';
+          banner.appendChild(span);
+          banner.appendChild(openBtn);
+          banner.appendChild(disableBtn);
+          banner.appendChild(btn);
+          banner.hidden = false;
+        })
+        .catch(() => {});
+    }
+    loadPreflightBanner();
 
     // ── Case lifecycle (#119) ───────────────────────────────────────────────
     // Load the case's status (open/closed) and update the toolbar button + label.
