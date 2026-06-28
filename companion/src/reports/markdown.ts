@@ -14,6 +14,8 @@ import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { ADVERSARY_EMULATION_CAVEAT } from "../analysis/adversaryEmulation.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
+import { buildD3fendResult } from "../analysis/d3fendMap.js";
+import { loadD3fendDataset, d3fendEnvOptions } from "../analysis/d3fendData.js";
 import { hasExposureFinding, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
@@ -707,6 +709,53 @@ const PLAYBOOK_STATUS_LABEL: Record<PlaybookStatus, string> = {
   skipped: "Skipped",
 };
 
+// Defensive countermeasures (#178) — for each identified ATT&CK technique, the MITRE D3FEND
+// countermeasures that harden against / detect / isolate it. Offline + deterministic (no AI),
+// resolved from the bundled D3FEND mapping. Turns the incident's technique list into concrete
+// hardening guidance for the defensive team — a toggleable appendix section.
+function d3fendSection(state: InvestigationState, lines: string[]): void {
+  lines.push("## Defensive countermeasures (D3FEND)", "");
+  const result = buildD3fendResult(state, loadD3fendDataset(), d3fendEnvOptions());
+  lines.push(`_${result.note}_`, "");
+  if (!result.mappedTechniqueCount) {
+    lines.push("_D3FEND mapping not available — run `npm run data:update-d3fend`._", "");
+    return;
+  }
+  if (!result.caseTechniqueCount) {
+    lines.push("_No techniques identified yet — countermeasures need at least one ATT&CK technique._", "");
+    return;
+  }
+  if (!result.coveredTechniqueCount) {
+    lines.push(
+      `_None of the case's ${result.caseTechniqueCount} identified technique(s) have a D3FEND countermeasure mapping._`,
+      "",
+    );
+    return;
+  }
+  lines.push(
+    `Countermeasures for ${result.coveredTechniqueCount} of ${result.caseTechniqueCount} identified ` +
+      `technique(s), from MITRE D3FEND v${result.d3fendVersion}.`,
+    "",
+  );
+
+  // Defensive-tactic rollup — the case-wide hardening priorities, in D3FEND lifecycle order.
+  lines.push("### By defensive tactic", "");
+  for (const g of result.byTactic) {
+    const cms = g.countermeasures.map((c) => `[${c.name}](${c.url})`).join(", ");
+    lines.push(`- **${g.tactic}:** ${cms}`);
+  }
+  lines.push("");
+
+  // Per-technique detail — what to apply for each technique the case observed.
+  lines.push("### By technique", "");
+  lines.push("| ATT&CK technique | D3FEND countermeasures |", "| --- | --- |");
+  for (const t of result.techniques) {
+    const cms = t.countermeasures.map((c) => `${c.name} (${c.tactic})`).join("; ");
+    lines.push(`| ${cellMd(t.technique)} | ${cellMd(cms)} |`);
+  }
+  lines.push("");
+}
+
 function playbookSection(tasks: PlaybookTask[], lines: string[]): void {
   lines.push("## Response Playbook", "");
   const stats = playbookStats(tasks);
@@ -823,6 +872,7 @@ export function renderMarkdownReport(
     playbook: () => {
       if (playbookTasks && playbookTasks.length > 0) playbookSection(playbookTasks, lines);
     },
+    d3fend: () => d3fendSection(state, lines),
     notebook: () => {
       if (notebookEntries && notebookEntries.length > 0) analystNotebook(notebookEntries, lines);
     },

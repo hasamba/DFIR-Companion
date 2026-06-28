@@ -24,6 +24,8 @@ import { buildMobileSummary, mobileSummaryEnvOptions, type MobileCaseSummary } f
 import { buildGeoMap, geoMapEnvOptions, type GeoMapData } from "../analysis/geoMap.js";
 import { detectTimelineAnomalies, anomalyEnvOptions, type TimelineAnomalyResult } from "../analysis/timelineAnomalies.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
+import { buildD3fendResult, type D3fendResult } from "../analysis/d3fendMap.js";
+import { loadD3fendDataset, d3fendEnvOptions } from "../analysis/d3fendData.js";
 import { buildStixBundle, type StixBundle } from "./stix.js";
 import {
   buildIocBlocklistTxt,
@@ -236,6 +238,14 @@ export class ReportWriter {
   async adversaryHints(caseId: string): Promise<AdversaryHintsResult> {
     const state = await this.loadFilteredState(caseId);
     return buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
+  }
+
+  // D3FEND defensive countermeasures (#178): for each ATT&CK technique the case identified, the
+  // bundled MITRE D3FEND mapping's hardening/detection/isolation countermeasures. Offline + derived
+  // on read from the same scope/legitimate-filtered state, so the dashboard and report agree.
+  async d3fendCountermeasures(caseId: string): Promise<D3fendResult> {
+    const state = await this.loadFilteredState(caseId);
+    return buildD3fendResult(state, loadD3fendDataset(), d3fendEnvOptions());
   }
 
   // Compact, READ-ONLY case summary for the mobile companion PWA (#59): case status, the worst

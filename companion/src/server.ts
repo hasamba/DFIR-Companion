@@ -1580,6 +1580,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // D3FEND defensive countermeasures (#178): per identified ATT&CK technique, the MITRE D3FEND
+  // hardening/detection/isolation countermeasures from the bundled offline mapping. Derived on read.
+  app.get("/cases/:id/d3fend-countermeasures", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.d3fendCountermeasures(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Mobile companion summary (#59): a compact, READ-ONLY projection of the case for the phone PWA
   // (/mobile) — case status, worst findings, most severe/recent events, IOC list with verdicts.
   // Same scope/legitimate filtering as the report, so the phone view agrees with the dashboard.

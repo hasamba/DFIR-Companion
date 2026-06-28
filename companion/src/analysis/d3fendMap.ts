@@ -1,0 +1,191 @@
+// MITRE D3FEND defensive-countermeasure mapping — offline "how do I defend against this?" lookup
+// (issue #178).
+//
+// Synthesis tells the analyst WHICH ATT&CK techniques a case used (offensive: "what the attacker
+// did"). D3FEND is the defensive counterpart — it maps each ATT&CK technique to the countermeasures
+// that harden against / detect / isolate it. Resolving the case's identified techniques against the
+// bundled D3FEND mapping turns the incident's technique list into concrete hardening guidance for
+// the defensive team, with NO AI call and NO runtime network (the mapping is a static, committed
+// file regenerated offline by `npm run data:update-d3fend`).
+//
+// This module is PURE and OFFLINE: input is the case's techniques (via `collectCaseTechniques`,
+// shared with adversary hints so both agree on what counts) + the bundled mapping; output is the
+// per-technique countermeasures plus a defensive-tactic rollup. The dataset is loaded separately
+// (d3fendData.ts) so this logic stays trivially testable.
+//
+// MATCHING is sub-technique aware and bidirectional. D3FEND maps most techniques at the sub-technique
+// level (T1110.001) and some only at the base (T1059), so the resolver bridges both directions,
+// deduped, to maximize recall without inventing mappings:
+//   • a case SUB-technique (T1059.001) → its exact id AND its base T1059, and
+//   • a case BASE technique (T1110, no sub) → its exact id AND every mapped sub-technique T1110.*
+// This mirrors the base-credit idea in adversaryHints.ts: a coarsely-tagged case still surfaces the
+// hardening guidance D3FEND lists for the technique family.
+//
+// CRUCIAL FRAMING: D3FEND's ATT&CK relationships are INFERRED (artifact-based), not an authoritative
+// "fix". They are suggested countermeasures to consider — not a guarantee or a complete list — so
+// every surface that renders them carries that note.
+
+import type { InvestigationState } from "./stateTypes.js";
+import { collectCaseTechniques, normalizeTechniqueId, baseTechniqueId } from "./adversaryHints.js";
+
+// One D3FEND countermeasure as stored in the bundled dataset (no `url` — derived at resolve time to
+// keep the file small).
+export interface D3fendCountermeasure {
+  id: string; // D3FEND technique id (URI fragment), e.g. "TokenBinding"
+  name: string; // human label, e.g. "Token Binding"
+  tactic: string; // D3FEND defensive tactic: Model | Harden | Detect | Isolate | Deceive | Evict | Restore
+  category: string; // top-level D3FEND technique category, e.g. "Credential Hardening"
+}
+
+// A countermeasure enriched with its d3fend.mitre.org link (what callers render).
+export interface D3fendCountermeasureView extends D3fendCountermeasure {
+  url: string;
+}
+
+// All countermeasures mapped to one ATT&CK technique the case identified.
+export interface D3fendTechniqueMatch {
+  technique: string; // the case's ATT&CK technique id (full granularity), e.g. "T1059.001"
+  countermeasures: D3fendCountermeasureView[];
+}
+
+// A defensive-tactic rollup: every distinct countermeasure for the case, grouped by D3FEND tactic.
+export interface D3fendTacticGroup {
+  tactic: string;
+  countermeasures: D3fendCountermeasureView[];
+}
+
+// The full response a caller (route / report) returns.
+export interface D3fendResult {
+  d3fendVersion: string; // D3FEND ontology release the mapping came from
+  datasetGenerated: string; // when the slim mapping was generated
+  source: string; // dataset provenance string
+  note: string; // the standing "suggested, not guaranteed" disclaimer
+  mappedTechniqueCount: number; // techniques in the whole dataset (coverage context)
+  countermeasureCount: number; // distinct countermeasures in the whole dataset
+  caseTechniqueCount: number; // distinct techniques the case contributed
+  coveredTechniqueCount: number; // of those, how many had ≥1 D3FEND countermeasure
+  techniques: D3fendTechniqueMatch[]; // per case-technique that had a match, sorted by id
+  byTactic: D3fendTacticGroup[]; // distinct countermeasures grouped by D3FEND tactic, lifecycle order
+}
+
+// The shape of a loaded dataset this builder needs — declared structurally so the pure module stays
+// decoupled from the loader (d3fendData.ts) and the import stays one-directional.
+export interface D3fendDatasetView {
+  d3fendVersion: string;
+  generated: string;
+  source: string;
+  note: string;
+  countermeasureCount: number;
+  map: Record<string, D3fendCountermeasure[]>; // ATT&CK technique id → countermeasures
+}
+
+export interface D3fendOptions {
+  maxPerTechnique?: number; // cap on countermeasures shown per technique (default 12)
+}
+
+export const DEFAULT_MAX_PER_TECHNIQUE = 12;
+
+// D3FEND's defensive lifecycle order — used to order both per-technique countermeasures and the
+// tactic rollup so every surface reads Model → Harden → Detect → Isolate → Deceive → Evict → Restore.
+export const D3FEND_TACTIC_ORDER = ["Model", "Harden", "Detect", "Isolate", "Deceive", "Evict", "Restore"];
+
+// The standing disclaimer, shared by every surface that renders countermeasures (issue #178).
+export const D3FEND_NOTE = "Suggested D3FEND countermeasures inferred from ATT&CK technique — review for fit, not a complete or guaranteed list.";
+
+const tacticRank = (t: string): number => {
+  const i = D3FEND_TACTIC_ORDER.indexOf(t);
+  return i === -1 ? D3FEND_TACTIC_ORDER.length : i;
+};
+
+// The d3fend.mitre.org page for a countermeasure id (e.g. "TokenBinding" → …/technique/d3f:TokenBinding/).
+export function d3fendTechniqueUrl(id: string): string {
+  return `https://d3fend.mitre.org/technique/d3f:${id.trim()}/`;
+}
+
+// Sort countermeasures by D3FEND lifecycle tactic, then name (stable, deterministic).
+function sortCountermeasures<T extends D3fendCountermeasure>(cms: T[]): T[] {
+  return [...cms].sort((a, b) => tacticRank(a.tactic) - tacticRank(b.tactic) || a.name.localeCompare(b.name));
+}
+
+// Gather the countermeasures mapped to one case technique, deduped by D3FEND id — bidirectionally:
+// a sub-technique also pulls in its base's countermeasures, and a base technique also pulls in every
+// mapped sub-technique's (D3FEND maps most techniques only at one granularity, so we bridge both).
+function lookupTechnique(technique: string, map: Record<string, D3fendCountermeasure[]>): D3fendCountermeasure[] {
+  const seen = new Set<string>();
+  const out: D3fendCountermeasure[] = [];
+  const add = (cms: D3fendCountermeasure[] | undefined): void => {
+    if (!cms) return;
+    for (const cm of cms) {
+      if (!cm || typeof cm.id !== "string" || seen.has(cm.id)) continue;
+      seen.add(cm.id);
+      out.push(cm);
+    }
+  };
+  add(map[technique]); // exact id (e.g. T1059.001 or T1110)
+  const base = baseTechniqueId(technique);
+  if (base && base !== technique) {
+    add(map[base]); // sub-technique → its base (T1059.001 → T1059)
+  } else if (base) {
+    // base technique → every mapped sub-technique of it (T1110 → T1110.001, T1110.002, …)
+    const prefix = `${base}.`;
+    for (const key of Object.keys(map)) if (key.startsWith(prefix)) add(map[key]);
+  }
+  return out;
+}
+
+// End-to-end: collect the case's techniques, resolve each against the D3FEND mapping, and wrap the
+// result with provenance + the note. Shared by the /d3fend-countermeasures route and the report
+// renderer so both present identical numbers and wording. Pure (the dataset + options are passed in).
+export function buildD3fendResult(
+  state: InvestigationState,
+  dataset: D3fendDatasetView,
+  opts: D3fendOptions = {},
+): D3fendResult {
+  const maxPerTechnique = Math.max(1, Math.floor(opts.maxPerTechnique ?? DEFAULT_MAX_PER_TECHNIQUE));
+  const map = dataset.map ?? {};
+  const caseTechniques = collectCaseTechniques(state); // full-granularity, deduped, sorted
+
+  const techniques: D3fendTechniqueMatch[] = [];
+  const tacticBuckets = new Map<string, Map<string, D3fendCountermeasureView>>(); // tactic → (id → view)
+
+  for (const raw of caseTechniques) {
+    const technique = normalizeTechniqueId(raw);
+    if (!technique) continue;
+    const matched = sortCountermeasures(lookupTechnique(technique, map));
+    if (matched.length === 0) continue;
+
+    const views: D3fendCountermeasureView[] = matched
+      .slice(0, maxPerTechnique)
+      .map((cm) => ({ ...cm, url: d3fendTechniqueUrl(cm.id) }));
+    techniques.push({ technique, countermeasures: views });
+
+    // Roll the FULL matched set (not just the per-technique cap) into the tactic groups, deduped —
+    // the rollup is the case-wide defensive picture, so a countermeasure trimmed off one technique's
+    // list still counts if another technique surfaces it.
+    for (const cm of matched) {
+      let bucket = tacticBuckets.get(cm.tactic);
+      if (!bucket) {
+        bucket = new Map<string, D3fendCountermeasureView>();
+        tacticBuckets.set(cm.tactic, bucket);
+      }
+      if (!bucket.has(cm.id)) bucket.set(cm.id, { ...cm, url: d3fendTechniqueUrl(cm.id) });
+    }
+  }
+
+  const byTactic: D3fendTacticGroup[] = [...tacticBuckets.entries()]
+    .map(([tactic, byId]) => ({ tactic, countermeasures: sortCountermeasures([...byId.values()]) }))
+    .sort((a, b) => tacticRank(a.tactic) - tacticRank(b.tactic) || a.tactic.localeCompare(b.tactic));
+
+  return {
+    d3fendVersion: dataset.d3fendVersion || "unknown",
+    datasetGenerated: dataset.generated || "",
+    source: dataset.source || "",
+    note: D3FEND_NOTE,
+    mappedTechniqueCount: Object.keys(map).length,
+    countermeasureCount: dataset.countermeasureCount || 0,
+    caseTechniqueCount: caseTechniques.length,
+    coveredTechniqueCount: techniques.length,
+    techniques,
+    byTactic,
+  };
+}

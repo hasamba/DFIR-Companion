@@ -261,7 +261,18 @@ actors above ones sharing only the broad technique, while breadth (`overlapCount
 hypothesis fuel, NOT attribution (every hint carries the group's total technique count so a diffuse 4-of-150
 reads differently from a focused 4-of-12, and the caveat is shown everywhere). `ReportWriter.adversaryHints` →
 `GET /cases/:id/adversary-hints`, dashboard *Adversary Hints* panel + report §4.6.1; thresholds
-`DFIR_ADVERSARY_MIN_OVERLAP`/`DFIR_ADVERSARY_TOP_N`. The **mobile companion summary**
+`DFIR_ADVERSARY_MIN_OVERLAP`/`DFIR_ADVERSARY_TOP_N`. **D3FEND defensive countermeasures** (`analysis/d3fendMap.ts`,
+pure, #178) are the defensive counterpart: the case's ATT&CK techniques (via the shared `collectCaseTechniques`)
+are resolved against a bundled **offline mapping** (`data/d3fend-map.json`, loaded+cached by `analysis/d3fendData.ts`;
+regenerate via `npm run data:update-d3fend` → `scripts/update-d3fend.ts`, the only network touch and offline-prep
+only — it slims D3FEND's inferred ATT&CK→countermeasure SPARQL mapping) into the D3FEND countermeasures that harden
+against / detect / isolate each technique. Matching is **bidirectional + sub-technique-aware**: a case sub-technique
+also pulls its base's countermeasures, and a base technique also pulls every mapped sub-technique's — so a coarsely-
+tagged case still surfaces the technique family's hardening. Output is per-technique + a defensive-tactic rollup
+(Model→Harden→Detect→Isolate→Deceive→Evict→Restore), capped per technique by `DFIR_D3FEND_MAX_PER_TECHNIQUE` (default
+12). **No AI, no runtime network** — suggested countermeasures (D3FEND relationships are INFERRED), NOT a guaranteed or
+complete list, with that note shown everywhere. `ReportWriter.d3fendCountermeasures` → `GET /cases/:id/d3fend-countermeasures`,
+dashboard *Defensive Countermeasures* panel + the toggleable `d3fend` report section. The **mobile companion summary**
 (`analysis/mobileSummary.ts`, pure) is the same shape: a compact, READ-ONLY projection of the (scope/legit-filtered)
 state for the phone PWA — findings worst-first, events most-severe-then-most-recent, IOCs flagged-first with their
 worst threat-intel verdict, plus severity/entity counts; heavy lists capped (`DFIR_MOBILE_MAX_FINDINGS`/`_EVENTS`/`_IOCS`)
