@@ -37,9 +37,11 @@ export interface D3fendCountermeasure {
   category: string; // top-level D3FEND technique category, e.g. "Credential Hardening"
 }
 
-// A countermeasure enriched with its d3fend.mitre.org link (what callers render).
+// A countermeasure enriched with its d3fend.mitre.org link + plain-English definition (what callers
+// render — the definition powers the dashboard hover tooltip / the report's inline gloss).
 export interface D3fendCountermeasureView extends D3fendCountermeasure {
   url: string;
+  definition?: string; // plain-English "what this is", from the D3FEND ontology (absent if unmapped)
 }
 
 // All countermeasures mapped to one ATT&CK technique the case identified.
@@ -85,6 +87,7 @@ export interface D3fendDatasetView {
   note: string;
   countermeasureCount: number;
   map: Record<string, D3fendCountermeasure[]>; // ATT&CK technique id → countermeasures
+  definitions?: Record<string, string>; // d3fend id → plain-English definition
 }
 
 export interface D3fendOptions {
@@ -100,20 +103,65 @@ export const D3FEND_TACTIC_ORDER = ["Model", "Harden", "Detect", "Isolate", "Dec
 // The standing disclaimer, shared by every surface that renders countermeasures (issue #178).
 export const D3FEND_NOTE = "Suggested D3FEND countermeasures inferred from ATT&CK technique — review for fit, not a complete or guaranteed list.";
 
-// Plain-language action label + one-line meaning for each D3FEND tactic, so the analyst-facing
-// surfaces (dashboard checklist + report) don't lean on raw D3FEND jargon. Shared so both agree.
+// Which lifecycle band a D3FEND tactic belongs to, so the UI can separate "the hardening you
+// implement now" from "things you do while responding to THIS incident" and "prerequisite context".
+//   harden  — proactive hardening to do now (Prevent / Detect / Contain)
+//   respond — actions taken during this incident's response (Evict / Restore)
+//   context — prerequisite hygiene or advanced/optional (Model / Deceive)
+export type D3fendTier = "harden" | "respond" | "context";
+
+// Plain-language action label + meaning + a concrete "what to do" line + lifecycle tier for each
+// D3FEND tactic, so the analyst-facing surfaces (dashboard checklist + report) don't lean on raw
+// D3FEND jargon and make clear WHERE the actual hardening is. Shared so both agree.
 export interface D3fendActionInfo {
   label: string; // imperative action name, e.g. "Prevent"
   blurb: string; // one-line meaning, e.g. "stop it happening again"
+  guidance: string; // concrete "what you do" the analyst can act on
+  tier: D3fendTier;
 }
 export const D3FEND_ACTION_INFO: Record<string, D3fendActionInfo> = {
-  Harden: { label: "Prevent", blurb: "stop it happening again" },
-  Detect: { label: "Detect", blurb: "spot it if it recurs" },
-  Isolate: { label: "Contain", blurb: "limit the blast radius" },
-  Deceive: { label: "Deceive", blurb: "lure and mislead the attacker" },
-  Evict: { label: "Evict", blurb: "remove the attacker's foothold" },
-  Restore: { label: "Restore", blurb: "recover affected systems" },
-  Model: { label: "Model", blurb: "know your attack surface" },
+  Harden: {
+    label: "Prevent",
+    blurb: "stop it happening again",
+    guidance: "Apply the config / credential / patch change that removes the weakness the attacker used (e.g. enable MFA, disable the abused feature, restrict permissions).",
+    tier: "harden",
+  },
+  Detect: {
+    label: "Detect",
+    blurb: "spot it if it recurs",
+    guidance: "Make sure logging or an EDR/SIEM rule will catch this behaviour next time, then verify the alert fires.",
+    tier: "harden",
+  },
+  Isolate: {
+    label: "Contain",
+    blurb: "limit the blast radius",
+    guidance: "Segment the network, sandbox the app, or tighten privileges so this technique can't spread.",
+    tier: "harden",
+  },
+  Evict: {
+    label: "Evict",
+    blurb: "remove the attacker's foothold",
+    guidance: "Do this during THIS incident: kill the malicious processes, delete persistence, reset compromised credentials.",
+    tier: "respond",
+  },
+  Restore: {
+    label: "Restore",
+    blurb: "recover affected systems",
+    guidance: "Do this during THIS incident: restore affected data, configs, and accounts from a known-good state.",
+    tier: "respond",
+  },
+  Model: {
+    label: "Model",
+    blurb: "know your attack surface",
+    guidance: "Prerequisite hygiene, not a fix: keep asset/data/account inventories so you can find and scope what's affected.",
+    tier: "context",
+  },
+  Deceive: {
+    label: "Deceive",
+    blurb: "lure and mislead the attacker",
+    guidance: "Optional / advanced: deploy decoys or honeytokens to detect and study intruders — only if your program is mature.",
+    tier: "context",
+  },
 };
 // The action label for a D3FEND tactic, falling back to the raw tactic for any future/unknown one.
 export function d3fendActionLabel(tactic: string): string {
@@ -171,7 +219,14 @@ export function buildD3fendResult(
 ): D3fendResult {
   const maxPerTechnique = Math.max(1, Math.floor(opts.maxPerTechnique ?? DEFAULT_MAX_PER_TECHNIQUE));
   const map = dataset.map ?? {};
+  const defs = dataset.definitions ?? {};
   const caseTechniques = collectCaseTechniques(state); // full-granularity, deduped, sorted
+
+  // Enrich a raw countermeasure with its d3fend URL + plain-English definition (omitted when absent).
+  const viewOf = (cm: D3fendCountermeasure): D3fendCountermeasureView => {
+    const def = defs[cm.id];
+    return def ? { ...cm, url: d3fendTechniqueUrl(cm.id), definition: def } : { ...cm, url: d3fendTechniqueUrl(cm.id) };
+  };
 
   const techniques: D3fendTechniqueMatch[] = [];
   const tacticBuckets = new Map<string, Map<string, D3fendTacticCountermeasure>>(); // tactic → (id → cm + coverage)
@@ -182,9 +237,7 @@ export function buildD3fendResult(
     const matched = sortCountermeasures(lookupTechnique(technique, map));
     if (matched.length === 0) continue;
 
-    const views: D3fendCountermeasureView[] = matched
-      .slice(0, maxPerTechnique)
-      .map((cm) => ({ ...cm, url: d3fendTechniqueUrl(cm.id) }));
+    const views: D3fendCountermeasureView[] = matched.slice(0, maxPerTechnique).map(viewOf);
     techniques.push({ technique, countermeasures: views });
 
     // Roll the FULL matched set (not just the per-technique cap) into the tactic groups, deduped —
@@ -198,7 +251,7 @@ export function buildD3fendResult(
       }
       const entry = bucket.get(cm.id);
       if (entry) entry.techniques.push(technique);
-      else bucket.set(cm.id, { ...cm, url: d3fendTechniqueUrl(cm.id), techniques: [technique] });
+      else bucket.set(cm.id, { ...viewOf(cm), techniques: [technique] });
     }
   }
 

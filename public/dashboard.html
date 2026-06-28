@@ -2997,8 +2997,13 @@
       #sec-d3fend .d3f-note{color:var(--c-ffb454);font-size:12px;margin-bottom:6px}
       #sec-d3fend .d3f-meta{color:var(--c-9aa4b2);font-size:11px;margin-bottom:10px}
       #sec-d3fend .d3f-empty{color:var(--c-9aa4b2)}
+      #sec-d3fend .d3f-band{margin-bottom:14px}
+      #sec-d3fend .d3f-band-h{font-size:12px;font-weight:bold;color:var(--c-6bcb77);text-transform:uppercase;letter-spacing:.03em;margin:0 0 8px;padding-bottom:4px;border-bottom:1px solid var(--c-232a33)}
+      #sec-d3fend .d3f-band-h2{color:var(--c-9aa4b2)}
       #sec-d3fend .d3f-actions{display:flex;flex-direction:column;gap:10px}
       #sec-d3fend .d3f-act{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-6bcb77);border-radius:6px;padding:8px 10px}
+      #sec-d3fend .d3f-act-guide{color:var(--c-c9d1db);font-size:11px;margin:0 0 7px;line-height:1.4}
+      #sec-d3fend .d3f-info{color:var(--c-9aa4b2);font-size:11px;cursor:help}
       #sec-d3fend .d3f-act-h{display:flex;align-items:baseline;gap:6px;margin-bottom:6px}
       #sec-d3fend .d3f-act-emoji{font-size:13px}
       #sec-d3fend .d3f-act-label{color:var(--c-d6deea);font-weight:bold;font-size:13px}
@@ -7710,24 +7715,25 @@
         el.innerHTML = note + `<div class="d3f-empty">None of the case's ${esc(d.caseTechniqueCount)} identified technique(s) have a D3FEND countermeasure mapping.</div>`;
         return;
       }
-      // Plain-language action label + meaning per D3FEND tactic (mirrors D3FEND_ACTION_INFO on the
-      // server) so the analyst doesn't have to decode raw D3FEND jargon.
+      // Plain-language action label + meaning + concrete "what to do" + lifecycle tier per D3FEND
+      // tactic (mirrors D3FEND_ACTION_INFO on the server) so the analyst doesn't decode raw jargon
+      // and can see WHERE the actual hardening is.
       const ACTION = {
-        Harden:  { emoji: "🔒", label: "Prevent", blurb: "stop it happening again" },
-        Detect:  { emoji: "🔍", label: "Detect",  blurb: "spot it if it recurs" },
-        Isolate: { emoji: "⛔", label: "Contain", blurb: "limit the blast radius" },
-        Deceive: { emoji: "🎭", label: "Deceive", blurb: "lure & mislead the attacker" },
-        Evict:   { emoji: "🧹", label: "Evict",   blurb: "remove the attacker's foothold" },
-        Restore: { emoji: "♻️", label: "Restore", blurb: "recover affected systems" },
-        Model:   { emoji: "🗺️", label: "Model",   blurb: "know your attack surface" },
+        Harden:  { emoji: "🔒", label: "Prevent", blurb: "stop it happening again",        guidance: "Apply the config / credential / patch change that removes the weakness the attacker used (e.g. enable MFA, disable the abused feature, restrict permissions)." },
+        Detect:  { emoji: "🔍", label: "Detect",  blurb: "spot it if it recurs",            guidance: "Make sure logging or an EDR/SIEM rule will catch this behaviour next time, then verify the alert fires." },
+        Isolate: { emoji: "⛔", label: "Contain", blurb: "limit the blast radius",          guidance: "Segment the network, sandbox the app, or tighten privileges so this technique can't spread." },
+        Evict:   { emoji: "🧹", label: "Evict",   blurb: "remove the attacker's foothold",  guidance: "Do this during THIS incident: kill the malicious processes, delete persistence, reset compromised credentials." },
+        Restore: { emoji: "♻️", label: "Restore", blurb: "recover affected systems",        guidance: "Do this during THIS incident: restore affected data, configs, and accounts from a known-good state." },
+        Model:   { emoji: "🗺️", label: "Model",   blurb: "know your attack surface",        guidance: "Prerequisite hygiene, not a fix: keep asset/data/account inventories so you can find and scope what's affected." },
+        Deceive: { emoji: "🎭", label: "Deceive", blurb: "lure & mislead the attacker",     guidance: "Optional / advanced: deploy decoys or honeytokens to detect and study intruders — only if your program is mature." },
       };
       const totalCms = (d.byTactic || []).reduce((n, g) => n + ((g.countermeasures || []).length), 0);
-      const meta = `<div class="d3f-meta">${esc(totalCms)} countermeasure(s) across ${esc((d.byTactic || []).length)} defensive action(s), covering ${esc(d.coveredTechniqueCount)} of ${esc(d.caseTechniqueCount)} identified ATT&CK technique(s) · MITRE D3FEND v${esc(d.d3fendVersion)}</div>`;
-      // One section per defensive action; under each, the countermeasures with the case technique(s)
-      // they address. This is a "what do I actually do" checklist, not a wall of chips.
-      const sections = (d.byTactic || []).map(g => {
-        const a = ACTION[g.tactic] || { emoji: "🛡", label: g.tactic, blurb: "" };
-        const COVERS_CAP = 6; // keep each row compact even when a countermeasure covers many techniques
+      const meta = `<div class="d3f-meta">${esc(totalCms)} countermeasure(s) covering ${esc(d.coveredTechniqueCount)} of ${esc(d.caseTechniqueCount)} identified ATT&CK technique(s) · MITRE D3FEND v${esc(d.d3fendVersion)} · <em>hover a countermeasure for its definition</em></div>`;
+      // One section per defensive action: a header + a plain-English "what to do", then the
+      // countermeasures (definition on hover) with the case technique(s) each addresses.
+      const COVERS_CAP = 6; // keep each row compact even when a countermeasure covers many techniques
+      const d3fGroup = g => {
+        const a = ACTION[g.tactic] || { emoji: "🛡", label: g.tactic, blurb: "", guidance: "" };
         const rows = (g.countermeasures || []).map(c => {
           const techs = c.techniques || [];
           const covers = techs.slice(0, COVERS_CAP).map(t => {
@@ -7737,14 +7743,29 @@
           const moreN = techs.length - COVERS_CAP;
           const more = moreN > 0 ? `<span class="d3f-cover-more" title="${escAttr(techs.join(", "))}">+${esc(moreN)} more</span>` : "";
           const coversBlock = techs.length ? `<span class="d3f-covers">covers ${covers}${more}</span>` : "";
-          return `<div class="d3f-row"><a href="${escAttr(c.url)}" target="_blank" rel="noopener" class="d3f-cm" title="${escAttr(c.category || "")}">${esc(c.name)}</a>${coversBlock}</div>`;
+          // Definition (+ D3FEND category) on hover — the practical "what is this" without a click.
+          const tip = [c.definition || "", c.category ? ("D3FEND category: " + c.category) : ""].filter(Boolean).join("\n\n");
+          const dinfo = c.definition ? `<span class="d3f-info" title="${escAttr(tip)}">ⓘ</span>` : "";
+          return `<div class="d3f-row"><a href="${escAttr(c.url)}" target="_blank" rel="noopener" class="d3f-cm" title="${escAttr(tip)}">${esc(c.name)}</a>${dinfo}${coversBlock}</div>`;
         }).join("");
+        const guide = a.guidance ? `<div class="d3f-act-guide">→ ${esc(a.guidance)}</div>` : "";
         return `<div class="d3f-act">` +
           `<div class="d3f-act-h"><span class="d3f-act-emoji">${a.emoji}</span><span class="d3f-act-label">${esc(a.label)}</span><span class="d3f-act-blurb">— ${esc(a.blurb)}</span><span class="d3f-act-count" title="countermeasures">${esc((g.countermeasures || []).length)}</span></div>` +
+          guide +
           `<div class="d3f-act-list">${rows}</div>` +
         `</div>`;
-      }).join("");
-      el.innerHTML = note + meta + `<div class="d3f-actions">${sections}</div>`;
+      };
+      // Two bands: the proactive hardening to do now, then incident-response + prerequisite context.
+      const BAND1 = ["Harden", "Detect", "Isolate"];
+      const BAND2 = ["Evict", "Restore", "Model", "Deceive"];
+      const ordIdx = (arr, t) => { const i = arr.indexOf(t); return i < 0 ? 99 : i; };
+      const groups = d.byTactic || [];
+      const band1 = groups.filter(g => BAND1.includes(g.tactic)).sort((a, b) => ordIdx(BAND1, a.tactic) - ordIdx(BAND1, b.tactic));
+      const band2 = groups.filter(g => !BAND1.includes(g.tactic)).sort((a, b) => ordIdx(BAND2, a.tactic) - ordIdx(BAND2, b.tactic));
+      let html = note + meta;
+      if (band1.length) html += `<div class="d3f-band"><div class="d3f-band-h">🛠 Harden now — implement these to prevent, detect and contain a recurrence</div><div class="d3f-actions">${band1.map(d3fGroup).join("")}</div></div>`;
+      if (band2.length) html += `<div class="d3f-band"><div class="d3f-band-h d3f-band-h2">🚑 This incident &amp; context — eviction/recovery steps for the live response, plus prerequisites</div><div class="d3f-actions">${band2.map(d3fGroup).join("")}</div></div>`;
+      el.innerHTML = html;
     }
 
     // ── Geographic Map (#133) ───────────────────────────────────────────────────────────────

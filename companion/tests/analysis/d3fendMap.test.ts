@@ -4,6 +4,7 @@ import {
   buildD3fendResult,
   DEFAULT_MAX_PER_TECHNIQUE,
   D3FEND_TACTIC_ORDER,
+  D3FEND_ACTION_INFO,
   d3fendActionLabel,
   type D3fendDatasetView,
   type D3fendCountermeasure,
@@ -181,6 +182,23 @@ describe("buildD3fendResult", () => {
     expect(result.note).toBeTruthy();
   });
 
+  it("attaches the plain-English definition to a countermeasure when the dataset has one", () => {
+    const ds = dataset(
+      { T1059: [cm("ScriptExecutionAnalysis", "Detect")] },
+      { definitions: { ScriptExecutionAnalysis: "Analyzing the execution of a script." } },
+    );
+    const result = buildD3fendResult(stateWith(["T1059"]), ds);
+    expect(result.techniques[0].countermeasures[0].definition).toBe("Analyzing the execution of a script.");
+    const detect = result.byTactic.find((g) => g.tactic === "Detect")!;
+    expect(detect.countermeasures[0].definition).toBe("Analyzing the execution of a script.");
+  });
+
+  it("omits the definition field when the dataset has none for that id", () => {
+    const ds = dataset({ T1059: [cm("NoDef", "Detect")] }); // no definitions map
+    const result = buildD3fendResult(stateWith(["T1059"]), ds);
+    expect(result.techniques[0].countermeasures[0].definition).toBeUndefined();
+  });
+
   it("carries dataset provenance and the standing note through", () => {
     const ds = dataset({ T1059: [cm("DetectA", "Detect")] }, { d3fendVersion: "1.4.0", countermeasureCount: 149 });
     const result = buildD3fendResult(stateWith(["T1059"]), ds);
@@ -212,6 +230,25 @@ describe("d3fendActionLabel", () => {
   });
   it("falls back to the raw tactic for an unknown one", () => {
     expect(d3fendActionLabel("Frobnicate")).toBe("Frobnicate");
+  });
+});
+
+describe("D3FEND_ACTION_INFO", () => {
+  it("classifies the proactive-hardening tactics as the 'harden' tier", () => {
+    for (const t of ["Harden", "Detect", "Isolate"]) {
+      expect(D3FEND_ACTION_INFO[t].tier, t).toBe("harden");
+    }
+  });
+  it("classifies eviction/restoration as incident 'respond' and model/deceive as 'context'", () => {
+    expect(D3FEND_ACTION_INFO.Evict.tier).toBe("respond");
+    expect(D3FEND_ACTION_INFO.Restore.tier).toBe("respond");
+    expect(D3FEND_ACTION_INFO.Model.tier).toBe("context");
+    expect(D3FEND_ACTION_INFO.Deceive.tier).toBe("context");
+  });
+  it("gives every action a concrete what-to-do guidance line", () => {
+    for (const info of Object.values(D3FEND_ACTION_INFO)) {
+      expect(info.guidance.length).toBeGreaterThan(20);
+    }
   });
 });
 

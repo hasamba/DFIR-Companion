@@ -26,6 +26,11 @@ const MAPPINGS_URL =
   process.env.DFIR_D3FEND_MAPPINGS_URL ||
   "https://d3fend.mitre.org/api/ontology/inference/d3fend-full-mappings.json";
 const VERSION_URL = process.env.DFIR_D3FEND_VERSION_URL || "https://d3fend.mitre.org/api/version.json";
+// The full ontology (JSON-LD) carries each defensive technique's plain-English `d3f:definition`,
+// which the mapping endpoint omits. We join it by technique id so each countermeasure is
+// self-explanatory in the UI (a hover tooltip) instead of a bare name.
+const ONTOLOGY_URL = process.env.DFIR_D3FEND_ONTOLOGY_URL || "https://d3fend.mitre.org/ontologies/d3fend.json";
+const DEF_MAX = 240; // trim long definitions to one scannable line
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = join(HERE, "..", "data", "d3fend-map.json");
@@ -75,6 +80,34 @@ function d3fendId(uri: string | undefined): string | null {
   const frag = uri.includes("#") ? uri.slice(uri.lastIndexOf("#") + 1) : uri;
   const clean = frag.trim();
   return clean ? clean : null;
+}
+
+// One node of the D3FEND ontology JSON-LD `@graph`. `d3f:definition` is a string or a JSON-LD
+// value object ({ "@value": "…" }) or an array of either.
+interface OntologyNode {
+  ["@id"]?: string;
+  ["d3f:definition"]?: unknown;
+}
+
+// Pull the plain text out of a JSON-LD value (string | {"@value"} | array of those).
+function ldText(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v.trim();
+  if (Array.isArray(v)) return ldText(v[0]);
+  if (typeof v === "object") {
+    const o = v as { ["@value"]?: unknown };
+    return typeof o["@value"] === "string" ? o["@value"].trim() : "";
+  }
+  return "";
+}
+
+// Collapse whitespace and trim a definition to one scannable line.
+function trimDef(raw: string): string {
+  const s = raw.replace(/\s+/g, " ").trim();
+  if (s.length <= DEF_MAX) return s;
+  const cut = s.slice(0, DEF_MAX);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > DEF_MAX * 0.6 ? cut.slice(0, lastSpace) : cut).trim() + "…";
 }
 
 async function fetchJson(url: string): Promise<unknown> {
@@ -127,6 +160,31 @@ async function main(): Promise<void> {
     map[tech] = cms;
   }
 
+  // Plain-English definition per countermeasure, joined from the ontology by D3FEND id (URI
+  // fragment). Best-effort: a failed fetch or a missing definition just leaves that one out — the
+  // names still render, only the hover tooltip is absent.
+  const definitions: Record<string, string> = {};
+  try {
+    console.log(`[d3fend] fetching ${ONTOLOGY_URL}`);
+    const onto = (await fetchJson(ONTOLOGY_URL)) as { ["@graph"]?: OntologyNode[] };
+    const graph = onto["@graph"] ?? [];
+    const defById = new Map<string, string>();
+    for (const node of graph) {
+      const id = node["@id"];
+      const def = ldText(node["d3f:definition"]);
+      if (!id || !def) continue;
+      const frag = id.includes(":") ? id.slice(id.lastIndexOf(":") + 1) : id.includes("#") ? id.slice(id.lastIndexOf("#") + 1) : id;
+      if (frag && !defById.has(frag)) defById.set(frag, def);
+    }
+    for (const id of allCountermeasures) {
+      const def = defById.get(id);
+      if (def) definitions[id] = trimDef(def);
+    }
+    console.log(`[d3fend] ${Object.keys(definitions).length}/${allCountermeasures.size} countermeasures have a definition`);
+  } catch (err) {
+    console.warn(`[d3fend] ontology fetch failed (${err instanceof Error ? err.message : err}) — definitions omitted`);
+  }
+
   const dataset = {
     source: "MITRE D3FEND (ATT&CK → countermeasure mappings)",
     note: "Suggested defensive countermeasures inferred by D3FEND — not exhaustive or guaranteed.",
@@ -135,6 +193,7 @@ async function main(): Promise<void> {
     techniqueCount: Object.keys(map).length,
     countermeasureCount: allCountermeasures.size,
     map,
+    definitions, // d3fend id → plain-English definition (for the UI hover / report)
   };
 
   await mkdir(dirname(OUT_PATH), { recursive: true });

@@ -734,21 +734,41 @@ function d3fendSection(state: InvestigationState, lines: string[]): void {
   }
   lines.push(
     `Countermeasures for ${result.coveredTechniqueCount} of ${result.caseTechniqueCount} identified ` +
-      `technique(s), from MITRE D3FEND v${result.d3fendVersion}. Grouped by defensive action; each ` +
-      `countermeasure lists the case technique(s) it addresses.`,
+      `technique(s), from MITRE D3FEND v${result.d3fendVersion}. Grouped by defensive action, in two ` +
+      `bands: the **hardening to implement now** (Prevent / Detect / Contain), then **this-incident ` +
+      `response and prerequisite context** (Evict / Restore / Model / Deceive). Each countermeasure ` +
+      `is glossed in plain English and lists the case technique(s) it addresses.`,
     "",
   );
 
-  // Action-first checklist — group by what to DO (Prevent / Detect / Contain / …), using plain
-  // language instead of raw D3FEND tactic names, and show which case techniques each one covers.
-  for (const g of result.byTactic) {
+  // One sub-block per defensive action: a plain-language heading + the concrete "what to do", then the
+  // countermeasures (each with its D3FEND definition inline, since a report can't hover) + coverage.
+  const renderAction = (g: (typeof result.byTactic)[number]): void => {
     const info = D3FEND_ACTION_INFO[g.tactic];
     const heading = info ? `${info.label} — ${info.blurb}` : g.tactic;
-    lines.push(`### ${heading}`, "");
+    lines.push(`#### ${heading}`, "");
+    if (info?.guidance) lines.push(`_${info.guidance}_`, "");
     for (const c of g.countermeasures) {
-      lines.push(`- [${c.name}](${c.url}) — covers ${c.techniques.join(", ")}`);
+      const gloss = c.definition ? ` — ${c.definition}` : "";
+      lines.push(`- [${c.name}](${c.url})${gloss} _(covers ${c.techniques.join(", ")})_`);
     }
     lines.push("");
+  };
+
+  // Split the actions into the two bands (by D3FEND tier), preserving a sensible order within each.
+  const BAND1 = ["Harden", "Detect", "Isolate"];
+  const BAND2 = ["Evict", "Restore", "Model", "Deceive"];
+  const ordIdx = (arr: string[], t: string): number => (arr.indexOf(t) < 0 ? 99 : arr.indexOf(t));
+  const band1 = result.byTactic.filter((g) => BAND1.includes(g.tactic)).sort((a, b) => ordIdx(BAND1, a.tactic) - ordIdx(BAND1, b.tactic));
+  const band2 = result.byTactic.filter((g) => !BAND1.includes(g.tactic)).sort((a, b) => ordIdx(BAND2, a.tactic) - ordIdx(BAND2, b.tactic));
+
+  if (band1.length) {
+    lines.push("### Harden now — implement these", "");
+    band1.forEach(renderAction);
+  }
+  if (band2.length) {
+    lines.push("### This incident & context", "");
+    band2.forEach(renderAction);
   }
 }
 

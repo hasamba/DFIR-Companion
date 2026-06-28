@@ -64,6 +64,14 @@ function coerce(raw: unknown): D3fendDatasetView {
     }));
     if (clean.length) map[tech] = clean;
   }
+  const rawDefs =
+    obj?.definitions && typeof obj.definitions === "object" && !Array.isArray(obj.definitions)
+      ? (obj.definitions as Record<string, unknown>)
+      : {};
+  const definitions: Record<string, string> = {};
+  for (const [id, def] of Object.entries(rawDefs)) {
+    if (typeof def === "string" && def.trim()) definitions[id] = def;
+  }
   return {
     d3fendVersion: typeof obj?.d3fendVersion === "string" ? obj.d3fendVersion : "unknown",
     generated: typeof obj?.generated === "string" ? obj.generated : "",
@@ -71,6 +79,7 @@ function coerce(raw: unknown): D3fendDatasetView {
     note: typeof obj?.note === "string" ? obj.note : "",
     countermeasureCount: typeof obj?.countermeasureCount === "number" ? obj.countermeasureCount : 0,
     map,
+    definitions,
   };
 }
 
