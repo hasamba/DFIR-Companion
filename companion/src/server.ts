@@ -6,6 +6,7 @@ import { writeFile, readFile, rm, readdir, stat, open, copyFile, mkdir } from "n
 import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
+import { atomicWrite } from "./storage/atomicWrite.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { AnonControlStore, type AnonControl } from "./analysis/anonControl.js";
@@ -175,6 +176,10 @@ import {
   buildAiDiagnostics, summarizeImportAttempts, countByKind, aggregateCaseSizes, buildDiagnosticsText,
   type DiagnosticsReport, type ImporterFailure, type AiError, type ScannedFile,
 } from "./analysis/diagnostics.js";
+import {
+  buildPreflightReport, buildPreflightText,
+  type PreflightItem, type PreflightReport,
+} from "./analysis/preflight.js";
 import { archiveCase } from "./analysis/caseArchive.js";
 import { NotificationConfigStore } from "./analysis/notificationStore.js";
 import { seedDemoCase } from "./analysis/seedDemoCase.js";
@@ -467,6 +472,10 @@ export interface AppOptions {
   // Automatic state backup (#180): snapshots SNAPSHOT_STATE_FILES before synthesis + on a timer.
   // Opt-in — absent → backup routes 404.
   backupManager?: BackupManager;
+  // Startup pre-flight (#179): called once inside createApp with the runPreflight function.
+  // startServer stores the function and fires it after app.listen() so the probes run when
+  // the server is actually ready. Tests can inject their own handler or leave it absent.
+  onPreflightReady?: (run: () => Promise<PreflightReport>) => void;
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -1106,6 +1115,137 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json({ ok: false, provider: provider.name, latencyMs, kind, error: (err as Error).message });
     }
   });
+
+  // ── Startup pre-flight (#179) ─────────────────────────────────────────────────────────
+  // Results are cached for PREFLIGHT_TTL_MS so opening the dashboard repeatedly is cheap.
+  // A POST re-runs the checks immediately (the "Re-run" button in Settings → Diagnostics).
+  // The user can disable checks entirely via POST /diagnostics/preflight/control { disabled:true }
+  // (persisted in {casesRoot}/preflight/control.json so the setting survives restarts).
+  const PREFLIGHT_TTL_MS = 30_000;
+  let preflightCache: { report: PreflightReport; at: number } | null = null;
+
+  const preflightControlPath = join(store.casesRoot, "preflight", "control.json");
+  async function readPreflightDisabled(): Promise<boolean> {
+    try {
+      const raw = await readFile(preflightControlPath, "utf-8");
+      return !!(JSON.parse(raw)?.disabled);
+    } catch {
+      return false;
+    }
+  }
+  async function writePreflightControl(ctrl: { disabled: boolean }): Promise<void> {
+    await mkdir(join(store.casesRoot, "preflight"), { recursive: true });
+    await atomicWrite(preflightControlPath, JSON.stringify(ctrl, null, 2));
+  }
+
+  async function runPreflightChecks(): Promise<PreflightReport> {
+    // Honour the persistent disable flag — return an empty disabled report immediately.
+    if (await readPreflightDisabled()) {
+      const report = buildPreflightReport([], new Date().toISOString(), 0, true);
+      preflightCache = { report, at: Date.now() };
+      return report;
+    }
+
+    const startedAt = Date.now();
+    const items: PreflightItem[] = [];
+
+    // 1. AI provider — CRITICAL: without it, analysis and synthesis don't work.
+    const aiProvider = options.aiTestProvider?.();
+    if (!aiProvider) {
+      items.push({ name: "AI provider", ok: false, critical: true, detail: "not configured — set DFIR_AI_PROVIDER / DFIR_AI_MODEL / DFIR_AI_KEY in .env, then restart" });
+    } else {
+      try {
+        await aiProvider.analyze({
+          systemPrompt: "You are a connectivity probe. Reply ONLY with the JSON object {\"ok\":true} and nothing else.",
+          userPrompt: "Return the JSON object {\"ok\":true}.",
+          images: [],
+        });
+        items.push({ name: "AI provider", ok: true, critical: true, detail: `${aiProvider.name} reachable` });
+      } catch (err) {
+        const kind = err instanceof ProviderError ? err.kind : "other";
+        items.push({ name: "AI provider", ok: false, critical: true, detail: `${aiProvider.name} ${kind}: ${(err as Error).message}` });
+      }
+    }
+
+    // 2. Enrichment providers — non-critical (opt-in). A provider is only in allProviders when
+    //    it's configured (keyed providers are registered only when their DFIR_*_KEY is set), so
+    //    presence here == "configured". Local self-hosted instances (MISP/YETI/OpenCTI) implement
+    //    probe() — we verify they're reachable + auth works. External SaaS (VirusTotal, AbuseIPDB,
+    //    CrowdStrike, Hunting.ch, Shodan, …) have NO probe(): we deliberately do NOT call them at
+    //    startup (OPSEC: no automatic third-party traffic, no wasted API quota) and only confirm
+    //    they're configured.
+    for (const p of allProviders) {
+      if (p.probe) {
+        const h = await enrichHealth.check(p).catch(() => ({ ok: false as const, detail: "probe error" }));
+        items.push({
+          name: `Enrichment: ${p.name}`,
+          ok: h.ok,
+          critical: false,
+          detail: h.detail ?? (h.ok ? "reachable" : "unreachable"),
+        });
+      } else {
+        items.push({
+          name: `Enrichment: ${p.name}`,
+          ok: true,
+          critical: false,
+          detail: "configured (no live check)",
+        });
+      }
+    }
+
+    // 3. Velociraptor — non-critical (hunt-only feature).
+    if (options.velociraptorClient) {
+      try {
+        await options.velociraptorClient.listClients();
+        items.push({ name: "Velociraptor", ok: true, critical: false, detail: "API reachable" });
+      } catch (err) {
+        items.push({ name: "Velociraptor", ok: false, critical: false, detail: (err as Error).message });
+      }
+    }
+
+    const report = buildPreflightReport(items, new Date().toISOString(), Date.now() - startedAt);
+    preflightCache = { report, at: Date.now() };
+    return report;
+  }
+
+  app.get("/diagnostics/preflight", async (_req: Request, res: Response) => {
+    if (preflightCache && Date.now() - preflightCache.at < PREFLIGHT_TTL_MS) {
+      return res.status(200).json({ report: preflightCache.report, text: buildPreflightText(preflightCache.report) });
+    }
+    try {
+      const report = await runPreflightChecks();
+      return res.status(200).json({ report, text: buildPreflightText(report) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Force a fresh run — used by the "Re-run" button in Settings → Diagnostics.
+  app.post("/diagnostics/preflight", async (_req: Request, res: Response) => {
+    preflightCache = null;
+    try {
+      const report = await runPreflightChecks();
+      return res.status(200).json({ report, text: buildPreflightText(report) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Read / toggle the persistent disable flag.
+  app.get("/diagnostics/preflight/control", async (_req: Request, res: Response) => {
+    const disabled = await readPreflightDisabled().catch(() => false);
+    return res.status(200).json({ disabled });
+  });
+  app.post("/diagnostics/preflight/control", async (req: Request, res: Response) => {
+    const { disabled } = req.body as { disabled?: boolean };
+    if (typeof disabled !== "boolean") return res.status(400).json({ error: "disabled must be boolean" });
+    await writePreflightControl({ disabled });
+    preflightCache = null;
+    return res.status(200).json({ disabled });
+  });
+
+  // Hand the run function to startServer so it can fire it after app.listen().
+  options.onPreflightReady?.(runPreflightChecks);
 
   // ── Case lifecycle (#119) ──────────────────────────────────────────────────────────────
   // Set a case's lifecycle status (open / closed). A closed case is eligible for archiving.
@@ -7529,6 +7669,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     },
   });
 
+  // Pre-flight (#179): createApp calls onPreflightReady with runPreflightChecks; we store it
+  // here and fire it after app.listen() so probes don't run before the server is ready.
+  let scheduledPreflight: (() => Promise<PreflightReport>) | null = null;
+
   // Live synthesis on by default — set DFIR_AI_AUTO_SYNTHESIZE=off to disable.
   const autoSynthesize = (process.env.DFIR_AI_AUTO_SYNTHESIZE ?? "on").toLowerCase() !== "off";
   const autoSynthesizeDebounceMs = Number(process.env.DFIR_AI_AUTO_SYNTHESIZE_MS) || 8000;
@@ -7648,6 +7792,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     updateRepo,
     demoMode,
     backupManager,
+    // Pre-flight (#179): fire the checks once the server is listening (see below).
+    onPreflightReady: (run) => { scheduledPreflight = run; },
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
@@ -7717,6 +7863,19 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const server = app.listen(port, host, () => {
     const shownHost = host === "0.0.0.0" ? "127.0.0.1" : host;
     logLine(`DFIR companion on http://${shownHost}:${port} (dashboard at /dashboard)`);
+    // Pre-flight (#179): fire now that the server is listening so probes can reach the AI provider
+    // and local enrichment servers. Best-effort — a failure is logged, never fatal.
+    if (scheduledPreflight) {
+      void scheduledPreflight().then((r) => {
+        if (r.disabled) { logLine("[preflight] checks disabled"); return; }
+        const status = r.anyCriticalFailed ? "CRITICAL" : r.anyFailed ? "WARN" : "OK";
+        logLine(`[preflight] ${status} (${r.durationMs}ms) — ${r.items.map((i) => `${i.name}:${i.ok ? "ok" : "FAIL"}`).join(", ")}`);
+        if (r.anyCriticalFailed) {
+          const failed = r.items.filter((i) => !i.ok && i.critical).map((i) => `  ✗ ${i.name}: ${i.detail}`).join("\n");
+          warnLine(`[preflight] CRITICAL — open the dashboard → Settings → Diagnostics for details:\n${failed}`);
+        }
+      }).catch((e) => warnLine(`[preflight] error: ${(e as Error).message}`));
+    }
   });
 
   // Demo mode: seed the demo case immediately on startup so it's always present, then reset it
