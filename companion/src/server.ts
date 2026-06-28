@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { writeFile, readFile, rm, readdir, stat, open, copyFile, mkdir } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
+import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { AnonControlStore, type AnonControl } from "./analysis/anonControl.js";
@@ -463,6 +464,9 @@ export interface AppOptions {
   // public Railway/cloud deployment is safe to share. The startup seed + periodic reset live in
   // startServer; the middleware here enforces the read-only surface at the API layer.
   demoMode?: boolean;
+  // Automatic state backup (#180): snapshots SNAPSHOT_STATE_FILES before synthesis + on a timer.
+  // Opt-in — absent → backup routes 404.
+  backupManager?: BackupManager;
 }
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -1030,6 +1034,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           recentFailures: recentImportFailures.slice(0, 20),
           customImporters: importerRegistry.importers.size,
         },
+        backups: options.backupManager
+          ? await (async () => {
+              let totalCount = 0;
+              let totalBytes = 0;
+              await Promise.all(cases.map(async (c) => {
+                try {
+                  const s = await options.backupManager!.summary(c.caseId);
+                  totalCount += s.count;
+                  totalBytes += s.totalBytes;
+                } catch { /* best-effort */ }
+              }));
+              return { enabled: true, totalCount, totalBytes, retain: options.backupManager!.config.retain };
+            })()
+          : { enabled: false, totalCount: 0, totalBytes: 0, retain: 0 },
       };
       return res.status(200).json({ report, text: buildDiagnosticsText(report) });
     } catch (err) {
@@ -1628,6 +1646,47 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // parseSnapshot throws plain Errors with a human-readable reason → 400 (bad upload).
       const msg = (err as Error).message;
       if (/snapshot|case id/i.test(msg)) return res.status(400).json({ error: msg });
+      return res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── State backups (#180) ─────────────────────────────────────────────────────────────────────
+  // Automatic snapshots of SNAPSHOT_STATE_FILES before synthesis + on a timer.
+  // List: GET /cases/:id/backups → { backups: BackupInfo[], summary: BackupSummary }
+  // Restore: POST /cases/:id/restore-backup { filename } → { restored: string[] }
+  // Both 404 when backupManager is absent (opt-in feature).
+
+  app.get("/cases/:id/backups", async (req: Request, res: Response) => {
+    if (!options.backupManager) return res.status(404).json({ error: "backup not configured — restart the server" });
+    const caseId = req.params.id;
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    try {
+      const [backups, summary] = await Promise.all([
+        options.backupManager.listBackups(caseId),
+        options.backupManager.summary(caseId),
+      ]);
+      return res.status(200).json({ backups, summary });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/restore-backup", async (req: Request, res: Response) => {
+    if (!options.backupManager) return res.status(404).json({ error: "backup not configured — restart the server" });
+    const caseId = req.params.id;
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    const filename = (req.body as { filename?: unknown })?.filename;
+    if (typeof filename !== "string" || !filename.trim()) {
+      return res.status(400).json({ error: "filename is required" });
+    }
+    try {
+      const result = await options.backupManager.restoreBackup(caseId, filename.trim());
+      return res.status(200).json(result);
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("not found") || msg.includes("invalid backup")) {
+        return res.status(404).json({ error: msg });
+      }
       return res.status(500).json({ error: msg });
     }
   });
@@ -5883,6 +5942,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const reqThinking = Number((req.body as { thinkingTokens?: unknown })?.thinkingTokens);
     const thinkingTokens = Number.isFinite(reqThinking) && reqThinking > 0 ? Math.floor(reqThinking) : undefined;
     options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: deepReasoning ? "synthesizing (deep reasoning)" : "synthesizing conclusions" });
+    // Pre-synthesis backup (#180): snapshot state before overwriting conclusions. Best-effort.
+    if (options.backupManager) {
+      await options.backupManager.createBackup(caseId, "pre-synthesis").catch(() => {});
+    }
     try {
       // Explicit user action → force, so it always runs even if inputs are unchanged.
       const state = await options.pipeline.synthesize(caseId, { force: true, deepReasoning, ...(thinkingTokens !== undefined ? { thinkingTokens } : {}) });
@@ -7404,6 +7467,38 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const clickupExportStore = new ClickUpExportStore(store);
   const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore);
 
+  // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
+  const backupConfig = resolveBackupConfig(process.env);
+  const backupManager = new BackupManager(store, backupConfig);
+  if (backupConfig.intervalMs > 0) {
+    // Time-based: only back up cases that have changed since the last scheduled backup.
+    const lastScheduledBackupAt = new Map<string, number>();
+    const runScheduledBackups = async (): Promise<void> => {
+      const cases = await store.listCases().catch(() => []);
+      for (const c of cases) {
+        const invPath = join(store.stateDir(c.caseId), "investigation.json");
+        let mtime: number;
+        try {
+          mtime = (await stat(invPath)).mtimeMs;
+        } catch {
+          continue; // case has no investigation.json yet
+        }
+        const lastAt = lastScheduledBackupAt.get(c.caseId) ?? 0;
+        if (mtime > lastAt) {
+          try {
+            await backupManager.createBackup(c.caseId, "scheduled");
+            lastScheduledBackupAt.set(c.caseId, Date.now());
+          } catch (e) {
+            logLine(`[backup] scheduled backup for ${c.caseId} failed: ${(e as Error).message}`);
+          }
+        }
+      }
+    };
+    const backupTimer = setInterval(() => { void runScheduledBackups(); }, backupConfig.intervalMs);
+    backupTimer.unref();
+    logLine(`[backup] automatic backups every ${backupConfig.intervalMs / 1000}s (retain ${backupConfig.retain})`);
+  }
+
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
   const velociraptorProvider = buildVelociraptorProvider();   // dedicated VQL-hunt model (#70)
@@ -7552,6 +7647,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     updateCheckEnv: process.env.DFIR_UPDATE_CHECK,
     updateRepo,
     demoMode,
+    backupManager,
   });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
