@@ -4,6 +4,7 @@ import {
   buildD3fendResult,
   DEFAULT_MAX_PER_TECHNIQUE,
   D3FEND_TACTIC_ORDER,
+  d3fendActionLabel,
   type D3fendDatasetView,
   type D3fendCountermeasure,
 } from "../../src/analysis/d3fendMap.js";
@@ -135,6 +136,21 @@ describe("buildD3fendResult", () => {
     expect(result.byTactic.map((g) => g.tactic)).toEqual(["Harden", "Detect", "Isolate"]);
     const harden = result.byTactic.find((g) => g.tactic === "Harden")!;
     expect(harden.countermeasures.map((c) => c.id)).toEqual(["Shared"]); // deduped across techniques
+    // …and it carries the case techniques it covers (the "covers T1059, T1110" data).
+    expect(harden.countermeasures[0].techniques).toEqual(["T1059", "T1110"]);
+  });
+
+  it("orders by-tactic countermeasures by coverage (most techniques first) then name", () => {
+    const ds = dataset({
+      T1003: [cm("Broad", "Harden"), cm("NarrowB", "Harden")],
+      T1110: [cm("Broad", "Harden"), cm("NarrowA", "Harden")],
+    });
+    const result = buildD3fendResult(stateWith(["T1003", "T1110"]), ds);
+    const harden = result.byTactic.find((g) => g.tactic === "Harden")!;
+    // Broad covers 2 techniques → first; the two single-coverage ones then sort by name.
+    expect(harden.countermeasures.map((c) => c.id)).toEqual(["Broad", "NarrowA", "NarrowB"]);
+    expect(harden.countermeasures[0].techniques).toEqual(["T1003", "T1110"]);
+    expect(harden.countermeasures[1].techniques).toEqual(["T1110"]);
   });
 
   it("omits techniques with no mapping and counts coverage", () => {
@@ -185,6 +201,17 @@ describe("buildD3fendResult", () => {
 describe("D3FEND_TACTIC_ORDER", () => {
   it("is the canonical D3FEND defensive lifecycle", () => {
     expect(D3FEND_TACTIC_ORDER).toEqual(["Model", "Harden", "Detect", "Isolate", "Deceive", "Evict", "Restore"]);
+  });
+});
+
+describe("d3fendActionLabel", () => {
+  it("maps D3FEND tactics to plain-language action labels", () => {
+    expect(d3fendActionLabel("Harden")).toBe("Prevent");
+    expect(d3fendActionLabel("Isolate")).toBe("Contain");
+    expect(d3fendActionLabel("Detect")).toBe("Detect");
+  });
+  it("falls back to the raw tactic for an unknown one", () => {
+    expect(d3fendActionLabel("Frobnicate")).toBe("Frobnicate");
   });
 });
 

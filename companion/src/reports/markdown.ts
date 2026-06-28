@@ -14,7 +14,7 @@ import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { ADVERSARY_EMULATION_CAVEAT } from "../analysis/adversaryEmulation.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
-import { buildD3fendResult } from "../analysis/d3fendMap.js";
+import { buildD3fendResult, D3FEND_ACTION_INFO } from "../analysis/d3fendMap.js";
 import { loadD3fendDataset, d3fendEnvOptions } from "../analysis/d3fendData.js";
 import { hasExposureFinding, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev.js";
@@ -734,26 +734,22 @@ function d3fendSection(state: InvestigationState, lines: string[]): void {
   }
   lines.push(
     `Countermeasures for ${result.coveredTechniqueCount} of ${result.caseTechniqueCount} identified ` +
-      `technique(s), from MITRE D3FEND v${result.d3fendVersion}.`,
+      `technique(s), from MITRE D3FEND v${result.d3fendVersion}. Grouped by defensive action; each ` +
+      `countermeasure lists the case technique(s) it addresses.`,
     "",
   );
 
-  // Defensive-tactic rollup — the case-wide hardening priorities, in D3FEND lifecycle order.
-  lines.push("### By defensive tactic", "");
+  // Action-first checklist — group by what to DO (Prevent / Detect / Contain / …), using plain
+  // language instead of raw D3FEND tactic names, and show which case techniques each one covers.
   for (const g of result.byTactic) {
-    const cms = g.countermeasures.map((c) => `[${c.name}](${c.url})`).join(", ");
-    lines.push(`- **${g.tactic}:** ${cms}`);
+    const info = D3FEND_ACTION_INFO[g.tactic];
+    const heading = info ? `${info.label} — ${info.blurb}` : g.tactic;
+    lines.push(`### ${heading}`, "");
+    for (const c of g.countermeasures) {
+      lines.push(`- [${c.name}](${c.url}) — covers ${c.techniques.join(", ")}`);
+    }
+    lines.push("");
   }
-  lines.push("");
-
-  // Per-technique detail — what to apply for each technique the case observed.
-  lines.push("### By technique", "");
-  lines.push("| ATT&CK technique | D3FEND countermeasures |", "| --- | --- |");
-  for (const t of result.techniques) {
-    const cms = t.countermeasures.map((c) => `${c.name} (${c.tactic})`).join("; ");
-    lines.push(`| ${cellMd(t.technique)} | ${cellMd(cms)} |`);
-  }
-  lines.push("");
 }
 
 function playbookSection(tasks: PlaybookTask[], lines: string[]): void {

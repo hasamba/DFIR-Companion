@@ -48,10 +48,18 @@ export interface D3fendTechniqueMatch {
   countermeasures: D3fendCountermeasureView[];
 }
 
-// A defensive-tactic rollup: every distinct countermeasure for the case, grouped by D3FEND tactic.
+// A countermeasure in the by-tactic rollup, carrying which of the case's techniques it addresses
+// (so the "covers T1003, T1059…" coverage can render without re-deriving it client-side).
+export interface D3fendTacticCountermeasure extends D3fendCountermeasureView {
+  techniques: string[]; // the case's ATT&CK techniques this countermeasure covers (full matched set, sorted)
+}
+
+// A defensive-tactic rollup: every distinct countermeasure for the case, grouped by D3FEND tactic,
+// each carrying the techniques it covers. This is the primary, action-first view (the dashboard
+// renders it as a "Prevent / Detect / Contain" checklist).
 export interface D3fendTacticGroup {
   tactic: string;
-  countermeasures: D3fendCountermeasureView[];
+  countermeasures: D3fendTacticCountermeasure[];
 }
 
 // The full response a caller (route / report) returns.
@@ -91,6 +99,26 @@ export const D3FEND_TACTIC_ORDER = ["Model", "Harden", "Detect", "Isolate", "Dec
 
 // The standing disclaimer, shared by every surface that renders countermeasures (issue #178).
 export const D3FEND_NOTE = "Suggested D3FEND countermeasures inferred from ATT&CK technique — review for fit, not a complete or guaranteed list.";
+
+// Plain-language action label + one-line meaning for each D3FEND tactic, so the analyst-facing
+// surfaces (dashboard checklist + report) don't lean on raw D3FEND jargon. Shared so both agree.
+export interface D3fendActionInfo {
+  label: string; // imperative action name, e.g. "Prevent"
+  blurb: string; // one-line meaning, e.g. "stop it happening again"
+}
+export const D3FEND_ACTION_INFO: Record<string, D3fendActionInfo> = {
+  Harden: { label: "Prevent", blurb: "stop it happening again" },
+  Detect: { label: "Detect", blurb: "spot it if it recurs" },
+  Isolate: { label: "Contain", blurb: "limit the blast radius" },
+  Deceive: { label: "Deceive", blurb: "lure and mislead the attacker" },
+  Evict: { label: "Evict", blurb: "remove the attacker's foothold" },
+  Restore: { label: "Restore", blurb: "recover affected systems" },
+  Model: { label: "Model", blurb: "know your attack surface" },
+};
+// The action label for a D3FEND tactic, falling back to the raw tactic for any future/unknown one.
+export function d3fendActionLabel(tactic: string): string {
+  return D3FEND_ACTION_INFO[tactic]?.label ?? tactic;
+}
 
 const tacticRank = (t: string): number => {
   const i = D3FEND_TACTIC_ORDER.indexOf(t);
@@ -146,7 +174,7 @@ export function buildD3fendResult(
   const caseTechniques = collectCaseTechniques(state); // full-granularity, deduped, sorted
 
   const techniques: D3fendTechniqueMatch[] = [];
-  const tacticBuckets = new Map<string, Map<string, D3fendCountermeasureView>>(); // tactic → (id → view)
+  const tacticBuckets = new Map<string, Map<string, D3fendTacticCountermeasure>>(); // tactic → (id → cm + coverage)
 
   for (const raw of caseTechniques) {
     const technique = normalizeTechniqueId(raw);
@@ -161,19 +189,28 @@ export function buildD3fendResult(
 
     // Roll the FULL matched set (not just the per-technique cap) into the tactic groups, deduped —
     // the rollup is the case-wide defensive picture, so a countermeasure trimmed off one technique's
-    // list still counts if another technique surfaces it.
+    // list still counts if another technique surfaces it. Accumulate the techniques each one covers.
     for (const cm of matched) {
       let bucket = tacticBuckets.get(cm.tactic);
       if (!bucket) {
-        bucket = new Map<string, D3fendCountermeasureView>();
+        bucket = new Map<string, D3fendTacticCountermeasure>();
         tacticBuckets.set(cm.tactic, bucket);
       }
-      if (!bucket.has(cm.id)) bucket.set(cm.id, { ...cm, url: d3fendTechniqueUrl(cm.id) });
+      const entry = bucket.get(cm.id);
+      if (entry) entry.techniques.push(technique);
+      else bucket.set(cm.id, { ...cm, url: d3fendTechniqueUrl(cm.id), techniques: [technique] });
     }
   }
 
+  // Within a tactic, order by coverage (a countermeasure that defends more of the case's techniques
+  // is the higher-leverage action) then name; each one's covered techniques sorted for stable output.
   const byTactic: D3fendTacticGroup[] = [...tacticBuckets.entries()]
-    .map(([tactic, byId]) => ({ tactic, countermeasures: sortCountermeasures([...byId.values()]) }))
+    .map(([tactic, byId]) => {
+      const countermeasures = [...byId.values()]
+        .map((cm) => ({ ...cm, techniques: [...cm.techniques].sort() }))
+        .sort((a, b) => b.techniques.length - a.techniques.length || a.name.localeCompare(b.name));
+      return { tactic, countermeasures };
+    })
     .sort((a, b) => tacticRank(a.tactic) - tacticRank(b.tactic) || a.tactic.localeCompare(b.tactic));
 
   return {

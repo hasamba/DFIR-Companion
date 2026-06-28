@@ -268,11 +268,14 @@ regenerate via `npm run data:update-d3fend` → `scripts/update-d3fend.ts`, the 
 only — it slims D3FEND's inferred ATT&CK→countermeasure SPARQL mapping) into the D3FEND countermeasures that harden
 against / detect / isolate each technique. Matching is **bidirectional + sub-technique-aware**: a case sub-technique
 also pulls its base's countermeasures, and a base technique also pulls every mapped sub-technique's — so a coarsely-
-tagged case still surfaces the technique family's hardening. Output is per-technique + a defensive-tactic rollup
-(Model→Harden→Detect→Isolate→Deceive→Evict→Restore), capped per technique by `DFIR_D3FEND_MAX_PER_TECHNIQUE` (default
-12). **No AI, no runtime network** — suggested countermeasures (D3FEND relationships are INFERRED), NOT a guaranteed or
-complete list, with that note shown everywhere. `ReportWriter.d3fendCountermeasures` → `GET /cases/:id/d3fend-countermeasures`,
-dashboard *Defensive Countermeasures* panel + the toggleable `d3fend` report section. The **mobile companion summary**
+tagged case still surfaces the technique family's hardening. The PRIMARY output is `byTactic` — an **action-first
+checklist**: countermeasures grouped by D3FEND tactic (lifecycle order Model→Harden→Detect→Isolate→Deceive→Evict→Restore),
+each carrying the case `techniques[]` it covers and ordered by coverage (highest-leverage first); the dashboard +
+report render it with plain-language labels (`D3FEND_ACTION_INFO`: Harden→"Prevent", Isolate→"Contain", …) instead of
+raw D3FEND jargon. A per-technique breakdown (`techniques[]`, capped by `DFIR_D3FEND_MAX_PER_TECHNIQUE`, default 12) is
+also returned. **No AI, no runtime network** — suggested countermeasures (D3FEND relationships are INFERRED), NOT a
+guaranteed or complete list, with that note shown everywhere. `ReportWriter.d3fendCountermeasures` →
+`GET /cases/:id/d3fend-countermeasures`, dashboard *Defensive Countermeasures* panel + the toggleable `d3fend` report section. The **mobile companion summary**
 (`analysis/mobileSummary.ts`, pure) is the same shape: a compact, READ-ONLY projection of the (scope/legit-filtered)
 state for the phone PWA — findings worst-first, events most-severe-then-most-recent, IOCs flagged-first with their
 worst threat-intel verdict, plus severity/entity counts; heavy lists capped (`DFIR_MOBILE_MAX_FINDINGS`/`_EVENTS`/`_IOCS`)

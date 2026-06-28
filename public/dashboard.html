@@ -2992,23 +2992,26 @@
       #sec-adversary .adv-next-hunt:disabled{opacity:.6;cursor:default}
       #sec-adversary .adv-next-ds{color:var(--c-9aa4b2);font-size:11px;margin:2px 0 0 4px;font-style:italic}
     </style>
-    <section id="sec-d3fend" style="grid-column: 1 / -1"><h2>Defensive Countermeasures<span class="ev-sub">MITRE D3FEND hardening / detection / isolation steps mapped from the case's ATT&amp;CK techniques — offline, no AI</span></h2><div id="d3fendPanel">—</div></section>
+    <section id="sec-d3fend" style="grid-column: 1 / -1"><h2>Defensive Countermeasures<span class="ev-sub">what to do about the attacker's techniques — MITRE D3FEND steps grouped by defensive action (Prevent · Detect · Contain · …); offline, no AI</span></h2><div id="d3fendPanel">—</div></section>
     <style>
-      #sec-d3fend .d3f-note{color:var(--c-ffb454);font-size:12px;margin-bottom:8px}
-      #sec-d3fend .d3f-meta{color:var(--c-9aa4b2);font-size:11px;margin-bottom:8px}
+      #sec-d3fend .d3f-note{color:var(--c-ffb454);font-size:12px;margin-bottom:6px}
+      #sec-d3fend .d3f-meta{color:var(--c-9aa4b2);font-size:11px;margin-bottom:10px}
       #sec-d3fend .d3f-empty{color:var(--c-9aa4b2)}
-      #sec-d3fend .d3f-sub{color:var(--c-9aa4b2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:12px 0 6px}
-      #sec-d3fend .d3f-tactics{display:flex;flex-direction:column;gap:6px}
-      #sec-d3fend .d3f-tactic{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-      #sec-d3fend .d3f-tactic-name{font-size:11px;font-weight:bold;border-radius:4px;padding:0 6px;white-space:nowrap;min-width:56px;text-align:center;background:var(--c-0f1620);color:var(--c-6aa9ff);border:1px solid var(--c-1f2a3a)}
-      #sec-d3fend .d3f-cms{display:flex;flex-wrap:wrap;gap:4px}
-      #sec-d3fend .d3f-cm{background:var(--c-0f1620);color:var(--c-6bcb77);border:1px solid var(--c-1f5a35);border-radius:3px;padding:0 6px;font-size:11px;text-decoration:none}
+      #sec-d3fend .d3f-actions{display:flex;flex-direction:column;gap:10px}
+      #sec-d3fend .d3f-act{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-6bcb77);border-radius:6px;padding:8px 10px}
+      #sec-d3fend .d3f-act-h{display:flex;align-items:baseline;gap:6px;margin-bottom:6px}
+      #sec-d3fend .d3f-act-emoji{font-size:13px}
+      #sec-d3fend .d3f-act-label{color:var(--c-d6deea);font-weight:bold;font-size:13px}
+      #sec-d3fend .d3f-act-blurb{color:var(--c-9aa4b2);font-size:11px}
+      #sec-d3fend .d3f-act-count{margin-left:auto;color:var(--c-9aa4b2);font-size:11px;background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:10px;padding:0 7px}
+      #sec-d3fend .d3f-act-list{display:flex;flex-direction:column;gap:3px}
+      #sec-d3fend .d3f-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:2px 0}
+      #sec-d3fend .d3f-cm{color:var(--c-6bcb77);text-decoration:none;font-size:12px;font-weight:600}
       #sec-d3fend .d3f-cm:hover{text-decoration:underline}
-      #sec-d3fend .d3f-list{display:flex;flex-direction:column;gap:8px}
-      #sec-d3fend .d3f-card{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-6bcb77);border-radius:6px;padding:8px 10px}
-      #sec-d3fend .d3f-card-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px}
-      #sec-d3fend .d3f-tech{color:var(--c-6aa9ff);font-weight:bold;text-decoration:none}
-      #sec-d3fend .d3f-tech:hover{text-decoration:underline}
+      #sec-d3fend .d3f-covers{color:var(--c-9aa4b2);font-size:11px;display:inline-flex;flex-wrap:wrap;gap:4px;align-items:baseline}
+      #sec-d3fend .d3f-cover{color:var(--c-6aa9ff);background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px;font-size:10px;text-decoration:none}
+      #sec-d3fend .d3f-cover:hover{text-decoration:underline}
+      #sec-d3fend .d3f-cover-more{color:var(--c-9aa4b2);font-size:10px;cursor:help}
     </style>
     <section id="sec-velohunts" style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="veloHuntSuggest">—</div></section>
     <style>
@@ -7707,22 +7710,41 @@
         el.innerHTML = note + `<div class="d3f-empty">None of the case's ${esc(d.caseTechniqueCount)} identified technique(s) have a D3FEND countermeasure mapping.</div>`;
         return;
       }
-      const meta = `<div class="d3f-meta">Countermeasures for ${esc(d.coveredTechniqueCount)} of ${esc(d.caseTechniqueCount)} identified technique(s) · MITRE D3FEND v${esc(d.d3fendVersion)} · grouped by defensive tactic (Harden → Detect → Isolate → …)</div>`;
-      const chip = c => `<a href="${escAttr(c.url)}" target="_blank" rel="noopener" class="d3f-cm" title="${escAttr((c.tactic ? c.tactic + " · " : "") + (c.category || ""))}">${esc(c.name)}</a>`;
-      const tactics = (d.byTactic || []).map(g => {
-        const chips = (g.countermeasures || []).map(chip).join("");
-        return `<div class="d3f-tactic"><span class="d3f-tactic-name">${esc(g.tactic)}</span><div class="d3f-cms">${chips}</div></div>`;
+      // Plain-language action label + meaning per D3FEND tactic (mirrors D3FEND_ACTION_INFO on the
+      // server) so the analyst doesn't have to decode raw D3FEND jargon.
+      const ACTION = {
+        Harden:  { emoji: "🔒", label: "Prevent", blurb: "stop it happening again" },
+        Detect:  { emoji: "🔍", label: "Detect",  blurb: "spot it if it recurs" },
+        Isolate: { emoji: "⛔", label: "Contain", blurb: "limit the blast radius" },
+        Deceive: { emoji: "🎭", label: "Deceive", blurb: "lure & mislead the attacker" },
+        Evict:   { emoji: "🧹", label: "Evict",   blurb: "remove the attacker's foothold" },
+        Restore: { emoji: "♻️", label: "Restore", blurb: "recover affected systems" },
+        Model:   { emoji: "🗺️", label: "Model",   blurb: "know your attack surface" },
+      };
+      const totalCms = (d.byTactic || []).reduce((n, g) => n + ((g.countermeasures || []).length), 0);
+      const meta = `<div class="d3f-meta">${esc(totalCms)} countermeasure(s) across ${esc((d.byTactic || []).length)} defensive action(s), covering ${esc(d.coveredTechniqueCount)} of ${esc(d.caseTechniqueCount)} identified ATT&CK technique(s) · MITRE D3FEND v${esc(d.d3fendVersion)}</div>`;
+      // One section per defensive action; under each, the countermeasures with the case technique(s)
+      // they address. This is a "what do I actually do" checklist, not a wall of chips.
+      const sections = (d.byTactic || []).map(g => {
+        const a = ACTION[g.tactic] || { emoji: "🛡", label: g.tactic, blurb: "" };
+        const COVERS_CAP = 6; // keep each row compact even when a countermeasure covers many techniques
+        const rows = (g.countermeasures || []).map(c => {
+          const techs = c.techniques || [];
+          const covers = techs.slice(0, COVERS_CAP).map(t => {
+            const u = attackUrl(t);
+            return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="d3f-cover">${esc(t)}</a>` : `<span class="d3f-cover">${esc(t)}</span>`;
+          }).join("");
+          const moreN = techs.length - COVERS_CAP;
+          const more = moreN > 0 ? `<span class="d3f-cover-more" title="${escAttr(techs.join(", "))}">+${esc(moreN)} more</span>` : "";
+          const coversBlock = techs.length ? `<span class="d3f-covers">covers ${covers}${more}</span>` : "";
+          return `<div class="d3f-row"><a href="${escAttr(c.url)}" target="_blank" rel="noopener" class="d3f-cm" title="${escAttr(c.category || "")}">${esc(c.name)}</a>${coversBlock}</div>`;
+        }).join("");
+        return `<div class="d3f-act">` +
+          `<div class="d3f-act-h"><span class="d3f-act-emoji">${a.emoji}</span><span class="d3f-act-label">${esc(a.label)}</span><span class="d3f-act-blurb">— ${esc(a.blurb)}</span><span class="d3f-act-count" title="countermeasures">${esc((g.countermeasures || []).length)}</span></div>` +
+          `<div class="d3f-act-list">${rows}</div>` +
+        `</div>`;
       }).join("");
-      const tacticBlock = tactics ? `<div class="d3f-sub">By defensive tactic</div><div class="d3f-tactics">${tactics}</div>` : "";
-      const cards = (d.techniques || []).map(t => {
-        const u = attackUrl(t.technique);
-        const head = u
-          ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="d3f-tech">${esc(t.technique)}</a>`
-          : `<span class="d3f-tech">${esc(t.technique)}</span>`;
-        const chips = (t.countermeasures || []).map(chip).join("");
-        return `<div class="d3f-card"><div class="d3f-card-head">${head}</div><div class="d3f-cms">${chips}</div></div>`;
-      }).join("");
-      el.innerHTML = note + meta + tacticBlock + `<div class="d3f-sub">By technique</div><div class="d3f-list">${cards}</div>`;
+      el.innerHTML = note + meta + `<div class="d3f-actions">${sections}</div>`;
     }
 
     // ── Geographic Map (#133) ───────────────────────────────────────────────────────────────
