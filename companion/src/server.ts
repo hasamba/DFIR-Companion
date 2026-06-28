@@ -1167,17 +1167,30 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
     }
 
-    // 2. Enrichment providers — non-critical (opt-in). Only probe those with a probe() method
-    //    (local self-hosted instances like MISP/YETI); external SaaS needs a live IOC to test.
+    // 2. Enrichment providers — non-critical (opt-in). A provider is only in allProviders when
+    //    it's configured (keyed providers are registered only when their DFIR_*_KEY is set), so
+    //    presence here == "configured". Local self-hosted instances (MISP/YETI/OpenCTI) implement
+    //    probe() — we verify they're reachable + auth works. External SaaS (VirusTotal, AbuseIPDB,
+    //    CrowdStrike, Hunting.ch, Shodan, …) have NO probe(): we deliberately do NOT call them at
+    //    startup (OPSEC: no automatic third-party traffic, no wasted API quota) and only confirm
+    //    they're configured.
     for (const p of allProviders) {
-      if (!p.probe) continue;
-      const h = await enrichHealth.check(p).catch(() => ({ ok: false as const, detail: "probe error" }));
-      items.push({
-        name: `Enrichment: ${p.name}`,
-        ok: h.ok,
-        critical: false,
-        detail: h.detail ?? (h.ok ? "reachable" : "unreachable"),
-      });
+      if (p.probe) {
+        const h = await enrichHealth.check(p).catch(() => ({ ok: false as const, detail: "probe error" }));
+        items.push({
+          name: `Enrichment: ${p.name}`,
+          ok: h.ok,
+          critical: false,
+          detail: h.detail ?? (h.ok ? "reachable" : "unreachable"),
+        });
+      } else {
+        items.push({
+          name: `Enrichment: ${p.name}`,
+          ok: true,
+          critical: false,
+          detail: "configured (no live check)",
+        });
+      }
     }
 
     // 3. Velociraptor — non-critical (hunt-only feature).

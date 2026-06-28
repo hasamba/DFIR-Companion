@@ -40,6 +40,16 @@ function fakeEnrich(name: string, reachable: boolean): EnrichmentProvider {
   } as unknown as EnrichmentProvider;
 }
 
+// Fake external SaaS provider with NO probe() — VirusTotal-style. Should be reported as
+// "configured" without any network call.
+function fakeExternalEnrich(name: string): EnrichmentProvider {
+  return {
+    name,
+    scope: "external",
+    lookup: async () => null,
+  } as unknown as EnrichmentProvider;
+}
+
 describe("GET /diagnostics/preflight", () => {
   it("returns 200 with report shape when AI is not configured", async () => {
     const app = createApp(store, {});
@@ -112,6 +122,23 @@ describe("GET /diagnostics/preflight", () => {
     expect(item.critical).toBe(false);
     // Enrichment failure alone must not set anyCriticalFailed
     expect(res.body.report.anyCriticalFailed).toBe(false);
+  });
+
+  it("reports a no-probe external provider (VirusTotal-style) as configured without a network call", async () => {
+    let looked = false;
+    const vt = fakeExternalEnrich("VirusTotal");
+    // Spy: lookup must NOT be invoked during preflight.
+    (vt as unknown as { lookup: () => Promise<null> }).lookup = async () => { looked = true; return null; };
+    const app = createApp(store, { aiTestProvider: () => fakeAi({ ok: true }), enrichmentProviders: [vt] });
+    const res = await request(app).get("/diagnostics/preflight");
+    expect(res.status).toBe(200);
+    const item = res.body.report.items.find((i: { name: string }) => i.name === "Enrichment: VirusTotal");
+    expect(item).toBeTruthy();
+    expect(item.ok).toBe(true);
+    expect(item.critical).toBe(false);
+    expect(item.detail).toContain("configured");
+    expect(looked).toBe(false); // no outbound call
+    expect(res.body.report.anyFailed).toBe(false);
   });
 
   it("caches results within the TTL (second call returns same ranAt)", async () => {
