@@ -2536,6 +2536,16 @@
           <span id="diagMsg" class="manual-msg"></span>
         </div>
         <div id="diagBody" style="font-size:12.5px;color:var(--c-cbd3df)">Loading…</div>
+        <!-- Case backup restore (#180) -->
+        <div id="diagCaseBackups" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--c-2a2f3a,#2a2f3a)">
+          <div style="font-weight:600;color:var(--c-9aa4b2,#9aa4b2);font-size:12.5px;margin-bottom:6px">Restore a case backup</div>
+          <div style="font-size:11px;color:#7e8aa0;margin-bottom:8px">Loads backups for the currently-selected case. Restoring overwrites the live state — the current state is not auto-saved first, so make a manual backup before restoring if needed.</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <button id="diagLoadBackupsBtn" type="button">🗂 Load case backups</button>
+            <span id="diagBackupMsg" class="manual-msg"></span>
+          </div>
+          <div id="diagBackupsList" style="font-size:12.5px"></div>
+        </div>
       </div>
 
       <div class="settings-footer">
@@ -11667,6 +11677,12 @@
     document.getElementById("diagSizesBtn").addEventListener("click", diagComputeSizes);
     // The AI-test button is re-rendered with the diagnostics body, so delegate from the pane.
     document.getElementById("diagBody").addEventListener("click", e => { if (e.target.closest("#diagAiTestBtn")) diagAiTest(); });
+    // Case backup restore (#180) — load button is static; restore buttons are in the dynamically rendered list.
+    document.getElementById("diagLoadBackupsBtn").addEventListener("click", loadCaseBackups);
+    document.getElementById("diagBackupsList").addEventListener("click", e => {
+      const btn = e.target.closest(".bk-restore-btn");
+      if (btn) restoreCaseBackup(btn.dataset.filename);
+    });
     document.getElementById("stab-whitelist").addEventListener("click", e => {
       const q = e.target.closest(".wl-quick");
       if (q) { document.getElementById("wlMatch").value = q.dataset.m; document.getElementById("wlPattern").value = q.dataset.p; document.getElementById("wlType").value = q.dataset.t || ""; return; }
@@ -12398,8 +12414,18 @@
         impRows += diagRow("Recent failures", "none", "#5ad17a");
       }
       const importers = diagCard("Importer health", impRows);
+      const bk = report.backups || {};
+      let backupsCard = "";
+      if (bk.enabled) {
+        backupsCard = diagCard("State backups", [
+          diagRow("Total backups", `${bk.totalCount} across all cases`),
+          diagRow("Disk usage", diagFmtBytes(bk.totalBytes)),
+          diagRow("Retain per case", bk.retain === 0 ? "unlimited" : String(bk.retain)),
+          `<div style="font-size:11px;color:#7e8aa0;margin-top:4px">Created automatically before each synthesis. Use "Load case backups" below to browse and restore per-case snapshots.</div>`,
+        ].join(""));
+      }
       const footer = `<div style="font-size:11px;color:#7e8aa0;margin-top:4px">generated ${esc((report.generatedAt || "").replace("T", " ").slice(0, 19))} · uptime ${diagFmtAge(report.uptimeMs)}</div>`;
-      return disk + cases + queue + aiCard + importers + `<div id="diagSizes"></div>` + footer;
+      return disk + cases + queue + aiCard + importers + backupsCard + `<div id="diagSizes"></div>` + footer;
     }
     function loadDiagnostics() {
       const body = document.getElementById("diagBody");
@@ -12459,6 +12485,65 @@
       } else {
         try { const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); done(); } catch { fail(); }
       }
+    }
+    // Case backup restore (#180) ---------------------------------------------------------------
+    function loadCaseBackups() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const list = document.getElementById("diagBackupsList");
+      const msg = document.getElementById("diagBackupMsg");
+      const btn = document.getElementById("diagLoadBackupsBtn");
+      if (!caseId) { if (msg) { msg.style.color = "#ffb05a"; msg.textContent = "select a case first"; } return; }
+      if (msg) { msg.style.color = "#9aa4b2"; msg.textContent = "loading…"; }
+      if (btn) btn.disabled = true;
+      if (list) list.innerHTML = "";
+      fetch(`/cases/${encodeURIComponent(caseId)}/backups`)
+        .then(async r => { if (!r.ok) throw new Error(await r.text().catch(() => String(r.status))); return r.json(); })
+        .then(j => {
+          if (msg) { msg.style.color = ""; msg.textContent = ""; }
+          const backups = j.backups || [];
+          if (!backups.length) {
+            list.innerHTML = `<div style="color:#9aa4b2;padding:4px 0">No backups found for case <code>${esc(caseId)}</code>.</div>`;
+            return;
+          }
+          const TRIGGER_COLOR = { "pre-synthesis": "#7ec8e3", scheduled: "#9aa4b2", "pre-import": "#b8ccff", shutdown: "#ffce8a" };
+          list.innerHTML = `<div style="color:#9aa4b2;font-size:11px;margin-bottom:6px">${backups.length} backup${backups.length !== 1 ? "s" : ""} for case <code>${esc(caseId)}</code> · newest first</div>` +
+            backups.map((b, i) => {
+              const col = TRIGGER_COLOR[b.trigger] || "#9aa4b2";
+              const ts = (b.createdAt || "").replace("T", " ").slice(0, 19);
+              return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 8px;background:var(--c-1a1f29,#1a1f29);border:1px solid var(--c-2a2f3a);border-radius:6px;margin-bottom:5px;flex-wrap:wrap">
+                <span style="display:flex;gap:8px;align-items:center;min-width:0">
+                  <span style="color:${col};font-size:11px;white-space:nowrap">${esc(b.trigger)}</span>
+                  <span style="color:#cbd3df;font-family:monospace;font-size:11.5px">${esc(ts)}</span>
+                  <span style="color:#7e8aa0;font-size:11px">${diagFmtBytes(b.sizeBytes)}</span>
+                </span>
+                <button type="button" class="bk-restore-btn" data-filename="${esc(b.filename)}" style="padding:2px 10px;font-size:11px;background:#2a1a1a;border:1px solid #5a2a2a;border-radius:4px;color:#ffb05a;cursor:pointer;white-space:nowrap">↩ Restore</button>
+              </div>`;
+            }).join("");
+        })
+        .catch(e => {
+          if (msg) { msg.style.color = "#ff9f9f"; msg.textContent = e.message + " — restart the companion server if this 404s"; }
+        })
+        .finally(() => { if (btn) btn.disabled = false; });
+    }
+    function restoreCaseBackup(filename) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("diagBackupMsg");
+      if (!caseId || !filename) return;
+      const ts = filename.replace(/_[a-z-]+\.json$/, "").replace(/T/, " ").replace(/-/g, (m, o) => o > 10 ? ":" : m).slice(0, 19);
+      if (!confirm(`Restore backup from ${ts} for case "${caseId}"?\n\nThis overwrites the live investigation state (findings, timeline, IOCs, tags, comments, …) with the snapshot. The current live state is NOT auto-saved.\n\nProceed?`)) return;
+      if (msg) { msg.style.color = "#9aa4b2"; msg.textContent = "restoring…"; }
+      fetch(`/cases/${encodeURIComponent(caseId)}/restore-backup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename }),
+      })
+        .then(async r => { if (!r.ok) throw new Error(await r.text().catch(() => String(r.status))); return r.json(); })
+        .then(j => {
+          if (msg) { msg.style.color = "#5ad17a"; msg.textContent = `✓ Restored ${(j.restored || []).length} file(s) — reload the page to reflect changes`; }
+        })
+        .catch(e => {
+          if (msg) { msg.style.color = "#ff9f9f"; msg.textContent = "Restore failed: " + e.message; }
+        });
     }
 
     // --- Notifications (issue #58) — Slack/Teams/SMTP channels, Settings → Notifications ----------

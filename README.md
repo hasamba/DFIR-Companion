@@ -276,6 +276,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **ATT&CK Navigator layer** — techniques colored by severity; upload to [Navigator](https://mitre-attack.github.io/attack-navigator/)
 - **STIX 2.1 bundle** — for OpenCTI, MISP, Anomali, etc.
 - **IOC block-list** — TXT/CSV/STIX-only; filters by severity/type/verdict
+- **Automatic state backup / rotation** — pre-synthesis + hourly snapshots of all per-case state files; configurable retention; Settings → Diagnostics → restore with one click
 - **Investigation snapshot** — portable JSON bundle (no AI keys or machine config); cross-machine sharing + restore as new case
 - **Redacted case package** — ZIP with tokenized IPs/hosts/users, blurred PII in screenshots, adversary indicators preserved
 - **AI executive summary** — management-facing (no ATT&CK ids/hashes/tool names)
