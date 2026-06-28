@@ -212,6 +212,12 @@ export interface DiagnosticsReport {
     recentFailures: ImporterFailure[];
     customImporters: number;
   };
+  backups: {
+    enabled: boolean;
+    totalCount: number;
+    totalBytes: number;
+    retain: number;
+  };
 }
 
 /**
