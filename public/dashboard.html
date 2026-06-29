@@ -3025,7 +3025,6 @@
       #sec-d3fend .d3f-actions{display:flex;flex-direction:column;gap:10px}
       #sec-d3fend .d3f-act{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-6bcb77);border-radius:6px;padding:8px 10px}
       #sec-d3fend .d3f-act-guide{color:var(--c-c9d1db);font-size:11px;margin:0 0 7px;line-height:1.4}
-      #sec-d3fend .d3f-info{color:var(--c-9aa4b2);font-size:11px;cursor:help}
       #sec-d3fend .d3f-act-h{display:flex;align-items:baseline;gap:6px;margin-bottom:6px}
       #sec-d3fend .d3f-act-emoji{font-size:13px}
       #sec-d3fend .d3f-act-label{color:var(--c-d6deea);font-weight:bold;font-size:13px}
@@ -7856,10 +7855,9 @@
           const moreN = techs.length - COVERS_CAP;
           const more = moreN > 0 ? `<span class="d3f-cover-more" title="${escAttr(techs.join(", "))}">+${esc(moreN)} more</span>` : "";
           const coversBlock = techs.length ? `<span class="d3f-covers">covers ${covers}${more}</span>` : "";
-          // Definition (+ D3FEND category) on hover — the practical "what is this" without a click.
+          // Definition (+ D3FEND category) on hover over the name — the practical "what is this".
           const tip = [c.definition || "", c.category ? ("D3FEND category: " + c.category) : ""].filter(Boolean).join("\n\n");
-          const dinfo = c.definition ? `<span class="d3f-info" title="${escAttr(tip)}">ⓘ</span>` : "";
-          return `<div class="d3f-row"><a href="${escAttr(c.url)}" target="_blank" rel="noopener" class="d3f-cm" title="${escAttr(tip)}">${esc(c.name)}</a>${dinfo}${coversBlock}</div>`;
+          return `<div class="d3f-row"><a href="${escAttr(c.url)}" target="_blank" rel="noopener" class="d3f-cm" title="${escAttr(tip)}">${esc(c.name)}</a>${coversBlock}</div>`;
         }).join("");
         const guide = a.guidance ? `<div class="d3f-act-guide">→ ${esc(a.guidance)}</div>` : "";
         return `<div class="d3f-act">` +
