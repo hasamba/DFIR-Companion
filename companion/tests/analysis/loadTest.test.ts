@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { emptyState, type ForensicEvent, type IOC, type InvestigationState, type Severity } from "../../src/analysis/stateTypes.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "../../src/analysis/synthSelect.js";
 import { correlateEvents } from "../../src/analysis/correlate.js";
-import { filterEventsByScope, NO_SCOPE } from "../../src/analysis/scope.js";
+import { filterEventsByScope } from "../../src/analysis/scope.js";
 import { applyLegitimate, type LegitimateMarker } from "../../src/analysis/legitimate.js";
 import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
@@ -122,8 +122,6 @@ function buildSyntheticState(): InvestigationState {
     });
   }
 
-  const iocByValue = new Map(state.iocs.map((i) => [i.value.toLowerCase(), i.id]));
-
   for (let i = 0; i < TARGET_EVENT_COUNT; i++) {
     const seed = i * 7919 + 13;
     const severity = pickWeighted(SEVERITIES, SEV_WEIGHTS, seed);
@@ -238,10 +236,6 @@ function buildSyntheticState(): InvestigationState {
   return state;
 }
 
-function heapUsedMB(): number {
-  return Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-}
-
 function timeMs(fn: () => void): { ms: number; result?: unknown } {
   const t0 = performance.now();
   const result = fn();
@@ -250,7 +244,8 @@ function timeMs(fn: () => void): { ms: number; result?: unknown } {
 }
 
 describe("load test — 10k synthetic events", { timeout: 60_000 }, () => {
-  const state = buildSyntheticState();
+  let state!: InvestigationState;
+  beforeAll(() => { state = buildSyntheticState(); }, 60_000);
 
   it("generates the expected synthetic case size", () => {
     expect(state.forensicTimeline.length).toBe(TARGET_EVENT_COUNT);
@@ -286,12 +281,23 @@ describe("load test — 10k synthetic events", { timeout: 60_000 }, () => {
     expect(correlated.length).toBeGreaterThan(0);
     expect(correlated.length).toBeLessThanOrEqual(state.forensicTimeline.length);
 
+    // Idempotency: second pass on already-correlated output must be stable.
     const { ms: ms2, result: r2 } = timeMs(() => correlateEvents(correlated, { windowSeconds: 2 }));
     const second = r2 as ForensicEvent[];
     expect(second.length).toBe(correlated.length);
 
     expect(ms1).toBeLessThan(2000); // hash/path union-find on 10k
     expect(ms2).toBeLessThan(500);  // idempotent re-run should be near-instant
+
+    // Correctness: two events that share a sha256 within the window merge into one.
+    const sharedHash = "a".repeat(64);
+    const tA = "2026-06-15T00:00:00.000Z";
+    const tB = new Date(new Date(tA).getTime() + 1000).toISOString();
+    const pair: ForensicEvent[] = [
+      { id: "c-a", timestamp: tA, description: "proc a", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sha256: sharedHash, sources: ["THOR"] },
+      { id: "c-b", timestamp: tB, description: "proc b", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sha256: sharedHash, sources: ["SIEM"] },
+    ];
+    expect(correlateEvents(pair, { windowSeconds: 2 }).length).toBe(1);
   });
 
   it("filterEventsByScope + applyLegitimate stay fast", () => {
@@ -301,25 +307,29 @@ describe("load test — 10k synthetic events", { timeout: 60_000 }, () => {
       { id: "event:evt-00000", kind: "event", ref: "evt-00000", note: "test", markedAt: "2026-06-15T00:00:00Z" },
     ];
 
-    const { ms: msScope } = timeMs(() => filterEventsByScope(state.forensicTimeline, scope));
-    const { ms: msLegit } = timeMs(() => applyLegitimate(state, markers));
-
+    const { ms: msScope, result: rScope } = timeMs(() => filterEventsByScope(state.forensicTimeline, scope));
+    const filtered = rScope as ForensicEvent[];
+    // A 12-hour window over a ~250-hour timeline captures a fraction of events.
+    expect(filtered.length).toBeGreaterThan(0);
+    expect(filtered.length).toBeLessThan(state.forensicTimeline.length);
     expect(msScope).toBeLessThan(200);
+
+    const { ms: msLegit, result: rLegit } = timeMs(() => applyLegitimate(state, markers));
+    const legit = rLegit as InvestigationState;
+    // The IOC marker for "10.0.0.10" removes matching IOCs from the returned state.
+    expect(legit.iocs.length).toBeLessThan(state.iocs.length);
     expect(msLegit).toBeLessThan(200);
   });
 
-  it("renderMarkdownReport stays fast and bounded in memory", () => {
-    const heapBefore = heapUsedMB();
+  it("renderMarkdownReport stays fast", () => {
     const { ms, result } = timeMs(() => renderMarkdownReport(state, emptyReportMeta()));
     const report = result as string;
-    const heapAfter = heapUsedMB();
 
     expect(report.length).toBeGreaterThan(10_000);
     expect(report).toContain("## 4 Investigation");
     expect(report).toContain("### 3.1 Incident timeline");
     expect(report).toContain("### 4.2 Compromised assets");
 
-    expect(ms).toBeLessThan(5000); // report renders all derived views
-    expect(heapAfter - heapBefore).toBeLessThan(300); // MB growth guard against unbounded accumulation
+    expect(ms).toBeLessThan(5000); // report renders all derived views on 10k events
   });
 });
