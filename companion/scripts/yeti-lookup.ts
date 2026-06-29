@@ -6,7 +6,7 @@
 //   npm run yeti -- 43.134.22.100 evil.com 9f86d0818...   (multiple, space-separated)
 //   npx tsx scripts/yeti-lookup.ts 43.134.22.100
 import { config as loadDotenv } from "dotenv";
-loadDotenv();
+loadDotenv({ quiet: true });
 import { YetiProvider } from "../src/enrichment/yeti.js";
 import { buildTlsFetch } from "../src/enrichment/tlsFetch.js";
 import type { IocKind } from "../src/enrichment/provider.js";

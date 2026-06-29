@@ -13,7 +13,7 @@
 // findings / attacker-path synthesis (one text-only call):
 //   npm run reanalyze -- <caseId> --reset --model openai/gpt-4o-mini --synth-model openai/gpt-4o
 import { config as loadDotenv } from "dotenv";
-loadDotenv();
+loadDotenv({ quiet: true });
 
 import { readFile } from "node:fs/promises";
 import { join, isAbsolute, resolve } from "node:path";

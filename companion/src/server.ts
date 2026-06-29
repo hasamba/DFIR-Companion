@@ -15,6 +15,7 @@ import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
 import type { AnonTokenCategory } from "./analysis/anonymize.js";
 import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js";
 import { TesseractOcrRunner, type OcrRunner } from "./analysis/ocrRedact.js";
+import { extractOcrText, searchOcrIndex, isOcrSearchEnabled } from "./analysis/ocrSearch.js";
 import { resolveRedactedExportOptions, redactedExportFilename } from "./analysis/redactedExport.js";
 import { buildRedactedExport } from "./reports/redactedExportBuilder.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
@@ -751,6 +752,54 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const buffers = new Map<string, CaptureMetadata[]>();
   const SIGNIFICANT = new Set(["navigation", "tab_switch"]);
 
+  // Screenshot OCR full-text search index (#176). Runs in the BACKGROUND after a capture is
+  // persisted — never on the /captures hot path (Tesseract is ~0.5–2s/image and evidence-first
+  // means the screenshot is already on disk). Best-effort: a failure is logged, never thrown.
+  // A burst of captures (e.g. a batch import) is QUEUED and drained at most OCR_MAX_CONCURRENT
+  // at a time, so every non-duplicate screenshot is indexed — not dropped — without spawning N
+  // Tesseract workers at once. The queue is bounded purely as a runaway safety net; in practice
+  // captures are paced far slower than OCR drains.
+  const ocrQueue: CaptureMetadata[] = [];
+  let ocrActive = 0;
+  const OCR_MAX_CONCURRENT = 2;
+  const OCR_MAX_QUEUE = 1000;
+  function pumpOcrQueue(): void {
+    while (ocrActive < OCR_MAX_CONCURRENT && ocrQueue.length > 0) {
+      const metadata = ocrQueue.shift()!;
+      ocrActive++;
+      void (async () => {
+        try {
+          const path = join(store.screenshotsDir(metadata.caseId), metadata.screenshotFile);
+          const bytes = await readFile(path);
+          const runner = options.ocrRunner ?? new TesseractOcrRunner();
+          const words = await runner.recognize(bytes);
+          const text = extractOcrText(words);
+          await store.putOcrEntry(metadata.caseId, {
+            screenshotFile: metadata.screenshotFile,
+            text,
+            ocrAt: new Date().toISOString(),
+            wordCount: text.length === 0 ? 0 : text.split(" ").length,
+          });
+        } catch (err) {
+          serverLogger.debug(`OCR index failed for ${metadata.screenshotFile}: ${(err as Error).message}`, { caseId: metadata.caseId });
+        } finally {
+          ocrActive--;
+          pumpOcrQueue();
+        }
+      })();
+    }
+  }
+  function indexCaptureText(metadata: CaptureMetadata): void {
+    if (!isOcrSearchEnabled() || !metadata.screenshotFile || metadata.isDuplicate) return;
+    if (ocrQueue.length >= OCR_MAX_QUEUE) {
+      // Runaway safety net only — recover anything dropped here with `npm run ocr-index`.
+      serverLogger.debug(`OCR index: queue full, skipped seq=${metadata.sequenceNumber}`, { caseId: metadata.caseId });
+      return;
+    }
+    ocrQueue.push(metadata);
+    pumpOcrQueue();
+  }
+
   // Per-case AI on/off + last-analyzed sequence (cached, persisted to disk).
   const aiControl = new AiControlStore(store);
   const controlCache = new Map<string, AiControl>();
@@ -1339,7 +1388,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         }
       }
       const metadata = await ingestCapture(store, req.body);
-      res.status(201).json(metadata);
+      // Pre-evaluate the analysis condition before responding so the dashboard knows whether
+      // this capture will produce timeline events (mirrors the analyzed/reason pattern on /import).
+      const willAnalyze = !metadata.isDuplicate && Boolean(options.pipeline) && hasAiProvider()
+        && (await getControl(metadata.caseId)).enabled;
+      res.status(201).json(
+        !metadata.isDuplicate && !willAnalyze
+          ? { ...metadata, analyzed: false, reason: "ai-off" as const }
+          : metadata,
+      );
       serverLogger.debug(
         `screenshot captured seq=${metadata.sequenceNumber} trigger=${metadata.triggerType} ` +
           `file=${metadata.screenshotFile || "(none)"}${metadata.isDuplicate ? " (duplicate — not analyzed)" : ""}`,
@@ -1349,8 +1406,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // (live, via the WS broadcast) or detect it on connect (via /captures/recent).
       lastCapture = { caseId: metadata.caseId, at: Date.now() };
       options.onCapture?.(metadata.caseId);
+      // Background OCR full-text index (#176) — independent of AI analysis (it's local + free),
+      // so it runs whenever OCR search is enabled, not gated on the AI provider.
+      indexCaptureText(metadata);
       // Evidence is always stored; AI analysis only runs when enabled for the case.
-      if (!metadata.isDuplicate && options.pipeline && hasAiProvider() && (await getControl(metadata.caseId)).enabled) {
+      if (willAnalyze) {
         const buf = buffers.get(metadata.caseId) ?? [];
         buf.push(metadata);
         buffers.set(metadata.caseId, buf);
@@ -1407,6 +1467,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
     }
     return res.status(404).json({ error: "evidence not found" });
+  });
+
+  // Screenshot OCR full-text search (#176). Scans the case's local OCR index for `q` and
+  // returns one hit per matching screenshot (snippet + match count); the dashboard links each
+  // hit back to the screenshot via GET /cases/:id/evidence/:file. Local-only, no AI.
+  app.get("/cases/:id/ocr-search", async (req: Request, res: Response) => {
+    try {
+      if (!(await store.caseExists(req.params.id))) {
+        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+      }
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      if (q.trim().length === 0) return res.status(400).json({ error: "missing query parameter q" });
+      const index = await store.loadOcrIndex(req.params.id);
+      const hits = searchOcrIndex(index, q);
+      return res.status(200).json({ enabled: isOcrSearchEnabled(), indexed: Object.keys(index).length, hits });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   app.post("/cases/:id/report", async (req: Request, res: Response) => {
@@ -8053,7 +8131,7 @@ if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.
     : fileURLToPath(new URL("../", import.meta.url)); // .../companion/
   // DFIR_ENV_FILE lets a read-only deployment (e.g. an AppImage mount) point at a writable .env.
   const envFile = process.env.DFIR_ENV_FILE || (seaRuntime ? join(companionDir, ".env") : undefined);
-  loadDotenv({ path: envFile });
+  loadDotenv({ path: envFile, quiet: true });
   const raw = process.env.DFIR_CASES_ROOT ?? "cases";
   // Anchor a relative cases root to the companion package directory, so the SAME
   // physical folder is used no matter which directory the server is launched from.

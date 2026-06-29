@@ -1,7 +1,7 @@
 // Report how many of a case's screenshots were actually analyzed by the AI.
 //   Usage:  npm run coverage -- <caseId>   (default: test1)
 import { config as loadDotenv } from "dotenv";
-loadDotenv();
+loadDotenv({ quiet: true });
 
 import { readFile } from "node:fs/promises";
 import { join, isAbsolute, resolve } from "node:path";
