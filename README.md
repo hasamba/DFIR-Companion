@@ -232,7 +232,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Correlation & deduplication
 - **Cross-source correlation** — the same artifact seen by different tools collapses into one corroborated event (shared hash / same path in a time window / exact duplicate), tagged with the real tool names. Idempotent — re-importing never doubles the timeline.
-- **Corroboration filter (lens)** — a global filter-bar control to show only Timeline events / IOCs / Findings observed by **2+ or 3+ distinct tools**, so single-source background noise (internet scanners, benign telemetry) drops away and the multi-source attack path stands out. A *lens, not a gate* — nothing is removed from state; set back to *any* to see single-source evidence again. Per-browser.
+- **Corroboration filter (lens)** — a per-section control in each title bar (Timeline / IOCs / Findings) to show only items observed by **2+ or 3+ distinct tools**, so single-source background noise (internet scanners, benign telemetry) drops away and the multi-source attack path stands out. Each section's lens is independent. A *lens, not a gate* — nothing is removed from state; set back to *any* to see single-source evidence again. Per-browser.
 
 ### Investigation workflow
 - **Explain This Event** — 💡 per-row AI button explains any forensic event in context: what happened, why it matters, normal-vs-suspicious, ATT&CK mapping, 1–3 runnable pivot queries (VQL/KQL/SPL), evidence for/against; ephemeral overlay
