@@ -1555,6 +1555,17 @@
           <div class="sec-checks" id="tlDisplayChecks"></div>
         </div>
         <div class="sfield">
+          <label>Import severity <span class="sfield-hint" style="display:inline">— the minimum severity used when importing evidence. "Ask every time" prompts on each import; pick a level to remember it and skip the prompt. Saved in this browser.</span></label>
+          <select id="importSevDefault">
+            <option value="">Ask every time (default)</option>
+            <option value="critical">critical — only Critical</option>
+            <option value="high">high — Critical + High</option>
+            <option value="medium">medium — Critical + High + Medium</option>
+            <option value="low">low — everything except Info</option>
+            <option value="info">info — import everything</option>
+          </select>
+        </div>
+        <div class="sfield">
           <label>Log verbosity <span class="sfield-hint" style="display:inline">— takes effect immediately (no restart)</span></label>
           <select id="logLevelSelect">
             <option value="error">error — only failures</option>
@@ -10614,6 +10625,59 @@
         r.readAsDataURL(file);
       });
     }
+    // ── Import minimum-severity preference (per-browser) ──────────────────────
+    // Stored as { value, remember }. When remember is set, askMinSeverity() returns the
+    // saved value WITHOUT showing the dialog. Settings → General → Import severity manages it.
+    const IMPORT_SEV_KEY = "dfir_import_min_severity";
+    const VALID_SEV = ["critical", "high", "medium", "low", "info"];
+    function getImportSevPref() {
+      try { const o = JSON.parse(localStorage.getItem(IMPORT_SEV_KEY) || "null"); return o && typeof o === "object" ? o : null; }
+      catch (e) { return null; }
+    }
+    function setImportSevPref(value, remember) {
+      try {
+        if (!remember) localStorage.removeItem(IMPORT_SEV_KEY);
+        else localStorage.setItem(IMPORT_SEV_KEY, JSON.stringify({ value, remember: true }));
+      } catch (e) { /* quota — non-fatal */ }
+    }
+    // Resolve the minimum severity for an import batch. Returns a normalized severity string,
+    // or null if the user cancelled the whole import. A remembered choice skips the dialog.
+    function askMinSeverity() {
+      return new Promise((resolve) => {
+        const pref = getImportSevPref();
+        if (pref && pref.remember && VALID_SEV.includes(pref.value)) { resolve(pref.value); return; }
+        const overlay = document.getElementById("importSevOverlay");
+        const sel = document.getElementById("importSevSelect");
+        const remember = document.getElementById("importSevRemember");
+        sel.value = (pref && VALID_SEV.includes(pref.value)) ? pref.value : "info";
+        remember.checked = false;
+        overlay.classList.add("open");
+        const cleanup = () => {
+          overlay.classList.remove("open");
+          document.getElementById("importSevOk").onclick = null;
+          document.getElementById("importSevCancel").onclick = null;
+          overlay.onclick = null;
+        };
+        document.getElementById("importSevOk").onclick = () => {
+          const value = sel.value.trim().toLowerCase();
+          setImportSevPref(value, remember.checked);
+          syncImportSevDefaultSelect();
+          cleanup();
+          resolve(value);
+        };
+        const cancel = () => { cleanup(); resolve(null); };
+        document.getElementById("importSevCancel").onclick = cancel;
+        overlay.onclick = (ev) => { if (ev.target.id === "importSevOverlay") cancel(); };
+      });
+    }
+    // Mirror the remembered preference into the Settings → General select (and react to edits there).
+    function syncImportSevDefaultSelect() {
+      const el = document.getElementById("importSevDefault");
+      if (!el) return;
+      const pref = getImportSevPref();
+      el.value = (pref && pref.remember && VALID_SEV.includes(pref.value)) ? pref.value : "";
+    }
+
     // ── Unified import: one button, the server auto-detects the file type ─────
     // Images go through the same /captures path the extension uses; every other file is
     // POSTed to /import, where the server sniffs it (JSON/CSV/log + per-format signatures)
@@ -10638,17 +10702,12 @@
       // whole batch (data files only; screenshots have no severity). Imports that don't grade
       // severity (e.g. KAPE, Plaso, plain telemetry) are kept in full regardless of this floor;
       // "info" (or Cancel-then-keep) imports everything. The server normalizes the value.
+      // A remembered choice (askMinSeverity → IMPORT_SEV_KEY) skips the dialog entirely.
       let minSeverity = "";
       if (data.length) {
-        const ans = prompt(
-          "Minimum severity to import? Events below this are dropped — but imports that carry NO " +
-          "severity (KAPE, Plaso, plain telemetry) are kept in full.\n\n" +
-          "  critical = only Critical\n  high     = Critical + High\n  medium   = Critical + High + Medium\n" +
-          "  low      = everything except Info\n  info     = import everything (default)",
-          "info",
-        );
+        const ans = await askMinSeverity();
         if (ans === null) { e.target.value = ""; return; } // cancelled the whole import
-        minSeverity = ans.trim().toLowerCase();
+        minSeverity = ans;
       }
 
       // Data files → the unified /import endpoint (server auto-detects + routes).
@@ -11707,6 +11766,7 @@
       document.getElementById("settingsInvestigator").value = localStorage.getItem("dfir.investigator") || "";
       renderSecChecks();
       renderTlChecks();
+      syncImportSevDefaultSelect();
       fetchEnvSettings();
       fetchLogLevel();
       // Reset to first tab
@@ -12237,6 +12297,11 @@
     });
     document.getElementById("secDeselectAll").addEventListener("click", () => {
       document.querySelectorAll("#secChecks .sec-check input[type=checkbox]").forEach(cb => { cb.checked = false; });
+    });
+    // Import severity default — "" = ask every time (clears the remembered choice), else remember it.
+    document.getElementById("importSevDefault").addEventListener("change", (e) => {
+      const v = e.target.value;
+      setImportSevPref(v, !!v);
     });
     // Timeline row display — apply immediately on any change (toggle or select/deselect all).
     document.getElementById("tlDisplayChecks").addEventListener("change", applyTlDisplayFromChecks);

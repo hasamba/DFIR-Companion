@@ -258,6 +258,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Timeline pagination** — 100/250/500/all rows per page (user-selectable); prev/next controls
 - **Timeline source filter** — faceted dropdown (beside the severity legend) to show/hide events by the tool/source that produced them; multi-source events stay visible unless every source is hidden
 - **Timeline row display** — Settings → General toggles which sub-elements each timeline row shows (action icons / tag pills / badges / host chip / MITRE / related findings / evidence links); timestamp + message always shown; per-browser, applies immediately
+- **Remember import severity** — the minimum-severity import prompt has a *don't ask again* checkbox that saves the chosen floor and skips the prompt on future imports; manage/clear it in Settings → General → Import severity; per-browser
 - **Correlation profile** — per-case Strict/Moderate/Aggressive/Custom window for cross-source event merging; toolbar dropdown + `PUT /cases/:id/correlation-profile`
 
 ### Threat-intel enrichment (off by default — opt-in per case)
