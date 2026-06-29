@@ -85,16 +85,40 @@ const KEYWORD_TACTIC: Array<[RegExp, IrisTactic]> = [
   [/\b(powershell|cmd\.exe|wscript|cscript|\bwmi\b|invoke-expression|iex\s*\(|encodedcommand)\b/i, "Execution"],
 ];
 
+// A handful of techniques span several ATT&CK tactics, and the single home recorded in
+// TECHNIQUE_TACTIC is the wrong stage for a whole class of events. The worst offender is T1078
+// (Valid Accounts): ATT&CK lists it under Initial Access / Persistence / Priv-Esc / Defense Evasion,
+// and we pin it to Initial Access — but an explicit-credential or remote-service logon REUSING
+// existing credentials (EID 4648, SSH/RDP/WinRM, psexec/wmiexec, pass-the-hash) is operationally
+// LATERAL MOVEMENT, not first entry. Without this refinement those internal host-to-host logons pile
+// into the Initial Access lane and contradict a synthesis that (correctly) calls the entry vector
+// unknown. When an event's description matches a rule below, that tactic overrides the table default
+// FOR THAT TECHNIQUE. Description-free callers are unaffected (the regex tests against "").
+const CONTEXT_REFINEMENT: Record<string, ReadonlyArray<readonly [RegExp, IrisTactic]>> = {
+  T1078: [
+    [/\b(explicit credentials|eid\s*4648|remote desktop|rdp|winrm|psexec|wmiexec|pass-?the-?(?:hash|ticket)|accepted\s+(?:password|publickey)|ssh\s+login)\b/i, "Lateral Movement"],
+  ],
+};
+
 function baseTechnique(id: string): string {
   const m = /T\d{4}/i.exec(id);
   return m ? m[0].toUpperCase() : id.toUpperCase();
+}
+
+// The tactic a single technique resolves to, letting a description-keyed refinement override the
+// table default for multi-tactic techniques (e.g. T1078 → Lateral Movement on a remote logon).
+function tacticForTechnique(technique: string, description: string): IrisTactic | undefined {
+  const base = baseTechnique(technique);
+  const refinements = CONTEXT_REFINEMENT[base];
+  if (refinements) for (const [re, tac] of refinements) if (re.test(description)) return tac;
+  return TECHNIQUE_TACTIC[base];
 }
 
 // The IRIS event-category name for an event, or undefined when nothing matches (→ "Unspecified").
 export function tacticForTechniques(techniques: readonly string[], description = ""): IrisTactic | undefined {
   const found = new Set<IrisTactic>();
   for (const t of techniques) {
-    const tac = TECHNIQUE_TACTIC[baseTechnique(t)];
+    const tac = tacticForTechnique(t, description);
     if (tac) found.add(tac);
   }
   if (found.size > 0) return TACTIC_PRIORITY.find((t) => found.has(t));
