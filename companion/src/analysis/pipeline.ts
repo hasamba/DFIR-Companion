@@ -16,6 +16,8 @@ import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity
 import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
 import { buildMitigationsResult } from "./attackMitigations.js";
 import { loadMitigationsDataset } from "./attackMitigationsData.js";
+import { buildD3fendResult } from "./d3fendMap.js";
+import { loadD3fendDataset, d3fendEnvOptions } from "./d3fendData.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
 import type { StateLock } from "./stateLock.js";
@@ -636,8 +638,9 @@ export const EXEC_SUMMARY_PROMPT = [
 // concrete, prioritized action list the IR team can actually execute, specific to THIS incident.
 export const REMEDIATION_PROMPT = [
   "You are a senior incident-response consultant writing a REMEDIATION PLAN for ONE security incident.",
-  "Using ONLY the case evidence below (findings, ATT&CK techniques, and the MITRE ATT&CK mitigations",
-  "recommended for those techniques), write a concrete, prioritized plan the IR team can execute NOW.",
+  "Using ONLY the case evidence below (findings, ATT&CK techniques, the MITRE ATT&CK mitigations and the",
+  "MITRE D3FEND countermeasures recommended for those techniques), write a concrete, prioritized plan the",
+  "IR team can execute NOW.",
   "",
   "Rules:",
   "- Be SPECIFIC TO THIS INCIDENT: reference the actual hosts, accounts, CVEs, IOCs, and tools named in",
@@ -646,7 +649,10 @@ export const REMEDIATION_PROMPT = [
   "  step for this environment. Do NOT invent facts the evidence doesn't support.",
   "- Organize by phase, in this order: ## Contain now, ## Eradicate, ## Harden (prevent recurrence),",
   "  ## Recover, ## Verify. Under each, a numbered list of specific actions.",
-  "- For each action, end with the technique/finding it addresses in parentheses, e.g. '(T1003.001 — Mimikatz on DC01)'.",
+  "- For each action, end with the technique/finding it addresses in parentheses, and CITE the relevant",
+  "  framework references: the ATT&CK mitigation M-code AND, where one fits, the relevant D3FEND",
+  "  countermeasure name — e.g. '(T1003.001 — Mimikatz on DC01; ATT&CK M1043, D3FEND Local Account Monitoring)'.",
+  "  Only cite a D3FEND countermeasure that appears in the supplied list; omit it if none fits.",
   "- Lead with the most urgent containment. Keep it actionable and tight — no filler, no restating the incident.",
   "",
   "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
@@ -3272,6 +3278,15 @@ export class AnalysisPipeline {
         .map((m) => `- ${m.id} ${m.name} (covers ${m.techniques.join(", ")}): ${m.description}`)
         .join("\n") || "(no mapped ATT&CK mitigations)";
 
+    // The deterministic D3FEND countermeasures (defensive techniques/sensors) for the same
+    // techniques — so the plan can also cite the relevant D3FEND control alongside the M-code.
+    const d3f = buildD3fendResult(filtered, loadD3fendDataset(), d3fendEnvOptions());
+    const d3fendText =
+      d3f.byTactic
+        .flatMap((g) => g.countermeasures.map((c) => `- ${c.name} [${c.tactic}] (covers ${c.techniques.join(", ")})`))
+        .slice(0, 40)
+        .join("\n") || "(no mapped D3FEND countermeasures)";
+
     const contextBlock = buildSynthesisContext(loaded, scopedEvents, await this.getKevCatalog());
 
     const userPrompt =
@@ -3279,6 +3294,7 @@ export class AnalysisPipeline {
       `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
       `FINDINGS:\n${findingsText}\n\n` +
       `RECOMMENDED ATT&CK MITIGATIONS (use these as the basis for concrete steps):\n${mitigationsText}\n\n` +
+      `RELEVANT D3FEND COUNTERMEASURES (the defensive technique/sensor for each — cite alongside the ATT&CK mitigation where it fits):\n${d3fendText}\n\n` +
       `Write the incident-specific remediation plan as JSON.`;
 
     return withRetry(async () => {

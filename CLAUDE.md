@@ -286,8 +286,9 @@ per-technique breakdown; bidirectional sub/base matching like D3FEND. No AI, no 
 `ReportWriter.attackMitigations` → `GET /cases/:id/attack-mitigations`, dashboard *Mitigation & Defensive Countermeasures*
 panel (mitigations on top, D3FEND below) + report. On top of that, an **AI remediation plan** (`AnalysisPipeline.remediationPlan`,
 `REMEDIATION_PROMPT`): one text-only call → an incident-SPECIFIC, prioritized plan (Contain/Eradicate/Harden/Recover/Verify),
-**grounded in the deterministic ATT&CK mitigations** (fed into the prompt so the model writes concrete steps referencing the
-real hosts/CVEs/IOCs instead of hallucinating). Ephemeral (no state change), gated on an AI provider (501 otherwise):
+**grounded in the deterministic ATT&CK mitigations + D3FEND countermeasures** (both fed into the prompt so the model writes
+concrete steps referencing the real hosts/CVEs/IOCs and cites the relevant ATT&CK M-code + D3FEND countermeasure per action,
+instead of hallucinating). Ephemeral (no state change), gated on an AI provider (501 otherwise):
 `POST /cases/:id/remediation-plan`, dashboard *✨ Generate remediation plan* button. The **mobile companion summary**
 (`analysis/mobileSummary.ts`, pure) is the same shape: a compact, READ-ONLY projection of the (scope/legit-filtered)
 state for the phone PWA — findings worst-first, events most-severe-then-most-recent, IOCs flagged-first with their
