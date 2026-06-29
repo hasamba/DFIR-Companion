@@ -104,6 +104,21 @@ describe("POST /captures background OCR indexing", () => {
     expect(search.body.hits.map((h: { screenshotFile: string }) => h.screenshotFile)).toContain(file);
   });
 
+  it("indexes EVERY screenshot in a burst (queued, not dropped past the concurrency cap)", async () => {
+    // Seven captures posted back-to-back, each with distinct bytes so none is a byte-dup.
+    const files: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const res = await request(app).post("/captures").send(capture({
+        imageBase64: Buffer.from([i, i + 1, i + 2, i + 3]).toString("base64"),
+      }));
+      expect(res.status).toBe(201);
+      files.push(res.body.screenshotFile as string);
+    }
+    // All seven must eventually be indexed — the queue drains them, none is dropped.
+    for (const f of files) expect(await waitForIndex(f, 80)).toBe(true);
+    expect(Object.keys(await cases.loadOcrIndex("c1"))).toHaveLength(7);
+  });
+
   it("does not index when DFIR_OCR_SEARCH is off", async () => {
     process.env.DFIR_OCR_SEARCH = "off";
     const res = await request(app).post("/captures").send(capture());

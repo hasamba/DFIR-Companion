@@ -10600,7 +10600,7 @@
       if (!data.length) hideImportProgress(); // images-only batch: nothing to track
 
       // Image files → screenshot ingest (stored as evidence, analyzed when AI is on).
-      let imgOk = 0, imgDup = 0, imgFail = 0;
+      let imgOk = 0, imgDup = 0, imgFail = 0, imgAiOff = 0;
       for (let i = 0; i < images.length; i++) {
         const f = images[i];
         statusEl.textContent = `importing screenshot ${i + 1}/${images.length}: ${f.name}…`;
@@ -10618,7 +10618,9 @@
           if (r.status === 423) { const jr = await r.json().catch(() => ({})); statusEl.textContent = jr.error || "Case is closed — reopen it to add screenshots"; e.target.value = ""; return; }
           if (!r.ok) { imgFail++; continue; }
           const meta = await r.json();
-          if (meta.isDuplicate) imgDup++; else imgOk++;
+          if (meta.isDuplicate) imgDup++;
+          else if (meta.analyzed === false && meta.reason === "ai-off") imgAiOff++;
+          else imgOk++;
         } catch { imgFail++; }
       }
 
@@ -10627,7 +10629,8 @@
       const floorNote = minSeverity && minSeverity !== "info" ? ` (min severity ${minSeverity})` : "";
       if (kindList.length) parts.push(`imported ${kindList.join(", ")}${floorNote} — analyzing (see AI status)`);
       if (aiOffSkipped) parts.push(`${aiOffSkipped} CSV/log saved as evidence but NOT analyzed — AI is off (turn AI on, then re-import)`);
-      if (images.length) parts.push(`${imgOk} screenshot(s)` + (imgDup ? `, ${imgDup} dup` : "") + (imgFail ? `, ${imgFail} failed` : ""));
+      if (imgOk || imgDup || imgFail) parts.push(`${imgOk} screenshot(s)` + (imgDup ? `, ${imgDup} dup` : "") + (imgFail ? `, ${imgFail} failed` : ""));
+      if (imgAiOff) parts.push(`${imgAiOff} screenshot(s) saved but NOT analyzed — AI is off (turn AI on, then run: npm run reanalyze -- ${caseId})`);
       if (dataFail) parts.push(`${dataFail} file(s) failed / unrecognized`);
       statusEl.textContent = parts.join(" · ") || "nothing imported";
       e.target.value = ""; // allow re-selecting the same files
