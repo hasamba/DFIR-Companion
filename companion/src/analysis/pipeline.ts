@@ -69,6 +69,7 @@ import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
 import { parseSiemExport, type SiemImportOptions } from "./siemImport.js";
+import { parseEvtxXml } from "./evtxXmlImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
@@ -1603,6 +1604,55 @@ export class AnalysisPipeline {
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `SIEM import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a Windows Event Log exported as XML (Event Viewer "Save As XML" / `wevtutil … /f:xml` /
+  // PowerShell `Get-WinEvent … ToXml()`). The XML envelope is parsed to the same record shape the
+  // SIEM importer consumes and run through the SAME deterministic per-EID Windows/Sysmon mapping —
+  // so it behaves identically to a SIEM/EVTX JSON import, just from the XML rendering.
+  async importEvtxXml(
+    caseId: string,
+    xmlText: string,
+    opts: {
+      label: string;
+      idPrefix: string;          // unique per import (e.g. "s3") so ids never collide
+      importedAt: string;
+      siem?: SiemImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseEvtxXml(xmlText, opts.siem);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const source = detectTool(opts.label) ?? "Windows Event Log";
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [source],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Windows Event Log (XML) import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
       summary: "",

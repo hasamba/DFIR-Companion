@@ -11,10 +11,11 @@ import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevi
 import { parseCsv } from "./csvImport.js";
 import { looksLikeJournald } from "./journaldImport.js";
 import { looksLikeSysdig } from "./sysdigImport.js";
+import { looksLikeWinEventXml } from "./evtxXmlImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
 
 export type ImportKind =
-  | "thor" | "siem" | "chainsaw" | "hayabusa" | "velociraptor" | "securityonion" | "socrates" | "network"
+  | "thor" | "siem" | "evtxxml" | "chainsaw" | "hayabusa" | "velociraptor" | "securityonion" | "socrates" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
   | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "csv" | "log" | "unknown";
 
@@ -395,6 +396,11 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // the Velociraptor importer (a more-specific content match — sandbox/hayabusa/… — always wins).
   const vrHint = (k: ImportKind): ImportKind =>
     k === "siem" && looksLikeVelociraptorFile(filename) ? "velociraptor" : k;
+
+  // Windows Event Log exported as XML (Event Viewer "Save As XML" / `wevtutil qe /f:xml` /
+  // `Get-WinEvent … ToXml()`). Checked first: it starts with `<`, so it can't collide with the
+  // JSON/NDJSON/CSV/log sniffs below, and the `<Events><Event>` envelope is unambiguous.
+  if (looksLikeWinEventXml(t)) return "evtxxml";
 
   // JSON / NDJSON.
   if (t[0] === "{" || t[0] === "[") {

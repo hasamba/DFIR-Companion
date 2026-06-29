@@ -82,7 +82,13 @@ CSV (`analyzeCsv`), generic logs (`analyzeLog` — `logAggregate.ts` collapses r
 lines into counted patterns first, then AI triages only suspicious ones), **THOR**
 Nextron JSON (`importThor` → `thorImport.ts`), **SIEM/EDR** JSON (`importSiem` →
 `siemImport.ts` — unwraps the container, per-EID Windows/Sysmon mapping, field
-auto-detection for other records, aggregation), and **Chainsaw/EVTX** (`importChainsaw` →
+auto-detection for other records, aggregation; the records→result core is the exported
+`buildSiemResult`), and **Windows Event Log XML** (`importEvtxXml` → `evtxXmlImport.ts` — Event
+Viewer "Save As XML" / `wevtutil qe /f:xml` / `Get-WinEvent … ToXml()`; a dependency-free scan over
+the regular `<Events><Event>` envelope parses each event into the SAME record shape `mapWindows`
+consumes — `EventID`/`Channel`/`Computer`/`@timestamp`/`EventData{Name→value}`, decoding XML
+entities — then hands it to `buildSiemResult`, so it behaves identically to a SIEM/EVTX-JSON import
+from the XML rendering; detected ahead of the JSON/CSV/log sniffs since it leads with `<`), and **Chainsaw/EVTX** (`importChainsaw` →
 `chainsawImport.ts` — Chainsaw hunt JSON or a raw `evtx_dump`; reuses `siemImport`'s
 exported `mapWindows`/`aggregateEvents` on the embedded EVTX event and overlays the matched
 Sigma rule's level→severity + `attack.tXXXX`→MITRE), and **Hayabusa** (`importHayabusa` →
@@ -141,7 +147,7 @@ pslist/psscan/pstree → process-tree events (parent→child links, `CreateTime`
 events (bumped on LOLBin/encoded tradecraft via the exported `isSuspiciousCmd`), svcscan/modules/driverscan →
 service/driver evidence; dlllist/handles are IOC-only/dropped to stay signal-rich. Tagged **Volatility**/**Rekall**;
 reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`/`genericIocs` and reads the artifact's own time).
-The last sixteen
+The last seventeen
 are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
