@@ -1,9 +1,9 @@
 // Materialize a packable Chocolatey package for the portable Windows build.
 //
 // The committed package under packaging/chocolatey/ is a TEMPLATE: the nuspec carries a
-// __VERSION__ placeholder and tools/chocolateyinstall.ps1 + tools/VERIFICATION.txt carry
-// __URL64__ / __CHECKSUM64__ (portable build) plus __EXT_URL64__ / __EXT_CHECKSUM64__ (the
-// bundled capture extension). This script copies the template into companion/dist-choco/,
+// __VERSION__ placeholder and tools/chocolateyinstall.ps1 carries __URL64__ / __CHECKSUM64__
+// (portable build) plus __EXT_URL64__ / __EXT_CHECKSUM64__ (the bundled capture extension).
+// This script copies the template into companion/dist-choco/,
 // substitutes those values, and (optionally) runs `choco pack` to produce the .nupkg.
 //
 // Run with:

@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Chocolatey package** — removed `tools/LICENSE.txt` and `tools/VERIFICATION.txt`; those files are not required for packages that embed no binaries (per Chocolatey moderator feedback).
+
 ### Added
 - **Startup pre-flight diagnostics** — non-blocking self-test on server start: live-probes the AI provider + local enrichment instances (MISP/YETI/OpenCTI `probe()`) + Velociraptor, and reports every other configured provider (VirusTotal, AbuseIPDB, CrowdStrike, Hunting.ch, Shodan, …) as "configured" without any outbound call (OPSEC: no automatic third-party traffic); logs OK/WARN/CRITICAL; red dashboard banner for AI failures; `GET /diagnostics/preflight` (cached 30 s) + `POST` (re-run); user-toggleable disable persisted to `preflight/control.json` via `…/preflight/control` (closes #179).
 - **Automatic state backup / rotation** — the server snapshots all per-case state files before each synthesis and on a 1-hour timer; configurable via `DFIR_STATE_BACKUP_RETAIN` / `_PRE_SYNTH_RETAIN` / `_INTERVAL_MS`; Settings → Diagnostics shows per-case backup list with one-click restore (closes #180).
