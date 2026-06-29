@@ -1,5 +1,4 @@
 import type { OcrWord } from "./ocrRedact.js";
-import { DEFAULT_CONFIDENCE_THRESHOLD } from "./ocrRedact.js";
 
 // Screenshot OCR full-text search (#176). A LOCAL, opt-out index over the text Tesseract
 // reads from each captured screenshot, so an analyst can recall "where did I see 'mimikatz'?"
@@ -40,14 +39,16 @@ export function isOcrSearchEnabled(env: NodeJS.ProcessEnv = process.env): boolea
 }
 
 /**
- * Flatten the words OCR read into one searchable string. Words below the confidence
- * threshold (default 60, same bar the redactor uses) or empty after trimming are dropped,
- * so the index holds legible text rather than OCR noise.
+ * Flatten the words OCR read into one searchable string. By default it keeps EVERYTHING OCR
+ * returned (only empty/whitespace tokens are dropped) — for a search index recall beats
+ * precision: a garbage token like "ww" is harmless (nobody searches for it), but dropping a
+ * REAL low-confidence token loses it forever. Tesseract scores small / dark-theme console text
+ * low even when it read it correctly, so a confidence floor here silently drops exactly the
+ * high-value tokens analysts search for (FQDNs, SIDs, full paths, MITRE ids, Defender-tamper
+ * args). The redaction path keeps its own `DEFAULT_CONFIDENCE_THRESHOLD` separately, where a
+ * false black box IS costly — callers that want filtering can still pass a threshold.
  */
-export function extractOcrText(
-  words: OcrWord[],
-  confidenceThreshold = DEFAULT_CONFIDENCE_THRESHOLD,
-): string {
+export function extractOcrText(words: OcrWord[], confidenceThreshold = 0): string {
   return words
     .filter((w) => w.confidence >= confidenceThreshold)
     .map((w) => w.text.trim())

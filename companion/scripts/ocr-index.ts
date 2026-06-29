@@ -21,7 +21,11 @@ function casesRoot(): string {
 }
 
 async function main(): Promise<void> {
-  const caseId = process.argv[2] ?? "test1";
+  const args = process.argv.slice(2);
+  // --force re-OCRs screenshots already in the index (use after changing the OCR text rules,
+  // e.g. the confidence floor). Without it, only un-indexed screenshots are processed.
+  const force = args.includes("--force");
+  const caseId = args.find((a) => !a.startsWith("--")) ?? "test1";
   if (!isOcrSearchEnabled()) {
     console.log("OCR search is disabled (DFIR_OCR_SEARCH=off) — backfilling anyway by request.");
   }
@@ -43,8 +47,8 @@ async function main(): Promise<void> {
   const index = await store.loadOcrIndex(caseId);
   // Unique screenshot files (duplicates re-use the previous frame's bytes — index once).
   const files = Array.from(new Set(captures.map((c) => c.screenshotFile).filter(Boolean)));
-  const todo = files.filter((f) => !index[f]);
-  console.log(`Case "${caseId}": ${files.length} screenshots, ${todo.length} need OCR.`);
+  const todo = force ? files : files.filter((f) => !index[f]);
+  console.log(`Case "${caseId}": ${files.length} screenshots, ${todo.length} to OCR${force ? " (--force: re-indexing all)" : ""}.`);
 
   const runner = new TesseractOcrRunner();
   let done = 0;
