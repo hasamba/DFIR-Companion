@@ -48,6 +48,26 @@ describe("correlateEvents", () => {
     expect(merged.sources).toEqual(expect.arrayContaining(["THOR", "CSV import"]));
   });
 
+  it("merges a process creation seen by the EDR (ECAR) and the Windows log on host+pid", () => {
+    // Same process creation, two tools, different wording + no shared hash/path — only the pid links them.
+    const ecar = ev({ id: "ec", description: "Process created: powershell.exe -enc … (parent explorer.exe) @ FILE-BO-01",
+      asset: "FILE-BO-01", pid: 5292, processName: "powershell.exe", sources: ["EDR (ECAR)"], timestamp: "2024-05-14T13:29:39.632Z" });
+    const evtx = ev({ id: "wn", description: "Microsoft-Windows-Sysmon Process Create (EID 1) - FILE-BO-01\\nina.kapoor @ FILE-BO-01",
+      asset: "FILE-BO-01", pid: 5292, processName: "powershell.exe", sources: ["Windows Event Log"], timestamp: "2024-05-14T13:29:40.001Z" });
+    const out = correlateEvents([ecar, evtx]);
+    expect(out).toHaveLength(1);
+    expect(out[0].sources).toEqual(expect.arrayContaining(["EDR (ECAR)", "Windows Event Log"]));
+    expect(out[0].pid).toBe(5292);
+  });
+
+  it("does NOT merge same pid on DIFFERENT hosts, or the same pid reused outside the window", () => {
+    const a = ev({ id: "a", description: "create @ A", asset: "HOST-A", pid: 4321, sources: ["EDR (ECAR)"], timestamp: "2024-05-14T13:00:00Z" });
+    const b = ev({ id: "b", description: "create @ B", asset: "HOST-B", pid: 4321, sources: ["Windows Event Log"], timestamp: "2024-05-14T13:00:01Z" });
+    // Same host + pid but 10 minutes apart (pid recycled) — beyond the 120s window.
+    const c = ev({ id: "c", description: "later reuse @ A", asset: "HOST-A", pid: 4321, sources: ["Windows Event Log"], timestamp: "2024-05-14T13:10:00Z" });
+    expect(correlateEvents([a, b, c])).toHaveLength(3);
+  });
+
   it("does NOT treat a URL in the description as a shared file path (#102)", () => {
     // Two different Defender detections seconds apart, each message carrying the same Microsoft
     // fwlink URL. The URL must not be read as a filesystem path and collapse them into one.

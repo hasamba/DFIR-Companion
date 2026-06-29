@@ -270,8 +270,12 @@ from `DFIR_NSRL_DB` (env-managed → the UI connect is read-only) or, when unset
 
 **Cross-source correlation runs in `mergeDelta`** (`correlate.ts`): events describing the
 same artifact collapse into one — by exact dup (time+description, so re-imports don't
-double), shared hash, or same path within a time window. The merged event unions `sources`
-(real tool names via `toolDetect.ts`); 2+ distinct tools = corroboration. Idempotent.
+double), shared hash, same path within a time window, or **same host+pid within a window**
+(a process CREATION seen by both an EDR (ECAR) and the Windows log (4688/Sysmon 1) — matched
+on the SHORT hostname so `FILE-BO-01` lines up with `FILE-BO-01.fqdn`, and on the created-process
+`ForensicEvent.pid` which importers set on creation events and keep in the aggKey so distinct
+executions stay distinct + correlatable; `pidWindowSeconds` default 120). The merged event unions
+`sources` (real tool names via `toolDetect.ts`); 2+ distinct tools = corroboration. Idempotent.
 Just BEFORE correlation, `mergeDelta` runs `clampOutlierYears` (`timeYearClamp.ts`): when one year
 holds ≥90% of dated events, an event on an OUTLIER year (a year-less syslog/CSV line the AI import
 guessed into 2023 / the current year instead of the real collection year) is re-anchored onto the
