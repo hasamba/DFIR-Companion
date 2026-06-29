@@ -200,6 +200,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Velociraptor** | JSON array, JSONL, or artifact map | Sigma/YARA verdict or per-EID |
 | **THOR (Nextron)** | JSON-Lines scan output | THOR alert level |
 | **Suricata / Zeek** | `eve.json`, Zeek JSON logs; telemetry → IOCs only | Alert priority / notice severity |
+| **Snort / Suricata IDS (fast)** | `alert_fast` single-line alert log | Rule **Priority** (1→High / 2→Medium / 3→Low) |
 | **Security Onion** | SOC Alerts/Hunt events (ECS); pushed by the extension or a SOC API export | `event.severity_label` (Suricata/SO label) |
 | **SO-CRATES** | Suricata alerts + YARA file matches (`/api/events`) and Sigma detections (`/api/sigma-alerts`); pushed by the extension or a raw export | Suricata priority / Sigma level / YARA match |
 | **Cyber Triage** | JSONL / JSON / CSV timeline | Cyber Triage item score |
