@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DFIR Companion — Presentation</title>
+<!-- DECK_INJECT: the standalone-HTML export injects `window.__DECK__ = {…}` here so the deck
+     renders offline with no server. In live mode the script below fetches it instead. -->
+<!--DECK_INJECT-->
+<style>
+  :root {
+    --accent: #2d6cdf;
+    --bg: #0e1116;
+    --card: #161b22;
+    --fg: #e6edf3;
+    --muted: #9aa4b2;
+    --line: #2a2f3a;
+    --crit: #ff5a5a; --high: #ff9d3a; --med: #ffd23a; --low: #6aa9ff; --info: #7d8694;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column; min-height: 100vh;
+  }
+  a { color: var(--low); }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 18px;
+    border-bottom: 1px solid var(--line); flex-wrap: wrap;
+  }
+  header .brand { font-weight: 700; color: var(--accent); }
+  header .spacer { flex: 1 1 auto; }
+  header label { color: var(--muted); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
+  select, button, input[type="number"] {
+    background: var(--card); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 10px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  input[type="number"] { width: 56px; cursor: text; }
+  main { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .stage { width: min(1100px, 96vw); }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-top: 5px solid var(--accent);
+    border-radius: 14px; padding: 38px 44px; min-height: 60vh;
+    display: flex; flex-direction: column; box-shadow: 0 8px 40px rgba(0,0,0,.35);
+  }
+  .kicker { color: var(--muted); font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
+  .card h1 { font-size: 40px; margin: 6px 0 18px; line-height: 1.15; }
+  .card h2 { font-size: 30px; margin: 6px 0 16px; line-height: 1.2; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; color: var(--muted); font-size: 15px; margin-bottom: 18px; }
+  .meta b { color: var(--fg); font-weight: 600; }
+  .desc { font-size: 22px; line-height: 1.45; white-space: pre-wrap; }
+  .body { font-size: 20px; line-height: 1.55; white-space: pre-wrap; }
+  .sev { display: inline-block; padding: 3px 12px; border-radius: 999px; font-weight: 700; font-size: 14px; color: #0b0d10; }
+  .sev.Critical { background: var(--crit); } .sev.High { background: var(--high); }
+  .sev.Medium { background: var(--med); } .sev.Low { background: var(--low); color: #0b0d10; }
+  .sev.Info { background: var(--info); color: #fff; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .chip { background: #21262d; border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; font-size: 14px; }
+  .chip.mal { border-color: var(--crit); color: var(--crit); }
+  .chip.sus { border-color: var(--high); color: var(--high); }
+  .section-label { color: var(--muted); font-weight: 700; margin: 18px 0 6px; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; }
+  .counts { display: flex; gap: 28px; margin-top: 24px; flex-wrap: wrap; }
+  .counts .n { font-size: 44px; font-weight: 800; color: var(--accent); }
+  .counts .l { color: var(--muted); font-size: 14px; }
+  .sevbar { display: flex; gap: 14px; margin-top: 20px; flex-wrap: wrap; }
+  .sevbar span { font-size: 14px; }
+  .shot { margin-top: 18px; }
+  .shot img { max-width: 100%; max-height: 34vh; border: 1px solid var(--line); border-radius: 8px; }
+  .shot .cap { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .grow { flex: 1 1 auto; }
+  footer {
+    display: flex; align-items: center; gap: 14px; padding: 10px 18px; border-top: 1px solid var(--line);
+  }
+  footer .progress { flex: 1 1 auto; height: 6px; background: var(--line); border-radius: 999px; overflow: hidden; }
+  footer .progress > i { display: block; height: 100%; background: var(--accent); width: 0%; transition: width .2s; }
+  footer .pos { color: var(--muted); font-size: 13px; min-width: 70px; text-align: center; }
+  .empty { color: var(--muted); text-align: center; font-size: 18px; }
+  .company { color: var(--muted); margin-top: 28px; font-size: 16px; }
+  .subtitle { color: var(--muted); font-size: 22px; margin: -8px 0 10px; }
+  @media (max-width: 640px) {
+    .card { padding: 24px; min-height: 66vh; } .card h1 { font-size: 30px; } .desc { font-size: 19px; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <span class="brand">▶ Presentation</span>
+    <span id="deckName" style="color:var(--muted)"></span>
+    <span class="spacer"></span>
+    <label id="sevWrap">Severity
+      <select id="sevSelect" title="Only show findings/events at or above this severity">
+        <option value="">All</option>
+        <option value="low">Low+</option>
+        <option value="medium">Medium+</option>
+        <option value="high">High+</option>
+        <option value="critical">Critical</option>
+      </select>
+    </label>
+    <label>Auto
+      <input type="checkbox" id="autoChk" title="Auto-advance slides" />
+      <input type="number" id="autoSecs" value="8" min="2" max="120" title="Seconds per slide" />s
+    </label>
+    <button id="exportBtn" title="Download a self-contained HTML slide deck (works offline)">⬇ Standalone HTML</button>
+    <button id="fsBtn" title="Toggle fullscreen (F)">⛶ Fullscreen</button>
+  </header>
+
+  <main>
+    <div class="stage">
+      <div id="card" class="card"><div class="empty">Loading…</div></div>
+    </div>
+  </main>
+
+  <footer>
+    <button id="prevBtn" title="Previous (←)">‹ Prev</button>
+    <div class="progress"><i id="bar"></i></div>
+    <span class="pos" id="pos">– / –</span>
+    <button id="nextBtn" title="Next (→)">Next ›</button>
+  </footer>
+
+<script>
+(function () {
+  "use strict";
+  var SEV = ["Critical", "High", "Medium", "Low", "Info"];
+  var deck = null;
+  var idx = 0;
+  var autoTimer = null;
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  // Case id from the URL path (/cases/<id>/present) — only used in live (non-embedded) mode.
+  function caseIdFromPath() {
+    var m = location.pathname.match(/\/cases\/([^/]+)\/present/);
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+  var caseId = caseIdFromPath();
+  var embedded = !!(window.__DECK__);
+
+  function applyAccent() {
+    var a = deck && deck.branding && deck.branding.accentColor;
+    if (a && /^#[0-9a-fA-F]{6}$/.test(a)) document.documentElement.style.setProperty("--accent", a);
+  }
+
+  function iocChips(iocs) {
+    if (!iocs || !iocs.length) return "";
+    var chips = iocs.map(function (i) {
+      var cls = i.verdict === "malicious" ? " mal" : i.verdict === "suspicious" ? " sus" : "";
+      var v = i.verdict ? " · " + esc(i.verdict) : "";
+      return '<span class="chip' + cls + '">' + esc(i.type) + ": " + esc(i.value) + v + "</span>";
+    }).join("");
+    return '<div class="section-label">Supporting indicators</div><div class="chips">' + chips + "</div>";
+  }
+  function mitreChips(t) {
+    if (!t || !t.length) return "";
+    return '<div class="section-label">ATT&amp;CK</div><div class="chips">' +
+      t.map(function (x) { return '<span class="chip">' + esc(x) + "</span>"; }).join("") + "</div>";
+  }
+  function shot(s) {
+    if (!s) return "";
+    if (embedded) return '<div class="shot"><div class="cap">📎 evidence: ' + esc(s) + " (open online to view)</div></div>";
+    var url = "/cases/" + encodeURIComponent(caseId) + "/evidence/" + encodeURIComponent(s);
+    return '<div class="shot"><img src="' + esc(url) + '" alt="evidence" ' +
+      "onerror=\"this.style.display='none';this.nextElementSibling.textContent='📎 '+" + JSON.stringify(esc(s)) + "\" />" +
+      '<div class="cap">📎 ' + esc(s) + "</div></div>";
+  }
+  function fmtTime(s, e) {
+    if (!s) return "(no timestamp)";
+    return esc(s) + (e && e !== s ? " → " + esc(e) : "");
+  }
+
+  function renderTitle(sl) {
+    var b = sl.branding || {};
+    var c = sl.counts || { findings: 0, events: 0, iocs: 0 };
+    var sc = sl.severityCounts || {};
+    var sevbar = SEV.filter(function (k) { return sc[k]; }).map(function (k) {
+      return '<span><span class="sev ' + k + '">' + k + "</span> " + sc[k] + "</span>";
+    }).join("");
+    return '<div class="kicker">Incident briefing</div>' +
+      "<h1>" + esc(sl.title) + "</h1>" +
+      (b.subtitle ? '<div class="subtitle">' + esc(b.subtitle) + "</div>" : "") +
+      '<div class="counts">' +
+        '<div><div class="n">' + c.findings + '</div><div class="l">findings</div></div>' +
+        '<div><div class="n">' + c.events + '</div><div class="l">timeline events</div></div>' +
+        '<div><div class="n">' + c.iocs + '</div><div class="l">indicators</div></div>' +
+      "</div>" +
+      (sevbar ? '<div class="sevbar">' + sevbar + "</div>" : "") +
+      '<div class="grow"></div>' +
+      (b.companyName ? '<div class="company">' + esc(b.companyName) + "</div>" : "");
+  }
+  function renderSummary(sl) {
+    return '<div class="kicker">Overview</div><h2>' + esc(sl.title) + "</h2>" +
+      '<div class="body">' + esc(sl.body || "") + "</div>";
+  }
+  function renderSection(sl) {
+    return '<div class="grow"></div><div class="kicker">Section</div><h1>' + esc(sl.title) + "</h1>" +
+      (sl.body ? '<div class="meta"><span>' + esc(sl.body) + "</span></div>" : "") +
+      '<div class="grow"></div>';
+  }
+  function renderFinding(sl) {
+    var sev = sl.severity ? '<span class="sev ' + esc(sl.severity) + '">' + esc(sl.severity) + "</span>" : "";
+    var conf = (typeof sl.confidence === "number") ? "<span><b>Confidence:</b> " + esc(sl.confidence) + "%</span>" : "";
+    return '<div class="kicker">Finding</div>' +
+      '<div class="meta">' + sev + conf + "</div>" +
+      "<h2>" + esc(sl.title) + "</h2>" +
+      '<div class="desc">' + esc(sl.description || "") + "</div>" +
+      mitreChips(sl.mitreTechniques) + iocChips(sl.iocs) + shot(sl.screenshot);
+  }
+  function renderEvent(sl) {
+    var sev = sl.severity ? '<span class="sev ' + esc(sl.severity) + '">' + esc(sl.severity) + "</span>" : "";
+    var cnt = sl.count && sl.count > 1 ? "<span><b>×" + esc(sl.count) + "</b> occurrences</span>" : "";
+    var src = sl.sources && sl.sources.length ? "<span><b>Source:</b> " + esc(sl.sources.join(", ")) + "</span>" : "";
+    var asset = sl.asset ? "<span><b>Asset:</b> " + esc(sl.asset) + "</span>" : "";
+    return '<div class="kicker">Timeline event</div>' +
+      '<div class="meta">' + sev + "<span><b>When:</b> " + fmtTime(sl.timestamp, sl.endTimestamp) + "</span>" + asset + src + cnt + "</div>" +
+      '<div class="desc">' + esc(sl.description || "") + "</div>" +
+      mitreChips(sl.mitreTechniques) + iocChips(sl.iocs) + shot(sl.screenshot);
+  }
+
+  function render() {
+    var card = document.getElementById("card");
+    if (!deck || !deck.slides || !deck.slides.length) {
+      card.innerHTML = '<div class="empty">No slides — this case has no findings or timeline events' +
+        " for the selected severity.</div>";
+      document.getElementById("pos").textContent = "0 / 0";
+      document.getElementById("bar").style.width = "0%";
+      return;
+    }
+    if (idx < 0) idx = 0;
+    if (idx >= deck.slides.length) idx = deck.slides.length - 1;
+    var sl = deck.slides[idx];
+    var html;
+    switch (sl.kind) {
+      case "title": html = renderTitle(sl); break;
+      case "summary": html = renderSummary(sl); break;
+      case "section": html = renderSection(sl); break;
+      case "finding": html = renderFinding(sl); break;
+      case "event": html = renderEvent(sl); break;
+      default: html = "<h2>" + esc(sl.title) + "</h2>";
+    }
+    card.innerHTML = html;
+    card.scrollTop = 0;
+    var n = deck.slides.length;
+    document.getElementById("pos").textContent = (idx + 1) + " / " + n;
+    document.getElementById("bar").style.width = ((idx + 1) / n * 100) + "%";
+  }
+
+  function go(d) { idx += d; render(); }
+  function goTo(i) { idx = i; render(); }
+
+  function setDeck(d) {
+    deck = d;
+    applyAccent();
+    document.getElementById("deckName").textContent = deck && deck.caseName ? "— " + deck.caseName : "";
+    idx = 0;
+    render();
+  }
+
+  function load() {
+    if (embedded) { setDeck(window.__DECK__); return; }
+    var sev = document.getElementById("sevSelect").value;
+    var url = "/cases/" + encodeURIComponent(caseId) + "/presentation" + (sev ? "?minSeverity=" + sev : "");
+    document.getElementById("card").innerHTML = '<div class="empty">Loading…</div>';
+    fetch(url).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status + " — is the companion server running?");
+      return r.json();
+    }).then(setDeck).catch(function (e) {
+      document.getElementById("card").innerHTML = '<div class="empty">Failed to load: ' + esc(e.message) + "</div>";
+    });
+  }
+
+  // Auto-advance.
+  function stopAuto() { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } }
+  function startAuto() {
+    stopAuto();
+    var secs = Math.max(2, Number(document.getElementById("autoSecs").value) || 8);
+    autoTimer = setInterval(function () {
+      if (!deck || !deck.slides.length) return;
+      if (idx >= deck.slides.length - 1) { idx = 0; } else { idx++; }
+      render();
+    }, secs * 1000);
+  }
+  function syncAuto() { document.getElementById("autoChk").checked ? startAuto() : stopAuto(); }
+
+  // Controls.
+  document.getElementById("prevBtn").onclick = function () { go(-1); };
+  document.getElementById("nextBtn").onclick = function () { go(1); };
+  document.getElementById("autoChk").onchange = syncAuto;
+  document.getElementById("autoSecs").onchange = function () { if (document.getElementById("autoChk").checked) startAuto(); };
+  document.getElementById("sevSelect").onchange = load;
+  document.getElementById("fsBtn").onclick = function () {
+    if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen();
+  };
+  document.getElementById("exportBtn").onclick = function () {
+    if (embedded) return;
+    var sev = document.getElementById("sevSelect").value;
+    location.href = "/cases/" + encodeURIComponent(caseId) + "/present/export" + (sev ? "?minSeverity=" + sev : "");
+  };
+
+  document.addEventListener("keydown", function (e) {
+    if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+    switch (e.key) {
+      case "ArrowRight": case "PageDown": case " ": e.preventDefault(); go(1); break;
+      case "ArrowLeft": case "PageUp": e.preventDefault(); go(-1); break;
+      case "Home": e.preventDefault(); goTo(0); break;
+      case "End": e.preventDefault(); if (deck) goTo(deck.slides.length - 1); break;
+      case "f": case "F": document.getElementById("fsBtn").click(); break;
+      case "a": case "A":
+        var c = document.getElementById("autoChk"); c.checked = !c.checked; syncAuto(); break;
+    }
+  });
+
+  // In embedded (offline) mode there's no server to fetch a different severity or re-export.
+  if (embedded) {
+    document.getElementById("sevWrap").style.display = "none";
+    document.getElementById("exportBtn").style.display = "none";
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>
