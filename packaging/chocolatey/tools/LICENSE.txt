@@ -1,9 +1,0 @@
-DFIR Companion is licensed under the GNU Affero General Public License v3.0 only
-(SPDX: AGPL-3.0-only).
-
-The full license text is distributed with the source and is available here:
-  https://github.com/hasamba/DFIR-Companion/blob/master/LICENSE
-
-By installing this package you receive the portable build under the same AGPL-3.0-only
-terms. The Chocolatey packaging files in this package are part of the same repository and
-covered by the same license.
