@@ -8,6 +8,7 @@ import {
   DEFAULT_GAP_MIN_MINUTES,
   DEFAULT_GAP_DENSITY_FACTOR,
   DEFAULT_GAP_MAX_FINDINGS,
+  DEFAULT_GAP_OUTLIER_SPAN,
 } from "../../src/analysis/gapDetect.js";
 import { emptyState, type ForensicEvent, type Finding, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
@@ -187,6 +188,34 @@ describe("detectTimelineGaps", () => {
     expect(gaps).toHaveLength(1); // the undated event is ignored; the real 2h+ hole is still found
     expect(gaps[0].complete).toBe(true);
   });
+
+  it("ignores mis-dated stray events (wrong-year) instead of manufacturing a giant gap", () => {
+    // A dense, gap-free body on the real day, plus two strays a year before / two years after (the
+    // signature of an importer guessing the wrong YEAR for a year-less syslog timestamp).
+    const body = series("body", "EventLog", "2024-05-14T12:00:00Z", 60, 40); // 40 events, 39-min span, no internal gap
+    const old = ev("old", "2023-05-14T12:00:00Z", { sources: ["EventLog"] });
+    const future = ev("future", "2026-05-14T12:00:00Z", { sources: ["EventLog"] });
+    const all = [old, ...body, future];
+
+    // With the default outlier guard the strays (~5% of events, far beyond the IQR fence) are dropped
+    // from gap analysis → the dense body has no qualifying gap.
+    expect(detectTimelineGaps(all)).toEqual([]);
+
+    // Disabling the guard reproduces the bug: the strays manufacture enormous false "silence" gaps.
+    const naive = detectTimelineGaps(all, { outlierSpanFactor: 0 });
+    expect(naive.length).toBeGreaterThan(0);
+    expect(naive.some((g) => g.durationSeconds > 300 * 86400)).toBe(true);
+  });
+
+  it("preserves a genuine long gap between two substantial clusters (not treated as outliers)", () => {
+    // 20 + 20 events split by a 3-hour blackout: the minority side is far above the trim fraction, so
+    // the real gap survives the outlier guard.
+    const first = series("a", "EventLog", "2024-05-14T08:00:00Z", 60, 20);
+    const second = series("b", "EventLog", "2024-05-14T11:30:00Z", 60, 20); // ~3h+ gap from first
+    const gaps = detectTimelineGaps([...first, ...second]);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].complete).toBe(true);
+  });
 });
 
 describe("backfillSilenceGapFindings", () => {
@@ -265,11 +294,13 @@ describe("gapEnvOptions", () => {
     delete process.env.DFIR_GAP_DENSITY_FACTOR;
     delete process.env.DFIR_GAP_ACTIVE_HOURS;
     delete process.env.DFIR_GAP_MAX_FINDINGS;
+    delete process.env.DFIR_GAP_OUTLIER_SPAN;
     expect(gapEnvOptions()).toEqual({
       minGapMinutes: DEFAULT_GAP_MIN_MINUTES,
       densityFactor: DEFAULT_GAP_DENSITY_FACTOR,
       activeHours: null,
       maxFindings: DEFAULT_GAP_MAX_FINDINGS,
+      outlierSpanFactor: DEFAULT_GAP_OUTLIER_SPAN,
     });
   });
 
@@ -278,10 +309,12 @@ describe("gapEnvOptions", () => {
     process.env.DFIR_GAP_DENSITY_FACTOR = "0";
     process.env.DFIR_GAP_ACTIVE_HOURS = "9-17";
     process.env.DFIR_GAP_MAX_FINDINGS = "3";
-    expect(gapEnvOptions()).toEqual({ minGapMinutes: 60, densityFactor: 0, activeHours: { start: 9, end: 17 }, maxFindings: 3 });
+    process.env.DFIR_GAP_OUTLIER_SPAN = "8";
+    expect(gapEnvOptions()).toEqual({ minGapMinutes: 60, densityFactor: 0, activeHours: { start: 9, end: 17 }, maxFindings: 3, outlierSpanFactor: 8 });
     delete process.env.DFIR_GAP_MIN_MINUTES;
     delete process.env.DFIR_GAP_DENSITY_FACTOR;
     delete process.env.DFIR_GAP_ACTIVE_HOURS;
     delete process.env.DFIR_GAP_MAX_FINDINGS;
+    delete process.env.DFIR_GAP_OUTLIER_SPAN;
   });
 });

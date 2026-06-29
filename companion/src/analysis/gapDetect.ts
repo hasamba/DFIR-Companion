@@ -59,11 +59,29 @@ export interface GapOptions {
   // them). Guards against a super-timeline case (MFT/registry spanning years) flooding the findings
   // list. Default 5. The worst (longest) complete gaps are kept. Set 0 for no findings.
   maxFindings?: number;
+  // Robustness against MIS-DATED stray events (issue: an importer that guesses the wrong YEAR for a
+  // year-less timestamp — e.g. a Cisco ASA syslog line `May 14 12:00:48` parsed as 2023/2026 instead of
+  // the real 2024 — would otherwise manufacture a giant "729d of silence" gap between the strays and the
+  // real body). Before detection, the timeline's robust "core" time span is measured (the p2.5→p97.5
+  // percentile range, so a handful of strays can't stretch it); any event lying more than
+  // `outlierSpanFactor` × that core span outside the core is dropped FROM GAP ANALYSIS ONLY (it stays in
+  // the timeline). This keys on MAGNITUDE, not count: a real collection gap is a small multiple of the
+  // active span (an overnight/weekend lull, a few hours), while a wrong-year stray is hundreds-to-
+  // thousands× it — so a substantial cluster (≥2.5% of events, hence inside the percentile core) and any
+  // plausibly-real gap survive, but year-scale strays are removed. Default 5. Set 0 to disable.
+  outlierSpanFactor?: number;
 }
 
 export const DEFAULT_GAP_MIN_MINUTES = 30;
 export const DEFAULT_GAP_DENSITY_FACTOR = 4;
 export const DEFAULT_GAP_MAX_FINDINGS = 5;
+export const DEFAULT_GAP_OUTLIER_SPAN = 5;
+// Outlier trimming only applies to a timeline with at least this many dated events (a tiny hand-built
+// timeline has no meaningful percentiles). The core span is the p2.5→p97.5 range: a cluster larger than
+// ~2.5% of events falls inside the core and is never treated as a stray.
+const OUTLIER_MIN_EVENTS = 12;
+const OUTLIER_CORE_LO_Q = 0.025;
+const OUTLIER_CORE_HI_Q = 0.975;
 
 // The shared "this is a lead, not a verdict" disclaimer — rendered on every surface (panel + report).
 export const GAP_CAVEAT =
@@ -98,6 +116,37 @@ function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = sorted.length >> 1;
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// Linear-interpolated quantile of an ASCENDING numeric array (q in [0,1]). Empty ⇒ 0.
+function quantileSorted(sorted: number[], q: number): number {
+  if (sorted.length === 0) return 0;
+  if (sorted.length === 1) return sorted[0];
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
+// Drop MIS-DATED temporal outliers from a time-ascending event list, for gap analysis only. The robust
+// core span is the p2.5→p97.5 range (so strays can't inflate it); any event lying more than `factor` ×
+// that span outside the core is removed — keying on MAGNITUDE so a real (small-multiple) gap survives
+// while a year-scale stray is dropped. Below OUTLIER_MIN_EVENTS, with factor ≤ 0 / a degenerate (zero)
+// core span, or if trimming would leave < 2 events, no trimming happens. Pure. See
+// GapOptions.outlierSpanFactor for the rationale.
+function dropTimeOutliers(dated: readonly ForensicEvent[], factor: number): readonly ForensicEvent[] {
+  const n = dated.length;
+  if (factor <= 0 || n < OUTLIER_MIN_EVENTS) return dated;
+  const starts = dated.map(startMs); // already ascending (dated is time-sorted)
+  const coreLo = quantileSorted(starts, OUTLIER_CORE_LO_Q);
+  const coreHi = quantileSorted(starts, OUTLIER_CORE_HI_Q);
+  const coreSpan = coreHi - coreLo;
+  if (coreSpan <= 0) return dated; // core collapsed to an instant — no meaningful fence
+  const lo = coreLo - factor * coreSpan;
+  const hi = coreHi + factor * coreSpan;
+  const kept = dated.filter((_, i) => starts[i] >= lo && starts[i] <= hi);
+  if (kept.length === n || kept.length < 2) return dated;
+  return kept;
 }
 
 // Render a duration (seconds) as a compact human label: "45m", "2h 15m", "1d 3h".
@@ -149,7 +198,11 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
   const densityFactor = Math.max(0, opts.densityFactor ?? DEFAULT_GAP_DENSITY_FACTOR);
   const activeHours = opts.activeHours ?? null;
 
-  const dated = events.filter((e) => !Number.isNaN(startMs(e))).sort(byEventTime);
+  const datedAll = events.filter((e) => !Number.isNaN(startMs(e))).sort(byEventTime);
+  if (datedAll.length < 2) return [];
+
+  // Drop mis-dated stray events (wrong-year timestamps) so they can't manufacture a giant false gap.
+  const dated = dropTimeOutliers(datedAll, opts.outlierSpanFactor ?? DEFAULT_GAP_OUTLIER_SPAN);
   if (dated.length < 2) return [];
 
   const starts = dated.map(startMs);
@@ -280,6 +333,7 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
 //   DFIR_GAP_DENSITY_FACTOR (default 4) — gap must be ≥ this × the timeline's median cadence to flag
 //   DFIR_GAP_ACTIVE_HOURS   (unset)     — "START-END" UTC hours (e.g. "8-18"); when set, supersedes density
 //   DFIR_GAP_MAX_FINDINGS  (default 5)  — cap on complete-silence gaps that escalate to a finding
+//   DFIR_GAP_OUTLIER_SPAN  (default 5)  — drop mis-dated strays beyond this × the core time span; 0 disables
 export function gapEnvOptions(): GapOptions {
   const minGapMinutes = Number(process.env.DFIR_GAP_MIN_MINUTES) || DEFAULT_GAP_MIN_MINUTES;
   const num = (raw: string | undefined, dflt: number): number =>
@@ -289,6 +343,7 @@ export function gapEnvOptions(): GapOptions {
     densityFactor: num(process.env.DFIR_GAP_DENSITY_FACTOR, DEFAULT_GAP_DENSITY_FACTOR),
     activeHours: parseActiveHours(process.env.DFIR_GAP_ACTIVE_HOURS),
     maxFindings: num(process.env.DFIR_GAP_MAX_FINDINGS, DEFAULT_GAP_MAX_FINDINGS),
+    outlierSpanFactor: num(process.env.DFIR_GAP_OUTLIER_SPAN, DEFAULT_GAP_OUTLIER_SPAN),
   };
 }
 
