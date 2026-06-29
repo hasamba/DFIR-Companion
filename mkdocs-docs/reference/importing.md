@@ -26,7 +26,7 @@ Before importing, you can set a **minimum severity** filter. Events below the fl
 | **Cloud IR** | AWS CloudTrail JSON, M365 Unified Audit Log, Entra ID sign-in/audit logs, GCP Cloud Audit Logs, Azure Activity Log |
 | **Malware analysis** | CAPEv2 report.json, CrowdStrike Falcon Sandbox summary JSON, sandbox report arrays |
 | **Super-timeline** | Plaso/log2timeline psort CSV (dynamic and l2tcsv) — files over 200 MB are streamed line-by-line automatically; filter your `psort` output first to reduce size |
-| **Linux** | auditd logs (raw/ausearch/aureport), journald JSON (`journalctl -o json`) |
+| **Linux** | shell history (`.bash_history` / `.zsh_history`, with or without timestamps), auditd logs (raw/ausearch/aureport), journald JSON (`journalctl -o json`) |
 | **Container/syscall** | Falco alert JSON, sysdig JSON |
 | **Case management** | TheHive 5 case/alert/observable export |
 | **Email** | .eml (full fidelity), .msg (Outlook OLE, best-effort) |

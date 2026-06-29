@@ -2527,6 +2527,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "journald": return pipeline.importJournald(caseId, text, base);
       case "sysdig": return pipeline.importSysdig(caseId, text, base);
       case "wazuh": return pipeline.importWazuh(caseId, text, base);
+      case "bashhistory": return pipeline.importBashHistory(caseId, text, base);
       case "csv": return pipeline.analyzeCsv(caseId, text, base);
       case "log": return pipeline.analyzeLog(caseId, text, base);
       default: return Promise.reject(new Error(`unhandled import kind: ${kind as string}`));

@@ -12,9 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Timeline host de-duplication** — when the affected-host chip (🖥) is shown on a timeline event, the redundant trailing `@ <host>` that importers append to the description is now stripped, so the hostname isn't shown twice.
 - **Chocolatey package** — removed `tools/LICENSE.txt` and `tools/VERIFICATION.txt`; those files are not required for packages that embed no binaries (per Chocolatey moderator feedback).
 
 ### Added
+- **Timeline row display toggles** — Settings → General now has a *Timeline row display* control to choose which sub-elements appear in each forensic-timeline event row (action icons / tag pills / badges / host chip / MITRE / related findings / evidence links); the timestamp and message are always shown. Per-browser, applies immediately, no server round-trip.
+- **Linux shell history import** — `.bash_history` / `.zsh_history` (and sh/ash/ksh/fish) are now a recognized artifact: one forensic event per command at the artifact's own time (bash `HISTTIMEFORMAT` `#epoch` lines + zsh extended history), the account derived from the filename, Info by default with a conservative bump on attacker tradecraft (reverse shells, download-and-execute, credential access, log/history tampering, lateral SSH) and IP/URL/domain IOC extraction. No AI, deterministic.
 - **Windows Event Log XML import** — the Import button now ingests event logs saved as XML (Event Viewer "Save As XML", `wevtutil qe /f:xml`, `Get-WinEvent … ToXml()`); the regular `<Events><Event>` envelope is parsed deterministically and run through the same per-EID Windows/Sysmon mapping as the SIEM/EVTX-JSON paths (derived severity, MITRE, IOC/asset extraction, aggregation). No AI, dependency-free parser.
 - **Screenshot OCR full-text search** — captured screenshots are OCR'd locally (Tesseract, in the background after capture) into a per-case index, so an analyst can full-text search the text seen in consoles (a hostname, "mimikatz", a hash, an error) and jump straight to the screenshot. Filter-bar search box → `GET /cases/:id/ocr-search`; backfill older captures with `npm run ocr-index -- <case>`; opt out with `DFIR_OCR_SEARCH=off`. Local-only, no AI (closes #176).
 - **Presentation / timeline-replay mode** — a read-only, step-through slide deck (cover → summary/narrative → key findings worst-first → timeline events one at a time) for handoff briefings and executive walkthroughs. Big readable cards (timestamp, severity, source, description, asset, supporting IOCs with verdicts, evidence screenshot); keyboard nav (←/→/space/Home/End), auto-advance, fullscreen, severity filter. Inherits the case's report-template branding; export a self-contained offline HTML deck. `/cases/:id/present`, `GET /cases/:id/presentation`, `GET /cases/:id/present/export`; dashboard **▶ Present** button + Export → Presentation deck (closes #177).
@@ -32,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Demo case** — added a realistic DC01 AD-enumeration burst (May 16 09:00, between the Mimikatz dump and the log-clearing) so the new Timeline Anomalies panel shows a Critical event-rate spike out of the box (part of #175).
 
 ### Fixed
+- **IOC "Flagged only" / timeline "Starred" filters collapsed their section** — clicking these in-header filter toggles also bubbled to the section's collapse-on-`h2`-click handler, hiding the list they had just filtered (symptom: "1 flagged" in the title but an empty list); the collapse handler now ignores clicks on interactive header controls.
+- **AI status badge always visible** — in the tight (icons-only) toolbar the AI status badge was hidden, yet "(see AI status)" messages pointed at it; it now stays visible as a compact colored pill (grey off/unknown, green idle, yellow analyzing, red error) with the full text on hover.
 - **Import into a non-existent case** — the `import` + `import-file` routes now 404 a missing case (parity with `/captures`/`/state`) instead of orphaning the bytes; dashboard shows "create the case first".
 
 ## [0.27.0] - 2026-06-24

@@ -12,12 +12,13 @@ import { parseCsv } from "./csvImport.js";
 import { looksLikeJournald } from "./journaldImport.js";
 import { looksLikeSysdig } from "./sysdigImport.js";
 import { looksLikeWinEventXml } from "./evtxXmlImport.js";
+import { looksLikeBashHistory } from "./bashHistoryImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
 
 export type ImportKind =
   | "thor" | "siem" | "evtxxml" | "chainsaw" | "hayabusa" | "velociraptor" | "securityonion" | "socrates" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
-  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "csv" | "log" | "unknown";
+  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -421,6 +422,11 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // Linux auditd records (line-oriented `type=… msg=audit(…)`) — checked before the email/CSV/log
   // fallback; the audit-record shape is unique enough to claim directly.
   if (isAuditd(t)) return "auditd";
+
+  // Linux/Unix shell history (.bash_history / .zsh_history / …). Recognized by the history
+  // filename or the bash `#<epoch>` / zsh extended-history content signature — checked before the
+  // generic log fallback, which an un-timestamped command list would otherwise land in.
+  if (looksLikeBashHistory(filename, t)) return "bashhistory";
 
   // Email artifact (.eml RFC 822 header block, or a best-effort .msg) — checked before the
   // CSV/log fallback so a header-block email isn't mistaken for a line-oriented log.
