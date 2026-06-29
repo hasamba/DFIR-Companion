@@ -12,7 +12,7 @@ import { seedDemoCase, DEMO_CASE_ID_DEFAULT } from "../src/analysis/seedDemoCase
 
 // Load .env so DFIR_CASES_ROOT matches the server — otherwise the demo lands in companion/cases
 // while the server reads from the configured root, and the dashboard shows no case.
-loadDotenv();
+loadDotenv({ quiet: true });
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);

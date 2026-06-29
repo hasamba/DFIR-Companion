@@ -2,6 +2,7 @@ import { mkdir, writeFile, appendFile, readFile, stat, readdir } from "node:fs/p
 import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
+import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { atomicWrite } from "./atomicWrite.js";
 
 export interface CreateCaseInput {
@@ -43,6 +44,11 @@ export class CaseStore {
   }
   importsLogPath(caseId: string): string {
     return join(this.metadataDir(caseId), "imports.jsonl");
+  }
+  // Screenshot OCR full-text search index (#176). A sidecar — NOT captures.jsonl, which is
+  // append-only — keyed by screenshotFile so a re-OCR replaces a row instead of duplicating it.
+  ocrIndexPath(caseId: string): string {
+    return join(this.metadataDir(caseId), "ocr.json");
   }
   caseMetaPath(caseId: string): string {
     return join(this.caseDir(caseId), "case.json");
@@ -170,5 +176,27 @@ export class CaseStore {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return 1;
       throw err;
     }
+  }
+
+  // Load the case's OCR search index (#176), or {} when it doesn't exist yet / is unreadable.
+  // A corrupt index is non-fatal — it's a derived cache, rebuildable via `npm run ocr-index`.
+  async loadOcrIndex(caseId: string): Promise<OcrIndex> {
+    try {
+      const parsed = JSON.parse(await readFile(this.ocrIndexPath(caseId), "utf8"));
+      return parsed && typeof parsed === "object" ? (parsed as OcrIndex) : {};
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+      return {};
+    }
+  }
+
+  // Merge one OCR entry into the index by screenshotFile (immutable update) and write it
+  // atomically — the metadata/ dir may live in a Dropbox/OneDrive-synced cases/ root, so the
+  // rename can hit a transient lock (see atomicWrite.ts).
+  async putOcrEntry(caseId: string, entry: OcrIndexEntry): Promise<void> {
+    await mkdir(this.metadataDir(caseId), { recursive: true });
+    const index = await this.loadOcrIndex(caseId);
+    const updated: OcrIndex = { ...index, [entry.screenshotFile]: entry };
+    await atomicWrite(this.ocrIndexPath(caseId), JSON.stringify(updated, null, 2));
   }
 }
