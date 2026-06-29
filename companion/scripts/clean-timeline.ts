@@ -5,7 +5,7 @@
 //   npm run clean-timeline -- <caseId>            preview what would be removed
 //   npm run clean-timeline -- <caseId> --apply    actually remove them
 import { config as loadDotenv } from "dotenv";
-loadDotenv();
+loadDotenv({ quiet: true });
 
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

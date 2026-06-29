@@ -8,7 +8,7 @@
 //   npm run notion:push -- <caseId> --new [--database <id>]   # create a new page (database row)
 //   npm run notion:push -- <caseId> --new [--parent <id>]     # create a new page under a parent
 import { config as loadDotenv } from "dotenv";
-loadDotenv();
+loadDotenv({ quiet: true });
 
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

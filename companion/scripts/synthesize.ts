@@ -6,7 +6,7 @@
 //   npm run synthesize -- <caseId> --model openai/gpt-4o
 //   npm run synthesize -- <caseId> --provider gemini --model gemini-1.5-pro --key <k>
 import { config as loadDotenv } from "dotenv";
-loadDotenv();
+loadDotenv({ quiet: true });
 
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

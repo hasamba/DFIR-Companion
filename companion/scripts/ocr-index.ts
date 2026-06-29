@@ -4,7 +4,7 @@
 // themselves automatically; the server queues a burst rather than dropping it).
 //   Usage:  npm run ocr-index -- <caseId>   (default: test1)
 import { config as loadDotenv } from "dotenv";
-loadDotenv();
+loadDotenv({ quiet: true });
 
 import { readFile } from "node:fs/promises";
 import { join, isAbsolute, resolve } from "node:path";
