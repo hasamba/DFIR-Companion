@@ -668,6 +668,37 @@ export function genericIocs(pairs: [string, string][], iocSink: Map<string, Siem
   }
 }
 
+// Scan a record's free-text human message for embedded indicators that live INSIDE the message
+// rather than in a dedicated structured field — e.g. an SSH auth line
+// "Failed password for svc_mgmt from 10.44.20.20 port 52310 on PROXY-BO-01". genericIocs only reads
+// IP-/hash-/url-NAMED keys, so without this an indicator that only appears in the message text lands
+// in the timeline (which renders the description) but never becomes an IOC. Internal RFC1918 IPs are
+// kept (an internal SSH source is investigative); the `.local` mDNS suffix is skipped so every event's
+// AD hostname doesn't flood the IOC list.
+const TEXT_URL_RE = /\bhttps?:\/\/[^\s'"|;>]+/gi;
+const TEXT_IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
+const TEXT_HASH_RE = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
+const TEXT_DOMAIN_RE = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b/gi;
+// Internal-only zones — an AD/mDNS hostname is an asset, not an indicator; don't flood the IOC list.
+const TEXT_DOMAIN_SKIP_RE = /\.(?:local|localdomain|internal|lan|home|corp|arpa)$/i;
+// A "domain" ending in a common file extension is really a filename (evil.exe, payload.bin, report.json)
+// — keep it out of the domain IOCs (the URL/path importers already capture files where relevant).
+const TEXT_FILE_EXT_RE = /\.(?:exe|dll|sys|ps1|bat|cmd|vbs|js|jar|sh|bin|conf|log|txt|json|xml|yml|yaml|cfg|ini|py|pl|so|gz|tar|zip|7z|rar|tmp|bak|dat|pid|sock|key|pem|crt|doc|docx|xls|xlsx|pdf|png|jpg|gif)$/i;
+
+export function textIocs(text: string, sink: Map<string, SiemIoc>): void {
+  if (!text) return;
+  for (const m of text.match(TEXT_URL_RE) ?? []) addIoc(sink, "url", m.replace(/[).,;]+$/, "").slice(0, 300));
+  for (const m of text.match(TEXT_HASH_RE) ?? []) addIoc(sink, "hash", m.toLowerCase());
+  for (const m of text.match(TEXT_IPV4_RE) ?? []) { const ip = cleanIp(m); if (ip) addIoc(sink, "ip", ip); }
+  for (const m of text.matchAll(TEXT_DOMAIN_RE)) {
+    const d = m[0].toLowerCase();
+    const after = text[(m.index ?? 0) + m[0].length] ?? "";
+    if (after === "@") continue;                          // local-part of user@host, not a domain
+    if (IPV4.test(d) || TEXT_DOMAIN_SKIP_RE.test(d) || TEXT_FILE_EXT_RE.test(d)) continue;
+    addIoc(sink, "domain", d);
+  }
+}
+
 // Document/transport metadata that carries no investigative signal — excluded from the fallback
 // field dump so the description leads with real content (e.g. Elasticsearch hit metadata).
 const META_KEYS = new Set([
@@ -694,6 +725,7 @@ export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>
   genericIocs(pairs, iocSink);
 
   const base = msg ? oneLine(msg) : summarizePairs(pairs);
+  textIocs(base, iocSink);   // scrape indicators embedded in the free-text message (not in a named field)
   let description = `${vendor ?? "SIEM event"}: ${base}`.slice(0, 600);
   if (host && !description.toLowerCase().includes(host.toLowerCase())) description = `${description} @ ${host}`.slice(0, 600);
 
