@@ -156,7 +156,7 @@ Standard DFIR questions auto-answered from the synthesized case
 - **IOCs, MITRE coverage, attacker-path narrative** — cross-source corroboration badges + kill chain
 - **Attack phases** — timeline grouped into activity bursts by time gap, labeled by dominant tactic (deterministic, no AI)
 - **Beacon/C2 candidates** — outbound channels with regular inter-arrival intervals (a hunting lead, not proof)
-- **Timeline anomalies** — per-asset event-rate spikes (assets whose bucket count exceeds N× the median across all assets); ranked Critical/High/Medium, linked to timeline events (deterministic, no AI)
+- **Timeline anomalies** — per-asset event-rate spikes, two baselines: **peer** (an asset far busier than other assets in the same bucket) and **self** (an asset bursting above its own typical rate — catches a normally-quiet host that bursts, which broad telemetry can't mask); ranked Critical/High/Medium, linked to timeline events (deterministic, no AI)
 - **Log gap analysis** — suspicious silent periods in the timeline, flagged by density + working-hours rules
 - **Gap hypotheses & shadow artifacts** — AI-proposed attacker actions during silent windows + Velociraptor collections to reconstruct missing time
 - **Memory-forensics "Next-Step"** — on Volatility 3/Rekall import, spot anomalies (mis-parented procs, injected memory, encoded commands) and propose the next analysis step

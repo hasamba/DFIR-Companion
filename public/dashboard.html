@@ -2964,7 +2964,7 @@
     </section>
 
     <section id="sec-beacons" style="grid-column: 1 / -1"><h2>Beacon Candidates<span class="ev-sub">periodic outbound channels — too regular to be human traffic (derived, no AI); a hunting lead, not a verdict</span></h2><div id="beacons">—</div></section>
-    <section id="sec-anomalies" style="grid-column: 1 / -1"><h2>Timeline Anomalies<span class="ev-sub">assets whose event rate in a time bucket spikes above the per-bucket median of all assets (derived, no AI); a triage lead, not a verdict</span></h2><div id="anomalies">—</div></section>
+    <section id="sec-anomalies" style="grid-column: 1 / -1"><h2>Timeline Anomalies<span class="ev-sub">assets whose event rate in a time bucket spikes — vs other assets (peer) or vs their own baseline (self) (derived, no AI); a triage lead, not a verdict</span></h2><div id="anomalies">—</div></section>
     <section id="sec-geomap" style="grid-column: 1 / -1">
       <h2>🌍 Geographic Map<span class="ev-sub">imported IPs geolocated from GeoIP enrichment — markers colored by severity (derived; OpenStreetMap tiles load on demand when you open the map)</span></h2>
       <div id="geoStats" class="geo-stats">—</div>
@@ -3271,7 +3271,11 @@
     </section>
     <section id="sec-hypotheses" style="grid-column: 1 / -1" class="collapsed">
       <h2>Hypotheses<span class="ev-sub" id="hypBadge"></span></h2>
-      <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Testable explanations for the observed activity — track each from <em>open</em> to <em>supported</em> / <em>refuted</em> / <em>unknown</em>. Auto-generated on synthesis (badged <span class="hyp-src synthesis">auto</span>) and analyst-authored; both survive synthesis and are never wiped. A hypothesis is a lead to test, not a verdict.</p>
+      <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Testable explanations for the observed activity — track each from <em>open</em> to <em>supported</em> / <em>refuted</em> / <em>unknown</em>. Auto-generated whenever synthesis runs (after each import; badged <span class="hyp-src synthesis">auto</span>) and analyst-authored; both survive synthesis and are never wiped. A hypothesis is a lead to test, not a verdict.</p>
+      <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px">
+        <button id="hypGenerateBtn" title="Run a full synthesis now (forced) — regenerates the auto hypotheses from the current timeline. Your edited/authored hypotheses are preserved.">✨ Generate</button>
+        <span id="hypGenMsg" class="manual-msg"></span>
+      </div>
       <div id="hypList">—</div>
       <div class="hyp-add-form">
         <input id="hypTitle" placeholder="Hypothesis (a testable claim, e.g. 'Initial access was phishing')" />
@@ -4471,7 +4475,7 @@
         const counts = HYP_STATUS.map(([v, l]) => { const n = hypotheses.filter(h => h.status === v).length; return n ? `${n} ${v}` : null; }).filter(Boolean);
         badge.textContent = hypotheses.length ? " — " + counts.join(" · ") : "";
       }
-      if (!hypotheses.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No hypotheses yet — run synthesis to auto-generate, or add one below.</div>"; return; }
+      if (!hypotheses.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No hypotheses yet — they're auto-generated whenever synthesis runs (after each import). Click <strong>✨ Generate</strong> above to run synthesis now, or add one below.</div>"; return; }
       let html = "";
       for (const [v, label] of HYP_STATUS) {
         const group = hypotheses.filter(h => h.status === v);
@@ -4535,6 +4539,30 @@
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
         .then(() => { document.getElementById("hypTitle").value = ""; document.getElementById("hypOutcome").value = ""; msg.textContent = ""; loadHypotheses(caseId); })
         .catch(e => { msg.textContent = "failed: " + e.message + " — restart the companion server if this 404s"; });
+    };
+
+    // On-demand hypothesis generation (#140): hypotheses are a byproduct of synthesis, so this just
+    // runs a forced synthesis (same endpoint/force as the toolbar Synthesize button) and reloads the
+    // panel. Analyst-touched/authored hypotheses are frozen server-side; only pristine auto ones refresh.
+    document.getElementById("hypGenerateBtn").onclick = function() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("hypGenMsg");
+      const btn = document.getElementById("hypGenerateBtn");
+      if (!caseId) { msg.textContent = "open a case first"; return; }
+      btn.disabled = true;
+      msg.textContent = "synthesizing…";
+      fetch(`/cases/${caseId}/synthesize`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(r => { if (r.status === 423) return r.json().then(p => { throw Object.assign(new Error(p.error || "Case is closed"), { locked: true }); }); if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(p => {
+          if (p.error) { msg.textContent = "failed: " + p.error; return; }
+          msg.textContent = "";
+          loadHypotheses(caseId);
+          // refresh the rest of the case in case the WS push was missed
+          fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
+          loadSynthMeta(caseId);
+        })
+        .catch(e => { msg.textContent = "failed: " + e.message + " — restart the companion server if this 404s"; })
+        .finally(() => { btn.disabled = false; });
     };
 
     // Promote a notebook hypothesis entry into a tracked hypothesis (the notebook→hypothesis bridge).
@@ -7466,33 +7494,39 @@
       if (!el) return;
       const d = anomaliesData;
       if (!d) { el.innerHTML = "<span style='color:var(--c-9aa4b2)'>—</span>"; return; }
-      if (d.assetCount < 2) {
-        el.innerHTML = "<span style='color:var(--c-9aa4b2)'>Not enough assets in the timeline to compute a baseline (need ≥ 2).</span>";
-        return;
-      }
       if (!d.anomalies || !d.anomalies.length) {
-        el.innerHTML = `<span style='color:var(--c-9aa4b2)'>No asset-rate spikes detected (bucket ${esc(String(d.bucketMinutes))} min, threshold ${esc(String(d.spikeFactor))}×).</span>`;
+        const sf = esc(String(d.spikeFactor)), self = esc(String(d.selfFactor != null ? d.selfFactor : d.spikeFactor));
+        el.innerHTML = d.assetCount < 2
+          ? `<span style='color:var(--c-9aa4b2)'>No event-rate spikes detected (only ${esc(String(d.assetCount))} asset; bucket ${esc(String(d.bucketMinutes))} min, peer ${sf}× / self ${self}×).</span>`
+          : `<span style='color:var(--c-9aa4b2)'>No event-rate spikes detected (bucket ${esc(String(d.bucketMinutes))} min, peer ${sf}× / self ${self}×).</span>`;
         return;
       }
+      const TYPE_TIP = { peer: "busier than other assets in the same bucket", self: "bursting above this asset's own typical rate" };
       const rows = d.anomalies.map(a => {
         const sevColor = KC_SEV_COLOR[a.severity] || "var(--c-2a2f3a)";
         const window = `${esc(a.bucketStart || "")} → ${esc(a.bucketEnd || "")}`;
+        const methods = Array.isArray(a.methods) && a.methods.length ? a.methods : [a.kind || "peer"];
+        const typeTip = methods.map(m => TYPE_TIP[m] || m).join("; ");
+        const typeCell = methods.join(" + ");
+        const baseTip = (a.kind === "self") ? "this asset's own median events per bucket" : "median events across all assets in this bucket";
         const evLink = a.eventIds && a.eventIds.length
           ? `<a href="#" class="anomaly-events" data-evids="${escAttr(a.eventIds.join(","))}" data-label="${escAttr((a.asset || "") + " · " + (a.bucketStart || ""))}" style="font-size:11px;color:var(--c-6aa9ff);margin-left:6px" title="Filter the forensic timeline to exactly these ${a.eventIds.length} events">view ${a.eventIds.length} event${a.eventIds.length !== 1 ? "s" : ""}</a>`
           : "";
         return `<tr>` +
           `<td><span class="sev-${esc(a.severity)}" style="color:${sevColor};font-weight:bold">${esc(a.severity)}</span></td>` +
           `<td><strong>${esc(a.asset)}</strong>${evLink}</td>` +
+          `<td title="${escAttr(typeTip)}">${esc(typeCell)}</td>` +
           `<td style="color:var(--c-9aa4b2);font-size:11px">${window}</td>` +
           `<td title="events in this bucket for this asset">${esc(String(a.eventCount))}</td>` +
-          `<td title="median count across all assets in this bucket">${esc(String(a.medianCount))}</td>` +
-          `<td title="eventCount ÷ median"><strong>${esc(String(a.ratio))}×</strong></td>` +
+          `<td title="${escAttr(baseTip)}">${esc(String(a.medianCount))}</td>` +
+          `<td title="eventCount ÷ baseline"><strong>${esc(String(a.ratio))}×</strong></td>` +
           `</tr>`;
       }).join("");
+      const self = esc(String(d.selfFactor != null ? d.selfFactor : d.spikeFactor));
       el.innerHTML =
-        `<div style="color:var(--c-9aa4b2);font-size:11px;margin-bottom:6px">An event-rate spike is a triage lead — a host flooding logs can be an attacker running recon, ransomware encrypting, or a noisy EDR rule. Verify each anomaly against the raw timeline. Suppress false-positive events with the <em>false-positive</em> tag to exclude them from the baseline. Bucket: ${esc(String(d.bucketMinutes))} min · threshold: ${esc(String(d.spikeFactor))}×.</div>` +
+        `<div style="color:var(--c-9aa4b2);font-size:11px;margin-bottom:6px">An event-rate spike is a triage lead — a host flooding logs can be an attacker running recon, ransomware encrypting, or a noisy EDR rule. <strong>peer</strong> = busier than other assets this bucket; <strong>self</strong> = bursting above its own normal rate. Verify each against the raw timeline; suppress noise with the <em>false-positive</em> tag to drop it from the baseline. Bucket: ${esc(String(d.bucketMinutes))} min · peer ${esc(String(d.spikeFactor))}× / self ${self}×.</div>` +
         `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
-        `<th>Severity</th><th>Asset</th><th>Bucket</th><th>Events</th><th>Median</th><th>Ratio</th>` +
+        `<th>Severity</th><th>Asset</th><th title="peer = vs other assets this bucket; self = vs this asset's own baseline">Type</th><th>Bucket</th><th>Events</th><th>Baseline</th><th>Ratio</th>` +
         `</tr></thead><tbody>${rows}</tbody></table></div>`;
     }
 
