@@ -447,6 +447,25 @@ Advanced Hunting export), alongside an analyst-facing `README.md`.
 run. User regexes are length-bounded (ReDoS guard) and the `description` template engine is
 helper-free (no injection).
 
+## Evidence drop folder (auto-import inbox)
+
+Every case has a `cases/<caseId>/drop/` folder (created when the case is created). Copy any artifact
+into it — at any depth, subfolders are scanned recursively — and the server auto-detects and imports
+it via the **same chain as the dashboard Import button** (`detectImportKind` → persist evidence →
+import → import-meta diff → IOC-whitelist/NSRL auto-legitimate → re-synthesize). Dropped images
+(`.png/.jpg/...`) are ingested as screenshot evidence through the capture + vision pipeline.
+
+A background poller sweeps each case's drop folder (default every 10 s). A file is imported only once
+its size + modified-time are unchanged across two consecutive sweeps, so a file still being copied (or
+mid-Dropbox/OneDrive-sync) isn't read half-written. After processing, the file is moved to
+`drop/_processed/` (success) or `drop/_failed/` (error), preserving its relative subpath — those two
+subfolders and the `README.txt` are ignored by the scanner, so moving a file out *is* the dedup.
+
+Results surface in the dashboard **📥 Drop** banner (`GET /cases/:id/drop-status`, broadcast live over
+the WebSocket), and any sweep with failures also fires a notification to your configured
+Slack/Teams/email channel. Closed cases are skipped. Tune with `DFIR_DROP_ENABLED` /
+`DFIR_DROP_POLL_S` / `DFIR_DROP_MAX_BYTES` (see `.env.example`).
+
 ## Case folder layout
 
     cases/<caseId>/
@@ -454,6 +473,10 @@ helper-free (no injection).
       screenshots/000001_<ts>_<tab-title>.webp   evidence (raw screenshots; title is slugified — OS-reserved chars stripped, capped at 60 chars; falls back to 000001_<ts>.webp when the title has no safe characters)
       imports/0001_<name>.csv             evidence (raw uploaded CSV / log / THOR / SIEM-EDR JSON result exports)
       imports/0002_<name>.log             evidence (raw uploaded log files — firewall, syslog, sshd, IIS/Apache/nginx, app logs)
+      drop/                               evidence drop folder (auto-import inbox; created on case creation)
+        _processed/                       files moved here after a successful auto-import (subpath preserved)
+        _failed/                          files moved here when auto-import fails (subpath preserved)
+        README.txt                        usage hint (ignored by the scanner)
       metadata/captures.jsonl             append-only audit trail
       metadata/ocr.json                   screenshot OCR full-text search index (#176; keyed by screenshot filename; rebuildable via `npm run ocr-index`)
       metadata/imports.jsonl              append-only import audit trail (CSV + log + THOR + SIEM/EDR + Chainsaw/EVTX + Hayabusa + Velociraptor + Suricata/Zeek + Security Onion + KAPE/EZ + Cyber Triage + M365/Entra + AWS CloudTrail + GCP/Azure + Plaso + Sandbox + Memory + Email + auditd + journald + sysdig/Falco + Wazuh uploads share the same sequence)
@@ -461,6 +484,7 @@ helper-free (no injection).
       state/
         investigation.json                accumulating findings/timeline/forensic events
         pending_analysis.json             written if an analysis window fails (auto-cleared on success)
+        drop-status.json                  last drop-folder sweep summary (imported / failed files) for the 📥 Drop banner
       reports/                            written by POST /cases/:id/report
         report.md                         Executive Summary, Attacker Path, Forensic Timeline,
                                           Findings, Investigation Log, MITRE ATT&CK

@@ -174,6 +174,24 @@ N ago / +N new events" and "+N new IOCs" banners + per-row `NEW` highlights abov
 analog of `synth-meta.json`) — this is at the route level, so the per-format `import-*` routes and script imports
 don't record it.
 
+**Evidence drop folder (auto-import inbox).** Every case has a `cases/<id>/drop/` folder (created in the
+`POST /cases` route via `ensureDropFolders`, and re-ensured each sweep). A SINGLE global self-rescheduling
+poller in the `createApp` closure (`pollDropFolders`/`scanCaseDrops`, mirrors `resumeVeloMonitors` — `.unref()`,
+per-case scanning guard) sweeps each non-closed case's `drop/` recursively. The pure decision core is
+`analysis/dropScan.ts` (`selectReadyFiles` — a file imports only once its size+mtime are stable across two
+sweeps, so a half-copied/mid-sync file isn't read; `classifyDropFile` image-vs-artifact; `shouldIgnoreDropFile`
+skips the reserved `_processed/`/`_failed/` subtrees + README + OS junk). Images → `ingestCapture` (transcoded to
+webp via sharp, since `imageLoader` sends `image/webp`) + the same capture/flush trigger as `POST /captures`;
+everything else → `resolveImportKind` → the SHARED **`ingestStreamed`** chain (the Import-button path: persist →
+`dispatchImport` → import-meta diff → whitelist/NSRL → re-synthesize). On success the file moves to
+`drop/_processed/<relpath>`, on failure to `drop/_failed/<relpath>` (moving out of the watched area IS the dedup —
+no manifest). Per-sweep result → `DropStatusStore` (`state/drop-status.json`, the drop analog of import-meta;
+**NOT in `SNAPSHOT_STATE_FILES`** — transient/machine) → `onDropStatus` WS-broadcast `drop_status_changed` →
+dashboard 📥 Drop banner (`GET /cases/:id/drop-status`); a sweep with failures also `dispatchNotify`s a milestone.
+The watcher is ARMED only when `options.dropStatusStore` is wired (startServer) so createApp-only unit tests never
+start a filesystem poller; gated `DFIR_DROP_ENABLED` (default on) / `DFIR_DROP_POLL_S` / `DFIR_DROP_MAX_BYTES`.
+Server-only (no `scripts/*` wiring).
+
 **Custom declarative importers (the external plugin layer).** Analysts can teach the Companion a new file format
 WITHOUT code by dropping a JSON **`ImporterSpec`** (`analysis/importerSpec.ts` — Zod schema + `BUILTIN_KINDS` +
 `EXAMPLE_IMPORTER_SPEC`) into a folder beside `cases/`. It's **pure data, never executed**: `match` (format +
