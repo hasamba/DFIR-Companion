@@ -3,6 +3,7 @@ import type { InvestigationState, Finding, IOC, Technique, ForensicEvent } from 
 import { byEventTime } from "./forensicSort.js";
 import { isAnalystWorkLog } from "./workLogFilter.js";
 import { correlateEvents } from "./correlate.js";
+import { clampOutlierYears } from "./timeYearClamp.js";
 import { toUtcIso } from "./timeUtc.js";
 
 export interface WindowContext {
@@ -154,6 +155,7 @@ export function mergeDelta(
       if (incoming.sources?.length) existing.sources = uniq([...(existing.sources ?? []), ...incoming.sources]);
       if (incoming.processName) existing.processName = incoming.processName;
       if (incoming.parentName) existing.parentName = incoming.parentName;
+      if (incoming.pid !== undefined) existing.pid = incoming.pid;
       if (incoming.action) existing.action = incoming.action;
       if (incoming.srcIp) existing.srcIp = incoming.srcIp;
       if (incoming.dstIp) existing.dstIp = incoming.dstIp;
@@ -176,6 +178,7 @@ export function mergeDelta(
         ...(incoming.sources?.length ? { sources: uniq(incoming.sources) } : {}),
         ...(incoming.processName ? { processName: incoming.processName } : {}),
         ...(incoming.parentName ? { parentName: incoming.parentName } : {}),
+        ...(incoming.pid !== undefined ? { pid: incoming.pid } : {}),
         ...(incoming.action ? { action: incoming.action } : {}),
         ...(incoming.srcIp ? { srcIp: incoming.srcIp } : {}),
         ...(incoming.dstIp ? { dstIp: incoming.dstIp } : {}),
@@ -183,10 +186,15 @@ export function mergeDelta(
       });
     }
   }
+  // Re-anchor mis-dated stray events (a year-less syslog/CSV line the AI import guessed into the wrong
+  // year) onto the timeline's dominant year BEFORE correlation, so they sort/correlate in the right
+  // place instead of corrupting the chronology. Conservative + idempotent (no-op unless one year clearly
+  // dominates). See timeYearClamp.ts.
+  const dated = clampOutlierYears(forensicTimeline);
   // Collapse duplicates / cross-source matches immediately (so re-importing the same
   // report, or two tools flagging one artifact, never doubles the timeline) — not only
   // during synthesis. Idempotent.
-  const correlated = correlateEvents(forensicTimeline).sort(byEventTime);
+  const correlated = correlateEvents(dated).sort(byEventTime);
 
   // Key questions are a holistic reassessment — replace wholesale when synthesis
   // provides them; otherwise keep the existing set (per-window deltas omit them).

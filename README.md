@@ -193,12 +193,14 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | Format | Key sources | Severity derived from |
 |---|---|---|
 | **SIEM / EDR JSON** | Elastic, Kibana, Splunk, QRadar, any JSON/NDJSON export | Windows/Sysmon per-EID table |
+| **ECAR (EDR telemetry)** | EDR Common Activity Record NDJSON (`object`/`action`/`properties`, epoch-ms `timestamp_ms`) — process/flow/logon/registry/module/file/thread events | Info evidence; LOLBin/encoded command-line bump (public IPs → IOCs) |
 | **Windows Event Log XML** | Event Viewer "Save As XML", `wevtutil qe /f:xml`, `Get-WinEvent … ToXml()` (Security, Sysmon, System, any channel) | Windows/Sysmon per-EID table |
 | **Chainsaw** | EVTX hunt JSON/JSONL (`chainsaw hunt --json`) | Matched Sigma rule level |
 | **Hayabusa** | `json-timeline` or `csv-timeline` | Matched Sigma rule level |
 | **Velociraptor** | JSON array, JSONL, or artifact map | Sigma/YARA verdict or per-EID |
 | **THOR (Nextron)** | JSON-Lines scan output | THOR alert level |
 | **Suricata / Zeek** | `eve.json`, Zeek JSON logs; telemetry → IOCs only | Alert priority / notice severity |
+| **Snort / Suricata IDS (fast)** | `alert_fast` single-line alert log | Rule **Priority** (1→High / 2→Medium / 3→Low) |
 | **Security Onion** | SOC Alerts/Hunt events (ECS); pushed by the extension or a SOC API export | `event.severity_label` (Suricata/SO label) |
 | **SO-CRATES** | Suricata alerts + YARA file matches (`/api/events`) and Sigma detections (`/api/sigma-alerts`); pushed by the extension or a raw export | Suricata priority / Sigma level / YARA match |
 | **Cyber Triage** | JSONL / JSON / CSV timeline | Cyber Triage item score |
@@ -230,6 +232,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Correlation & deduplication
 - **Cross-source correlation** — the same artifact seen by different tools collapses into one corroborated event (shared hash / same path in a time window / exact duplicate), tagged with the real tool names. Idempotent — re-importing never doubles the timeline.
+- **Corroboration filter (lens)** — a global filter-bar control to show only Timeline events / IOCs / Findings observed by **2+ or 3+ distinct tools**, so single-source background noise (internet scanners, benign telemetry) drops away and the multi-source attack path stands out. A *lens, not a gate* — nothing is removed from state; set back to *any* to see single-source evidence again. Per-browser.
 
 ### Investigation workflow
 - **Explain This Event** — 💡 per-row AI button explains any forensic event in context: what happened, why it matters, normal-vs-suspicious, ATT&CK mapping, 1–3 runnable pivot queries (VQL/KQL/SPL), evidence for/against; ephemeral overlay

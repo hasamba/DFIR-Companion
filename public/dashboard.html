@@ -2715,6 +2715,14 @@
     <button id="clearFiltersBtn" type="button" hidden>Clear</button>
     <span id="searchMatchCount"></span>
     <div class="sf-sep"></div>
+    <label title="Corroboration lens: show only items observed by multiple distinct tools. A LENS — nothing is deleted; single-source evidence reappears when set back to 'any'.">⊕ Corroboration:
+      <select id="corrobFilter">
+        <option value="0">any</option>
+        <option value="2">2+ sources</option>
+        <option value="3">3+ sources</option>
+      </select>
+    </label>
+    <div class="sf-sep"></div>
     <span title="Full-text search across captured screenshots using local OCR (#176)">🔍 Screenshot text:</span>
     <div class="sf-search-wrap">
       <input id="ocrSearch" type="search" placeholder="e.g. mimikatz, a hostname, a hash…" title="Search the text OCR read from every screenshot in this case (local, no AI). Enter to search." autocomplete="off" />
@@ -3420,6 +3428,13 @@
       } catch { return { key: "date", dir: "asc" }; }
     })();
     let searchTerm = "";                      // active text search (lower-cased; empty = no filter)
+    // Corroboration lens (#35): 0 = off; 2/3 = show only items observed by ≥N distinct tools. A LENS,
+    // not a gate — it narrows the view but never drops state, so single-source evidence (a Sysmon-only
+    // process, a syslog-only logon) is always one click away. Persisted per-browser.
+    let corrobMin = (() => { const v = parseInt(localStorage.getItem("dfir.corrobMin") || "0", 10); return v === 2 || v === 3 ? v : 0; })();
+    // Distinct REAL tool sources backing an item (drops the "unknown source" placeholder), the unit the
+    // corroboration lens counts. Shared by the timeline + findings filters.
+    function realSourceCount(sources) { return (sources || []).filter(s => s && s !== "unknown source").length; }
     let hiddenSources = new Set();            // source/tool names the user unchecked in the source filter (empty = show all)
     let _srcMenuSig = "";                      // signature of the source-filter menu's last build (skip rebuild when unchanged)
     let hiddenIocTypes = new Set();           // IOC types the user unchecked in the IOC type filter (#169; empty = show all)
@@ -9364,10 +9379,11 @@
       let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
       if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
       if (hiddenIocTypes.size > 0) visible = visible.filter(i => !hiddenIocTypes.has(i.type || "other"));
+      if (corrobMin > 1) visible = visible.filter(i => (iocSourcesById[i.id] || []).length >= corrobMin);   // corroboration lens (#35)
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div style='color:var(--c-9aa4b2)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : (searchTerm || hiddenIocTypes.size > 0) && iocs.length > 0 ? "<div style='color:var(--c-9aa4b2)'>No IOCs match the filter.</div>"
+          : (searchTerm || hiddenIocTypes.size > 0 || corrobMin > 1) && iocs.length > 0 ? "<div style='color:var(--c-9aa4b2)'>No IOCs match the filter.</div>"
           : "<div style='color:var(--c-9aa4b2)'>No IOCs yet</div>";
         updateIocBulkBar();
         return;
@@ -9549,6 +9565,7 @@
         if (!real.length) return !hiddenSources.has(NO_SOURCE_FACET);  // unsourced events ride the "(no source)" facet
         return real.some(s => !hiddenSources.has(s));                   // hidden only when ALL its sources are unchecked
       });
+      if (corrobMin > 1) visible = visible.filter(e => realSourceCount(e.sources) >= corrobMin);   // corroboration lens (#35)
       const viewSevFiltering = !!(activeView && activeView.filters && activeView.filters.minSeverity);
       if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity));   // dashboard-view severity floor (#142)
       visible = sortTimelineEvents(visible);
@@ -9565,7 +9582,7 @@
       const countEl = document.getElementById('timelineCount');
       if (countEl) {
         const total = ft.length;
-        const baseText = (filtering || showStarredOnly || sourceFiltering || viewSevFiltering || evIdFilter || _hasActiveFilter())
+        const baseText = (filtering || showStarredOnly || sourceFiltering || viewSevFiltering || evIdFilter || corrobMin > 1 || _hasActiveFilter())
           ? `${totalFiltered} of ${total} events`
           : `${total} event${total !== 1 ? 's' : ''}`;
         countEl.textContent = (tlPageSize > 0 && totalFiltered > tlPageSize)
@@ -9578,7 +9595,7 @@
 
       if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
-          ((filtering || showStarredOnly || sourceFiltering || viewSevFiltering || evIdFilter || _hasActiveFilter()) && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
+          ((filtering || showStarredOnly || sourceFiltering || viewSevFiltering || evIdFilter || corrobMin > 1 || _hasActiveFilter()) && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
         return;
       }
 
@@ -9820,9 +9837,17 @@
         : "";
       const sorted = [...state.findings].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
       const minConf = parseInt(document.getElementById("confFilter").value, 10) || 0;
+      // Corroboration lens (#35): a finding's sources are the union of its supporting events' tools.
+      const _findingCorrob = (f) => {
+        if (corrobMin <= 1) return true;
+        const srcs = new Set();
+        for (const e of (suppEventsByFinding[f.id] || [])) for (const s of (e.sources || [])) if (s && s !== "unknown source") srcs.add(s);
+        return srcs.size >= corrobMin;
+      };
       const filtered = sorted.filter(f =>
         (f.confidence === undefined || f.confidence >= minConf) &&
         (!searchTerm || _findingMatchesSearch(f, searchTerm)) &&
+        _findingCorrob(f) &&
         viewMeetsMinSev(f.severity));   // dashboard-view severity floor (#142)
       const capped = viewTopN() > 0 ? filtered.slice(0, viewTopN()) : filtered;   // view top-N cap
       document.getElementById("findings").innerHTML =
@@ -10670,6 +10695,18 @@
         ff.value = ""; ft.value = "";
         applyTimeRange();
       });
+
+      // Corroboration lens (#35): reflect the persisted value, then re-render all three views on change.
+      const corrobSel = document.getElementById("corrobFilter");
+      if (corrobSel) {
+        corrobSel.value = String(corrobMin);
+        corrobSel.addEventListener("change", () => {
+          const v = parseInt(corrobSel.value, 10);
+          corrobMin = v === 2 || v === 3 ? v : 0;
+          localStorage.setItem("dfir.corrobMin", String(corrobMin));
+          if (lastState) render(lastState);
+        });
+      }
 
       // Press "/" to reveal + focus the search bar (when not already in a text field).
       document.addEventListener("keydown", (e) => {
