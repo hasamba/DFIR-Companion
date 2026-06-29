@@ -1110,6 +1110,15 @@
       color: var(--c-9aa4b2); cursor: pointer; padding: 2px 7px; font-size: 11px; }
     #clearFiltersBtn:hover { color: var(--c-ff7a7a); border-color: var(--c-ff7a7a); }
     #searchMatchCount { color: var(--c-6aa9ff); font-size: 11px; }
+    /* OCR full-text search results (#176) */
+    #ocrSearchResults { padding: 6px 16px; background: var(--c-0e1116); border-bottom: 1px solid var(--c-1a1f28); max-height: 280px; overflow-y: auto; }
+    #ocrSearchResults[hidden] { display: none; }
+    #ocrSearchResults .ocr-hit { display: block; padding: 5px 8px; border: 1px solid var(--c-1a1f28); border-radius: 5px; margin-bottom: 5px; text-decoration: none; color: var(--c-cbd3df); }
+    #ocrSearchResults .ocr-hit:hover { border-color: var(--c-6aa9ff); background: var(--c-12161d); }
+    #ocrSearchResults .ocr-hit .ocr-file { color: var(--c-6aa9ff); font-size: 11px; font-family: monospace; }
+    #ocrSearchResults .ocr-hit .ocr-snippet { font-size: 12px; margin-top: 2px; }
+    #ocrSearchResults .ocr-hit mark { background: var(--c-ffd93b); color: #000; padding: 0 1px; border-radius: 2px; }
+    #ocrSearchResults .ocr-empty { color: var(--c-9aa4b2); font-size: 12px; padding: 4px; }
     /* Toolbar is tight on real estate: on narrower screens collapse the "deep" label to just the
        🧠 checkbox (the tooltip still explains it). */
     @media (max-width: 1440px) { #deepReasoningLabel .dr-text { display: none; } }
@@ -2662,7 +2671,16 @@
     <label>to <input id="filterTo" type="datetime-local" title="Filter timeline to (UTC)" /></label>
     <button id="clearFiltersBtn" type="button" hidden>Clear</button>
     <span id="searchMatchCount"></span>
+    <div class="sf-sep"></div>
+    <span title="Full-text search across captured screenshots using local OCR (#176)">🔍 Screenshot text:</span>
+    <div class="sf-search-wrap">
+      <input id="ocrSearch" type="search" placeholder="e.g. mimikatz, a hostname, a hash…" title="Search the text OCR read from every screenshot in this case (local, no AI). Enter to search." autocomplete="off" />
+      <button id="ocrSearchClear" type="button" title="Clear" hidden>✕</button>
+    </div>
+    <span id="ocrSearchInfo" style="color:var(--c-9aa4b2);font-size:11px"></span>
   </div>
+  <!-- OCR full-text search results (#176): server-side hits across the case's screenshots. -->
+  <div id="ocrSearchResults" hidden></div>
 
   <!-- Disk-space warning banner (#119): shown when the cases-root filesystem is nearly full. -->
   <div id="diskWarnBanner" hidden>
@@ -7012,6 +7030,72 @@
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
     function escAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
+
+    // --- Screenshot OCR full-text search (#176) ---------------------------------------------
+    // Queries GET /cases/:id/ocr-search and links each hit back to the screenshot it came from.
+    (function wireOcrSearch() {
+      const input = document.getElementById("ocrSearch");
+      const clearBtn = document.getElementById("ocrSearchClear");
+      const results = document.getElementById("ocrSearchResults");
+      const info = document.getElementById("ocrSearchInfo");
+      if (!input || !results) return;
+
+      function highlight(snippet, query) {
+        const safe = esc(snippet);
+        const q = query.trim();
+        if (!q) return safe;
+        const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+        // snippet is escaped first, so wrapping matches in <mark> can't inject markup.
+        return safe.replace(rx, (m) => `<mark>${m}</mark>`);
+      }
+
+      function clear() {
+        input.value = "";
+        results.hidden = true;
+        results.innerHTML = "";
+        info.textContent = "";
+        clearBtn.hidden = true;
+      }
+
+      async function run() {
+        const caseId = document.getElementById("caseId").value.trim();
+        const q = input.value.trim();
+        clearBtn.hidden = q.length === 0;
+        if (!caseId || q.length === 0) { results.hidden = true; results.innerHTML = ""; info.textContent = ""; return; }
+        try {
+          const r = await fetch(`/cases/${encodeURIComponent(caseId)}/ocr-search?q=${encodeURIComponent(q)}`);
+          if (r.status === 404) { info.textContent = "no such case"; results.hidden = true; return; }
+          if (!r.ok) {
+            // Endpoint missing → server is stale (see CLAUDE.md #1 gotcha).
+            info.textContent = r.status === 400 ? "" : "search failed — restart the companion server";
+            results.hidden = true;
+            return;
+          }
+          const data = await r.json();
+          const hits = data.hits || [];
+          info.textContent = `${hits.length} hit(s) · ${data.indexed || 0} screenshot(s) indexed${data.enabled === false ? " · OCR search OFF" : ""}`;
+          if (hits.length === 0) {
+            results.innerHTML = `<div class="ocr-empty">No screenshot text matches "${esc(q)}".</div>`;
+          } else {
+            results.innerHTML = hits.map((h) =>
+              `<a class="ocr-hit" href="/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(h.screenshotFile)}" target="_blank" rel="noopener">` +
+              `<span class="ocr-file">📎 ${esc(h.screenshotFile)}${h.matchCount > 1 ? ` · ${h.matchCount}×` : ""}</span>` +
+              `<div class="ocr-snippet">${highlight(h.snippet || "", q)}</div></a>`,
+            ).join("");
+          }
+          results.hidden = false;
+        } catch (e) {
+          info.textContent = "search failed";
+          results.hidden = true;
+        }
+      }
+
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); run(); }
+        else if (e.key === "Escape") { clear(); }
+      });
+      clearBtn.addEventListener("click", clear);
+    })();
 
     function legitBtn(kind, ref, label) {
       const labelAttr = label != null ? ` data-label="${escAttr(label)}"` : "";

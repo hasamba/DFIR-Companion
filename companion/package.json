@@ -19,6 +19,7 @@
     "reanalyze": "tsx scripts/reanalyze.ts",
     "synthesize": "tsx scripts/synthesize.ts",
     "clean-timeline": "tsx scripts/clean-timeline.ts",
+    "ocr-index": "tsx scripts/ocr-index.ts",
     "prompts:eject": "tsx scripts/eject-prompts.ts",
     "yeti": "tsx scripts/yeti-lookup.ts",
     "iris:push": "tsx scripts/push-iris.ts",

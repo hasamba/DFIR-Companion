@@ -15,6 +15,7 @@ import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
 import type { AnonTokenCategory } from "./analysis/anonymize.js";
 import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js";
 import { TesseractOcrRunner, type OcrRunner } from "./analysis/ocrRedact.js";
+import { extractOcrText, searchOcrIndex, isOcrSearchEnabled } from "./analysis/ocrSearch.js";
 import { resolveRedactedExportOptions, redactedExportFilename } from "./analysis/redactedExport.js";
 import { buildRedactedExport } from "./reports/redactedExportBuilder.js";
 import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
@@ -751,6 +752,42 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const buffers = new Map<string, CaptureMetadata[]>();
   const SIGNIFICANT = new Set(["navigation", "tab_switch"]);
 
+  // Screenshot OCR full-text search index (#176). Runs in the BACKGROUND after a capture is
+  // persisted — never on the /captures hot path (Tesseract is ~0.5–2s/image and evidence-first
+  // means the screenshot is already on disk). Best-effort: a failure is logged, never thrown.
+  // A small in-flight guard caps concurrent OCR so a burst of captures can't spawn N workers.
+  const ocrInFlight = new Set<string>();
+  const OCR_MAX_CONCURRENT = 2;
+  function indexCaptureText(metadata: CaptureMetadata): void {
+    if (!isOcrSearchEnabled() || !metadata.screenshotFile || metadata.isDuplicate) return;
+    if (ocrInFlight.size >= OCR_MAX_CONCURRENT) {
+      // Backfill (npm run ocr-index) catches anything skipped under load — don't queue unbounded.
+      serverLogger.debug(`OCR index: skipped seq=${metadata.sequenceNumber} (busy)`, { caseId: metadata.caseId });
+      return;
+    }
+    const key = `${metadata.caseId}/${metadata.screenshotFile}`;
+    ocrInFlight.add(key);
+    void (async () => {
+      try {
+        const path = join(store.screenshotsDir(metadata.caseId), metadata.screenshotFile);
+        const bytes = await readFile(path);
+        const runner = options.ocrRunner ?? new TesseractOcrRunner();
+        const words = await runner.recognize(bytes);
+        const text = extractOcrText(words);
+        await store.putOcrEntry(metadata.caseId, {
+          screenshotFile: metadata.screenshotFile,
+          text,
+          ocrAt: new Date().toISOString(),
+          wordCount: text.length === 0 ? 0 : text.split(" ").length,
+        });
+      } catch (err) {
+        serverLogger.debug(`OCR index failed for ${metadata.screenshotFile}: ${(err as Error).message}`, { caseId: metadata.caseId });
+      } finally {
+        ocrInFlight.delete(key);
+      }
+    })();
+  }
+
   // Per-case AI on/off + last-analyzed sequence (cached, persisted to disk).
   const aiControl = new AiControlStore(store);
   const controlCache = new Map<string, AiControl>();
@@ -1349,6 +1386,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // (live, via the WS broadcast) or detect it on connect (via /captures/recent).
       lastCapture = { caseId: metadata.caseId, at: Date.now() };
       options.onCapture?.(metadata.caseId);
+      // Background OCR full-text index (#176) — independent of AI analysis (it's local + free),
+      // so it runs whenever OCR search is enabled, not gated on the AI provider.
+      indexCaptureText(metadata);
       // Evidence is always stored; AI analysis only runs when enabled for the case.
       if (!metadata.isDuplicate && options.pipeline && hasAiProvider() && (await getControl(metadata.caseId)).enabled) {
         const buf = buffers.get(metadata.caseId) ?? [];
@@ -1407,6 +1447,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
     }
     return res.status(404).json({ error: "evidence not found" });
+  });
+
+  // Screenshot OCR full-text search (#176). Scans the case's local OCR index for `q` and
+  // returns one hit per matching screenshot (snippet + match count); the dashboard links each
+  // hit back to the screenshot via GET /cases/:id/evidence/:file. Local-only, no AI.
+  app.get("/cases/:id/ocr-search", async (req: Request, res: Response) => {
+    try {
+      if (!(await store.caseExists(req.params.id))) {
+        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+      }
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      if (q.trim().length === 0) return res.status(400).json({ error: "missing query parameter q" });
+      const index = await store.loadOcrIndex(req.params.id);
+      const hits = searchOcrIndex(index, q);
+      return res.status(200).json({ enabled: isOcrSearchEnabled(), indexed: Object.keys(index).length, hits });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   app.post("/cases/:id/report", async (req: Request, res: Response) => {
