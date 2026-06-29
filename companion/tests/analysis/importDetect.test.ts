@@ -350,6 +350,19 @@ describe("detectImportKind — Windows Event Log XML", () => {
   });
 });
 
+describe("detectImportKind — shell history", () => {
+  it("bashhistory: by filename", () => {
+    expect(detectImportKind("nina.kapoor.bash_history", "ls\nid\nwhoami")).toBe("bashhistory");
+    expect(detectImportKind("0001_root.zsh_history", "ls")).toBe("bashhistory");
+  });
+  it("bashhistory: by #epoch content signature", () => {
+    expect(detectImportKind("dump.txt", "#1715688062\ncat /etc/fstab\n#1715691267\nls -la")).toBe("bashhistory");
+  });
+  it("NOT bashhistory: a plain syslog stays a log", () => {
+    expect(detectImportKind("auth.log", "Jan  1 00:00:01 host sshd[1]: Failed password for root\nJan  1 00:00:02 host sshd[1]: Failed password for admin")).toBe("log");
+  });
+});
+
 function exampleImporter() {
   const r = parseImporterSpec(EXAMPLE_IMPORTER_SPEC);
   if (!r.ok) throw new Error("bad example");

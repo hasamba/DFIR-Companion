@@ -904,14 +904,16 @@
     .toolbar-main.icons-only button { font-size: 0; padding-left: 9px; padding-right: 9px; }
     .toolbar-main.icons-only button::before { margin-right: 0; }
     /* The capture count carries a camera icon (always shown). When space is tight the word
-       "Screenshots:" drops and only the camera + number remain, and the AI-status message is
-       hidden entirely — the two longest status strings, freeing the row to stay on one line. */
+       "Screenshots:" drops and only the camera + number remain, and the AI-status badge is
+       compacted (not hidden) — its colored pill (grey/green/yellow/red) still conveys the state
+       at a glance, the verbose text truncates with an ellipsis, and the full string stays on
+       hover (title) — so "(see AI status)" messages always have something to point at. */
     #captureCount::before { content: ""; display: inline-block; width: 14px; height: 14px;
       vertical-align: -2px; margin-right: 5px; background: no-repeat center / contain;
       background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z'/><circle cx='12' cy='13' r='4'/></svg>"); }
-    .toolbar-main.icons-only #aiStatus { display: none; }
+    .toolbar-main.icons-only #aiStatus { max-width: 104px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; }  /* compact, never hidden — the colored pill still shows the state */
     .toolbar-main.icons-only .cc-label { display: none; }
-    .toolbar-main.icons-only #status { margin-left: auto; }  /* re-anchor right alignment (the hidden #aiStatus carried it) */
     .toolbar-main.icons-only { gap: 8px 7px; }               /* tighter column gap suits an icon row and buys ~55px to stay on one line */
     #caseId { width: 120px; }                                  /* sized for INC-YYYY-NNN; content scrolls for longer ids */
     .toolbar-main.icons-only #caseId { width: 100px; }        /* narrow further when tight */
@@ -1150,8 +1152,8 @@
     <label id="deepReasoningLabel" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--c-9aa4b2);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs an Anthropic or OpenRouter reasoning-capable synthesis model.">
       <input type="checkbox" id="deepReasoning" style="margin:0;cursor:pointer" />🧠<span class="dr-text">&nbsp;deep</span>
     </label>
-    <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.xml,.eml,.msg,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,text/xml,application/xml,image/png,image/jpeg,image/webp" style="display:none" />
-    <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
+    <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.xml,.eml,.msg,.bash_history,.zsh_history,.history,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,text/xml,application/xml,image/png,image/jpeg,image/webp" style="display:none" />
+    <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux shell history, auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
     <button id="importUndoBtn" type="button" style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
     <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch JSONL, JSON state, or a shareable investigation snapshot)">
@@ -1521,6 +1523,11 @@
           <label>Dashboard sections <span class="sfield-hint" style="display:inline">— drag to reorder · check to show</span></label>
           <div class="sec-selall"><button type="button" id="secSelectAll">Select all</button><button type="button" id="secDeselectAll">Deselect all</button></div>
           <div class="sec-checks" id="secChecks"></div>
+        </div>
+        <div class="sfield">
+          <label>Timeline row display <span class="sfield-hint" style="display:inline">— check what to show in each forensic-timeline event row (the timestamp &amp; message are always shown). Applies immediately.</span></label>
+          <div class="sec-selall"><button type="button" id="tlSelectAll">Select all</button><button type="button" id="tlDeselectAll">Deselect all</button></div>
+          <div class="sec-checks" id="tlDisplayChecks"></div>
         </div>
         <div class="sfield">
           <label>Log verbosity <span class="sfield-hint" style="display:inline">— takes effect immediately (no restart)</span></label>
@@ -6935,6 +6942,7 @@
       const el = document.getElementById("aiStatus");
       el.className = "ai-" + kind;
       el.textContent = "AI: " + text;
+      el.title = "AI: " + text;  // full text on hover (the badge truncates in the tight icons-only toolbar)
     }
 
     // ── Import progress bar helpers ───────────────────────────────────────────
@@ -6981,6 +6989,7 @@
           const el = document.getElementById("aiStatus");
           el.className = "ai-analyzing";
           el.textContent = evt.detail;
+          el.title = evt.detail;
         } else setAi("analyzing", "processing evidence… " + (evt.detail || ""));
       } else if (evt.status === "idle") {
         hideImportProgress();
@@ -9406,6 +9415,7 @@
         + `<div class="tl-pagesize-wrap" title="Rows per page"><select class="tl-pagesize-sel" onchange="tlPageSize=+this.value;renderTimelineEvents(lastFt)">${pageSizeOpts}</select></div>`
         + `</div>`;
 
+      const tld = loadTlDisplay();   // per-browser timeline-row display toggles (Settings → General)
       const rows = pageVisible.map(e => {
         const id = String(e.id);
         const starred = starredEvents.has(id);
@@ -9428,8 +9438,14 @@
           const inner = `<span title="${escAttr(cc.note || "")}" style="color:${col};border:1px solid ${col};border-radius:4px;padding:0 5px;font-size:10px">${label}</span>`;
           chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner);
         }
-        const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "").replace(/\s*\[more\]$/, "");
+        let desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "").replace(/\s*\[more\]$/, "");
         // Affected host/asset, shown as a compact chip before the description for fast scanning.
+        const showHost = tlShow("host", tld);
+        // The host chip already shows the asset, so drop the redundant trailing "@ <host>"
+        // many importers append to the description — but only when that chip is actually rendered.
+        if (showHost && e.asset) {
+          desc = desc.replace(new RegExp("\\s*@\\s*" + e.asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "i"), "");
+        }
         const host = e.asset ? ` <span class="ev-host" title="Affected host / asset">🖥 ${esc(e.asset)}</span>` : "";
         // Findings this event backs — clickable, jump to the finding in the Findings section.
         const findingLinks = (e.relatedFindingIds && e.relatedFindingIds.length)
@@ -9452,17 +9468,24 @@
         return `<div class="ev-row${isSelected ? " ev-selected" : ""}${isNew ? " ev-new" : ""}" data-evid="${escAttr(id)}">`
           + `<div class="ev-col-ctrl">`
           + `<input type="checkbox" class="ev-checkbox ev-row-cb" data-evid="${escAttr(id)}" ${isSelected ? "checked" : ""} title="Select event" />`
-          + `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>`
-          + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)}`
-          + ((e.srcIp || e.dstIp) ? `<button type="button" class="ev-geo" title="Show this event's IP on the map" onclick="geoFocusIp('${escAttr(e.dstIp || e.srcIp)}')" style="background:none;border:none;cursor:pointer;font-size:12px;padding:0 4px">📍</button>` : "")
+          + (tlShow("icons", tld)
+              ? `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>`
+                + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)}`
+                + ((e.srcIp || e.dstIp) ? `<button type="button" class="ev-geo" title="Show this event's IP on the map" onclick="geoFocusIp('${escAttr(e.dstIp || e.srcIp)}')" style="background:none;border:none;cursor:pointer;font-size:12px;padding:0 4px">📍</button>` : "")
+              : "")
           + `</div>`
           + `<div class="ev-col-time"><span class="sev-${esc(e.severity)}">${span}</span></div>`
-          + `<div class="ev-col-content">${tagPills("event", e.id)}${newBadge}${badge}${corro}${chain}${host} ${descHtml(desc, e.id)} ${legitBtn("event", e.id, desc)}`
-          + `${e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:var(--c-ff8a8a)">${esc(e.chainCheck.note)}</small>` : ""}`
-          + `${e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : ""}`
-          + findingLinks
+          + `<div class="ev-col-content">`
+          + (tlShow("tags", tld) ? tagPills("event", e.id) : "")
+          + (tlShow("badges", tld) ? `${newBadge}${badge}${corro}${chain}` : "")
+          + (showHost ? host : "")
+          + ` ${descHtml(desc, e.id)} ${legitBtn("event", e.id, desc)}`
+          + (tlShow("badges", tld) && e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:var(--c-ff8a8a)">${esc(e.chainCheck.note)}</small>` : "")
+          + (tlShow("mitre", tld) && e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : "")
+          + (tlShow("findings", tld) ? findingLinks : "")
           + deobBlock
-          + `${evidenceLinks(caseId, e.sourceScreenshots)}</div>`
+          + (tlShow("evidence", tld) ? evidenceLinks(caseId, e.sourceScreenshots) : "")
+          + `</div>`
           + `</div>`;
       }).join("");
 
@@ -11175,7 +11198,13 @@
         const key = sectionKey(sec);
         if (!h2.querySelector(".chev")) h2.insertAdjacentHTML("afterbegin", '<span class="chev">▾</span>');
         if (key && collapsed[key]) sec.classList.add("collapsed");
-        h2.onclick = () => {
+        h2.onclick = (e) => {
+          // Don't collapse when the click landed on an interactive control living inside the header
+          // (filter toggles like "⚠ Flagged only" / "☆ Starred", the + add-toggle, dropdown buttons,
+          // severity checkboxes). Those are driven by their own listeners — some delegated on <main>,
+          // an ANCESTOR of this h2 — so the click bubbles here first and would collapse the section,
+          // hiding the very list the filter just rendered (the cause of "1 flagged but list empty").
+          if (e.target.closest("button, input, select, a, label")) return;
           sec.classList.toggle("collapsed");
           const map = loadCollapsed();
           if (key) map[key] = sec.classList.contains("collapsed");
@@ -11327,6 +11356,44 @@
           container.querySelectorAll(".sec-check").forEach(r => r.classList.remove("drag-over"));
         });
       });
+    }
+
+    // ── Timeline row display toggles ───────────────────────────────────────────
+    // Per-browser choice of which sub-elements appear in each forensic-timeline event row.
+    // The timestamp + message are always shown ("the event itself"); everything else is opt-out.
+    // Default = all ON (current behavior). Read by renderTimelineEvents via tlShow().
+    const TL_DISPLAY_KEY = "dfir.tlDisplay";
+    const TL_FIELDS = [
+      ["icons",    "Action icons (★ star · 💬 comment · 🏷 tag · 🔍 hunt · 💡 explain · 📍 map)"],
+      ["tags",     "Analyst tag pills"],
+      ["badges",   "Badges (×count · ⊕ sources · chain · NEW)"],
+      ["host",     "Host / asset chip"],
+      ["mitre",    "MITRE techniques"],
+      ["findings", "Related findings"],
+      ["evidence", "Evidence links"],
+    ];
+    function loadTlDisplay() {
+      try { return JSON.parse(localStorage.getItem(TL_DISPLAY_KEY) || "{}"); } catch { return {}; }
+    }
+    // A field is shown unless the user explicitly turned it off (default ON).
+    function tlShow(key, d) { d = d || loadTlDisplay(); return d[key] !== false; }
+    function saveTlDisplay(d) {
+      try { localStorage.setItem(TL_DISPLAY_KEY, JSON.stringify(d)); } catch {}
+    }
+    function renderTlChecks() {
+      const container = document.getElementById("tlDisplayChecks");
+      if (!container) return;
+      const d = loadTlDisplay();
+      container.innerHTML = TL_FIELDS.map(([key, label]) =>
+        `<label class="sec-check" style="cursor:pointer"><input type="checkbox" class="tl-disp-cb" data-key="${esc(key)}" ${tlShow(key, d) ? "checked" : ""}> ${esc(label)}</label>`
+      ).join("");
+    }
+    // Apply the checkbox states → localStorage and re-render the timeline immediately.
+    function applyTlDisplayFromChecks() {
+      const d = {};
+      document.querySelectorAll("#tlDisplayChecks .tl-disp-cb").forEach(cb => { d[cb.dataset.key] = cb.checked; });
+      saveTlDisplay(d);
+      if (typeof lastFt !== "undefined") renderTimelineEvents(lastFt);
     }
 
     // ── Dashboard view presets (#142) ─────────────────────────────────────────
@@ -11562,6 +11629,7 @@
     function openSettingsModal() {
       document.getElementById("settingsInvestigator").value = localStorage.getItem("dfir.investigator") || "";
       renderSecChecks();
+      renderTlChecks();
       fetchEnvSettings();
       fetchLogLevel();
       // Reset to first tab
@@ -12092,6 +12160,16 @@
     });
     document.getElementById("secDeselectAll").addEventListener("click", () => {
       document.querySelectorAll("#secChecks .sec-check input[type=checkbox]").forEach(cb => { cb.checked = false; });
+    });
+    // Timeline row display — apply immediately on any change (toggle or select/deselect all).
+    document.getElementById("tlDisplayChecks").addEventListener("change", applyTlDisplayFromChecks);
+    document.getElementById("tlSelectAll").addEventListener("click", () => {
+      document.querySelectorAll("#tlDisplayChecks .tl-disp-cb").forEach(cb => { cb.checked = true; });
+      applyTlDisplayFromChecks();
+    });
+    document.getElementById("tlDeselectAll").addEventListener("click", () => {
+      document.querySelectorAll("#tlDisplayChecks .tl-disp-cb").forEach(cb => { cb.checked = false; });
+      applyTlDisplayFromChecks();
     });
     document.querySelectorAll(".stab").forEach(btn => {
       btn.addEventListener("click", () => {

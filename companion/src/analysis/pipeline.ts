@@ -70,6 +70,7 @@ import { aggregateLogLines } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
 import { parseSiemExport, type SiemImportOptions } from "./siemImport.js";
 import { parseEvtxXml } from "./evtxXmlImport.js";
+import { parseShellHistoryFile, userFromHistoryFilename } from "./bashHistoryImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
@@ -1655,6 +1656,53 @@ export class AnalysisPipeline {
       timelineNote: `Windows Event Log (XML) import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a Linux/Unix shell history file (.bash_history / .zsh_history / …). Deterministic
+  // host-triage: one forensic event per command at the artifact's own time (bash HISTTIMEFORMAT
+  // `#<epoch>` / zsh extended history), Info by default with a conservative tradecraft bump. The
+  // account is derived from the filename and shown in each event.
+  async importBashHistory(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;          // unique per import (e.g. "b3") so ids never collide
+      importedAt: string;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const user = userFromHistoryFilename(opts.label);
+    const parsedRaw = parseShellHistoryFile(text, { user });
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Shell history"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Shell history import${user ? ` (${user})` : ""}: ${parsed.kept} command(s) from ${parsed.total} line(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
       summary: "",
     };
     const delta = deltaSchema.parse(raw);

@@ -146,8 +146,18 @@ pslist/psscan/pstree → process-tree events (parent→child links, `CreateTime`
 (+ foreign IP/port IOCs, external ESTABLISHED→Low), **malfind → High injected-code (T1055)**, cmdline → command-line
 events (bumped on LOLBin/encoded tradecraft via the exported `isSuspiciousCmd`), svcscan/modules/driverscan →
 service/driver evidence; dlllist/handles are IOC-only/dropped to stay signal-rich. Tagged **Volatility**/**Rekall**;
-reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`/`genericIocs` and reads the artifact's own time).
-The last seventeen
+reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`/`genericIocs` and reads the artifact's own time),
+and **Linux/Unix shell history** (`importBashHistory` → `bashHistoryImport.ts` — `.bash_history`/`.zsh_history`
+(+ sh/ash/ksh/fish); one event per command at the artifact's own time, parsing bash `HISTTIMEFORMAT` `#<epoch>`
+comment lines + zsh extended history (`: <epoch>:<elapsed>;cmd`), the account derived from the filename
+(`userFromHistoryFilename`); **Info by default** — a shell history is mostly benign admin activity — with a
+CONSERVATIVE per-command bump (`CMD_RULES`, worst-first) only on real tradecraft: reverse/bind shells →High
+(T1059.004), curl/wget-pipe-to-shell →High (T1105), `/etc/shadow`/dumpers →High (T1003.008), history/log tampering
+→High (T1070.003), cron/systemd/authorized_keys persistence →Medium, setuid/pkexec →Medium, plain downloads →Low,
+lateral `ssh user@host`/`scp …:` →Low (T1021.004); IPs/URLs/domains scraped to IOCs (skipping the user before `@`);
+reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`. Detected by the history FILENAME or the bash/zsh
+content signature ahead of the generic-log fallback).
+The last eighteen
 are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
