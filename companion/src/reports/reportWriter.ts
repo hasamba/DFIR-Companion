@@ -21,6 +21,12 @@ import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../a
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { buildMobileSummary, mobileSummaryEnvOptions, type MobileCaseSummary } from "../analysis/mobileSummary.js";
+import {
+  buildPresentationDeck,
+  presentationEnvOptions,
+  type PresentationBranding,
+  type PresentationDeck,
+} from "../analysis/presentation.js";
 import { buildGeoMap, geoMapEnvOptions, type GeoMapData } from "../analysis/geoMap.js";
 import { detectTimelineAnomalies, anomalyEnvOptions, type TimelineAnomalyResult } from "../analysis/timelineAnomalies.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
@@ -36,7 +42,7 @@ import {
   type IocBlocklistFormat,
   type IocBlocklistOptions,
 } from "./iocBlocklist.js";
-import type { InvestigationState } from "../analysis/stateTypes.js";
+import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
 import type { HypothesisStore } from "../analysis/hypothesisStore.js";
@@ -44,7 +50,7 @@ import type { Hypothesis } from "../analysis/hypothesis.js";
 import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
-import { defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
+import { buildBrandingContext, defaultReportTemplate, renderTemplateString, type ReportTemplate } from "./reportTemplate.js";
 import type { ReportTemplateStore } from "./reportTemplateStore.js";
 import type { ReportTemplateControlStore } from "./reportTemplateControl.js";
 import { applyAnonDeep, type RedactedReportContents } from "../analysis/redactedExport.js";
@@ -266,6 +272,33 @@ export class ReportWriter {
     const state = await this.loadFilteredState(caseId);
     const meta = await this.cases.getCaseMeta(caseId);
     return buildMobileSummary(state, { ...mobileSummaryEnvOptions(), caseName: meta?.name });
+  }
+
+  // Presentation / timeline-replay deck (#177): a read-only, step-through slide deck for handoff
+  // briefings and executive walkthroughs. Same scope/legitimate filtering as the report so the deck
+  // agrees with the dashboard; branding (cover title/subtitle, accent, company name) is inherited
+  // from the case's report template (issue #60). `minSeverity` lets the presenter floor the
+  // findings/events shown (respecting the dashboard's severity filter). The deck is rendered by the
+  // slide viewer (public/present.html) and embedded into the standalone-HTML export.
+  async presentation(caseId: string, opts: { minSeverity?: Severity } = {}): Promise<PresentationDeck> {
+    const state = await this.loadFilteredState(caseId);
+    const caseMeta = await this.cases.getCaseMeta(caseId);
+    const template = await this.loadTemplate(caseId);
+    const reportMeta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
+    const ctx = buildBrandingContext(state, reportMeta);
+    const branding: PresentationBranding = {
+      title: renderTemplateString(template.coverTitle, ctx).trim() || (caseMeta?.name ?? caseId),
+      subtitle: renderTemplateString(template.coverSubtitle, ctx).trim(),
+      accentColor: template.accentColor,
+      companyName: template.showCompanyName ? reportMeta.companyName.trim() : "",
+    };
+    return buildPresentationDeck(state, {
+      ...presentationEnvOptions(),
+      branding,
+      caseName: caseMeta?.name,
+      generatedAt: new Date().toISOString(),
+      minSeverity: opts.minSeverity,
+    });
   }
 
   // Geographic IP map (#133): markers for the case's geo-located IP IOCs (derived on read).

@@ -1614,6 +1614,40 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Presentation / timeline-replay deck (#177): the JSON deck the slide viewer (/cases/:id/present)
+  // fetches. Same scope/legitimate filtering as the report; an optional ?minSeverity= floors the
+  // findings/events so the presenter can tailor the narrative (respecting the severity filter).
+  app.get("/cases/:id/presentation", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const minSeverity = parseMinSeverity(req.query.minSeverity);
+      return res.status(200).json(await options.reportWriter.presentation(req.params.id, { minSeverity }));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Standalone, self-contained HTML slide deck (#177) — works offline with no server. Embeds the
+  // deck JSON into the viewer page so a stakeholder can open it directly. The deck is escaped so
+  // case content can never break out of the <script> (no `</script>` injection).
+  app.get("/cases/:id/present/export", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const minSeverity = parseMinSeverity(req.query.minSeverity);
+      const deck = await options.reportWriter.presentation(req.params.id, { minSeverity });
+      const tpl = await readPublicAsset("present.html", "utf8");
+      const safeJson = JSON.stringify(deck).replace(/</g, "\\u003c");
+      const html = tpl.replace("<!--DECK_INJECT-->", `<script>window.__DECK__=${safeJson};</script>`);
+      const filename = `presentation-${req.params.id.replace(/[^a-zA-Z0-9._-]/g, "_")}.html`;
+      res
+        .type("html")
+        .set("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(html);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Geographic IP map (#133): markers for the case's geo-located IP IOCs, derived on demand with
   // the same scope filtering as the report (legit IOCs kept + rendered gray). Coordinates come
   // from the opt-in GeoIP enrichment, so the map is empty until IP IOCs are enriched.
@@ -7869,6 +7903,15 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // public/; the SW is served at root so its default control scope covers /mobile.
   app.get("/mobile", async (_req, res) => {
     const html = await readPublicAsset("mobile.html", "utf8");
+    res.type("html").send(html);
+  });
+
+  // Presentation / timeline-replay mode (#177): a read-only, step-through slide viewer for handoff
+  // briefings and executive walkthroughs. The static page reads the case id from its own URL path
+  // and fetches GET /cases/:id/presentation. Self-contained (inline CSS+JS), so the same file also
+  // backs the offline standalone-HTML export (which just embeds the deck via window.__DECK__).
+  app.get("/cases/:id/present", async (_req, res) => {
+    const html = await readPublicAsset("present.html", "utf8");
     res.type("html").send(html);
   });
 

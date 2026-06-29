@@ -295,7 +295,19 @@ state for the phone PWA — findings worst-first, events most-severe-then-most-r
 worst threat-intel verdict, plus severity/entity counts; heavy lists capped (`DFIR_MOBILE_MAX_FINDINGS`/`_EVENTS`/`_IOCS`)
 with a pre-cap `total` so the UI shows "N of M". `ReportWriter.mobileSummary` → `GET /cases/:id/mobile-summary`, served
 as the installable PWA at **`/mobile`** (`public/mobile.html` + `manifest.webmanifest` + `sw.js`; routes in `server.ts`
-next to `/dashboard`). Read-only — no editing, no AI. Side files in `state/`:
+next to `/dashboard`). Read-only — no editing, no AI. The **presentation / timeline-replay deck**
+(`analysis/presentation.ts`, pure, #177) is the same shape: a READ-ONLY slide projection for handoff
+briefings/executive walkthroughs — cover → summary/narrative/attacker-path → key findings (worst-first) →
+timeline events (chronological), each finding/event slide carrying severity/description/asset/ATT&CK + its
+supporting IOCs (event IOCs resolved by exact-token match against the IOC index, like `iocCorroboration`;
+finding IOCs from `relatedIocs`) + worst verdict + evidence screenshot; severity-floored (`?minSeverity=`)
+and capped (`DFIR_PRESENT_MAX_FINDINGS`/`_EVENTS`). `ReportWriter.presentation` resolves the branding from the
+case's **report template** (cover title/subtitle/accent/company via `buildBrandingContext`+`renderTemplateString`)
+→ `GET /cases/:id/presentation` (JSON). The viewer is `public/present.html` (self-contained, inline CSS+JS),
+served live at **`/cases/:id/present`**; the **standalone offline export** `GET /cases/:id/present/export`
+serves the SAME page with the deck injected via `window.__DECK__` (the `<!--DECK_INJECT-->` placeholder; deck
+JSON `<`-escaped so case content can't break out of the `<script>`) so it plays with no server. Read-only — no
+editing, no AI. Side files in `state/`:
 `ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (per-source enrichment
 selection — the enabled provider names; **default = local-only** (MISP/YETI/OpenCTI), external opt-in),
 `pending_analysis.json`, `report-meta.json` (human-authored report
