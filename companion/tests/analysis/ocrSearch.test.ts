@@ -22,18 +22,20 @@ function indexOf(entries: Array<{ file: string; text: string }>): OcrIndex {
 }
 
 describe("extractOcrText", () => {
-  it("joins legible words and drops low-confidence/empty ones", () => {
-    const words = [word("C:\\>"), word("mimikatz.exe", 80), word("garbage", 30), word("  ")];
-    expect(extractOcrText(words)).toBe("C:\\> mimikatz.exe");
+  it("keeps ALL words by default (recall over precision) — only empties dropped", () => {
+    // A real low-confidence token (e.g. a FQDN/SID Tesseract scored low on dark-theme console
+    // text) must NOT be dropped — losing it would mean a failed search. Empty/whitespace go.
+    const words = [word("C:\\>"), word("mimikatz.exe", 80), word("WIN11.windomain", 30), word("  ")];
+    expect(extractOcrText(words)).toBe("C:\\> mimikatz.exe WIN11.windomain");
   });
 
-  it("honours a custom confidence threshold", () => {
+  it("honours an explicit confidence threshold when a caller opts in", () => {
     const words = [word("keep", 65), word("drop", 55)];
     expect(extractOcrText(words, 60)).toBe("keep");
   });
 
-  it("returns an empty string when nothing survives", () => {
-    expect(extractOcrText([word("x", 10)])).toBe("");
+  it("returns an empty string when there are no non-empty words", () => {
+    expect(extractOcrText([word("  ", 10)])).toBe("");
     expect(extractOcrText([])).toBe("");
   });
 });
