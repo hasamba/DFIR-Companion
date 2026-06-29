@@ -856,7 +856,7 @@
        hover tooltips (data-tip) keep every icon discoverable. */
     #connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
     #aiToggle::before, #synthesize::before, #secondOpinion::before, #importBtn::before, #importCaseBtn::before,
-    #importUndoBtn::before, #importRedoBtn::before,
+    #importUndoBtn::before, #importRedoBtn::before, #presentBtn::before,
     #toggleAll::before, #toggleSearchBar::before {
       content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
       margin-right: 6px; background: no-repeat center / contain; }
@@ -866,6 +866,8 @@
     #anonToggle::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3l18 18'/><path d='M10.6 10.6a2 2 0 0 0 2.8 2.8'/><path d='M9.5 5.2A9.5 9.5 0 0 1 21 12a13 13 0 0 1-2 2.6M6 6.3A13 13 0 0 0 3 12a9.5 9.5 0 0 0 12.5 5.8'/></svg>"); }
     #aiToggle::before    { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z'/><path d='M18.5 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'/></svg>"); }
     #synthesize::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/></svg>"); }
+    /* Presentation mode (#177) — a "play" triangle inside a slide frame (projector/slideshow). */
+    #presentBtn::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='3' width='20' height='14' rx='2'/><path d='M10 8l4 2.5-4 2.5z' fill='%23cbd3df'/><path d='M12 17v4M8 21h8'/></svg>"); }
     /* Second opinion (#116) — balance scales = weighing an independent opinion against the primary. */
     #secondOpinion::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v18'/><path d='M5 7h14'/><path d='M5 7l-3 6a3 3 0 0 0 6 0z'/><path d='M19 7l-3 6a3 3 0 0 0 6 0z'/><path d='M8 21h8'/></svg>"); }
     #importBtn::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v11'/><path d='M8 10l4 4 4-4'/><path d='M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2'/></svg>"); }
@@ -1149,6 +1151,7 @@
       <option value="report">Generate report (Markdown + HTML)</option>
       <option value="report-pdf">Generate report (PDF)</option>
       <option value="report-docx">Generate report (Word .docx)</option>
+      <option value="present-html">Presentation deck (standalone HTML)</option>
       <option value="timeline-csv">Forensic timeline (CSV)</option>
       <option value="attack-layer">ATT&amp;CK Navigator layer (JSON)</option>
       <option value="timesketch-jsonl">Timesketch JSONL</option>
@@ -1162,6 +1165,7 @@
     <select id="pushSelect" class="toolbar-select" data-tip="Push this case to an external platform" style="display:none">
       <option value="">Push to…</option>
     </select>
+    <button id="presentBtn" type="button" data-tip="Presentation mode — a read-only, step-through slide deck of the case (cover, summary, key findings, then the timeline one event at a time) for handoff briefings and executive walkthroughs. Respects the current severity filter. Opens in a new tab; export a self-contained offline deck via Export → Presentation deck.">Present</button>
     <span id="reportLinks" class="report-links"></span>
     <span id="dashViewWrap" style="position:relative;display:inline-flex;align-items:center">
       <button id="dashViewBtn" type="button" aria-haspopup="true" aria-expanded="false" data-tip="Dashboard view — switch the panel layout + severity filter for a role (Analyst / Lead / Executive) or phase (Triage / Report / Deep-Dive / Hunt-Prep), or edit your own. Remembered per-case.">
@@ -10593,6 +10597,9 @@
         // On-demand .docx — the server generates the binary fresh per request. No POST
         // /cases/:id/report dance, no on-disk file. Trigger the download directly.
         window.location.href = `/cases/${c}/report.docx`;
+      } else if (action === "present-html") {
+        // Standalone, self-contained presentation deck (#177) — opens/downloads an offline HTML slide deck.
+        window.location.href = `/cases/${c}/present/export`;
       } else if (action === "timeline-csv") {
         window.location.href = `/cases/${c}/incident-timeline.csv`;
       } else if (action === "attack-layer") {
@@ -10616,6 +10623,15 @@
       } else if (action === "save-template") {
         openSaveTemplate();
       }
+    };
+
+    // ── Presentation mode (#177) ──────────────────────────────────────────────
+    // Open the read-only, step-through slide viewer for this case in a new tab. The viewer has its
+    // own severity selector + standalone-HTML export, so we just point it at the case.
+    document.getElementById("presentBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { document.getElementById("status").textContent = "open a case first"; return; }
+      window.open(`/cases/${encodeURIComponent(caseId)}/present`, "_blank", "noopener");
     };
 
     // ── Manual add (event / IOC the AI didn't catch) ──────────────────────────
