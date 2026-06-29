@@ -1,6 +1,7 @@
 // Backfill the screenshot OCR full-text search index (#176) for a case. OCRs every
-// screenshot that isn't already in metadata/ocr.json — use it after enabling OCR search on a
-// case captured earlier, or to recover entries skipped while the capture path was under load.
+// screenshot that isn't already in metadata/ocr.json — use it for a case whose screenshots were
+// captured BEFORE this feature existed or BEFORE OCR search was enabled (live captures index
+// themselves automatically; the server queues a burst rather than dropping it).
 //   Usage:  npm run ocr-index -- <caseId>   (default: test1)
 import { config as loadDotenv } from "dotenv";
 loadDotenv();

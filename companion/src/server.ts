@@ -755,37 +755,49 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Screenshot OCR full-text search index (#176). Runs in the BACKGROUND after a capture is
   // persisted — never on the /captures hot path (Tesseract is ~0.5–2s/image and evidence-first
   // means the screenshot is already on disk). Best-effort: a failure is logged, never thrown.
-  // A small in-flight guard caps concurrent OCR so a burst of captures can't spawn N workers.
-  const ocrInFlight = new Set<string>();
+  // A burst of captures (e.g. a batch import) is QUEUED and drained at most OCR_MAX_CONCURRENT
+  // at a time, so every non-duplicate screenshot is indexed — not dropped — without spawning N
+  // Tesseract workers at once. The queue is bounded purely as a runaway safety net; in practice
+  // captures are paced far slower than OCR drains.
+  const ocrQueue: CaptureMetadata[] = [];
+  let ocrActive = 0;
   const OCR_MAX_CONCURRENT = 2;
+  const OCR_MAX_QUEUE = 1000;
+  function pumpOcrQueue(): void {
+    while (ocrActive < OCR_MAX_CONCURRENT && ocrQueue.length > 0) {
+      const metadata = ocrQueue.shift()!;
+      ocrActive++;
+      void (async () => {
+        try {
+          const path = join(store.screenshotsDir(metadata.caseId), metadata.screenshotFile);
+          const bytes = await readFile(path);
+          const runner = options.ocrRunner ?? new TesseractOcrRunner();
+          const words = await runner.recognize(bytes);
+          const text = extractOcrText(words);
+          await store.putOcrEntry(metadata.caseId, {
+            screenshotFile: metadata.screenshotFile,
+            text,
+            ocrAt: new Date().toISOString(),
+            wordCount: text.length === 0 ? 0 : text.split(" ").length,
+          });
+        } catch (err) {
+          serverLogger.debug(`OCR index failed for ${metadata.screenshotFile}: ${(err as Error).message}`, { caseId: metadata.caseId });
+        } finally {
+          ocrActive--;
+          pumpOcrQueue();
+        }
+      })();
+    }
+  }
   function indexCaptureText(metadata: CaptureMetadata): void {
     if (!isOcrSearchEnabled() || !metadata.screenshotFile || metadata.isDuplicate) return;
-    if (ocrInFlight.size >= OCR_MAX_CONCURRENT) {
-      // Backfill (npm run ocr-index) catches anything skipped under load — don't queue unbounded.
-      serverLogger.debug(`OCR index: skipped seq=${metadata.sequenceNumber} (busy)`, { caseId: metadata.caseId });
+    if (ocrQueue.length >= OCR_MAX_QUEUE) {
+      // Runaway safety net only — recover anything dropped here with `npm run ocr-index`.
+      serverLogger.debug(`OCR index: queue full, skipped seq=${metadata.sequenceNumber}`, { caseId: metadata.caseId });
       return;
     }
-    const key = `${metadata.caseId}/${metadata.screenshotFile}`;
-    ocrInFlight.add(key);
-    void (async () => {
-      try {
-        const path = join(store.screenshotsDir(metadata.caseId), metadata.screenshotFile);
-        const bytes = await readFile(path);
-        const runner = options.ocrRunner ?? new TesseractOcrRunner();
-        const words = await runner.recognize(bytes);
-        const text = extractOcrText(words);
-        await store.putOcrEntry(metadata.caseId, {
-          screenshotFile: metadata.screenshotFile,
-          text,
-          ocrAt: new Date().toISOString(),
-          wordCount: text.length === 0 ? 0 : text.split(" ").length,
-        });
-      } catch (err) {
-        serverLogger.debug(`OCR index failed for ${metadata.screenshotFile}: ${(err as Error).message}`, { caseId: metadata.caseId });
-      } finally {
-        ocrInFlight.delete(key);
-      }
-    })();
+    ocrQueue.push(metadata);
+    pumpOcrQueue();
   }
 
   // Per-case AI on/off + last-analyzed sequence (cached, persisted to disk).
@@ -1376,7 +1388,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         }
       }
       const metadata = await ingestCapture(store, req.body);
-      res.status(201).json(metadata);
+      // Pre-evaluate the analysis condition before responding so the dashboard knows whether
+      // this capture will produce timeline events (mirrors the analyzed/reason pattern on /import).
+      const willAnalyze = !metadata.isDuplicate && Boolean(options.pipeline) && hasAiProvider()
+        && (await getControl(metadata.caseId)).enabled;
+      res.status(201).json(
+        !metadata.isDuplicate && !willAnalyze
+          ? { ...metadata, analyzed: false, reason: "ai-off" as const }
+          : metadata,
+      );
       serverLogger.debug(
         `screenshot captured seq=${metadata.sequenceNumber} trigger=${metadata.triggerType} ` +
           `file=${metadata.screenshotFile || "(none)"}${metadata.isDuplicate ? " (duplicate — not analyzed)" : ""}`,
@@ -1390,7 +1410,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // so it runs whenever OCR search is enabled, not gated on the AI provider.
       indexCaptureText(metadata);
       // Evidence is always stored; AI analysis only runs when enabled for the case.
-      if (!metadata.isDuplicate && options.pipeline && hasAiProvider() && (await getControl(metadata.caseId)).enabled) {
+      if (willAnalyze) {
         const buf = buffers.get(metadata.caseId) ?? [];
         buf.push(metadata);
         buffers.set(metadata.caseId, buf);
