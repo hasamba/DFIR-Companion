@@ -3001,17 +3001,14 @@
       #sec-d3fend #remediationPlan p{margin:4px 0}
       #sec-d3fend .mit-h{font-size:13px;font-weight:bold;color:var(--c-ff9f43);margin:0 0 4px}
       #sec-d3fend .mit-meta{color:var(--c-9aa4b2);font-size:11px;margin-bottom:8px}
-      #sec-d3fend .mit-list{display:flex;flex-direction:column;gap:7px}
-      #sec-d3fend .mit-row{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-ff9f43);border-radius:6px;padding:7px 10px}
-      #sec-d3fend .mit-row-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+      #sec-d3fend .mit-card{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-ff9f43);border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;gap:3px}
+      #sec-d3fend .mit-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:2px 0}
       #sec-d3fend .mit-name{color:var(--c-ff9f43);font-weight:bold;text-decoration:none;font-size:12px}
       #sec-d3fend .mit-name:hover{text-decoration:underline}
-      #sec-d3fend .mit-cov{margin-left:auto;color:var(--c-ff9f43);font-size:11px;font-weight:bold;background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:10px;padding:0 7px;white-space:nowrap}
-      #sec-d3fend .mit-desc{color:var(--c-c9d1db);font-size:11px;margin:4px 0 4px;line-height:1.4}
-      #sec-d3fend .mit-techs{color:var(--c-9aa4b2);font-size:10px;display:flex;flex-wrap:wrap;gap:4px;align-items:baseline}
-      #sec-d3fend .mit-tech{color:var(--c-6aa9ff);background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px;text-decoration:none}
+      #sec-d3fend .mit-covers{color:var(--c-9aa4b2);font-size:11px;display:inline-flex;flex-wrap:wrap;gap:4px;align-items:baseline}
+      #sec-d3fend .mit-tech{color:var(--c-6aa9ff);background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px;font-size:10px;text-decoration:none}
       #sec-d3fend .mit-tech:hover{text-decoration:underline}
-      #sec-d3fend .mit-more{color:var(--c-9aa4b2);cursor:help}
+      #sec-d3fend .mit-more{color:var(--c-9aa4b2);font-size:10px;cursor:help}
       #sec-d3fend .d3f-section-h{font-size:13px;font-weight:bold;color:var(--c-6bcb77);margin:16px 0 6px;padding-top:10px;border-top:1px solid var(--c-232a33)}
       #sec-d3fend #remediationPlan:not(:empty){background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-c79bff);border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:12px;line-height:1.5;color:var(--c-c9d1db)}
       #sec-d3fend #remediationPlan h1,#sec-d3fend #remediationPlan h2,#sec-d3fend #remediationPlan h3{color:var(--c-d6deea);font-size:13px;margin:8px 0 4px}
@@ -7729,6 +7726,8 @@
       const head = `<div class="mit-h">🎯 Recommended mitigations — concrete ATT&CK actions, highest-leverage first</div>`;
       const meta = `<div class="mit-meta">${esc(d.byMitigation.length)} mitigation(s) covering ${esc(d.coveredTechniqueCount)} of ${esc(d.caseTechniqueCount)} identified technique(s) · MITRE ATT&CK v${esc(d.attackVersion)} · ordered by how many of this case's techniques each one addresses</div>`;
       const COV = 8;
+      // One row per mitigation (mirrors the D3FEND row): the name carries the description on hover,
+      // and the case technique(s) it applies to sit inline on the same line.
       const rows = (d.byMitigation || []).map(m => {
         const techs = m.techniques || [];
         const shown = techs.slice(0, COV).map(t => {
@@ -7736,14 +7735,15 @@
           return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="mit-tech">${esc(t)}</a>` : `<span class="mit-tech">${esc(t)}</span>`;
         }).join("");
         const moreN = techs.length - COV;
-        const more = moreN > 0 ? `<span class="mit-more" title="${escAttr(techs.join(", "))}">+${esc(moreN)}</span>` : "";
+        const more = moreN > 0 ? `<span class="mit-more" title="${escAttr(techs.join(", "))}">+${esc(moreN)} more</span>` : "";
+        const tip = m.description || "";
         const name = m.url
-          ? `<a href="${escAttr(m.url)}" target="_blank" rel="noopener" class="mit-name">${esc(m.id)} · ${esc(m.name)}</a>`
-          : `<span class="mit-name">${esc(m.id)} · ${esc(m.name)}</span>`;
-        const desc = m.description ? `<div class="mit-desc">${esc(m.description)}</div>` : "";
-        return `<div class="mit-row"><div class="mit-row-h">${name}<span class="mit-cov" title="how many of this case's techniques this single mitigation addresses">covers ${esc(techs.length)}</span></div>${desc}<div class="mit-techs">applies to: ${shown}${more}</div></div>`;
+          ? `<a href="${escAttr(m.url)}" target="_blank" rel="noopener" class="mit-name" title="${escAttr(tip)}">${esc(m.id)} · ${esc(m.name)}</a>`
+          : `<span class="mit-name" title="${escAttr(tip)}">${esc(m.id)} · ${esc(m.name)}</span>`;
+        const applies = techs.length ? `<span class="mit-covers">applies to ${shown}${more}</span>` : "";
+        return `<div class="mit-row">${name}${applies}</div>`;
       }).join("");
-      el.innerHTML = head + meta + `<div class="mit-list">${rows}</div>`;
+      el.innerHTML = head + meta + `<div class="mit-card">${rows}</div>`;
     }
 
     // Minimal, safe Markdown → HTML (headings, ordered/unordered lists, bold, inline code, paras).
