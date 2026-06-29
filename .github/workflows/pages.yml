@@ -4,7 +4,8 @@ on:
   push:
     branches: [master]
     paths:
-      - 'USER_MANUAL.md'
+      - 'mkdocs-docs/**'
+      - 'mkdocs.yml'
       - 'docs/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
@@ -25,26 +26,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare Jekyll site
-        run: |
-          # Copy the existing docs/ site (landing page + images) as the Jekyll source
-          cp -r docs _jekyll_src
-          # Add the manual as a /manual/ subpage — does NOT overwrite index.html
-          mkdir -p _jekyll_src/manual
-          printf -- '---\nlayout: default\ntitle: DFIR Companion — User Manual\n---\n\n' > _jekyll_src/manual/index.md
-          cat USER_MANUAL.md >> _jekyll_src/manual/index.md
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Build with Jekyll
-        uses: actions/jekyll-build-pages@v1
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          source: ./_jekyll_src
-          destination: ./_site
+          python-version: '3.x'
+
+      - name: Install MkDocs Material
+        run: pip install mkdocs-material
+
+      - name: Build MkDocs site
+        run: mkdocs build
+
+      - name: Assemble final site
+        run: |
+          # Create the final site: existing landing page at root + manual at /manual/
+          mkdir -p _final_site
+          cp -r docs/. _final_site/
+          mkdir -p _final_site/manual
+          cp -r _mkdocs_site/. _final_site/manual/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
+        with:
+          path: _final_site
 
   deploy:
     environment:
