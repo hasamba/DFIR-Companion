@@ -148,7 +148,7 @@ describe("detectTimelineAnomalies", () => {
       ev("c15_0", "2026-05-20T15:40:00Z", "host-c"),
       ev("c15_1", "2026-05-20T15:50:00Z", "host-c"),
     ];
-    const r = detectTimelineAnomalies(events);
+    const r = detectTimelineAnomalies(events, { bucketMinutes: 60 });
     expect(r.anomalies).toHaveLength(1);
     expect(r.anomalies[0].asset).toBe("host-a");
     expect(r.anomalies[0].bucketStart).toContain("T14:");
@@ -162,7 +162,7 @@ describe("detectTimelineAnomalies", () => {
       ev("b0", `${BASE_TS}20:00Z`, "host-b"),
       ev("c0", `${BASE_TS}30:00Z`, "host-c"),
     ];
-    const r = detectTimelineAnomalies(events);
+    const r = detectTimelineAnomalies(events, { bucketMinutes: 60 });
     expect(r.anomalies).toHaveLength(1);
     expect(r.anomalies[0].asset).toBe("(unknown)");
   });
@@ -183,7 +183,7 @@ describe("detectTimelineAnomalies", () => {
       ev("g0", `${BASE_TS}34:00Z`, "host-g"),
       ev("h0", `${BASE_TS}35:00Z`, "host-h"),
     ];
-    const r = detectTimelineAnomalies(events);
+    const r = detectTimelineAnomalies(events, { bucketMinutes: 60 });
     expect(r.anomalies[0].severity).toBe("Critical");
     expect(r.anomalies[1].severity).toBe("High");
   });
@@ -207,5 +207,63 @@ describe("detectTimelineAnomalies", () => {
     expect(detectTimelineAnomalies(events, { bucketMinutes: 60 }).anomalies).toHaveLength(0);
     expect(detectTimelineAnomalies(events, { bucketMinutes: 15 }).anomalies).toHaveLength(0);
     // Still no anomaly (single asset), but at least it runs without error
+  });
+});
+
+describe("detectTimelineAnomalies — self-baseline (an asset vs its own rate)", () => {
+  it("flags a quiet host that bursts, even with NO peers to compare against", () => {
+    // host-a is the only asset: 1 event/hour for four hours, then 10 in hour 14.
+    const events: ForensicEvent[] = [
+      ev("q1", "2026-05-20T10:00:00Z", "host-a"),
+      ev("q2", "2026-05-20T11:00:00Z", "host-a"),
+      ev("q3", "2026-05-20T12:00:00Z", "host-a"),
+      ev("q4", "2026-05-20T13:00:00Z", "host-a"),
+      ...Array.from({ length: 10 }, (_, i) =>
+        ev(`burst${i}`, `2026-05-20T14:${String(i).padStart(2, "0")}:00Z`, "host-a")),
+    ];
+    const r = detectTimelineAnomalies(events, { bucketMinutes: 60 });
+    expect(r.assetCount).toBe(1);                 // single asset → peer baseline impossible
+    expect(r.anomalies).toHaveLength(1);
+    const a = r.anomalies[0];
+    expect(a.asset).toBe("host-a");
+    expect(a.kind).toBe("self");
+    expect(a.methods).toEqual(["self"]);
+    expect(a.eventCount).toBe(10);
+    expect(a.ratio).toBe(10);                     // 10 / median([1,1,1,1,10]) = 10/1
+    expect(a.severity).toBe("Critical");
+    expect(a.bucketStart).toContain("T14:");
+  });
+
+  it("does not self-flag an asset with fewer than 3 active buckets (unstable baseline)", () => {
+    const events: ForensicEvent[] = [
+      ev("a1", "2026-05-20T10:00:00Z", "host-a"),
+      ...Array.from({ length: 10 }, (_, i) =>
+        ev(`b${i}`, `2026-05-20T14:${String(i).padStart(2, "0")}:00Z`, "host-a")),
+    ];
+    // 2 active buckets only, and a single asset (no peer baseline) → nothing flagged.
+    expect(detectTimelineAnomalies(events, { bucketMinutes: 60 }).anomalies).toHaveLength(0);
+  });
+
+  it("reports BOTH methods when a burst beats peers and the asset's own baseline", () => {
+    const events: ForensicEvent[] = [
+      ev("a10", "2026-05-20T10:00:00Z", "host-a"),
+      ev("a11", "2026-05-20T11:00:00Z", "host-a"),
+      ev("a12", "2026-05-20T12:00:00Z", "host-a"),
+      ev("a13", "2026-05-20T13:00:00Z", "host-a"),
+      ...Array.from({ length: 10 }, (_, i) =>
+        ev(`a14_${i}`, `2026-05-20T14:${String(i).padStart(2, "0")}:00Z`, "host-a")),
+      ev("b14", "2026-05-20T14:30:00Z", "host-b"),
+      ev("c14", "2026-05-20T14:45:00Z", "host-c"),
+    ];
+    const r = detectTimelineAnomalies(events, { bucketMinutes: 60 });
+    const a = r.anomalies.find((x) => x.asset === "host-a" && x.bucketStart.includes("T14:"));
+    expect(a).toBeTruthy();
+    expect(a!.methods).toEqual(["peer", "self"]); // peer pass runs first, both flag the same bucket
+  });
+
+  it("exposes selfFactor in result metadata (defaults to spikeFactor, overridable)", () => {
+    expect(detectTimelineAnomalies([]).selfFactor).toBe(DEFAULT_SPIKE_FACTOR);
+    expect(detectTimelineAnomalies([], { spikeFactor: 8 }).selfFactor).toBe(8);
+    expect(detectTimelineAnomalies([], { selfFactor: 3 }).selfFactor).toBe(3);
   });
 });

@@ -12,10 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Timeline anomalies — default bucket 15 min** — the per-asset spike bucket default dropped from 60 to 15 minutes (`DFIR_ANOMALY_BUCKET_MINUTES`); a concentrated burst is no longer averaged across a quiet hour and diluted below the threshold (part of #175).
 - **Timeline host de-duplication** — when the affected-host chip (🖥) is shown on a timeline event, the redundant trailing `@ <host>` that importers append to the description is now stripped, so the hostname isn't shown twice.
 - **Chocolatey package** — removed `tools/LICENSE.txt` and `tools/VERIFICATION.txt`; those files are not required for packages that embed no binaries (per Chocolatey moderator feedback).
 
 ### Added
+- **Timeline anomalies — self-baseline detection** — alongside the existing peer baseline (an asset busier than other assets in the same bucket), the panel now also flags an asset bursting above **its own** typical rate (median of its per-bucket counts, needs ≥3 active buckets), so a normally-quiet host that bursts is caught even when its absolute volume is low and broad telemetry can't mask it. A **Type** column shows `peer` / `self` / `peer + self`; tunable via `DFIR_ANOMALY_SELF_FACTOR` (part of #175).
 - **Remember import severity** — the minimum-severity import prompt is now a dialog with a *Remember this choice — don't ask again* checkbox; checking it skips the prompt on future imports and uses the saved floor. Manage/clear it via Settings → General → Import severity. Per-browser, no server round-trip.
 - **Timeline row display toggles** — Settings → General now has a *Timeline row display* control to choose which sub-elements appear in each forensic-timeline event row (action icons / tag pills / badges / host chip / MITRE / related findings / evidence links); the timestamp and message are always shown. Per-browser, applies immediately, no server round-trip.
 - **Linux shell history import** — `.bash_history` / `.zsh_history` (and sh/ash/ksh/fish) are now a recognized artifact: one forensic event per command at the artifact's own time (bash `HISTTIMEFORMAT` `#epoch` lines + zsh extended history), the account derived from the filename, Info by default with a conservative bump on attacker tradecraft (reverse shells, download-and-execute, credential access, log/history tampering, lateral SSH) and IP/URL/domain IOC extraction. No AI, deterministic.

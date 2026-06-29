@@ -305,26 +305,24 @@ function timelineCoverage(state: InvestigationState, lines: string[]): void {
 function timelineAnomalies(state: InvestigationState, lines: string[]): void {
   lines.push("### 3.4 Timeline anomalies", "");
   lines.push(
-    "_Per-asset event-rate spikes: assets whose event count in a time bucket exceeds the spike-factor × median across all assets. A lead, not proof — verify each anomaly against the raw timeline._",
+    "_Per-asset event-rate spikes, two baselines: **peer** = an asset far busier than other assets in the same bucket; **self** = an asset bursting above its own typical rate. A lead, not proof — verify each anomaly against the raw timeline._",
     "",
   );
   const result = detectTimelineAnomalies(state.forensicTimeline, anomalyEnvOptions());
-  if (result.assetCount < 2) {
-    lines.push("_Not enough assets in the timeline to compute a baseline (need ≥ 2)._", "");
-    return;
-  }
   if (result.anomalies.length === 0) {
     lines.push(
-      `_No asset-rate spikes detected (bucket ${result.bucketMinutes} min, threshold ${result.spikeFactor}×)._`,
+      result.assetCount < 2
+        ? `_No event-rate spikes detected (only ${result.assetCount} asset; bucket ${result.bucketMinutes} min, peer ${result.spikeFactor}× / self ${result.selfFactor}×)._`
+        : `_No event-rate spikes detected (bucket ${result.bucketMinutes} min, peer ${result.spikeFactor}× / self ${result.selfFactor}×)._`,
       "",
     );
     return;
   }
-  lines.push("| Severity | Asset | Bucket | Events | Median | Ratio |", "| --- | --- | --- | --- | --- | --- |");
+  lines.push("| Severity | Asset | Type | Bucket | Events | Baseline | Ratio |", "| --- | --- | --- | --- | --- | --- | --- |");
   for (const a of result.anomalies) {
     const window = `${a.bucketStart} → ${a.bucketEnd}`;
     lines.push(
-      `| ${a.severity} | ${cellMd(a.asset)} | ${cellMd(window)} | ${a.eventCount} | ${a.medianCount} | ${a.ratio}× |`,
+      `| ${a.severity} | ${cellMd(a.asset)} | ${a.methods.join(" + ")} | ${cellMd(window)} | ${a.eventCount} | ${a.medianCount} | ${a.ratio}× |`,
     );
   }
   lines.push("");

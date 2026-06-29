@@ -99,11 +99,14 @@ Useful for spotting lateral movement (events jumping between assets) and attack 
 
 ## Timeline Anomalies
 
-Detects assets whose event rate spikes above the per-bucket median. A sudden burst of activity from one asset stands out here.
+Detects assets whose event rate spikes in a time bucket, using two baselines (shown in the **Type** column):
 
-Useful for spotting data exfiltration, log flooding, or initial-access beachheads. No AI — purely statistical.
+- **peer** — the asset is far busier than *other* assets in the same bucket (count ≥ spike-factor × the per-bucket median across assets).
+- **self** — the asset is bursting above *its own* typical rate (count ≥ self-factor × the median of that asset's own per-bucket counts). Catches a normally-quiet host (a DC, a file server) that suddenly bursts, even when its absolute volume is low — the peer method can miss those, and importing unrelated telemetry can't mask them.
 
-Configure thresholds via `DFIR_ANOMALY_BUCKET_MINUTES`, `DFIR_ANOMALY_SPIKE_FACTOR`, `DFIR_ANOMALY_MIN_EVENTS`.
+A burst flagged by both is shown once as `peer + self`. Useful for spotting data exfiltration, log flooding, or initial-access beachheads. No AI — purely statistical.
+
+Configure thresholds via `DFIR_ANOMALY_BUCKET_MINUTES` (default 15), `DFIR_ANOMALY_SPIKE_FACTOR` (peer, default 5), `DFIR_ANOMALY_SELF_FACTOR` (self, defaults to the peer factor), `DFIR_ANOMALY_MIN_EVENTS`.
 
 ---
 
