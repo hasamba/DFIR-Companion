@@ -29,6 +29,8 @@ Demo Case: https://dfir-companion-production.up.railway.app/dashboard?caseId=dem
  
 Hands-on lab: https://killercoda.com/dfir-companion/scenario/killercoda
 
+User Manual: https://hasamba.github.io/DFIR-Companion/manual/
+
 ## Table of contents
 
 - [Quick start](#quick-start)
