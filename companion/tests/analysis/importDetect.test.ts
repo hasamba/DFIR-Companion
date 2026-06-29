@@ -17,6 +17,14 @@ describe("detectImportKind — JSON formats", () => {
     ]))).toBe("ecar");
   });
 
+  it("snort: fast-alert log (not generic log)", () => {
+    const log = [
+      "05/14-12:26:09.500 [**] [1:2009714:9] ET WEB_SERVER Possible SQL Injection [**] [Classification: web-application-attack] [Priority: 1] {TCP} 145.78.103.167:60278 -> 45.83.220.5:80",
+      "05/14-12:08:14.605 [**] [1:366:1] PROTOCOL-ICMP PING [**] [Classification: icmp-event] [Priority: 3] {ICMP} 37.75.195.175 -> 45.83.220.5",
+    ].join("\n");
+    expect(detectImportKind("snort_alert.log", log)).toBe("snort");
+  });
+
   it("sandbox: CAPE report.json", () => {
     expect(detectImportKind("report.json", j({ info: { id: 1 }, target: { file: {} }, signatures: [] }))).toBe("sandbox");
   });

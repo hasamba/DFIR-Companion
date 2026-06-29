@@ -14,12 +14,13 @@ import { looksLikeSysdig } from "./sysdigImport.js";
 import { looksLikeWinEventXml } from "./evtxXmlImport.js";
 import { looksLikeBashHistory } from "./bashHistoryImport.js";
 import { isEcarRecord } from "./ecarImport.js";
+import { looksLikeSnort } from "./snortImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
 
 export type ImportKind =
   | "thor" | "siem" | "evtxxml" | "chainsaw" | "hayabusa" | "ecar" | "velociraptor" | "securityonion" | "socrates" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
-  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "csv" | "log" | "unknown";
+  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "snort" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -444,6 +445,11 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // TAB-separated table. Checked before the CSV/log fallback (it's tab-, not comma-separated, and
   // the interleaved hexdump/disasm would otherwise be mistaken for a generic log).
   if (looksLikeVolatilityText(t)) return "memory";
+
+  // Snort / Suricata "fast" alert log (`MM/DD-HH:MM:SS [**] [gid:sid:rev] … [Priority: N]`) — a real
+  // IDS verdict feed; checked before the generic log fallback so it's parsed deterministically, not
+  // sent to the AI line-triage.
+  if (looksLikeSnort(t)) return "snort";
 
   // Tabular (CSV / EZ / Plaso / Hayabusa-csv / M365-csv) vs a line-oriented log.
   const csvKind = detectCsv(t);

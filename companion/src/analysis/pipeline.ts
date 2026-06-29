@@ -75,6 +75,7 @@ import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImpor
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { parseEcarJson, ECAR_SOURCE, type EcarImportOptions } from "./ecarImport.js";
+import { parseSnortLog, SNORT_SOURCE, type SnortImportOptions } from "./snortImport.js";
 import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
 import { parseSocrates, type SocratesImportOptions } from "./socratesImport.js";
 import { parseSecurityOnion, type SecurityOnionImportOptions } from "./securityOnionImport.js";
@@ -1949,6 +1950,52 @@ export class AnalysisPipeline {
       timelineNote: `ECAR import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a Snort / Suricata "fast" alert log — a real IDS verdict feed. Deterministic (no AI):
+  // severity is the rule's Priority verdict, public src/dst IPs become IOCs, year-less timestamps are
+  // re-anchored by the mergeDelta year-clamp. See snortImport.ts.
+  async importSnort(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;
+      importedAt: string;
+      snort?: SnortImportOptions;
+      minSeverity?: Severity;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseSnortLog(text, { ...opts.snort });
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [SNORT_SOURCE],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Snort import (${parsed.format}): ${parsed.kept} alert(s) from ${parsed.total} line(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
       summary: "",
     };
     const delta = deltaSchema.parse(raw);

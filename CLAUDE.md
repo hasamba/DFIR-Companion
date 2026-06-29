@@ -169,8 +169,14 @@ because benign Windows processes (MsMpEng/Defender, services.exe, WmiPrvSE) do b
 verdict is a false-positive factory; the evidence + technique context is preserved in the description for a detector
 to weigh. IOCs are PUBLIC-IP-only (RFC1918/loopback/CGNAT skipped) to keep the list tight. Reuses `siemImport`'s
 `extractRecords`/`aggregateEvents`/`addIoc`/`cleanIp`; detected by the `timestamp_ms`+`object`+`action` triple
-ahead of the SIEM/network catch-alls).
-The last nineteen
+ahead of the SIEM/network catch-alls),
+and **Snort/Suricata IDS** (`importSnort` → `snortImport.ts` — the `alert_fast` single-line format
+`MM/DD-HH:MM:SS [**] [gid:sid:rev] msg [**] [Classification: …] [Priority: N] {PROTO} src -> dst`. A real
+IDS verdict feed, so it's consumed not re-derived: severity from the rule **Priority** (1→High/2→Medium/
+3→Low), SID + classification + flow → description, public src/dst IPs → IOCs. Year-less timestamps (like
+Cisco ASA) are stamped an assumed year and the `mergeDelta` year-clamp re-anchors them. `looksLikeSnort`
+detects it ahead of the generic-log fallback; reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`).
+The last twenty
 are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
