@@ -1,0 +1,73 @@
+site_name: DFIR Companion
+site_url: https://hasamba.github.io/DFIR-Companion/manual/
+site_description: Plain-English guide for the DFIR Companion — a localhost analysis and reporting companion for incident responders.
+repo_url: https://github.com/hasamba/DFIR-Companion
+repo_name: hasamba/DFIR-Companion
+edit_uri: edit/master/mkdocs-docs/
+
+docs_dir: mkdocs-docs
+site_dir: _mkdocs_site
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep orange
+      accent: orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep orange
+      accent: orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Analyst Walkthrough: walkthrough.md
+  - Feature Reference:
+    - Case Management: reference/cases.md
+    - Evidence Capture: reference/evidence-capture.md
+    - Importing Evidence: reference/importing.md
+    - AI Analysis: reference/ai-analysis.md
+    - Dashboard Panels: reference/dashboard.md
+    - IOC Enrichment: reference/ioc-enrichment.md
+    - Threat Hunting: reference/threat-hunting.md
+    - Reports & Exports: reference/reports.md
+    - Integrations: reference/integrations.md
+    - Live Monitoring & Push Ingest: reference/live-monitoring.md
+    - Settings Reference: reference/settings.md
+    - Advanced Features: reference/advanced.md
+  - Tips for Analysts: tips.md
