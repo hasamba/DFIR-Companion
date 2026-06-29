@@ -3,6 +3,7 @@ import type { InvestigationState, Finding, IOC, Technique, ForensicEvent } from 
 import { byEventTime } from "./forensicSort.js";
 import { isAnalystWorkLog } from "./workLogFilter.js";
 import { correlateEvents } from "./correlate.js";
+import { clampOutlierYears } from "./timeYearClamp.js";
 import { toUtcIso } from "./timeUtc.js";
 
 export interface WindowContext {
@@ -183,10 +184,15 @@ export function mergeDelta(
       });
     }
   }
+  // Re-anchor mis-dated stray events (a year-less syslog/CSV line the AI import guessed into the wrong
+  // year) onto the timeline's dominant year BEFORE correlation, so they sort/correlate in the right
+  // place instead of corrupting the chronology. Conservative + idempotent (no-op unless one year clearly
+  // dominates). See timeYearClamp.ts.
+  const dated = clampOutlierYears(forensicTimeline);
   // Collapse duplicates / cross-source matches immediately (so re-importing the same
   // report, or two tools flagging one artifact, never doubles the timeline) — not only
   // during synthesis. Idempotent.
-  const correlated = correlateEvents(forensicTimeline).sort(byEventTime);
+  const correlated = correlateEvents(dated).sort(byEventTime);
 
   // Key questions are a holistic reassessment — replace wholesale when synthesis
   // provides them; otherwise keep the existing set (per-window deltas omit them).
