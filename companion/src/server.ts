@@ -2506,6 +2506,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     switch (kind) {
       case "thor": return pipeline.importThor(caseId, text, base);
       case "siem": return pipeline.importSiem(caseId, text, base);
+      case "evtxxml": return pipeline.importEvtxXml(caseId, text, base);
       case "chainsaw": return pipeline.importChainsaw(caseId, text, base);
       case "hayabusa": return pipeline.importHayabusa(caseId, text, base);
       case "velociraptor": return pipeline.importVelociraptor(caseId, text, base);

@@ -331,6 +331,25 @@ describe("detectImportKind — logs & edges", () => {
   });
 });
 
+describe("detectImportKind — Windows Event Log XML", () => {
+  const evtxXml = `<?xml version="1.0" encoding="utf-8"?>
+<Events>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System><Provider Name="Microsoft-Windows-Security-Auditing"/><EventID>4624</EventID>
+  <Channel>Security</Channel><Computer>DC01</Computer><TimeCreated SystemTime="2024-05-14T12:00:00Z"/></System>
+  <EventData><Data Name="TargetUserName">jdoe</Data></EventData>
+</Event></Events>`;
+  it("evtxxml: Event Viewer / wevtutil XML export", () => {
+    expect(detectImportKind("windows_event_security.xml", evtxXml)).toBe("evtxxml");
+  });
+  it("evtxxml: namespace-stripped envelope still detected", () => {
+    expect(detectImportKind("sysmon.xml", "<Events><Event><System><EventID>1</EventID></System></Event></Events>")).toBe("evtxxml");
+  });
+  it("NOT evtxxml: arbitrary HTML/XML is left to the log fallback", () => {
+    expect(detectImportKind("page.xml", "<note><to>You</to><from>Me</from></note>")).toBe("log");
+  });
+});
+
 function exampleImporter() {
   const r = parseImporterSpec(EXAMPLE_IMPORTER_SPEC);
   if (!r.ok) throw new Error("bad example");

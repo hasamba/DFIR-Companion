@@ -823,10 +823,12 @@ export function aggregateEvents(
 
 // ───────────────────────────── top-level parse ─────────────────────────────
 
-export function parseSiemExport(text: string, opts: SiemImportOptions = {}): SiemParseResult {
+// Map a flat array of already-extracted records to the SIEM result (Windows per-EID mapping,
+// generic field auto-detection fallback, aggregation + caps). Shared by parseSiemExport (which
+// unwraps JSON/NDJSON containers first) and the Windows-Event-XML importer (which parses the XML
+// envelope to the same record shape) so both produce an identical SiemParseResult. Pure.
+export function buildSiemResult(records: Row[], format: string, opts: SiemImportOptions = {}): SiemParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
-
-  const { records, format } = extractRecords(text);
   const total = records.length;
 
   const iocSink = new Map<string, SiemIoc>();
@@ -858,4 +860,9 @@ export function parseSiemExport(text: string, opts: SiemImportOptions = {}): Sie
     format,
     hostname,
   };
+}
+
+export function parseSiemExport(text: string, opts: SiemImportOptions = {}): SiemParseResult {
+  const { records, format } = extractRecords(text);
+  return buildSiemResult(records, format, opts);
 }
