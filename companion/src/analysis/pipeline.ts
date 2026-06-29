@@ -13,7 +13,11 @@ import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity, TimelineEntry } from "./stateTypes.js";
-import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, type AskAnswer, type ExecSummary, type ExplainEventResult } from "./responseSchema.js";
+import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
+import { buildMitigationsResult } from "./attackMitigations.js";
+import { loadMitigationsDataset } from "./attackMitigationsData.js";
+import { buildD3fendResult } from "./d3fendMap.js";
+import { loadD3fendDataset, d3fendEnvOptions } from "./d3fendData.js";
 import { buildStateSummary } from "./summary.js";
 import { mergeDelta } from "./stateMerge.js";
 import type { StateLock } from "./stateLock.js";
@@ -553,7 +557,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -628,6 +632,31 @@ export const EXEC_SUMMARY_PROMPT = [
   "",
   "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
   JSON.stringify({ summary: "the executive summary as a few plain-language paragraphs (use \\n\\n between them)" }, null, 2),
+].join("\n");
+
+// Incident-specific remediation plan (#178) — turn the case's findings + ATT&CK mitigations into a
+// concrete, prioritized action list the IR team can actually execute, specific to THIS incident.
+export const REMEDIATION_PROMPT = [
+  "You are a senior incident-response consultant writing a REMEDIATION PLAN for ONE security incident.",
+  "Using ONLY the case evidence below (findings, ATT&CK techniques, the MITRE ATT&CK mitigations and the",
+  "MITRE D3FEND countermeasures recommended for those techniques), write a concrete, prioritized plan the",
+  "IR team can execute NOW.",
+  "",
+  "Rules:",
+  "- Be SPECIFIC TO THIS INCIDENT: reference the actual hosts, accounts, CVEs, IOCs, and tools named in",
+  "  the findings/timeline (e.g. 'reset krbtgt twice — DC01 was compromised', not 'rotate credentials').",
+  "- Ground each action in the supplied ATT&CK mitigations; turn their generic guidance into a concrete",
+  "  step for this environment. Do NOT invent facts the evidence doesn't support.",
+  "- Organize by phase, in this order: ## Contain now, ## Eradicate, ## Harden (prevent recurrence),",
+  "  ## Recover, ## Verify. Under each, a numbered list of specific actions.",
+  "- For each action, end with the technique/finding it addresses in parentheses, and CITE the relevant",
+  "  framework references: the ATT&CK mitigation M-code AND, where one fits, the relevant D3FEND",
+  "  countermeasure name — e.g. '(T1003.001 — Mimikatz on DC01; ATT&CK M1043, D3FEND Local Account Monitoring)'.",
+  "  Only cite a D3FEND countermeasure that appears in the supplied list; omit it if none fits.",
+  "- Lead with the most urgent containment. Keep it actionable and tight — no filler, no restating the incident.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({ plan: "the remediation plan as GitHub-flavored markdown (## headings + numbered lists)" }, null, 2),
 ].join("\n");
 
 // Explain a SINGLE forensic event in context — what happened, why it matters, ATT&CK mapping,
@@ -1027,6 +1056,7 @@ export const getMemoryNextStepPrompt = (): string => resolvePrompt("MEMNEXT", ME
 export const getQueryTranslatePrompt = (): string => resolvePrompt("QUERYXLATE", QUERY_TRANSLATE_PROMPT);
 export const getReconcilePrompt = (): string => resolvePrompt("RECONCILE", RECONCILE_PROMPT);
 export const getExplainEventPrompt = (): string => resolvePrompt("EXPLAIN", EXPLAIN_EVENT_PROMPT);
+export const getRemediationPrompt = (): string => resolvePrompt("REMEDIATION", REMEDIATION_PROMPT);
 
 export const IMPORTER_PROMPT = [
   "You are writing a DECLARATIVE IMPORTER DEFINITION for the DFIR Companion. Output ONLY a single",
@@ -3223,6 +3253,53 @@ export class AnalysisPipeline {
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getExecSummaryPrompt(), userPrompt, images: [] }, "exec-summary");
       return execSummarySchema.parse(parsed);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // Incident-specific remediation plan (#178): a concrete, prioritized action list for the IR team,
+  // GROUNDED in the deterministic ATT&CK Mitigations for the case's techniques so the model turns
+  // generic guidance into specific steps instead of hallucinating. Single-shot, no state change.
+  async remediationPlan(caseId: string): Promise<RemediationPlan> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("remediation plan");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const filtered: InvestigationState = { ...loaded, forensicTimeline: scopedEvents };
+
+    const findingsText =
+      loaded.findings.slice(0, 100).map((f) => `[${f.severity}] ${f.title}${f.mitreTechniques?.length ? ` (${f.mitreTechniques.join(", ")})` : ""}`).join("\n") || "(none)";
+
+    // The deterministic ATT&CK mitigations for this case's techniques — the grounding facts.
+    const mit = buildMitigationsResult(filtered, loadMitigationsDataset());
+    const mitigationsText =
+      mit.byMitigation
+        .slice(0, 30)
+        .map((m) => `- ${m.id} ${m.name} (covers ${m.techniques.join(", ")}): ${m.description}`)
+        .join("\n") || "(no mapped ATT&CK mitigations)";
+
+    // The deterministic D3FEND countermeasures (defensive techniques/sensors) for the same
+    // techniques — so the plan can also cite the relevant D3FEND control alongside the M-code.
+    const d3f = buildD3fendResult(filtered, loadD3fendDataset(), d3fendEnvOptions());
+    const d3fendText =
+      d3f.byTactic
+        .flatMap((g) => g.countermeasures.map((c) => `- ${c.name} [${c.tactic}] (covers ${c.techniques.join(", ")})`))
+        .slice(0, 40)
+        .join("\n") || "(no mapped D3FEND countermeasures)";
+
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents, await this.getKevCatalog());
+
+    const userPrompt =
+      contextBlock +
+      `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
+      `FINDINGS:\n${findingsText}\n\n` +
+      `RECOMMENDED ATT&CK MITIGATIONS (use these as the basis for concrete steps):\n${mitigationsText}\n\n` +
+      `RELEVANT D3FEND COUNTERMEASURES (the defensive technique/sensor for each — cite alongside the ATT&CK mitigation where it fits):\n${d3fendText}\n\n` +
+      `Write the incident-specific remediation plan as JSON.`;
+
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getRemediationPrompt(), userPrompt, images: [] }, "remediation");
+      return remediationPlanSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 

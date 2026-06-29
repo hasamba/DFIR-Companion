@@ -32,6 +32,7 @@ export const REPORT_SECTION_DEFS = [
   { key: "conclusions", label: "5 · Conclusions & recommendations" },
   { key: "hypotheses", label: "Hypotheses (what we investigated & concluded)" },
   { key: "playbook", label: "Response Playbook" },
+  { key: "d3fend", label: "Mitigation & defensive countermeasures (ATT&CK + D3FEND)" },
   { key: "notebook", label: "Analyst Notebook" },
 ] as const;
 
@@ -177,6 +178,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "conclusions", enabled: true },
       { key: "hypotheses", enabled: false },
       { key: "playbook", enabled: false },
+      { key: "d3fend", enabled: false },
       { key: "notebook", enabled: false },
     ],
   }),
@@ -202,6 +204,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "conclusions", enabled: true },
       { key: "hypotheses", enabled: true },
       { key: "playbook", enabled: true },
+      { key: "d3fend", enabled: true },
       { key: "notebook", enabled: true },
     ],
   }),
