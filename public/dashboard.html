@@ -2778,10 +2778,11 @@
           <span id="addEventMsg" class="manual-msg"></span>
         </form>
       </div>
+      <div id="dropStatus" class="synth-meta" style="display:none"></div>
       <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="evIdFilterChip" style="display:none;margin:0 0 8px;font-size:12px;background:var(--c-1a1f2a);border:1px solid var(--c-2a2f3a);border-radius:4px;padding:6px 10px;"></div>
       <div id="forensicTimeline">—</div></section>
-    <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
+    <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain<span class="ev-sub">events bucketed by their ATT&amp;CK tactic (derived, no AI); a categorization, not a confirmed kill-chain stage — e.g. valid-account use can span entry and lateral movement</span></h2><div id="killChain">—</div></section>
     <!-- Memory Next-Step agent (#101): shown only when Volatility/Rekall memory output is imported. -->
     <section id="sec-mem-nextsteps" style="grid-column: 1 / -1; display:none"><h2>Memory Next Steps<span class="ev-sub">iterative memory-forensics agent — reads the imported Volatility/Rekall evidence, spots process-tree/injection/network anomalies, and suggests the exact next Volatility command</span><button id="memNextStepsBtn" type="button" title="Ask the AI to read this case's imported memory evidence (process tree, malfind, connections, command lines), identify anomalies, and propose the exact next Volatility 3 command to run" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest next steps</button><span id="memNextStepsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="memNextSteps"></div></section>
     <style>
@@ -6152,7 +6153,9 @@
           // 409 + sectionDisabled: the report's Executive summary section is off, so the server
           // skipped the AI call to save tokens. Surface why instead of a generic failure.
           if (r.status === 409 && d.sectionDisabled) { const e = new Error(d.error || "section disabled"); e.sectionDisabled = true; throw e; }
-          if (!r.ok) throw new Error("HTTP " + r.status);
+          // Surface the server's real error (e.g. "Budget limit exceeded", "402 billing") instead of a
+          // bare "HTTP 500" — the route returns it in d.error; fall back to the status only when absent.
+          if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
           return d;
         })
         .then(d => {
@@ -6195,7 +6198,9 @@
           // 409 + sectionDisabled: the report's Timeline section (which holds the narrative) is off,
           // so the server skipped the AI call to save tokens (issue #168). Surface why, not a failure.
           if (r.status === 409 && d.sectionDisabled) { const e = new Error(d.error || "section disabled"); e.sectionDisabled = true; throw e; }
-          if (!r.ok) throw new Error("HTTP " + r.status);
+          // Surface the server's real error (e.g. "Budget limit exceeded", "402 billing") instead of a
+          // bare "HTTP 500" — the route returns it in d.error; fall back to the status only when absent.
+          if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
           return d;
         })
         .then(d => {
@@ -6440,6 +6445,36 @@
     const evKey = (e) => `${evNorm(e.timestamp)}|${evNorm(e.description)}`;
     function loadImportMeta(caseId) {
       fetch(`/cases/${caseId}/import-meta`).then(r => r.json()).then(renderImportMeta).catch(() => {});
+    }
+    // Evidence drop folder (#auto-import inbox): show where to drop + the last sweep's result, and
+    // list any files that failed (they sit in drop/_failed/). Backed by GET /cases/:id/drop-status.
+    function loadDropStatus(caseId) {
+      fetch(`/cases/${caseId}/drop-status`).then(r => r.ok ? r.json() : null).then(renderDropStatus).catch(() => {});
+    }
+    function renderDropStatus(d) {
+      const el = document.getElementById("dropStatus");
+      if (!el) return;
+      if (!d || !d.enabled) { el.style.display = "none"; el.innerHTML = ""; return; }
+      const s = d.status || {};
+      el.style.display = "block";
+      const pathLine = `📂 Drop folder: <code style="word-break:break-all">${esc(d.dropPath || "")}</code>`;
+      if (!s.lastSweepAt) {
+        el.innerHTML = `<div class="sm-line"><span>${pathLine}</span><span style="color:var(--c-9aa4b2)">drop files here to auto-import</span></div>`;
+        return;
+      }
+      const imp = s.importedCount || 0, fail = s.failedCount || 0;
+      const counts = [];
+      if (imp) counts.push(`<span class="sm-added">${imp} imported</span>`);
+      if (fail) counts.push(`<span class="sm-removed">${fail} failed</span>`);
+      const summary = counts.length ? counts.join(" · ") : "nothing new";
+      let detail = "";
+      if (fail && Array.isArray(s.failed) && s.failed.length) {
+        const items = s.failed.slice(0, CAP_IMPORT_LIST).map(x =>
+          `<span class="sm-item sm-removed">✗ ${esc(x.relpath)} — <span style="color:var(--c-9aa4b2)">${esc(x.reason)}</span></span>`
+        ).join("");
+        detail = `<details open><summary>${fail} file${fail !== 1 ? "s" : ""} did not import (moved to _failed/)</summary>${items}</details>`;
+      }
+      el.innerHTML = `<div class="sm-line"><span>📥 Drop sweep <strong>${esc(relTime(s.lastSweepAt))}</strong></span><span>${summary}</span></div>${detail}`;
     }
     function renderImportMeta(m) {
       paintTimelineImportMeta(m);
@@ -7235,6 +7270,15 @@
       T1486:"Impact",T1490:"Impact",T1489:"Impact",T1485:"Impact",T1491:"Impact",T1561:"Impact",
       T1499:"Impact",T1498:"Impact",T1531:"Impact",T1496:"Impact",T1565:"Impact",T1657:"Impact",
     };
+    // Context refinement for multi-tactic techniques — mirrors CONTEXT_REFINEMENT in mitreTactics.ts.
+    // T1078 (Valid Accounts) is pinned to Initial Access, but a remote/explicit-credential logon
+    // reusing existing creds is lateral movement, not first entry — keeps EID 4648 host-to-host
+    // logons out of the Initial Access lane.
+    const KC_CONTEXT_REFINEMENT = {
+      T1078: [
+        [/\b(explicit credentials|eid\s*4648|remote desktop|rdp|winrm|psexec|wmiexec|pass-?the-?(?:hash|ticket)|accepted\s+(?:password|publickey)|ssh\s+login)\b/i, "Lateral Movement"],
+      ],
+    };
     const KC_KEYWORD_TACTIC = [
       [/\b(ransom\w*|encrypt(ed|ion)? for impact|vssadmin\s+delete|shadow\s*cop(y|ies)\s+delet|inhibit\s+recovery|wbadmin\s+delete)\b/i, "Impact"],
       [/\b(exfiltrat\w+|data\s+staged|rclone|megacmd)\b/i, "Exfiltration"],
@@ -7265,14 +7309,17 @@
 
     function kcTacticForEvent(e) {
       const techs = e.mitreTechniques || [];
+      const desc = e.description || "";
       const found = new Set();
       for (const t of techs) {
         const base = ((/T\d{4}/i.exec(t) || [])[0] || t).toUpperCase();
-        const tac = KC_TECHNIQUE_TACTIC[base];
+        // A description-keyed refinement overrides the table default for multi-tactic techniques.
+        const refinements = KC_CONTEXT_REFINEMENT[base];
+        let tac = KC_TECHNIQUE_TACTIC[base];
+        if (refinements) for (const [re, rtac] of refinements) if (re.test(desc)) { tac = rtac; break; }
         if (tac) found.add(tac);
       }
       if (found.size > 0) return KC_TACTIC_PRIORITY.find(t => found.has(t));
-      const desc = e.description || "";
       for (const [re, tac] of KC_KEYWORD_TACTIC) if (re.test(desc)) return tac;
       return null;
     }
@@ -9866,6 +9913,7 @@
       loadSynthMeta(caseId);
       loadSecondOpinion(caseId);
       loadImportMeta(caseId);
+      loadDropStatus(caseId);
       loadUndoStack(caseId);
       loadCustomerExposure(caseId);
       loadCaseLifecycle(caseId);
@@ -9926,6 +9974,7 @@
         else if (msg.type === "playbook_changed") loadPlaybook(caseId);
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
+        else if (msg.type === "drop_status_changed") loadDropStatus(caseId);
         else if (msg.type === "import_undo_changed") loadUndoStack(caseId);
         else if (msg.type === "velo_hunt_changed") { loadVeloHuntJobs(caseId); loadHuntProfile(caseId); }
         else if (msg.type === "velo_monitor_changed") loadVeloMonitors(caseId);

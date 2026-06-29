@@ -1,8 +1,8 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { config as loadDotenv } from "dotenv";
-import { join, basename, isAbsolute, resolve, dirname, relative } from "node:path";
+import { join, basename, isAbsolute, resolve, dirname, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeFile, readFile, rm, readdir, stat, open, copyFile, mkdir } from "node:fs/promises";
+import { writeFile, readFile, rm, readdir, stat, open, copyFile, mkdir, rename } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
@@ -121,6 +121,11 @@ import type { AssetType } from "./analysis/assetGraph.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { SecondOpinionStore } from "./analysis/secondOpinionStore.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
+import { DropStatusStore, type DropFailure } from "./analysis/dropStatus.js";
+import {
+  selectReadyFiles, classifyDropFile, shouldIgnoreDropFile, isOversize,
+  DROP_PROCESSED, DROP_FAILED, DROP_README, type DropFileStat,
+} from "./analysis/dropScan.js";
 import { TemplateStore, buildInitialQuestions, buildInitialNextSteps } from "./analysis/templateStore.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
@@ -316,6 +321,12 @@ export interface AppOptions {
   // route writes it after the importer completes; onImportMeta pings dashboard clients to re-fetch.
   importMetaStore?: ImportMetaStore;
   onImportMeta?: (caseId: string) => void;
+  // Evidence drop folder (auto-import inbox): the last-sweep summary read by GET /cases/:id/drop-status
+  // and the live "📥 Drop: N imported, M failed" banner. Presence of dropStatusStore also ARMS the
+  // background watcher (so createApp-only unit tests that omit it never start a filesystem poller).
+  // onDropStatus pings dashboard clients to re-fetch after a sweep that imported or failed something.
+  dropStatusStore?: DropStatusStore;
+  onDropStatus?: (caseId: string) => void;
   // Import undo/redo (#76): before each import the pre-import forensic timeline + IOCs are snapshotted
   // onto a per-case stack so the analyst can roll back an import that floods the dashboard (and redo).
   // onImportUndo pings dashboard clients to re-fetch the undo-stack state (button enable/labels).
@@ -655,7 +666,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, irisEnabled: !!irisClient, timesketchEnabled: !!options.timesketchClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked, geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, irisEnabled: !!irisClient, timesketchEnabled: !!options.timesketchClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, dropEnabled: dropWatchEnabled && !!options.dropStatusStore, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked, geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" });
   });
 
   // ── Update check (opt-in "newer release available" notice; NEVER downloads) ──────────────
@@ -978,6 +989,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         }
       }
       dispatchNotify(milestoneEvent(caseId, `Investigation opened: ${name}`, [`Investigator: ${investigator ?? "unknown"}`], new Date().toISOString()));
+      // Create the evidence drop folder for every new case (best-effort — never block case creation).
+      await ensureDropFolders(caseId).catch(() => { /* the watcher re-ensures on its next poll */ });
       return res.status(201).json(meta);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -2602,6 +2615,196 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try { const deob = await applyDeobfuscationToCase(caseId); if (deob.deobfuscated > 0) logLine(`[deobfuscate] ${caseId} decoded ${deob.deobfuscated} pushed event(s), +${deob.newIocs} new IOC(s)`); } catch { /* non-fatal */ }
     resynthesizeInBackground(caseId);
     return { storedName, addedEvents, addedIocs, analyzed: true };
+  }
+
+  // ── Evidence drop folder (auto-import inbox) ──────────────────────────────────────────────────
+  // A per-case `cases/<id>/drop/` folder: anything copied in (at any depth) is auto-imported via the
+  // SAME chain as the Import button. ONE global self-rescheduling poller (mirrors resumeVeloMonitors)
+  // — chosen over fs.watch because cases/ often lives in a Dropbox/OneDrive-synced folder where watch
+  // events are unreliable (the same reason atomicWrite retries sync locks). Files settle for one poll
+  // (size+mtime stable) before import, so a half-copied file isn't read. On success the file moves to
+  // drop/_processed/ (which is also the dedup — the watcher skips that subtree); on failure to
+  // drop/_failed/. The watcher is ARMED only when options.dropStatusStore is wired (startServer), so
+  // createApp-only unit tests never spin up a filesystem poller.
+  const dropWatchEnabled = (process.env.DFIR_DROP_ENABLED ?? "on").trim().toLowerCase() !== "off";
+  const dropPollMs = Math.min(600, Math.max(2, Number(process.env.DFIR_DROP_POLL_S) || 10)) * 1000;
+  const dropMaxBytes = Number(process.env.DFIR_DROP_MAX_BYTES) || 200 * 1024 * 1024;
+  const DROP_CONCURRENCY = 4;
+  const dropSeen = new Map<string, Map<string, { size: number; mtimeMs: number }>>();
+  const dropScanning = new Set<string>();
+  const DROP_README_TEXT = [
+    "DFIR Companion — evidence drop folder",
+    "",
+    "Copy artifacts into this folder (subfolders are fine — they're scanned recursively).",
+    "Each file is auto-detected and imported into this case, exactly like the dashboard Import button.",
+    "Images (.png/.jpg/...) are ingested as screenshot evidence.",
+    "",
+    "After processing, files move to _processed/ (success) or _failed/ (error).",
+    "Failures are reported in the dashboard (📥 Drop banner) and any configured notification channel.",
+    "",
+    "This README and the _processed/ and _failed/ subfolders are ignored by the scanner.",
+    "",
+  ].join("\n");
+
+  function dropDirOf(caseId: string): string { return join(store.caseDir(caseId), "drop"); }
+
+  async function ensureDropFolders(caseId: string): Promise<void> {
+    const dropDir = dropDirOf(caseId);
+    await mkdir(join(dropDir, DROP_PROCESSED), { recursive: true });
+    await mkdir(join(dropDir, DROP_FAILED), { recursive: true });
+    const readme = join(dropDir, DROP_README);
+    try { await stat(readme); } catch { await writeFile(readme, DROP_README_TEXT, "utf8").catch(() => { /* best-effort */ }); }
+  }
+
+  // Recursive walk of drop/, skipping the reserved subtrees + README + OS/sync junk (shouldIgnoreDropFile).
+  async function listDropFiles(dropDir: string): Promise<DropFileStat[]> {
+    const out: DropFileStat[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      let entries;
+      try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const full = join(dir, e.name);
+        const rel = relative(dropDir, full);
+        if (shouldIgnoreDropFile(rel)) continue;
+        if (e.isDirectory()) { await walk(full); continue; }
+        if (!e.isFile()) continue;
+        try { const st = await stat(full); out.push({ relpath: rel, size: st.size, mtimeMs: st.mtimeMs }); } catch { /* vanished mid-walk */ }
+      }
+    };
+    await walk(dropDir);
+    return out;
+  }
+
+  // Find a non-colliding destination (a re-dropped same-name file shouldn't clobber an earlier one).
+  async function uniqueDest(path: string): Promise<string> {
+    let candidate = path;
+    const ext = extname(path);
+    const stem = path.slice(0, path.length - ext.length);
+    for (let n = 1; n < 1000; n++) {
+      try { await stat(candidate); } catch { return candidate; } // ENOENT → free
+      candidate = `${stem}_${n}${ext}`;
+    }
+    return candidate;
+  }
+
+  async function moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void> {
+    const src = join(dropDir, relpath);
+    const dest = await uniqueDest(join(dropDir, ok ? DROP_PROCESSED : DROP_FAILED, relpath));
+    await mkdir(dirname(dest), { recursive: true });
+    try {
+      await rename(src, dest);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EXDEV") { await copyFile(src, dest); await rm(src, { force: true }); }
+      else throw e;
+    }
+  }
+
+  // Ingest one dropped image as screenshot evidence: transcode to webp (imageLoader sends screenshots
+  // as image/webp, so a dropped png/jpg must be honest on disk + wire), then run the SAME capture +
+  // vision trigger as POST /captures. triggerType "navigation" forces a prompt flush.
+  async function ingestDroppedImage(caseId: string, fullPath: string, name: string, mtimeMs: number): Promise<void> {
+    const raw = await readFile(fullPath);
+    let webp: Buffer;
+    try { const sharp = (await import("sharp")).default; webp = await sharp(raw).webp().toBuffer(); }
+    catch (e) { throw new Error(`not a readable image: ${(e as Error).message}`); }
+    const metadata = await ingestCapture(store, {
+      caseId, timestamp: new Date(mtimeMs).toISOString(), url: `drop://${name}`,
+      tabTitle: name, triggerType: "navigation", imageBase64: webp.toString("base64"),
+    });
+    const willAnalyze = !metadata.isDuplicate && Boolean(options.pipeline) && hasAiProvider() && (await getControl(caseId)).enabled;
+    options.onCapture?.(caseId);
+    indexCaptureText(metadata);
+    if (willAnalyze) {
+      const buf = buffers.get(caseId) ?? [];
+      buf.push(metadata);
+      buffers.set(caseId, buf);
+      void flush(caseId);
+    }
+  }
+
+  async function processDropFile(caseId: string, dropDir: string, file: DropFileStat): Promise<{ ok: boolean; reason?: string }> {
+    const full = join(dropDir, file.relpath);
+    const name = basename(file.relpath);
+    try {
+      if (isOversize(file.size, dropMaxBytes)) {
+        return { ok: false, reason: `too large (${Math.round(file.size / 1048576)} MB > ${Math.round(dropMaxBytes / 1048576)} MB cap) — use Import-from-path` };
+      }
+      if (classifyDropFile(file.relpath) === "image") {
+        await ingestDroppedImage(caseId, full, name, file.mtimeMs);
+        return { ok: true };
+      }
+      const text = await readFile(full, "utf8");
+      if (!text.trim()) return { ok: false, reason: "empty file" };
+      const kind = resolveImportKind(name, text);
+      if (kind === "unknown") return { ok: false, reason: "unrecognized file type (not a supported import format)" };
+      const r = await ingestStreamed(caseId, kind, text, name, undefined);
+      if (!r.analyzed) return { ok: false, reason: "AI is off — saved as evidence but not analyzed; enable AI and re-import" };
+      return { ok: true };
+    } catch (err) {
+      recordImportFailure(caseId, "drop", name, err);
+      return { ok: false, reason: (err as Error)?.message ?? String(err) };
+    }
+  }
+
+  async function scanCaseDrops(caseId: string): Promise<void> {
+    if (dropScanning.has(caseId)) return;   // a previous sweep of this case is still running
+    dropScanning.add(caseId);
+    try {
+      const meta = await store.getCaseMeta(caseId).catch(() => null);
+      if (meta?.status === "closed") return; // don't auto-import into a closed case (parity with /import)
+      const dropDir = dropDirOf(caseId);
+      await ensureDropFolders(caseId);
+      const listing = await listDropFiles(dropDir);
+      const { ready, nextSeen } = selectReadyFiles(listing, dropSeen.get(caseId) ?? new Map());
+      dropSeen.set(caseId, nextSeen);
+      if (ready.length === 0) return;
+
+      const imported: string[] = [];
+      const failed: DropFailure[] = [];
+      for (let i = 0; i < ready.length; i += DROP_CONCURRENCY) {
+        const batch = ready.slice(i, i + DROP_CONCURRENCY);
+        await Promise.all(batch.map(async (file) => {
+          const res = await processDropFile(caseId, dropDir, file);
+          if (res.ok) imported.push(file.relpath);
+          else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
+          await moveDropFile(dropDir, file.relpath, res.ok).catch((e) => logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`));
+          nextSeen.delete(file.relpath); // moved out of the watched area — forget it
+        }));
+      }
+      if (imported.length === 0 && failed.length === 0) return;
+
+      if (options.dropStatusStore) {
+        try {
+          await options.dropStatusStore.record(caseId, { dropPath: dropDir, imported, failed });
+          options.onDropStatus?.(caseId);
+        } catch (e) { logLine(`[drop] status record failed: ${(e as Error).message}`); }
+      }
+      logLine(`[drop] ${caseId}: ${imported.length} imported, ${failed.length} failed`);
+      if (failed.length > 0) {
+        const lines = failed.slice(0, 20).map((x) => `• ${x.relpath} — ${x.reason}`);
+        dispatchNotify(milestoneEvent(caseId, `Drop import: ${imported.length} imported, ${failed.length} failed`, lines, new Date().toISOString()));
+      }
+    } finally {
+      dropScanning.delete(caseId);
+    }
+  }
+
+  let dropTimer: NodeJS.Timeout | null = null;
+  async function pollDropFolders(): Promise<void> {
+    try {
+      for (const c of await store.listCases()) await scanCaseDrops(c.caseId);
+    } catch (e) {
+      logLine(`[drop] poll error: ${(e as Error).message}`);
+    } finally {
+      dropTimer = setTimeout(() => { void pollDropFolders(); }, dropPollMs);
+      dropTimer.unref();
+    }
+  }
+  function startDropWatcher(): void {
+    if (dropTimer) return;
+    logLine(`[drop] watching evidence drop folders (poll every ${dropPollMs / 1000}s, cap ${Math.round(dropMaxBytes / 1048576)} MB)`);
+    dropTimer = setTimeout(() => { void pollDropFolders(); }, dropPollMs);
+    dropTimer.unref();
   }
 
   // ── Live Velociraptor CLIENT_EVENT monitors (#84) ─────────────────────────────────────────────
@@ -6484,6 +6687,23 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Evidence drop folder: the last sweep's summary (imported / failed files) for the dashboard
+  // "📥 Drop: N imported, M failed" banner. `enabled` reflects DFIR_DROP_ENABLED; `dropPath` tells
+  // the analyst where to drop files (the browser can't open it, so it's shown + copyable).
+  app.get("/cases/:id/drop-status", async (req: Request, res: Response) => {
+    if (!options.dropStatusStore) return res.status(501).json({ error: "drop folder not configured" });
+    try {
+      if (!(await store.caseExists(req.params.id))) {
+        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+      }
+      const status = await options.dropStatusStore.load(req.params.id);
+      const dropPath = status.dropPath || dropDirOf(req.params.id);
+      return res.status(200).json({ enabled: dropWatchEnabled, pollSeconds: dropPollMs / 1000, dropPath, status });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // #76 Import undo/redo. Imports can flood the dashboard; these let the analyst roll the forensic
   // timeline + IOCs back to the pre-import snapshot (and redo). The synthesis-derived conclusions are
   // re-derived from the restored timeline by resynthesizeInBackground, exactly as on import.
@@ -7233,6 +7453,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // tests and embeddings that don't use monitoring.
   void resumeVeloMonitors();
 
+  // Arm the evidence drop-folder watcher (auto-import inbox). Gated on the status store being wired
+  // (startServer), so createApp-only unit tests never start a filesystem poller.
+  if (dropWatchEnabled && options.dropStatusStore) startDropWatcher();
+
   // Vendored client libraries (Leaflet for the Geographic map, #133). Whitelisted filenames only.
   // Registered inside createApp so the routes are available in tests (startServer calls createApp).
   const vendorFiles: Record<string, string> = {
@@ -7750,6 +7974,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const correlationProfileStore = new CorrelationProfileStore(store);
   const secondOpinionStore = new SecondOpinionStore(store);
   const importMetaStore = new ImportMetaStore(store);
+  const dropStatusStore = new DropStatusStore(store);   // evidence drop-folder last-sweep summary
   // #76: import undo/redo. Depth is the number of import levels kept (each = a full timeline+IOC copy).
   const importUndoStore = new ImportUndoStore(store, Number(process.env.DFIR_IMPORT_UNDO_DEPTH) || undefined);
   const notionExportStore = new NotionExportStore(store);
@@ -7871,6 +8096,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onSecondOpinion: (caseId) => hub.broadcastTo(caseId, { type: "second_opinion_changed" }),
     importMetaStore,
     onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
+    dropStatusStore,
+    onDropStatus: (caseId) => hub.broadcastTo(caseId, { type: "drop_status_changed" }),
     importUndoStore,
     onImportUndo: (caseId) => hub.broadcastTo(caseId, { type: "import_undo_changed" }),
     autoSynthesize,

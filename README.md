@@ -179,6 +179,7 @@ Standard DFIR questions auto-answered from the synthesized case
 - **One-click artifact push** — Splunk/Velociraptor/Kibana/Security Onion/SO-CRATES/CrowdStrike injects **Push to DFIR-Companion** button; intercepts API JSON or scrapes table
 - **Case management** — **+ New case** in dashboard (templates auto-load incident questions + import hints); captures to unknown case rejected
 - **Import screenshots** — multi-select PNG/JPEG/WebP; single **Import** button auto-detects artifact format (CSV/JSON/log)
+- **Evidence drop folder** — each case has a `drop/` folder; anything copied in (subfolders included) is auto-imported in the background via the same chain as the Import button (images → screenshot evidence), then moved to `_processed/` or `_failed/`; failures surface in a dashboard banner + notifications
 - **Import undo/redo** — roll back/forward to exact pre-import state (no re-synthesis); multi-level per-case stack
 - **Custom (declarative) importers** — teach a new file format with a JSON definition (no code); LLM-authorable via a built-in prompt, auto-detected + imported like a built-in, with built-in/custom precedence
 - **Evidence-first** — written to disk + audit log before analysis; SHA-256 dedup (disable via `DFIR_DEDUP=off`)
