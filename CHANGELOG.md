@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Global search filter now spans event-derived views** — the toolbar search + time-range filter now also narrows **Kill Chain** and **Attack Phases** (not just the timeline/IOCs/findings), so searching e.g. an IP scopes every event-based section to the matching events; Kill Chain shows a "Filtered to N of M" note, Attack Phases shows per-phase "N of M match" and hides phases with no matches.
 - **Kill Chain — T1078 logons no longer inflate Initial Access** — a Valid-Accounts (`T1078`) event whose description shows credential *reuse* (EID 4648 explicit credentials, SSH/RDP/WinRM, psexec/wmiexec, pass-the-hash) is now bucketed under **Lateral Movement** instead of Initial Access, so internal host-to-host logons stop padding the Initial Access lane and contradicting an "entry vector unknown" synthesis; the panel gains a "categorization, not a confirmed stage" caption.
 - **Timeline anomalies — default bucket 15 min** — the per-asset spike bucket default dropped from 60 to 15 minutes (`DFIR_ANOMALY_BUCKET_MINUTES`); a concentrated burst is no longer averaged across a quiet hour and diluted below the threshold (part of #175).
 - **Timeline host de-duplication** — when the affected-host chip (🖥) is shown on a timeline event, the redundant trailing `@ <host>` that importers append to the description is now stripped, so the hostname isn't shown twice.

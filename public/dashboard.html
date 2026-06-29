@@ -3271,12 +3271,8 @@
       </div>
     </section>
     <section id="sec-hypotheses" style="grid-column: 1 / -1" class="collapsed">
-      <h2>Hypotheses<span class="ev-sub" id="hypBadge"></span></h2>
+      <h2>Hypotheses<button id="hypGenerateBtn" type="button" title="Run a full synthesis now (forced) — regenerates the auto hypotheses from the current timeline. Your edited/authored hypotheses are preserved." style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="hypGenMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><span class="ev-sub" id="hypBadge"></span></h2>
       <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Testable explanations for the observed activity — track each from <em>open</em> to <em>supported</em> / <em>refuted</em> / <em>unknown</em>. Auto-generated whenever synthesis runs (after each import; badged <span class="hyp-src synthesis">auto</span>) and analyst-authored; both survive synthesis and are never wiped. A hypothesis is a lead to test, not a verdict.</p>
-      <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px">
-        <button id="hypGenerateBtn" title="Run a full synthesis now (forced) — regenerates the auto hypotheses from the current timeline. Your edited/authored hypotheses are preserved.">✨ Generate</button>
-        <span id="hypGenMsg" class="manual-msg"></span>
-      </div>
       <div id="hypList">—</div>
       <div class="hyp-add-form">
         <input id="hypTitle" placeholder="Hypothesis (a testable claim, e.g. 'Initial access was phishing')" />
@@ -3458,6 +3454,24 @@
       return true;
     }
     function _hasActiveFilter() { return !!(searchTerm || filterFrom || filterTo); }
+    // True when an event passes the GLOBAL search-bar filter (text search + time range). This is the
+    // filter the toolbar search applies to the timeline; we also feed it to the timeline-DERIVED views
+    // (Kill Chain, Attack Phases) so "I searched an IP" narrows every event-based section, not just the
+    // timeline list. (Severity-legend + source toggles stay timeline-local — they're list facets.)
+    function _matchesGlobalFilter(e) {
+      if (searchTerm && !_evMatchesSearch(e, searchTerm)) return false;
+      if ((filterFrom || filterTo) && !_evMatchesTimeRange(e, filterFrom, filterTo)) return false;
+      return true;
+    }
+    function applyGlobalEventFilter(events) {
+      return _hasActiveFilter() ? (events || []).filter(_matchesGlobalFilter) : (events || []);
+    }
+    // Re-render the timeline-derived views so they honor the same global filter. render() already does
+    // this; the time-range paths that only re-render the timeline list call this to stay consistent.
+    function refreshFilteredViews() {
+      renderKillChain(lastFt || []);
+      if (phasesData.length) renderPhases();
+    }
     function _updateSearchCount(shown, total) {
       const el = document.getElementById("searchMatchCount");
       if (!el) return;
@@ -4476,7 +4490,7 @@
         const counts = HYP_STATUS.map(([v, l]) => { const n = hypotheses.filter(h => h.status === v).length; return n ? `${n} ${v}` : null; }).filter(Boolean);
         badge.textContent = hypotheses.length ? " — " + counts.join(" · ") : "";
       }
-      if (!hypotheses.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No hypotheses yet — they're auto-generated whenever synthesis runs (after each import). Click <strong>✨ Generate</strong> above to run synthesis now, or add one below.</div>"; return; }
+      if (!hypotheses.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No hypotheses yet — they're auto-generated whenever synthesis runs (after each import). Click <strong>✨ Generate</strong> in the section title to run synthesis now, or add one below.</div>"; return; }
       let html = "";
       for (const [v, label] of HYP_STATUS) {
         const group = hypotheses.filter(h => h.status === v);
@@ -4545,7 +4559,9 @@
     // On-demand hypothesis generation (#140): hypotheses are a byproduct of synthesis, so this just
     // runs a forced synthesis (same endpoint/force as the toolbar Synthesize button) and reloads the
     // panel. Analyst-touched/authored hypotheses are frozen server-side; only pristine auto ones refresh.
-    document.getElementById("hypGenerateBtn").onclick = function() {
+    // stopPropagation so the h2 click doesn't toggle the section collapse (same guard as genExec/genNarrative).
+    document.getElementById("hypGenerateBtn").addEventListener("click", function(e) {
+      e.stopPropagation();
       const caseId = document.getElementById("caseId").value.trim();
       const msg = document.getElementById("hypGenMsg");
       const btn = document.getElementById("hypGenerateBtn");
@@ -4564,7 +4580,7 @@
         })
         .catch(e => { msg.textContent = "failed: " + e.message + " — restart the companion server if this 404s"; })
         .finally(() => { btn.disabled = false; });
-    };
+    });
 
     // Promote a notebook hypothesis entry into a tracked hypothesis (the notebook→hypothesis bridge).
     function promoteToHypothesis(id) {
@@ -7436,13 +7452,19 @@
       // Event details for expansion come from the in-scope timeline already on the page.
       const evById = {};
       for (const e of (lastFt || [])) evById[String(e.id)] = e;
-      el.innerHTML = `<div class="ph-list">` + phasesData.map((p, i) => {
+      // Honor the global search-bar filter: keep only each phase's matching events, and drop phases
+      // with none — so "I searched an IP" narrows the phases the same way it narrows the timeline.
+      const filtered = _hasActiveFilter();
+      const rows = phasesData.map((p, i) => {
+        const ids = (p.eventIds || []).map(String);
+        const matchIds = filtered ? ids.filter(id => { const e = evById[id]; return e && _matchesGlobalFilter(e); }) : ids;
+        if (filtered && !matchIds.length) return "";   // hide phases with no events matching the filter
         const color = KC_SEV_COLOR[p.maxSeverity] || "var(--c-2a2f3a)";
         const when = (p.endTimestamp && p.endTimestamp !== p.startTimestamp)
           ? `${esc(p.startTimestamp)} → ${esc(p.endTimestamp)}` : esc(p.startTimestamp || "(undated)");
         const isOpen = phOpen.has(p.id);
         const ttps = (p.inferredTechniques || []).length;
-        const evRows = (p.eventIds || []).map(id => {
+        const evRows = matchIds.map(id => {
           const e = evById[String(id)];
           if (!e) return `<div class="ph-ev-row"><span class="ph-ev-desc" style="color:var(--c-9aa4b2)">${esc(String(id))}</span></div>`;
           const desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "").replace(/\s*\[more\]$/, "");
@@ -7452,17 +7474,21 @@
             `${e.mitreTechniques && e.mitreTechniques.length ? `<small class="kc-ev-mitre">${mitreLinks(e.mitreTechniques)}</small>` : ""}` +
             `</div>`;
         }).join("");
+        const countMeta = filtered
+          ? `${matchIds.length} of ${p.eventCount} event${p.eventCount === 1 ? "" : "s"} match`
+          : `${esc(p.eventCount)} event${p.eventCount === 1 ? "" : "s"}${ttps ? ` · ${esc(ttps)} TTP${ttps === 1 ? "" : "s"}` : ""}`;
         return `<div class="ph-row${isOpen ? " ph-open" : ""}">` +
           `<div class="ph-head" style="border-left-color:${color}" data-phid="${escAttr(p.id)}">` +
           `<span class="ph-caret">▶</span>` +
           `<span class="ph-num">${i + 1}.</span>` +
           `<span class="ph-label" style="color:${color}">${esc(p.label)}</span>` +
           `<span class="ph-when">${when}</span>` +
-          `<span class="ph-meta">${esc(p.eventCount)} event${p.eventCount === 1 ? "" : "s"}${ttps ? ` · ${esc(ttps)} TTP${ttps === 1 ? "" : "s"}` : ""}</span>` +
+          `<span class="ph-meta">${countMeta}</span>` +
           `</div>` +
           `<div class="ph-events"${isOpen ? "" : " hidden"}>${evRows || "<span style='color:var(--c-9aa4b2)'>No events.</span>"}</div>` +
           `</div>`;
-      }).join("") + `</div>`;
+      }).join("");
+      el.innerHTML = `<div class="ph-list">${rows || "<span style='color:var(--c-9aa4b2)'>No phases match the filter.</span>"}</div>`;
     }
 
     // Expand/collapse a phase to reveal its events (event-delegated; survives re-renders).
@@ -8983,6 +9009,7 @@
             filterTo = new Date(ms1).toISOString();
             if (cfBtn) cfBtn.hidden = false;
             renderTimelineEvents(lastFt);
+            refreshFilteredViews();   // keep Kill Chain + Attack Phases in sync with the brushed range
             const sec = document.getElementById("sec-timeline");
             if (sec && sec.classList.contains("collapsed")) sec.classList.remove("collapsed");
           }
@@ -9068,6 +9095,8 @@
     })();
 
     function renderKillChain(ft) {
+      const total = (ft || []).length;
+      ft = applyGlobalEventFilter(ft);          // honor the global search-bar filter (text + time range)
       const byTactic = {};
       for (const tac of KC_CHAIN_ORDER) byTactic[tac] = [];
       byTactic["Uncategorized"] = [];
@@ -9096,8 +9125,11 @@
           `</div>` +
           `</div>`;
       }).join("");
+      const filterNote = _hasActiveFilter()
+        ? `<div style="font-size:11px;color:var(--c-9aa4b2);margin-bottom:6px">Filtered to ${ft.length} of ${total} events matching the search.</div>`
+        : "";
       document.getElementById("killChain").innerHTML =
-        `<div class="kc-strip">${cards}</div><div id="kcDetail" class="kc-detail" hidden></div>`;
+        filterNote + `<div class="kc-strip">${cards}</div><div id="kcDetail" class="kc-detail" hidden></div>`;
       renderKcDetail();
     }
     // True when the score line already shows this tag (matched as a bounded token, so "US" isn't
@@ -10617,6 +10649,7 @@
         filterTo = utcInputToIso(ft.value);
         cfBtn.hidden = !filterFrom && !filterTo;
         renderTimelineEvents(lastFt);
+        refreshFilteredViews();   // keep Kill Chain + Attack Phases in sync with the time range
       }
 
       gs.addEventListener("input", () => {
