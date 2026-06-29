@@ -217,6 +217,32 @@ describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
     expect(vals).toContain("ip:203.0.113.9");
   });
 
+  it("scrapes indicators embedded in the free-text message, not just IP-named fields", () => {
+    // An SSH auth line where the source IP lives INSIDE the message — no dedicated ip/src_ip field.
+    // Without free-text scraping the IP shows in the timeline but never becomes an IOC.
+    const ssh = {
+      "@timestamp": "2024-05-14T14:20:09.941Z", host: "PROXY-BO-01",
+      message: "Failed password for svc_mgmt from 10.44.20.20 port 52310 on PROXY-BO-01",
+    };
+    const r = parseSiemExport(JSON.stringify([ssh]));
+    const vals = r.iocs.map((i) => `${i.type}:${i.value}`);
+    expect(vals).toContain("ip:10.44.20.20");   // internal RFC1918 source kept
+  });
+
+  it("scrapes a URL/domain/hash from message text but skips internal .local hostnames", () => {
+    const rec = {
+      "@timestamp": "2024-05-14T14:20:09.941Z", host: "WS-1",
+      message:
+        "Download from http://evil.example.com/payload.bin sha256 " +
+        "b".repeat(64) + " observed on WS-MPATEL-01.northstar-branch.local",
+    };
+    const vals = parseSiemExport(JSON.stringify([rec])).iocs.map((i) => `${i.type}:${i.value}`);
+    expect(vals).toContain("url:http://evil.example.com/payload.bin");
+    expect(vals).toContain("domain:evil.example.com");
+    expect(vals).toContain("hash:" + "b".repeat(64));
+    expect(vals.some((v) => v.includes(".local"))).toBe(false);   // AD hostname not flooded into IOCs
+  });
+
   it("parses Kibana display-format timestamps (\"May 7, 2026 @ 16:31:04.000\") to UTC ISO", () => {
     const rec = { "@timestamp": "May 7, 2026 @ 16:31:04.000", host: "h", message: "x" };
     const e = parseSiemExport(JSON.stringify([rec])).events[0];
