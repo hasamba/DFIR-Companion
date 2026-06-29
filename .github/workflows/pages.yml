@@ -25,11 +25,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare manual as Jekyll index
+      - name: Prepare Jekyll site
         run: |
-          mkdir -p docs
-          printf -- '---\nlayout: default\ntitle: DFIR Companion User Manual\n---\n\n' > docs/index.md
-          cat USER_MANUAL.md >> docs/index.md
+          # Copy the existing docs/ site (landing page + images) as the Jekyll source
+          cp -r docs _jekyll_src
+          # Add the manual as a /manual/ subpage — does NOT overwrite index.html
+          mkdir -p _jekyll_src/manual
+          printf -- '---\nlayout: default\ntitle: DFIR Companion — User Manual\n---\n\n' > _jekyll_src/manual/index.md
+          cat USER_MANUAL.md >> _jekyll_src/manual/index.md
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -37,7 +40,7 @@ jobs:
       - name: Build with Jekyll
         uses: actions/jekyll-build-pages@v1
         with:
-          source: ./docs
+          source: ./_jekyll_src
           destination: ./_site
 
       - name: Upload Pages artifact

@@ -1,5 +1,5 @@
-title: DFIR Companion User Manual
-description: Complete guide for security analysts and incident responders using DFIR Companion.
+title: DFIR Companion
+description: A localhost DFIR analysis and reporting companion for security analysts.
 theme: jekyll-theme-cayman
 markdown: kramdown
 kramdown:
