@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Demo case** — added a realistic DC01 AD-enumeration burst (May 16 09:00, between the Mimikatz dump and the log-clearing) so the new Timeline Anomalies panel shows a Critical event-rate spike out of the box (part of #175).
 
 ### Fixed
+- **Timeline Anomalies "view N events" now shows all N** — the link filtered the forensic timeline to exactly the bucket's events (with a clearable "Showing N of N" chip) instead of just jumping to the first, so the analyst can see precisely which events drove the spike (part of #175).
 - **IOC "Flagged only" / timeline "Starred" filters collapsed their section** — clicking these in-header filter toggles also bubbled to the section's collapse-on-`h2`-click handler, hiding the list they had just filtered (symptom: "1 flagged" in the title but an empty list); the collapse handler now ignores clicks on interactive header controls.
 - **AI status badge always visible** — in the tight (icons-only) toolbar the AI status badge was hidden, yet "(see AI status)" messages pointed at it; it now stays visible as a compact colored pill (grey off/unknown, green idle, yellow analyzing, red error) with the full text on hover.
 - **Import into a non-existent case** — the `import` + `import-file` routes now 404 a missing case (parity with `/captures`/`/state`) instead of orphaning the bytes; dashboard shows "create the case first".

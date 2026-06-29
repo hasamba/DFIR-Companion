@@ -704,6 +704,8 @@
     .ev-row.ev-selected { background: var(--c-142038); }
     .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 162px; padding-top: 1px; }
     .ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add, .ev-col-ctrl .explain-btn { margin-left: 0; }
+    /* Action icons hidden (Settings → Timeline row display) → reclaim the control column's width, keep just the checkbox. */
+    #forensicTimeline.tl-no-icons .ev-col-ctrl, #forensicTimeline.tl-no-icons .ev-header-ctrl { width: 22px; }
     .ev-checkbox { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; margin: 0; }
     .ev-star { background: transparent; border: 0; color: var(--c-3a4050); font-size: 13px; cursor: pointer; padding: 0 1px; line-height: 1; flex-shrink: 0; }
     .ev-star.starred, .ev-star:hover { color: var(--c-ffd93b); }
@@ -1286,6 +1288,29 @@
         <button id="tagAddBtn">Add tag</button>
         <button id="tagClose" style="background:var(--c-2a2f3a);">Close</button>
         <span id="tagMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+  <div id="importSevOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Minimum severity to import</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        Events below this floor are dropped — but imports that carry <strong>no</strong> severity
+        (KAPE, Plaso, plain telemetry) are kept in full regardless.</p>
+      <select id="importSevSelect" style="width:100%; box-sizing:border-box; background:var(--c-0f1115); color:var(--c-e6e6e6); border:1px solid var(--c-2a2f3a); border-radius:6px; padding:6px;">
+        <option value="critical">critical — only Critical</option>
+        <option value="high">high — Critical + High</option>
+        <option value="medium">medium — Critical + High + Medium</option>
+        <option value="low">low — everything except Info</option>
+        <option value="info" selected>info — import everything (default)</option>
+      </select>
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; margin:12px 0 0">
+        <input type="checkbox" id="importSevRemember"> Remember this choice — don't ask again
+      </label>
+      <span class="sfield-hint" style="display:block; margin-top:4px">You can change or clear this later in Settings → General → Import severity.</span>
+      <div style="margin-top:12px; display:flex; gap:8px; align-items:center;">
+        <button id="importSevOk">Import</button>
+        <button id="importSevCancel" style="background:var(--c-2a2f3a);">Cancel</button>
       </div>
     </div>
   </div>
@@ -2743,6 +2768,7 @@
         </form>
       </div>
       <div id="importMeta" class="synth-meta" style="display:none"></div>
+      <div id="evIdFilterChip" style="display:none;margin:0 0 8px;font-size:12px;background:var(--c-1a1f2a);border:1px solid var(--c-2a2f3a);border-radius:4px;padding:6px 10px;"></div>
       <div id="forensicTimeline">—</div></section>
     <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain</h2><div id="killChain">—</div></section>
     <!-- Memory Next-Step agent (#101): shown only when Volatility/Rekall memory output is imported. -->
@@ -4926,6 +4952,11 @@
     // --- Starred events (per case, localStorage) ---------------------------------
     let starredEvents = new Set();
     let showStarredOnly = false;
+    // Transient "show only this set of event ids" filter — set by the Timeline Anomalies
+    // "view N events" link (and reusable by any panel that points at a group of events) so the
+    // analyst sees EXACTLY the events behind a bucket, not just the first. null = inactive.
+    let evIdFilter = null;        // Set<string> of event ids, or null
+    let evIdFilterLabel = "";     // human label shown in the chip (e.g. the anomaly bucket)
     let showFlaggedIocsOnly = false;   // IOCs section: show only malicious/suspicious (any enrichment engine)
     const starredKey = caseId => `dfir_starred_${caseId}`;
     function loadStarred(caseId) {
@@ -7436,7 +7467,7 @@
         const sevColor = KC_SEV_COLOR[a.severity] || "var(--c-2a2f3a)";
         const window = `${esc(a.bucketStart || "")} → ${esc(a.bucketEnd || "")}`;
         const evLink = a.eventIds && a.eventIds.length
-          ? `<a href="#" class="ev-jump" data-evid="${escAttr(a.eventIds[0])}" style="font-size:11px;color:var(--c-6aa9ff);margin-left:6px" title="Jump to the first event in this bucket in the timeline">view ${a.eventIds.length} event${a.eventIds.length !== 1 ? "s" : ""}</a>`
+          ? `<a href="#" class="anomaly-events" data-evids="${escAttr(a.eventIds.join(","))}" data-label="${escAttr((a.asset || "") + " · " + (a.bucketStart || ""))}" style="font-size:11px;color:var(--c-6aa9ff);margin-left:6px" title="Filter the forensic timeline to exactly these ${a.eventIds.length} events">view ${a.eventIds.length} event${a.eventIds.length !== 1 ? "s" : ""}</a>`
           : "";
         return `<tr>` +
           `<td><span class="sev-${esc(a.severity)}" style="color:${sevColor};font-weight:bold">${esc(a.severity)}</span></td>` +
@@ -8650,6 +8681,7 @@
       document.querySelectorAll(".sev-filter").forEach(cb => { cb.checked = true; });
       hiddenSources.clear(); _srcMenuSig = "";
       showStarredOnly = false;
+      evIdFilter = null; evIdFilterLabel = "";
       const sfBtn = document.getElementById("evStarFilterBtn");
       if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
       searchTerm = ""; filterFrom = null; filterTo = null;
@@ -8657,6 +8689,37 @@
       const ffEl = document.getElementById("filterFrom"); if (ffEl) ffEl.value = "";
       const ftEl = document.getElementById("filterTo"); if (ftEl) ftEl.value = "";
       const csBtn = document.getElementById("clearSearch"); if (csBtn) csBtn.hidden = true;
+    }
+
+    // Filter the forensic timeline to EXACTLY a set of event ids (e.g. every event behind a Timeline
+    // Anomaly bucket) so the analyst sees all of them, not just the first. Clears other view filters
+    // first so none of the targeted events stay hidden, expands the section, scrolls it into view.
+    function filterTimelineToEventIds(ids, label) {
+      const list = (ids || []).map(String).filter(Boolean);
+      if (!list.length) return;
+      resetTimelineViewFilters();              // also clears any prior id filter
+      evIdFilter = new Set(list);
+      evIdFilterLabel = label || "";
+      const sec = document.getElementById("sec-timeline");
+      if (sec) sec.classList.remove("collapsed");
+      renderTimelineEvents(lastFt || []);
+      if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    function clearEvIdFilter() {
+      evIdFilter = null; evIdFilterLabel = "";
+      renderTimelineEvents(lastFt || []);
+    }
+    // Render (or hide) the chip that shows the active "only these N events" filter + a Clear button.
+    function renderEvIdFilterChip(shown, _total) {
+      const el = document.getElementById("evIdFilterChip");
+      if (!el) return;
+      if (!evIdFilter) { el.style.display = "none"; el.innerHTML = ""; return; }
+      const n = evIdFilter.size;
+      el.style.display = "";
+      el.innerHTML =
+        `<span style="color:var(--c-6aa9ff)">⧉ Showing ${shown} of ${n} event${n !== 1 ? "s" : ""} in this group` +
+        `${evIdFilterLabel ? " — " + esc(evIdFilterLabel) : ""}</span>` +
+        ` <button type="button" onclick="clearEvIdFilter()" style="margin-left:8px;font-size:11px;background:var(--c-2a2f3a);border:none;color:var(--c-c9d1db);border-radius:3px;padding:2px 8px;cursor:pointer" title="Clear this filter and show the whole timeline">✕ Clear, show all</button>`;
     }
 
     // Reveal a forensic event by id and scroll+flash it — used by the Evidence panel's supporting-event
@@ -9352,6 +9415,7 @@
       const allSevs = ['Critical', 'High', 'Medium', 'Low', 'Info'];
       const filtering = activeSevs.size < allSevs.length;
       let visible = filtering ? ft.filter(e => activeSevs.has(e.severity)) : ft;
+      if (evIdFilter) visible = visible.filter(e => evIdFilter.has(String(e.id)));
       if (showStarredOnly) visible = visible.filter(e => starredEvents.has(String(e.id)));
       if (searchTerm) visible = visible.filter(e => _evMatchesSearch(e, searchTerm));
       if (filterFrom || filterTo) visible = visible.filter(e => _evMatchesTimeRange(e, filterFrom, filterTo));
@@ -9372,10 +9436,12 @@
       const pEnd = tlPageSize > 0 ? Math.min(pStart + tlPageSize, totalFiltered) : totalFiltered;
       const pageVisible = tlPageSize > 0 ? visible.slice(pStart, pEnd) : visible;
 
+      renderEvIdFilterChip(visible.length, ft.length);
+
       const countEl = document.getElementById('timelineCount');
       if (countEl) {
         const total = ft.length;
-        const baseText = (filtering || showStarredOnly || sourceFiltering || viewSevFiltering || _hasActiveFilter())
+        const baseText = (filtering || showStarredOnly || sourceFiltering || viewSevFiltering || evIdFilter || _hasActiveFilter())
           ? `${totalFiltered} of ${total} events`
           : `${total} event${total !== 1 ? 's' : ''}`;
         countEl.textContent = (tlPageSize > 0 && totalFiltered > tlPageSize)
@@ -9388,7 +9454,7 @@
 
       if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
-          ((filtering || showStarredOnly || sourceFiltering || viewSevFiltering || _hasActiveFilter()) && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
+          ((filtering || showStarredOnly || sourceFiltering || viewSevFiltering || evIdFilter || _hasActiveFilter()) && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
         return;
       }
 
@@ -9489,7 +9555,10 @@
           + `</div>`;
       }).join("");
 
-      document.getElementById("forensicTimeline").innerHTML = headerRow + rows + paginationBar;
+      const tlEl = document.getElementById("forensicTimeline");
+      tlEl.innerHTML = headerRow + rows + paginationBar;
+      // When action icons are hidden, narrow the control column so its empty space is reclaimed.
+      tlEl.classList.toggle("tl-no-icons", !tlShow("icons", tld));
 
       // indeterminate can only be set via JS, not HTML attribute
       const selAll = document.getElementById("evSelectAll");
@@ -10236,6 +10305,14 @@
       // timeline row (handles pagination/filters so the event is found even when off-page or hidden).
       const ejump = e.target.closest && e.target.closest(".ev-jump");
       if (ejump) { e.preventDefault(); jumpToEvent(ejump.getAttribute("data-evid")); return; }
+      // Timeline-anomaly "view N events" link → filter the timeline to exactly that bucket's events.
+      const aev = e.target.closest && e.target.closest(".anomaly-events");
+      if (aev) {
+        e.preventDefault();
+        const ids = (aev.getAttribute("data-evids") || "").split(",").filter(Boolean);
+        filterTimelineToEventIds(ids, aev.getAttribute("data-label") || "");
+        return;
+      }
       const chip = e.target.closest && e.target.closest(".comment-chip");
       if (chip) { openCommentModal(chip.getAttribute("data-ct"), chip.getAttribute("data-ci")); return; }
       const tag = e.target.closest && e.target.closest(".tag-add");
