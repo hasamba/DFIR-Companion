@@ -1,0 +1,8 @@
+title: DFIR Companion User Manual
+description: Complete guide for security analysts and incident responders using DFIR Companion.
+theme: jekyll-theme-cayman
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  toc_levels: 1..3
