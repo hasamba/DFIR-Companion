@@ -429,7 +429,12 @@ only when their domain is a customer domain AND the email isn't itself an IOC. T
 
 - **Evidence-first:** the ingest path writes the screenshot to disk and appends the
   append-only `captures.jsonl` audit line **before** any analysis. Analysis never gates
-  evidence persistence.
+  evidence persistence. **Screenshot OCR full-text search** (#176, `analysis/ocrSearch.ts` pure +
+  `CaseStore.putOcrEntry`/`loadOcrIndex`) runs the SAME `TesseractOcrRunner` in the BACKGROUND
+  after `/captures` persists (never on the hot path; concurrency-capped, best-effort) → a per-case
+  `metadata/ocr.json` index (sidecar, NOT the append-only `captures.jsonl`); `GET /cases/:id/ocr-search`
+  + the dashboard filter-bar box search it. Opt out with `DFIR_OCR_SEARCH=off`; backfill via
+  `npm run ocr-index`. Local-only, no AI — like the redaction OCR, it never sends bytes anywhere.
 - **Localhost only:** the server binds `127.0.0.1`. CORS + Private-Network-Access headers
   are required so the `chrome-extension://` origin can reach it — don't remove them.
 - **Graceful AI parsing:** use **`parseJsonLoose`** (`extractJson.ts`) before

@@ -90,3 +90,46 @@ describe("CaseStore evidence writes", () => {
     expect(await store.nextSequenceNumber("c3")).toBe(2);
   });
 });
+
+describe("CaseStore OCR index (#176)", () => {
+  const entry = (file: string, text: string) => ({
+    screenshotFile: file,
+    text,
+    ocrAt: "2026-06-29T00:00:00.000Z",
+    wordCount: text.split(" ").length,
+  });
+
+  it("returns {} for a case with no index yet", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "o1", name: "n", investigator: "i", aiProvider: null });
+    expect(await store.loadOcrIndex("o1")).toEqual({});
+  });
+
+  it("putOcrEntry persists and round-trips, keyed by screenshotFile", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "o2", name: "n", investigator: "i", aiProvider: null });
+
+    await store.putOcrEntry("o2", entry("000001_t.webp", "mimikatz on host"));
+    await store.putOcrEntry("o2", entry("000002_t.webp", "clean console"));
+
+    const idx = await store.loadOcrIndex("o2");
+    expect(Object.keys(idx)).toEqual(["000001_t.webp", "000002_t.webp"]);
+    expect(idx["000001_t.webp"].text).toBe("mimikatz on host");
+
+    // on-disk file is at metadata/ocr.json
+    const written = JSON.parse(await readFile(store.ocrIndexPath("o2"), "utf8"));
+    expect(written["000002_t.webp"].wordCount).toBe(2);
+  });
+
+  it("re-OCR of the same screenshot replaces the row (no duplicate)", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "o3", name: "n", investigator: "i", aiProvider: null });
+
+    await store.putOcrEntry("o3", entry("000001_t.webp", "old text"));
+    await store.putOcrEntry("o3", entry("000001_t.webp", "new text"));
+
+    const idx = await store.loadOcrIndex("o3");
+    expect(Object.keys(idx)).toHaveLength(1);
+    expect(idx["000001_t.webp"].text).toBe("new text");
+  });
+});
