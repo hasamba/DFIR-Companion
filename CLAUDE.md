@@ -156,8 +156,21 @@ CONSERVATIVE per-command bump (`CMD_RULES`, worst-first) only on real tradecraft
 →High (T1070.003), cron/systemd/authorized_keys persistence →Medium, setuid/pkexec →Medium, plain downloads →Low,
 lateral `ssh user@host`/`scp …:` →Low (T1021.004); IPs/URLs/domains scraped to IOCs (skipping the user before `@`);
 reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`. Detected by the history FILENAME or the bash/zsh
-content signature ahead of the generic-log fallback).
-The last eighteen
+content signature ahead of the generic-log fallback),
+and **ECAR** (`importEcar` → `ecarImport.ts` — the "EDR Common Activity Record" NDJSON EDR telemetry feed:
+each record is an `(object, action)` pair on a host at epoch-ms `timestamp_ms`, with the detail in a nested
+`properties` bag. The generic SIEM path can't read it — it has no `@timestamp`/`message`, so a generic pass
+emits undated "SIEM event: CONNECT @ host" rows and drops the command lines — so this dedicated mapper classifies
+each object/action: PROCESS/CREATE→process event (command_line/image_path/parent, `isSuspiciousCmd` LOLBin/encoded
+bump→T1059), FLOW/CONNECT→network conn (external→Low, public IP→IOC), USER_SESSION/LOGIN→logon (failure→Low),
+REGISTRY/MODIFY, MODULE/LOAD, FILE/*, PROCESS/OPEN + THREAD/REMOTE_CREATE. **Severity is Info-by-default** (raw
+telemetry, not a detection feed): PROCESS/OPEN to lsass and REMOTE_CREATE stay Info — NOT auto-Critical/Medium —
+because benign Windows processes (MsMpEng/Defender, services.exe, WmiPrvSE) do both constantly, so a deterministic
+verdict is a false-positive factory; the evidence + technique context is preserved in the description for a detector
+to weigh. IOCs are PUBLIC-IP-only (RFC1918/loopback/CGNAT skipped) to keep the list tight. Reuses `siemImport`'s
+`extractRecords`/`aggregateEvents`/`addIoc`/`cleanIp`; detected by the `timestamp_ms`+`object`+`action` triple
+ahead of the SIEM/network catch-alls).
+The last nineteen
 are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
