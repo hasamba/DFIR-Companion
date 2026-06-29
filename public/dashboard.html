@@ -6482,30 +6482,15 @@
     function loadDropStatus(caseId) {
       fetch(`/cases/${caseId}/drop-status`).then(r => r.ok ? r.json() : null).then(renderDropStatus).catch(() => {});
     }
-    function renderDropStatus(d) {
+    // The drop-folder auto-import feature stays fully enabled (the server poller keeps ingesting
+    // cases/<id>/drop/); we deliberately do NOT surface its inbox/sweep banner in the dashboard.
+    // Failures still land in drop/_failed/ and are reported via the server log + any notification
+    // channel. `d` is accepted (and ignored) so the fetch/WebSocket callers don't need to change.
+    function renderDropStatus(_d) {
       const el = document.getElementById("dropStatus");
       if (!el) return;
-      if (!d || !d.enabled) { el.style.display = "none"; el.innerHTML = ""; return; }
-      const s = d.status || {};
-      el.style.display = "block";
-      const pathLine = `📂 Drop folder: <code style="word-break:break-all">${esc(d.dropPath || "")}</code>`;
-      if (!s.lastSweepAt) {
-        el.innerHTML = `<div class="sm-line"><span>${pathLine}</span><span style="color:var(--c-9aa4b2)">drop files here to auto-import</span></div>`;
-        return;
-      }
-      const imp = s.importedCount || 0, fail = s.failedCount || 0;
-      const counts = [];
-      if (imp) counts.push(`<span class="sm-added">${imp} imported</span>`);
-      if (fail) counts.push(`<span class="sm-removed">${fail} failed</span>`);
-      const summary = counts.length ? counts.join(" · ") : "nothing new";
-      let detail = "";
-      if (fail && Array.isArray(s.failed) && s.failed.length) {
-        const items = s.failed.slice(0, CAP_IMPORT_LIST).map(x =>
-          `<span class="sm-item sm-removed">✗ ${esc(x.relpath)} — <span style="color:var(--c-9aa4b2)">${esc(x.reason)}</span></span>`
-        ).join("");
-        detail = `<details open><summary>${fail} file${fail !== 1 ? "s" : ""} did not import (moved to _failed/)</summary>${items}</details>`;
-      }
-      el.innerHTML = `<div class="sm-line"><span>📥 Drop sweep <strong>${esc(relTime(s.lastSweepAt))}</strong></span><span>${summary}</span></div>${detail}`;
+      el.style.display = "none";
+      el.innerHTML = "";
     }
     function renderImportMeta(m) {
       paintTimelineImportMeta(m);
