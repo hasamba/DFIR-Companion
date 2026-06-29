@@ -135,13 +135,20 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       const desc = `Process created: ${cmd || image || "(unknown)"}` +
         (parentName ? ` (parent ${parentName})` : "") + at;
       if (grade) addIoc(sink, "process", procName || image);
+      // The created-process pid — the cross-tool correlation key (matches Windows 4688 NewProcessId /
+      // Sysmon EID 1 ProcessId on the same host), so an ECAR create merges with its Windows-log twin.
+      const pidNum = Number(rec["pid"]);
+      const pid = Number.isInteger(pidNum) && pidNum > 0 ? pidNum : undefined;
       return {
         ...base, severity,
         mitre: grade ? ["T1059"] : [],
         description: desc,
-        aggKey: `ecar|proc|${host}|${image}|${cmd}`,
+        // pid is in the key so distinct executions stay distinct rows (not aggregated away) — that's
+        // both better forensics and what lets each creation correlate with its Windows-log twin by pid.
+        aggKey: `ecar|proc|${host}|${pid ?? ""}|${image}|${cmd}`,
         ...(procName ? { processName: procName } : {}),
         ...(parentName ? { parentName } : {}),
+        ...(pid !== undefined ? { pid } : {}),
       };
     }
 

@@ -155,6 +155,7 @@ export function mergeDelta(
       if (incoming.sources?.length) existing.sources = uniq([...(existing.sources ?? []), ...incoming.sources]);
       if (incoming.processName) existing.processName = incoming.processName;
       if (incoming.parentName) existing.parentName = incoming.parentName;
+      if (incoming.pid !== undefined) existing.pid = incoming.pid;
       if (incoming.action) existing.action = incoming.action;
       if (incoming.srcIp) existing.srcIp = incoming.srcIp;
       if (incoming.dstIp) existing.dstIp = incoming.dstIp;
@@ -177,6 +178,7 @@ export function mergeDelta(
         ...(incoming.sources?.length ? { sources: uniq(incoming.sources) } : {}),
         ...(incoming.processName ? { processName: incoming.processName } : {}),
         ...(incoming.parentName ? { parentName: incoming.parentName } : {}),
+        ...(incoming.pid !== undefined ? { pid: incoming.pid } : {}),
         ...(incoming.action ? { action: incoming.action } : {}),
         ...(incoming.srcIp ? { srcIp: incoming.srcIp } : {}),
         ...(incoming.dstIp ? { dstIp: incoming.dstIp } : {}),

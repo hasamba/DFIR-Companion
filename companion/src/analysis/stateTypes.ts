@@ -84,6 +84,11 @@ export interface ForensicEvent {
   // the validation pass when enrichment is on.
   processName?: string;
   parentName?: string;
+  // Process id of the SUBJECT process — set by importers on process-CREATION events (ECAR
+  // PROCESS/CREATE, Windows Security 4688 NewProcessId, Sysmon EID 1 ProcessId). Used for
+  // cross-tool correlation: the same creation seen by the EDR and the Windows log merges on
+  // (asset + pid) within a time window (correlate.ts step 3), so it carries both tools as sources.
+  pid?: number;
   chainCheck?: ProcessChainCheck;
   // File-lineage / network-flow fields (Phase 2 evidence-chain edges).
   // action distinguishes a file write from an execute (same hash → lineage edge) and
