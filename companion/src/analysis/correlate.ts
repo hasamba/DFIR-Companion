@@ -15,6 +15,7 @@ import type { ForensicEvent, Severity } from "./stateTypes.js";
 
 export interface CorrelateOptions {
   windowSeconds?: number; // path+time match tolerance (default 2)
+  pidWindowSeconds?: number; // host+pid (process-creation) match tolerance (default 120)
 }
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
@@ -119,6 +120,7 @@ function mergeGroup(events: ForensicEvent[]): ForensicEvent {
     asset: primary.asset ?? events.find((e) => e.asset)?.asset,
     processName: primary.processName ?? events.find((e) => e.processName)?.processName,
     parentName: primary.parentName ?? events.find((e) => e.parentName)?.parentName,
+    pid: primary.pid ?? events.find((e) => e.pid !== undefined)?.pid,
     chainCheck: primary.chainCheck ?? events.find((e) => e.chainCheck)?.chainCheck,
     action: primary.action ?? events.find((e) => e.action)?.action,
     srcIp: primary.srcIp ?? events.find((e) => e.srcIp)?.srcIp,
@@ -189,6 +191,33 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
       // Undated events on the same path correlate too (no time to disprove); dated ones
       // must be within the window.
       if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= windowMs) dsu.union(a.i, b.i);
+    }
+  }
+
+  // 3) Same host + created-process PID within a window → union. Cross-tool corroboration for a process
+  //    CREATION: the EDR (ECAR) and the Windows log (Security 4688 / Sysmon 1) both record the same
+  //    creation with the same pid on the same host, but with different wording + no shared hash/path, so
+  //    steps 0–2 miss it. pids recycle over time, so a window bounds the match; corroboration is required
+  //    (one side carries a source the other lacks) so two creations from ONE tool that happen to reuse a
+  //    pid never merge — only genuine cross-tool pairs do. Only process-creation events carry `pid`.
+  const pidWindowMs = (opts.pidWindowSeconds ?? 120) * 1000;
+  // Match on the SHORT hostname: an EDR reports `FILE-BO-01` while the Windows log records the FQDN
+  // `FILE-BO-01.northstar-branch.local` for the same host — keying on the full string would never match.
+  const shortHost = (asset: string): string => asset.split(".")[0].trim().toLowerCase();
+  const byPid = new Map<string, number[]>();
+  events.forEach((e, i) => {
+    if (e.pid === undefined || !e.asset) return;
+    const key = `${shortHost(e.asset)}|${e.pid}`;
+    (byPid.get(key) ?? byPid.set(key, []).get(key)!).push(i);
+  });
+  for (const idxs of byPid.values()) {
+    if (idxs.length < 2) continue;
+    const dated = idxs.map((i) => ({ i, t: epoch(events[i].timestamp) }))
+      .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
+    for (let k = 1; k < dated.length; k++) {
+      const a = dated[k - 1], b = dated[k];
+      if (!corroborates(events[a.i], events[b.i])) continue;
+      if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= pidWindowMs) dsu.union(a.i, b.i);
     }
   }
 

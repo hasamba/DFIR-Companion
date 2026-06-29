@@ -52,6 +52,7 @@ export interface SiemEvent {
   sources?: string[];
   processName?: string;
   parentName?: string;
+  pid?: number;
   srcIp?: string;
   dstIp?: string;
   port?: number;
@@ -501,12 +502,22 @@ export interface MappedEvent {
   asset?: string;
   processName?: string;
   parentName?: string;
+  pid?: number;
   // Per-event tool source(s). siem mapping leaves this unset (the pipeline tags the whole
   // import); reused by chainsawImport, which tags each event Chainsaw/EVTX individually.
   sources?: string[];
   srcIp?: string;
   dstIp?: string;
   port?: number;
+}
+
+// Parse a Windows pid that may be decimal ("5292") or hex ("0x14ac", as 4688 renders it). Returns a
+// positive integer or undefined.
+export function parsePid(raw: string): number | undefined {
+  const s = raw.trim();
+  if (!s || s === "-") return undefined;
+  const n = /^0x[0-9a-f]+$/i.test(s) ? parseInt(s, 16) : Number(s);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
 // Map a Windows Event Log / Sysmon record. Returns null if it is not a Windows record.
@@ -560,6 +571,11 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     ? baseName(str(getCI(ed, "Image")) || str(getCI(ed, "SourceImage")) || str(getCI(ed, "NewProcessName"))) || undefined
     : undefined;
   const parentName = baseName(str(getCI(ed, "ParentImage"))) || undefined;
+  // Subject (created-process) pid on process-CREATION events only — Security 4688 renders it as
+  // NewProcessId (hex), Sysmon EID 1 as ProcessId (decimal). Used for cross-tool correlation.
+  const pid = (!isSysmon && eid === 4688) ? parsePid(str(getCI(ed, "NewProcessId")))
+    : (isSysmon && eid === 1) ? parsePid(str(getCI(ed, "ProcessId")))
+    : undefined;
 
   // IOCs from the structured fields.
   for (const ipKey of ["IpAddress", "DestinationIp", "SourceIp", "ClientAddress"]) {
@@ -581,13 +597,16 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     description,
     severity,
     mitre,
-    aggKey: `win|${channel}|${eid}|${accts.join(",")}|${subject}`.toLowerCase(),
+    // pid (on process-creation events) is in the key so distinct creations stay distinct rows rather
+    // than aggregating into one — preserving per-process granularity and enabling pid correlation.
+    aggKey: `win|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}`.toLowerCase(),
     ...(sha256 ? { sha256 } : {}),
     ...(md5 ? { md5 } : {}),
     ...(imagePath ? { path: imagePath } : {}),
     ...(host ? { asset: host } : {}),
     ...(processName ? { processName } : {}),
     ...(def.kind === "process" && parentName ? { parentName } : {}),
+    ...(pid !== undefined ? { pid } : {}),
   };
 }
 
@@ -815,6 +834,7 @@ export function createEventAggregator(
           ...(m.asset ? { asset: m.asset } : {}),
           ...(m.processName ? { processName: m.processName } : {}),
           ...(m.parentName ? { parentName: m.parentName } : {}),
+          ...(m.pid !== undefined ? { pid: m.pid } : {}),
           ...(m.sources?.length ? { sources: [...m.sources] } : {}),
           ...(m.srcIp ? { srcIp: m.srcIp } : {}),
           ...(m.dstIp ? { dstIp: m.dstIp } : {}),

@@ -53,6 +53,7 @@ export const deltaSchema = z.object({
     sources: z.array(z.string()).optional(),
     processName: z.string().optional(),
     parentName: z.string().optional(),
+    pid: z.number().int().positive().optional(),              // subject pid on process-creation events (cross-tool correlation)
     // Phase 2 evidence-chain fields.
     action: z.enum(["write", "execute", "network_send", "network_receive"]).optional(),
     srcIp: z.string().optional(),

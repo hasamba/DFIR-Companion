@@ -156,8 +156,27 @@ CONSERVATIVE per-command bump (`CMD_RULES`, worst-first) only on real tradecraft
 →High (T1070.003), cron/systemd/authorized_keys persistence →Medium, setuid/pkexec →Medium, plain downloads →Low,
 lateral `ssh user@host`/`scp …:` →Low (T1021.004); IPs/URLs/domains scraped to IOCs (skipping the user before `@`);
 reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`. Detected by the history FILENAME or the bash/zsh
-content signature ahead of the generic-log fallback).
-The last eighteen
+content signature ahead of the generic-log fallback),
+and **ECAR** (`importEcar` → `ecarImport.ts` — the "EDR Common Activity Record" NDJSON EDR telemetry feed:
+each record is an `(object, action)` pair on a host at epoch-ms `timestamp_ms`, with the detail in a nested
+`properties` bag. The generic SIEM path can't read it — it has no `@timestamp`/`message`, so a generic pass
+emits undated "SIEM event: CONNECT @ host" rows and drops the command lines — so this dedicated mapper classifies
+each object/action: PROCESS/CREATE→process event (command_line/image_path/parent, `isSuspiciousCmd` LOLBin/encoded
+bump→T1059), FLOW/CONNECT→network conn (external→Low, public IP→IOC), USER_SESSION/LOGIN→logon (failure→Low),
+REGISTRY/MODIFY, MODULE/LOAD, FILE/*, PROCESS/OPEN + THREAD/REMOTE_CREATE. **Severity is Info-by-default** (raw
+telemetry, not a detection feed): PROCESS/OPEN to lsass and REMOTE_CREATE stay Info — NOT auto-Critical/Medium —
+because benign Windows processes (MsMpEng/Defender, services.exe, WmiPrvSE) do both constantly, so a deterministic
+verdict is a false-positive factory; the evidence + technique context is preserved in the description for a detector
+to weigh. IOCs are PUBLIC-IP-only (RFC1918/loopback/CGNAT skipped) to keep the list tight. Reuses `siemImport`'s
+`extractRecords`/`aggregateEvents`/`addIoc`/`cleanIp`; detected by the `timestamp_ms`+`object`+`action` triple
+ahead of the SIEM/network catch-alls),
+and **Snort/Suricata IDS** (`importSnort` → `snortImport.ts` — the `alert_fast` single-line format
+`MM/DD-HH:MM:SS [**] [gid:sid:rev] msg [**] [Classification: …] [Priority: N] {PROTO} src -> dst`. A real
+IDS verdict feed, so it's consumed not re-derived: severity from the rule **Priority** (1→High/2→Medium/
+3→Low), SID + classification + flow → description, public src/dst IPs → IOCs. Year-less timestamps (like
+Cisco ASA) are stamped an assumed year and the `mergeDelta` year-clamp re-anchors them. `looksLikeSnort`
+detects it ahead of the generic-log fallback; reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`).
+The last twenty
 are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
@@ -257,8 +276,17 @@ from `DFIR_NSRL_DB` (env-managed → the UI connect is read-only) or, when unset
 
 **Cross-source correlation runs in `mergeDelta`** (`correlate.ts`): events describing the
 same artifact collapse into one — by exact dup (time+description, so re-imports don't
-double), shared hash, or same path within a time window. The merged event unions `sources`
-(real tool names via `toolDetect.ts`); 2+ distinct tools = corroboration. Idempotent.
+double), shared hash, same path within a time window, or **same host+pid within a window**
+(a process CREATION seen by both an EDR (ECAR) and the Windows log (4688/Sysmon 1) — matched
+on the SHORT hostname so `FILE-BO-01` lines up with `FILE-BO-01.fqdn`, and on the created-process
+`ForensicEvent.pid` which importers set on creation events and keep in the aggKey so distinct
+executions stay distinct + correlatable; `pidWindowSeconds` default 120). The merged event unions
+`sources` (real tool names via `toolDetect.ts`); 2+ distinct tools = corroboration. Idempotent.
+Just BEFORE correlation, `mergeDelta` runs `clampOutlierYears` (`timeYearClamp.ts`): when one year
+holds ≥90% of dated events, an event on an OUTLIER year (a year-less syslog/CSV line the AI import
+guessed into 2023 / the current year instead of the real collection year) is re-anchored onto the
+dominant year — preserving month/day/time — so a stray can't corrupt the chronology or manufacture a
+false coverage gap. Conservative (a genuine multi-year timeline is left untouched) + idempotent.
 
 **State** = `InvestigationState` (`analysis/stateTypes.ts`), persisted per case in
 `cases/<id>/state/investigation.json`. `ForensicEvent` carries optional structured fields
