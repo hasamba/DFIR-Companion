@@ -193,6 +193,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | Format | Key sources | Severity derived from |
 |---|---|---|
 | **SIEM / EDR JSON** | Elastic, Kibana, Splunk, QRadar, any JSON/NDJSON export | Windows/Sysmon per-EID table |
+| **ECAR (EDR telemetry)** | EDR Common Activity Record NDJSON (`object`/`action`/`properties`, epoch-ms `timestamp_ms`) — process/flow/logon/registry/module/file/thread events | Info evidence; LOLBin/encoded command-line bump (public IPs → IOCs) |
 | **Windows Event Log XML** | Event Viewer "Save As XML", `wevtutil qe /f:xml`, `Get-WinEvent … ToXml()` (Security, Sysmon, System, any channel) | Windows/Sysmon per-EID table |
 | **Chainsaw** | EVTX hunt JSON/JSONL (`chainsaw hunt --json`) | Matched Sigma rule level |
 | **Hayabusa** | `json-timeline` or `csv-timeline` | Matched Sigma rule level |

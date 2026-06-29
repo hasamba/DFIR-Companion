@@ -13,10 +13,11 @@ import { looksLikeJournald } from "./journaldImport.js";
 import { looksLikeSysdig } from "./sysdigImport.js";
 import { looksLikeWinEventXml } from "./evtxXmlImport.js";
 import { looksLikeBashHistory } from "./bashHistoryImport.js";
+import { isEcarRecord } from "./ecarImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
 
 export type ImportKind =
-  | "thor" | "siem" | "evtxxml" | "chainsaw" | "hayabusa" | "velociraptor" | "securityonion" | "socrates" | "network"
+  | "thor" | "siem" | "evtxxml" | "chainsaw" | "hayabusa" | "ecar" | "velociraptor" | "securityonion" | "socrates" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
   | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "csv" | "log" | "unknown";
 
@@ -247,6 +248,9 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isGcp(sample)) return "cloud";
   if (isAzure(sample)) return "cloud";
   if (isM365(sample)) return "m365";
+  // ECAR EDR telemetry — the (timestamp_ms + object + action) triple is distinctive and absent from
+  // every other feed; checked early so the generic SIEM/network catch-alls can't claim it.
+  if (isEcarRecord(sample)) return "ecar";
   if (isChainsaw(sample)) return "chainsaw";
   if (isSecurityOnion(sample)) return "securityonion";
   if (isSocrates(sample)) return "socrates";

@@ -8,6 +8,15 @@ const j = (o: unknown): string => JSON.stringify(o);
 const ndjson = (...o: unknown[]): string => o.map((x) => JSON.stringify(x)).join("\n");
 
 describe("detectImportKind — JSON formats", () => {
+  it("ecar: EDR Common Activity Record NDJSON (not siem/network)", () => {
+    expect(detectImportKind("ecar.json", ndjson(
+      { timestamp_ms: 1715688049745, hostname: "WEB-BO-01", object: "FLOW", action: "CONNECT", properties: { src_ip: "1.2.3.4", dst_ip: "10.44.30.10" } },
+    ))).toBe("ecar");
+    expect(detectImportKind("ecar.json", j([
+      { timestamp_ms: 1715688049745, hostname: "WEB-BO-01", object: "PROCESS", action: "CREATE", properties: { command_line: "id" } },
+    ]))).toBe("ecar");
+  });
+
   it("sandbox: CAPE report.json", () => {
     expect(detectImportKind("report.json", j({ info: { id: 1 }, target: { file: {} }, signatures: [] }))).toBe("sandbox");
   });
