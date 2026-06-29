@@ -3,7 +3,7 @@
 //   Usage:  npm run verify:ai            (uses case "test1")
 //           npm run verify:ai -- mycase  (uses case "mycase")
 import { config as loadDotenv } from "dotenv";
-loadDotenv();
+loadDotenv({ quiet: true });
 
 import { readFile, readdir } from "node:fs/promises";
 import { join, isAbsolute, resolve } from "node:path";
