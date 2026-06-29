@@ -272,6 +272,11 @@ from `DFIR_NSRL_DB` (env-managed → the UI connect is read-only) or, when unset
 same artifact collapse into one — by exact dup (time+description, so re-imports don't
 double), shared hash, or same path within a time window. The merged event unions `sources`
 (real tool names via `toolDetect.ts`); 2+ distinct tools = corroboration. Idempotent.
+Just BEFORE correlation, `mergeDelta` runs `clampOutlierYears` (`timeYearClamp.ts`): when one year
+holds ≥90% of dated events, an event on an OUTLIER year (a year-less syslog/CSV line the AI import
+guessed into 2023 / the current year instead of the real collection year) is re-anchored onto the
+dominant year — preserving month/day/time — so a stray can't corrupt the chronology or manufacture a
+false coverage gap. Conservative (a genuine multi-year timeline is left untouched) + idempotent.
 
 **State** = `InvestigationState` (`analysis/stateTypes.ts`), persisted per case in
 `cases/<id>/state/investigation.json`. `ForensicEvent` carries optional structured fields

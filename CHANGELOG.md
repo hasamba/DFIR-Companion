@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Mis-dated events re-anchored to the dominant year** — when one year clearly dominates the timeline (≥90% of dated events), events landing on an outlier year (a year-less syslog/CSV line the AI import guessed into 2023 or the current year instead of the real collection year) are re-anchored onto the dominant year — preserving month/day/time — so the chronology and kill-chain ordering aren't corrupted by a stray. Conservative + idempotent; a genuine multi-year timeline is left untouched. Applied in `mergeDelta` (every import path); `timeYearClamp.ts`.
 - **Timeline coverage gaps — robust to mis-dated strays** — gap detection now drops temporal outliers (events lying many multiples of the timeline's core p2.5→p97.5 span outside it) before measuring silence, so a handful of events with a wrong-year timestamp (e.g. a year-less Cisco ASA syslog line parsed as 2023/2026 instead of 2024) can no longer manufacture giant false "729d/365d of complete silence" High findings. Keys on magnitude not count, so a genuine long gap between two substantial activity periods is preserved; tunable via `DFIR_GAP_OUTLIER_SPAN` (default 5, 0 disables).
 
 ### Changed
