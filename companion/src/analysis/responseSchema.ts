@@ -114,6 +114,14 @@ export const execSummarySchema = z.object({
 
 export type ExecSummary = z.infer<typeof execSummarySchema>;
 
+// Incident-specific remediation plan (#178) — a concrete, prioritized action list the IR team can
+// execute, grounded in the case findings + ATT&CK mitigations. Markdown in a single string. Lenient.
+export const remediationPlanSchema = z.object({
+  plan: z.string().catch(""),
+});
+
+export type RemediationPlan = z.infer<typeof remediationPlanSchema>;
+
 // AI explanation of a single forensic event in the context of the investigation (issue #141).
 // Lenient (.catch) so a slightly-off model response still parses.
 export const explainEventSchema = z.object({

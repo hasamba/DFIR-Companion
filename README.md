@@ -160,6 +160,7 @@ Standard DFIR questions auto-answered from the synthesized case
 - **Memory-forensics "Next-Step"** — on Volatility 3/Rekall import, spot anomalies (mis-parented procs, injected memory, encoded commands) and propose the next analysis step
 - **Adversary hints** — MITRE ATT&CK groups ranked by technique overlap (offline dataset, sub-technique-aware; hypothesis fuel, not attribution)
 - **Adversary emulation** — likely next techniques: the matched groups' named tradecraft the case hasn't observed yet, ranked by distinctiveness as hunt priorities, each with a one-click "hunt this" → Velociraptor VQL
+- **Mitigations & defensive countermeasures** — concrete **MITRE ATT&CK Mitigations** (M-codes) for the case's techniques, ranked by leverage (which one mitigation covers the most techniques), plus **MITRE D3FEND** hardening/detection/isolation steps; offline, no AI. Bridges "what the attacker did" to "what to actually do about it." A **✨ Generate remediation plan** button turns it into a concrete, incident-specific IR plan (one AI call)
 - **Compromised assets** — victim hosts/accounts + interactive asset↔IOC graph
 - **Key investigative questions** — answered with pointers to evidence or next steps to collect
 - **Investigation threads** — open/resolved leads

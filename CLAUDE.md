@@ -261,7 +261,35 @@ actors above ones sharing only the broad technique, while breadth (`overlapCount
 hypothesis fuel, NOT attribution (every hint carries the group's total technique count so a diffuse 4-of-150
 reads differently from a focused 4-of-12, and the caveat is shown everywhere). `ReportWriter.adversaryHints` →
 `GET /cases/:id/adversary-hints`, dashboard *Adversary Hints* panel + report §4.6.1; thresholds
-`DFIR_ADVERSARY_MIN_OVERLAP`/`DFIR_ADVERSARY_TOP_N`. The **mobile companion summary**
+`DFIR_ADVERSARY_MIN_OVERLAP`/`DFIR_ADVERSARY_TOP_N`. **D3FEND defensive countermeasures** (`analysis/d3fendMap.ts`,
+pure, #178) are the defensive counterpart: the case's ATT&CK techniques (via the shared `collectCaseTechniques`)
+are resolved against a bundled **offline mapping** (`data/d3fend-map.json`, loaded+cached by `analysis/d3fendData.ts`;
+regenerate via `npm run data:update-d3fend` → `scripts/update-d3fend.ts`, the only network touch and offline-prep
+only — it slims D3FEND's inferred ATT&CK→countermeasure SPARQL mapping) into the D3FEND countermeasures that harden
+against / detect / isolate each technique. Matching is **bidirectional + sub-technique-aware**: a case sub-technique
+also pulls its base's countermeasures, and a base technique also pulls every mapped sub-technique's — so a coarsely-
+tagged case still surfaces the technique family's hardening. The PRIMARY output is `byTactic` — an **action-first
+checklist**: countermeasures grouped by D3FEND tactic (lifecycle order Model→Harden→Detect→Isolate→Deceive→Evict→Restore),
+each carrying the case `techniques[]` it covers and ordered by coverage (highest-leverage first); the dashboard +
+report render it with plain-language labels (`D3FEND_ACTION_INFO`: Harden→"Prevent", Isolate→"Contain", …) instead of
+raw D3FEND jargon. A per-technique breakdown (`techniques[]`, capped by `DFIR_D3FEND_MAX_PER_TECHNIQUE`, default 12) is
+also returned. **No AI, no runtime network** — suggested countermeasures (D3FEND relationships are INFERRED), NOT a
+guaranteed or complete list, with that note shown everywhere. `ReportWriter.d3fendCountermeasures` →
+`GET /cases/:id/d3fend-countermeasures`, dashboard *Defensive Countermeasures* panel + the toggleable `d3fend` report section. **ATT&CK Mitigations** (`analysis/attackMitigations.ts`, pure, #178) are the ACTIONABLE
+counterpart that leads the same panel: D3FEND names defensive *techniques/sensors* (a taxonomy), so the panel now opens
+with the concrete **MITRE ATT&CK Mitigations** (M-codes) recommended for the case's techniques — a bundled OFFLINE dataset
+(`data/attack-mitigations.json`, loaded by `attackMitigationsData.ts`; regenerate via `npm run data:update-attack-mitigations`
+→ `scripts/update-attack-mitigations.ts`, the only network touch — it slims the STIX `course-of-action` objects + `mitigates`
+relationships, keeping each link's technique-SPECIFIC detail). `buildMitigationsResult`'s PRIMARY output is `byMitigation`
+**ranked by coverage** (the one mitigation that addresses the most of the case's techniques first = "start here"), plus a
+per-technique breakdown; bidirectional sub/base matching like D3FEND. No AI, no runtime network.
+`ReportWriter.attackMitigations` → `GET /cases/:id/attack-mitigations`, dashboard *Mitigation & Defensive Countermeasures*
+panel (mitigations on top, D3FEND below) + report. On top of that, an **AI remediation plan** (`AnalysisPipeline.remediationPlan`,
+`REMEDIATION_PROMPT`): one text-only call → an incident-SPECIFIC, prioritized plan (Contain/Eradicate/Harden/Recover/Verify),
+**grounded in the deterministic ATT&CK mitigations + D3FEND countermeasures** (both fed into the prompt so the model writes
+concrete steps referencing the real hosts/CVEs/IOCs and cites the relevant ATT&CK M-code + D3FEND countermeasure per action,
+instead of hallucinating). Ephemeral (no state change), gated on an AI provider (501 otherwise):
+`POST /cases/:id/remediation-plan`, dashboard *✨ Generate remediation plan* button. The **mobile companion summary**
 (`analysis/mobileSummary.ts`, pure) is the same shape: a compact, READ-ONLY projection of the (scope/legit-filtered)
 state for the phone PWA — findings worst-first, events most-severe-then-most-recent, IOCs flagged-first with their
 worst threat-intel verdict, plus severity/entity counts; heavy lists capped (`DFIR_MOBILE_MAX_FINDINGS`/`_EVENTS`/`_IOCS`)
@@ -648,8 +676,8 @@ deep-links back to the case; `DFIR_NOTIFY_CA`/`_INSECURE` for a self-hosted webh
 `scripts/*` pipeline wiring — `onSynth` is optional, so CLI synthesize/reanalyze just omit it).
 
 **Customizable prompts.** The prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
-consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`/`getNarrativePrompt()`/`getHuntSuggestPrompt()`/`getPlaybookHuntPrompt()`/`getGapHypothesisPrompt()`/`getMemoryNextStepPrompt()`/`getQueryTranslatePrompt()`/`getReconcilePrompt()` (the `RECONCILE_PROMPT` lives in `analysis/secondOpinion.ts`),
-which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC|NARRATIVE|HUNTS|PBHUNTS|GAPHYP|MEMNEXT|QUERYXLATE|RECONCILE>_PROMPT` inline, or `…_PROMPT_FILE` —
+consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`/`getNarrativePrompt()`/`getHuntSuggestPrompt()`/`getPlaybookHuntPrompt()`/`getGapHypothesisPrompt()`/`getMemoryNextStepPrompt()`/`getQueryTranslatePrompt()`/`getReconcilePrompt()`/`getRemediationPrompt()` (the `RECONCILE_PROMPT` lives in `analysis/secondOpinion.ts`),
+which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC|NARRATIVE|HUNTS|PBHUNTS|GAPHYP|MEMNEXT|QUERYXLATE|RECONCILE|REMEDIATION>_PROMPT` inline, or `…_PROMPT_FILE` —
 re-read each call, so file edits apply with no restart; bad file → warn + fall back to default).
 When you change a prompt's wording, keep the example JSON shape it dictates in sync with `responseSchema.ts`.
 When you add a prompt, also add its `<NAME>` token to `resolvePrompt`'s union type.
