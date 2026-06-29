@@ -115,6 +115,21 @@ describe("irisMap", () => {
     expect(tacticForTechniques([], "nothing notable here")).toBeUndefined();
   });
 
+  it("refines a T1078 logon to Lateral Movement when the description shows credential reuse", () => {
+    // EID 4648 explicit-credential logons (the bulk of an intrusion's T1078 events) are host-to-host
+    // credential reuse — lateral movement, not the initial entry point. Without the refinement they
+    // would pile into Initial Access and contradict an "entry vector unknown" synthesis.
+    expect(tacticForTechniques(["T1078"], "Logon with explicit credentials (EID 4648) - CORP\\svc-proxy @ WS-01")).toBe("Lateral Movement");
+    expect(tacticForTechniques(["T1078"], "Accepted password for nina.kapoor from 10.44.10.24 on PROXY-01")).toBe("Lateral Movement");
+    expect(tacticForTechniques(["T1078.003"], "Accepted SSH login for user 'root' from IP 10.0.0.5")).toBe("Lateral Movement");
+    expect(tacticForTechniques(["T1078"], "RDP session to FILE-01")).toBe("Lateral Movement");
+    // No credential-reuse signal → keep the table default (Initial Access).
+    expect(tacticForTechniques(["T1078"], "Valid account used")).toBe("Initial Access");
+    expect(tacticForTechniques(["T1078"])).toBe("Initial Access");
+    // A higher-priority co-occurring tactic still wins over the refined Lateral Movement.
+    expect(tacticForTechniques(["T1078", "T1003"], "Logon with explicit credentials")).toBe("Credential Access");
+  });
+
   it("maps a next step to an IRIS task body (title ≥2 chars, priority tag)", () => {
     const step: NextStep = { id: "s1", priority: "critical", action: "Isolate DC01", rationale: "Active C2", pointer: "host DC01" };
     const t = mapNextStepTask(step);
