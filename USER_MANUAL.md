@@ -59,6 +59,10 @@ Understanding this avoids confusion:
 
 ### 3.1 Installation
 
+Choose the method that fits your setup:
+
+#### From source (recommended for development)
+
 1. Install [Node.js](https://nodejs.org/) **20 or later** (Node 22.5+ if you want the NSRL SQLite backend).
 2. Clone or download the repository.
 3. Run:
@@ -69,6 +73,35 @@ Understanding this avoids confusion:
    npm run dev
    ```
 4. The server starts on **http://127.0.0.1:4773**. Open the dashboard at **http://127.0.0.1:4773/dashboard**.
+
+#### Windows — Chocolatey
+
+```powershell
+choco install dfir-companion
+```
+
+Installs the portable Windows build and bundles the capture extension on disk for offline "Load unpacked". Data is stored in `%LOCALAPPDATA%\DFIR-Companion`.
+
+#### Windows — Portable executable
+
+Download `dfir-companion-win.zip` from the [latest GitHub release](https://github.com/hasamba/DFIR-Companion/releases/latest), extract, and run `dfir-companion.exe`. No Node.js required.
+
+#### Linux — AppImage
+
+Download `dfir-companion-linux.AppImage` from the [latest GitHub release](https://github.com/hasamba/DFIR-Companion/releases/latest), make it executable (`chmod +x`), and run it. Set `DFIR_ENV_FILE` to point to your `.env` if you need the file outside the AppImage mount.
+
+#### Docker
+
+```bash
+docker run -p 4773:4773 \
+  -v /your/cases:/cases \
+  -e DFIR_CASES_ROOT=/cases \
+  ghcr.io/hasamba/dfir-companion:latest
+```
+
+Dashboard is then at **http://127.0.0.1:4773/dashboard**. Mount a local volume for persistent case storage.
+
+---
 
 > **Already running?** If the dashboard says "companion offline", the server is not running. If you see `EADDRINUSE`, another instance is already running — just use that one, or free the port:
 > ```powershell
@@ -99,9 +132,19 @@ Everything is optional. You can dismiss the wizard and add things later from **S
 
 The capture extension lets you screenshot any browser tab with a keyboard shortcut.
 
+#### Chrome Web Store (easiest)
+
+Install directly from the Chrome Web Store — no developer mode needed:
+
+**[DFIR Companion — Evidence Capture & Push](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf)**
+
+Click **Add to Chrome**, confirm the permissions, and the extension icon appears in your toolbar.
+
+#### Load unpacked (from source or Chocolatey)
+
 1. In Chrome (or any Chromium browser), go to `chrome://extensions/`.
 2. Enable **Developer mode** (top-right toggle).
-3. Click **Load unpacked** and select the `extension/` folder (or the built `dist/` inside it after running `npm run build`).
+3. Click **Load unpacked** and select the `extension/dist/` folder (run `npm run build` inside `extension/` first if building from source; Chocolatey installs it pre-built on disk).
 4. The extension icon appears in the toolbar.
 
 **Keyboard shortcut:** `Ctrl+Shift+S` (Windows/Linux) toggles capture mode on/off. When capture is active, a floating push button appears on the page.
