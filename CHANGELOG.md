@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Phishing → host initial-access correlation** — when a host later contacts a domain a phishing email linked to, the contact event is tagged as initial access (T1566.002 → T1204.002) and raised to ≥Medium, giving synthesis a real entry-vector root instead of "began via an unknown vector". The email importer surfaces the link host(s) on the email event; the correlation (`analysis/initialAccess.ts`, in `mergeDelta`) is conservative + idempotent and uses only the link domains, never sender/recipient domains (closes #201).
+
 ### Changed
 - **Synthesis anchors on connective IOCs** — synthesis context now leads with a ranked digest of the indicators that span the intrusion: IOCs ranked by cross-host reach (a C2 seen on multiple hosts) + multi-tool corroboration, with an offline (no-network) risky-TLD/DGA reputation hint, so the model latches onto the real attack backbone instead of a flat list of thousands of per-host telemetry indicators (`analysis/iocAnchors.ts`, fed into `buildSynthesisContext`; closes #200).
 - **Process/command severity is now content-, path- & exfil-aware** — the shared tradecraft grader (`isSuspiciousCmd`, used by the Windows/Sysmon, ECAR and memory importers) now flags a renamed LSASS dumper by its arguments (`-p lsass … .dmp`, nanodump/dumpert/handlekatz, `ntds.dit`/`reg save …\sam`) as High, bumps execution from a user-writable/staging path (`\AppData\`, `\Temp\`, `\Downloads\`, `\Users\Public\`, `/tmp`, `/dev/shm`) to Medium, and treats DB dumps (`mysqldump`/`pg_dump`/`mongodump`) + curl/wget file-uploads as suspicious; bash history adds matching collection (T1005) and exfil (T1041) rules. So real tradecraft graded Info/Low (and thus skipped by the severity-stratified synthesis selection) now surfaces — without auto-escalating ambiguous backups (closes #199).
