@@ -95,6 +95,7 @@ import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
 import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
+import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
 import type { KevCatalog } from "./kev.js";
@@ -3732,6 +3733,12 @@ export class AnalysisPipeline {
     let next = pinnedNow.length
       ? { ...gapFilled, keyQuestions: mergePinnedQuestions(pinnedNow, gapFilled.keyQuestions) }
       : gapFilled;
+
+    // Union the deterministically-identified ATT&CK techniques carried by the (in-scope) timeline
+    // into the synthesized MITRE table, so techniques the model didn't echo — especially the Info/Low
+    // discovery phase (whoami/net group/findstr password/cat .env) tagged by the importers — still
+    // appear in the case's MITRE table and report. Same scoped events synthesis saw; pure + idempotent.
+    next = { ...next, mitreTechniques: unionEventTechniques(next.mitreTechniques, scopedEvents) };
 
     // Dry run (second-opinion Pass 1): return model B's conclusions WITHOUT persisting or any side
     // effect — and WITHOUT folding in accepted deltas, so B stays an independent opinion.

@@ -14,6 +14,7 @@ import {
   type MappedEvent, type SiemImportOptions, type SiemIoc, type SiemParseResult,
 } from "./siemImport.js";
 import type { Severity } from "./stateTypes.js";
+import { reconTechniques } from "./reconTechniques.js";
 
 export interface BashHistoryImportOptions extends SiemImportOptions {
   // The account the history belongs to (derived from the filename by the pipeline, e.g.
@@ -116,10 +117,14 @@ const CMD_RULES: CmdRule[] = [
 ];
 
 function classify(command: string): { severity: Severity; mitre: string[] } {
+  // Discovery / credential-access recon (id, uname, find -name *.env, cat .env, …) is tagged on
+  // every command regardless of the severity rule, so the enumeration phase is identified even
+  // though shell-history recon stays Info.
+  const recon = reconTechniques("", command);
   for (const rule of CMD_RULES) {
-    if (rule.re.test(command)) return { severity: rule.severity, mitre: [...rule.mitre] };
+    if (rule.re.test(command)) return { severity: rule.severity, mitre: [...new Set([...rule.mitre, ...recon])] };
   }
-  return { severity: "Info", mitre: [] };
+  return { severity: "Info", mitre: recon };
 }
 
 // ───────────────────────────── IOC extraction ─────────────────────────────

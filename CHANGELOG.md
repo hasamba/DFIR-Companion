@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Recon-burst ATT&CK tagging** — discovery / credential-access commands (whoami, ipconfig, `net group … /domain`, `net user /domain`, systeminfo, arp, `dir /s`, `findstr password`, `.ssh`/`id_rsa`, `find … -name *.env`, `cat .env`, …) are now tagged with their ATT&CK techniques (T1033/T1016/T1082/T1069.002/T1087.002/T1018/T1083/T1552.004/T1552.001) across the Windows/Sysmon, ECAR and bash importers, and synthesis unions the in-scope event techniques into the MITRE table — so the enumeration phase is identified in the case's MITRE table/report even though each recon command stays Info/Low (`analysis/reconTechniques.ts`).
+
 ### Fixed
 - **Benign LSASS access no longer escalated to High** — a Sysmon EID 10 (ProcessAccess) to `lsass.exe` from a Windows-native accessor (Defender / Defender-for-Endpoint, `svchost`/`services`/`csrss`/`wininit`/`lsass`/`WmiPrvSE`) is now graded Low evidence instead of an auto-High credential-dumping finding — these processes open LSASS constantly. A masqueraded benign name run from a suspicious path (`\Temp\`, `\Users\Public\`) and any non-listed accessor (a renamed dumper) still grade High + T1003.001, so real dumps are unaffected (`siemImport.ts` `mapWindows`; closes #198).
 
