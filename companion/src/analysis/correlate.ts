@@ -163,6 +163,14 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
   //    as before, so this is fully backward-compatible.
   const byHash = new Map<string, number>(); // "hash:action" → first index with that pair
   events.forEach((e, i) => {
+    // Process-CREATION events (those carrying a `pid`) are correlated by host+pid in step 3, NOT by
+    // image hash: a process's hash identifies the BINARY, not the activity, and an interpreter's image
+    // hash (powershell.exe / cmd.exe / rundll32.exe) is identical across EVERY invocation — so
+    // hash-merging here collapsed all of a host's distinct PowerShell commands (e.g. a benign cmdlet,
+    // `Compress-Archive` collection and `Invoke-RestMethod` exfil) into one row, destroying the kill
+    // chain. Skipping pid-bearing events keeps distinct creations distinct; re-import dedup is still
+    // covered by step 0 (exact time+description) and genuine cross-tool pairs by step 3.
+    if (e.pid !== undefined) return;
     for (const h of eventHashes(e)) {
       const key = `${h}:${e.action ?? ""}`;
       const prev = byHash.get(key);
