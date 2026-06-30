@@ -149,6 +149,24 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
     expect(byTarget["explorer.exe"]).toBe("High");  // unknown source → still flagged
   });
 
+  it("downgrades benign Defender CreateRemoteThread (EID 8) to Low and drops T1055, but flags a masquerade", () => {
+    const defender = {
+      "@timestamp": "2024-03-18T11:00:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
+      event_id: 8, event_data: { SourceImage: "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18\\MsMpEng.exe", TargetImage: "C:\\Windows\\explorer.exe" },
+    };
+    const masq = {
+      "@timestamp": "2024-03-18T11:01:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
+      event_id: 8, event_data: { SourceImage: "C:\\Users\\Public\\svchost.exe", TargetImage: "C:\\Windows\\explorer.exe" },
+    };
+    const r = parseSiemExport(elastic(defender, masq));
+    const def = r.events.find((e) => e.description.includes("MsMpEng.exe"))!;
+    const mq = r.events.find((e) => e.description.includes("Public\\svchost.exe"))!;
+    expect(def.severity).toBe("Low");
+    expect(def.mitreTechniques).not.toContain("T1055");
+    expect(mq.severity).toBe("High");   // masqueraded name from \Users\Public\
+    expect(mq.mitreTechniques).toContain("T1055");
+  });
+
   it("flags LSASS process-access (Sysmon EID 10) as High with credential-dumping MITRE", () => {
     const lsass = {
       "@timestamp": "2017-03-20T10:02:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
