@@ -43,6 +43,7 @@ import {
   type SiemParseResult,
 } from "./siemImport.js";
 import { reconTechniques } from "./reconTechniques.js";
+import { tradecraftSignal } from "./tradecraftRules.js";
 
 type Row = Record<string, unknown>;
 
@@ -132,17 +133,21 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       const procName = baseName(image) || baseName(cmd);
       const parentName = baseName(parent);
       const grade = isSuspiciousCmd(image, cmd);
-      const severity: Severity = grade === "strong" ? "High" : grade === "weak" ? "Medium" : "Info";
+      const tc = tradecraftSignal(image, cmd);
+      const strong = grade === "strong" || tc?.weight === "strong";
+      const flagged = Boolean(grade) || Boolean(tc);
+      const severity: Severity = strong ? "High" : flagged ? "Medium" : "Info";
       const desc = `Process created: ${cmd || image || "(unknown)"}` +
         (parentName ? ` (parent ${parentName})` : "") + at;
-      if (grade) addIoc(sink, "process", procName || image);
+      if (flagged) addIoc(sink, "process", procName || image);
       // The created-process pid — the cross-tool correlation key (matches Windows 4688 NewProcessId /
       // Sysmon EID 1 ProcessId on the same host), so an ECAR create merges with its Windows-log twin.
       const pidNum = Number(rec["pid"]);
       const pid = Number.isInteger(pidNum) && pidNum > 0 ? pidNum : undefined;
       // Discovery / credential-access recon tagging (whoami, net group /domain, find -name *.env,
-      // cat .env, …) so the enumeration phase is identified even when each command stays Info.
-      const mitre = [...new Set([...(grade ? ["T1059"] : []), ...reconTechniques(image, cmd)])];
+      // cat .env, …) plus deterministic tradecraft techniques (Defender-disable, tunneling, exfil…)
+      // so the enumeration/tradecraft phase is identified even when each command stays Info.
+      const mitre = [...new Set([...(flagged ? ["T1059"] : []), ...(tc?.mitre ?? []), ...reconTechniques(image, cmd)])];
       return {
         ...base, severity,
         mitre,

@@ -24,6 +24,7 @@
 import type { Severity } from "./stateTypes.js";
 import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
+import { tradecraftSignal } from "./tradecraftRules.js";
 
 export interface SiemImportOptions {
   // Collapse repetitive identical events into one counted row. Default true.
@@ -574,6 +575,14 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     const susp = isSuspiciousCmd(image, cmd);
     if (susp === "strong") { severity = worst(severity, "High"); if (!mitre.includes("T1003")) mitre.push("T1003"); }
     else if (susp === "weak") severity = worst(severity, "Medium");
+    // Deterministic attacker-tradecraft grading harvested from real intrusions (Defender-disable,
+    // recovery inhibition, reverse-tunnel C2, Impacket lateral movement, cloud exfil, RMM/C2 tooling)
+    // with the CORRECT ATT&CK technique per match (not isSuspiciousCmd's T1003 default).
+    const tc = tradecraftSignal(image, cmd);
+    if (tc) {
+      severity = worst(severity, tc.weight === "strong" ? "High" : "Medium");
+      for (const t of tc.mitre) if (!mitre.includes(t)) mitre.push(t);
+    }
     // Tag discovery / credential-access recon (whoami, net group /domain, dir /s, findstr password,
     // .ssh/id_rsa, …) so the case identifies the enumeration phase even when each command is Info/Low.
     for (const t of reconTechniques(image, cmd)) if (!mitre.includes(t)) mitre.push(t);
