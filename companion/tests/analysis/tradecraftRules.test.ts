@@ -47,7 +47,12 @@ describe("tradecraftRules — strong (High) attacker tradecraft", () => {
     expect(sig("lazagne.exe all")?.mitre).toContain("T1555");
   });
 
-  it("flags recovery inhibition (T1490) — the WMI/bcdedit/Safe-Mode variants we did not match", () => {
+  it("flags recovery inhibition (T1490) — incl. the vssadmin.exe form STRONG_CMD missed", () => {
+    // vssadmin.exe delete shadows — the `.exe` form STRONG_CMD's `vssadmin\s+delete` did not match.
+    const v = sig("vssadmin.exe delete shadows /all /quiet");
+    expect(v?.weight).toBe("strong");
+    expect(v?.mitre).toContain("T1490");
+    expect(sig("C:\\Windows\\System32\\vssadmin.exe delete shadows /all /quiet")?.mitre).toContain("T1490");
     expect(sig("wmic shadowcopy delete /all")?.mitre).toContain("T1490");
     expect(sig('powershell "Get-WmiObject Win32_Shadowcopy | Remove-WmiObject"')?.mitre).toContain("T1490");
     expect(sig("bcdedit /set {default} recoveryenabled No")?.mitre).toContain("T1490");
@@ -55,6 +60,14 @@ describe("tradecraftRules — strong (High) attacker tradecraft", () => {
     expect(sig("bcdedit /set {default} safeboot network")?.mitre).toContain("T1490");
     expect(sig("wbadmin delete systemstatebackup -keepVersions:0")?.mitre).toContain("T1490");
     expect(sig("Get-VM | where { $_.Name -ne 'VM01' } | Stop-VM -Force")?.mitre).toContain("T1490");
+  });
+
+  it("flags ransomware encryptor invocation (T1486) without colliding with PowerShell -enc", () => {
+    expect(sig("C:\\ProgramData\\msidxsvc.exe --enc --path D:\\ClientData")?.mitre).toContain("T1486");
+    expect(sig("locker.exe -p=G:\\ -n=15")?.mitre).toContain("T1486");
+    expect(sig("win.exe -n=2 netonly")?.mitre).toContain("T1486");
+    // single-dash -enc is PowerShell EncodedCommand, NOT a ransomware flag — must not be T1486
+    expect(sig("powershell.exe -nop -enc SQBFAFgA")?.mitre ?? []).not.toContain("T1486");
   });
 
   it("flags tunneling, Impacket lateral movement and cloud exfil", () => {
