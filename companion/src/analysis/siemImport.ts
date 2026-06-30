@@ -331,7 +331,13 @@ const LOLBINS = new Set([
 // Core OS processes that legitimately call CreateRemoteThread (Sysmon EID 8) during normal
 // session/process setup — csrss/wininit/services injecting is routine, so we downgrade those
 // from the default High (they stay in the timeline; synthesis/legit-marking can still act).
-const BENIGN_THREAD_SOURCES = new Set(["csrss.exe", "wininit.exe", "services.exe", "smss.exe", "svchost.exe", "wmiprvse.exe", "lsm.exe"]);
+// Core OS processes that legitimately CreateRemoteThread as routine session/service setup, PLUS
+// Windows Defender / Defender-for-Endpoint, which inject monitoring threads into user processes as
+// part of behavioral scanning — a benign EID 8 source, not injection tradecraft.
+const BENIGN_THREAD_SOURCES = new Set([
+  "csrss.exe", "wininit.exe", "services.exe", "smss.exe", "svchost.exe", "wmiprvse.exe", "lsm.exe", "winlogon.exe",
+  "msmpeng.exe", "mpdefendercoreservice.exe", "mssense.exe", "sensendr.exe", "mpcmdrun.exe", // Defender / MDE
+]);
 // Windows-native processes that access LSASS constantly as part of normal operation (#198). A
 // Sysmon EID 10 ProcessAccess to lsass.exe from one of these is NOT credential dumping — Defender /
 // Defender-for-Endpoint scan it on every boot, and core OS processes open it routinely. Keyed on the
@@ -583,10 +589,17 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
       if (!mitre.includes("T1003.001")) mitre.push("T1003.001");
     }
   }
-  // CreateRemoteThread (Sysmon 8) from a core OS process is routine session setup, not
-  // injection — downgrade from the table's default High so it doesn't drown real signal.
-  if (isSysmon && eid === 8 && BENIGN_THREAD_SOURCES.has(baseName(str(getCI(ed, "SourceImage"))).toLowerCase())) {
-    severity = "Low";
+  // CreateRemoteThread (Sysmon 8) from a core OS process or Defender is routine session setup /
+  // behavioral monitoring, not injection — downgrade from the table's default High and drop the
+  // T1055 tag so it doesn't drown real signal. A benign name run from a SUSPICIOUS path (a
+  // masqueraded svchost.exe in \Temp\) is NOT benign and keeps High + T1055.
+  if (isSysmon && eid === 8) {
+    const srcImg = str(getCI(ed, "SourceImage"));
+    if (BENIGN_THREAD_SOURCES.has(baseName(srcImg).toLowerCase()) && !SUSP_PATH.test(srcImg)) {
+      severity = "Low";
+      const i = mitre.indexOf("T1055");
+      if (i >= 0) mitre.splice(i, 1);
+    }
   }
 
   // Structured correlation/IOC fields.
