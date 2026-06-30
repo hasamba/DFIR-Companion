@@ -3435,9 +3435,15 @@
     let corrobTimeline = _corrobOf("timeline");
     let corrobIocs = _corrobOf("iocs");
     let corrobFindings = _corrobOf("findings");
-    // Distinct REAL tool sources backing an item (drops the "unknown source" placeholder), the unit the
-    // corroboration lens counts. Shared by the timeline + findings filters.
-    function realSourceCount(sources) { return (sources || []).filter(s => s && s !== "unknown source").length; }
+    // Count of DISTINCT real tool sources backing an item (drops the "unknown source" placeholder; dedups
+    // so a repeated source name can't inflate the count), the unit the corroboration lens counts. When a
+    // `hidden` set is passed, sources unchecked in the Sources filter are excluded — so the lens counts
+    // only the tools the analyst is currently looking at (the two filters compose as one question).
+    function realSourceCount(sources, hidden) {
+      const set = new Set();
+      for (const s of (sources || [])) if (s && s !== "unknown source" && !(hidden && hidden.has(s))) set.add(s);
+      return set.size;
+    }
     let hiddenSources = new Set();            // source/tool names the user unchecked in the source filter (empty = show all)
     let _srcMenuSig = "";                      // signature of the source-filter menu's last build (skip rebuild when unchanged)
     let hiddenIocTypes = new Set();           // IOC types the user unchecked in the IOC type filter (#169; empty = show all)
@@ -9507,18 +9513,24 @@
     // Build/refresh the source-filter dropdown from the current timeline. Hidden when there are
     // fewer than 2 sources (nothing to filter). The menu is rebuilt only when the source set
     // changes; otherwise we just sync checkbox state so an open menu isn't disrupted mid-use.
-    function renderSourceFilter(ft) {
+    // `lensFt` (optional): the corroboration-lens-filtered subset. When the 2+/3+ lens is active the menu
+    // lists ONLY the tools that appear in that view (no dead facets that show nothing), while pruning of
+    // stale hidden sources still uses the FULL timeline so toggling the lens never forgets a hidden choice.
+    function renderSourceFilter(ft, lensFt) {
       const wrap = document.getElementById("srcLegendWrap");
       const menu = document.getElementById("srcFilterMenu");
       const btn = document.getElementById("srcFilterBtn");
       if (!wrap || !menu || !btn) return;
-      const sources = sourceFacets(ft);
-      // Drop any unchecked sources that no longer exist (keeps the active state honest across imports).
-      for (const s of [...hiddenSources]) if (!sources.includes(s)) hiddenSources.delete(s);
+      const allSources = sourceFacets(ft);
+      // Drop unchecked sources that no longer exist anywhere (cross-import hygiene) — full timeline, not
+      // the lens subset, so a lens-excluded hidden source isn't forgotten when the lens toggles.
+      for (const s of [...hiddenSources]) if (!allSources.includes(s)) hiddenSources.delete(s);
+      const sources = lensFt ? sourceFacets(lensFt) : allSources;
       if (sources.length < 2) { wrap.style.display = "none"; menu.hidden = true; _srcMenuSig = ""; return; }
       wrap.style.display = "";
-      const shown = sources.length - hiddenSources.size;
-      const active = hiddenSources.size > 0;
+      const hiddenInView = sources.filter(s => hiddenSources.has(s)).length;
+      const shown = sources.length - hiddenInView;
+      const active = hiddenInView > 0;
       btn.classList.toggle("active", active);
       btn.textContent = active ? `⛏ Sources (${shown}/${sources.length})` : "⛏ Sources";
       const sig = sources.join("");
@@ -9536,7 +9548,13 @@
     function renderTimelineEvents(ft) {
       if (!_tlKeepPage) tlPage = 0;
       _tlKeepPage = false;
-      renderSourceFilter(ft);
+      // When the corroboration lens is on, scope the Sources menu to the tools present on events that
+      // CLEAR the lens (≥N distinct sources, counting all of them — so the facet list is stable as the
+      // analyst toggles sources). Drives renderSourceFilter's display list.
+      const lensFt = corrobTimeline > 1
+        ? ft.filter(e => realSourceCount(e.sources) >= corrobTimeline)
+        : null;
+      renderSourceFilter(ft, lensFt);
 
       const checked = document.querySelectorAll('.sev-filter:checked');
       const activeSevs = new Set([...checked].map(cb => cb.value));
@@ -9553,7 +9571,10 @@
         if (!real.length) return !hiddenSources.has(NO_SOURCE_FACET);  // unsourced events ride the "(no source)" facet
         return real.some(s => !hiddenSources.has(s));                   // hidden only when ALL its sources are unchecked
       });
-      if (corrobTimeline > 1) visible = visible.filter(e => realSourceCount(e.sources) >= corrobTimeline);   // corroboration lens (#35)
+      // Corroboration lens (#35): count only DISTINCT sources the analyst is still looking at (excludes
+      // ones unchecked in the Sources filter), so the two filters compose — isolating to a single source
+      // under 2+ correctly shows nothing (you can't be corroborated by 2 distinct tools within 1).
+      if (corrobTimeline > 1) visible = visible.filter(e => realSourceCount(e.sources, hiddenSources) >= corrobTimeline);
       const viewSevFiltering = !!(activeView && activeView.filters && activeView.filters.minSeverity);
       if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity));   // dashboard-view severity floor (#142)
       visible = sortTimelineEvents(visible);
