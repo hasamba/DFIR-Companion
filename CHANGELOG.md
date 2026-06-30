@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Host & account ranking + auto-scope** — a derived dashboard panel (`GET /cases/:id/host-ranking`) scoring each host/account by SIGNAL (severity-weighted events + ATT&CK techniques + connective IOCs), not volume, so the entities carrying the attack rise to the top while benign-but-chatty hosts sink — with a one-click suggested scope time window covering the top hosts' activity. The top hosts are also fed into the synthesis prompt ("signal concentration") so an automatic run over a noisy multi-host timeline anchors its narrative on the right hosts (`analysis/hostRanking.ts`; closes #202).
 - **Phishing → host initial-access correlation** — when a host later contacts a domain a phishing email linked to, the contact event is tagged as initial access (T1566.002 → T1204.002) and raised to ≥Medium, giving synthesis a real entry-vector root instead of "began via an unknown vector". The email importer surfaces the link host(s) on the email event; the correlation (`analysis/initialAccess.ts`, in `mergeDelta`) is conservative + idempotent and uses only the link domains, never sender/recipient domains (closes #201).
 
 ### Changed

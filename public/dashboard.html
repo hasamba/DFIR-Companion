@@ -2811,6 +2811,26 @@
       #sec-mem-nextsteps .mns-copy.copied{background:var(--c-2f8f4e)}
     </style>
     <section id="sec-phases" style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
+    <section id="sec-hostranking" style="grid-column: 1 / -1"><h2>Host &amp; Account Ranking<span class="ev-sub">which hosts/accounts carry the attack — scored by signal (severity-weighted events + techniques + connective IOCs), not volume (derived, no AI)</span></h2><div id="hostRanking">—</div></section>
+    <style>
+      #sec-hostranking .hr-empty{color:var(--c-9aa4b2);font-size:12px}
+      #sec-hostranking .hr-scope{margin-bottom:10px;font-size:12px;color:var(--c-c9d1db);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+      #sec-hostranking .hr-scope b{color:var(--c-d6deea)}
+      #sec-hostranking .hr-apply{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:4px;padding:2px 10px;font-size:11px;cursor:pointer;text-transform:none;letter-spacing:0}
+      #sec-hostranking .hr-apply:disabled{opacity:.6;cursor:default}
+      #sec-hostranking .hr-list{display:flex;flex-direction:column;gap:6px}
+      #sec-hostranking .hr-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-6aa9ff);border-radius:5px;padding:5px 9px;font-size:12px}
+      #sec-hostranking .hr-row.acct{border-left-color:var(--c-c79bff)}
+      #sec-hostranking .hr-name{color:var(--c-d6deea);font-weight:bold}
+      #sec-hostranking .hr-kind{color:var(--c-9aa4b2);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+      #sec-hostranking .hr-score{margin-left:auto;background:var(--c-13243a);color:var(--c-9ecbff);border:1px solid var(--c-3a567d);border-radius:4px;padding:0 7px;font-weight:bold;white-space:nowrap}
+      #sec-hostranking .hr-badge{border-radius:3px;padding:0 6px;font-size:11px;white-space:nowrap}
+      #sec-hostranking .hr-crit{background:#cf222e22;color:#ff7b72;border:1px solid #cf222e55}
+      #sec-hostranking .hr-high{background:#bb800922;color:#e3b341;border:1px solid #bb800955}
+      #sec-hostranking .hr-med{background:#9aa4b222;color:#9aa4b2;border:1px solid #9aa4b255}
+      #sec-hostranking .hr-tech{color:#6aa9ff}
+      #sec-hostranking .hr-conn{color:#c79bff}
+    </style>
     <section id="sec-gaps" style="grid-column: 1 / -1"><h2>Timeline Gaps<span class="ev-sub">suspicious silent periods — a complete gap (all sources dark) is the classic log-tampering signature (derived, no AI); a lead, not proof</span><button id="hypothesizeGapsBtn" type="button" title="Ask the AI to hypothesise what the attacker did during each silent period (from the surrounding events) and pair each gap with shadow-artifact collections that reconstruct the missing window" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Hypothesize gaps</button><span id="hypothesizeGapsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="timelineGaps">—</div><div id="gapHypotheses"></div></section>
     <style>
       #sec-gaps .gh-empty{color:var(--c-9aa4b2);font-size:12px;margin-top:10px}
@@ -7864,6 +7884,59 @@
       });
     }
 
+    // ── Host & Account Ranking (#202) ─────────────────────────────────────────────────────
+    // Which hosts/accounts carry the attack — scored by SIGNAL (severity-weighted events +
+    // techniques + connective IOCs), not volume, so benign-but-chatty hosts sink. Derived
+    // server-side (GET /cases/:id/host-ranking); re-derived (debounced) on each state change.
+    let hostRankingData = null;
+    let hostRankingTimer = null;
+    function loadHostRanking(caseId) {
+      fetch(`/cases/${caseId}/host-ranking`).then(r => r.json()).then(d => {
+        hostRankingData = (d && typeof d === "object") ? d : null;
+        renderHostRanking();
+      }).catch(() => {});
+    }
+    function scheduleHostRankingReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(hostRankingTimer);
+      hostRankingTimer = setTimeout(() => loadHostRanking(caseId), 800);
+    }
+    function applyHostRankingScope() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const w = hostRankingData && hostRankingData.suggestedWindow;
+      if (!caseId || !w || !w.start) return;
+      fetch(`/cases/${caseId}/scope`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ start: w.start, end: w.end }) })
+        .then(() => { if (typeof refresh === "function") refresh(); })
+        .catch(() => {});
+    }
+    function renderHostRanking() {
+      const el = document.getElementById("hostRanking");
+      if (!el) return;
+      const d = hostRankingData;
+      if (!d || !d.ranks || !d.ranks.length) {
+        el.innerHTML = `<div class="hr-empty">No host or account carries attack signal yet — ranking surfaces entities with Critical/High/Medium events, techniques, or connective IOCs.</div>`;
+        return;
+      }
+      const w = d.suggestedWindow || {};
+      let scope = "";
+      if (d.topHosts && d.topHosts.length && w.start) {
+        const fmt = (t) => esc((t || "").replace("T", " ").replace(/\.\d+Z?$/, "").replace("Z", ""));
+        scope = `<div class="hr-scope">⌖ Signal concentrated on <b>${esc(d.topHosts.join(", "))}</b> · suggested scope ${fmt(w.start)} → ${fmt(w.end)} <button class="hr-apply" onclick="applyHostRankingScope()">Apply scope window</button></div>`;
+      }
+      const rows = d.ranks.map(r => {
+        const badges = [
+          r.critical ? `<span class="hr-badge hr-crit">${esc(r.critical)} Crit</span>` : "",
+          r.high ? `<span class="hr-badge hr-high">${esc(r.high)} High</span>` : "",
+          r.medium ? `<span class="hr-badge hr-med">${esc(r.medium)} Med</span>` : "",
+          r.techniques ? `<span class="hr-tech">${esc(r.techniques)} tech</span>` : "",
+          r.connectiveIocs ? `<span class="hr-conn">⊕${esc(r.connectiveIocs)} IOC</span>` : "",
+        ].filter(Boolean).join(" ");
+        return `<div class="hr-row ${r.type === "account" ? "acct" : ""}"><span class="hr-name">${esc(r.name)}</span><span class="hr-kind">${esc(r.type)}</span>${badges}<span class="hr-score" title="signal score">${esc(r.score)}</span></div>`;
+      }).join("");
+      el.innerHTML = scope + `<div class="hr-list">${rows}</div>`;
+    }
+
     // ── Adversary Hints (#46) ─────────────────────────────────────────────────────────────
     // Known ATT&CK groups ranked by technique overlap with the case — offline hypothesis fuel,
     // NOT attribution. Derived server-side (GET /cases/:id/adversary-hints) from the bundled MITRE
@@ -9957,6 +10030,7 @@
       loadBeacons(caseId);
       loadAnomalies(caseId);
       loadAdversaryHints(caseId);
+      loadHostRanking(caseId);
       loadD3fend(caseId);
       loadAttackMitigations(caseId);
       loadGeoMap(caseId);
@@ -10029,7 +10103,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "capture_ingest") {
@@ -11571,6 +11645,7 @@
       { id: "sec-timeline",     label: "Forensic Timeline" },
       { id: "sec-kill-chain",   label: "Kill Chain" },
       { id: "sec-phases",       label: "Attack Phases" },
+      { id: "sec-hostranking",  label: "Host & Account Ranking" },
       { id: "sec-gaps",         label: "Timeline Gaps" },
       { id: "sec-swimlane",     label: "Timeline Swimlane" },
       { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
