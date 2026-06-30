@@ -331,6 +331,15 @@ const LOLBINS = new Set([
 // session/process setup — csrss/wininit/services injecting is routine, so we downgrade those
 // from the default High (they stay in the timeline; synthesis/legit-marking can still act).
 const BENIGN_THREAD_SOURCES = new Set(["csrss.exe", "wininit.exe", "services.exe", "smss.exe", "svchost.exe", "wmiprvse.exe", "lsm.exe"]);
+// Windows-native processes that access LSASS constantly as part of normal operation (#198). A
+// Sysmon EID 10 ProcessAccess to lsass.exe from one of these is NOT credential dumping — Defender /
+// Defender-for-Endpoint scan it on every boot, and core OS processes open it routinely. Keyed on the
+// SourceImage basename; still graded High when the source runs from a SUSPICIOUS path (a masqueraded
+// "svchost.exe" in \Temp\ is not benign), and a non-listed accessor (e.g. a renamed dumper) stays High.
+const BENIGN_LSASS_ACCESSORS = new Set([
+  "msmpeng.exe", "mpdefendercoreservice.exe", "mssense.exe", "sensendr.exe", "mpcmdrun.exe", // Defender / MDE
+  "svchost.exe", "services.exe", "csrss.exe", "wininit.exe", "lsass.exe", "wmiprvse.exe", "smss.exe", "lsm.exe",
+]);
 // Command-line markers strongly associated with attacker tradecraft → stronger bump.
 const STRONG_CMD = /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal|lsass[^\n]{0,40}\.dmp|\.dmp[^\n]{0,40}lsass|(?:-p|--pid|--process)\s+lsass|nanodump|dumpert|handlekatz|procdump[^\n]*lsass|reg\s+save\s+[^\n]*\\sam\b|ntds\.dit|ntdsutil[^\n]*ifm/i;
 const SUSP_CMD = /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run|mysqldump|pg_dump|mongodump|(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i;
@@ -560,8 +569,15 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     else if (susp === "weak") severity = worst(severity, "Medium");
   }
   if (def.kind === "procaccess" && /lsass\.exe$/i.test(str(getCI(ed, "TargetImage")))) {
-    severity = "High";
-    if (!mitre.includes("T1003.001")) mitre.push("T1003.001");
+    const srcImg = str(getCI(ed, "SourceImage"));
+    const benign = BENIGN_LSASS_ACCESSORS.has(baseName(srcImg).toLowerCase()) && !SUSP_PATH.test(srcImg);
+    if (benign) {
+      // Routine OS / Defender LSASS access — keep as Low evidence, NOT a credential-dump finding (#198).
+      severity = "Low";
+    } else {
+      severity = "High";
+      if (!mitre.includes("T1003.001")) mitre.push("T1003.001");
+    }
   }
   // CreateRemoteThread (Sysmon 8) from a core OS process is routine session setup, not
   // injection — downgrade from the table's default High so it doesn't drown real signal.

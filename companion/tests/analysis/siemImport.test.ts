@@ -159,6 +159,32 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
     expect(r.events[0].mitreTechniques).toContain("T1003.001");
   });
 
+  it("downgrades benign LSASS access from Defender / core-OS processes to Low — #198", () => {
+    const defender = {
+      "@timestamp": "2024-03-18T10:00:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
+      event_id: 10, event_data: { SourceImage: "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.2\\MsMpEng.exe", TargetImage: "C:\\Windows\\System32\\lsass.exe", GrantedAccess: "0x1410" },
+    };
+    const svchost = {
+      "@timestamp": "2024-03-18T10:01:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
+      event_id: 10, event_data: { SourceImage: "C:\\Windows\\System32\\svchost.exe", TargetImage: "C:\\Windows\\System32\\lsass.exe", GrantedAccess: "0x1010" },
+    };
+    const r = parseSiemExport(elastic(defender, svchost));
+    for (const e of r.events) {
+      expect(e.severity).toBe("Low");
+      expect(e.mitreTechniques).not.toContain("T1003.001");
+    }
+  });
+
+  it("still flags a MASQUERADED benign name running LSASS access from a suspicious path as High — #198", () => {
+    const masq = {
+      "@timestamp": "2024-03-18T10:02:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
+      event_id: 10, event_data: { SourceImage: "C:\\Users\\Public\\svchost.exe", TargetImage: "C:\\Windows\\System32\\lsass.exe", GrantedAccess: "0x1410" },
+    };
+    const r = parseSiemExport(elastic(masq));
+    expect(r.events[0].severity).toBe("High");
+    expect(r.events[0].mitreTechniques).toContain("T1003.001");
+  });
+
   it("grades a renamed LSASS dumper (by argument) as High — #199", () => {
     const dump = {
       "@timestamp": "2024-03-18T15:24:38Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS-DEV-01",
