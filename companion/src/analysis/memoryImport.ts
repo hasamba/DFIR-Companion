@@ -49,6 +49,7 @@ import {
   type SiemIoc,
 } from "./siemImport.js";
 import { parseCsv } from "./csvImport.js";
+import { tradecraftSignal } from "./tradecraftRules.js";
 
 type Row = Record<string, unknown>;
 
@@ -340,12 +341,15 @@ function mapCmdline(label: string, tool: string, rows: Row[], sink: Map<string, 
     const name = proc ? baseName(proc) : "";
     if (name) addIoc(sink, "process", name);
     const susp = isSuspiciousCmd(proc, args);
-    const severity: Severity = susp === "strong" ? "High" : susp === "weak" ? "Medium" : "Info";
+    const tc = tradecraftSignal(proc, args);
+    const strong = susp === "strong" || tc?.weight === "strong";
+    const flagged = Boolean(susp) || Boolean(tc);
+    const severity: Severity = strong ? "High" : flagged ? "Medium" : "Info";
     out.push({
       timestamp: "",
       description: `${tool} ${label}: ${proc || "?"} (PID ${pid || "?"})${args ? ` — ${oneLine(args).slice(0, 220)}` : ""}`.slice(0, 600),
       severity,
-      mitre: susp ? ["T1059"] : [],
+      mitre: [...new Set([...(flagged ? ["T1059"] : []), ...(tc?.mitre ?? [])])],
       aggKey: `mem|cmd|${name.toLowerCase()}|${pid}`.slice(0, 400),
       sources: [tool],
       ...(name ? { processName: name } : {}),

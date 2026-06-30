@@ -21,7 +21,17 @@ const RECON_RULES: ReconRule[] = [
   // T1087.002 Account Discovery: Domain Account
   { re: /\bnet\s+user\b[^\n]*\/domain|\bnet\s+accounts\b[^\n]*\/domain|\bget-aduser\b|\bdsquery\b|\bnet\s+group\b[^\n]*\/domain/i, ids: ["T1087.002"] },
   // T1018 Remote System Discovery
-  { re: /\barp\s+-a\b|\bnet\s+view\b|\bnltest\b[^\n]*(?:dclist|dsgetdc)|\bnmap\b|\bping\b[^\n]*-n\s|for\s+\/l[^\n]*ping/i, ids: ["T1018"] },
+  { re: /\barp\s+-a\b|\bnet\s+view\b|\bnltest\b[^\n]*(?:dclist|dsgetdc)|\bping\b[^\n]*-n\s|for\s+\/l[^\n]*ping/i, ids: ["T1018"] },
+  // T1482 Domain Trust Discovery (nltest trust enum, AdFind trust dump — incl. renamed AdFind)
+  { re: /\bnltest\b[^\n]*(?:domain_trusts|trusted_domains)|-sc\s+trustdmp\b|\bnltest\b\s+\/finduser/i, ids: ["T1482"] },
+  // T1087.002 Account Discovery via AD-recon tooling (AdFind / BloodHound / PingCastle / ADRecon)
+  { re: /\badfind(?:\.exe)?\b|-sc\s+trustdmp\b|\bsharphound\b|\bbloodhound\b|\bping\s*castle\b|\bpingcastle\b|\badrecon\b|\bseatbelt\b|\b\[adsisearcher\]/i, ids: ["T1087.002"] },
+  // T1046 Network Service Discovery (port/host scanners — Advanced IP Scanner, SoftPerfect, masscan…)
+  { re: /\badvanced\s*(?:ip|port)\s*scanner\b|\bsoftperfect\b|\bnetscan(?:\.exe)?\b|\bmasscan\b|\brustscan\b|\bkportscan\b|\bangryip\b|\bnmap\b/i, ids: ["T1046"] },
+  // T1518.001 Security Software Discovery (AV-product enumeration)
+  { re: /securitycenter2[^\n]*antivirusproduct|antivirusproduct[^\n]*get|get-mpcomputerstatus|get-mpthreat|\bsc\b[^\n]*query[^\n]*windefend/i, ids: ["T1518.001"] },
+  // T1135 Network Share Discovery (share enumeration tooling)
+  { re: /\binvoke-sharefinder\b|\bsharpshares\b|\bfinduncommonshares\b|\bnet\s+share\b|find-domainshare|get-netshare/i, ids: ["T1135"] },
   // T1083 File and Directory Discovery
   { re: /\bdir\b\s+[^\n]*\/s\b|\bwhere\b\s+\/r\b|\bfind\b\s+[\\/][^\n]*-name|\bfind\b\s+\/[a-z]\b|get-childitem[^\n]*-recurse|\bls\s+-r\b|\btree\b|\blocate\b/i, ids: ["T1083"] },
   // T1552.004 Unsecured Credentials: Private Keys
@@ -80,6 +90,29 @@ const TECHNIQUE_NAMES: Readonly<Record<string, string>> = {
   "T1053.003": "Scheduled Task/Job: Cron",
   "T1543.002": "Create or Modify System Process: Systemd Service",
   "T1548.001": "Abuse Elevation Control Mechanism: Setuid and Setgid",
+  // ── discovery + tradecraft techniques added from the DFIR Report corpus ──
+  T1482: "Domain Trust Discovery",
+  T1046: "Network Service Discovery",
+  T1135: "Network Share Discovery",
+  "T1518.001": "Security Software Discovery",
+  "T1003.002": "OS Credential Dumping: Security Account Manager",
+  "T1003.003": "OS Credential Dumping: NTDS",
+  "T1003.006": "OS Credential Dumping: DCSync",
+  T1555: "Credentials from Password Stores",
+  "T1558.003": "Steal or Forge Kerberos Tickets: Kerberoasting",
+  "T1114.002": "Email Collection: Remote Email Collection",
+  "T1562.001": "Impair Defenses: Disable or Modify Tools",
+  T1112: "Modify Registry",
+  "T1548.002": "Abuse Elevation Control Mechanism: Bypass User Account Control",
+  T1490: "Inhibit System Recovery",
+  T1489: "Service Stop",
+  "T1021.002": "Remote Services: SMB/Windows Admin Shares",
+  T1047: "Windows Management Instrumentation",
+  T1572: "Protocol Tunneling",
+  T1090: "Proxy",
+  "T1567.002": "Exfiltration to Cloud Storage",
+  T1219: "Remote Access Software",
+  T1068: "Exploitation for Privilege Escalation",
 };
 
 // Best-effort ATT&CK technique name for a given id (falls back to the bare id).
