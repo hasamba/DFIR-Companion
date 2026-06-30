@@ -23,6 +23,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { toUtcIso } from "./timeUtc.js";
+import { reconTechniques } from "./reconTechniques.js";
 
 export interface SiemImportOptions {
   // Collapse repetitive identical events into one counted row. Default true.
@@ -567,6 +568,9 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     const susp = isSuspiciousCmd(image, cmd);
     if (susp === "strong") { severity = worst(severity, "High"); if (!mitre.includes("T1003")) mitre.push("T1003"); }
     else if (susp === "weak") severity = worst(severity, "Medium");
+    // Tag discovery / credential-access recon (whoami, net group /domain, dir /s, findstr password,
+    // .ssh/id_rsa, …) so the case identifies the enumeration phase even when each command is Info/Low.
+    for (const t of reconTechniques(image, cmd)) if (!mitre.includes(t)) mitre.push(t);
   }
   if (def.kind === "procaccess" && /lsass\.exe$/i.test(str(getCI(ed, "TargetImage")))) {
     const srcImg = str(getCI(ed, "SourceImage"));

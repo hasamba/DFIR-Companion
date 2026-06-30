@@ -42,6 +42,7 @@ import {
   type SiemIoc,
   type SiemParseResult,
 } from "./siemImport.js";
+import { reconTechniques } from "./reconTechniques.js";
 
 type Row = Record<string, unknown>;
 
@@ -139,9 +140,12 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       // Sysmon EID 1 ProcessId on the same host), so an ECAR create merges with its Windows-log twin.
       const pidNum = Number(rec["pid"]);
       const pid = Number.isInteger(pidNum) && pidNum > 0 ? pidNum : undefined;
+      // Discovery / credential-access recon tagging (whoami, net group /domain, find -name *.env,
+      // cat .env, …) so the enumeration phase is identified even when each command stays Info.
+      const mitre = [...new Set([...(grade ? ["T1059"] : []), ...reconTechniques(image, cmd)])];
       return {
         ...base, severity,
-        mitre: grade ? ["T1059"] : [],
+        mitre,
         description: desc,
         // pid is in the key so distinct executions stay distinct rows (not aggregated away) — that's
         // both better forensics and what lets each creation correlate with its Windows-log twin by pid.
