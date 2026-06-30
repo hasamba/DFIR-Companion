@@ -515,7 +515,13 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
   if (p.attachments.length) {
     desc += ` | ${p.attachments.length} attachment(s): ${p.attachments.map((a) => a.filename).join(", ")}`;
   }
-  if (p.urls.length) desc += ` | ${p.urls.length} URL(s)`;
+  if (p.urls.length) {
+    desc += ` | ${p.urls.length} URL(s)`;
+    // Surface the link HOST(s) (not the sender/recipient domains) so analysts see where the link
+    // pointed AND the initial-access correlation (#201) can match a later host contact to it.
+    const linkHosts = [...new Set(p.urls.map(urlHost).filter((h): h is string => !!h && !IPV4.test(h) && DOMAIN_RE.test(h)))];
+    if (linkHosts.length) desc += ` linking ${linkHosts.slice(0, 5).join(", ")}`;
+  }
 
   return {
     id: "",
