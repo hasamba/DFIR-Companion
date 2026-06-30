@@ -1671,6 +1671,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Suspicious host/account ranking (#202): which entities carry the attack's signal, scored by
+  // severity-weighted events + techniques + connective IOCs (not volume), plus a suggested scope
+  // time window. Derived on read.
+  app.get("/cases/:id/host-ranking", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.hostRanking(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // D3FEND defensive countermeasures (#178): per identified ATT&CK technique, the MITRE D3FEND
   // hardening/detection/isolation countermeasures from the bundled offline mapping. Derived on read.
   app.get("/cases/:id/d3fend-countermeasures", async (req: Request, res: Response) => {

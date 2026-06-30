@@ -14,6 +14,7 @@ import {
   type MappedEvent, type SiemImportOptions, type SiemIoc, type SiemParseResult,
 } from "./siemImport.js";
 import type { Severity } from "./stateTypes.js";
+import { reconTechniques } from "./reconTechniques.js";
 
 export interface BashHistoryImportOptions extends SiemImportOptions {
   // The account the history belongs to (derived from the filename by the pipeline, e.g.
@@ -102,6 +103,11 @@ const CMD_RULES: CmdRule[] = [
   { re: /\bcrontab\s+-|\/etc\/cron|systemctl\s+(?:enable|--now)\b|>>?\s*~?\/?\.?(?:bashrc|bash_profile|profile|zshrc)\b|authorized_keys\b|ld\.so\.preload|\/etc\/rc\.local/i, severity: "Medium", mitre: ["T1053.003", "T1543.002"] },
   // Privilege escalation tradecraft (setuid bits, pkexec, known sudo abuse) — NOT plain `sudo`.
   { re: /\bchmod\s+[0-7]*4[0-7]{3}\b|\bchmod\s+[ug]\+s\b|\bpkexec\b|\bsudo\s+-l\b|\bsetcap\b/i, severity: "Medium", mitre: ["T1548.001"] },
+  // Exfiltration over web — curl/wget UPLOADING a file (POST form / --upload-file / --data-binary),
+  // distinct from (and worse than) a plain download below. #199.
+  { re: /\b(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@|--data\s+@)/i, severity: "Medium", mitre: ["T1041"] },
+  // Collection — bulk database dump to a file (mysqldump/pg_dump/mongodump). #199.
+  { re: /\b(?:mysqldump|pg_dump|pg_dumpall|mongodump)\b/i, severity: "Medium", mitre: ["T1005"] },
   // Ingress tool transfer — fetching files (not piped, so lower than download-and-exec above).
   { re: /\b(?:wget|curl|scp|sftp|tftp|ftp)\b/i, severity: "Low", mitre: ["T1105"] },
   // Lateral movement via SSH/SCP to another host.
@@ -111,10 +117,14 @@ const CMD_RULES: CmdRule[] = [
 ];
 
 function classify(command: string): { severity: Severity; mitre: string[] } {
+  // Discovery / credential-access recon (id, uname, find -name *.env, cat .env, …) is tagged on
+  // every command regardless of the severity rule, so the enumeration phase is identified even
+  // though shell-history recon stays Info.
+  const recon = reconTechniques("", command);
   for (const rule of CMD_RULES) {
-    if (rule.re.test(command)) return { severity: rule.severity, mitre: [...rule.mitre] };
+    if (rule.re.test(command)) return { severity: rule.severity, mitre: [...new Set([...rule.mitre, ...recon])] };
   }
-  return { severity: "Info", mitre: [] };
+  return { severity: "Info", mitre: recon };
 }
 
 // ───────────────────────────── IOC extraction ─────────────────────────────
