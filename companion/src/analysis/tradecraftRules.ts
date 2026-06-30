@@ -66,12 +66,24 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
   { re: /\bsetspn(?:\.exe)?\b\s+-/i, weight: "weak", ids: ["T1558.003"] },
 
   // ───────────── Impact: inhibit system recovery (T1490) ─────────────
+  // `vssadmin delete shadows` — matched here (not only STRONG_CMD's `vssadmin\s+delete`, which misses
+  // the `.exe` form `vssadmin.exe delete`) so it grades High with the CORRECT technique (T1490, not the
+  // T1003 STRONG_CMD hardcodes). The shadow-copy wipe is the ransomware-imminent tell.
+  { re: /\bvssadmin(?:\.exe)?\b[^\n]*\bdelete\s+shadows/i, weight: "strong", ids: ["T1490"] },
   { re: /\bwmic(?:\.exe)?\b[^\n]*shadowcopy\s+delete|win32_shadowcopy[^\n]*(?:remove-wmiobject|remove-ciminstance|delete)/i, weight: "strong", ids: ["T1490"] },
   { re: /\bbcdedit(?:\.exe)?\b[^\n]*(?:recoveryenabled\s+no|bootstatuspolicy\s+ignoreallfailures)/i, weight: "strong", ids: ["T1490"] },
   { re: /\bwbadmin(?:\.exe)?\b[^\n]*delete\s+(?:catalog|systemstatebackup)|\bvssadmin\b[^\n]*resize\s+shadowstorage/i, weight: "strong", ids: ["T1490"] },
   { re: /\bget-vm\b[^\n]*stop-vm|\bdisable-computerrestore\b/i, weight: "strong", ids: ["T1490"] },
   // Forced reboot to Safe Mode so EDR/AV is offline during encryption (REvil/Snatch et al.).
   { re: /\bbcdedit(?:\.exe)?\b[^\n]*safeboot|\bbootcfg\b[^\n]*safeboot|\s-smode\b/i, weight: "strong", ids: ["T1490"] },
+
+  // ───────────── Impact: file encryption for ransom (T1486) ─────────────
+  // An executable invoked with ransomware-style encryption flags. Conservative — keyed on the
+  // distinctive double-dash `--enc`/`--encrypt` + `--path` combo (the `msidxsvc.exe --enc --path`
+  // pattern) and the Akira/LockBit-style `-p=<path> -n=<percent>` / `-n=<percent> netonly` argument
+  // shapes. NOTE: `--enc` (double dash), never the single-dash `-enc` (that is PowerShell's
+  // EncodedCommand flag, already covered by SUSP_CMD) — so this does not collide with encoded PS.
+  { re: /--enc(?:rypt)?\b[^\n]*\s--?path\b|--?path\b[^\n]*\s--enc(?:rypt)?\b|\s-p=\S+\s+-n=\d|\s-n=\d+\s+netonly\b/i, weight: "strong", ids: ["T1486"] },
 
   // ───────────── Impact: stop backup/DB services before encryption (T1489) — dual-use → weak ──────
   { re: /\b(?:net|net1)\s+stop\b[^\n]*\b(?:veeam|sqlserveragent|mssql|msexchange|backupexec|acronis|sophos)/i, weight: "weak", ids: ["T1489"] },

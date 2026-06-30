@@ -26,6 +26,25 @@ describe("correlateEvents", () => {
     expect(out[0].description).not.toContain("corroborated");
   });
 
+  it("does NOT merge distinct process creations that share an interpreter's image hash", () => {
+    // powershell.exe has ONE image hash across every invocation — merging by it would collapse a
+    // benign cmdlet, `Compress-Archive` (collection) and `Invoke-RestMethod` (exfil) into one row.
+    // Process-creation events (those carrying a pid) correlate by host+pid, not image hash.
+    const PSHASH = "5d9d62a6794ccf2b4ed30874273f8666fd353e183b7587ac4c8261edabe6990b";
+    const mk = (id: string, pid: number, cmd: string, t: string): ForensicEvent => ev({
+      id, description: `Sysmon Process create (EID 1) - powershell.exe - CommandLine=${cmd}`,
+      sha256: PSHASH, pid, asset: "FS-01.meridiancpa.com", timestamp: t, sources: ["Sysmon"],
+    });
+    const out = correlateEvents([
+      mk("e1", 1000, "powershell.exe Get-Date", "2024-03-12T15:00:00Z"),
+      mk("e2", 9908, "powershell.exe -nop -c Compress-Archive -Path D:\\ClientData\\Tax2023", "2024-03-12T16:15:02Z"),
+      mk("e3", 10436, "powershell.exe -nop -w hidden -c Invoke-RestMethod ...", "2024-03-12T17:00:21Z"),
+    ]);
+    expect(out).toHaveLength(3); // all three survive — distinct activities, not one binary
+    expect(out.some((e) => e.description.includes("Compress-Archive"))).toBe(true);
+    expect(out.some((e) => e.description.includes("Invoke-RestMethod"))).toBe(true);
+  });
+
   it("never invents 'unknown source' for a source-less event, and self-heals a legacy note", () => {
     // An event from a build before `sources` existed (no sources) merged with a THOR event.
     const legacy = ev({ id: "old", description: "Malware file found — evil.exe [corroborated by 2 sources: unknown source, THOR]",
