@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseNetworkLogs } from "../../src/analysis/networkImport.js";
+import { parseNetworkLogs, zeekStreamFromName, inferZeekStream } from "../../src/analysis/networkImport.js";
 
 // ── Suricata eve.json records ───────────────────────────────────────────────
 function suricataAlert(): object {
@@ -125,5 +125,63 @@ describe("parseNetworkLogs — options & edges", () => {
     const r = parseNetworkLogs("not json");
     expect(r.format).toBe("empty");
     expect(r.events).toHaveLength(0);
+  });
+});
+
+// ── Zeek PER-STREAM JSON (no `_path` — the filename names the stream) — #197 ─────────────────
+describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
+  const dns = { ts: 1512115201, uid: "C1", "id.orig_h": "10.0.0.5", "id.resp_h": "10.0.0.1", query: "evil-c2.example.com", qtype_name: "A" };
+  const http = { ts: 1512115202, uid: "C2", "id.orig_h": "10.0.0.5", method: "GET", host: "download.bad.test", uri: "/x.exe" };
+  const files = { ts: 1512115203, fuid: "F1", mime_type: "application/x-dosexec", filename: "x.exe", sha256: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" };
+  const x509 = { ts: 1512115204, id: "C3", fingerprint: "ab:cd", "certificate.serial": "01", "san.dns": ["cert.bad.test", "alt.bad.test"] };
+  const conn = { ts: 1512115205, uid: "C4", "id.orig_h": "10.0.0.5", "id.resp_h": "10.0.0.9", proto: "tcp", conn_state: "S0" };
+
+  it("extracts the DNS query as a domain IOC using the filename hint, no timeline event", () => {
+    const r = parseNetworkLogs(JSON.stringify(dns), { filename: "0004_dns.json" });
+    expect(r.format).toBe("zeek");
+    expect(r.events).toHaveLength(0);
+    expect(r.iocs.find((i) => i.type === "domain")?.value).toBe("evil-c2.example.com");
+  });
+
+  it("extracts http host + uri without a filename (field inference)", () => {
+    const r = parseNetworkLogs(JSON.stringify(http));
+    expect(r.iocs.some((i) => i.type === "domain" && i.value === "download.bad.test")).toBe(true);
+    expect(r.iocs.some((i) => i.type === "url" && i.value === "/x.exe")).toBe(false); // uri w/o scheme is not a URL IOC
+    expect(r.events).toHaveLength(0);
+  });
+
+  it("extracts file hashes from a per-stream files.json", () => {
+    const r = parseNetworkLogs(JSON.stringify(files), { filename: "files.json" });
+    expect(r.iocs.some((i) => i.type === "hash")).toBe(true);
+    expect(r.iocs.some((i) => i.type === "file" && i.value === "x.exe")).toBe(true);
+  });
+
+  it("extracts cert SAN DNS names from x509 (san.dns array)", () => {
+    const r = parseNetworkLogs(JSON.stringify(x509), { filename: "x509.json" });
+    const domains = r.iocs.filter((i) => i.type === "domain").map((i) => i.value);
+    expect(domains).toContain("cert.bad.test");
+    expect(domains).toContain("alt.bad.test");
+  });
+
+  it("treats conn telemetry as IOC-free flow — no events, no noise rows", () => {
+    const r = parseNetworkLogs([conn, conn].map((o) => JSON.stringify(o)).join("\n"), { filename: "conn.json" });
+    expect(r.format).toBe("zeek");
+    expect(r.events).toHaveLength(0);
+    expect(r.iocs).toHaveLength(0);
+  });
+
+  it("zeekStreamFromName strips seq prefix + extension", () => {
+    expect(zeekStreamFromName("0004_conn.json")).toBe("conn");
+    expect(zeekStreamFromName("dns.log")).toBe("dns");
+    expect(zeekStreamFromName("x509.json")).toBe("x509");
+    expect(zeekStreamFromName("random.json")).toBe("");
+  });
+
+  it("inferZeekStream classifies records by their fields", () => {
+    expect(inferZeekStream(dns)).toBe("dns");
+    expect(inferZeekStream(http)).toBe("http");
+    expect(inferZeekStream(files)).toBe("files");
+    expect(inferZeekStream(x509)).toBe("x509");
+    expect(inferZeekStream(conn)).toBe("conn");
   });
 });

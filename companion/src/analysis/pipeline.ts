@@ -2028,7 +2028,9 @@ export class AnalysisPipeline {
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsedRaw = parseNetworkLogs(text, opts.network);
+    // Pass the import filename so per-stream Zeek JSON (conn.json / dns.json / … with no `_path`)
+    // routes to the right stream (#197).
+    const parsedRaw = parseNetworkLogs(text, { ...opts.network, filename: opts.network?.filename ?? opts.label });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
 
