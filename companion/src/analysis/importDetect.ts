@@ -162,8 +162,21 @@ function isHayabusaJson(s: Row): boolean {
       (!!getCI(s, "Channel") || getCI(s, "EID") != null || getCI(s, "RecordID") != null)) return true;
   return false;
 }
+// Zeek logs exported as PER-STREAM JSON (one file per log type: conn.json, dns.json, http.json,
+// ssl.json, x509.json, files.json, notice.json …) carry NO `_path` field — the stream is implied
+// by the filename. Identify them by the Zeek epoch `ts` plus a Zeek-idiomatic connection/file/cert
+// key (the literal dotted keys `id.orig_h` / `certificate.*`, or `uid`/`fuid`, or a `note`). This is
+// conservative (requires both `ts` AND a Zeek marker) so it can't claim arbitrary `{ts:…}` records.
+function isZeekStream(s: Row): boolean {
+  const ts = getCI(s, "ts");
+  const hasTs = typeof ts === "number" || (typeof ts === "string" && /^\d{9,}(?:\.\d+)?$/.test(ts.trim()));
+  if (!hasTs) return false;
+  if (getCI(s, "uid") != null || getCI(s, "fuid") != null || getCI(s, "note") != null) return true;
+  if (getCI(s, "id.orig_h") != null || getCI(s, "id.resp_h") != null) return true;
+  return Object.keys(s).some((k) => k.startsWith("id.") || k.startsWith("certificate."));
+}
 function isNetwork(s: Row): boolean {
-  return !!getCI(s, "event_type") || !!getCI(s, "_path");
+  return !!getCI(s, "event_type") || !!getCI(s, "_path") || isZeekStream(s);
 }
 // Cyber Triage timeline JSONL: every row carries `epoch_timestamp` + (`timestamp_desc` |
 // `timestamp_description`) + `message`, with a Cyber Triage `score`/`scoreDescription` verdict.
