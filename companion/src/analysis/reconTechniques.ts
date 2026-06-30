@@ -28,6 +28,22 @@ const RECON_RULES: ReconRule[] = [
   { re: /\.ssh(?:\b|[\\/])|\bid_rsa\b|\bid_dsa\b|\bid_ecdsa\b|\bid_ed25519\b|\.pem\b|\.ppk\b|authorized_keys\b/i, ids: ["T1552.004"] },
   // T1552.001 Unsecured Credentials: Credentials In Files
   { re: /\bfindstr\b[^\n]*password|\bselect-string\b[^\n]*password|\bgrep\b[^\n]*password|(?:cat|type)\b[^\n]*\.env\b|\.env\b|stripe_secret|aws_secret|database_url|\bfindstr\b[^\n]*secret/i, ids: ["T1552.001"] },
+  // ── Action techniques (collection / exfil / anti-forensics / transfer / lateral) — these survive
+  // in EDR/Sysmon process telemetry even when the shell history that would carry them is cleared. ──
+  // T1105 Ingress Tool Transfer (download-to-disk tooling — specific patterns, not a bare curl)
+  { re: /downloadfile|invoke-webrequest[^\n]*-outfile|\bcertutil\b[^\n]*-urlcache|\bbitsadmin\b[^\n]*\/transfer|\bwget\b[^\n]*\s-O\b|\bcurl\b[^\n]*\s-o\b/i, ids: ["T1105"] },
+  // T1005 Data from Local System (bulk DB dump)
+  { re: /\bmysqldump\b|\bpg_dump(?:all)?\b|\bmongodump\b/i, ids: ["T1005"] },
+  // T1560.001 Archive Collected Data: Archive via Utility
+  { re: /\btar\b[^\n]*\s-[a-z]*c[a-z]*f|\bzip\b\s+-r\b|\bgzip\b\s+\S|\b7z\b\s+a\b|compress-archive|\brar\b\s+a\b/i, ids: ["T1560.001"] },
+  // T1041 Exfiltration Over C2 Channel (file upload via web client)
+  { re: /(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i, ids: ["T1041"] },
+  // T1070.003 Indicator Removal: Clear Command History
+  { re: /\bhistory\s+-c\b|unset\s+histfile|histfile=\/dev\/null|histsize=0\b|(?:rm|truncate|>\s*)\s*[^\n]*\.bash_history|clear-history/i, ids: ["T1070.003"] },
+  // T1070.001 Indicator Removal: Clear Windows Event Logs
+  { re: /\bwevtutil\b\s+cl\b|clear-eventlog|remove-eventlog|wevtutil\b[^\n]*clear-log/i, ids: ["T1070.001"] },
+  // T1021.004 Remote Services: SSH
+  { re: /\bssh\b\s+[^\n]*@|\bscp\b\s+[^\n]*@[^\n]*:/i, ids: ["T1021.004"] },
 ];
 
 // ATT&CK technique names — the recon set plus the techniques the deterministic importers commonly
@@ -55,6 +71,7 @@ const TECHNIQUE_NAMES: Readonly<Record<string, string>> = {
   "T1560.001": "Archive Collected Data: Archive via Utility",
   "T1070.003": "Indicator Removal: Clear Command History",
   "T1070.002": "Indicator Removal: Clear Linux or Mac System Logs",
+  "T1070.001": "Indicator Removal: Clear Windows Event Logs",
   T1036: "Masquerading",
   "T1204.002": "User Execution: Malicious File",
   "T1566.002": "Phishing: Spearphishing Link",
@@ -70,7 +87,9 @@ export function techniqueName(id: string): string {
   return TECHNIQUE_NAMES[id] ?? id;
 }
 
-// The discovery / credential-access ATT&CK technique ids a process command line indicates (deduped).
+// The ATT&CK technique ids a process command line indicates (deduped) — discovery / credential
+// access plus the action techniques (collection / exfil / anti-forensics / transfer / SSH) that
+// survive in EDR/Sysmon telemetry even when the shell history is cleared.
 export function reconTechniques(image: string, cmd: string): string[] {
   const blob = `${image} ${cmd}`;
   const out = new Set<string>();
