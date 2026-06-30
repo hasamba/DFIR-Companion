@@ -332,8 +332,13 @@ const LOLBINS = new Set([
 // from the default High (they stay in the timeline; synthesis/legit-marking can still act).
 const BENIGN_THREAD_SOURCES = new Set(["csrss.exe", "wininit.exe", "services.exe", "smss.exe", "svchost.exe", "wmiprvse.exe", "lsm.exe"]);
 // Command-line markers strongly associated with attacker tradecraft → stronger bump.
-const STRONG_CMD = /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal/i;
-const SUSP_CMD = /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run/i;
+const STRONG_CMD = /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal|lsass[^\n]{0,40}\.dmp|\.dmp[^\n]{0,40}lsass|(?:-p|--pid|--process)\s+lsass|nanodump|dumpert|handlekatz|procdump[^\n]*lsass|reg\s+save\s+[^\n]*\\sam\b|ntds\.dit|ntdsutil[^\n]*ifm/i;
+const SUSP_CMD = /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run|mysqldump|pg_dump|mongodump|(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i;
+// Execution from a user-writable / staging directory is itself a weak masquerade/tradecraft signal
+// (#199) — a non-system binary launched from Temp / AppData / Downloads / Public, or /tmp,/dev/shm,
+// /var/tmp on *nix. Tested against the IMAGE path (not the whole command) to avoid matching a path
+// that merely appears as an argument.
+const SUSP_PATH = /\\(?:appdata|temp|downloads)\\|\\users\\public\\|(?:^|[\s"])\/(?:tmp|var\/tmp|dev\/shm)\//i;
 
 // Channel → short tool label for the description and source tag.
 function channelLabel(channel: string): string {
@@ -486,7 +491,7 @@ function winAccounts(ed: Row): string[] {
 export function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" | null {
   const blob = `${image} ${cmd}`;
   if (STRONG_CMD.test(blob)) return "strong";
-  if (LOLBINS.has(baseName(image).toLowerCase()) || SUSP_CMD.test(blob)) return "weak";
+  if (LOLBINS.has(baseName(image).toLowerCase()) || SUSP_CMD.test(blob) || SUSP_PATH.test(image)) return "weak";
   return null;
 }
 
