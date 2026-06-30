@@ -221,6 +221,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **CSV** | Velociraptor / EDR exports | — |
 | **Generic logs** | Firewall, syslog, VPN; repetitive lines → counted patterns | AI-triaged |
 
+**Deterministic tradecraft grading** — across the Windows/Sysmon, ECAR and memory importers, process command lines are graded against a rule set harvested from ~95 real intrusions (The DFIR Report, 2020–2026): high-confidence tradecraft → **High** with the correct ATT&CK technique (Defender/AV disable T1562.001, recovery inhibition T1490, LSA/UAC tampering T1112/T1548.002, credential dumping `dcsync`/`secretsdump`/`lsassy`/`reg save …\security` T1003.x, reverse-tunnel C2 `ssh -R`/plink T1572, Impacket lateral movement T1047/T1021.002, cloud exfil rclone/restic T1567.002, RMM/C2 tooling T1219/T1071), dual-use → **Medium**; pure host/domain discovery (nltest trusts, AdFind/BloodHound, scanners, AV/share enum) is tagged but never escalated, so the enumeration phase shows in the MITRE table without false findings.
+
 ### AI analysis
 - **Guided AI setup** — the Setup wizard's first step picks provider → model (cheap/strong suggestions) → key → optional base URL, then runs a live connectivity test before you leave
 - **Two-phase** — cheap per-window vision (extraction) + strong text-only synthesis (findings/IOCs/MITRE/attacker path)
