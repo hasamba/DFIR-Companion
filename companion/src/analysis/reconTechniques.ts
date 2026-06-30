@@ -105,6 +105,7 @@ const TECHNIQUE_NAMES: Readonly<Record<string, string>> = {
   T1112: "Modify Registry",
   "T1548.002": "Abuse Elevation Control Mechanism: Bypass User Account Control",
   T1490: "Inhibit System Recovery",
+  T1486: "Data Encrypted for Impact",
   T1489: "Service Stop",
   "T1021.002": "Remote Services: SMB/Windows Admin Shares",
   T1047: "Windows Management Instrumentation",
