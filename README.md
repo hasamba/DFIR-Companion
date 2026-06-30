@@ -164,6 +164,7 @@ Standard DFIR questions auto-answered from the synthesized case
 - **Adversary emulation** — likely next techniques: the matched groups' named tradecraft the case hasn't observed yet, ranked by distinctiveness as hunt priorities, each with a one-click "hunt this" → Velociraptor VQL
 - **Mitigations & defensive countermeasures** — concrete **MITRE ATT&CK Mitigations** (M-codes) for the case's techniques, ranked by leverage (which one mitigation covers the most techniques), plus **MITRE D3FEND** hardening/detection/isolation steps; offline, no AI. Bridges "what the attacker did" to "what to actually do about it." A **✨ Generate remediation plan** button turns it into a concrete, incident-specific IR plan (one AI call)
 - **Compromised assets** — victim hosts/accounts + interactive asset↔IOC graph
+- **Host & account ranking** — which hosts/accounts carry the attack, scored by signal (severity-weighted events + techniques + connective IOCs) not volume, with a one-click suggested scope window
 - **Key investigative questions** — answered with pointers to evidence or next steps to collect
 - **Investigation threads** — open/resolved leads
 - **Dashboard view presets** — one-click Analyst/Lead/Executive (role) + Triage/Report/Deep-Dive/Hunt-Prep (phase) layouts that re-arrange panels, filter by severity, and pair a report template; per-case, fully editable

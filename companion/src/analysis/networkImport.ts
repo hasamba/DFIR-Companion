@@ -38,6 +38,34 @@ export interface NetworkImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  // Zeek exported as per-stream JSON has no `_path`; the filename names the stream (conn.json,
+  // dns.json, …). When provided, it's the authoritative stream for records that carry no `_path`.
+  filename?: string;
+}
+
+const ZEEK_STREAMS = [
+  "conn", "dns", "http", "ssl", "x509", "files", "notice", "weird", "dhcp", "smtp",
+  "ftp", "ssh", "dce_rpc", "kerberos", "ntlm", "rdp", "snmp", "sip", "dnp3", "modbus",
+  "radius", "syslog", "tunnel", "irc", "mysql", "pe", "socks", "ntp", "ocsp",
+];
+
+// Derive the Zeek stream from a (possibly seq-prefixed) filename: "0004_conn.json" → "conn".
+export function zeekStreamFromName(name: string): string {
+  const base = name.toLowerCase().replace(/^.*[\\/]/, "").replace(/\.(json|log|ndjson|jsonl|gz)$/g, "");
+  const m = base.match(new RegExp(`(?:^|[._-])(${ZEEK_STREAMS.join("|")})(?:[._-]|$)`));
+  return m ? m[1] : "";
+}
+
+// Infer the Zeek stream from a record's own fields when there's no filename hint and no `_path`.
+export function inferZeekStream(row: Row): string {
+  if (getCI(row, "query") != null || getCI(row, "qtype_name") != null) return "dns";
+  if (getCI(row, "uri") != null || getCI(row, "method") != null) return "http";
+  if (getCI(row, "server_name") != null || getCI(row, "cipher") != null || getCI(row, "ssl_history") != null) return "ssl";
+  if (getCI(row, "san.dns") != null || getCI(row, "fingerprint") != null ||
+      Object.keys(row).some((k) => k.startsWith("certificate."))) return "x509";
+  if (getCI(row, "fuid") != null || getCI(row, "mime_type") != null) return "files";
+  if (getCI(row, "note") != null) return "notice";
+  return "conn"; // id.orig_h + conn_state → pure flow telemetry (no IOC, no timeline event)
 }
 
 export interface NetworkParseResult {
@@ -165,8 +193,15 @@ function zeekIocs(row: Row, path: string, sink: Map<string, SiemIoc>): void {
   switch (path) {
     case "dns": addDomain(sink, getCI(row, "query")); break;
     case "http": addDomain(sink, getCI(row, "host")); addUrl(sink, getCI(row, "uri")); break;
-    case "ssl":
-    case "x509": addDomain(sink, getCI(row, "server_name")); break;
+    case "ssl": addDomain(sink, getCI(row, "server_name")); break;
+    case "x509": {
+      // x509 records name the cert host in `san.dns` (string or array), not `server_name`.
+      addDomain(sink, getCI(row, "server_name"));
+      const san = getCI(row, "san.dns");
+      if (Array.isArray(san)) for (const d of san) addDomain(sink, d);
+      else addDomain(sink, san);
+      break;
+    }
     case "files":
       addHash(sink, getCI(row, "sha256")); addHash(sink, getCI(row, "sha1")); addHash(sink, getCI(row, "md5"));
       addFile(sink, getCI(row, "filename"));
@@ -228,6 +263,8 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const mapped: MappedEvent[] = [];
   let alerts = 0;
   let sawSuricata = false, sawZeek = false;
+  // Per-stream Zeek JSON (no `_path`): the filename is the authoritative stream for the whole file.
+  const fileStream = opts.filename ? zeekStreamFromName(opts.filename) : "";
 
   for (const row of records) {
     const host = pickHost(row);
@@ -240,12 +277,13 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
       sawSuricata = true;
       suricataIocs(row, etype, iocSink);
       if (etype === "alert") { mapped.push(mapSuricataAlert(row, host, iocSink)); alerts++; }
-    } else if (zpath) {
+    } else {
+      // Zeek: either `_path`-tagged (combined JSON) or per-stream (filename / field-inferred).
+      const zstream = zpath || fileStream || inferZeekStream(row);
       sawZeek = true;
-      zeekIocs(row, zpath, iocSink);
-      if (zpath === "notice") { mapped.push(mapZeekNotice(row, host, iocSink)); alerts++; }
+      zeekIocs(row, zstream, iocSink);
+      if (zstream === "notice") { mapped.push(mapZeekNotice(row, host, iocSink)); alerts++; }
     }
-    // rows that are neither Suricata nor Zeek are ignored (not network logs).
   }
 
   const { events, groups } = aggregateEvents(mapped, {

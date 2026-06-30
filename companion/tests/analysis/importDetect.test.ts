@@ -136,6 +136,15 @@ describe("detectImportKind — JSON formats", () => {
   it("network: Zeek json", () => {
     expect(detectImportKind("conn.json", ndjson({ _path: "notice", note: "x" }))).toBe("network");
   });
+  it("network: Zeek PER-STREAM json with no _path (conn/dns/files/x509) — #197", () => {
+    expect(detectImportKind("conn.json", ndjson({ ts: 1710770402.0, uid: "C1", "id.orig_h": "10.10.10.5", "id.resp_h": "10.0.2.50", proto: "tcp", conn_state: "S0" }))).toBe("network");
+    expect(detectImportKind("dns.json", ndjson({ ts: 1710770412.4, uid: "C2", "id.orig_h": "10.10.20.30", query: "cdn.onenote.net", qtype_name: "AAAA" }))).toBe("network");
+    expect(detectImportKind("files.json", ndjson({ ts: 1710770420.1, fuid: "F1", mime_type: "application/x-dosexec", sha256: "a".repeat(64) }))).toBe("network");
+    expect(detectImportKind("x509.json", ndjson({ ts: 1710770430.2, id: "C3", fingerprint: "ab:cd", "certificate.serial": "01", "san.dns": ["x.test"] }))).toBe("network");
+  });
+  it("NOT network: a plain {ts,message} record (no Zeek key) stays SIEM — #197 guard", () => {
+    expect(detectImportKind("e.json", ndjson({ ts: 1710770402, message: "hello world" }))).toBe("siem");
+  });
   it("thor: JSON-Lines findings", () => {
     expect(detectImportKind("thor.json", ndjson({ time: "t", module: "Filescan", level: "Warning", message: "x" }))).toBe("thor");
   });

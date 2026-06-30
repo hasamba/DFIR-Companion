@@ -20,6 +20,7 @@ import { detectTimelineGaps, gapEnvOptions, type TimelineGap } from "../analysis
 import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../analysis/swimlane.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
+import { rankHosts, type HostRankingResult } from "../analysis/hostRanking.js";
 import { buildMobileSummary, mobileSummaryEnvOptions, type MobileCaseSummary } from "../analysis/mobileSummary.js";
 import {
   buildPresentationDeck,
@@ -246,6 +247,14 @@ export class ReportWriter {
   async adversaryHints(caseId: string): Promise<AdversaryHintsResult> {
     const state = await this.loadFilteredState(caseId);
     return buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
+  }
+
+  // Suspicious host/account ranking (#202): score each entity by signal (not volume) so the analyst
+  // sees which hosts carry the attack, plus a suggested auto-scope time window. Derived on read from
+  // the same scope/legitimate-filtered state as the report.
+  async hostRanking(caseId: string): Promise<HostRankingResult> {
+    const state = await this.loadFilteredState(caseId);
+    return rankHosts(state);
   }
 
   // D3FEND defensive countermeasures (#178): for each ATT&CK technique the case identified, the

@@ -23,6 +23,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { toUtcIso } from "./timeUtc.js";
+import { reconTechniques } from "./reconTechniques.js";
 
 export interface SiemImportOptions {
   // Collapse repetitive identical events into one counted row. Default true.
@@ -330,10 +331,30 @@ const LOLBINS = new Set([
 // Core OS processes that legitimately call CreateRemoteThread (Sysmon EID 8) during normal
 // session/process setup — csrss/wininit/services injecting is routine, so we downgrade those
 // from the default High (they stay in the timeline; synthesis/legit-marking can still act).
-const BENIGN_THREAD_SOURCES = new Set(["csrss.exe", "wininit.exe", "services.exe", "smss.exe", "svchost.exe", "wmiprvse.exe", "lsm.exe"]);
+// Core OS processes that legitimately CreateRemoteThread as routine session/service setup, PLUS
+// Windows Defender / Defender-for-Endpoint, which inject monitoring threads into user processes as
+// part of behavioral scanning — a benign EID 8 source, not injection tradecraft.
+const BENIGN_THREAD_SOURCES = new Set([
+  "csrss.exe", "wininit.exe", "services.exe", "smss.exe", "svchost.exe", "wmiprvse.exe", "lsm.exe", "winlogon.exe",
+  "msmpeng.exe", "mpdefendercoreservice.exe", "mssense.exe", "sensendr.exe", "mpcmdrun.exe", // Defender / MDE
+]);
+// Windows-native processes that access LSASS constantly as part of normal operation (#198). A
+// Sysmon EID 10 ProcessAccess to lsass.exe from one of these is NOT credential dumping — Defender /
+// Defender-for-Endpoint scan it on every boot, and core OS processes open it routinely. Keyed on the
+// SourceImage basename; still graded High when the source runs from a SUSPICIOUS path (a masqueraded
+// "svchost.exe" in \Temp\ is not benign), and a non-listed accessor (e.g. a renamed dumper) stays High.
+const BENIGN_LSASS_ACCESSORS = new Set([
+  "msmpeng.exe", "mpdefendercoreservice.exe", "mssense.exe", "sensendr.exe", "mpcmdrun.exe", // Defender / MDE
+  "svchost.exe", "services.exe", "csrss.exe", "wininit.exe", "lsass.exe", "wmiprvse.exe", "smss.exe", "lsm.exe",
+]);
 // Command-line markers strongly associated with attacker tradecraft → stronger bump.
-const STRONG_CMD = /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal/i;
-const SUSP_CMD = /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run/i;
+const STRONG_CMD = /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal|lsass[^\n]{0,40}\.dmp|\.dmp[^\n]{0,40}lsass|(?:-p|--pid|--process)\s+lsass|nanodump|dumpert|handlekatz|procdump[^\n]*lsass|reg\s+save\s+[^\n]*\\sam\b|ntds\.dit|ntdsutil[^\n]*ifm/i;
+const SUSP_CMD = /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run|mysqldump|pg_dump|mongodump|(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i;
+// Execution from a user-writable / staging directory is itself a weak masquerade/tradecraft signal
+// (#199) — a non-system binary launched from Temp / AppData / Downloads / Public, or /tmp,/dev/shm,
+// /var/tmp on *nix. Tested against the IMAGE path (not the whole command) to avoid matching a path
+// that merely appears as an argument.
+const SUSP_PATH = /\\(?:appdata|temp|downloads)\\|\\users\\public\\|(?:^|[\s"])\/(?:tmp|var\/tmp|dev\/shm)\//i;
 
 // Channel → short tool label for the description and source tag.
 function channelLabel(channel: string): string {
@@ -486,7 +507,7 @@ function winAccounts(ed: Row): string[] {
 export function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" | null {
   const blob = `${image} ${cmd}`;
   if (STRONG_CMD.test(blob)) return "strong";
-  if (LOLBINS.has(baseName(image).toLowerCase()) || SUSP_CMD.test(blob)) return "weak";
+  if (LOLBINS.has(baseName(image).toLowerCase()) || SUSP_CMD.test(blob) || SUSP_PATH.test(image)) return "weak";
   return null;
 }
 
@@ -553,15 +574,32 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     const susp = isSuspiciousCmd(image, cmd);
     if (susp === "strong") { severity = worst(severity, "High"); if (!mitre.includes("T1003")) mitre.push("T1003"); }
     else if (susp === "weak") severity = worst(severity, "Medium");
+    // Tag discovery / credential-access recon (whoami, net group /domain, dir /s, findstr password,
+    // .ssh/id_rsa, …) so the case identifies the enumeration phase even when each command is Info/Low.
+    for (const t of reconTechniques(image, cmd)) if (!mitre.includes(t)) mitre.push(t);
   }
   if (def.kind === "procaccess" && /lsass\.exe$/i.test(str(getCI(ed, "TargetImage")))) {
-    severity = "High";
-    if (!mitre.includes("T1003.001")) mitre.push("T1003.001");
+    const srcImg = str(getCI(ed, "SourceImage"));
+    const benign = BENIGN_LSASS_ACCESSORS.has(baseName(srcImg).toLowerCase()) && !SUSP_PATH.test(srcImg);
+    if (benign) {
+      // Routine OS / Defender LSASS access — keep as Low evidence, NOT a credential-dump finding (#198).
+      severity = "Low";
+    } else {
+      severity = "High";
+      if (!mitre.includes("T1003.001")) mitre.push("T1003.001");
+    }
   }
-  // CreateRemoteThread (Sysmon 8) from a core OS process is routine session setup, not
-  // injection — downgrade from the table's default High so it doesn't drown real signal.
-  if (isSysmon && eid === 8 && BENIGN_THREAD_SOURCES.has(baseName(str(getCI(ed, "SourceImage"))).toLowerCase())) {
-    severity = "Low";
+  // CreateRemoteThread (Sysmon 8) from a core OS process or Defender is routine session setup /
+  // behavioral monitoring, not injection — downgrade from the table's default High and drop the
+  // T1055 tag so it doesn't drown real signal. A benign name run from a SUSPICIOUS path (a
+  // masqueraded svchost.exe in \Temp\) is NOT benign and keeps High + T1055.
+  if (isSysmon && eid === 8) {
+    const srcImg = str(getCI(ed, "SourceImage"));
+    if (BENIGN_THREAD_SOURCES.has(baseName(srcImg).toLowerCase()) && !SUSP_PATH.test(srcImg)) {
+      severity = "Low";
+      const i = mitre.indexOf("T1055");
+      if (i >= 0) mitre.splice(i, 1);
+    }
   }
 
   // Structured correlation/IOC fields.

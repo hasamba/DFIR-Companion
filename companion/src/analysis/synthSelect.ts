@@ -2,6 +2,8 @@ import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { buildAssetGraph } from "./assetGraph.js";
 import { extractCveIds, matchKevEntries, buildKevDigest, type KevCatalog } from "./kev.js";
+import { rankConnectiveIocs, buildConnectiveIocDigest } from "./iocAnchors.js";
+import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 
 const SEV_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 
@@ -81,7 +83,18 @@ export function buildSynthesisContext(
     kevBlock = buildKevDigest(kevMatches);
   }
 
+  // Connective indicators (#200): rank IOCs by cross-host / multi-tool reach so the model anchors
+  // on the attack's backbone (a C2 seen on multiple hosts by multiple tools) instead of the flat
+  // list. Leads the digest — it's the highest-signal context.
+  const connectiveBlock = buildConnectiveIocDigest(rankConnectiveIocs(state, scopedEvents));
+
+  // Signal concentration (#202): tell the model which host(s) carry the suspicious activity so an
+  // automatic run over a noisy multi-host timeline doesn't anchor its narrative on a benign host.
+  const concentrationBlock = buildSignalConcentrationDigest(rankHosts({ ...state, forensicTimeline: scopedEvents }));
+
   let block = "";
+  if (concentrationBlock) block += concentrationBlock;
+  if (connectiveBlock) block += connectiveBlock;
   if (assetLines.length) block += `COMPROMISED ASSETS (host/account ← IoCs seen on it):\n${assetLines.join("\n")}\n\n`;
   if (verdictLines.length) block += `THREAT-INTEL VERDICTS (third-party):\n${verdictLines.join("\n")}\n\n`;
   if (kevBlock) block += kevBlock;
