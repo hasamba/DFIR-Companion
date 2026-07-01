@@ -9,6 +9,8 @@ const CONNECT_EXFIL = '10.30.10.14 - arjun.mehta@northpeaklabs.com [15/May/2024:
 const GET_EXFIL = '10.30.10.14 - arjun.mehta@northpeaklabs.com [15/May/2024:06:42:01 +0000] "GET https://vault.cloudpear.io/u/arjun/bk-0514.tgz HTTP/1.1" 200 18376 "-" "Wget/1.21.3"';
 const GIT_CLONE = '10.30.10.14 - - [15/May/2024:05:30:58 +0000] "GET /perception-core.git/info/refs?service=git-upload-pack HTTP/1.1" 200 524288000 "-" "git/2.34.1"';
 const GIT_DENIED = '10.30.10.14 - - [15/May/2024:05:31:11 +0000] "GET /security/keystore-svc.git/info/refs?service=git-upload-pack HTTP/1.1" 403 1275 "http://git.corp.northpeaklabs.com/" "git/2.34.1"';
+// A secret spilled into the HTTP Referer query string (the spillage-full-matrix "http_referrer" surface).
+const REFERER_SPILL = '10.66.20.30 - - [16/May/2024:13:59:31 +0000] "GET /dashboard HTTP/1.1" 200 3787 "https://portal.svc3.example.com/login?token=sk_test_EvidenceForgeFake0BGU06yXEsv2" "Mozilla/5.0"';
 
 describe("looksLikeCombinedLog", () => {
   it("matches by filename", () => {
@@ -81,6 +83,28 @@ describe("mapCombinedLogLine", () => {
     expect(m.mitre).toContain("T1213");
   });
 
+  it("captures a secret-bearing HTTP Referer as a url IOC + domain IOC and folds it into the description", () => {
+    const sink = new Map<string, SiemIoc>();
+    const m = mapCombinedLogLine(REFERER_SPILL, sink)!;
+    const ref = "https://portal.svc3.example.com/login?token=sk_test_EvidenceForgeFake0BGU06yXEsv2";
+    expect(m.description).toContain(`ref ${ref}`);
+    expect([...sink.values()].filter((i) => i.type === "url").map((i) => i.value)).toContain(ref);
+    expect([...sink.values()].filter((i) => i.type === "domain").map((i) => i.value)).toContain("portal.svc3.example.com");
+  });
+
+  it("emits no referer IOC when the referer is '-' (absent)", () => {
+    const sink = new Map<string, SiemIoc>();
+    mapCombinedLogLine(HEALTH, sink);
+    expect([...sink.values()].filter((i) => i.type === "url")).toHaveLength(0);
+  });
+
+  it("does NOT emit a url IOC for a referer without a query string (just its host as a domain)", () => {
+    const sink = new Map<string, SiemIoc>();
+    mapCombinedLogLine(GIT_DENIED, sink); // referer "http://git.corp.northpeaklabs.com/"
+    expect([...sink.values()].filter((i) => i.type === "url")).toHaveLength(0);
+    expect([...sink.values()].filter((i) => i.type === "domain").map((i) => i.value)).toContain("git.corp.northpeaklabs.com");
+  });
+
   it("returns null for a non-matching line", () => {
     expect(mapCombinedLogLine("not a log line at all", new Map())).toBeNull();
   });
@@ -108,5 +132,16 @@ describe("parseCombinedLog", () => {
     const r = parseCombinedLog([HEALTH, HEALTH, HEALTH].join("\n"));
     expect(r.events).toHaveLength(1);
     expect(r.events[0].count).toBe(3);
+  });
+
+  it("preserves a secret-bearing referer as a url IOC even when its request line aggregates away", () => {
+    // A benign /dashboard hit (no referer) lands FIRST, so it wins the aggregated event's
+    // description; the secret-referer /dashboard hit collapses into it. The url IOC must survive.
+    const benign = '10.66.20.30 - - [16/May/2024:13:59:30 +0000] "GET /dashboard HTTP/1.1" 200 3787 "-" "curl/8"';
+    const r = parseCombinedLog([benign, REFERER_SPILL].join("\n"));
+    const dash = r.events.filter((e) => e.description.includes("/dashboard"));
+    expect(dash).toHaveLength(1);
+    expect(dash[0].count).toBe(2);
+    expect(r.iocs.some((i) => i.type === "url" && i.value.includes("sk_test_EvidenceForgeFake0BGU06yXEsv2"))).toBe(true);
   });
 });
