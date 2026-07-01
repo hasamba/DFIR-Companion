@@ -108,6 +108,13 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
   { re: /\brestic(?:\.exe)?\b[^\n]*(?:\bbackup\b|rest:http)/i, weight: "strong", ids: ["T1567.002"] },
   { re: /\b(?:megacmd|megasync)\b|\bmega\.nz\b/i, weight: "weak", ids: ["T1567.002"] },
   { re: /\b(?:winrar|rar)(?:\.exe)?\b[^\n]*\s-(?:ep1|scul|iext|imon1)\b/i, weight: "weak", ids: ["T1560.001"] }, // WinRAR staging fingerprint
+  // Web-client file UPLOAD to a remote host (data exfil over HTTP/S). Keyed on the upload verb — a
+  // PowerShell `Invoke-RestMethod`/`Invoke-WebRequest` (or `irm`/`iwr`) with `-InFile`, or a
+  // `-Method Post|Put` carrying a `-Body`/`-InFile`, and curl/wget upload flags — so a plain
+  // (download) request is NOT flagged. Dual-use (also legit API posts) → Medium. (Bare curl/wget
+  // uploads are also tag-only T1041 in reconTechniques; here they additionally earn a severity bump.)
+  { re: /\b(?:invoke-restmethod|invoke-webrequest|iwr|irm)\b[^\n]*(?:\s-infile\b|\s-method\s+(?:post|put)\b[^\n]*\s-(?:in)?(?:file|body)\b|\s-(?:in)?(?:file|body)\b[^\n]*\s-method\s+(?:post|put)\b)/i, weight: "weak", ids: ["T1041"] },
+  { re: /\b(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i, weight: "weak", ids: ["T1041"] },
 
   // ───────────── Remote-access (RMM) tooling abused for access / persistence (T1219) ─────────────
   // Unattended-install flags are the attacker fingerprint → strong; bare presence is dual-use → weak.
