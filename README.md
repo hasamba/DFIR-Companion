@@ -256,7 +256,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **IOC type filter** — faceted dropdown (ip/domain/url/hash/file/process/other) with per-type counts; composes with the flagged-only + search filters
 - **Hunt-pivot generator** — one-click emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries
 - **Query Translator** — plain English → runnable queries (NL: "PowerShell downloading then executing") across all enabled platforms; one-click-deploy VQL hunts
-- **Velociraptor triage bundles** — browse artifacts → save bundles → run as hunts (label/OS/min-severity) → auto-collect + import, with live hunt-status polling (a deleted or stopped hunt is reflected on the dashboard within 30s, and results auto-collect as soon as the hunt finishes)
+- **Velociraptor triage bundles** — browse artifacts → save bundles → run as hunts (label/OS/min-severity) → auto-collect + import, with live hunt-status polling (a deleted hunt is reflected on the dashboard within 30s, and results auto-collect as soon as the hunt finishes)
 - **AI-suggested fleet hunts** — AI proposes proactive fleet-sweep hunts grounded in the causal evidence graph (spawn chains, file lineage, lateral movement), so hunts target the relationship, not just the leaf indicator
 - **AI-suggested playbook hunts** — AI proposes hunts per endpoint-related task (single-endpoint collection or fleet hunt)
 - **Hunting feedback loop** — records each deployed hunt's outcome (new evidence + counts) per case; suggestions skip an already-run query and pivot on what hit, with a *Hunting Profile* of hunted/hit/missed
