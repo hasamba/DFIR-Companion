@@ -2502,6 +2502,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // restart the dashboard still shows them and the analyst triggers "Collect now". .unref() so a
   // pending timer never blocks exit.
   const veloHuntTimers = new Map<string, NodeJS.Timeout>();
+  const collectingNow = new Set<string>();   // in-memory guard closing the TOCTOU race between the fixed-delay
+                                              // timer and the status poller both deciding to collect the same
+                                              // hunt around the same moment (VeloHuntStore has no lock/CAS) —
+                                              // checked+set synchronously before any await.
 
   type ImportBase = { label: string; idPrefix: string; importedAt: string; onProgress?: (done: number, total: number) => void; minSeverity?: Severity };
 
@@ -2938,6 +2942,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const huntStore = options.veloHuntStore;
     const pipeline = options.pipeline;
     if (!client || !huntStore || !pipeline) return;
+    if (collectingNow.has(huntId)) return;   // already collecting this hunt in this process — avoid a double-run
+    collectingNow.add(huntId);
+    try {
     const pending = veloHuntTimers.get(huntId);
     if (pending) { clearTimeout(pending); veloHuntTimers.delete(huntId); }
     stopVeloHuntStatusPoll(caseId, huntId);   // an import is starting — it now owns this job's status
@@ -3043,6 +3050,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       options.onVeloHunt?.(caseId);
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: `Velociraptor hunt collect failed: ${(err as Error).message}` });
     }
+    } finally {
+      collectingNow.delete(huntId);
+    }
   }
 
   // ── Velociraptor hunt STATUS polling ─────────────────────────────────────────────────────────
@@ -3063,7 +3073,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const client = options.velociraptorClient;
     if (!huntStore || !client) { veloStatusTimers.delete(statusKey(caseId, huntId)); return; }
     let job: VeloHuntJob | null = null;
-    try { job = await huntStore.get(caseId, huntId); } catch { /* treat as gone */ }
+    try { job = await huntStore.get(caseId, huntId); } catch (err) { logLine(`[velo-hunt-status] failed to load hunt ${huntId} for status poll: ${(err as Error).message}`); }
     if (!job) { veloStatusTimers.delete(statusKey(caseId, huntId)); return; }
 
     const deps: HuntPollDeps = { getState: (id) => client.huntStatus(id), log: logLine };
