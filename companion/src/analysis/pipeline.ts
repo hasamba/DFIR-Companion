@@ -87,6 +87,8 @@ import { parseCybertriage, type CybertriageImportOptions } from "./cybertriageIm
 import { parseM365Audit, type M365ImportOptions } from "./m365Import.js";
 import { parseCloudTrail, type AwsImportOptions } from "./awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "./cloudActivityImport.js";
+import { parseK8sAudit, type K8sAuditImportOptions } from "./k8sAuditImport.js";
+import { parseOsqueryLog, type OsqueryImportOptions } from "./osqueryImport.js";
 import { parsePlasoCsv, parsePlasoFromLines, type PlasoImportOptions, type PlasoParseResult } from "./plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "./sandboxImport.js";
 import { parseMemory, type MemoryImportOptions } from "./memoryImport.js";
@@ -2560,6 +2562,101 @@ export class AnalysisPipeline {
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Cloud activity import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        `, ${parsed.iocs.length} IOC(s)`,
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import Kubernetes API-server audit logs (audit.k8s.io). Deterministic (no AI call): each audit
+  // Event → a forensic event whose severity is derived from the (verb, resource, subresource) tuple
+  // (pod exec/attach, secret access, RBAC change, privileged-pod create, anonymous access), Info by
+  // default. Source IP → IOC. Tagged Kubernetes Audit.
+  async importK8sAudit(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;          // unique per import (e.g. "k3") so ids never collide
+      importedAt: string;
+      k8s?: K8sAuditImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseK8sAudit(text, opts.k8s);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Kubernetes Audit"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Kubernetes audit import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+        `, ${parsed.iocs.length} IOC(s)`,
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import osquery scheduled-query result logs (differential `columns` rows + `snapshot` sets).
+  // Deterministic (no AI call): Info-by-default endpoint telemetry, with a conservative tradecraft
+  // bump on a command-line column; columns → IOCs (path/hash/ip/process). Tagged osquery.
+  async importOsquery(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;          // unique per import (e.g. "o3") so ids never collide
+      importedAt: string;
+      osquery?: OsqueryImportOptions;
+      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseOsqueryLog(text, opts.osquery);
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["osquery"],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `osquery import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         `, ${parsed.iocs.length} IOC(s)`,
       summary: "",

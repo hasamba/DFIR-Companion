@@ -6,7 +6,7 @@ import { z } from "zod";
 // The built-in ImportKind values a custom id must NOT shadow (kept in sync with importDetect.ts).
 export const BUILTIN_KINDS: ReadonlySet<string> = new Set([
   "thor", "siem", "evtxxml", "chainsaw", "hayabusa", "ecar", "velociraptor", "securityonion", "socrates", "network", "kape", "cybertriage",
-  "m365", "aws", "cloud", "plaso", "sandbox", "memory", "email", "auditd", "journald",
+  "m365", "aws", "cloud", "k8s", "osquery", "plaso", "sandbox", "memory", "email", "auditd", "journald",
   "sysdig", "wazuh", "thehive", "bashhistory", "snort", "combinedlog", "asa", "syslog", "csv", "log", "unknown",
 ]);
 

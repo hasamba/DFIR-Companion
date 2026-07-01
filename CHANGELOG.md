@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Plain syslog importer** — deterministic RFC 5424 / RFC 3164 parser (Info-by-default telemetry, auth-failure/crit-PRI bumps to Low, host carried as asset), replacing AI log-triage for Linux/Unix syslog.
 - **Kerberoasting / AS-REP roasting event verdict** — an RC4-encrypted (0x17/0x18) Kerberos TGS-REQ (4769) for a user service account now grades Medium + T1558.003, and an RC4 AS-REQ (4768) with pre-auth disabled grades Medium + T1558.004, instead of a flat Low (`siemImport.ts`; RC4 to machine/krbtgt accounts stays Low).
 - **AWS CloudTrail priv-esc actions** — `PassRole` + Lambda `CreateFunction` (Medium) and STS `GetSessionToken` (Low, T1078.004) now graded in the severity table.
+- **Kubernetes audit-log importer** (`k8sAuditImport.ts`) — deterministic `audit.k8s.io` parser; severity derived from the (verb, resource) tuple (pod exec/attach T1609, secret access T1552.007, RBAC change T1098, privileged-pod T1610/T1611, anonymous access T1078), Info by default.
+- **osquery result-log importer** (`osqueryImport.ts`) — deterministic parser for scheduled-query differential + snapshot logs; Info-by-default telemetry with a conservative tradecraft bump on command-line columns.
 
 ### Fixed
 - **Combined access-log importer captures the HTTP Referer** — a secret leaked in the Referer query string is no longer silently dropped (host → domain IOC, full referer → unaggregated url IOC).

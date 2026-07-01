@@ -22,7 +22,7 @@ import type { EngineDetectContext, ExternalImporter } from "./declarativeImporte
 
 export type ImportKind =
   | "thor" | "siem" | "evtxxml" | "chainsaw" | "hayabusa" | "ecar" | "velociraptor" | "securityonion" | "socrates" | "network"
-  | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
+  | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "k8s" | "osquery" | "plaso" | "sandbox" | "memory" | "email"
   | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "snort" | "combinedlog" | "asa" | "syslog" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
@@ -82,6 +82,24 @@ function isGcp(s: Row): boolean {
 function isAzure(s: Row): boolean {
   return (!!getCI(s, "operationName") || !!getCI(s, "OperationNameValue") || !!getCI(s, "OperationName")) &&
     (!!getCI(s, "caller") || !!getCI(s, "Caller") || !!getCI(s, "resourceId") || !!getCI(s, "ResourceId") || !!getCI(s, "correlationId"));
+}
+// Kubernetes API-server audit Event (`audit.k8s.io`): the strong tell is the apiVersion; failing
+// that, a `verb` + `objectRef` + the audit-specific `requestReceivedTimestamp`/`stage` fields (which
+// no other JSON feed carries). Claimed ahead of the SIEM/Velociraptor catch-alls.
+function isK8sAudit(s: Row): boolean {
+  if (/audit\.k8s\.io/i.test(str(getCI(s, "apiVersion")))) return true;
+  return !!getCI(s, "verb") && isObject(getCI(s, "objectRef")) &&
+    (getCI(s, "requestReceivedTimestamp") != null || getCI(s, "stageTimestamp") != null ||
+      (getCI(s, "stage") != null && isObject(getCI(s, "user"))));
+}
+// osquery scheduled-query result log: a `name` (query/pack) + a result payload (`columns` object or
+// `snapshot` array) + an osquery-specific marker (`action` added/removed/snapshot, or hostIdentifier/
+// calendarTime/unixTime). Distinctive enough to claim ahead of the SIEM catch-all.
+function isOsquery(s: Row): boolean {
+  if (!getCI(s, "name") || !(isObject(getCI(s, "columns")) || Array.isArray(getCI(s, "snapshot")))) return false;
+  const action = str(getCI(s, "action")).toLowerCase();
+  return action === "added" || action === "removed" || action === "snapshot" ||
+    getCI(s, "hostIdentifier") != null || getCI(s, "calendarTime") != null || getCI(s, "unixTime") != null;
 }
 function isM365(s: Row): boolean {
   return !!getCI(s, "Operation") || !!getCI(s, "Operations") || !!getCI(s, "AuditData") ||
@@ -265,6 +283,8 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isGcp(sample)) return "cloud";
   if (isAzure(sample)) return "cloud";
   if (isM365(sample)) return "m365";
+  if (isK8sAudit(sample)) return "k8s";
+  if (isOsquery(sample)) return "osquery";
   // ECAR EDR telemetry — the (timestamp_ms + object + action) triple is distinctive and absent from
   // every other feed; checked early so the generic SIEM/network catch-alls can't claim it.
   if (isEcarRecord(sample)) return "ecar";

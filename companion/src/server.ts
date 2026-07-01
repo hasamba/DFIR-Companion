@@ -2543,6 +2543,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "m365": return pipeline.importM365(caseId, text, base);
       case "aws": return pipeline.importAws(caseId, text, base);
       case "cloud": return pipeline.importCloudActivity(caseId, text, base);
+      case "k8s": return pipeline.importK8sAudit(caseId, text, base);
+      case "osquery": return pipeline.importOsquery(caseId, text, base);
       case "plaso": return pipeline.importPlaso(caseId, text, base);
       case "sandbox": return pipeline.importSandbox(caseId, text, base);
       case "memory": return pipeline.importMemory(caseId, text, base);
