@@ -548,6 +548,35 @@ export function parsePid(raw: string): number | undefined {
 }
 
 // Map a Windows Event Log / Sysmon record. Returns null if it is not a Windows record.
+// RC4 Kerberos ticket-encryption types (0x17 RC4-HMAC, 0x18 RC4-HMAC-EXP) — the weak cipher an
+// attacker forces so a service ticket can be cracked offline. Sourced from the Kerberoasting
+// detection tell in Anthropic-Cybersecurity-Skills `detecting-kerberoasting-attacks` (Apache-2.0):
+// a TGS-REQ (4769) encrypted with RC4 against a *user* service account (SPN owner) is the classic
+// roasting request. Sibling AS-REP roasting (4768 with pre-auth disabled) is standard AD tradecraft.
+const RC4_ENC_TYPES = new Set(["0x17", "0x18"]);
+
+// Verdict-OVERLAY (we grade + tag the otherwise-Low 4769/4768, we do not re-detect): conservative to
+// respect signal-to-noise — RC4 to a machine account (`name$`) or the krbtgt service is normal in a
+// mixed AD and stays Low; a single RC4 request isn't proof, so we grade Medium and rely on the
+// technique tag + high-volume-spray correlation (many 4769s → the burst/asset views) to surface it.
+export function kerberosRoastSignal(eid: number, ed: Row): { severity: Severity; mitre: string[] } | null {
+  if (eid !== 4769 && eid !== 4768) return null;
+  const enc = str(getCI(ed, "TicketEncryptionType")).trim().toLowerCase();
+  if (!RC4_ENC_TYPES.has(enc)) return null;
+  if (eid === 4769) {
+    // TGS-REQ: the account the ticket is FOR is the ServiceName (the SPN owner).
+    const service = str(getCI(ed, "ServiceName")).trim();
+    if (!service || service.endsWith("$") || service.toLowerCase().includes("krbtgt")) return null;
+    return { severity: "Medium", mitre: ["T1558.003"] }; // Kerberoasting
+  }
+  // AS-REQ (4768): AS-REP roasting only when pre-authentication is disabled (PreAuthType 0) — RC4 on
+  // a normal logon is far too common to flag, so require the roastable-account tell to stay low-FP.
+  const preAuth = str(getCI(ed, "PreAuthType")).trim();
+  const target = str(getCI(ed, "TargetUserName")).trim();
+  if (preAuth !== "0" || !target || target.endsWith("$")) return null;
+  return { severity: "Medium", mitre: ["T1558.004"] }; // AS-REP roasting
+}
+
 export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent | null {
   const eidRaw = getCI(rec, "event_id") ?? getCI(rec, "EventID") ?? getPath(rec, "winlog.event_id") ?? getPath(rec, "event.code");
   const eid = Number(typeof eidRaw === "object" && isObject(eidRaw) ? getCI(eidRaw, "#text") : eidRaw);
@@ -613,6 +642,15 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
       severity = "Low";
       const i = mitre.indexOf("T1055");
       if (i >= 0) mitre.splice(i, 1);
+    }
+  }
+  // Kerberoasting / AS-REP roasting: an RC4-encrypted Kerberos ticket request for a user service
+  // account grades the otherwise-Low 4769/4768 with the correct technique (see kerberosRoastSignal).
+  if (!isSysmon) {
+    const roast = kerberosRoastSignal(eid, ed);
+    if (roast) {
+      severity = worst(severity, roast.severity);
+      for (const t of roast.mitre) if (!mitre.includes(t)) mitre.push(t);
     }
   }
 

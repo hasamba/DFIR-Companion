@@ -249,6 +249,54 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
   });
 });
 
+describe("parseSiemExport — Kerberoasting / AS-REP roasting (RC4 ticket verdict)", () => {
+  const roast4769 = (service: string, enc: string) => ({
+    "@timestamp": "2024-05-01T12:00:00Z", log_name: "Security", computer_name: "DC01.corp.local",
+    event_id: 4769, level: "Information",
+    event_data: { TargetUserName: "attacker@CORP.LOCAL", ServiceName: service, TicketEncryptionType: enc, TicketOptions: "0x40810000", Status: "0x0", IpAddress: "10.0.0.66" },
+  });
+
+  it("grades an RC4 (0x17) TGS-REQ for a user service account as Medium T1558.003", () => {
+    const r = parseSiemExport(elastic(roast4769("MSSQLSvc/db01.corp.local:1433", "0x17")));
+    expect(r.events[0].severity).toBe("Medium");
+    expect(r.events[0].mitreTechniques).toContain("T1558.003");
+  });
+
+  it("leaves RC4 TGS-REQ for a MACHINE account (name$) as Low with no roasting tag", () => {
+    const r = parseSiemExport(elastic(roast4769("DC01$", "0x17")));
+    expect(r.events[0].severity).toBe("Low");
+    expect(r.events[0].mitreTechniques).not.toContain("T1558.003");
+  });
+
+  it("leaves an AES (0x12) TGS-REQ for a user service account as Low (not the RC4 tell)", () => {
+    const r = parseSiemExport(elastic(roast4769("MSSQLSvc/db01.corp.local:1433", "0x12")));
+    expect(r.events[0].severity).toBe("Low");
+    expect(r.events[0].mitreTechniques).not.toContain("T1558.003");
+  });
+
+  it("grades an RC4 AS-REQ with pre-auth disabled (PreAuthType 0) as Medium T1558.004", () => {
+    const asrep = {
+      "@timestamp": "2024-05-01T12:05:00Z", log_name: "Security", computer_name: "DC01.corp.local",
+      event_id: 4768, level: "Information",
+      event_data: { TargetUserName: "svc_legacy", TargetDomainName: "CORP", TicketEncryptionType: "0x17", PreAuthType: "0", IpAddress: "10.0.0.66" },
+    };
+    const r = parseSiemExport(elastic(asrep));
+    expect(r.events[0].severity).toBe("Medium");
+    expect(r.events[0].mitreTechniques).toContain("T1558.004");
+  });
+
+  it("leaves a normal RC4 AS-REQ (PreAuthType 2) as Low — RC4 on a real logon is too common to flag", () => {
+    const normal = {
+      "@timestamp": "2024-05-01T12:06:00Z", log_name: "Security", computer_name: "DC01.corp.local",
+      event_id: 4768, level: "Information",
+      event_data: { TargetUserName: "alice", TargetDomainName: "CORP", TicketEncryptionType: "0x17", PreAuthType: "2", IpAddress: "10.0.0.20" },
+    };
+    const r = parseSiemExport(elastic(normal));
+    expect(r.events[0].severity).toBe("Low");
+    expect(r.events[0].mitreTechniques).not.toContain("T1558.004");
+  });
+});
+
 describe("isSuspiciousCmd — #199 tradecraft grading", () => {
   it("strong: a renamed LSASS dumper identified by its arguments", () => {
     expect(isSuspiciousCmd("C:\\Windows\\Temp\\wdi-svc.exe", "wdi-svc.exe -p lsass -o C:\\Windows\\Temp\\lsa.dmp")).toBe("strong");
