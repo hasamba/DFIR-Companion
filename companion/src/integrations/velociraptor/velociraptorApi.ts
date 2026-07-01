@@ -616,6 +616,19 @@ export class VelociraptorClient {
     return { state, error, rows: Number(r.total_collected_rows ?? 0) || 0 };
   }
 
+  // The hunt's own state (issue: 30s status polling) — is it still RUNNING, PAUSED, STOPPED, or
+  // ARCHIVED, or has it been deleted entirely in Velociraptor? Mirrors flowStatus() but queries the
+  // hunts() plugin by hunt_id instead of flows() by session_id. Returns null when Velociraptor has no
+  // record of the hunt at all (deleted) rather than an empty-state object, so callers can tell
+  // "gone" apart from "state field came back blank".
+  async huntStatus(huntId: string): Promise<{ state: string } | null> {
+    if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
+    const rows = await this.runRaw(`SELECT state FROM hunts() WHERE hunt_id='${huntId}' LIMIT 1`);
+    if (!rows.length) return null;
+    const r = (rows[0] ?? {}) as { state?: unknown };
+    return { state: String(r.state ?? "").trim() };
+  }
+
   // Convenience: resolve a hostname LIVE (enumerate the fleet + match in TS, short-name ⇄ FQDN
   // tolerant) then collect on it. The server's collect route prefers the persisted inventory; this is
   // the no-inventory / programmatic / CLI path. The hostname is matched in TS — never embedded in VQL.
