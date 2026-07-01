@@ -65,13 +65,13 @@ export function templateizeLine(rest: string): string {
 }
 
 export interface AggregateOptions {
-  // Cap on the number of templates returned (most frequent first). Protects the AI
-  // call from a pathological log with thousands of distinct patterns.
+  // Cap on the number of templates returned. Protects the AI call from a pathological
+  // log with thousands of distinct patterns.
   maxTemplates?: number;
 }
 
-// Group log lines into counted templates, most frequent first. Order within a count
-// tie follows first appearance, so the output is stable/deterministic.
+// Group log lines into counted templates. Order within a count tie follows first
+// appearance, so the output is stable/deterministic.
 export function aggregateLogLines(lines: readonly string[], opts: AggregateOptions = {}): LogTemplate[] {
   const groups = new Map<string, LogTemplate>();
   const insertionOrder = new Map<string, number>();
@@ -90,9 +90,20 @@ export function aggregateLogLines(lines: readonly string[], opts: AggregateOptio
     }
   }
 
-  const sorted = [...groups.values()].sort((a, b) =>
-    b.count - a.count || (insertionOrder.get(a.template)! - insertionOrder.get(b.template)!),
-  );
+  const all = [...groups.values()];
+  const byInsertion = (a: LogTemplate, b: LogTemplate): number =>
+    insertionOrder.get(a.template)! - insertionOrder.get(b.template)!;
+  const byCountDesc = (a: LogTemplate, b: LogTemplate): number => b.count - a.count || byInsertion(a, b);
+
   const max = opts.maxTemplates ?? 400;
-  return sorted.slice(0, max);
+  if (all.length <= max) return all.sort(byCountDesc);
+
+  // Truncation needed. A naive "most frequent first" cap silently drops RARE templates once a log
+  // has more than `max` distinct patterns — but a rare (often count=1) template is exactly where a
+  // one-off attack line (a single unusual upload, a lone 403 on a sensitive path) lives; the
+  // thousands of repetitive baseline lines it's competing with are the LEAST likely to be signal.
+  // So truncate the FREQUENT end instead: sort rarest-first, keep up to `max`, then restore the
+  // frequency-first presentation order the AI prompt expects.
+  const kept = [...all].sort((a, b) => a.count - b.count || byInsertion(a, b)).slice(0, max);
+  return kept.sort(byCountDesc);
 }

@@ -92,7 +92,10 @@ describe("parseShellHistoryFile — classification + IOCs", () => {
     expect(dump?.mitreTechniques).toContain("T1005");
     const exfil = r.events.find((e) => /curl -X POST/.test(e.description));
     expect(exfil?.severity).toBe("Medium");
+    // T1041 stays (exfilCorrelate.ts keys on it to stitch a preceding archive-staging event into a
+    // first-class exfiltration finding); T1567.002 is the more accurate label for the upload itself.
     expect(exfil?.mitreTechniques).toContain("T1041");
+    expect(exfil?.mitreTechniques).toContain("T1567.002");
   });
 
   it("aggregates identical repeated commands into one counted row", () => {

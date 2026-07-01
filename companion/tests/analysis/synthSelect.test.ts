@@ -60,4 +60,21 @@ describe("buildSynthesisContext", () => {
   it("returns an empty string when there's nothing to add", () => {
     expect(buildSynthesisContext(emptyState("c1"), [])).toBe("");
   });
+
+  it("flags a threat-intel verdict on the case's OWN host asset instead of trusting it silently", () => {
+    const s = emptyState("c1");
+    // db-01 is the case's own internal server (an event carries it as `asset`); a threat-intel
+    // provider nonetheless marked the same value suspicious — likely stale/wrong data, not a real
+    // external C2, and the model must not treat it as confirmed without saying so.
+    s.iocs.push({ id: "i1", type: "domain", value: "db-01.northpeaklabs.com", firstSeen: "",
+      enrichments: [{ source: "OpenCTI", verdict: "suspicious", score: "", fetchedAt: "" }] });
+    s.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "connection to db-01.northpeaklabs.com",
+      severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "db-01.northpeaklabs.com" });
+
+    const ctx = buildSynthesisContext(s, s.forensicTimeline);
+    expect(ctx).toContain("THREAT-INTEL VERDICTS");
+    expect(ctx).toContain("db-01.northpeaklabs.com = suspicious (OpenCTI)");
+    expect(ctx).toContain("CONFLICT");
+    expect(ctx).toContain("also one of this case's OWN host assets");
+  });
 });

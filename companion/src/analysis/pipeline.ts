@@ -76,6 +76,8 @@ import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImp
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { parseEcarJson, ECAR_SOURCE, type EcarImportOptions } from "./ecarImport.js";
 import { parseSnortLog, SNORT_SOURCE, type SnortImportOptions } from "./snortImport.js";
+import { parseCombinedLog, COMBINED_LOG_SOURCE, type CombinedLogImportOptions } from "./combinedLogImport.js";
+import { parseCiscoAsaLog, CISCO_ASA_SOURCE, type CiscoAsaImportOptions } from "./ciscoAsaImport.js";
 import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
 import { parseSocrates, type SocratesImportOptions } from "./socratesImport.js";
 import { parseSecurityOnion, type SecurityOnionImportOptions } from "./securityOnionImport.js";
@@ -396,6 +398,19 @@ export const LOG_SYSTEM_PROMPT = [
   "keying attempts and retransmission/timeout chatter, heartbeats, successful benign connections,",
   "and informational/debug lines. A high ×count alone does NOT make a pattern suspicious; benign",
   "infrastructure noise (e.g. a tunnel repeatedly re-keying) should be skipped even at high volume.",
+  "This applies to sudo/privilege lines too, not just network chatter: a NAMED account running a",
+  "SPECIFIC, scoped sudo command (service restart/status, package install/upgrade, listing firewall",
+  "rules, reading a config) is routine sysadmin/SRE work — grade it Info/Low, NOT High, even if it",
+  "recurs often or several different accounts each do their own such commands across the observation",
+  "window (many people doing their normal jobs is not a 'privilege escalation campaign'). Reserve",
+  "High/Critical sudo severity for a genuine anomaly: a brand-new/never-seen account gaining sudo, a",
+  "user or group ADDED to sudoers/wheel/admin, an interactive root shell (sudo -i / su -) opened by",
+  "an account that doesn't normally have one, or sudo usage immediately followed by credential-",
+  "dumping/exfil/tampering commands. Likewise, auth FAILURES are only brute-force-worthy when there's",
+  "a clear escalating pattern (many failures in a short window from ONE source against one/few",
+  "accounts, ideally followed by a success) — a handful of scattered failures spread across many",
+  "different users/hosts over hours is ordinary human error (mistyped/expired passwords), not an",
+  "attack indicator, and should stay Info or be skipped entirely.",
   "If NOTHING in this batch is security-relevant, return an empty forensicEvents array — that is the",
   "correct, expected answer for a clean/noisy operational log.",
   "",
@@ -485,6 +500,25 @@ export const SYNTHESIS_PROMPT = [
   "  pairing its OWN 'Data Exfiltration' finding (T1041, plus T1567.x if a named cloud-storage service is",
   "  the destination). Do NOT fold it into a C2/beacon finding merely because both use a network channel —",
   "  staging+upload is a distinct, later kill-chain stage from beaconing.",
+  "  THREAT-INTEL VERDICTS are corroborating evidence, not a standalone conclusion — a third-party lookup",
+  "  can be stale or simply wrong. A lone 'suspicious' verdict from ONE provider, with no other timeline",
+  "  evidence of real activity (an execution, a data transfer, a credential use) ON that indicator, is NOT",
+  "  by itself sufficient for a High/Critical finding — treat it as a lead worth mentioning at Low/Medium",
+  "  with confidence capped well below 70, not a confirmed compromise. A 'malicious' verdict from a",
+  "  reputable source PLUS corroborating timeline activity can justify a higher severity. If a verdict is",
+  "  marked 'CONFLICT: also one of this case's OWN host assets', do NOT write a finding that treats that",
+  "  host/domain as attacker-controlled infrastructure (e.g. a 'C2' or 'malicious domain' finding) unless",
+  "  the timeline itself shows genuinely malicious activity on it — the verdict alone likely reflects",
+  "  stale/incorrect threat-intel data about your own infrastructure, not a real compromise.",
+  "  Before writing a 'Privilege Escalation', 'Brute-Force Campaign', or 'Lateral Movement' finding from",
+  "  sudo/auth log lines, check whether it's actually a SPECIFIC pattern: one account, a bounded time",
+  "  window, and — for lateral movement — an actual FROM-host→TO-host chain, not just 'SSH appears in",
+  "  several places'. Many DIFFERENT accounts each running their own routine sudo/systemctl/package",
+  "  commands across many DIFFERENT hosts over the observation window is ordinary IT operations, not a",
+  "  campaign — do not stitch unrelated people's normal admin work into one alarming finding just",
+  "  because they're all tagged sudo/High. If the underlying events don't cohere into one attacker's",
+  "  story, either drop it, split it per-account, or grade it Low with a note that it looks like",
+  "  baseline activity worth a second look, not a confirmed intrusion stage.",
   "- iocs: concrete indicators (ips, domains, hashes, malicious files/processes) seen in the timeline.",
   "- mitreTechniques: the ATT&CK techniques observed, aggregated.",
   "- attackerPath: a chronological narrative of the intrusion in kill-chain order (initial access →",
@@ -1956,6 +1990,98 @@ export class AnalysisPipeline {
       timelineNote: `ECAR import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import an Apache/Nginx/Squid combined access log (web server or forward-proxy). Deterministic
+  // (no AI): raw web/proxy telemetry, Info by default with a conservative bump only for an
+  // access-denied response; git smart-HTTP clone/push tagged T1213. See combinedLogImport.ts.
+  async importCombinedLog(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;
+      importedAt: string;
+      combinedLog?: CombinedLogImportOptions;
+      minSeverity?: Severity;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseCombinedLog(text, { ...opts.combinedLog });
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [COMBINED_LOG_SOURCE],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Web/proxy access-log import (${parsed.format}): ${parsed.kept} request(s) from ${parsed.total} line(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a Cisco ASA firewall syslog export. Deterministic (no AI): Built/Teardown telemetry
+  // stays Info, an explicit Deny bumps to Low, dynamic-NAT-translation noise is dropped,
+  // year-less timestamps are re-anchored by the mergeDelta year-clamp. See ciscoAsaImport.ts.
+  async importCiscoAsa(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;
+      importedAt: string;
+      ciscoAsa?: CiscoAsaImportOptions;
+      minSeverity?: Severity;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseCiscoAsaLog(text, { ...opts.ciscoAsa });
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [CISCO_ASA_SOURCE],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Cisco ASA import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} line(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
       summary: "",
     };
     const delta = deltaSchema.parse(raw);
