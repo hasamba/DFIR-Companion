@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { emptyState } from "../../src/analysis/stateTypes.js";
-import { rankConnectiveIocs, buildConnectiveIocDigest, looksSuspiciousDomain } from "../../src/analysis/iocAnchors.js";
+import { rankConnectiveIocs, buildConnectiveIocDigest, looksSuspiciousDomain, isKnownHostAsset, shortHost } from "../../src/analysis/iocAnchors.js";
 
 function ev(id: string, asset: string, sources: string[], description: string): any {
   return { id, timestamp: "2024-03-18T15:00:00Z", description, severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset, sources };
@@ -60,5 +60,58 @@ describe("rankConnectiveIocs (#200)", () => {
     s.iocs.push({ id: "i1", type: "ip", value: "10.0.0.9", firstSeen: "" });
     s.forensicTimeline.push(ev("e1", "H1", ["Sysmon"], "connection to 10.0.0.9"));
     expect(rankConnectiveIocs(s)).toHaveLength(0);
+  });
+});
+
+describe("isKnownHostAsset / shortHost — internal-infra conflict detection", () => {
+  it("matches on the bare hostname regardless of protocol/path/FQDN qualification", () => {
+    const hosts = new Set(["db-01"]);
+    expect(isKnownHostAsset("db-01.northpeaklabs.com", hosts)).toBe(true);
+    expect(isKnownHostAsset("https://db-01/health", hosts)).toBe(true);
+    expect(shortHost("DB-01.northpeaklabs.com")).toBe("db-01");
+    expect(isKnownHostAsset("evil-external.tld", hosts)).toBe(false);
+  });
+});
+
+describe("rankConnectiveIocs — internal-infra conflict dampener", () => {
+  function stateWithInternalMaliciousDomain(): ReturnType<typeof emptyState> {
+    const s = emptyState("c");
+    // db-01 is the case's OWN shared internal server (widely touched — many hosts/accounts), and a
+    // (possibly stale) threat-intel provider has marked it malicious.
+    s.iocs.push({ id: "i1", type: "domain", value: "db-01.northpeaklabs.com", firstSeen: "",
+      enrichments: [{ source: "OpenCTI", verdict: "suspicious", score: "", fetchedAt: "" }] });
+    s.forensicTimeline.push(
+      ev("e1", "db-01.northpeaklabs.com", ["SIEM"], "connection from grace.kim to db-01.northpeaklabs.com"),
+      ev("e2", "db-01.northpeaklabs.com", ["SIEM"], "connection from priya.raman to db-01.northpeaklabs.com"),
+      ev("e3", "WS-ENG-04", ["Zeek"], "connection to db-01.northpeaklabs.com"),
+    );
+    return s;
+  }
+
+  it("flags internalConflict and caps the malicious bump instead of anchoring it as a C2 backbone", () => {
+    const anchors = rankConnectiveIocs(stateWithInternalMaliciousDomain());
+    const db01 = anchors.find((a) => a.value === "db-01.northpeaklabs.com");
+    expect(db01?.malicious).toBe(true);
+    expect(db01?.internalConflict).toBe(true);
+  });
+
+  it("renders an explicit CONFLICT warning in the digest instead of a bare malicious flag", () => {
+    const digest = buildConnectiveIocDigest(rankConnectiveIocs(stateWithInternalMaliciousDomain()));
+    expect(digest).toContain("CONFLICT");
+    expect(digest).toContain("ALSO one of the case's OWN host assets");
+  });
+
+  it("does NOT flag a genuine external indicator that happens to be malicious", () => {
+    const s = emptyState("c");
+    s.iocs.push({ id: "i1", type: "domain", value: "evil-c2.tld", firstSeen: "",
+      enrichments: [{ source: "VirusTotal", verdict: "malicious", score: "60/73", fetchedAt: "" }] });
+    s.forensicTimeline.push(
+      ev("e1", "WS-01", ["Zeek"], "beacon to evil-c2.tld"),
+      ev("e2", "WS-02", ["ECAR"], "beacon to evil-c2.tld"),
+    );
+    const anchors = rankConnectiveIocs(s);
+    const c2 = anchors.find((a) => a.value === "evil-c2.tld");
+    expect(c2?.internalConflict).toBe(false);
+    expect(buildConnectiveIocDigest(anchors)).not.toContain("CONFLICT");
   });
 });
