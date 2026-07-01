@@ -15,6 +15,7 @@ import { looksLikeWinEventXml } from "./evtxXmlImport.js";
 import { looksLikeBashHistory } from "./bashHistoryImport.js";
 import { isEcarRecord } from "./ecarImport.js";
 import { looksLikeSnort } from "./snortImport.js";
+import { looksLikeYara } from "./yaraImport.js";
 import { looksLikeCombinedLog } from "./combinedLogImport.js";
 import { looksLikeCiscoAsa } from "./ciscoAsaImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
@@ -22,7 +23,7 @@ import type { EngineDetectContext, ExternalImporter } from "./declarativeImporte
 export type ImportKind =
   | "thor" | "siem" | "evtxxml" | "chainsaw" | "hayabusa" | "ecar" | "velociraptor" | "securityonion" | "socrates" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
-  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "snort" | "combinedlog" | "asa" | "csv" | "log" | "unknown";
+  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "snort" | "yara" | "combinedlog" | "asa" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -465,6 +466,11 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // IDS verdict feed; checked before the generic log fallback so it's parsed deterministically, not
   // sent to the AI line-triage.
   if (looksLikeSnort(t)) return "snort";
+
+  // YARA CLI scan output (`<Rule> [tags] [meta] <file>` + `-s` `0xOFF:$id:` lines) — a real detector
+  // verdict; checked before the generic log fallback so a saved YARA report is parsed deterministically
+  // rather than sent to AI line-triage. (In the external-tools run path the kind is set directly.)
+  if (looksLikeYara(t)) return "yara";
 
   // Cisco ASA firewall syslog (`%ASA-#-######: Built/Teardown/Deny …`) — telemetry, not a
   // detection feed, but a well-known deterministic grammar; checked before the generic log

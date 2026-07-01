@@ -16,7 +16,7 @@ describe("DropStatusStore", () => {
 
   it("returns an empty status when none exists", async () => {
     expect(await store.load("c1")).toEqual({
-      lastSweepAt: "", dropPath: "", importedCount: 0, failedCount: 0, imported: [], failed: [],
+      lastSweepAt: "", dropPath: "", importedCount: 0, failedCount: 0, imported: [], failed: [], pendingRawInputs: [],
     });
   });
 

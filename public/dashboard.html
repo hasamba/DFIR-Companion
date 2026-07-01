@@ -1161,7 +1161,7 @@
     <label id="deepReasoningLabel" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--c-9aa4b2);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs an Anthropic or OpenRouter reasoning-capable synthesis model.">
       <input type="checkbox" id="deepReasoning" style="margin:0;cursor:pointer" />🧠<span class="dr-text">&nbsp;deep</span>
     </label>
-    <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.xml,.eml,.msg,.bash_history,.zsh_history,.history,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,text/xml,application/xml,image/png,image/jpeg,image/webp" style="display:none" />
+    <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.xml,.eml,.msg,.bash_history,.zsh_history,.history,.evtx,.evt,.pcap,.pcapng,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,text/xml,application/xml,image/png,image/jpeg,image/webp" style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux shell history, auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
     <button id="importUndoBtn" type="button" style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
@@ -1528,6 +1528,7 @@
         <button class="stab" data-stab="exposure">Exposure</button>
         <button class="stab" data-stab="integrations">Integrations</button>
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
+        <button class="stab" data-stab="tools">Tools</button>
         <button class="stab" data-stab="whitelist">IOC Whitelist</button>
         <button class="stab" data-stab="nsrl">NSRL</button>
         <button class="stab" data-stab="importers">Importers</button>
@@ -2158,6 +2159,74 @@
         </div>
       </div>
 
+      <!-- External forensic tools (#211) -->
+      <div class="stab-pane" id="stab-tools">
+        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+          Run your <strong>own locally-installed</strong> tools against raw evidence the Companion can't parse
+          (EVTX, PCAP, files), then ingest their <strong>output</strong> through the normal importers — the tool does the
+          detecting, the Companion ingests the verdict. The Companion never downloads or bundles a binary; you install and
+          update it. Each tool is OFF until its <strong>binary path</strong> is set. Paths/args are stored in <code>.env</code>
+          (not secrets); click <strong>Reconnect</strong> to apply without a restart. A raw file copied into a case's
+          <strong>drop folder</strong> is run automatically when a matching tool has auto-run on.
+        </div>
+        <div style="background:#211405;border:1px solid #5a4a1a;border-radius:6px;padding:6px 9px;font-size:12px;color:#ffce8a;margin-bottom:12px">
+          ⚠ The run/update commands you configure are executed on this machine (no shell — args are tokenized). Only point them at trusted binaries.
+        </div>
+        <div style="margin:0 0 12px"><button id="toolsReconnectBtn" type="button" title="Re-read DFIR_TOOL_* from .env and apply without a companion restart">🔌 Reconnect / apply</button> <span id="toolsMsg" class="manual-msg"></span></div>
+        <div id="toolsStatus" style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:12px">—</div>
+
+        <div class="settings-group-head">Hayabusa <span style="color:var(--c-7e8aa0);font-weight:400">(EVTX → csv/json-timeline · <a href="https://github.com/Yamato-Security/hayabusa" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="sgrid">
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_HAYABUSA_BINARY — full path to hayabusa(.exe); blank = off</span></label><input id="env-DFIR_TOOL_HAYABUSA_BINARY" placeholder="(off)" /></div>
+          <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_HAYABUSA_RUN_ARGS — &lt;target&gt;/&lt;output&gt; substituted; blank = default</span></label><input id="env-DFIR_TOOL_HAYABUSA_RUN_ARGS" placeholder="csv-timeline -f <target> -o <output> -w" /></div>
+          <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_HAYABUSA_UPDATE_CMD — full command; blank = &lt;binary&gt; update-rules</span></label><input id="env-DFIR_TOOL_HAYABUSA_UPDATE_CMD" placeholder="(default: <binary> update-rules)" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_HAYABUSA_AUTO_RUN — on/off (default on when configured)</span></label><input id="env-DFIR_TOOL_HAYABUSA_AUTO_RUN" placeholder="on" /></div>
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_HAYABUSA_TIMEOUT_MS (default 300000)</span></label><input id="env-DFIR_TOOL_HAYABUSA_TIMEOUT_MS" placeholder="300000" /></div>
+        </div>
+        <div style="margin:4px 0 14px"><button class="tool-update" data-tool="hayabusa" type="button">↻ Update rules</button></div>
+
+        <div class="settings-group-head">Velociraptor CLI <span style="color:var(--c-7e8aa0);font-weight:400">(offline EVTX → artifact JSON · <a href="https://github.com/Velocidex/velociraptor" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="sgrid">
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_BINARY — local velociraptor(.exe); distinct from the Velociraptor API tab; blank = off</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_BINARY" placeholder="(off)" /></div>
+          <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_RUN_ARGS — &lt;target&gt;/&lt;output&gt; substituted; blank = default</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_RUN_ARGS" placeholder="artifacts collect Windows.EventLogs.Hayabusa --args EvtxGlob=<target> --output <output>" /></div>
+          <div class="sfield"><label>Result file<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_OUTPUT_FILE — filename read back (default results.json)</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_OUTPUT_FILE" placeholder="results.json" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_AUTO_RUN — on/off</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_AUTO_RUN" placeholder="on" /></div>
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_TIMEOUT_MS</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_TIMEOUT_MS" placeholder="300000" /></div>
+        </div>
+
+        <div class="settings-group-head">Suricata <span style="color:var(--c-7e8aa0);font-weight:400">(PCAP → eve.json · <a href="https://github.com/OISF/suricata" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="sgrid">
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_SURICATA_BINARY — full path to suricata; blank = off</span></label><input id="env-DFIR_TOOL_SURICATA_BINARY" placeholder="(off)" /></div>
+          <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_SURICATA_RUN_ARGS — &lt;output&gt; is an output DIR; blank = default</span></label><input id="env-DFIR_TOOL_SURICATA_RUN_ARGS" placeholder="-r <target> -l <output>" /></div>
+          <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_SURICATA_UPDATE_CMD — blank = suricata-update</span></label><input id="env-DFIR_TOOL_SURICATA_UPDATE_CMD" placeholder="suricata-update" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_SURICATA_AUTO_RUN — on/off</span></label><input id="env-DFIR_TOOL_SURICATA_AUTO_RUN" placeholder="on" /></div>
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_SURICATA_TIMEOUT_MS</span></label><input id="env-DFIR_TOOL_SURICATA_TIMEOUT_MS" placeholder="300000" /></div>
+        </div>
+        <div style="margin:4px 0 14px"><button class="tool-update" data-tool="suricata" type="button">↻ Update rules</button></div>
+
+        <div class="settings-group-head">Snort <span style="color:var(--c-7e8aa0);font-weight:400">(PCAP + your rules → alert_fast · <a href="https://github.com/snort3/snort3" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="sgrid">
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_SNORT_BINARY — full path to snort; blank = off</span></label><input id="env-DFIR_TOOL_SNORT_BINARY" placeholder="(off)" /></div>
+          <div class="sfield"><label>Rules / config path<span class="sfield-hint">DFIR_TOOL_SNORT_RULES — substituted for &lt;rules&gt; (your snort.lua / .rules)</span></label><input id="env-DFIR_TOOL_SNORT_RULES" placeholder="(required to run)" /></div>
+          <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_SNORT_RUN_ARGS — output on stdout; blank = default</span></label><input id="env-DFIR_TOOL_SNORT_RUN_ARGS" placeholder="-r <target> -c <rules> -A fast -q" /></div>
+          <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_SNORT_UPDATE_CMD — e.g. your PulledPork command; blank = no button</span></label><input id="env-DFIR_TOOL_SNORT_UPDATE_CMD" placeholder="(none — e.g. pulledpork)" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_SNORT_AUTO_RUN — on/off</span></label><input id="env-DFIR_TOOL_SNORT_AUTO_RUN" placeholder="on" /></div>
+        </div>
+        <div style="margin:4px 0 14px"><button class="tool-update" data-tool="snort" type="button">↻ Update rules</button></div>
+
+        <div class="settings-group-head">YARA <span style="color:var(--c-7e8aa0);font-weight:400">(scan files/dirs → matches · <a href="https://github.com/VirusTotal/yara" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="sgrid">
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_YARA_BINARY — full path to yara(64); blank = off</span></label><input id="env-DFIR_TOOL_YARA_BINARY" placeholder="(off)" /></div>
+          <div class="sfield"><label>Rules path<span class="sfield-hint">DFIR_TOOL_YARA_RULES — substituted for &lt;rules&gt; (your .yar/.yara)</span></label><input id="env-DFIR_TOOL_YARA_RULES" placeholder="(required to run)" /></div>
+          <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_YARA_RUN_ARGS — output on stdout; blank = default</span></label><input id="env-DFIR_TOOL_YARA_RUN_ARGS" placeholder="-s -m -r <rules> <target>" /></div>
+          <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_YARA_UPDATE_CMD — e.g. git -C &lt;rulesDir&gt; pull; blank = no button</span></label><input id="env-DFIR_TOOL_YARA_UPDATE_CMD" placeholder="(none — e.g. git -C ... pull)" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_YARA_AUTO_RUN — on/off (no drop extension; manual run only by default)</span></label><input id="env-DFIR_TOOL_YARA_AUTO_RUN" placeholder="on" /></div>
+        </div>
+        <div style="margin:4px 0 14px"><button class="tool-update" data-tool="yara" type="button">↻ Update rules</button></div>
+
+        <div class="sfield-hint" style="display:block">Master auto-run kill-switch: <code>DFIR_TOOL_AUTO_RUN=off</code> disables all auto-run (set on the General tab's <code>.env</code>, or your env).</div>
+      </div>
+
       <!-- IOC Whitelist (Phase 2 of #35) -->
       <div class="stab-pane" id="stab-whitelist">
         <div class="sfield-hint" style="display:block;margin-bottom:8px">
@@ -2785,6 +2854,7 @@
           <span id="addEventMsg" class="manual-msg"></span>
         </form>
       </div>
+      <div id="rawToolBanner" class="synth-meta" style="display:none"></div>
       <div id="dropStatus" class="synth-meta" style="display:none"></div>
       <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="evIdFilterChip" style="display:none;margin:0 0 8px;font-size:12px;background:var(--c-1a1f2a);border:1px solid var(--c-2a2f3a);border-radius:4px;padding:6px 10px;"></div>
@@ -6512,14 +6582,64 @@
       fetch(`/cases/${caseId}/drop-status`).then(r => r.ok ? r.json() : null).then(renderDropStatus).catch(() => {});
     }
     // The drop-folder auto-import feature stays fully enabled (the server poller keeps ingesting
-    // cases/<id>/drop/); we deliberately do NOT surface its inbox/sweep banner in the dashboard.
-    // Failures still land in drop/_failed/ and are reported via the server log + any notification
-    // channel. `d` is accepted (and ignored) so the fetch/WebSocket callers don't need to change.
-    function renderDropStatus(_d) {
+    // cases/<id>/drop/); we deliberately do NOT surface its inbox/sweep banner in the dashboard —
+    // EXCEPT the actionable "raw EVTX/PCAP awaiting an external tool" case (#211), which needs an
+    // analyst decision (run a tool / configure one), so it's surfaced as a banner.
+    function renderDropStatus(d) {
       const el = document.getElementById("dropStatus");
       if (!el) return;
-      el.style.display = "none";
-      el.innerHTML = "";
+      // GET /cases/:id/drop-status wraps the record as { enabled, pollSeconds, dropPath, status }.
+      const st = (d && d.status) || d || {};
+      const pending = st.pendingRawInputs || [];
+      if (!pending.length) { el.style.display = "none"; el.innerHTML = ""; return; }
+      const caseId = (document.getElementById("caseId").value || "").trim();
+      const rows = pending.map((p) => {
+        const label = TOOL_LABELS[p.suggestedTool] || p.suggestedTool || "an external tool";
+        if (p.configured && p.suggestedTool) {
+          return `<div class="sm-item">📁 <strong>${esc(p.relpath)}</strong> — raw ${esc(p.ext)} · ` +
+            `<button class="raw-run" data-tool="${esc(p.suggestedTool)}" data-path="drop/${esc(p.relpath)}" style="padding:1px 8px;font-size:11px">Run ${esc(label)}</button></div>`;
+        }
+        return `<div class="sm-item">📁 <strong>${esc(p.relpath)}</strong> — raw ${esc(p.ext)}, no tool configured · ` +
+          `<button class="raw-config" style="padding:1px 8px;font-size:11px">Configure ${esc(label)}</button></div>`;
+      }).join("");
+      el.style.display = "block";
+      el.innerHTML = `<div class="sm-line"><span>📥 Raw evidence needs an external tool</span>` +
+        `<span style="color:var(--c-9aa4b2)">${pending.length} file${pending.length !== 1 ? "s" : ""}</span></div>${rows}`;
+      el.querySelectorAll(".raw-config").forEach((b) => b.onclick = openToolsSettings);
+      el.querySelectorAll(".raw-run").forEach((b) => b.onclick = () => runRawTool(caseId, b.getAttribute("data-tool"), b.getAttribute("data-path"), b));
+    }
+    // Display names for the external tools (kept in sync with TOOL_DEFS labels server-side).
+    const TOOL_LABELS = { hayabusa: "Hayabusa", velociraptor_cli: "Velociraptor CLI", suricata: "Suricata", snort: "Snort", yara: "YARA" };
+    // Deep-link the Settings modal straight to the Tools tab (mirrors the velo badge link).
+    function openToolsSettings() {
+      const b = document.getElementById("settingsBtn"); if (b) b.click();
+      const t = document.querySelector('.stab[data-stab="tools"]'); if (t) t.click();
+    }
+    // Manually run a configured tool against a raw file (drop-relative path), then refresh.
+    function runRawTool(caseId, toolId, path, btn) {
+      if (!caseId) return;
+      if (btn) { btn.disabled = true; btn.textContent = "Running…"; }
+      fetch(`/cases/${caseId}/tools/${toolId}/run`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path }),
+      }).then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+        if (!ok) { if (btn) { btn.disabled = false; btn.textContent = "Retry"; } document.getElementById("status").textContent = (j && j.error ? j.error : "tool run failed") + " — restart the companion server if this 404s"; return; }
+        document.getElementById("status").textContent = `${toolId}: +${j.addedEvents || 0} event(s), +${j.addedIocs || 0} IOC(s)`;
+        loadDropStatus(caseId); loadImportMeta(caseId);
+      }).catch(e => { if (btn) { btn.disabled = false; btn.textContent = "Retry"; } document.getElementById("status").textContent = "tool run failed: " + e.message + " — restart the companion server if this 404s"; });
+    }
+    // Raw EVTX/PCAP picked in the Import dialog: can't be parsed directly, so explain + point at the
+    // external-tools path (Settings → Tools + the case drop folder). #211
+    function renderRawToolBanner(names) {
+      const el = document.getElementById("rawToolBanner");
+      if (!el) return;
+      const list = names.map((n) => `<code>${esc(n)}</code>`).join(", ");
+      el.style.display = "block";
+      el.innerHTML = `<div class="sm-line"><span>⚠️ Raw evidence not directly supported</span>` +
+        `<button id="rawBannerCfg" style="padding:1px 8px;font-size:11px">Settings → Tools</button></div>` +
+        `<div class="sm-item">${list} ${names.length > 1 ? "are" : "is"} raw EVTX/PCAP — the Companion analyzes tool <em>output</em>, not raw binaries. ` +
+        `Configure Hayabusa / Velociraptor CLI / Suricata / Snort under <strong>Settings → Tools</strong>, then either copy the file into this case's ` +
+        `<strong>drop folder</strong> (it runs automatically) or export it to a supported format (EVTX → XML via <code>wevtutil qe /f:xml</code>).</div>`;
+      const b = document.getElementById("rawBannerCfg"); if (b) b.onclick = openToolsSettings;
     }
     function renderImportMeta(m) {
       paintTimelineImportMeta(m);
@@ -10956,8 +11076,14 @@
       if (!caseId || !files.length) return;
       const statusEl = document.getElementById("status");
       const isImage = (f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp)$/i.test(f.name);
+      // Raw binary evidence (EVTX/PCAP) the Companion can't parse — reading it as text corrupts it, so
+      // don't upload it. Surface a banner offering the external-tools path (Settings → Tools / drop). #211
+      const isRawTool = (f) => /\.(evtx|evt|pcap|pcapng)$/i.test(f.name);
       const images = files.filter(isImage);
-      const data = files.filter((f) => !isImage(f));
+      const rawTool = files.filter((f) => !isImage(f) && isRawTool(f));
+      const data = files.filter((f) => !isImage(f) && !isRawTool(f));
+      if (rawTool.length) renderRawToolBanner(rawTool.map((f) => f.name));
+      if (!data.length && !images.length) { e.target.value = ""; return; }
 
       // Minimum severity to import — restored across all import types. Asked once for the
       // whole batch (data files only; screenshots have no severity). Imports that don't grade
@@ -12588,6 +12714,7 @@
         if (tab === "dashboard-views") loadDashboardViewsEditor();
         if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
         if (tab === "updates") loadUpdateCheck();
+        if (tab === "tools") loadTools();
         if (tab === "diagnostics") { loadPreflightStatus(); loadDiagnostics(); }
       });
     });
@@ -13159,6 +13286,46 @@
         banner.style.display = "none";
       }
     }
+
+    // External forensic tools (#211): show which tools are configured + wire the per-tool Update-rules
+    // buttons. Env fields are populated by the generic fetchEnvSettings (like every other settings tab).
+    function loadTools() {
+      const wire = () => {
+        document.querySelectorAll("#stab-tools .tool-update").forEach((b) => b.onclick = () => updateToolRules(b.getAttribute("data-tool"), b));
+      };
+      fetch("/tools/status").then(r => r.ok ? r.json() : null).then(j => {
+        const el = document.getElementById("toolsStatus");
+        if (!el) return wire();
+        if (!j || !j.enabled) { el.innerHTML = `Tool runner not available — restart the companion server if this 404s.`; return wire(); }
+        const rows = (j.tools || []).map((t) => {
+          const state = t.configured
+            ? `<span style="color:#7fd08a">configured</span>${t.autoRun ? " · auto-run on" : " · auto-run off"}`
+            : `<span style="color:var(--c-7e8aa0)">off</span>`;
+          return `<div>${esc(t.label)} — ${state}${t.hasUpdate ? "" : " · no update command"}</div>`;
+        }).join("");
+        el.innerHTML = rows || "no tools";
+        wire();
+      }).catch(() => wire());
+    }
+    function updateToolRules(toolId, btn) {
+      const caseId = (document.getElementById("caseId").value || "").trim();
+      const msg = document.getElementById("toolsMsg");
+      if (btn) { btn.disabled = true; btn.textContent = "Updating…"; }
+      // Case id is only needed for the route path; use the connected case, or "_" (the command is global).
+      fetch(`/cases/${encodeURIComponent(caseId || "_")}/tools/${toolId}/update-rules`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      }).then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+        if (btn) { btn.disabled = false; btn.textContent = "↻ Update rules"; }
+        if (msg) msg.textContent = ok ? `${toolId}: ${(j.output || "updated").slice(0, 200)}` : (j.error || "update failed") + " — restart the companion server if this 404s";
+      }).catch(e => { if (btn) { btn.disabled = false; btn.textContent = "↻ Update rules"; } if (msg) msg.textContent = "update failed: " + e.message; });
+    }
+    document.getElementById("toolsReconnectBtn").onclick = () => {
+      const msg = document.getElementById("toolsMsg");
+      if (msg) msg.textContent = "applying…";
+      fetch("/tools/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(r => r.json()).then(j => { if (msg) msg.textContent = j.ok ? `applied — ${(j.configured || []).length} tool(s) configured` : (j.error || "reconnect failed"); loadTools(); })
+        .catch(e => { if (msg) msg.textContent = "reconnect failed: " + e.message + " — restart the companion server if this 404s"; });
+    };
 
     function loadUpdateCheck() {
       return fetch("/update-check").then(r => r.json()).then(j => {

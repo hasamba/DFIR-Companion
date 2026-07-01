@@ -18,12 +18,23 @@ export interface DropFileStat {
   mtimeMs: number;
 }
 
-/** How a drop file is routed once it has settled. */
-export type DropClass = "image" | "artifact";
+/**
+ * How a drop file is routed once it has settled.
+ *  - "image":          screenshot/vision pipeline
+ *  - "raw-tool-input": a raw binary (EVTX/PCAP) the Companion can't parse — must be run through an
+ *                      analyst-configured external tool (Hayabusa/Velociraptor CLI/Suricata/Snort),
+ *                      NOT read as text (reading a binary as text corrupts it). See #211.
+ *  - "artifact":       everything else → read as text and handed to the importer detector
+ */
+export type DropClass = "image" | "raw-tool-input" | "artifact";
 
 // Image extensions routed to the screenshot/vision pipeline (transcoded to webp on ingest). Anything
 // else is read as text and handed to the importer detector.
 export const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"]);
+
+// Raw binary evidence the Companion can't parse natively — routed to the external-tool run path (#211),
+// never read as text. Kept in sync with the tool `extensions` in integrations/tools/toolConfig.ts.
+export const RAW_TOOL_EXTS = new Set([".evtx", ".evt", ".pcap", ".pcapng"]);
 
 // Reserved subfolders the watcher writes to — never re-scanned (moving a file here *is* the dedup).
 export const DROP_PROCESSED = "_processed";
@@ -57,9 +68,21 @@ export function shouldIgnoreDropFile(relpath: string): boolean {
   return IGNORED_BASENAMES.has(base.toLowerCase());
 }
 
-/** Route a (non-ignored) drop file by extension: image → capture pipeline, else artifact import. */
+/**
+ * Route a (non-ignored) drop file by extension: image → capture pipeline; raw binary (EVTX/PCAP) →
+ * external-tool run path; else artifact import (read as text).
+ */
 export function classifyDropFile(relpath: string): DropClass {
-  return IMAGE_EXTS.has(extname(relpath).toLowerCase()) ? "image" : "artifact";
+  const ext = extname(relpath).toLowerCase();
+  if (IMAGE_EXTS.has(ext)) return "image";
+  if (RAW_TOOL_EXTS.has(ext)) return "raw-tool-input";
+  return "artifact";
+}
+
+/** The lowercased raw-tool extension of a file, or "" if it isn't a raw-tool input. */
+export function rawToolInputExt(relpath: string): string {
+  const ext = extname(relpath).toLowerCase();
+  return RAW_TOOL_EXTS.has(ext) ? ext : "";
 }
 
 /** A file is too large to read into memory for import (use Import-from-path for those). */

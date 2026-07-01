@@ -15,6 +15,15 @@ const failureSchema = z.object({
   reason: z.string().catch(""),
 });
 
+// A raw binary (EVTX/PCAP) waiting on an external tool: it can't be imported as text, so instead of
+// failing it we surface it as "pending" so the dashboard can offer "Run <tool>" / "Configure <tool>".
+const pendingRawSchema = z.object({
+  relpath: z.string().catch(""),
+  ext: z.string().catch(""),
+  suggestedTool: z.string().nullable().catch(null),
+  configured: z.boolean().catch(false),
+});
+
 export const dropStatusSchema = z.object({
   lastSweepAt: z.string().catch(""),
   dropPath: z.string().catch(""),
@@ -22,13 +31,15 @@ export const dropStatusSchema = z.object({
   failedCount: z.number().catch(0),
   imported: z.array(z.string()).catch([]),
   failed: z.array(failureSchema).catch([]),
+  pendingRawInputs: z.array(pendingRawSchema).catch([]),
 });
 
 export type DropFailure = z.infer<typeof failureSchema>;
+export type PendingRawInput = z.infer<typeof pendingRawSchema>;
 export type DropStatus = z.infer<typeof dropStatusSchema>;
 
 const EMPTY: DropStatus = {
-  lastSweepAt: "", dropPath: "", importedCount: 0, failedCount: 0, imported: [], failed: [],
+  lastSweepAt: "", dropPath: "", importedCount: 0, failedCount: 0, imported: [], failed: [], pendingRawInputs: [],
 };
 
 // One sweep can drop hundreds of files; cap the detail lists (the counts stay exact).
@@ -36,8 +47,9 @@ const MAX_LISTED = 200;
 
 export interface DropSweep {
   dropPath: string;
-  imported: string[];           // relpaths imported OK this sweep
-  failed: DropFailure[];        // relpaths that failed + the reason
+  imported: string[];               // relpaths imported OK this sweep
+  failed: DropFailure[];            // relpaths that failed + the reason
+  pendingRawInputs?: PendingRawInput[]; // raw EVTX/PCAP awaiting an external tool run
 }
 
 export class DropStatusStore {
@@ -64,6 +76,7 @@ export class DropStatusStore {
       failedCount: sweep.failed.length,
       imported: sweep.imported.slice(0, MAX_LISTED),
       failed: sweep.failed.slice(0, MAX_LISTED),
+      pendingRawInputs: (sweep.pendingRawInputs ?? []).slice(0, MAX_LISTED),
     };
     await atomicWrite(this.path(caseId), JSON.stringify(status, null, 2));
     return status;

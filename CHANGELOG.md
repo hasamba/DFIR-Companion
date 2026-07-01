@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **External tool runner (Settings → Tools)** — run your own local Hayabusa / Velociraptor CLI / Suricata / Snort / YARA against raw EVTX/PCAP/files, then ingest the tool's output through the existing importers; raw drops auto-run when configured, and the Import dialog shows a banner for EVTX/PCAP (closes #211).
+- **YARA CLI output importer** (`yara -s -m`) — rule matches → file-match events + file/hash IOCs.
+
 ## [0.28.0] - 2026-07-01
 
 ### Fixed
