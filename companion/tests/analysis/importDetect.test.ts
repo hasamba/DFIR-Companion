@@ -357,6 +357,19 @@ describe("detectImportKind — logs & edges", () => {
   });
 });
 
+describe("detectImportKind — Cisco ASA firewall syslog", () => {
+  it("asa: %ASA-tagged syslog (not the generic log fallback)", () => {
+    const log = [
+      "<166>May 15 06:42:06 fw01 %ASA-6-302013: Built outbound TCP connection 1209723 for inside:10.30.20.30/45083 (45.62.114.1/21267) to outside:185.143.62.40/443 (185.143.62.40/443)",
+      "<166>May 15 06:42:09 fw01 %ASA-6-302014: Teardown TCP connection 1209723 for inside:10.30.20.30/45083 to outside:185.143.62.40/443 duration 0:00:03 bytes 23625 TCP FINs",
+    ].join("\n");
+    expect(detectImportKind("cisco_asa.log", log)).toBe("asa");
+  });
+  it("NOT asa: a plain syslog stays a log", () => {
+    expect(detectImportKind("syslog.log", "Jan  1 00:00:01 host sshd[1]: Failed password for root")).toBe("log");
+  });
+});
+
 describe("detectImportKind — combined access/proxy log", () => {
   it("combinedlog: by filename (web/proxy access log, not the generic log fallback)", () => {
     const line = '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "Prometheus/2.47.0"';

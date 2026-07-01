@@ -7,7 +7,7 @@ import { z } from "zod";
 export const BUILTIN_KINDS: ReadonlySet<string> = new Set([
   "thor", "siem", "evtxxml", "chainsaw", "hayabusa", "ecar", "velociraptor", "securityonion", "socrates", "network", "kape", "cybertriage",
   "m365", "aws", "cloud", "plaso", "sandbox", "memory", "email", "auditd", "journald",
-  "sysdig", "wazuh", "thehive", "bashhistory", "snort", "combinedlog", "csv", "log", "unknown",
+  "sysdig", "wazuh", "thehive", "bashhistory", "snort", "combinedlog", "asa", "csv", "log", "unknown",
 ]);
 
 const severityEnum = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
