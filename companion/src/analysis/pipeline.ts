@@ -76,6 +76,7 @@ import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImp
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { parseEcarJson, ECAR_SOURCE, type EcarImportOptions } from "./ecarImport.js";
 import { parseSnortLog, SNORT_SOURCE, type SnortImportOptions } from "./snortImport.js";
+import { parseCombinedLog, COMBINED_LOG_SOURCE, type CombinedLogImportOptions } from "./combinedLogImport.js";
 import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
 import { parseSocrates, type SocratesImportOptions } from "./socratesImport.js";
 import { parseSecurityOnion, type SecurityOnionImportOptions } from "./securityOnionImport.js";
@@ -1966,6 +1967,52 @@ export class AnalysisPipeline {
       timelineNote: `ECAR import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
         (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import an Apache/Nginx/Squid combined access log (web server or forward-proxy). Deterministic
+  // (no AI): raw web/proxy telemetry, Info by default with a conservative bump only for an
+  // access-denied response; git smart-HTTP clone/push tagged T1213. See combinedLogImport.ts.
+  async importCombinedLog(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;
+      importedAt: string;
+      combinedLog?: CombinedLogImportOptions;
+      minSeverity?: Severity;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseCombinedLog(text, { ...opts.combinedLog });
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [COMBINED_LOG_SOURCE],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Web/proxy access-log import (${parsed.format}): ${parsed.kept} request(s) from ${parsed.total} line(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
       summary: "",
     };
     const delta = deltaSchema.parse(raw);

@@ -15,12 +15,13 @@ import { looksLikeWinEventXml } from "./evtxXmlImport.js";
 import { looksLikeBashHistory } from "./bashHistoryImport.js";
 import { isEcarRecord } from "./ecarImport.js";
 import { looksLikeSnort } from "./snortImport.js";
+import { looksLikeCombinedLog } from "./combinedLogImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
 
 export type ImportKind =
   | "thor" | "siem" | "evtxxml" | "chainsaw" | "hayabusa" | "ecar" | "velociraptor" | "securityonion" | "socrates" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
-  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "snort" | "csv" | "log" | "unknown";
+  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "snort" | "combinedlog" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -463,6 +464,13 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // IDS verdict feed; checked before the generic log fallback so it's parsed deterministically, not
   // sent to the AI line-triage.
   if (looksLikeSnort(t)) return "snort";
+
+  // Apache/Nginx/Squid combined access log (web server or forward-proxy access log) — checked
+  // before the generic log fallback so it's parsed deterministically instead of relying on AI
+  // line-triage, which silently drops rare/high-signal lines on a large, mostly-benign real log
+  // (see logAggregate.ts's truncation-bias fix for the general case; this importer sidesteps it
+  // entirely for the two most common web/proxy formats).
+  if (looksLikeCombinedLog(filename, t)) return "combinedlog";
 
   // Tabular (CSV / EZ / Plaso / Hayabusa-csv / M365-csv) vs a line-oriented log.
   const csvKind = detectCsv(t);

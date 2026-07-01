@@ -357,6 +357,24 @@ describe("detectImportKind — logs & edges", () => {
   });
 });
 
+describe("detectImportKind — combined access/proxy log", () => {
+  it("combinedlog: by filename (web/proxy access log, not the generic log fallback)", () => {
+    const line = '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "Prometheus/2.47.0"';
+    expect(detectImportKind("web_access.log", line)).toBe("combinedlog");
+    expect(detectImportKind("proxy_access.log", line)).toBe("combinedlog");
+  });
+  it("combinedlog: by content signature (no filename hint)", () => {
+    const log = [
+      '10.30.10.14 - arjun.mehta@corp.com [15/May/2024:06:42:01 +0000] "CONNECT vault.io:443 HTTP/1.1" 200 163 "-" "Wget/1.21.3"',
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "Prometheus/2.47.0"',
+    ].join("\n");
+    expect(detectImportKind("dump.txt", log)).toBe("combinedlog");
+  });
+  it("NOT combinedlog: a plain syslog stays a log", () => {
+    expect(detectImportKind("auth.log", "Jan  1 00:00:01 host sshd[1]: Failed password for root")).toBe("log");
+  });
+});
+
 describe("detectImportKind — Windows Event Log XML", () => {
   const evtxXml = `<?xml version="1.0" encoding="utf-8"?>
 <Events>
