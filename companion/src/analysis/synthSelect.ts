@@ -2,7 +2,7 @@ import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { buildAssetGraph } from "./assetGraph.js";
 import { extractCveIds, matchKevEntries, buildKevDigest, type KevCatalog } from "./kev.js";
-import { rankConnectiveIocs, buildConnectiveIocDigest } from "./iocAnchors.js";
+import { rankConnectiveIocs, buildConnectiveIocDigest, shortHost, isKnownHostAsset } from "./iocAnchors.js";
 import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 
 const SEV_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
@@ -56,6 +56,9 @@ export function buildSynthesisContext(
 ): string {
   const graph = buildAssetGraph({ ...state, forensicTimeline: scopedEvents });
   const iocVal = new Map(graph.iocs.map((i) => [i.id, i.value] as const));
+  // The case's own host assets — a verdict on one of these (shared internal infra the model would
+  // otherwise trust at face value) needs a flag, not silent inclusion. See iocAnchors.ts.
+  const hostNames = new Set(graph.assets.filter((a) => a.type === "host").map((a) => shortHost(a.name)));
 
   const assetLines = graph.assets.filter((a) => a.compromised).slice(0, 25).map((a) => {
     const iocs = a.iocIds.map((id) => iocVal.get(id) || id).slice(0, 8).join(", ");
@@ -68,7 +71,10 @@ export function buildSynthesisContext(
     .map((i) => {
       const e = (i.enrichments ?? []).find((x) => x.verdict === "malicious")
         ?? (i.enrichments ?? []).find((x) => x.verdict === "suspicious");
-      return `- ${i.value} = ${e?.verdict}${e?.source ? ` (${e.source}${e.score ? ` ${e.score}` : ""})` : ""}`;
+      const conflict = isKnownHostAsset(i.value, hostNames)
+        ? " ⚠ CONFLICT: also one of this case's OWN host assets — this verdict may be stale/wrong; requires independent corroboration before treating it as confirmed malicious"
+        : "";
+      return `- ${i.value} = ${e?.verdict}${e?.source ? ` (${e.source}${e.score ? ` ${e.score}` : ""})` : ""}${conflict}`;
     });
 
   // KEV correlation: scan the scoped events + IOC values for CVE ids and cross-reference
