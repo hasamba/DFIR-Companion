@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Combined access-log importer captures the HTTP Referer** — a secret leaked in the Referer query string is no longer silently dropped (host → domain IOC, full referer → unaggregated url IOC).
+- **Combined access-log importer captures the HTTP User-Agent** — a UA that isn't a `Product/Version` string (scanner/bot/prompt-injection payload) is emitted as an `other` IOC so it survives request aggregation; routine product UAs stay quiet.
 
 ## [0.28.0] - 2026-07-01
 

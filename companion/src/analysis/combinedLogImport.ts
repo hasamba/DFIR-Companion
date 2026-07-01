@@ -26,6 +26,16 @@
 // collapsed by aggregation, so a secret-bearing referer survives even when its request line
 // aggregates into a busier sibling — and the referer is folded into the event description too.
 //
+// The HTTP User-Agent is the other attacker-controlled field this format carries, and was likewise
+// PARSED-then-DISCARDED. It's a classic injection / scanner / C2 surface (a bot's UA, a prompt-
+// injection payload smuggled into the UA, a hand-crafted exploit tool string). It's now folded into
+// the description, and a UA that does NOT have the structural shape of a real User-Agent — i.e. does
+// not open with a `Product/Version` token (Mozilla/5.0, curl/8.0, Prometheus/2.47.0, git/2.34.1) — is
+// emitted as an `other` IOC. That's a low-false-positive STRUCTURAL anomaly test, not a maliciousness
+// guess: ordinary product UAs stay quiet (no IOC, preserving "routine traffic → no IOC"), while prose/
+// markup smuggled into the field survives even when its request line (often `GET / 200`) aggregates
+// into a benign sibling and the representative description carries a different UA.
+//
 // This importer is deliberately NOT "smart" about deciding what's malicious per line — guessing from
 // domain-name shape (TLD, DGA-ish labels) is unreliable and easy to game. The goal is that EVERY
 // unique request pattern survives as its own (aggregated) event so downstream correlation/synthesis
@@ -90,6 +100,13 @@ export function parseApacheDate(raw: string): string {
 // Bitbucket…) fetches/pushes over HTTPS, regardless of the hosting product.
 const GIT_SMART_HTTP = /\.git\/(?:info\/refs\?service=git-(?:upload|receive)-pack|git-(?:upload|receive)-pack)\b/i;
 
+// A conventional User-Agent opens with a `Product/Version` token (Mozilla/5.0, curl/8.0,
+// Prometheus/2.47.0, git/2.34.1, python-requests/2.31). A payload smuggled into the UA field — prose,
+// markup, an injection directive — does not. This structural test flags the anomaly with a low
+// false-positive rate WITHOUT guessing at maliciousness (a genuinely odd-but-benign UA getting a
+// review flag is harmless; a browser/tool UA never trips it).
+const UA_PRODUCT = /^[A-Za-z][\w.-]*\/[\w.]/;
+
 // The destination host from an absolute-URL request ("https://host/path") or a CONNECT tunnel
 // target ("host:port"). "" for an ordinary relative-path request (the log's own server IS the
 // destination — this importer doesn't know its own hostname, see module comment).
@@ -110,7 +127,7 @@ function classify(uri: string, status: number): { severity: Severity; mitre: str
 export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): MappedEvent | null {
   const m = LINE_RE.exec(line);
   if (!m) return null;
-  const [, , , userRaw, dateRaw, method, uri, statusRaw, bytesRaw, refererRaw] = m;
+  const [, , , userRaw, dateRaw, method, uri, statusRaw, bytesRaw, refererRaw, uaRaw] = m;
   const status = Number(statusRaw);
   const timestamp = parseApacheDate(dateRaw);
   const user = userRaw && userRaw !== "-" ? userRaw : "";
@@ -125,11 +142,18 @@ export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): Ma
   if (refHost) addIoc(sink, "domain", refHost);
   if (referer && /^https?:\/\//i.test(referer) && referer.includes("?")) addIoc(sink, "url", referer);
 
+  // User-Agent capture (see module comment): a UA that doesn't open like a real `Product/Version`
+  // string is anomalous (bot/scanner/injection payload) — emit it as an `other` IOC so it survives
+  // even when its request line aggregates into a benign sibling. "-" is Apache/nginx's "no UA".
+  const ua = uaRaw && uaRaw !== "-" ? uaRaw : "";
+  if (ua && !UA_PRODUCT.test(ua)) addIoc(sink, "other", ua.slice(0, 400));
+
   const { severity, mitre } = classify(uri, status);
   const userTag = user ? ` [${user}]` : "";
   const bytesTag = bytesRaw && bytesRaw !== "-" ? ` (${bytesRaw}b)` : "";
   const refTag = referer ? ` (ref ${referer})` : "";
-  const description = oneLine(`${method} ${uri} -> ${status}${bytesTag}${userTag}${refTag}`).slice(0, 600);
+  const uaTag = ua ? ` (ua ${ua})` : "";
+  const description = oneLine(`${method} ${uri} -> ${status}${bytesTag}${userTag}${refTag}${uaTag}`).slice(0, 600);
 
   return {
     timestamp,
