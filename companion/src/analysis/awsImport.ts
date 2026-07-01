@@ -69,6 +69,10 @@ const AWS_ACTIONS: Record<string, ActionDef> = {
   updateassumerolepolicy: { severity: "High", mitre: ["T1098"] },
   createpolicyversion: { severity: "High", mitre: ["T1098.003"] },
   setdefaultpolicyversion: { severity: "High", mitre: ["T1098.003"] },
+  // iam:PassRole priv-esc primitive + Lambda-based execution/persistence — from the IAM-priv-esc
+  // skill (Anthropic-Cybersecurity-Skills `detecting-aws-iam-privilege-escalation`, Apache-2.0).
+  passrole: { severity: "Medium", mitre: ["T1098"] },
+  createfunction: { severity: "Medium", mitre: ["T1648"] },
   deactivatemfadevice: { severity: "High", mitre: ["T1556"] },
   deletevirtualmfadevice: { severity: "High", mitre: ["T1556"] },
   // Defense evasion — disabling logging / detection
@@ -93,6 +97,10 @@ const AWS_ACTIONS: Record<string, ActionDef> = {
   getcalleridentity: { severity: "Info", mitre: ["T1087"] },
   assumerole: { severity: "Info", mitre: ["T1078.004"] },
   getfederationtoken: { severity: "Low", mitre: ["T1078.004"] },
+  getsessiontoken: { severity: "Low", mitre: ["T1078.004"] }, // STS token minting (cryptomining/priv-esc skills)
+  // NOTE: S3 object-level ops (GetObject/CopyObject/DeleteObject) are deliberately NOT graded here —
+  // they are extremely high-volume in normal operation, so grading each would flood the timeline
+  // (same signal-to-noise discipline as logAggregate). Bucket-policy/ACL exposure above is the signal.
   authorizesecuritygroupingress: { severity: "Medium", mitre: ["T1562.007"] },
   runinstances: { severity: "Low", mitre: ["T1578.002"] },
   importkeypair: { severity: "Medium", mitre: ["T1098.004"] },

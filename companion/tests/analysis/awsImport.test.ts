@@ -51,6 +51,21 @@ describe("parseCloudTrail — action-derived severity", () => {
     expect(r.events[0].severity).toBe("Medium");
     expect(r.events[0].description).toContain("[Client.UnauthorizedOperation]");
   });
+
+  it("grades iam:PassRole and Lambda CreateFunction (priv-esc primitives) as Medium", () => {
+    const pass = parseCloudTrail(envelope(record({ eventName: "PassRole", readOnly: false })));
+    expect(pass.events[0].severity).toBe("Medium");
+    expect(pass.events[0].mitreTechniques).toContain("T1098");
+    const fn = parseCloudTrail(envelope(record({ eventName: "CreateFunction", eventSource: "lambda.amazonaws.com", readOnly: false })));
+    expect(fn.events[0].severity).toBe("Medium");
+    expect(fn.events[0].mitreTechniques).toContain("T1648");
+  });
+
+  it("grades STS GetSessionToken as Low with T1078.004", () => {
+    const r = parseCloudTrail(envelope(record({ eventName: "GetSessionToken", eventSource: "sts.amazonaws.com", readOnly: false })));
+    expect(r.events[0].severity).toBe("Low");
+    expect(r.events[0].mitreTechniques).toContain("T1078.004");
+  });
 });
 
 describe("parseCloudTrail — console login & root", () => {
