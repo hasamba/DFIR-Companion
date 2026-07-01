@@ -49,7 +49,7 @@ const RECON_RULES: ReconRule[] = [
   // T1041 Exfiltration Over C2 Channel (file upload via web client)
   { re: /(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i, ids: ["T1041"] },
   // T1070.003 Indicator Removal: Clear Command History
-  { re: /\bhistory\s+-c\b|unset\s+histfile|histfile=\/dev\/null|histsize=0\b|(?:rm|truncate|>\s*)\s*[^\n]*\.bash_history|clear-history/i, ids: ["T1070.003"] },
+  { re: /\bhistory\s+-c\b|unset\s+histfile|histfile=\/dev\/null|histsize=0\b|histignore=\*|(?:rm|truncate|>\s*)\s*[^\n]*\.bash_history|clear-history/i, ids: ["T1070.003"] },
   // T1070.001 Indicator Removal: Clear Windows Event Logs
   { re: /\bwevtutil\b\s+cl\b|clear-eventlog|remove-eventlog|wevtutil\b[^\n]*clear-log/i, ids: ["T1070.001"] },
   // T1021.004 Remote Services: SSH
@@ -114,6 +114,14 @@ const TECHNIQUE_NAMES: Readonly<Record<string, string>> = {
   "T1567.002": "Exfiltration to Cloud Storage",
   T1219: "Remote Access Software",
   T1068: "Exploitation for Privilege Escalation",
+  // ── discovery + tradecraft techniques added from the Huntress Rapid Response corpus ──
+  "T1543.003": "Create or Modify System Process: Windows Service",
+  "T1564.002": "Hide Artifacts: Hidden Users",
+  "T1098.007": "Account Manipulation: Additional Local or Domain Groups",
+  "T1222.002": "File and Directory Permissions Modification: Linux and Mac File and Directory Permissions Modification",
+  "T1559.001": "Inter-Process Communication: Component Object Model",
+  "T1218.007": "System Binary Proxy Execution: Msiexec",
+  "T1555.003": "Credentials from Password Stores: Credentials from Web Browsers",
 };
 
 // Best-effort ATT&CK technique name for a given id (falls back to the bare id).

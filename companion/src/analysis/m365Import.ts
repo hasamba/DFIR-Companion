@@ -201,10 +201,15 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   const risk = pickStr(rec, ["riskLevelDuringSignIn", "riskLevelAggregated", "riskState"]).toLowerCase();
   const city = pickStr(rec, ["location.city"]);
   const country = pickStr(rec, ["location.countryOrRegion"]);
+  // ROPC (Resource Owner Password Credentials) legacy-auth grant — sends the password directly to
+  // the token endpoint with no interactive MFA prompt, a known Conditional-Access/MFA bypass. Entra
+  // sign-in logs surface this as the literal "BAV2ROPC" marker in the client UserAgent.
+  const isRopc = /bav2ropc/i.test(pickStr(rec, ["userAgent", "UserAgent"]));
 
   let severity: Severity; const mitre = ["T1078.004"];
   if (/high|confirmedcompromised|atrisk/.test(risk)) severity = "High";
   else if (risk === "medium") severity = "Medium";
+  else if (isRopc) { severity = "Medium"; mitre.push("T1556.007", "T1621"); }
   else if (errorCode !== 0) { severity = "Medium"; mitre.push("T1110"); }
   else severity = "Info";
   if (ip) addIoc(sink, "ip", ip);
@@ -215,6 +220,7 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   if (app) description += ` via ${app}`;
   if (errorCode !== 0) description += ` [FAILED${failureReason ? `: ${oneLine(failureReason).slice(0, 80)}` : ""}]`;
   if (risk && risk !== "none") description += ` [risk: ${risk}]`;
+  if (isRopc) description += " [legacy-auth ROPC — MFA bypass]";
   description = description.slice(0, 600);
 
   return {
