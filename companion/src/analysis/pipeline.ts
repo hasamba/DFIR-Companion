@@ -78,6 +78,7 @@ import { parseEcarJson, ECAR_SOURCE, type EcarImportOptions } from "./ecarImport
 import { parseSnortLog, SNORT_SOURCE, type SnortImportOptions } from "./snortImport.js";
 import { parseCombinedLog, COMBINED_LOG_SOURCE, type CombinedLogImportOptions } from "./combinedLogImport.js";
 import { parseCiscoAsaLog, CISCO_ASA_SOURCE, type CiscoAsaImportOptions } from "./ciscoAsaImport.js";
+import { parseSyslog, SYSLOG_SOURCE, type SyslogImportOptions } from "./syslogImport.js";
 import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
 import { parseSocrates, type SocratesImportOptions } from "./socratesImport.js";
 import { parseSecurityOnion, type SecurityOnionImportOptions } from "./securityOnionImport.js";
@@ -2127,6 +2128,53 @@ export class AnalysisPipeline {
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Snort import (${parsed.format}): ${parsed.kept} alert(s) from ${parsed.total} line(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import a plain Linux/Unix syslog export (RFC 5424 / RFC 3164). Deterministic (no AI): host
+  // telemetry stays Info, an auth-failure or crit/alert/emerg PRI bumps to Low, the host is carried
+  // as the event's asset, RFC-3164 year-less timestamps are re-anchored by the mergeDelta year-clamp.
+  // See syslogImport.ts.
+  async importSyslog(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;
+      importedAt: string;
+      syslog?: SyslogImportOptions;
+      minSeverity?: Severity;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseSyslog(text, { ...opts.syslog });
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [SYSLOG_SOURCE],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `Syslog import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} line(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
       summary: "",
     };
