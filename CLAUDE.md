@@ -79,7 +79,10 @@ companion server" messages when this happens; preserve that behavior.
 
 **Evidence import (deterministic + AI).** Besides screenshots, the pipeline ingests:
 CSV (`analyzeCsv`), generic logs (`analyzeLog` — `logAggregate.ts` collapses repetitive
-lines into counted patterns first, then AI triages only suspicious ones), **THOR**
+lines into counted patterns first, then AI triages only suspicious ones — truncation to the
+template cap protects the RARE end (sorts rarest-first when trimming, then restores
+frequency-first presentation order), not the most frequent, since a one-off attack line is
+exactly what gets outvoted by thousands of repetitive baseline patterns), **THOR**
 Nextron JSON (`importThor` → `thorImport.ts`), **SIEM/EDR** JSON (`importSiem` →
 `siemImport.ts` — unwraps the container, per-EID Windows/Sysmon mapping, field
 auto-detection for other records, aggregation; the records→result core is the exported
@@ -175,8 +178,35 @@ and **Snort/Suricata IDS** (`importSnort` → `snortImport.ts` — the `alert_fa
 IDS verdict feed, so it's consumed not re-derived: severity from the rule **Priority** (1→High/2→Medium/
 3→Low), SID + classification + flow → description, public src/dst IPs → IOCs. Year-less timestamps (like
 Cisco ASA) are stamped an assumed year and the `mergeDelta` year-clamp re-anchors them. `looksLikeSnort`
-detects it ahead of the generic-log fallback; reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`).
-The last twenty
+detects it ahead of the generic-log fallback; reuses `siemImport`'s `aggregateEvents`/`addIoc`/`cleanIp`),
+and **Apache/Nginx/Squid combined access logs** (`importCombinedLog` → `combinedLogImport.ts` — the
+near-universal "combined" log-line format (`IP - user [date] "METHOD URI PROTOCOL" status bytes
+"referer" "ua"`) used by BOTH web-server access logs and Squid forward-proxy logs. Neither carries a
+maliciousness verdict — raw telemetry, not a detection feed — so severity is **Info by default**,
+with a conservative bump only for a generic, unambiguous signal: an access-denied response
+(401/403/407) → Low, and the git smart-HTTP clone/push URL signature
+(`…/repo.git/info/refs?service=git-(upload|receive)-pack` — the canonical way any git client clones
+from any self-hosted git server) → T1213 without escalating severity. Every distinct destination
+host (an absolute-URL request or a CONNECT tunnel target) becomes a domain IOC; the authenticated
+user (Squid's `%u` field) rides in the description for free UPN detection. Deliberately NOT "smart"
+about guessing malice from a domain's shape (unreliable, easy to game) — the point is that EVERY
+unique request pattern survives as its own aggregated event so correlation/synthesis can judge it,
+instead of the generic AI log-triage path silently dropping the rare ones on a large, mostly-benign
+real log — see `logAggregate.ts` above for the analogous truncation-bias fix on formats WITHOUT a
+dedicated importer; detected by `looksLikeCombinedLog` ahead of the generic-log fallback),
+and **Cisco ASA firewall syslog** (`importCiscoAsa` → `ciscoAsaImport.ts` — the classic
+BSD-syslog-framed `%ASA-<level>-<msgid>: Built/Teardown/Deny …` message format. A firewall's
+Built/Teardown log is telemetry, not a detection feed (mirrors Zeek `conn.json`), so severity is
+**Info by default**; the one message ASA itself grades as noteworthy, an explicit **Deny**, bumps to
+Low — a block is prevention, not confirmed compromise, but still worth surfacing (see the
+branch-office benchmark, where blanket-demoting denies would have hidden a real lateral port-scan
+that manifested AS denied connections). Dynamic-NAT-translation messages (305011/305012) carry only
+the NAT mapping, never the real destination, and are dropped as pure noise — their paired
+Built/Teardown already has both. Like Snort the timestamp is year-less (`MMM DD HH:MM:SS`); an
+assumed year is stamped and the `mergeDelta` year-clamp re-anchors it once dated evidence lands.
+Public destination IPs → IOCs (RFC1918/loopback/CGNAT skipped); detected by `looksLikeCiscoAsa`
+ahead of the generic-log fallback).
+The last twenty-two
 are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.

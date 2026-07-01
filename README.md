@@ -202,6 +202,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **THOR (Nextron)** | JSON-Lines scan output | THOR alert level |
 | **Suricata / Zeek** | `eve.json`, Zeek JSON logs; telemetry → IOCs only | Alert priority / notice severity |
 | **Snort / Suricata IDS (fast)** | `alert_fast` single-line alert log | Rule **Priority** (1→High / 2→Medium / 3→Low) |
+| **Web/proxy access log** | Apache/Nginx/Squid **combined** log format (web server or forward-proxy access log) | Info by default; access-denied (401/403/407) → Low; git smart-HTTP clone/push → T1213 |
+| **Cisco ASA firewall syslog** | `%ASA-#-######:` Built/Teardown/Deny messages | Info by default (telemetry); explicit **Deny** → Low |
 | **Security Onion** | SOC Alerts/Hunt events (ECS); pushed by the extension or a SOC API export | `event.severity_label` (Suricata/SO label) |
 | **SO-CRATES** | Suricata alerts + YARA file matches (`/api/events`) and Sigma detections (`/api/sigma-alerts`); pushed by the extension or a raw export | Suricata priority / Sigma level / YARA match |
 | **Cyber Triage** | JSONL / JSON / CSV timeline | Cyber Triage item score |

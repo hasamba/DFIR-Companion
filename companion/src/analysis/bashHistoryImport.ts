@@ -104,8 +104,12 @@ const CMD_RULES: CmdRule[] = [
   // Privilege escalation tradecraft (setuid bits, pkexec, known sudo abuse) — NOT plain `sudo`.
   { re: /\bchmod\s+[0-7]*4[0-7]{3}\b|\bchmod\s+[ug]\+s\b|\bpkexec\b|\bsudo\s+-l\b|\bsetcap\b/i, severity: "Medium", mitre: ["T1548.001"] },
   // Exfiltration over web — curl/wget UPLOADING a file (POST form / --upload-file / --data-binary),
-  // distinct from (and worse than) a plain download below. #199.
-  { re: /\b(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@|--data\s+@)/i, severity: "Medium", mitre: ["T1041"] },
+  // distinct from (and worse than) a plain download below. #199. T1567.002 (Exfiltration to Cloud
+  // Storage) is the historically-accurate label for an HTTP(S) upload; T1041 is kept alongside it
+  // because exfilCorrelate.ts / stateMerge.ts key on T1041 to stitch a preceding archive-staging
+  // event (T1560.001) into a first-class "confirmed exfiltration" finding — removing it would
+  // silently break that correlation.
+  { re: /\b(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@|--data\s+@)/i, severity: "Medium", mitre: ["T1041", "T1567.002"] },
   // Collection — bulk database dump to a file (mysqldump/pg_dump/mongodump). #199.
   { re: /\b(?:mysqldump|pg_dump|pg_dumpall|mongodump)\b/i, severity: "Medium", mitre: ["T1005"] },
   // Ingress tool transfer — fetching files (not piped, so lower than download-and-exec above).

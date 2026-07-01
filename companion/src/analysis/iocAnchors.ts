@@ -21,7 +21,23 @@ export interface IocAnchor {
   tools: string[];       // distinct tools that observed it
   malicious: boolean;    // a third-party threat-intel verdict marked it malicious/suspicious
   suspicious: boolean;   // offline heuristic flagged it (risky TLD / DGA-ish)
+  internalConflict: boolean; // this value IS ALSO one of the case's own host assets (see below)
   score: number;
+}
+
+// A malicious/suspicious verdict on a value that is ALSO one of the case's own monitored HOST
+// assets (e.g. a shared internal DB/DC/file server everyone's traffic touches) is a red flag for
+// STALE OR WRONG threat-intel data, not necessarily a real compromise indicator — internal
+// infrastructure is exactly the kind of value that scores high on connective reach (many
+// hosts/accounts touch it) for reasons that have nothing to do with being a C2 backbone. Matches
+// on the bare hostname (before any subdomain qualification) so "db-01" and "db-01.corp.local"
+// both recognize each other, mirroring the short-host matching used elsewhere for cross-tool
+// correlation (see correlate.ts's host+pid step).
+export function shortHost(value: string): string {
+  return value.toLowerCase().replace(/^https?:\/\//, "").split(/[/:?]/)[0].split(".")[0];
+}
+export function isKnownHostAsset(value: string, hostNames: ReadonlySet<string>): boolean {
+  return hostNames.has(shortHost(value));
 }
 
 // High-abuse / commonly-malicious TLDs — a HINT, never a verdict.
@@ -61,6 +77,9 @@ export function rankConnectiveIocs(
   const graph = buildAssetGraph({ ...state, forensicTimeline: scopedEvents });
   const assetById = new Map(graph.assets.map((a) => [a.id, a] as const));
   const toolsByIocId = deriveIocSources(state.iocs, scopedEvents);
+  // The FULL set of the case's own host assets (not just this IOC's touched hosts) — used to catch
+  // a verdict on the org's OWN shared infrastructure (see isKnownHostAsset above).
+  const hostNames = new Set(graph.assets.filter((a) => a.type === "host").map((a) => shortHost(a.name)));
 
   const anchors: IocAnchor[] = [];
   for (const gi of graph.iocs) {
@@ -75,17 +94,23 @@ export function rankConnectiveIocs(
     const tools = toolsByIocId[gi.id] ?? [];
     const malicious = gi.verdict === "malicious" || gi.verdict === "suspicious";
     const suspicious = (gi.type === "domain" || gi.type === "url") && looksSuspiciousDomain(gi.value);
+    const internalConflict = (malicious || suspicious) && isKnownHostAsset(gi.value, hostNames);
 
     const connective = hosts.size >= minHosts || tools.length >= minTools;
     if (!connective && !malicious && !suspicious) continue;
 
     // Cross-host reach is the strongest signal (a C2 touching N hosts IS the backbone), so it
     // dominates the score; a third-party malicious verdict ranks above a lone offline heuristic.
-    const score = hosts.size * 4 + tools.length * 2 + accounts.size + (malicious ? 6 : 0) + (suspicious ? 1 : 0);
+    // But a value that's ALSO one of the case's own hosts naturally scores high on hosts.size just
+    // by being shared internal infrastructure — don't let a (possibly stale/wrong) verdict pile a
+    // full +6 on top of that; a much smaller bump keeps it from being presented as a confirmed C2
+    // backbone while still surfacing the conflict for the analyst/model to weigh.
+    const maliciousBump = malicious ? (internalConflict ? 1 : 6) : 0;
+    const score = hosts.size * 4 + tools.length * 2 + accounts.size + maliciousBump + (suspicious ? 1 : 0);
     anchors.push({
       value: gi.value, type: gi.type,
       hosts: [...hosts].sort(), accounts: [...accounts].sort(), tools,
-      malicious, suspicious, score,
+      malicious, suspicious, internalConflict, score,
     });
   }
 
@@ -106,7 +131,10 @@ export function buildConnectiveIocDigest(anchors: IocAnchor[]): string {
     if (a.tools.length) parts.push(`${a.tools.length} tool${a.tools.length > 1 ? "s" : ""}: ${a.tools.join(", ")}`);
     if (a.accounts.length) parts.push(`accounts: ${a.accounts.join(", ")}`);
     const flags = [a.malicious ? "threat-intel: malicious" : "", a.suspicious ? "suspicious indicator" : ""].filter(Boolean).join(", ");
-    return `- ${a.value}${parts.length ? ` [${parts.join(" | ")}]` : ""}${flags ? ` ⚠ ${flags}` : ""}`;
+    const conflict = a.internalConflict
+      ? " ⚠ CONFLICT: this is ALSO one of the case's OWN host assets — a third-party verdict here may be stale/wrong; do NOT treat it as a confirmed external C2 backbone without independent corroborating timeline evidence"
+      : "";
+    return `- ${a.value}${parts.length ? ` [${parts.join(" | ")}]` : ""}${flags ? ` ⚠ ${flags}` : ""}${conflict}`;
   });
   return `CONNECTIVE INDICATORS (cross-host / multi-tool — likely the attack backbone, weigh heavily):\n${lines.join("\n")}\n\n`;
 }

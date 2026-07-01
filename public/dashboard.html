@@ -9599,7 +9599,7 @@
       // the lens subset, so a lens-excluded hidden source isn't forgotten when the lens toggles.
       for (const s of [...hiddenSources]) if (!allSources.includes(s)) hiddenSources.delete(s);
       const sources = lensFt ? sourceFacets(lensFt) : allSources;
-      if (sources.length < 2) { wrap.style.display = "none"; menu.hidden = true; _srcMenuSig = ""; return; }
+      if (sources.length < 1) { wrap.style.display = "none"; menu.hidden = true; _srcMenuSig = ""; return; }
       wrap.style.display = "";
       const hiddenInView = sources.filter(s => hiddenSources.has(s)).length;
       const shown = sources.length - hiddenInView;
