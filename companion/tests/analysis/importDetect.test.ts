@@ -329,8 +329,8 @@ describe("detectImportKind — Wazuh", () => {
 });
 
 describe("detectImportKind — logs & edges", () => {
-  it("log: a line-oriented syslog file", () => {
-    expect(detectImportKind("auth.log", "Jan  1 00:00:01 host sshd[1]: Failed password for root\nJan  1 00:00:02 host sshd[1]: Failed password for admin")).toBe("log");
+  it("log: a generic app log with no syslog/CSV framing falls back to AI line-triage", () => {
+    expect(detectImportKind("app.log", "app started ok\nprocessing batch 12\nWARN retrying connection\nrequest done in 42ms")).toBe("log");
   });
   it("unknown: empty input", () => {
     expect(detectImportKind("x", "")).toBe("unknown");
@@ -365,8 +365,40 @@ describe("detectImportKind — Cisco ASA firewall syslog", () => {
     ].join("\n");
     expect(detectImportKind("cisco_asa.log", log)).toBe("asa");
   });
-  it("NOT asa: a plain syslog stays a log", () => {
-    expect(detectImportKind("syslog.log", "Jan  1 00:00:01 host sshd[1]: Failed password for root")).toBe("log");
+  it("NOT asa: a plain syslog (no %ASA tag) routes to the syslog importer, not asa", () => {
+    const log = [
+      "Jan  1 00:00:01 host sshd[1]: Failed password for root",
+      "Jan  1 00:00:02 host sshd[1]: Failed password for admin",
+      "Jan  1 00:00:03 host CRON[42]: pam_unix(cron:session): session opened for user root",
+    ].join("\n");
+    expect(detectImportKind("syslog.log", log)).toBe("syslog");
+  });
+});
+
+describe("detectImportKind — plain syslog (RFC 5424 / RFC 3164)", () => {
+  it("syslog: RFC 5424 rsyslog export (not the generic log fallback)", () => {
+    const log = [
+      "<30>1 2024-05-16T13:40:26.263976Z APP-MTX-01 app - - - alertbot: posting to slack with token xoxb-1-2-secret",
+      "<86>1 2024-05-16T13:09:55.931460Z APP-MTX-01 sshd 161779 - - Accepted password for jordan.lee from 10.66.10.23",
+      "<30>1 2024-05-16T13:01:44.688858Z APP-MTX-01 irqbalance 3122 - - NUMA node 0: balancing pass complete",
+    ].join("\n");
+    expect(detectImportKind("syslog.log", log)).toBe("syslog");
+  });
+  it("syslog: RFC 3164 BSD auth log", () => {
+    const log = [
+      "May 16 13:40:26 app01 sshd[1234]: Failed password for invalid user admin from 203.0.113.9",
+      "May 16 13:40:28 app01 sshd[1235]: Failed password for invalid user admin from 203.0.113.9",
+      "May 16 13:40:30 app01 sudo[900]: pam_unix(sudo:session): session opened for user root",
+    ].join("\n");
+    expect(detectImportKind("messages", log)).toBe("syslog");
+  });
+  it("asa STILL wins over syslog: an ASA export is claimed by its %ASA tag first", () => {
+    const log = [
+      "<166>May 15 06:42:06 fw01 %ASA-6-302013: Built outbound TCP connection for inside:10.30.20.30/45083 to outside:185.143.62.40/443",
+      "<166>May 15 06:42:09 fw01 %ASA-6-302014: Teardown TCP connection duration 0:00:03 bytes 23625",
+      "<164>May 15 06:42:11 fw01 %ASA-4-106023: Deny tcp src inside:10.30.10.27/60228 dst outside:42.5.45.223/23",
+    ].join("\n");
+    expect(detectImportKind("fw.log", log)).toBe("asa");
   });
 });
 
@@ -383,8 +415,13 @@ describe("detectImportKind — combined access/proxy log", () => {
     ].join("\n");
     expect(detectImportKind("dump.txt", log)).toBe("combinedlog");
   });
-  it("NOT combinedlog: a plain syslog stays a log", () => {
-    expect(detectImportKind("auth.log", "Jan  1 00:00:01 host sshd[1]: Failed password for root")).toBe("log");
+  it("NOT combinedlog: a plain syslog routes to the syslog importer, not combinedlog", () => {
+    const log = [
+      "Jan  1 00:00:01 host sshd[1]: Failed password for root",
+      "Jan  1 00:00:02 host sshd[1]: Accepted password for admin",
+      "Jan  1 00:00:03 host CRON[42]: pam_unix(cron:session): session opened for user root",
+    ].join("\n");
+    expect(detectImportKind("auth.log", log)).toBe("syslog");
   });
 });
 

@@ -17,12 +17,13 @@ import { isEcarRecord } from "./ecarImport.js";
 import { looksLikeSnort } from "./snortImport.js";
 import { looksLikeCombinedLog } from "./combinedLogImport.js";
 import { looksLikeCiscoAsa } from "./ciscoAsaImport.js";
+import { looksLikeSyslog } from "./syslogImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
 
 export type ImportKind =
   | "thor" | "siem" | "evtxxml" | "chainsaw" | "hayabusa" | "ecar" | "velociraptor" | "securityonion" | "socrates" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "plaso" | "sandbox" | "memory" | "email"
-  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "snort" | "combinedlog" | "asa" | "csv" | "log" | "unknown";
+  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "snort" | "combinedlog" | "asa" | "syslog" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -477,6 +478,12 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // (see logAggregate.ts's truncation-bias fix for the general case; this importer sidesteps it
   // entirely for the two most common web/proxy formats).
   if (looksLikeCombinedLog(filename, t)) return "combinedlog";
+
+  // Plain Linux/Unix syslog (RFC 5424 / RFC 3164) — telemetry, parsed deterministically instead of
+  // sent to the AI line-triage, which silently drops the rare high-signal line (e.g. a secret spilled
+  // into a one-off syslog message) on a large, mostly-benign host log. Checked after ASA (also
+  // syslog-framed but claimed by its `%ASA` tag) and combined-log, before the generic log fallback.
+  if (looksLikeSyslog(t)) return "syslog";
 
   // Tabular (CSV / EZ / Plaso / Hayabusa-csv / M365-csv) vs a line-oriented log.
   const csvKind = detectCsv(t);
