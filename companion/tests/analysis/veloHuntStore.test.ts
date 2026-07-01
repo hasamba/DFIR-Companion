@@ -68,4 +68,11 @@ describe("VeloHuntStore", () => {
     await writeFile(join(cases.stateDir("c1"), "velo-hunt.json"), JSON.stringify(JOB, null, 2), "utf8");
     expect(await store.list("c1")).toEqual([JOB]);
   });
+
+  it("round-trips the deleted and unreachable statuses", async () => {
+    await store.upsert("c1", { ...JOB, huntId: "H.DEL1", status: "deleted" });
+    await store.upsert("c1", { ...JOB, huntId: "H.UNR1", status: "unreachable" });
+    expect((await store.get("c1", "H.DEL1"))!.status).toBe("deleted");
+    expect((await store.get("c1", "H.UNR1"))!.status).toBe("unreachable");
+  });
 });
