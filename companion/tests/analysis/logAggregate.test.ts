@@ -62,14 +62,27 @@ describe("aggregateLogLines", () => {
     expect(out[0].example).toContain("Failed password");
   });
 
-  it("respects maxTemplates, keeping the most frequent", () => {
+  it("respects maxTemplates by dropping the MOST frequent, keeping rare ones — #6 needle-in-haystack fix", () => {
+    // A naive "most frequent first" cap would keep "a"(3)+"b"(2) and drop "c"(1) — exactly backwards:
+    // the rare, count=1 template is the one most likely to be a one-off signal, and the frequent ones
+    // are the least likely to need close reading. Truncation must protect the rare end instead.
     const lines = [
       "a 1", "a 2", "a 3",   // template "a N" ×3
       "b 1", "b 2",          // template "b N" ×2
       "c 1",                 // template "c N" ×1
     ];
     const out = aggregateLogLines(lines, { maxTemplates: 2 });
-    expect(out.map((t) => t.count)).toEqual([3, 2]);
+    expect(out.map((t) => t.count)).toEqual([2, 1]); // "a" (noisiest) dropped, "b" and "c" survive
+  });
+
+  it("keeps a single rare line even when it's vastly outnumbered by repetitive baseline noise", () => {
+    const lines = [
+      ...Array.from({ length: 500 }, (_, i) => `GET /health ${i}`),   // 500x repetitive health-check noise
+      "CONNECT vault.cloudpear.io:443 arjun.mehta",                    // the one rare, high-signal line
+    ];
+    const out = aggregateLogLines(lines, { maxTemplates: 1 });
+    expect(out).toHaveLength(1);
+    expect(out[0].example).toContain("vault.cloudpear.io");
   });
 
   it("returns [] for no lines", () => {
