@@ -7,7 +7,10 @@ import type { VeloHuntJob, VeloHuntStatus } from "../../analysis/veloHuntStore.j
 // Velociraptor binary and no network.
 
 // Read a hunt's live state from Velociraptor. Returns null when Velociraptor has no record of the
-// hunt at all (deleted) rather than an empty-state object.
+// hunt at all (deleted) rather than an empty-state object. A present-but-unrecognized state string
+// (state-vocabulary drift — a future Velociraptor version, a typo) is NOT rejected: it's treated as
+// "still running" (logged, not silently absorbed) so an operator can spot it without the poller itself
+// getting stuck.
 export type HuntStateReader = (huntId: string) => Promise<{ state: string } | null>;
 
 export interface HuntPollDeps {
@@ -37,7 +40,11 @@ export async function pollHuntStatusOnce(job: VeloHuntJob, deps: HuntPollDeps): 
   try {
     const result = await deps.getState(job.huntId);
     if (!result) return { action: "stop", job: { ...job, status: "deleted" } };
-    if (DONE_STATES.has(result.state.toUpperCase())) return { action: "collect", job };
+    const state = result.state.toUpperCase();
+    if (DONE_STATES.has(state)) return { action: "collect", job };
+    if (state !== "RUNNING" && state !== "PAUSED") {
+      deps.log?.(`[velo-hunt-status] hunt ${job.huntId} reported unrecognized state "${result.state}" — treating as still running`);
+    }
     return { action: "reschedule", job: { ...job, status: "running" } };
   } catch (err) {
     deps.log?.(`[velo-hunt-status] poll failed for hunt ${job.huntId}: ${(err as Error).message}`);

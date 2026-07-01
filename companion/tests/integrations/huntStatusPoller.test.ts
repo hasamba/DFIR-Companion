@@ -31,6 +31,15 @@ describe("pollHuntStatusOnce", () => {
     expect(out.job.status).toBe("running");
   });
 
+  it("reschedules as running but logs when Velociraptor reports an unrecognized state", async () => {
+    let logged = "";
+    const deps: HuntPollDeps = { getState: async () => ({ state: "UNKNOWN_STATE" }), log: (m) => { logged = m; } };
+    const out = await pollHuntStatusOnce(job(), deps);
+    expect(out.action).toBe("reschedule");
+    expect(out.job.status).toBe("running");
+    expect(logged).toContain("UNKNOWN_STATE");
+  });
+
   it("triggers a collect when Velociraptor reports STOPPED", async () => {
     const deps: HuntPollDeps = { getState: async () => ({ state: "STOPPED" }) };
     const out = await pollHuntStatusOnce(job(), deps);
