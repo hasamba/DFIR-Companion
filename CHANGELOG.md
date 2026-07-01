@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Velociraptor hunt status polling** — a 30s background poll reflects a hunt's live state (`deleted` when removed from Velociraptor, `unreachable` on a transient failure) and auto-collects as soon as the hunt finishes, instead of waiting out the fixed delay (`DFIR_VELO_HUNT_POLL_S`; closes #210).
+
 ## [0.28.0] - 2026-07-01
 
 ### Fixed
