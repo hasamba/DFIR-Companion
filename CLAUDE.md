@@ -193,8 +193,20 @@ about guessing malice from a domain's shape (unreliable, easy to game) — the p
 unique request pattern survives as its own aggregated event so correlation/synthesis can judge it,
 instead of the generic AI log-triage path silently dropping the rare ones on a large, mostly-benign
 real log — see `logAggregate.ts` above for the analogous truncation-bias fix on formats WITHOUT a
-dedicated importer; detected by `looksLikeCombinedLog` ahead of the generic-log fallback).
-The last twenty-one
+dedicated importer; detected by `looksLikeCombinedLog` ahead of the generic-log fallback),
+and **Cisco ASA firewall syslog** (`importCiscoAsa` → `ciscoAsaImport.ts` — the classic
+BSD-syslog-framed `%ASA-<level>-<msgid>: Built/Teardown/Deny …` message format. A firewall's
+Built/Teardown log is telemetry, not a detection feed (mirrors Zeek `conn.json`), so severity is
+**Info by default**; the one message ASA itself grades as noteworthy, an explicit **Deny**, bumps to
+Low — a block is prevention, not confirmed compromise, but still worth surfacing (see the
+branch-office benchmark, where blanket-demoting denies would have hidden a real lateral port-scan
+that manifested AS denied connections). Dynamic-NAT-translation messages (305011/305012) carry only
+the NAT mapping, never the real destination, and are dropped as pure noise — their paired
+Built/Teardown already has both. Like Snort the timestamp is year-less (`MMM DD HH:MM:SS`); an
+assumed year is stamped and the `mergeDelta` year-clamp re-anchors it once dated evidence lands.
+Public destination IPs → IOCs (RFC1918/loopback/CGNAT skipped); detected by `looksLikeCiscoAsa`
+ahead of the generic-log fallback).
+The last twenty-two
 are **fully
 deterministic, no AI call**, drop noise, map level→severity, and read the artifact's own
 time. All feed the same forensic timeline via `mergeDelta`.
