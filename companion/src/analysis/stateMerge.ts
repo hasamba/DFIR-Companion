@@ -5,6 +5,7 @@ import { isAnalystWorkLog } from "./workLogFilter.js";
 import { correlateEvents } from "./correlate.js";
 import { clampOutlierYears } from "./timeYearClamp.js";
 import { linkEmailDelivery } from "./initialAccess.js";
+import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { toUtcIso } from "./timeUtc.js";
 
 export interface WindowContext {
@@ -196,10 +197,15 @@ export function mergeDelta(
   // phishing email linked to, tag the contact as initial access (T1566.002 → T1204.002). Runs
   // before correlation so the tagged event still dedups normally. Conservative + idempotent (#201).
   const withInitialAccess = linkEmailDelivery(dated);
+  // Stitch archive STAGING (T1560.001) to a subsequent UPLOAD (T1041) on the same host: the
+  // SEQUENCE is the exfil signal (a lone upload to routine SaaS/cloud infra is not), so a matched
+  // upload is raised to High and tagged — a deterministic, destination-agnostic "Data Exfiltration"
+  // signal instead of relying on the synthesis model to notice the pairing. Conservative + idempotent.
+  const withExfil = linkArchiveToExfil(withInitialAccess);
   // Collapse duplicates / cross-source matches immediately (so re-importing the same
   // report, or two tools flagging one artifact, never doubles the timeline) — not only
   // during synthesis. Idempotent.
-  const correlated = correlateEvents(withInitialAccess).sort(byEventTime);
+  const correlated = correlateEvents(withExfil).sort(byEventTime);
 
   // Key questions are a holistic reassessment — replace wholesale when synthesis
   // provides them; otherwise keep the existing set (per-window deltas omit them).
