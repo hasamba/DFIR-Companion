@@ -656,9 +656,11 @@ back addressed as `artifact/source`. Routes `POST /velociraptor/hunt` + `/veloci
 (+ server-side `/velociraptor/run`); `/health.velociraptorEnabled` gates the button. VQL statements
 are passed as separate positional args with comments stripped (a leading `--` is parsed as a CLI flag).
 **Triage bundles** build on the same client+runner: `listClientArtifacts()` (browse `artifact_definitions()`
-type CLIENT), `launchArtifactHunt(artifacts, desc, {includeLabels,excludeLabels,os}, {timeoutSeconds, params})` (hunt over a
+type CLIENT), `launchArtifactHunt(artifacts, desc, {includeLabels,excludeLabels,os}, {timeoutSeconds, params, expirySeconds})` (hunt over a
 chosen SET of existing artifacts with Velociraptor's own include/exclude/OS conditions + an optional per-collection
-`timeout` override, since some artifacts e.g. THOR run past the 600s default; `params` = per-artifact overrides
+`timeout` override, since some artifacts e.g. THOR run past the 600s default; `expirySeconds` = the hunt's relative
+expiry via `expires=now() + <sec>` (`normalizeHuntExpirySeconds`, default 1h — all hunt paths incl. `launchHunt` take it,
+vs Velociraptor's week-long default); `params` = per-artifact overrides
 → the hunt's `spec=dict(\`Artifact\`=dict(P='v'))`, only for artifacts in the hunt, so a heavy artifact like
 Hayabusa runs constrained — Best Practice ships `RuleLevel`/`RuleStatus`), `huntResultsByArtifact()`
 (collect per-artifact into the `{ "Artifact.Name": [rows] }` artifact-map `importVelociraptor` already eats — **resilient**:

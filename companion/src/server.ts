@@ -157,7 +157,7 @@ import {
 } from "./analysis/customerExposure.js";
 import { byEventTime } from "./analysis/forensicSort.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
-import { VelociraptorClient, buildVelociraptorClient, matchClient, ALL_CLIENTS, type HuntTarget, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
+import { VelociraptorClient, buildVelociraptorClient, matchClient, ALL_CLIENTS, normalizeHuntExpirySeconds, type HuntTarget, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
 import { ArtifactBundleStore } from "./analysis/artifactBundleStore.js";
 import { VelociraptorClientStore } from "./analysis/velociraptorClientStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
@@ -2207,9 +2207,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
     const description = typeof req.body?.description === "string" ? req.body.description : "";
     if (!vql) return res.status(400).json({ error: "vql is required" });
+    const expirySeconds = normalizeHuntExpirySeconds(req.body?.expirySeconds);   // relative; defaults to one hour
     try {
-      logLine(`[velociraptor] launch hunt: ${description.slice(0, 80)}`);
-      const result = await options.velociraptorClient.launchHunt(vql, description);
+      logLine(`[velociraptor] launch hunt: ${description.slice(0, 80)} (expires in ${expirySeconds}s)`);
+      const result = await options.velociraptorClient.launchHunt(vql, description, { expirySeconds });
       logLine(`[velociraptor] hunt launched -> ${result.huntId} (artifact ${result.artifact}, ${result.sources.length} source(s))`);
       return res.status(200).json(result);
     } catch (err) {
@@ -3181,15 +3182,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const reqTimeout = Number(req.body?.timeoutSeconds);
       const rawTimeout = Number.isFinite(reqTimeout) && reqTimeout > 0 ? reqTimeout : bundle.timeoutSeconds;
       const timeoutSeconds = typeof rawTimeout === "number" && rawTimeout > 0 ? Math.min(86_400, Math.max(60, Math.floor(rawTimeout))) : undefined;
+      // Relative hunt expiry (seconds): run override > bundle default > the one-hour default.
+      const expirySeconds = normalizeHuntExpirySeconds(
+        Number(req.body?.expirySeconds) > 0 ? req.body.expirySeconds : bundle.expirySeconds,
+      );
 
-      logLine(`[velociraptor] run bundle "${bundle.name}" (${bundle.artifacts.length} artifact(s)), collect in ${waitMinutes}m${minSeverity ? `, min severity ${minSeverity}` : ""}${timeoutSeconds ? `, timeout ${timeoutSeconds}s` : ""}`);
-      const launch = await options.velociraptorClient.launchArtifactHunt(bundle.artifacts, bundle.name, target, { timeoutSeconds, params: bundle.params });
+      logLine(`[velociraptor] run bundle "${bundle.name}" (${bundle.artifacts.length} artifact(s)), collect in ${waitMinutes}m, expires in ${expirySeconds}s${minSeverity ? `, min severity ${minSeverity}` : ""}${timeoutSeconds ? `, timeout ${timeoutSeconds}s` : ""}`);
+      const launch = await options.velociraptorClient.launchArtifactHunt(bundle.artifacts, bundle.name, target, { timeoutSeconds, params: bundle.params, expirySeconds });
       const collectAt = new Date(Date.now() + waitMinutes * 60_000).toISOString();
       const job: VeloHuntJob = {
         bundleId: bundle.id, bundleName: bundle.name, artifacts: launch.artifacts,
         huntId: launch.huntId, guiUrl: launch.guiUrl,
         launchedAt: new Date().toISOString(), waitMinutes, collectAt,
-        status: "running", target, minSeverity, timeoutSeconds, filters: bundle.filters,
+        status: "running", target, minSeverity, timeoutSeconds, expirySeconds, filters: bundle.filters,
       };
       // Append this hunt (concurrent hunts are kept side by side, keyed by huntId) + its own timer.
       await options.veloHuntStore.upsert(caseId, job);
@@ -3280,8 +3285,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         options.onVeloHunt?.(caseId);
         return res.status(200).json({ mode, ...result });
       }
-      logLine(`[velociraptor] deploy-hunt fleet "${title}"`);
-      const launch = await options.velociraptorClient.launchHunt(vql, description);
+      const expirySeconds = normalizeHuntExpirySeconds(req.body?.expirySeconds);   // relative; defaults to one hour
+      logLine(`[velociraptor] deploy-hunt fleet "${title}" (expires in ${expirySeconds}s)`);
+      const launch = await options.velociraptorClient.launchHunt(vql, description, { expirySeconds });
       // Register a collectible job AND schedule auto-collect (the same flow bundle hunts use) so the
       // outcome fills by huntId without the analyst remembering to collect — fleet hunt results trickle
       // in as clients check in, so we pull after the wait (and "Collect now" can pull early / re-pull).
@@ -3293,7 +3299,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           bundleId: `suggested:${source}`, bundleName: title, artifacts: launch.artifact ? [launch.artifact] : [],
           sources: launch.sources,   // #157: the Custom.Hunt artifact's named sources (Pivot0…) so collect reads `artifact/source`
           huntId: launch.huntId, guiUrl: launch.guiUrl, launchedAt: now.toISOString(), waitMinutes,
-          collectAt: new Date(now.getTime() + waitMinutes * 60_000).toISOString(), status: "running",
+          collectAt: new Date(now.getTime() + waitMinutes * 60_000).toISOString(), status: "running", expirySeconds,
         };
         await options.veloHuntStore.upsert(caseId, job);
         const timer = setTimeout(() => { void importVeloHuntResults(caseId, launch.huntId); }, waitMinutes * 60_000);

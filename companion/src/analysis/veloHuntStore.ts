@@ -28,6 +28,7 @@ export interface VeloHuntJob {
   target?: HuntTarget;
   minSeverity?: Severity;     // optional import floor chosen at run time (keeps low-value items out)
   timeoutSeconds?: number;    // optional per-collection timeout used for this hunt (Velociraptor default 600s)
+  expirySeconds?: number;     // relative hunt expiry used at launch (seconds); default one hour
   filters?: Record<string, string>;   // per-artifact VQL WHERE filters snapshotted from the bundle (applied at collect)
   error?: string;
   importedAt?: string;    // ISO — when results were collected + imported

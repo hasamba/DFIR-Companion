@@ -259,7 +259,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **IOC type filter** — faceted dropdown (ip/domain/url/hash/file/process/other) with per-type counts; composes with the flagged-only + search filters
 - **Hunt-pivot generator** — one-click emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries
 - **Query Translator** — plain English → runnable queries (NL: "PowerShell downloading then executing") across all enabled platforms; one-click-deploy VQL hunts
-- **Velociraptor triage bundles** — browse artifacts → save bundles → run as hunts (label/OS/min-severity) → auto-collect + import, with live hunt-status polling (a deleted hunt is reflected on the dashboard within 30s, and results auto-collect as soon as the hunt finishes)
+- **Velociraptor triage bundles** — browse artifacts → save bundles → run as hunts (label/OS/min-severity, relative hunt expiry 1h/1d/1w, default 1h) → auto-collect + import, with live hunt-status polling (a deleted hunt is reflected on the dashboard within 30s, and results auto-collect as soon as the hunt finishes)
 - **AI-suggested fleet hunts** — AI proposes proactive fleet-sweep hunts grounded in the causal evidence graph (spawn chains, file lineage, lateral movement), so hunts target the relationship, not just the leaf indicator
 - **AI-suggested playbook hunts** — AI proposes hunts per endpoint-related task (single-endpoint collection or fleet hunt)
 - **Hunting feedback loop** — records each deployed hunt's outcome (new evidence + counts) per case; suggestions skip an already-run query and pivot on what hit, with a *Hunting Profile* of hunted/hit/missed
@@ -701,7 +701,9 @@ default, stored globally next to `cases/` in `bundles/`). **Every bundle, built-
 place** — an edit saves an override; **Reset to default** discards it. **Run** one as a hunt (optionally scoped
 by include/exclude labels + OS, and a **minimum-severity** import floor). The **collection timeout** is a bundle
 setting (configured in the editor — bump it for slow artifacts like THOR; Velociraptor's default is 600 s) and is
-applied automatically on every run. Bundles can also carry **per-artifact parameters** (passed to the hunt's
+applied automatically on every run. Each hunt also carries a **relative expiry** — how long it keeps scheduling on
+clients that check in later — chosen from **1 hour / 1 day / 1 week** (default **1 hour**, vs Velociraptor's own
+week-long default); it's a per-bundle default set in the editor and overridable per run. Bundles can also carry **per-artifact parameters** (passed to the hunt's
 `spec`) so a heavy artifact emits less at the source — Best Practice ships **Hayabusa pinned to `RuleLevel`=Critical/High/Medium
 + `RuleStatus`=Stable+Experimental** so it doesn't flood the import; tune any artifact via the builder's optional *Advanced → parameters* JSON,
 and drop noisy rows with per-artifact **exclude filters** (VQL `WHERE`, e.g. `NOT OSPath =~ 'pagefile'`). The hunt stays open until expiry, so

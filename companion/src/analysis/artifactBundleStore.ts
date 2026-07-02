@@ -16,6 +16,7 @@ export interface ArtifactBundle {
   artifacts: string[];          // Velociraptor CLIENT artifact names
   defaultWaitMinutes?: number;  // optional per-bundle default collect delay
   timeoutSeconds?: number;      // optional per-collection timeout override (Velociraptor default 600s) — some artifacts run longer
+  expirySeconds?: number;       // optional per-bundle hunt expiry (relative, seconds); unset → the one-hour default
   // Per-artifact parameter overrides passed to the hunt's `spec`, so a heavy artifact emits less at the
   // source (e.g. {"Windows.Hayabusa.Rules": {"RuleLevel": "Critical, High, and Medium"}} narrows Hayabusa).
   // Only the params you set are sent; everything else uses the artifact's own defaults.
@@ -209,6 +210,8 @@ export class ArtifactBundleStore {
       artifacts: Array.isArray(input.artifacts) ? input.artifacts.map(String).map((a) => a.trim()).filter(Boolean) : [],
       defaultWaitMinutes: typeof input.defaultWaitMinutes === "number" ? input.defaultWaitMinutes : undefined,
       timeoutSeconds: typeof input.timeoutSeconds === "number" ? input.timeoutSeconds : undefined,
+      // Relative hunt expiry (seconds); the API layer clamps/defaults, so here we just persist a positive int.
+      expirySeconds: typeof input.expirySeconds === "number" && input.expirySeconds > 0 ? Math.floor(input.expirySeconds) : undefined,
       params: sanitizeBundleParams(input.params),
       filters: sanitizeBundleFilters(input.filters),
     };

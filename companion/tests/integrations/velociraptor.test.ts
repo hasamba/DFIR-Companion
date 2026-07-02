@@ -11,6 +11,8 @@ import {
   spawnErrorMessage,
   matchClient,
   normalizeClientRow,
+  normalizeHuntExpirySeconds,
+  DEFAULT_HUNT_EXPIRY_SECONDS,
   type VeloClientRecord,
   type VelociraptorApiConfig,
   type VqlRunner,
@@ -131,6 +133,32 @@ describe("VelociraptorClient.run (server-side)", () => {
   });
 });
 
+describe("normalizeHuntExpirySeconds", () => {
+  it("defaults to one hour on missing / non-positive / non-numeric input", () => {
+    expect(DEFAULT_HUNT_EXPIRY_SECONDS).toBe(3600);
+    expect(normalizeHuntExpirySeconds(undefined)).toBe(3600);
+    expect(normalizeHuntExpirySeconds(null)).toBe(3600);
+    expect(normalizeHuntExpirySeconds(0)).toBe(3600);
+    expect(normalizeHuntExpirySeconds(-5)).toBe(3600);
+    expect(normalizeHuntExpirySeconds("nope")).toBe(3600);
+    expect(normalizeHuntExpirySeconds(NaN)).toBe(3600);
+  });
+  it("passes through the relative presets", () => {
+    expect(normalizeHuntExpirySeconds(3600)).toBe(3600);      // 1 hour
+    expect(normalizeHuntExpirySeconds(86_400)).toBe(86_400);   // 1 day
+    expect(normalizeHuntExpirySeconds(604_800)).toBe(604_800); // 1 week
+    expect(normalizeHuntExpirySeconds("86400")).toBe(86_400);  // numeric string
+  });
+  it("clamps to [60s, 30d] and floors fractional seconds", () => {
+    expect(normalizeHuntExpirySeconds(10)).toBe(60);            // below the floor
+    expect(normalizeHuntExpirySeconds(99_999_999)).toBe(2_592_000);   // above the 30-day ceiling
+    expect(normalizeHuntExpirySeconds(3600.9)).toBe(3600);
+  });
+  it("honors a custom fallback", () => {
+    expect(normalizeHuntExpirySeconds(undefined, 86_400)).toBe(86_400);
+  });
+});
+
 describe("VelociraptorClient.launchHunt", () => {
   it("packages the pivots as a CLIENT artifact and launches a hunt across all clients", async () => {
     let program = "";
@@ -150,7 +178,15 @@ describe("VelociraptorClient.launchHunt", () => {
     expect(program).toContain("type: CLIENT");
     expect(program).toContain("hunt(");
     expect(program).toContain("Custom.Hunt.Companion.find_x_exe");
+    expect(program).toContain("expires=now() + 3600");   // default one-hour expiry
     expect(program).not.toContain("-- file presence");   // comments stripped from the artifact source
+  });
+
+  it("uses a supplied relative expiry (seconds)", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.EXP", state: "RUNNING" } }], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).launchHunt("SELECT 1", "x", { expirySeconds: 604_800 });
+    expect(program).toContain("expires=now() + 604800");   // one week
   });
 
   it("makes one artifact source per pivot statement", async () => {
@@ -470,6 +506,14 @@ describe("VelociraptorClient.launchArtifactHunt", () => {
     expect(res.guiUrl).toBe("https://velo.example/app/index.html?org_id=root#/hunts/H.B1");
     expect(program).toContain("hunt(");
     expect(program).toContain("artifacts=['Windows.System.Pslist', 'Windows.Network.Netstat']");
+    expect(program).toContain("expires=now() + 3600");   // default one-hour expiry
+  });
+
+  it("uses a supplied relative expiry (seconds)", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [{ Hunt: { HuntId: "H.BEXP", state: "RUNNING" } }], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).launchArtifactHunt(["Windows.System.Pslist"], "x", {}, { expirySeconds: 86_400 });
+    expect(program).toContain("expires=now() + 86400");   // one day
   });
 
   it("adds include/exclude label + OS clauses and sanitizes label values", async () => {
