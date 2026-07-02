@@ -763,6 +763,14 @@
     .synth-meta .sm-added { color: var(--c-6bcb77); } .synth-meta .sm-removed { color: var(--c-ff7a7a); } .synth-meta .sm-changed { color: var(--c-ffd93b); }
     .synth-meta details { margin-top: 5px; } .synth-meta summary { cursor: pointer; color: var(--c-6aa9ff); }
     .synth-meta .sm-item { display: block; margin: 2px 0 2px 8px; }
+    /* Raw-file (EVTX/PCAP) prompt banner — prominent, at the top of the content. #211 */
+    .raw-banner { font-size: 13px; color: var(--c-e6e9ef); margin: 0 0 12px; padding: 11px 14px;
+      border: 1px solid #7a5c1a; border-left: 4px solid #e0a72c; border-radius: 8px; background: #241a08; }
+    .raw-banner .rb-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-weight: 600; margin-bottom: 4px; }
+    .raw-banner .rb-files { color: var(--c-9aa4b2); margin: 3px 0 8px; word-break: break-all; }
+    .raw-banner button { padding: 4px 14px; font-size: 12px; margin-right: 6px; }
+    .raw-banner .rb-yes { background: #2f7d32; color: #fff; border: none; border-radius: 5px; cursor: pointer; }
+    .raw-banner .rb-no { background: transparent; color: var(--c-9aa4b2); border: 1px solid var(--c-2a3146); border-radius: 5px; cursor: pointer; }
     /* Second LLM opinion panel (#116) — independent-model QA cross-check with per-delta accept/reject. */
     .so-panel { font-size: 12px; color: var(--c-c7ced9); margin: 0 0 10px; padding: 9px 11px;
       border: 1px solid var(--c-2a2f3a); border-radius: 6px; background: var(--c-0f1115); }
@@ -1161,7 +1169,7 @@
     <label id="deepReasoningLabel" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--c-9aa4b2);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs an Anthropic or OpenRouter reasoning-capable synthesis model.">
       <input type="checkbox" id="deepReasoning" style="margin:0;cursor:pointer" />🧠<span class="dr-text">&nbsp;deep</span>
     </label>
-    <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.xml,.eml,.msg,.bash_history,.zsh_history,.history,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,text/xml,application/xml,image/png,image/jpeg,image/webp" style="display:none" />
+    <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.xml,.eml,.msg,.bash_history,.zsh_history,.history,.evtx,.evt,.pcap,.pcapng,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,text/xml,application/xml,image/png,image/jpeg,image/webp" style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux shell history, auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
     <button id="importUndoBtn" type="button" style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
@@ -1528,6 +1536,7 @@
         <button class="stab" data-stab="exposure">Exposure</button>
         <button class="stab" data-stab="integrations">Integrations</button>
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
+        <button class="stab" data-stab="tools">Tools</button>
         <button class="stab" data-stab="whitelist">IOC Whitelist</button>
         <button class="stab" data-stab="nsrl">NSRL</button>
         <button class="stab" data-stab="importers">Importers</button>
@@ -2163,6 +2172,90 @@
         </div>
       </div>
 
+      <!-- External forensic tools (#211) -->
+      <div class="stab-pane" id="stab-tools">
+        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+          Run your <strong>own locally-installed</strong> tools against raw evidence the Companion can't parse
+          (EVTX, PCAP, files), then ingest their <strong>output</strong> through the normal importers — the tool does the
+          detecting, the Companion ingests the verdict. The Companion never downloads or bundles a binary; you install and
+          update it. Each tool is OFF until its <strong>binary path</strong> is set. Paths/args are stored in <code>.env</code>
+          (not secrets); click <strong>Reconnect</strong> to apply without a restart. A raw file copied into a case's
+          <strong>drop folder</strong> is run automatically when a matching tool has auto-run on.
+        </div>
+        <div style="background:#211405;border:1px solid #5a4a1a;border-radius:6px;padding:6px 9px;font-size:12px;color:#ffce8a;margin-bottom:12px">
+          ⚠ The run/update commands you configure are executed on this machine (no shell — args are tokenized). Only point them at trusted binaries.
+        </div>
+        <div style="margin:0 0 12px"><button id="toolsReconnectBtn" type="button" title="Re-read DFIR_TOOL_* from .env and apply without a companion restart">🔌 Reconnect / apply</button> <span id="toolsMsg" class="manual-msg"></span></div>
+        <div id="toolsStatus" style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:12px">—</div>
+
+        <div class="settings-group-head">Hayabusa <span style="color:var(--c-7e8aa0);font-weight:400">(EVTX → csv/json-timeline · <a href="https://github.com/Yamato-Security/hayabusa" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="sgrid">
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_HAYABUSA_BINARY — full path to hayabusa(.exe); blank = off</span></label><input id="env-DFIR_TOOL_HAYABUSA_BINARY" placeholder="(off)" /></div>
+          <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_HAYABUSA_RUN_ARGS — &lt;target&gt;/&lt;output&gt; substituted; blank = default</span></label><input id="env-DFIR_TOOL_HAYABUSA_RUN_ARGS" placeholder="csv-timeline -f <target> -o <output> -w" /></div>
+          <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_HAYABUSA_UPDATE_CMD — full command; blank = &lt;binary&gt; update-rules</span></label><input id="env-DFIR_TOOL_HAYABUSA_UPDATE_CMD" placeholder="(default: <binary> update-rules)" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_HAYABUSA_AUTO_RUN — opt-in; default OFF (a raw drop asks first). Set "on" to run without asking</span></label><input id="env-DFIR_TOOL_HAYABUSA_AUTO_RUN" placeholder="off (opt-in)" /></div>
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_HAYABUSA_TIMEOUT_MS (default 300000)</span></label><input id="env-DFIR_TOOL_HAYABUSA_TIMEOUT_MS" placeholder="300000" /></div>
+        </div>
+        <div style="margin:4px 0 14px"><button class="tool-update" data-tool="hayabusa" type="button">↻ Update rules</button></div>
+
+        <div class="settings-group-head">Velociraptor CLI <span style="color:var(--c-7e8aa0);font-weight:400">(offline EVTX → artifact JSON · <a href="https://github.com/Velocidex/velociraptor" target="_blank" rel="noopener">repo</a>)</span></div>
+        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">The default runs the <code>Windows.Hayabusa.Rules</code> artifact (not built in — loaded from the <strong>Definitions</strong> zip) against a <strong>folder</strong> of EVTX via <code>--ROOT &lt;targetdir&gt;</code>, with <code>--nobanner --no-debug</code>, redirecting the JSON results to a file (<code>&gt; &lt;output&gt;</code>) that the Companion imports. The Companion places the file in a temp folder under its <strong>original name</strong> (e.g. <code>Security.evtx</code>) so Velociraptor detects the channel from the filename — <strong>keep the original EVTX filenames</strong>. Placeholders: <code>&lt;targetdir&gt;</code> = the folder, <code>&lt;definitions&gt;</code> = the definitions path, <code>&lt;output&gt;</code> = the result file. (Don't add <code>-v</code> — verbose logs drown the results.)</p>
+        <div class="sgrid">
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_BINARY — local velociraptor(.exe); distinct from the Velociraptor API tab; blank = off</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_BINARY" placeholder="(off)" /></div>
+          <div class="sfield"><label>Definitions<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_DEFINITIONS — path to the artifact-definitions zip (e.g. Velociraptor.Sigma.Artifacts.zip) for &lt;definitions&gt;</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_DEFINITIONS" placeholder="C:\tools\Velociraptor.Sigma.Artifacts.zip" /></div>
+          <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_RUN_ARGS — &lt;targetdir&gt;/&lt;definitions&gt; substituted; blank = default</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_RUN_ARGS" placeholder="--definitions <definitions> -r Windows.Hayabusa.Rules --ROOT <targetdir> --nobanner --no-debug > <output>" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_AUTO_RUN — opt-in; default OFF</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_AUTO_RUN" placeholder="off (opt-in)" /></div>
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_TIMEOUT_MS</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_TIMEOUT_MS" placeholder="300000" /></div>
+        </div>
+
+        <div class="settings-group-head">Suricata <span style="color:var(--c-7e8aa0);font-weight:400">(PCAP → eve.json · <a href="https://suricata.io/download/" target="_blank" rel="noopener">download</a>)</span></div>
+        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">Runs from the Suricata install dir so it finds <code>suricata.yaml</code>. <strong>Windows rules:</strong> <code>suricata-update</code> is a Linux/pip tool — on Windows, download <a href="https://rules.emergingthreats.net/open/" target="_blank" rel="noopener">emerging-all.rules (ET Open)</a> manually and point <code>suricata.yaml</code> at it (see this <a href="https://letsdefend.io/blog/how-to-install-and-configure-suricata-on-windows" target="_blank" rel="noopener">Suricata-on-Windows guide</a>). Leave the update command blank unless you have <code>suricata-update</code> installed.</p>
+        <div class="sgrid">
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_SURICATA_BINARY — full path to suricata; blank = off</span></label><input id="env-DFIR_TOOL_SURICATA_BINARY" placeholder="(off)" /></div>
+          <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_SURICATA_RUN_ARGS — &lt;output&gt; is an output DIR; blank = default</span></label><input id="env-DFIR_TOOL_SURICATA_RUN_ARGS" placeholder="-r <target> -l <output>" /></div>
+          <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_SURICATA_UPDATE_CMD — blank = no button (Windows: update rules manually, see above)</span></label><input id="env-DFIR_TOOL_SURICATA_UPDATE_CMD" placeholder="(none on Windows)" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_SURICATA_AUTO_RUN — on/off</span></label><input id="env-DFIR_TOOL_SURICATA_AUTO_RUN" placeholder="off (opt-in)" /></div>
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_SURICATA_TIMEOUT_MS</span></label><input id="env-DFIR_TOOL_SURICATA_TIMEOUT_MS" placeholder="300000" /></div>
+        </div>
+        <div style="margin:4px 0 14px"><button class="tool-update" data-tool="suricata" type="button">↻ Update rules</button> <span style="font-size:11px;color:var(--c-7e8aa0)">(only if you configured an update command above)</span></div>
+
+        <div class="settings-group-head">Snort <span style="color:var(--c-7e8aa0);font-weight:400">(PCAP + your rules → alert_fast · <a href="https://github.com/snort3/snort3" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="sgrid">
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_SNORT_BINARY — full path to snort; blank = off</span></label><input id="env-DFIR_TOOL_SNORT_BINARY" placeholder="(off)" /></div>
+          <div class="sfield"><label>Rules / config path<span class="sfield-hint">DFIR_TOOL_SNORT_RULES — substituted for &lt;rules&gt; (your snort.lua / .rules)</span></label><input id="env-DFIR_TOOL_SNORT_RULES" placeholder="(required to run)" /></div>
+          <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_SNORT_RUN_ARGS — output on stdout; blank = default</span></label><input id="env-DFIR_TOOL_SNORT_RUN_ARGS" placeholder="-r <target> -c <rules> -A fast -q" /></div>
+          <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_SNORT_UPDATE_CMD — e.g. your PulledPork command; blank = no button</span></label><input id="env-DFIR_TOOL_SNORT_UPDATE_CMD" placeholder="(none — e.g. pulledpork)" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_SNORT_AUTO_RUN — on/off</span></label><input id="env-DFIR_TOOL_SNORT_AUTO_RUN" placeholder="off (opt-in)" /></div>
+        </div>
+        <div style="margin:4px 0 14px"><button class="tool-update" data-tool="snort" type="button">↻ Update rules</button></div>
+
+        <div class="settings-group-head">YARA <span style="color:var(--c-7e8aa0);font-weight:400">(scan files/dirs → matches · <a href="https://github.com/VirusTotal/yara" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="sgrid">
+          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_YARA_BINARY — full path to yara(64); blank = off</span></label><input id="env-DFIR_TOOL_YARA_BINARY" placeholder="(off)" /></div>
+          <div class="sfield"><label>Rules path<span class="sfield-hint">DFIR_TOOL_YARA_RULES — substituted for &lt;rules&gt; (your .yar/.yara)</span></label><input id="env-DFIR_TOOL_YARA_RULES" placeholder="(required to run)" /></div>
+          <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_YARA_RUN_ARGS — output on stdout; blank = default</span></label><input id="env-DFIR_TOOL_YARA_RUN_ARGS" placeholder="-s -m -r <rules> <target>" /></div>
+          <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_YARA_UPDATE_CMD — e.g. git -C &lt;rulesDir&gt; pull; blank = no button</span></label><input id="env-DFIR_TOOL_YARA_UPDATE_CMD" placeholder="(none — e.g. git -C ... pull)" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_YARA_AUTO_RUN — on/off (no drop extension; manual run only by default)</span></label><input id="env-DFIR_TOOL_YARA_AUTO_RUN" placeholder="off (opt-in)" /></div>
+        </div>
+        <div style="margin:4px 0 14px"><button class="tool-update" data-tool="yara" type="button">↻ Update rules</button></div>
+
+        <div class="sfield-hint" style="display:block;margin-bottom:16px">Master auto-run kill-switch: <code>DFIR_TOOL_AUTO_RUN=off</code> disables all auto-run (set on the General tab's <code>.env</code>, or your env).</div>
+
+        <div class="settings-group-head">Custom tools <span style="color:var(--c-7e8aa0);font-weight:400">(add your own — runs on the extensions you choose; output is auto-detected)</span></div>
+        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 10px">Define any local tool: give it a name, the binary path, a run command (use <code>&lt;target&gt;</code> for the input file and, if it writes a file, <code>&lt;output&gt;</code>), an optional update command, and the file extensions it should handle. The tool's output is fed through the normal importers (auto-detected). Importing or dropping a file with a matching extension will offer to run it.</p>
+        <div id="customToolList" style="margin-bottom:10px">—</div>
+        <div class="settings-group-head" style="font-size:12px;margin-top:6px">Add a custom tool</div>
+        <div class="sgrid">
+          <div class="sfield"><label>Name<span class="sfield-hint">a label for this tool</span></label><input id="ctName" placeholder="e.g. EvtxECmd" /></div>
+          <div class="sfield"><label>Binary path<span class="sfield-hint">full path to the executable</span></label><input id="ctBinary" placeholder="C:\tools\EvtxECmd\EvtxECmd.exe" /></div>
+          <div class="sfield"><label>Run command<span class="sfield-hint">args; &lt;target&gt; = input file, &lt;output&gt; = output file (omit for stdout)</span></label><input id="ctRunArgs" placeholder="-f <target> --csv <output>" /></div>
+          <div class="sfield"><label>Update command<span class="sfield-hint">optional; full command line (blank = no Update button)</span></label><input id="ctUpdateCmd" placeholder="(optional)" /></div>
+          <div class="sfield"><label>Extensions<span class="sfield-hint">comma-separated file types this runs on</span></label><input id="ctExtensions" placeholder=".evtx, .evt" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">on = run without asking; blank/off = ask first</span></label><input id="ctAutoRun" placeholder="off" /></div>
+        </div>
+        <div style="margin:6px 0 4px"><button id="ctAddBtn" type="button">＋ Add custom tool</button> <span id="ctMsg" class="manual-msg"></span></div>
+      </div>
+
       <!-- IOC Whitelist (Phase 2 of #35) -->
       <div class="stab-pane" id="stab-whitelist">
         <div class="sfield-hint" style="display:block;margin-bottom:8px">
@@ -2754,6 +2847,9 @@
   </div>
 
   <main>
+    <!-- Raw-file (EVTX/PCAP) prompts — shown at the top of the content so they're not buried in a section. #211 -->
+    <div id="rawToolBanner" class="raw-banner" style="display:none;grid-column:1 / -1"></div>
+    <div id="dropStatus" class="raw-banner" style="display:none;grid-column:1 / -1"></div>
     <section id="sec-ask" style="grid-column: 1 / -1">
       <h2>Ask the LLM about this case</h2>
       <div class="ask-row">
@@ -2790,7 +2886,6 @@
           <span id="addEventMsg" class="manual-msg"></span>
         </form>
       </div>
-      <div id="dropStatus" class="synth-meta" style="display:none"></div>
       <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="evIdFilterChip" style="display:none;margin:0 0 8px;font-size:12px;background:var(--c-1a1f2a);border:1px solid var(--c-2a2f3a);border-radius:4px;padding:6px 10px;"></div>
       <div id="forensicTimeline">—</div></section>
@@ -6531,14 +6626,138 @@
       fetch(`/cases/${caseId}/drop-status`).then(r => r.ok ? r.json() : null).then(renderDropStatus).catch(() => {});
     }
     // The drop-folder auto-import feature stays fully enabled (the server poller keeps ingesting
-    // cases/<id>/drop/); we deliberately do NOT surface its inbox/sweep banner in the dashboard.
-    // Failures still land in drop/_failed/ and are reported via the server log + any notification
-    // channel. `d` is accepted (and ignored) so the fetch/WebSocket callers don't need to change.
-    function renderDropStatus(_d) {
+    // cases/<id>/drop/); we deliberately do NOT surface its inbox/sweep banner in the dashboard —
+    // EXCEPT the actionable "raw EVTX/PCAP awaiting an external tool" case (#211), which needs an
+    // analyst decision (run a tool / configure one), so it's surfaced as a banner.
+    // Drop-folder raw files awaiting a tool (#211): ONE batch prompt for the whole set — "N raw files
+    // dropped, run tools on them? [Run all] [Dismiss]". A single POST runs every pending file through
+    // its matching tool server-side. Files with no configured tool are noted (link to Settings).
+    function renderDropStatus(d) {
       const el = document.getElementById("dropStatus");
       if (!el) return;
-      el.style.display = "none";
-      el.innerHTML = "";
+      // GET /cases/:id/drop-status wraps the record as { enabled, pollSeconds, dropPath, status }.
+      const st = (d && d.status) || d || {};
+      const pending = st.pendingRawInputs || [];
+      if (!pending.length) { el.style.display = "none"; el.innerHTML = ""; return; }
+      const caseId = (document.getElementById("caseId").value || "").trim();
+      const n = pending.length;
+      const anyConfigured = pending.some((p) => p.configured && p.suggestedTool);
+      const files = pending.map((p) => `<code>${esc(p.relpath)}</code>`).join(", ");
+      el.style.display = "block";
+      const head = `<div class="rb-head">📥 ${n} raw file${n !== 1 ? "s" : ""} dropped — run a tool on ${n !== 1 ? "them" : "it"}?</div>`;
+      const body = `<div class="rb-files">${files}</div>`;
+      const actions = anyConfigured
+        ? `<button class="rb-yes" id="dropRunAll">Run tools on ${n !== 1 ? "these " + n + " files" : "this file"}</button><button class="rb-no" id="dropDismiss">Dismiss</button>`
+        : `<div class="rb-files">No external tool is configured for ${n !== 1 ? "these file types" : "this file type"}.</div><button class="rb-yes" id="dropConfigure">Configure tools</button><button class="rb-no" id="dropDismiss">Dismiss</button>`;
+      el.innerHTML = head + body + actions;
+      const dis = document.getElementById("dropDismiss"); if (dis) dis.onclick = () => { el.style.display = "none"; };
+      const cfg = document.getElementById("dropConfigure"); if (cfg) cfg.onclick = openToolsSettings;
+      const runAll = document.getElementById("dropRunAll");
+      if (runAll) runAll.onclick = () => {
+        runAll.disabled = true; runAll.textContent = "Running…";
+        fetch(`/cases/${caseId}/drop/run-pending`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+          .then((r) => r.json().then((j) => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+            if (!ok) { runAll.disabled = false; runAll.textContent = "Retry"; document.getElementById("status").textContent = (j && j.error ? j.error : "run failed") + " — restart the companion server if this 404s"; return; }
+            document.getElementById("status").textContent = `Ran ${j.ran || 0} tool run(s)` + (j.failed ? `, ${j.failed} failed` : "") + (j.skipped ? `, ${j.skipped} skipped (no tool)` : "");
+            loadDropStatus(caseId); loadImportMeta(caseId);
+          }).catch((e) => { runAll.disabled = false; runAll.textContent = "Retry"; document.getElementById("status").textContent = "run failed: " + e.message; });
+      };
+    }
+    // Display names for the external tools (kept in sync with TOOL_DEFS labels server-side).
+    const TOOL_LABELS = { hayabusa: "Hayabusa", velociraptor_cli: "Velociraptor CLI", suricata: "Suricata", snort: "Snort", yara: "YARA" };
+    // Deep-link the Settings modal straight to the Tools tab (mirrors the velo badge link).
+    function openToolsSettings() {
+      const b = document.getElementById("settingsBtn"); if (b) b.click();
+      const t = document.querySelector('.stab[data-stab="tools"]'); if (t) t.click();
+    }
+    // Resolve which CONFIGURED tool handles a file extension (server preference order), from /tools/status.
+    function toolForExt(ext, status) {
+      const t = (status && status.tools || []).find((x) => x.configured && (x.extensions || []).includes(ext));
+      return t ? t.id : null;
+    }
+    function suggestToolForExt(ext, status) {
+      const t = (status && status.tools || []).find((x) => (x.extensions || []).includes(ext));
+      return t ? t.id : null;
+    }
+    // Display label for a tool id (built-in label or custom name), from /tools/status; falls back to the id.
+    function toolLabel(id, status) {
+      const t = (status && status.tools || []).find((x) => x.id === id);
+      return (t && t.label) || TOOL_LABELS[id] || id || "a tool";
+    }
+    // Every file extension any tool (built-in or custom) handles → used to detect raw-tool inputs in the
+    // Import dialog. From /tools/status so custom-tool extensions are included. Returns a Set or empty.
+    function fetchRawToolExts() {
+      return fetch("/tools/status").then((r) => r.ok ? r.json() : null).then((j) => {
+        const set = new Set();
+        for (const t of (j && j.tools) || []) for (const e of (t.extensions || [])) set.add(String(e).toLowerCase());
+        return set;
+      }).catch(() => new Set());
+    }
+    // Raw EVTX/PCAP picked in the Import dialog → ask ONCE before running a tool (yes/no, one banner for
+    // the whole batch). On Yes, each file's bytes are uploaded and run through its tool server-side. #211
+    function askRunToolsOnImport(caseId, rawFiles) {
+      const el = document.getElementById("rawToolBanner");
+      if (!el) return;
+      fetch("/tools/status").then((r) => r.ok ? r.json() : null).then((status) => {
+        const items = rawFiles.map((f) => {
+          const ext = "." + (f.name.split(".").pop() || "").toLowerCase();
+          const toolId = toolForExt(ext, status);
+          return { file: f, ext, toolId, label: toolLabel(toolId, status), suggested: suggestToolForExt(ext, status) };
+        });
+        const runnable = items.filter((i) => i.toolId);
+        const notCfg = items.filter((i) => !i.toolId);
+        const files = items.map((i) => `<code>${esc(i.file.name)}</code>`).join(", ");
+        el.style.display = "block";
+        let head, actions;
+        if (runnable.length) {
+          const tools = [...new Set(runnable.map((i) => i.label))].join(", ");
+          const many = rawFiles.length !== 1;
+          head = `<div class="rb-head">⚠️ ${rawFiles.length} raw ${many ? "files" : "file"} — the Companion can't read ${many ? "them" : "it"} directly. Run <strong>${esc(tools)}</strong> on ${many ? "them" : "it"}?</div>`;
+          actions = "";
+          if (notCfg.length) actions += `<div class="rb-files">${notCfg.length} file(s) have no configured tool and will be skipped — <a href="#" id="rawCfgLink">configure in Settings → Tools</a>.</div>`;
+          actions += `<button class="rb-yes" id="rawRunYes">Yes, run ${esc(tools)}</button><button class="rb-no" id="rawRunNo">No</button>`;
+        } else {
+          const sug = [...new Set(items.map((i) => toolLabel(i.suggested, status)))].join(", ");
+          const many = rawFiles.length !== 1;
+          head = `<div class="rb-head">⚠️ Raw evidence not directly supported</div>`;
+          actions = `<div class="rb-files">The Companion analyzes tool <em>output</em>, not raw binaries. Configure <strong>${esc(sug)}</strong> (Settings → Tools) to analyze ${many ? "these" : "this"}, then re-import — or copy into the case <strong>drop folder</strong> (EVTX can also be exported to XML via <code>wevtutil qe /f:xml</code>).</div>` +
+            `<button class="rb-yes" id="rawCfgBtn">Settings → Tools</button><button class="rb-no" id="rawRunNo">Dismiss</button>`;
+        }
+        el.innerHTML = head + `<div class="rb-files">${files}</div>` + actions;
+        const no = document.getElementById("rawRunNo"); if (no) no.onclick = () => { el.style.display = "none"; };
+        const cfgBtn = document.getElementById("rawCfgBtn"); if (cfgBtn) cfgBtn.onclick = openToolsSettings;
+        const cfgLink = document.getElementById("rawCfgLink"); if (cfgLink) cfgLink.onclick = (ev) => { ev.preventDefault(); openToolsSettings(); };
+        const yes = document.getElementById("rawRunYes");
+        if (yes) yes.onclick = () => runUploadRawFiles(caseId, runnable, el, yes);
+      }).catch(() => { el.style.display = "none"; });
+    }
+    // Upload each raw file's bytes (base64) and run its tool via /tools/:id/run-upload. Batch, sequential.
+    // Files too big for the JSON body cap are skipped with a hint to use the drop folder. #211
+    function runUploadRawFiles(caseId, items, el, btn) {
+      if (btn) { btn.disabled = true; btn.textContent = "Running…"; }
+      const statusEl = document.getElementById("status");
+      const LARGE_MB = 180; // base64 body must fit DFIR_MAX_BODY_MB (default 256 MB → ~190 MB raw)
+      (async () => {
+        let ran = 0, failed = 0, ev = 0, ioc = 0;
+        for (const it of items) {
+          statusEl.textContent = `running ${it.label || it.toolId} on ${it.file.name}…`;
+          try {
+            if (it.file.size > LARGE_MB * 1024 * 1024) { failed++; statusEl.textContent = `${it.file.name} is too large to upload — copy it into the case drop folder instead`; continue; }
+            const b64 = await fileToBase64(it.file);
+            if (!b64) { failed++; continue; }
+            const r = await fetch(`/cases/${caseId}/tools/${it.toolId}/run-upload`, {
+              method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ filename: it.file.name, dataBase64: b64 }),
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok) { failed++; console.warn("tool run failed", it.file.name, j.error); continue; }
+            ran++; ev += j.addedEvents || 0; ioc += j.addedIocs || 0;
+          } catch (e) { failed++; console.warn("tool run error", it.file.name, e && e.message); }
+        }
+        if (el) el.style.display = "none";
+        statusEl.textContent = `Ran ${ran} tool run(s): +${ev} event(s), +${ioc} IOC(s)` + (failed ? `, ${failed} failed/skipped` : "");
+        loadImportMeta(caseId);
+      })();
     }
     function renderImportMeta(m) {
       paintTimelineImportMeta(m);
@@ -10975,8 +11194,17 @@
       if (!caseId || !files.length) return;
       const statusEl = document.getElementById("status");
       const isImage = (f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp)$/i.test(f.name);
+      // Raw evidence an external tool handles (built-in EVTX/PCAP + any extension a CUSTOM tool claims)
+      // can't be read as text. The set of "raw" extensions comes from /tools/status so custom tools work
+      // too. Ask the analyst (one banner for the batch) whether to run a tool; never send raw through the
+      // text import path. #211
+      const rawExtSet = await fetchRawToolExts();
+      const isRawTool = (f) => rawExtSet.has("." + (f.name.split(".").pop() || "").toLowerCase());
       const images = files.filter(isImage);
-      const data = files.filter((f) => !isImage(f));
+      const rawTool = files.filter((f) => !isImage(f) && isRawTool(f));
+      const data = files.filter((f) => !isImage(f) && !isRawTool(f));
+      if (rawTool.length) askRunToolsOnImport(caseId, rawTool);
+      if (!data.length && !images.length) { e.target.value = ""; return; }
 
       // Minimum severity to import — restored across all import types. Asked once for the
       // whole batch (data files only; screenshots have no severity). Imports that don't grade
@@ -12607,6 +12835,7 @@
         if (tab === "dashboard-views") loadDashboardViewsEditor();
         if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
         if (tab === "updates") loadUpdateCheck();
+        if (tab === "tools") loadTools();
         if (tab === "diagnostics") { loadPreflightStatus(); loadDiagnostics(); }
       });
     });
@@ -13178,6 +13407,90 @@
         banner.style.display = "none";
       }
     }
+
+    // External forensic tools (#211): show which tools are configured + wire the per-tool Update-rules
+    // buttons. Env fields are populated by the generic fetchEnvSettings (like every other settings tab).
+    function loadTools() {
+      const wire = () => {
+        document.querySelectorAll("#stab-tools .tool-update").forEach((b) => b.onclick = () => updateToolRules(b.getAttribute("data-tool"), b));
+      };
+      fetch("/tools/status").then(r => r.ok ? r.json() : null).then(j => {
+        const el = document.getElementById("toolsStatus");
+        if (!el) return wire();
+        if (!j || !j.enabled) { el.innerHTML = `Tool runner not available — restart the companion server if this 404s.`; return wire(); }
+        const rows = (j.tools || []).map((t) => {
+          const state = t.configured
+            ? `<span style="color:#7fd08a">configured</span>${t.autoRun ? " · auto-run on" : " · auto-run off"}`
+            : `<span style="color:var(--c-7e8aa0)">off</span>`;
+          return `<div>${esc(t.label)} — ${state}${t.hasUpdate ? "" : " · no update command"}</div>`;
+        }).join("");
+        el.innerHTML = rows || "no tools";
+        wire();
+      }).catch(() => wire());
+      loadCustomTools();
+    }
+    // Custom tools (#211): list existing + wire delete; the add form posts /tools/custom.
+    function loadCustomTools() {
+      const el = document.getElementById("customToolList");
+      if (!el) return;
+      fetch("/tools/custom").then(r => r.ok ? r.json() : null).then(j => {
+        const tools = (j && j.tools) || [];
+        if (!tools.length) { el.innerHTML = `<div style="color:var(--c-7e8aa0);font-size:12px">No custom tools yet.</div>`; return; }
+        el.innerHTML = tools.map(t =>
+          `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--c-2a2f3a);border-radius:6px;margin-bottom:6px">
+            <strong>${esc(t.name)}</strong>
+            <span style="color:var(--c-9aa4b2);font-size:12px">${esc((t.extensions||[]).join(", ") || "no extensions")}${t.autoRun ? " · auto-run on" : ""}</span>
+            <code style="font-size:11px;color:var(--c-7e8aa0)">${esc(t.binary)} ${esc(t.runArgs||"")}</code>
+            <button class="ct-del" data-id="${esc(t.id)}" type="button" style="margin-left:auto;padding:1px 8px;font-size:11px">Delete</button>
+          </div>`).join("");
+        el.querySelectorAll(".ct-del").forEach(b => b.onclick = () => deleteCustomTool(b.getAttribute("data-id")));
+      }).catch(() => { el.innerHTML = `<div style="color:var(--c-7e8aa0);font-size:12px">Custom tools unavailable — restart the companion server if this 404s.</div>`; });
+    }
+    function addCustomTool() {
+      const msg = document.getElementById("ctMsg");
+      const body = {
+        name: (document.getElementById("ctName").value || "").trim(),
+        binary: (document.getElementById("ctBinary").value || "").trim(),
+        runArgs: (document.getElementById("ctRunArgs").value || "").trim(),
+        updateCommand: (document.getElementById("ctUpdateCmd").value || "").trim(),
+        extensions: (document.getElementById("ctExtensions").value || "").trim(),
+        autoRun: /^(on|true|yes|1)$/i.test((document.getElementById("ctAutoRun").value || "").trim()),
+      };
+      if (!body.name || !body.binary) { if (msg) msg.textContent = "name and binary path are required"; return; }
+      if (msg) msg.textContent = "adding…";
+      fetch("/tools/custom", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+          if (!ok) { if (msg) msg.textContent = (j && j.error ? j.error : "add failed") + " — restart the companion server if this 404s"; return; }
+          if (msg) msg.textContent = `added "${j.tool.name}"`;
+          ["ctName","ctBinary","ctRunArgs","ctUpdateCmd","ctExtensions","ctAutoRun"].forEach(id => { const e = document.getElementById(id); if (e) e.value = ""; });
+          loadCustomTools();   // shows the new one + a fresh empty form to add another
+        }).catch(e => { if (msg) msg.textContent = "add failed: " + e.message; });
+    }
+    function deleteCustomTool(id) {
+      if (!id) return;
+      fetch(`/tools/custom/${encodeURIComponent(id)}`, { method: "DELETE" })
+        .then(() => loadCustomTools()).catch(() => {});
+    }
+    { const b = document.getElementById("ctAddBtn"); if (b) b.onclick = addCustomTool; }
+    function updateToolRules(toolId, btn) {
+      const caseId = (document.getElementById("caseId").value || "").trim();
+      const msg = document.getElementById("toolsMsg");
+      if (btn) { btn.disabled = true; btn.textContent = "Updating…"; }
+      // Case id is only needed for the route path; use the connected case, or "_" (the command is global).
+      fetch(`/cases/${encodeURIComponent(caseId || "_")}/tools/${toolId}/update-rules`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      }).then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+        if (btn) { btn.disabled = false; btn.textContent = "↻ Update rules"; }
+        if (msg) msg.textContent = ok ? `${toolId}: ${(j.output || "updated").slice(0, 200)}` : (j.error || "update failed") + " — restart the companion server if this 404s";
+      }).catch(e => { if (btn) { btn.disabled = false; btn.textContent = "↻ Update rules"; } if (msg) msg.textContent = "update failed: " + e.message; });
+    }
+    document.getElementById("toolsReconnectBtn").onclick = () => {
+      const msg = document.getElementById("toolsMsg");
+      if (msg) msg.textContent = "applying…";
+      fetch("/tools/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(r => r.json()).then(j => { if (msg) msg.textContent = j.ok ? `applied — ${(j.configured || []).length} tool(s) configured` : (j.error || "reconnect failed"); loadTools(); })
+        .catch(e => { if (msg) msg.textContent = "reconnect failed: " + e.message + " — restart the companion server if this 404s"; });
+    };
 
     function loadUpdateCheck() {
       return fetch("/update-check").then(r => r.json()).then(j => {

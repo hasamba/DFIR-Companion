@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   classifyDropFile,
+  rawToolInputExt,
   shouldIgnoreDropFile,
   selectReadyFiles,
   isOversize,
@@ -17,10 +18,21 @@ describe("dropScan — classification", () => {
       expect(classifyDropFile(p)).toBe("image");
     }
   });
+  it("routes raw EVTX/PCAP to the external-tool run path", () => {
+    for (const p of ["Security.evtx", "sub/a.evt", "capture.pcap", "b.PCAPNG"]) {
+      expect(classifyDropFile(p)).toBe("raw-tool-input");
+    }
+  });
   it("routes everything else to artifact import", () => {
     for (const p of ["log.csv", "events.json", "auth.log", "export.xml", "mail.eml", "noext"]) {
       expect(classifyDropFile(p)).toBe("artifact");
     }
+  });
+  it("rawToolInputExt returns the lowercased ext only for raw inputs", () => {
+    expect(rawToolInputExt("Security.EVTX")).toBe(".evtx");
+    expect(rawToolInputExt("cap.pcapng")).toBe(".pcapng");
+    expect(rawToolInputExt("log.csv")).toBe("");
+    expect(rawToolInputExt("shot.png")).toBe("");
   });
 });
 

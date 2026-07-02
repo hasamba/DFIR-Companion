@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **External tool runner (Settings → Tools)** — run your own local Hayabusa / Velociraptor CLI / Suricata / Snort / YARA against raw EVTX/PCAP/files, then ingest the tool's output through the existing importers. Importing a raw file from the dashboard, or dropping raw files in a case's `drop/` folder, shows a header banner that asks (once per batch) before running; auto-run is opt-in per tool. Tools run from their own binary directory so bundled rules/config resolve, and ANSI colour codes are stripped from tool output (closes #211).
+- **Custom tools (Settings → Tools)** — add your own tools beyond the five built-ins: name, binary path, run command, optional update command, and the file extensions they run on; their output is auto-detected and routed to the right importer. Add as many as you like.
+- **YARA CLI output importer** (`yara -s -m`) — rule matches → file-match events + file/hash IOCs.
 - **Velociraptor hunt expiry** — hunts launch with a relative expiry (1 hour / 1 day / 1 week, default 1 hour) instead of Velociraptor's week-long default; a per-bundle default (bundle editor) is overridable per run, and all hunt paths (bundles, fleet, suggested deploys) inherit the 1-hour default.
 - **Velociraptor hunt status polling** — a 30s background poll reflects a hunt's live state (`deleted` when removed from Velociraptor, `unreachable` on a transient failure) and auto-collects as soon as the hunt finishes, instead of waiting out the fixed delay (`DFIR_VELO_HUNT_POLL_S`; closes #210).
 - **Plain syslog importer** — deterministic RFC 5424 / RFC 3164 parser (Info-by-default telemetry, auth-failure/crit-PRI bumps to Low, host carried as asset), replacing AI log-triage for Linux/Unix syslog.

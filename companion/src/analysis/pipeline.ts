@@ -76,6 +76,7 @@ import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImp
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { parseEcarJson, ECAR_SOURCE, type EcarImportOptions } from "./ecarImport.js";
 import { parseSnortLog, SNORT_SOURCE, type SnortImportOptions } from "./snortImport.js";
+import { parseYaraOutput, YARA_SOURCE, type YaraImportOptions } from "./yaraImport.js";
 import { parseCombinedLog, COMBINED_LOG_SOURCE, type CombinedLogImportOptions } from "./combinedLogImport.js";
 import { parseCiscoAsaLog, CISCO_ASA_SOURCE, type CiscoAsaImportOptions } from "./ciscoAsaImport.js";
 import { parseSyslog, SYSLOG_SOURCE, type SyslogImportOptions } from "./syslogImport.js";
@@ -2130,6 +2131,54 @@ export class AnalysisPipeline {
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Snort import (${parsed.format}): ${parsed.kept} alert(s) from ${parsed.total} line(s)` +
+        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
+      summary: "",
+    };
+    const delta = deltaSchema.parse(raw);
+
+    let state = await this.opts.stateStore.load(caseId);
+    state = mergeDelta(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // Import YARA CLI scan output (`yara -s -m <rules> <target>`). Deterministic (no AI): each rule
+  // match becomes a file-match event (default Medium, bumped only on an explicit rule-meta signal),
+  // matched file + hash meta become IOCs. YARA output is undated, so mergeDelta stamps events at import
+  // time. Used by the external-tools run path (#211). See yaraImport.ts.
+  async importYara(
+    caseId: string,
+    text: string,
+    opts: {
+      label: string;
+      idPrefix: string;
+      importedAt: string;
+      yara?: YaraImportOptions;
+      minSeverity?: Severity;
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<InvestigationState> {
+    const parsedRaw = parseYaraOutput(text, { ...opts.yara });
+    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+
+    const raw = {
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: parsed.events.map((e, i) => ({
+        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [YARA_SOURCE],
+      })),
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `YARA import: ${parsed.kept} match event(s) from ${parsed.total} match(es)` +
+        `, ${parsed.iocs.length} IOC(s)` +
         (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
       summary: "",
     };

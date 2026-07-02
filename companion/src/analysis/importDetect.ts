@@ -15,6 +15,7 @@ import { looksLikeWinEventXml } from "./evtxXmlImport.js";
 import { looksLikeBashHistory } from "./bashHistoryImport.js";
 import { isEcarRecord } from "./ecarImport.js";
 import { looksLikeSnort } from "./snortImport.js";
+import { looksLikeYara } from "./yaraImport.js";
 import { looksLikeCombinedLog } from "./combinedLogImport.js";
 import { looksLikeCiscoAsa } from "./ciscoAsaImport.js";
 import { looksLikeSyslog } from "./syslogImport.js";
@@ -23,7 +24,7 @@ import type { EngineDetectContext, ExternalImporter } from "./declarativeImporte
 export type ImportKind =
   | "thor" | "siem" | "evtxxml" | "chainsaw" | "hayabusa" | "ecar" | "velociraptor" | "securityonion" | "socrates" | "network"
   | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "k8s" | "osquery" | "plaso" | "sandbox" | "memory" | "email"
-  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "snort" | "combinedlog" | "asa" | "syslog" | "csv" | "log" | "unknown";
+  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "snort" | "yara" | "combinedlog" | "asa" | "syslog" | "csv" | "log" | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -504,6 +505,13 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // into a one-off syslog message) on a large, mostly-benign host log. Checked after ASA (also
   // syslog-framed but claimed by its `%ASA` tag) and combined-log, before the generic log fallback.
   if (looksLikeSyslog(t)) return "syslog";
+
+  // YARA CLI scan output (`<Rule> [tags] [meta] <file>` + `-s` `0xOFF:$id:` lines) — a real detector
+  // verdict, parsed deterministically instead of AI log-triage. LAST of the line-format checks: its
+  // header heuristic (identifier + path-ish tail) is fuzzy and can shadow the more specific formats
+  // above (e.g. a BSD syslog line), so those claim first. (The external-tools run path sets the kind
+  // directly and never relies on this.)
+  if (looksLikeYara(t)) return "yara";
 
   // Tabular (CSV / EZ / Plaso / Hayabusa-csv / M365-csv) vs a line-oriented log.
   const csvKind = detectCsv(t);

@@ -76,6 +76,31 @@ Customer exposure check configuration:
 
 ---
 
+## Tools
+
+Run your **own locally-installed** external tools against raw evidence the Companion can't parse
+(EVTX/PCAP/files), then ingest the tool's *output* through the existing importers. The Companion never
+downloads or bundles a binary — install and update it yourself (repo links are shown per tool).
+
+- **Hayabusa / Velociraptor CLI** — EVTX → csv/json-timeline / artifact JSON
+- **Suricata / Snort** — PCAP → alerts (Snort uses your own rules file)
+- **YARA** — scan files/dirs → rule matches (file/hash IOCs)
+
+**Custom tools** — beyond the five built-ins, add your own: a name, the binary path, a run command
+(`<target>` = input file, `<output>` = output file, omit for stdout), an optional update command, and
+the file extensions it handles. The output is auto-detected and routed to the right importer. Add as
+many as you like; each appears in the Import/drop banners for its extensions.
+
+Per tool: binary path (blank = off), run-args template (`<target>`/`<output>`/`<rules>` placeholders),
+rules path (Snort/YARA), a separate **Update rules** command + button, an **auto-run on drop** toggle,
+and timeout/output caps. Click **Reconnect / apply** to apply saved paths without a restart. A raw
+`.evtx`/`.evt`/`.pcap`/`.pcapng` copied into a case's `drop/` folder runs automatically when a matching
+tool has auto-run on; the Import dialog shows a banner for these formats. Config is stored in `.env`
+(`DFIR_TOOL_*`, not a secret). Commands run with **no shell** (args tokenized) and the target path is
+contained to the case directory. Master kill-switch: `DFIR_TOOL_AUTO_RUN=off`.
+
+---
+
 ## IOC Whitelist
 
 Global known-good pattern list:

@@ -2,7 +2,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import { config as loadDotenv } from "dotenv";
 import { join, basename, isAbsolute, resolve, dirname, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeFile, readFile, rm, readdir, stat, open, copyFile, mkdir, rename } from "node:fs/promises";
+import { writeFile, readFile, rm, readdir, stat, open, copyFile, mkdir, mkdtemp, rename } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
@@ -121,11 +121,17 @@ import type { AssetType } from "./analysis/assetGraph.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { SecondOpinionStore } from "./analysis/secondOpinionStore.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
-import { DropStatusStore, type DropFailure } from "./analysis/dropStatus.js";
+import { DropStatusStore, type DropFailure, type PendingRawInput } from "./analysis/dropStatus.js";
 import {
-  selectReadyFiles, classifyDropFile, shouldIgnoreDropFile, isOversize,
+  selectReadyFiles, classifyDropFile, rawToolInputExt, RAW_TOOL_EXTS, shouldIgnoreDropFile, isOversize,
   DROP_PROCESSED, DROP_FAILED, DROP_README, type DropFileStat,
 } from "./analysis/dropScan.js";
+import {
+  loadAllToolConfigs, toolForExtension, suggestedToolForExtension, TOOL_DEFS, type ToolId, type ToolConfig,
+} from "./integrations/tools/toolConfig.js";
+import { spawnToolRunner, type ToolRunner } from "./integrations/tools/toolRunner.js";
+import { runToolAgainstFile, updateToolRules, resolveContainedPath } from "./integrations/tools/runToolImport.js";
+import { CustomToolStore, customToolToConfig, normalizeExt, type CustomTool } from "./integrations/tools/customToolStore.js";
 import { TemplateStore, buildInitialQuestions, buildInitialNextSteps } from "./analysis/templateStore.js";
 import { diffTimeline } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
@@ -381,6 +387,16 @@ export interface AppOptions {
   // config saved via Settings, or the Velociraptor server coming back online, applies without a server
   // restart). Defaults to the env-based buildVelociraptorClient; tests inject a stub (no spawn).
   rebuildVelociraptorClient?: () => VelociraptorClient | undefined;
+  // External forensic tools (#211): a runner that spawns the analyst-configured LOCAL binaries
+  // (Hayabusa/Velociraptor CLI/Suricata/Snort/YARA) against raw evidence and hands the output to the
+  // existing importers. Absent → the tools feature is off (routes 501, drops surface a "configure"
+  // banner). Config is read live from DFIR_TOOL_* env via `loadToolConfigs` (default reads process.env,
+  // so POST /tools/reconnect applies saved settings without a restart). Tests inject stubs (no spawn).
+  toolRunner?: ToolRunner;
+  loadToolConfigs?: () => Map<ToolId, ToolConfig>;
+  // User-defined custom tools (#211) — a GLOBAL JSON store of analyst-added tools (name/binary/command/
+  // extensions), merged into the tool set alongside the built-ins. Absent → only built-ins.
+  customToolStore?: CustomToolStore;
   // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map). A single-endpoint
   // collection resolves the host against this file instead of a brittle live `clients(search=...)`
   // lookup; refreshed at startup, on demand (Settings), and lazily on a collect miss.
@@ -667,7 +683,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Lightweight reachability check used by the extension's connection status.
   // aiEnabled tells the dashboard whether an AI provider is configured at all.
   app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, irisEnabled: !!irisClient, timesketchEnabled: !!options.timesketchClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, dropEnabled: dropWatchEnabled && !!options.dropStatusStore, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked, geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, irisEnabled: !!irisClient, timesketchEnabled: !!options.timesketchClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, dropEnabled: dropWatchEnabled && !!options.dropStatusStore, toolsEnabled: !!options.toolRunner, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked, geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" });
   });
 
   // ── Update check (opt-in "newer release available" notice; NEVER downloads) ──────────────
@@ -2327,6 +2343,202 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // ── External forensic tools (#211) ────────────────────────────────────────────────────────────
+  // Per-tool configured/auto-run status for the Settings → Tools tab (no secret values). Derived LIVE
+  // from env so it reflects settings just saved + reconnected.
+  app.get("/tools/status", (_req: Request, res: Response) => {
+    const configured = liveToolConfigs();
+    const builtins = (Object.keys(TOOL_DEFS) as ToolId[]).map((id) => {
+      const cfg = configured.get(id);
+      return {
+        id,
+        label: TOOL_DEFS[id].label,
+        repoUrl: TOOL_DEFS[id].repoUrl,
+        importKind: TOOL_DEFS[id].importKind,
+        extensions: TOOL_DEFS[id].extensions,
+        configured: !!cfg,
+        autoRun: cfg?.autoRun ?? false,
+        hasUpdate: !!cfg?.updateCommand,
+        custom: false,
+      };
+    });
+    const custom = customTools.map((t) => ({
+      id: t.id,
+      label: t.name,
+      importKind: "auto",
+      extensions: t.extensions,
+      configured: true,
+      autoRun: t.autoRun,
+      hasUpdate: !!(t.updateCommand && t.updateCommand.trim()),
+      custom: true,
+    }));
+    res.status(200).json({ enabled: !!options.toolRunner, tools: [...builtins, ...custom] });
+  });
+
+  // Re-read DFIR_TOOL_* from .env (settings saved via the dashboard only write the file) so the tool
+  // paths/args/toggles apply WITHOUT the #1-gotcha restart. The runner is stateless (binary is a per-call
+  // arg) so there's nothing to rebuild — the next liveToolConfigs() sees the reloaded env. Always 200.
+  app.post("/tools/reconnect", async (_req: Request, res: Response) => {
+    try {
+      const applied = await reloadEnvPrefix("DFIR_TOOL_");
+      const configured = [...liveToolConfigs().keys()];
+      return res.status(200).json({ ok: true, enabled: !!options.toolRunner, configured, applied });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  // Manually run a configured tool against a raw file on disk (the drop-folder banner's "Run <tool>", or
+  // any case-relative path) and ingest its output through the normal import chain. 501 when tools are off,
+  // 400 on a bad tool id / path (containment enforced by resolveContainedPath).
+  app.post("/cases/:id/tools/:toolId/run", async (req: Request, res: Response) => {
+    const caseId = req.params.id;
+    const toolId = req.params.toolId;
+    if (!options.toolRunner) return res.status(501).json({ error: "external tools not configured" });
+    if (!isKnownTool(toolId)) return res.status(400).json({ error: `unknown tool "${toolId}"` });
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    const path = typeof req.body?.path === "string" ? req.body.path.trim() : "";
+    if (!path) return res.status(400).json({ error: "path is required" });
+    try {
+      const r = await runToolAndIngest(caseId, toolId, path, { undoLabel: `Tool: ${toolId} — ${basename(path)}` });
+      return res.status(200).json({ ok: true, tool: toolId, storedName: r.storedName, addedEvents: r.addedEvents, addedIocs: r.addedIocs, analyzed: r.analyzed });
+    } catch (err) {
+      recordImportFailure(caseId, toolId, path, err);
+      return res.status(400).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  // Run a tool against a raw file UPLOADED from the dashboard Import dialog (the browser has the bytes
+  // but the server can't read an arbitrary local path, and a binary can't go through the text /import
+  // body). The bytes are staged into a server-owned dir INSIDE the case (so path-containment holds),
+  // the tool runs, its output is imported, and the staged raw file is deleted (the Companion keeps the
+  // tool OUTPUT as evidence, not the raw binary). For files too large for the body cap, the analyst uses
+  // the drop folder instead. 501 tools off / 400 bad tool or input. #211
+  app.post("/cases/:id/tools/:toolId/run-upload", async (req: Request, res: Response) => {
+    const caseId = req.params.id;
+    const toolId = req.params.toolId;
+    if (!options.toolRunner) return res.status(501).json({ error: "external tools not configured" });
+    if (!isKnownTool(toolId)) return res.status(400).json({ error: `unknown tool "${toolId}"` });
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    const filename = String(req.body?.filename ?? "").trim();
+    const dataBase64 = typeof req.body?.dataBase64 === "string" ? req.body.dataBase64 : "";
+    if (!filename || !dataBase64) return res.status(400).json({ error: "filename and dataBase64 are required" });
+    if (!liveToolConfigs().get(toolId)) return res.status(400).json({ error: `tool "${toolId}" is not configured` });
+    // Stage into a FRESH per-upload dir under the file's ORIGINAL basename (no collisions, so no need to
+    // mangle the name) — folder-root tools (Velociraptor --ROOT) detect the EVTX channel from the filename.
+    const toolWork = join(store.caseDir(caseId), ".toolwork");
+    const safe = basename(filename).replace(/[^\w.\-]+/g, "_").slice(0, 120) || "raw.bin";
+    let stageDir = "";
+    try {
+      await mkdir(toolWork, { recursive: true });
+      stageDir = await mkdtemp(join(toolWork, "up-"));
+      const staged = join(stageDir, safe);
+      await writeFile(staged, Buffer.from(dataBase64, "base64"));
+      const r = await runToolAndIngest(caseId, toolId, staged, { undoLabel: `Tool: ${toolId} — ${basename(filename)}` });
+      return res.status(200).json({ ok: true, tool: toolId, addedEvents: r.addedEvents, addedIocs: r.addedIocs, analyzed: r.analyzed });
+    } catch (err) {
+      recordImportFailure(caseId, toolId, filename, err);
+      return res.status(400).json({ ok: false, error: (err as Error).message });
+    } finally {
+      if (stageDir) await rm(stageDir, { recursive: true, force: true }).catch(() => { /* best-effort cleanup */ });
+    }
+  });
+
+  // Batch-run EVERY pending raw drop file through its matching tool — the "Run tools on these N files"
+  // button on the drop banner (ONE confirmation for the whole batch). Each ran/failed file is moved out
+  // of drop/ (to _processed/_failed); files with no configured tool stay pending. Updates the drop
+  // status so the banner reflects what's left. 501 tools/drop off. #211
+  app.post("/cases/:id/drop/run-pending", async (req: Request, res: Response) => {
+    const caseId = req.params.id;
+    if (!options.toolRunner) return res.status(501).json({ error: "external tools not configured" });
+    if (!options.dropStatusStore) return res.status(501).json({ error: "drop folder not enabled" });
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    const pending = (await options.dropStatusStore.load(caseId)).pendingRawInputs ?? [];
+    const configured = liveToolConfigs();
+    const dropDir = dropDirOf(caseId);
+    // ONE undo checkpoint for the whole "Run all" batch (the user clicked once): snapshot before, then
+    // push a single checkpoint after if anything imported — so undo reverts the batch in one step.
+    let before: InvestigationState | null = null;
+    if (options.stateStore) { try { before = await options.stateStore.load(caseId); } catch { /* keep null */ } }
+    let ran = 0, failed = 0, skipped = 0;
+    const stillPending: PendingRawInput[] = [];
+    for (const p of pending) {
+      const toolId = resolveToolForExt(p.ext, configured);
+      if (!toolId) { skipped++; stillPending.push({ ...p, configured: false, suggestedTool: suggestedToolForExtension(p.ext) }); continue; }
+      try {
+        await runToolAndIngest(caseId, toolId, join(dropDir, p.relpath));
+        await moveDropFile(dropDir, p.relpath, true).catch(() => { /* best-effort */ });
+        ran++;
+      } catch (err) {
+        failed++;
+        recordImportFailure(caseId, "drop-tool", p.relpath, err);
+        await moveDropFile(dropDir, p.relpath, false).catch(() => { /* best-effort */ });
+      }
+      dropSeen.get(caseId)?.delete(p.relpath);   // moved out of the watched area — forget it
+    }
+    if (before && ran > 0) {
+      const s = await options.stateStore?.load(caseId).catch(() => null);
+      if (!s || s.forensicTimeline.length !== before.forensicTimeline.length || s.iocs.length !== before.iocs.length) {
+        await pushImportCheckpoint(caseId, before, `Tools: drop batch (${ran} file${ran !== 1 ? "s" : ""})`);
+      }
+    }
+    await options.dropStatusStore.record(caseId, { dropPath: dropDir, imported: [], failed: [], pendingRawInputs: stillPending });
+    options.onDropStatus?.(caseId);
+    return res.status(200).json({ ok: true, ran, failed, skipped });
+  });
+
+  // Run a tool's "update rules" command (Settings → Tools). Does NOT touch case data — a rule update is
+  // not evidence; returns the command output for a UI toast. 501 when tools off, 400 when no update
+  // command is configured for the tool.
+  app.post("/cases/:id/tools/:toolId/update-rules", async (req: Request, res: Response) => {
+    const toolId = req.params.toolId;
+    if (!options.toolRunner) return res.status(501).json({ error: "external tools not configured" });
+    if (!isKnownTool(toolId)) return res.status(400).json({ error: `unknown tool "${toolId}"` });
+    const cfg = liveToolConfigs().get(toolId);
+    if (!cfg) return res.status(400).json({ error: `tool "${toolId}" is not configured` });
+    try {
+      const output = await updateToolRules(cfg, options.toolRunner);
+      return res.status(200).json({ ok: true, tool: toolId, output });
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  // Custom tools (#211) — analyst-defined tools (name/binary/command/update/extensions) beyond the
+  // built-ins. GLOBAL store; the list is refreshed in memory on each mutation so liveToolConfigs/status
+  // reflect it immediately. 501 when the custom-tool store isn't wired.
+  app.get("/tools/custom", async (_req: Request, res: Response) => {
+    if (!options.customToolStore) return res.status(501).json({ error: "custom tools not enabled" });
+    return res.status(200).json({ tools: await options.customToolStore.load() });
+  });
+  app.post("/tools/custom", async (req: Request, res: Response) => {
+    if (!options.customToolStore) return res.status(501).json({ error: "custom tools not enabled" });
+    try {
+      const tool = await options.customToolStore.add(req.body ?? {});
+      await reloadCustomTools();
+      return res.status(201).json({ ok: true, tool });
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: (err as Error).message });
+    }
+  });
+  app.put("/tools/custom/:id", async (req: Request, res: Response) => {
+    if (!options.customToolStore) return res.status(501).json({ error: "custom tools not enabled" });
+    try {
+      const tool = await options.customToolStore.update(req.params.id, req.body ?? {});
+      if (!tool) return res.status(404).json({ error: `custom tool "${req.params.id}" not found` });
+      await reloadCustomTools();
+      return res.status(200).json({ ok: true, tool });
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: (err as Error).message });
+    }
+  });
+  app.delete("/tools/custom/:id", async (req: Request, res: Response) => {
+    if (!options.customToolStore) return res.status(501).json({ error: "custom tools not enabled" });
+    const removed = await options.customToolStore.remove(req.params.id);
+    await reloadCustomTools();
+    return res.status(200).json({ ok: true, removed });
+  });
+
   // Launch the VQL as a single-endpoint COLLECTION on ONE host (issue #70 — the playbook-hunt deploy
   // path for a task tied to exactly one endpoint). Resolves the host → client_id from the persisted
   // INVENTORY (refreshing it once on a miss), then runs collect_client on that client; returns the
@@ -2564,6 +2776,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "bashhistory": return pipeline.importBashHistory(caseId, text, base);
       case "ecar": return pipeline.importEcar(caseId, text, base);
       case "snort": return pipeline.importSnort(caseId, text, base);
+      case "yara": return pipeline.importYara(caseId, text, base);
       case "combinedlog": return pipeline.importCombinedLog(caseId, text, base);
       case "asa": return pipeline.importCiscoAsa(caseId, text, base);
       case "syslog": return pipeline.importSyslog(caseId, text, base);
@@ -2672,6 +2885,69 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "",
   ].join("\n");
 
+  // User-defined custom tools (#211) held in memory + refreshed on CRUD (mirrors importerRegistry), so
+  // liveToolConfigs stays synchronous.
+  let customTools: CustomTool[] = [];
+  if (options.customToolStore) options.customToolStore.load().then((t) => { customTools = t; }).catch(() => { /* keep empty */ });
+  async function reloadCustomTools(): Promise<void> {
+    if (options.customToolStore) customTools = await options.customToolStore.load();
+  }
+
+  // External-tools (#211) config is read LIVE from env so POST /tools/reconnect applies without a
+  // restart; tests inject a fixed map. The built-in tools come from env; custom tools are merged in from
+  // the in-memory store. Keyed by string id (built-in ToolId or a custom id). The runner is stateless.
+  const liveToolConfigs = (): Map<string, ToolConfig> => {
+    const out = new Map<string, ToolConfig>((options.loadToolConfigs ?? (() => loadAllToolConfigs(process.env)))());
+    for (const t of customTools) out.set(t.id, customToolToConfig(t));
+    return out;
+  };
+  // A tool id is known when it's a configured built-in or a defined custom tool.
+  const isKnownTool = (toolId: string): boolean => toolId in TOOL_DEFS || customTools.some((t) => t.id === toolId);
+  // Resolve which CONFIGURED tool handles a file extension: built-in preference first (via TOOL_DEFS),
+  // then a custom tool that claims the extension.
+  const resolveToolForExt = (ext: string, configured: Map<string, ToolConfig>): string | null => {
+    const builtin = toolForExtension(ext, configured);
+    if (builtin) return builtin;
+    const e = ext.toLowerCase();
+    const custom = customTools.find((t) => configured.has(t.id) && t.extensions.some((x) => x.toLowerCase() === e));
+    return custom ? custom.id : null;
+  };
+  // Every file extension claimed by a built-in raw type OR a defined custom tool (for drop routing).
+  const rawExtClaimed = (ext: string): boolean =>
+    RAW_TOOL_EXTS.has(ext.toLowerCase()) || customTools.some((t) => t.extensions.some((x) => x.toLowerCase() === ext.toLowerCase()));
+
+  // Run a configured external tool against a raw on-disk file (contained in the case dir) and ingest its
+  // output through the SAME chain as the Import button (ingestStreamed). Shared by the drop-folder
+  // auto-run and the manual POST /cases/:id/tools/:toolId/run route. A custom tool's output kind is
+  // "auto" → detected from the output. Throws when not configured / the run fails; the output work dir
+  // is server-owned + auto-cleaned inside runToolAgainstFile.
+  async function runToolAndIngest(
+    caseId: string, toolId: string, targetPath: string, opts: { undoLabel?: string } = {},
+  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
+    if (!options.toolRunner) throw new Error("external tools not configured");
+    const cfg = liveToolConfigs().get(toolId);
+    if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
+    const caseDir = store.caseDir(caseId);
+    const contained = resolveContainedPath(caseDir, targetPath);
+    const { outputText, importKind } = await runToolAgainstFile({
+      cfg, runner: options.toolRunner, targetPath: contained, workDir: join(caseDir, ".toolwork"),
+    });
+    const outName = `${basename(contained)}.${toolId}.out`;
+    // Custom tools declare no fixed importer — detect the kind from the tool's output.
+    const kind = importKind === "auto" ? resolveImportKind(outName, outputText) : importKind;
+    if (kind === "unknown") throw new Error(`${toolId}: could not detect the tool output's format (not a recognized import)`);
+    // ingestStreamed skips the undo checkpoint (built for high-frequency streaming), so a MANUAL tool
+    // run (Import dialog / Run button) wouldn't be undoable. When a label is given, snapshot the
+    // pre-import state and push an undo checkpoint if the import changed anything — parity with /import.
+    let before: InvestigationState | null = null;
+    if (opts.undoLabel && options.stateStore) { try { before = await options.stateStore.load(caseId); } catch { /* keep null */ } }
+    const r = await ingestStreamed(caseId, kind, outputText, outName);
+    if (before && opts.undoLabel && (r.addedEvents > 0 || r.addedIocs > 0)) {
+      await pushImportCheckpoint(caseId, before, opts.undoLabel);
+    }
+    return r;
+  }
+
   function dropDirOf(caseId: string): string { return join(store.caseDir(caseId), "drop"); }
 
   async function ensureDropFolders(caseId: string): Promise<void> {
@@ -2748,10 +3024,27 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   }
 
-  async function processDropFile(caseId: string, dropDir: string, file: DropFileStat): Promise<{ ok: boolean; reason?: string }> {
+  async function processDropFile(caseId: string, dropDir: string, file: DropFileStat): Promise<{ ok: boolean; reason?: string; pending?: PendingRawInput }> {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
     try {
+      // A raw file an external tool handles (built-in EVTX/PCAP, or any extension a CUSTOM tool claims)
+      // — can't be read as text. Run the configured tool against the on-disk file (size-independent, so
+      // checked BEFORE the oversize cap), or surface it as pending so the dashboard offers "Run/Configure
+      // <tool>". Auto-run is gated per-tool (#211). Images always go to the capture path, not here.
+      const ext = extname(file.relpath).toLowerCase();
+      if (options.toolRunner && classifyDropFile(file.relpath) !== "image" && rawExtClaimed(ext)) {
+        const configured = liveToolConfigs();
+        const toolId = resolveToolForExt(ext, configured);
+        const cfg = toolId ? configured.get(toolId) : undefined;
+        if (!toolId || !cfg || !cfg.autoRun) {
+          // Not runnable now → pending (banner). Do NOT move the file so a manual run can still act on it.
+          return { ok: false, pending: { relpath: file.relpath, ext, suggestedTool: toolId ?? suggestedToolForExtension(ext), configured: !!toolId } };
+        }
+        const r = await runToolAndIngest(caseId, toolId, full);
+        if (!r.analyzed) return { ok: false, reason: `${toolId} ran but AI is off — output saved as evidence but not analyzed` };
+        return { ok: true };
+      }
       if (isOversize(file.size, dropMaxBytes)) {
         return { ok: false, reason: `too large (${Math.round(file.size / 1048576)} MB > ${Math.round(dropMaxBytes / 1048576)} MB cap) — use Import-from-path` };
       }
@@ -2787,21 +3080,28 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
       const imported: string[] = [];
       const failed: DropFailure[] = [];
+      const pendingRawInputs: PendingRawInput[] = [];
       for (let i = 0; i < ready.length; i += DROP_CONCURRENCY) {
         const batch = ready.slice(i, i + DROP_CONCURRENCY);
         await Promise.all(batch.map(async (file) => {
           const res = await processDropFile(caseId, dropDir, file);
+          if (res.pending) {
+            // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
+            // "Run <tool>" can act on it and a later config/auto-run picks it up next sweep.
+            pendingRawInputs.push(res.pending);
+            return;
+          }
           if (res.ok) imported.push(file.relpath);
           else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
           await moveDropFile(dropDir, file.relpath, res.ok).catch((e) => logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`));
           nextSeen.delete(file.relpath); // moved out of the watched area — forget it
         }));
       }
-      if (imported.length === 0 && failed.length === 0) return;
+      if (imported.length === 0 && failed.length === 0 && pendingRawInputs.length === 0) return;
 
       if (options.dropStatusStore) {
         try {
-          await options.dropStatusStore.record(caseId, { dropPath: dropDir, imported, failed });
+          await options.dropStatusStore.record(caseId, { dropPath: dropDir, imported, failed, pendingRawInputs });
           options.onDropStatus?.(caseId);
         } catch (e) { logLine(`[drop] status record failed: ${(e as Error).message}`); }
       }
@@ -7529,7 +7829,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "DFIR_AI_", "DFIR_IRIS_", "DFIR_VELOCIRAPTOR_", "DFIR_TIMESKETCH_", "DFIR_NOTION_", "DFIR_CLICKUP_",
     "DFIR_VT_", "DFIR_ABUSEIPDB_", "DFIR_HUNTINGCH_", "DFIR_MB_", "DFIR_CROWDSTRIKE_", "DFIR_SHODAN_",
     "DFIR_MISP_", "DFIR_YETI_", "DFIR_OPENCTI_", "DFIR_ROCKYRACCOON_", "DFIR_GEOIP_",
-    "DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_PUSH_TOKEN", "DFIR_NSRL_",
+    "DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_PUSH_TOKEN", "DFIR_NSRL_", "DFIR_TOOL_",
   ]);
   app.post("/settings/reload", async (req: Request, res: Response) => {
     try {
@@ -8030,6 +8330,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // whitelist). Optionally pre-loaded at startup from file(s) named in DFIR_NSRL_FILE (; separated):
   // an NSRLFile.txt RDS export, a hashdeep CSV, or a plain hash-per-line list. Ingest is idempotent.
   const nsrlStore = new NsrlStore(join(dirname(casesRoot), "nsrl", "known-hashes.txt"));
+  // Custom external tools (#211) — a global JSON store in its own subdir beside cases/ (drive-root-safe).
+  const customToolStore = new CustomToolStore(join(dirname(casesRoot), "tools", "custom-tools.json"));
   const nsrlFiles = splitNsrlPaths(process.env.DFIR_NSRL_FILE);
   if (nsrlFiles.length > 0) {
     // Fire-and-forget (startServer is sync): ingest in the background via the same helper the
@@ -8233,6 +8535,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
     dropStatusStore,
     onDropStatus: (caseId) => hub.broadcastTo(caseId, { type: "drop_status_changed" }),
+    // External forensic tools (#211): the real spawn runner (tests inject a stub). Config is read live
+    // from DFIR_TOOL_* env, so a tool is off until its binary is set — no gating client to build.
+    toolRunner: spawnToolRunner(),
+    customToolStore,
     importUndoStore,
     onImportUndo: (caseId) => hub.broadcastTo(caseId, { type: "import_undo_changed" }),
     autoSynthesize,

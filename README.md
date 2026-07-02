@@ -181,6 +181,7 @@ Standard DFIR questions auto-answered from the synthesized case
 - **Case management** — **+ New case** in dashboard (templates auto-load incident questions + import hints); captures to unknown case rejected
 - **Import screenshots** — multi-select PNG/JPEG/WebP; single **Import** button auto-detects artifact format (CSV/JSON/log)
 - **Evidence drop folder** — each case has a `drop/` folder; anything copied in (subfolders included) is auto-imported in the background via the same chain as the Import button (images → screenshot evidence), then moved to `_processed/` or `_failed/`; failures surface in a dashboard banner + notifications
+- **External tool runner** (Settings → Tools) — run your **own locally-installed** Hayabusa / Velociraptor CLI / Suricata / Snort / YARA against raw evidence the Companion can't parse (EVTX/PCAP/files), then ingest the tool's *output* through the existing importers. Configure the binary path + args per tool (never bundled/downloaded). Importing a raw EVTX/PCAP from the dashboard — or dropping raw files in a case's `drop/` folder — shows a header banner that **asks once per batch** before running (auto-run is opt-in per tool); each tool also has a one-click "update rules" button. **Add your own custom tools** too (name, binary, command, update command, extensions) — their output is auto-detected and routed to the right importer. No-shell argv, path-contained, runs from the tool's own dir, off by default
 - **Import undo/redo** — roll back/forward to exact pre-import state (no re-synthesis); multi-level per-case stack
 - **Custom (declarative) importers** — teach a new file format with a JSON definition (no code); LLM-authorable via a built-in prompt, auto-detected + imported like a built-in, with built-in/custom precedence
 - **Evidence-first** — written to disk + audit log before analysis; SHA-256 dedup (disable via `DFIR_DEDUP=off`)
@@ -202,6 +203,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **THOR (Nextron)** | JSON-Lines scan output | THOR alert level |
 | **Suricata / Zeek** | `eve.json`, Zeek JSON logs; telemetry → IOCs only | Alert priority / notice severity |
 | **Snort / Suricata IDS (fast)** | `alert_fast` single-line alert log | Rule **Priority** (1→High / 2→Medium / 3→Low) |
+| **YARA** | `yara -s -m` CLI scan output (rule matches + strings/meta) | Info→Medium per match; bump on rule `score`/`threat_level` meta |
 | **Web/proxy access log** | Apache/Nginx/Squid **combined** log format (web server or forward-proxy access log); request URL, **HTTP Referer, and User-Agent** captured (secrets in URL/Referer + scanner/bot/injection UAs survive as events + IOCs) | Info by default; access-denied (401/403/407) → Low; git smart-HTTP clone/push → T1213 |
 | **Cisco ASA firewall syslog** | `%ASA-#-######:` Built/Teardown/Deny messages | Info by default (telemetry); explicit **Deny** → Low |
 | **Syslog (plain)** | RFC 5424 (`<PRI>1 …`) + RFC 3164 (`Mmm dd …`) Linux/Unix host logs | Info by default (telemetry); auth-failure or crit/alert/emerg PRI → Low |
