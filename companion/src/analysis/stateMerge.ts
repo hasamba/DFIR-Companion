@@ -45,7 +45,12 @@ export function mergeDelta(
   const iocIdRemap = new Map<string, string>();
   let nextSeq = nextIocSeq(iocs);
   for (const incoming of delta.iocs) {
-    const dup = iocs.find((i) => i.value === incoming.value);
+    // Case-insensitive: the same indicator (a hostname/domain especially) routinely arrives with
+    // different casing across importers/rows (e.g. "DESKTOP-X" vs "desktop-x"), and an exact-match
+    // comparison let those through as separate rows instead of collapsing into one (matches
+    // applyDeobfuscation.ts's dedup, which was already case-insensitive).
+    const incomingLower = incoming.value.toLowerCase();
+    const dup = iocs.find((i) => i.value.toLowerCase() === incomingLower);
     const canonical = dup ? dup.id : padIocId(nextSeq++);
     if (!dup) {
       iocs.push({ id: canonical, type: incoming.type, value: incoming.value, firstSeen: ctx.timestamp });

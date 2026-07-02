@@ -69,6 +69,22 @@ describe("mergeDelta", () => {
     expect(state.openThreads[0].closedAt).toBe("2026-05-28T10:01:00.000Z");
   });
 
+  it("dedupes IOCs case-insensitively — the same hostname/domain often arrives with different casing across importers/rows", () => {
+    let state = emptyState("c1");
+    state = mergeDelta(state, {
+      ...baseDelta,
+      iocs: [{ id: "i1", type: "domain", value: "DESKTOP-MNNUHHU.localdomain" }],
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+
+    state = mergeDelta(state, {
+      ...baseDelta,
+      iocs: [{ id: "i1", type: "domain", value: "desktop-mnnuhhu.localdomain" }], // same value, different case
+    }, { windowSequence: 2, timestamp: "2026-05-28T10:01:00.000Z", sourceScreenshots: [] });
+
+    expect(state.iocs).toHaveLength(1);
+    expect(state.iocs[0].value).toBe("DESKTOP-MNNUHHU.localdomain"); // first-seen casing wins
+  });
+
   it("assigns canonical 3-digit ids and remaps finding.relatedIocs even when the model reuses ids", () => {
     // The vision model often groups its output per-finding and emits i1/i2/i3
     // multiple times with different values. We must give each unique-value IOC

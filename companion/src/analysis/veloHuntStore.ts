@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { Severity } from "./stateTypes.js";
-import type { HuntTarget } from "../integrations/velociraptor/velociraptorApi.js";
+import type { HuntTarget, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 
 // The per-case record of Velociraptor BUNDLE hunts: which bundle was launched, the returned hunt id,
 // when results should be collected, and the outcome once they are. Persisted to a side file
@@ -35,6 +35,10 @@ export interface VeloHuntJob {
   importFile?: string;    // stored evidence filename
   addedEvents?: number;
   addedIocs?: number;
+  // Per-artifact collection accounting from the last collect, so "N artifacts, +X events" doesn't read
+  // as "only one artifact collected" when the rest simply had nothing to report vs. actually failed.
+  skippedArtifacts?: SkippedArtifact[];   // fetch FAILED (oversized/timeout/error) — see the reason
+  emptyArtifacts?: string[];              // fetched cleanly, zero rows — nothing to report, not an error
 }
 
 // Cap retained jobs per case (newest first) so the side file stays small — old terminal jobs drop off.

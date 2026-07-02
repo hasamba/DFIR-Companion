@@ -143,6 +143,22 @@ describe("parseVelociraptorJson — Elastic-indexed Velociraptor (Kibana push)",
     expect(e.description).toContain("custom_windows_detection_amcache"); // index-derived source
     expect(e.sources).toEqual(["Velociraptor"]);
   });
+
+  it("MFT hit on a .yms Sigma-rule filename: keyword match is against the rule itself, not attacker content → Info, no file IOC", () => {
+    const row = {
+      _Source: "DetectRaptor.Windows.Detection.MFT",
+      EventTime: "2026-07-02T12:37:57.1022486Z",
+      Detection: "Mimikatz Tools",
+      OSPath: "registry_event_cve_2021_1675_mimikatz_printernightmare_drivers.yms",
+      Fqdn: "DESKTOP-MNNUHHU.localdomain",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const e = r.events[0];
+    expect(e.severity).toBe("Info"); // .yms is a compiled Sigma signature, not the matched target
+    expect(e.description).toContain("Mimikatz Tools");
+    expect(e.sources).toEqual(["Velociraptor"]);
+    expect(r.iocs.some((i) => i.type === "file" && i.value.toLowerCase().endsWith(".yms"))).toBe(false);
+  });
 });
 
 // DetectRaptor-style "*.Detection.*" artifacts carry the verdict in a `Detection`/`RuleName`

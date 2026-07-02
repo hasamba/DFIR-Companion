@@ -3279,8 +3279,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // (Pivot0…); map them so collect reads `artifact/source` (else 0 rows → false "no evidence", #157).
       const sourcesByArtifact = (job.sources?.length && job.artifacts.length === 1) ? { [job.artifacts[0]]: job.sources } : undefined;
       const { results: map, skipped } = await client.huntResultsByArtifact(job.huntId, job.artifacts, job.filters, sourcesByArtifact);
-      if (skipped.length) logLine(`[velociraptor] hunt ${job.huntId}: skipped ${skipped.length} oversized/failed artifact(s): ${skipped.join(", ")} — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT / DFIR_VELOCIRAPTOR_MAX_ROWS to include them`);
+      if (skipped.length) logLine(`[velociraptor] hunt ${job.huntId}: skipped ${skipped.length} artifact(s) — ${skipped.map((s) => `${s.name} (${s.error})`).join("; ")} — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT / DFIR_VELOCIRAPTOR_MAX_ROWS if these are oversized`);
       const totalRows = Object.values(map).reduce((n, rows) => n + rows.length, 0);
+      // The artifacts that returned NEITHER rows nor an error — not a failure (they simply had nothing
+      // to report), but worth distinguishing from `skipped` so "N artifacts collected, M had no findings,
+      // K failed to collect" is fully accounted for instead of a bare "+X events" that reads as one artifact.
+      const skippedNames = new Set(skipped.map((s) => s.name));
+      const emptyArtifacts = job.artifacts.filter((a) => !map[a] && !skippedNames.has(a));
       if (totalRows > 0) {
         const json = JSON.stringify(map);
         const { storedName, importedAt, seq } = await persistEvidence(caseId, `velo-hunt_${job.huntId}.json`, json);
@@ -3342,7 +3347,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         } catch (e) { logLine(`[hunt-outcomes] fill failed for hunt ${job.huntId}: ${(e as Error).message}`); }
       }
 
-      job = { ...job, status: "imported", importedAt: new Date().toISOString(), importFile: lastFile, addedEvents, addedIocs, error: undefined };
+      job = {
+        ...job, status: "imported", importedAt: new Date().toISOString(), importFile: lastFile, addedEvents, addedIocs, error: undefined,
+        skippedArtifacts: skipped.length ? skipped : undefined, emptyArtifacts: emptyArtifacts.length ? emptyArtifacts : undefined,
+      };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
       if (importedAny) resynthesizeInBackground(caseId);
@@ -3640,9 +3648,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const job = await options.veloHuntStore.get(req.params.id, huntId);
       if (!job) return res.status(404).json({ error: "this hunt is no longer tracked (it aged out of the job list) — re-run it to see results" });
       const sourcesByArtifact = (job.sources?.length && job.artifacts.length === 1) ? { [job.artifacts[0]]: job.sources } : undefined;
-      const { results } = await options.velociraptorClient.huntResultsByArtifact(job.huntId, job.artifacts, job.filters, sourcesByArtifact);
+      const { results, skipped } = await options.velociraptorClient.huntResultsByArtifact(job.huntId, job.artifacts, job.filters, sourcesByArtifact);
       const rows = Object.values(results).flat();
-      return res.status(200).json({ rows, total: rows.length, artifacts: Object.keys(results) });
+      return res.status(200).json({ rows, total: rows.length, artifacts: Object.keys(results), skipped });
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
     }

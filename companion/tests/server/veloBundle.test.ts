@@ -188,6 +188,44 @@ describe("Velociraptor triage bundles — routes", () => {
     expect(state.forensicTimeline.length).toBeGreaterThan(0);
   });
 
+  it("collect records skipped (failed) and empty (no findings) artifacts on the job — so a bundle where most artifacts fail isn't silently indistinguishable from one where they simply found nothing", async () => {
+    const mixedRunner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("artifact_definitions()")) {
+        return { rows: [
+          { name: "Windows.System.Pslist", description: "Running processes", type: "CLIENT" },
+          { name: "Generic.System.Pstree", description: "Process tree", type: "CLIENT" },
+        ], raw: "" };
+      }
+      if (p.includes("hunt(") && p.includes("artifacts=[")) return { rows: [{ Hunt: { HuntId: "H.MIX1", state: "RUNNING" } }], raw: "" };
+      if (p.includes("hunt_results(")) {
+        if (p.includes("Pstree")) return { rows: [{ Name: "powershell.exe", Pid: 1234, CommandLine: "powershell -enc AAAA", Timestamp: "2026-06-01T10:00:00Z" }], raw: "" };
+        if (p.includes("Windows.Detection.Amcache") || p.includes("DetectRaptor")) throw new Error("output exceeded 1048576 bytes");
+        return { rows: [], raw: "" };
+      }
+      return { rows: [], raw: "" };
+    };
+    const made = await makeApp(mixedRunner);
+    // Edit the built-in bundle in place so it includes an artifact our mock throws on, alongside
+    // one that returns rows and one that returns nothing — exercising all three outcomes at once.
+    await request(made.app).post("/bundles").send({
+      id: "best-practice", name: "Best Practice",
+      artifacts: ["Generic.System.Pstree", "Windows.System.Pslist", "DetectRaptor.Windows.Detection.Amcache"],
+    });
+    await request(made.app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
+    expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
+
+    let job: { status: string; skippedArtifacts?: { name: string; error: string }[]; emptyArtifacts?: string[] } | null = null;
+    for (let i = 0; i < 100; i++) {
+      job = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
+      if (job && (job.status === "imported" || job.status === "error")) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(job?.status).toBe("imported");
+    expect(job?.skippedArtifacts).toEqual([{ name: "DetectRaptor.Windows.Detection.Amcache", error: "output exceeded 1048576 bytes" }]);
+    expect(job?.emptyArtifacts).toEqual(["Windows.System.Pslist"]);
+  });
+
   it("run-bundle is 501 when Velociraptor is not configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-velobundle-noclient-"));
     const store = new CaseStore(root);
