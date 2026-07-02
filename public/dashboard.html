@@ -5778,7 +5778,7 @@
       if (veloCountdownTimer) { clearInterval(veloCountdownTimer); veloCountdownTimer = null; }
       if (!jobs.length) { el.style.display = "none"; el.innerHTML = ""; return; }
       el.style.display = "block";
-      const statusColors = { running: "#6aa9ff", collecting: "#ffd93b", imported: "#4cd964", error: "#ff9f43" };
+      const statusColors = { running: "#6aa9ff", collecting: "#ffd93b", imported: "#4cd964", error: "#ff9f43", deleted: "#ff6b6b", unreachable: "#9aa4b2" };
       el.innerHTML = jobs.map(job => {
         const link = job.guiUrl ? ` · <a href="${escAttr(job.guiUrl)}" target="_blank" rel="noopener" style="color:var(--c-6aa9ff)">open in Velociraptor ↗</a>` : "";
         const badge = `<span style="color:${statusColors[job.status] || "#9aa4b2"};font-weight:600">${esc(job.status)}</span>`;
@@ -5788,6 +5788,10 @@
           detail = (ev || io) ? `+${ev} event(s), +${io} IOC(s) imported` : "no new results collected yet — clients may not have checked in; collect again later";
         } else if (job.status === "error") {
           detail = "error: " + (job.error || "");
+        } else if (job.status === "deleted") {
+          detail = "this hunt was removed from Velociraptor — no results will be collected";
+        } else if (job.status === "unreachable") {
+          detail = "couldn't reach Velociraptor to check status — will retry";
         }
         const canCollect = job.status === "running" || job.status === "imported" || job.status === "error";
         const collectBtn = canCollect ? `<button class="velo-collect-btn" data-hid="${escAttr(job.huntId)}">Collect now</button>` : "";

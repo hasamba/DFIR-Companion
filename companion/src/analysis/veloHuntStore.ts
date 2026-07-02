@@ -12,7 +12,7 @@ import type { HuntTarget } from "../integrations/velociraptor/velociraptorApi.js
 // MULTIPLE concurrent jobs per case are supported (a list keyed by huntId) — starting a second hunt
 // while a first is still running no longer drops the first.
 
-export type VeloHuntStatus = "running" | "collecting" | "imported" | "error";
+export type VeloHuntStatus = "running" | "collecting" | "imported" | "error" | "deleted" | "unreachable";
 
 export interface VeloHuntJob {
   bundleId: string;
