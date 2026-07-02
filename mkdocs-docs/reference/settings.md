@@ -13,6 +13,8 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 - Push ingest token management
 - Update check (opt-in dashboard banner for new GitHub releases)
 - Theme (dark / light)
+- **Import severity** — manage or clear the remembered minimum-severity import floor (see [Importing Evidence](importing.md#optional-severity-floor))
+- **Timeline row display** — choose which sub-elements show on each forensic-timeline row (see [Dashboard → Forensic Timeline](dashboard.md#forensic-timeline))
 
 ---
 

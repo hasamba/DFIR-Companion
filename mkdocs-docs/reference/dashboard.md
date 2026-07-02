@@ -68,10 +68,23 @@ Each row shows:
 - **Source** — show/hide by tool (e.g. hide all Chainsaw, show only Velociraptor)
 - **Date range** — filter by time window (or use the **Scope** bar to set the investigation scope)
 - **🔍 Screenshot text** — full-text search across OCR'd screenshots
+- **Corroboration lens** — show only events observed by 2+ or 3+ distinct tools (see below)
 - **Pagination** — 100 / 250 / 500 / All rows per page
 
 !!! tip
     Drag a time range on the **Timeline Swimlane** (below) to instantly scope the timeline to that window.
+
+### Row Display
+
+**Settings → General → Timeline row display** lets you choose which sub-elements appear on each row (action icons, tag pills, badges, host chip, MITRE, related findings, evidence links). Timestamp and message always show. Per-browser, applies immediately.
+
+---
+
+## Host & Account Ranking
+
+Ranks every host and account by **signal**, not volume: severity-weighted events + ATT&CK techniques + connective IOCs. Chatty-but-benign hosts sink; the entities actually carrying the attack rise to the top.
+
+A one-click **suggested scope** button sets the investigation scope window to cover the top-ranked hosts' activity. The top hosts also feed the synthesis prompt so an automatic run over a noisy multi-host timeline anchors its narrative on the right hosts instead of the loudest one.
 
 ---
 
@@ -161,7 +174,7 @@ Every indicator extracted from all evidence:
 - File paths
 - Process names
 
-**Filters:** by type (ip/domain/url/hash/file/process/other), by flagged-only, text search.
+**Filters:** by type (ip/domain/url/hash/file/process/other), by flagged-only, text search, corroboration lens (see below).
 
 Each IOC shows:
 
@@ -169,6 +182,16 @@ Each IOC shows:
 - **Source badge** — how many tools corroborated this indicator (e.g. ⊕ 3 sources)
 - **⚑ Mark legitimate** — known-good, excludes from analysis
 - Click to run enrichment on demand
+
+---
+
+## Corroboration Filter (Lens)
+
+**Forensic Timeline**, **IOCs**, and **Findings** each have an independent corroboration lens in their title bar: show only items observed by **2+** or **3+** distinct tools, cutting single-source noise (internet scanners, benign per-tool telemetry) so the multi-source attack path stands out.
+
+It's a **lens, not a gate** — nothing is dropped from state. Single-source evidence (a Sysmon-only process, a syslog-only logon) still shows at the default "any" setting. Each section's choice is remembered independently.
+
+On the timeline, the lens composes with the **Source** filter: it counts only distinct sources still checked, and while active the Source menu lists only the tools present on corroborated events.
 
 ---
 

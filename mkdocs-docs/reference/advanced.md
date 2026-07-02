@@ -64,6 +64,22 @@ Disable permanently: Settings → Diagnostics → disable pre-flight (for setups
 
 ---
 
+## Exfiltration Correlation
+
+A deterministic pass stitches archive **staging** (Compress-Archive/zip/tar/7z) to a subsequent **upload** on the same host within a bounded window (6 hours by default). The sequence — not the destination — is the signal: a lone upload to routine SaaS/cloud infrastructure is never escalated, but staging followed by upload anywhere raises the upload to **High** and tags it `[confirmed exfiltration: …]`.
+
+Synthesis is told to give a confirmed staging→upload pairing its own dedicated **"Data Exfiltration"** finding (with T1041, plus the named cloud service's technique if applicable) instead of folding it into a generic C2/beacon finding.
+
+---
+
+## Phishing → Initial-Access Correlation
+
+When a host later contacts a domain that a phishing email linked to, that contact event is tagged as initial access (upgraded from T1566.002 to **T1204.002**) and raised to at least Medium severity. This gives synthesis a real entry-vector root instead of concluding "began via an unknown vector."
+
+The correlation uses only the link domains extracted from the email — never sender or recipient domains — and is conservative and idempotent.
+
+---
+
 ## Hypothesis-Driven Mode
 
 The **Hypotheses** panel lets you track explicit investigation hypotheses. Open hypotheses are fed into synthesis as context, steering the AI to look for supporting or refuting evidence.
