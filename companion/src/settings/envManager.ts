@@ -1,16 +1,50 @@
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
-
-const ENV_PATH = resolve(process.cwd(), ".env");
+import { dirname, join, resolve } from "node:path";
+import { isSeaRuntime } from "../serverAssets.js";
 
 const SECRET_SUFFIXES = ["_KEY", "_SECRET", "_PASSWORD", "_TOKEN"];
+
+/** The per-user, writable .env the installers seed (Windows: %LOCALAPPDATA%\DFIR-Companion\.env). */
+export function perUserEnvFile(): string | null {
+  const base = process.env.LOCALAPPDATA; // Windows only; undefined elsewhere
+  return base ? join(base, "DFIR-Companion", ".env") : null;
+}
+
+/**
+ * Resolve the SINGLE .env file the companion both READS at startup and WRITES via the dashboard.
+ *
+ * This MUST return the same path server startup loads (see the bootstrap at the bottom of
+ * server.ts) — otherwise the dashboard "Save" writes a .env the server never reads. Historically
+ * this module hard-coded `process.cwd()/.env`, so when the Chocolatey shim was launched from
+ * C:\Windows\system32 the save landed in C:\Windows\system32\.env and silently did nothing.
+ *
+ * Priority:
+ *  1. DFIR_ENV_FILE — explicit override (installers set it; AppImage/read-only mounts need it).
+ *  2. SEA build (portable EXE / Chocolatey):
+ *     a. the per-user writable file the installers seed (%LOCALAPPDATA%\DFIR-Companion\.env) if it
+ *        exists — self-heals when the persistent DFIR_ENV_FILE env var hasn't yet propagated into
+ *        the launching shell (a classic Chocolatey gotcha);
+ *     b. otherwise the .env next to the EXE (a plain portable unzip).
+ *  3. Dev / Docker — cwd/.env (unchanged behaviour).
+ */
+export function resolveEnvFilePath(): string {
+  const explicit = process.env.DFIR_ENV_FILE?.trim();
+  if (explicit) return resolve(explicit);
+  if (isSeaRuntime()) {
+    const perUser = perUserEnvFile();
+    if (perUser && existsSync(perUser)) return perUser;
+    return join(dirname(process.execPath), ".env");
+  }
+  return resolve(process.cwd(), ".env");
+}
 
 export function isSecretKey(key: string): boolean {
   return SECRET_SUFFIXES.some(s => key.toUpperCase().endsWith(s) || key.toUpperCase().includes(s + "_"));
 }
 
 async function readRaw(): Promise<string> {
-  try { return await readFile(ENV_PATH, "utf8"); } catch { return ""; }
+  try { return await readFile(resolveEnvFilePath(), "utf8"); } catch { return ""; }
 }
 
 function parseLines(raw: string): Record<string, string> {
@@ -80,5 +114,5 @@ export async function updateEnv(updates: Record<string, string>): Promise<void> 
     }
   }
 
-  await writeFile(ENV_PATH, newLines.join("\n"), "utf8");
+  await writeFile(resolveEnvFilePath(), newLines.join("\n"), "utf8");
 }

@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Combined access-log importer captures the HTTP Referer** — a secret leaked in the Referer query string is no longer silently dropped (host → domain IOC, full referer → unaggregated url IOC).
 - **Combined access-log importer captures the HTTP User-Agent** — a UA that isn't a `Product/Version` string (scanner/bot/prompt-injection payload) is emitted as an `other` IOC so it survives request aggregation; routine product UAs stay quiet.
+- **`.env` config resolution unified across read/save (Chocolatey)** — the dashboard's Settings → Save now writes to the exact `.env` the server loaded (`DFIR_ENV_FILE` → per-user `%LOCALAPPDATA%\DFIR-Companion\.env` seed → EXE-adjacent → cwd) instead of `process.cwd()\.env` (which was `C:\Windows\system32\.env` when the shim was launched from there); the SEA build also self-heals onto the per-user seed when the installer's `DFIR_ENV_FILE` env var hasn't propagated into the launching shell. Startup now logs `[DFIR] env file: <path>`.
 
 ## [0.28.0] - 2026-07-01
 

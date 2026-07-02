@@ -70,7 +70,7 @@ import { detectImportWithCustom } from "./analysis/importDetect.js";
 import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "./analysis/importerStore.js";
 import { parseImporterSpec } from "./analysis/importerSpec.js";
 import { getImporterPrompt } from "./analysis/pipeline.js";
-import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix } from "./settings/envManager.js";
+import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix, resolveEnvFilePath } from "./settings/envManager.js";
 import { parseMinSeverity } from "./analysis/severityFloor.js";
 import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
@@ -8493,9 +8493,11 @@ if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.
   const companionDir = seaRuntime
     ? dirname(process.execPath) + "/"
     : fileURLToPath(new URL("../", import.meta.url)); // .../companion/
-  // DFIR_ENV_FILE lets a read-only deployment (e.g. an AppImage mount) point at a writable .env.
-  const envFile = process.env.DFIR_ENV_FILE || (seaRuntime ? join(companionDir, ".env") : undefined);
+  // Resolve the .env via the shared resolver so the dashboard's POST /settings/env writes back to
+  // the SAME file we load here (DFIR_ENV_FILE → per-user %LOCALAPPDATA% seed → EXE-adjacent → cwd).
+  const envFile = resolveEnvFilePath();
   loadDotenv({ path: envFile, quiet: true });
+  logLine(`[DFIR] env file: ${envFile}`);
   const raw = process.env.DFIR_CASES_ROOT ?? "cases";
   // Anchor a relative cases root to the companion package directory, so the SAME
   // physical folder is used no matter which directory the server is launched from.
