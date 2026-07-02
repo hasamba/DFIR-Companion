@@ -737,6 +737,10 @@
     #evStarFilterBtn.active { color: var(--c-ffd93b); border-color: var(--c-ffd93b); background: var(--c-1c1500); }
     #iocFlaggedBtn { background: transparent; border: 1px solid var(--c-3a4050); color: var(--c-6b7280); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
     #iocFlaggedBtn.active { color: var(--c-ff9f43); border-color: var(--c-ff9f43); background: var(--c-211405); }
+    #iocSignalBtn { background: transparent; border: 1px solid var(--c-3a4050); color: var(--c-6b7280); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+    #iocSignalBtn.active { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); background: var(--c-0d1b2e); }
+    .ioc-noise-chk { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--c-9aa4b2); cursor: pointer; }
+    .ioc-noise-chk input { cursor: pointer; }
     /* IOC multi-select + bulk action bar */
     .ioc-bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 0 4px; font-size: 12px; color: var(--c-9aa4b2); border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 4px; }
     .ioc-bulk-bar.active { display: flex; }
@@ -2085,6 +2089,11 @@
         <div id="veloDisabledNote" style="display:none;font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px;background:var(--c-1b2030);border:1px solid var(--c-2a3146);border-radius:6px;padding:8px 10px">
           Velociraptor API not configured — you can still build and edit bundles, but <strong>running a hunt</strong> needs the <strong>API config path</strong> set on the <strong>Integrations</strong> tab. After setting it (or once the Velociraptor server is up), click <strong>Reconnect</strong> below — no server restart needed.
         </div>
+        <div style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px;background:var(--c-1b2030);border:1px solid var(--c-2a3146);border-radius:6px;padding:8px 10px">
+          <strong>A heavy artifact (Hayabusa, a large Evtx/MFT dump) can fail to collect with</strong> <code>grpc: received message larger than max (X vs. 4194304)</code>.
+          Edit your <code>api.yaml</code> file, add a top-level <code>max_grpc_recv_size: 67108864</code> (64 MB, or larger) and save it.
+          Then click <strong>Collect now</strong> on the hunt again.
+        </div>
         <!-- Client inventory (#70): the host ↔ client_id map a single-endpoint collection resolves against. -->
         <div id="veloClientsCard" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;background:var(--c-161b28);border:1px solid var(--c-2a3146);border-radius:6px">
           <button id="veloReconnectBtn" type="button" title="Re-read the Velociraptor config from .env, rebuild the connection, and refresh the client list. Use this after configuring Velociraptor or when the Velociraptor server was down at startup — no companion restart needed.">🔌 Reconnect</button>
@@ -3116,7 +3125,7 @@
       </div>
     </section>
 
-    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><label class="ioc-noise-chk" title="Hide IOCs marked legitimate (false positive) or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide legit/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
@@ -5158,6 +5167,24 @@
     let evIdFilter = null;        // Set<string> of event ids, or null
     let evIdFilterLabel = "";     // human label shown in the chip (e.g. the anomaly bucket)
     let showFlaggedIocsOnly = false;   // IOCs section: show only malicious/suspicious (any enrichment engine)
+    // Noise-reduction defaults for a case with hundreds/thousands of IOCs (every file/process/hash seen
+    // anywhere becomes one — see the "too many IOCs" discussion): hide legitimate-marked + no-intel IOCs,
+    // and default to a "signal only" view (flagged, corroborated by 2+ tools, or has ANY enrichment data).
+    // Both are pure display filters — nothing is deleted; each persists per-browser (default ON) and
+    // can be toggled off per case/session, mirroring the corroboration lens's localStorage pattern.
+    const _boolPref = (k, dflt) => { const v = localStorage.getItem("dfir.ioc." + k); return v === null ? dflt : v === "1"; };
+    let hideLegitNoIntel = _boolPref("hideNoise", true);
+    let showSignalIocsOnly = _boolPref("signalOnly", true);
+    // Well-known OS system-binary paths (Windows/Linux/macOS) — a "file" IOC under one of these is
+    // almost always a benign system process observed by an EDR/telemetry artifact (Amcache, MFT,
+    // Pslist…), not attacker-controlled content. Display-only (a display filter, NOT extraction-time
+    // exclusion — the importers still capture every path; nothing is dropped from the case data or
+    // reports, so a genuinely malicious binary planted at a spoofed system32 path is still there if
+    // this checkbox is turned off). Deliberately conservative: full system dirs only, not broad
+    // parents like C:\Windows\ or /usr/ that would also hide non-system installed software.
+    const SYSTEM_PATH_RE = /^[a-z]:\\windows\\(system32|syswow64|winsxs)\\|^\/(usr\/(bin|sbin|lib(?:64)?)|s?bin)\/|^\/system\/library\//i;
+    function isSystemPathIoc(i) { return i.type === "file" && SYSTEM_PATH_RE.test(String(i.value || "").trim()); }
+    let hideSystemPaths = _boolPref("hideSysPaths", true);
     const starredKey = caseId => `dfir_starred_${caseId}`;
     function loadStarred(caseId) {
       try { starredEvents = new Set(JSON.parse(localStorage.getItem(starredKey(caseId)) || "[]")); }
@@ -5903,12 +5930,29 @@
         const canCollect = job.status === "running" || job.status === "imported" || job.status === "error";
         const collectBtn = canCollect ? `<button class="velo-collect-btn" data-hid="${escAttr(job.huntId)}">Collect now</button>` : "";
         const cd = (job.status === "running" && job.collectAt) ? `<span class="velo-countdown" data-collect-at="${escAttr(job.collectAt)}"></span> ` : "";
+        // Per-artifact accounting for a multi-artifact bundle hunt — without this, "+3 events" next to
+        // a 40-artifact bundle reads as "only one artifact worked" with no way to tell why the rest
+        // are missing (nothing to report vs. actually failed to collect).
+        let coverage = "";
+        if (job.status === "imported" && (job.artifacts || []).length > 1) {
+          const total = job.artifacts.length;
+          const failed = job.skippedArtifacts || [];
+          const empty = job.emptyArtifacts || [];
+          const hit = total - failed.length - empty.length;
+          coverage = `<div style="font-size:12px;color:var(--c-9aa4b2);margin-top:4px">${hit}/${total} artifact(s) returned results` +
+            (empty.length ? ` · ${empty.length} had no findings` : "") +
+            (failed.length ? ` · <span style="color:#ff9f43">${failed.length} failed to collect</span>` : "") + `</div>`;
+          if (failed.length) {
+            coverage += `<div style="font-size:12px;color:#ff9f43;margin-top:2px">${failed.map((s) => `${esc(s.name)}: ${esc(s.error)}`).join("<br>")}</div>`;
+          }
+        }
         return `<div class="synth-meta" style="margin:0 0 8px;padding:8px 10px;border:1px solid var(--c-2a3146);border-radius:6px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
             <div>🎯 <strong>${esc(job.bundleName)}</strong> · ${badge} · <code>${esc(job.huntId)}</code>${link}</div>
             <div>${collectBtn}</div>
           </div>
           <div style="font-size:12px;color:var(--c-9aa4b2);margin-top:4px">${cd}${esc(detail)}</div>
+          ${coverage}
         </div>`;
       }).join("");
       el.querySelectorAll(".velo-collect-btn").forEach(btn => btn.onclick = () => veloCollectNow(btn.dataset.hid, btn));
@@ -9630,6 +9674,11 @@
     function legitEventIdSet() {
       return new Set(legitMarkers.filter(m => m.kind === "event").map(m => String(m.ref).trim().toLowerCase()));
     }
+    // IOC VALUES the client confirmed legitimate (an IOC legit marker's ref is the indicator value,
+    // not its id — see legitBtn("ioc", i.value)) — used by the "Hide legit/no-intel" checkbox.
+    function legitIocValueSet() {
+      return new Set(legitMarkers.filter(m => m.kind === "ioc").map(m => String(m.ref).trim().toLowerCase()));
+    }
 
     function loadLegitimate(caseId) {
       fetch(`/cases/${caseId}/legitimate`).then(r => r.json()).then(renderLegitimate).catch(() => {});
@@ -9674,9 +9723,32 @@
     function iocFlagged(i) {
       return (i.enrichments || []).some(e => e.verdict === "malicious" || e.verdict === "suspicious");
     }
-    function renderIocs(iocs) {
+    // A case file can end up with more than one IOC row sharing the same id (a known bug where
+    // concurrent imports racing on the same case's state can each assign the same next-sequential
+    // id before either save lands — see server-side state locking). Collapse those here as a
+    // display-layer safety net so a stale/corrupted case doesn't show visible duplicates; the fix
+    // for the underlying data is a separate server-side de-dup, not this render function's job.
+    function dedupeIocsById(iocs) {
+      const seen = new Set();
+      const out = [];
+      for (const i of iocs) {
+        const key = i.id || `${i.type}:${i.value}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(i);
+      }
+      return out;
+    }
+    // Deterministic display order — grouped by type, then alphabetical by value — instead of raw
+    // insertion/id order (which is meaningless to an analyst and buries duplicates at the tail).
+    function sortIocsForDisplay(iocs) {
+      return [...iocs].sort((a, b) =>
+        (a.type || "").localeCompare(b.type || "") || (a.value || "").localeCompare(b.value || "", undefined, { sensitivity: "base" }));
+    }
+    function renderIocs(iocsRaw) {
       const el = document.getElementById("iocs");
       if (!el) return;
+      const iocs = sortIocsForDisplay(dedupeIocsById(iocsRaw));
       renderIocTypeFilter(iocs);
       const flaggedTotal = iocs.filter(iocFlagged).length;
       const cnt = document.getElementById("iocFlaggedCount");
@@ -9685,10 +9757,28 @@
       if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
       if (hiddenIocTypes.size > 0) visible = visible.filter(i => !hiddenIocTypes.has(i.type || "other"));
       if (corrobIocs > 1) visible = visible.filter(i => (iocSourcesById[i.id] || []).length >= corrobIocs);   // corroboration lens (#35)
+      // Noise reduction (two independent, composable lenses — nothing is deleted, both persisted
+      // per-browser): "Hide legit/no-intel" drops confirmed-false-positive + checked-nothing-found
+      // IOCs; "Signal only" narrows further to IOCs that are flagged, corroborated by 2+ tools, or
+      // carry ANY enrichment data.
+      if (hideLegitNoIntel) {
+        const legitVals = legitIocValueSet();
+        visible = visible.filter(i => !legitVals.has(String(i.value).trim().toLowerCase()) && !(Array.isArray(i.enrichments) && i.enrichments.length === 0));
+      }
+      if (showSignalIocsOnly) {
+        visible = visible.filter(i => iocFlagged(i) || (iocSourcesById[i.id] || []).length >= 2 || (Array.isArray(i.enrichments) && i.enrichments.length > 0));
+      }
+      // "Hide OS system paths" — a file IOC observed under a well-known Windows/Linux/macOS system
+      // binary dir. Independent of the two lenses above: a spoofed-looking system32 path (e.g. an
+      // attacker's binary renamed to a real system filename) is exactly the case an analyst still
+      // wants to catch, so this stays its own opt-out rather than being folded into "signal only".
+      if (hideSystemPaths) visible = visible.filter(i => !isSystemPathIoc(i));
+      const noiseFiltersActive = hideLegitNoIntel || showSignalIocsOnly || hideSystemPaths;
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div style='color:var(--c-9aa4b2)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : (searchTerm || hiddenIocTypes.size > 0 || corrobIocs > 1) && iocs.length > 0 ? "<div style='color:var(--c-9aa4b2)'>No IOCs match the filter.</div>"
+          : (searchTerm || hiddenIocTypes.size > 0 || corrobIocs > 1 || noiseFiltersActive) && iocs.length > 0
+            ? `<div style='color:var(--c-9aa4b2)'>No IOCs match the filter.${noiseFiltersActive ? " Turn off “Signal only” / “Hide legit/no-intel” / “Hide OS system paths” to see everything." : ""}</div>`
           : "<div style='color:var(--c-9aa4b2)'>No IOCs yet</div>";
         updateIocBulkBar();
         return;
@@ -9696,9 +9786,12 @@
       const allIds = visible.map(i => i.id);
       const allSel = allIds.length > 0 && allIds.every(id => selectedIocs.has(id));
       const someSel = allIds.some(id => selectedIocs.has(id));
+      const countLabel = visible.length === iocs.length
+        ? `${visible.length} IOC${visible.length !== 1 ? "s" : ""}`
+        : `${visible.length} of ${iocs.length} IOC${iocs.length !== 1 ? "s" : ""} shown`;
       const headerRow = `<div class="ioc-header-row">`
         + `<input type="checkbox" class="ioc-cb" id="iocSelectAll" ${allSel ? "checked" : ""} title="Select / deselect all visible IOCs" />`
-        + ` <span>${visible.length} IOC${visible.length !== 1 ? "s" : ""}</span>`
+        + ` <span>${countLabel}</span>`
         + `</div>`;
       const rows = visible.map(i => {
         const isNew = newIocKeys.has(i.value);
@@ -10290,6 +10383,8 @@
       showFlaggedIocsOnly = false;
       const ifBtn = document.getElementById("iocFlaggedBtn");
       if (ifBtn) ifBtn.classList.remove("active");
+      // hideLegitNoIntel / showSignalIocsOnly are NOT reset here — like the corroboration lens
+      // controls, they're per-browser preferences (localStorage-backed), not per-case session state.
       hiddenIocTypes.clear(); _iocTypeMenuSig = "";
       searchTerm = ""; filterFrom = null; filterTo = null;
       const gsEl = document.getElementById("globalSearch"); if (gsEl) gsEl.value = "";
@@ -10781,6 +10876,14 @@
         if (lastState) renderIocs(lastState.iocs || []);
         return;
       }
+      // IOC noise-reduction view: signal only (flagged / corroborated / enriched) vs everything.
+      if (e.target.id === "iocSignalBtn") {
+        showSignalIocsOnly = !showSignalIocsOnly;
+        localStorage.setItem("dfir.ioc.signalOnly", showSignalIocsOnly ? "1" : "0");
+        e.target.classList.toggle("active", showSignalIocsOnly);
+        if (lastState) renderIocs(lastState.iocs || []);
+        return;
+      }
       // Finding reference link inside a timeline event → jump to the finding.
       const fjump = e.target.closest && e.target.closest(".finding-jump");
       if (fjump) { e.preventDefault(); jumpToFinding(fjump.getAttribute("data-fid")); return; }
@@ -11060,6 +11163,33 @@
       wire("corrobFindings", () => corrobFindings,
         (v) => { corrobFindings = v; localStorage.setItem("dfir.corrob.findings", String(v)); },
         () => { if (lastState) { _tlKeepPage = true; render(lastState); } });
+    })();
+
+    // IOC noise-reduction controls (#218-ish): sync initial UI state from the persisted preference
+    // (the markup defaults all to ON, but a returning analyst may have turned one off) and wire each
+    // checkbox's change event — the button ("Signal only") is handled in the delegated click listener
+    // above since it's a toggle, not a native checkbox.
+    (function () {
+      const signalBtn = document.getElementById("iocSignalBtn");
+      if (signalBtn) signalBtn.classList.toggle("active", showSignalIocsOnly);
+      const noiseChk = document.getElementById("iocHideNoiseChk");
+      if (noiseChk) {
+        noiseChk.checked = hideLegitNoIntel;
+        noiseChk.addEventListener("change", () => {
+          hideLegitNoIntel = noiseChk.checked;
+          localStorage.setItem("dfir.ioc.hideNoise", hideLegitNoIntel ? "1" : "0");
+          if (lastState) renderIocs(lastState.iocs || []);
+        });
+      }
+      const sysPathChk = document.getElementById("iocHideSysPathsChk");
+      if (sysPathChk) {
+        sysPathChk.checked = hideSystemPaths;
+        sysPathChk.addEventListener("change", () => {
+          hideSystemPaths = sysPathChk.checked;
+          localStorage.setItem("dfir.ioc.hideSysPaths", hideSystemPaths ? "1" : "0");
+          if (lastState) renderIocs(lastState.iocs || []);
+        });
+      }
     })();
 
     document.getElementById("aiToggle").onclick = toggleAi;
