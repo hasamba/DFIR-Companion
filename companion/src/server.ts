@@ -2563,6 +2563,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "snort": return pipeline.importSnort(caseId, text, base);
       case "combinedlog": return pipeline.importCombinedLog(caseId, text, base);
       case "asa": return pipeline.importCiscoAsa(caseId, text, base);
+      case "syslog": return pipeline.importSyslog(caseId, text, base);
       case "csv": return pipeline.analyzeCsv(caseId, text, base);
       case "log": return pipeline.analyzeLog(caseId, text, base);
       default: return Promise.reject(new Error(`unhandled import kind: ${kind as string}`));
@@ -5015,7 +5016,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
     const kind = resolveImportKind(originalName, text);
     if (kind === "unknown") {
-      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / CSV / log)" });
+      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / syslog / CSV / log)" });
     }
     if ((kind === "csv" || kind === "log") && !hasAiProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });

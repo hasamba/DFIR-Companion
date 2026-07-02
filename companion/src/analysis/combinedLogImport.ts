@@ -18,6 +18,14 @@
 // a domain IOC, and the authenticated user (the Squid %u field, when present) is folded into the
 // description so the asset-graph's UPN detection picks it up for free.
 //
+// The HTTP Referer is a first-class spillage surface: apps routinely leak secrets/tokens in the
+// referring URL's query string (`?token=…`, `?jwt=…`). The request URI already survives in the
+// description, but the referer was previously PARSED-then-DISCARDED — so a secret carried in the
+// Referer header vanished. It's now captured: the referer's host becomes a domain IOC, a referer
+// that carries a query string (the actual leak vector) is emitted as a `url` IOC — url IOCs aren't
+// collapsed by aggregation, so a secret-bearing referer survives even when its request line
+// aggregates into a busier sibling — and the referer is folded into the event description too.
+//
 // This importer is deliberately NOT "smart" about deciding what's malicious per line — guessing from
 // domain-name shape (TLD, DGA-ish labels) is unreliable and easy to game. The goal is that EVERY
 // unique request pattern survives as its own (aggregated) event so downstream correlation/synthesis
@@ -102,17 +110,26 @@ function classify(uri: string, status: number): { severity: Severity; mitre: str
 export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): MappedEvent | null {
   const m = LINE_RE.exec(line);
   if (!m) return null;
-  const [, , , userRaw, dateRaw, method, uri, statusRaw, bytesRaw] = m;
+  const [, , , userRaw, dateRaw, method, uri, statusRaw, bytesRaw, refererRaw] = m;
   const status = Number(statusRaw);
   const timestamp = parseApacheDate(dateRaw);
   const user = userRaw && userRaw !== "-" ? userRaw : "";
   const host = requestHost(uri);
   if (host) addIoc(sink, "domain", host);
 
+  // Referer capture (see module comment): host → domain IOC; a referer with a query string is the
+  // secret-leak vector, so emit it as an unaggregated url IOC that survives even if this request
+  // line aggregates into a busier sibling. "-" is Apache/nginx's "no referer".
+  const referer = refererRaw && refererRaw !== "-" ? refererRaw : "";
+  const refHost = referer ? requestHost(referer) : "";
+  if (refHost) addIoc(sink, "domain", refHost);
+  if (referer && /^https?:\/\//i.test(referer) && referer.includes("?")) addIoc(sink, "url", referer);
+
   const { severity, mitre } = classify(uri, status);
   const userTag = user ? ` [${user}]` : "";
   const bytesTag = bytesRaw && bytesRaw !== "-" ? ` (${bytesRaw}b)` : "";
-  const description = oneLine(`${method} ${uri} -> ${status}${bytesTag}${userTag}`).slice(0, 600);
+  const refTag = referer ? ` (ref ${referer})` : "";
+  const description = oneLine(`${method} ${uri} -> ${status}${bytesTag}${userTag}${refTag}`).slice(0, 600);
 
   return {
     timestamp,
