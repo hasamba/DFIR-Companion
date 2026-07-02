@@ -209,12 +209,31 @@ function spawnVqlOnce(config: VelociraptorApiConfig, statements: string[], opts:
       if (killed) return;
       clearTimeout(timer);
       if (code !== 0) {
-        reject(new Error(err.trim() || `velociraptor exited with code ${code}`));
+        reject(new Error(translateVelociraptorError(err.trim()) || `velociraptor exited with code ${code}`));
         return;
       }
       resolve({ rows: parseVqlOutput(out), raw: out });
     });
   });
+}
+
+// Translate a known Velociraptor CLI error into an actionable message. Unlike our OWN
+// maxOutputBytes/collectMaxOutputBytes caps (DFIR_VELOCIRAPTOR_*_OUTPUT — bound what we capture
+// AFTER gRPC delivers it), the gRPC connection the `velociraptor query` CLI makes to the server
+// enforces its own message-size ceiling, independent of both our caps and the server's own config.
+// Per Velociraptor's source (config/proto/config.proto, ApiClientConfig.max_grpc_recv_size — "This
+// is 4mb by default but you can increase it if you like"), this is a field in the CLIENT-side
+// api_client.yaml — the exact file DFIR_VELOCIRAPTOR_API_CONFIG points to, NOT a CLI flag (an
+// earlier version of this file tried `--max_message_size`, which does not exist and broke every
+// query on some builds; NOT the server's Frontend.resources.max_upload_size either — that's a
+// different data path, HTTP client uploads, not this gRPC query connection). No server restart
+// needed: add `max_grpc_recv_size: <bytes>` as a top-level key in the api_client.yaml file.
+export function translateVelociraptorError(stderr: string): string {
+  if (!stderr) return stderr;
+  if (/received message larger than max/i.test(stderr)) {
+    return `${stderr} — raise this by adding "max_grpc_recv_size: 67108864" (or larger) as a top-level key in the api_client.yaml file your DFIR_VELOCIRAPTOR_API_CONFIG points to (Velociraptor's ApiClientConfig.max_grpc_recv_size, 4MB by default) — no CLI flag or server restart needed. Or narrow the artifact (fewer rows/hosts) so its output stays under the limit.`;
+  }
+  return stderr;
 }
 
 // The real runner: spawn the velociraptor binary with the api config, no shell (each statement is a
@@ -284,6 +303,14 @@ export interface HuntUpload {
   name: string;      // file name (basename of the upload path)
   clientId: string;  // the endpoint it came from
   content: string;   // the file's text content (read server-side)
+}
+
+// An artifact whose hunt_results fetch FAILED (oversized output, timeout, VQL error) — distinct from
+// an artifact that fetched cleanly but returned zero rows (that one is just absent from `results`,
+// not an error). Carries the reason so the analyst can tell "nothing fired" from "we couldn't read it".
+export interface SkippedArtifact {
+  name: string;
+  error: string;
 }
 
 // Default VQL to enumerate a hunt's uploaded JSON files and read their content server-side. Walks the
@@ -819,21 +846,24 @@ export class VelociraptorClient {
   // aborting the whole collection — so a bundle with a heavy artifact (Hayabusa) still imports the rest.
   // Only artifacts that returned rows are in `results` (empty ones are dropped; clients may not have
   // checked in yet, and the artifact-map needs non-empty arrays).
-  async huntResultsByArtifact(huntId: string, artifacts: string[], filters?: Record<string, string>, sourcesByArtifact?: Record<string, string[]>): Promise<{ results: Record<string, unknown[]>; skipped: string[] }> {
+  async huntResultsByArtifact(huntId: string, artifacts: string[], filters?: Record<string, string>, sourcesByArtifact?: Record<string, string[]>): Promise<{ results: Record<string, unknown[]>; skipped: SkippedArtifact[] }> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     const results: Record<string, unknown[]> = {};
-    const skipped: string[] = [];
+    const skipped: SkippedArtifact[] = [];
     for (const artifact of artifacts ?? []) {
       const name = String(artifact ?? "").trim();
-      if (!ARTIFACT_RE.test(name)) continue;   // skip invalid names rather than fail the whole collect
+      if (!ARTIFACT_RE.test(name)) { skipped.push({ name: name || artifact, error: "invalid artifact name" }); continue; }
       try {
         // Named sources are addressed as `artifact/source`. Bundle artifacts use a default source (empty
         // sources is correct); a Companion-launched fleet-hunt artifact stores its rows under named sources
         // (Pivot0…), so its results are 0 unless we pass them (the cause of false "no evidence", #157).
         const res = await this.huntResults(huntId, name, sourcesByArtifact?.[name] ?? [], filters?.[name]);
         if (res.rows.length) results[name] = res.rows;
-      } catch {
-        skipped.push(name);   // oversized / slow / failed — keep going (the caller logs the skips)
+      } catch (e) {
+        // oversized / slow / failed — keep going so the rest of the bundle still imports; the caller
+        // logs + persists this reason so a silent per-artifact failure doesn't read as "only one artifact
+        // collected" with no way to tell why.
+        skipped.push({ name, error: (e as Error).message });
       }
     }
     return { results, skipped };

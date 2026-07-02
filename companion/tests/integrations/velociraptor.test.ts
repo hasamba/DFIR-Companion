@@ -9,6 +9,7 @@ import {
   buildVelociraptorClient,
   retryTransientSpawn,
   spawnErrorMessage,
+  translateVelociraptorError,
   matchClient,
   normalizeClientRow,
   normalizeHuntExpirySeconds,
@@ -597,14 +598,14 @@ describe("VelociraptorClient.huntResultsByArtifact", () => {
     expect(skipped).toEqual([]);
   });
 
-  it("is resilient: an artifact whose fetch fails (oversized) is skipped, the rest still import", async () => {
+  it("is resilient: an artifact whose fetch fails (oversized) is skipped WITH its reason, the rest still import", async () => {
     const runner: VqlRunner = async (statements) => {
       const p = statements[0];
       if (p.includes("Hayabusa")) throw new Error("output exceeded 52428800 bytes");
       return { rows: [{ Name: "ok" }], raw: "" };
     };
     const { results, skipped } = await new VelociraptorClient(cfg, runner).huntResultsByArtifact("H.ABC123", ["Windows.Hayabusa.Rules", "Windows.System.Pslist"]);
-    expect(skipped).toEqual(["Windows.Hayabusa.Rules"]);
+    expect(skipped).toEqual([{ name: "Windows.Hayabusa.Rules", error: "output exceeded 52428800 bytes" }]);
     expect(Object.keys(results)).toEqual(["Windows.System.Pslist"]);
   });
 
@@ -684,6 +685,22 @@ describe("spawnErrorMessage", () => {
   it("stays terse for other codes (e.g. ENOENT — wrong path)", () => {
     const m = spawnErrorMessage("nope.exe", { message: "spawn ENOENT", code: "ENOENT" });
     expect(m).toBe('Failed to run velociraptor binary "nope.exe": spawn ENOENT');
+  });
+});
+
+describe("translateVelociraptorError", () => {
+  it("points a gRPC message-size failure at the CLIENT-side api_client.yaml's max_grpc_recv_size field, not a CLI flag or the server config", () => {
+    const m = translateVelociraptorError("velociraptor-v0.76.5-windows-amd64.exe: error: query: rpc error: code = ResourceExhausted desc = grpc: received message larger than max (18006256 vs. 4194304)");
+    expect(m).toContain("received message larger than max");
+    expect(m).toContain("max_grpc_recv_size");
+    expect(m).toContain("api_client.yaml");
+    expect(m).not.toContain("--max_message_size");   // that flag doesn't exist — must never be suggested again
+    expect(m).not.toContain("Frontend.resources.max_upload_size");   // wrong setting — a different data path (server config, not this gRPC connection)
+  });
+
+  it("passes through any other stderr unchanged", () => {
+    expect(translateVelociraptorError("unknown long flag '--max_message_size', try --help")).toBe("unknown long flag '--max_message_size', try --help");
+    expect(translateVelociraptorError("")).toBe("");
   });
 });
 
