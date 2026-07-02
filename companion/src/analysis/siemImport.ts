@@ -437,6 +437,12 @@ function pickHost(rec: Row): string {
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
 const NOISE_IP = new Set(["::1", "127.0.0.1", "0.0.0.0", "::", "-", "::ffff:127.0.0.1"]);
+// A real IPv6 shape check (full + every valid "::"-compressed form), NOT just "contains a colon" —
+// that naive check let ANY colon-bearing string through as a "valid" IPv6 IOC, including free-text
+// blobs (a PowerShell cmdletization proxy dump, `cim:ModifyInstance`, `::new(...)`, etc. all contain
+// colons) whenever the field happened to reach cleanIp — e.g. a key loosely matching /ip|addr/i.
+const IPV6_RE =
+  /^(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}$|^(?:[0-9a-f]{1,4}:){1,7}:$|^(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}$|^(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,2}$|^(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,3}$|^(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}$|^(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}$|^[0-9a-f]{1,4}:(?:(?::[0-9a-f]{1,4}){1,6})$|^:(?:(?::[0-9a-f]{1,4}){1,7}|:)$/i;
 
 // Strip an IPv4-mapped IPv6 prefix ("::ffff:10.0.0.1" → "10.0.0.1"); drop loopback/empty.
 export function cleanIp(raw: string): string {
@@ -446,8 +452,8 @@ export function cleanIp(raw: string): string {
   if (mapped) v = mapped[1];
   if (NOISE_IP.has(v)) return "";
   if (IPV4.test(v)) return v;
-  // Keep a routable IPv6 (contains ':'), but not link-local/loopback.
-  if (v.includes(":") && !/^fe80:|^::$/i.test(v)) return v;
+  // Keep a routable, well-shaped IPv6, but not link-local/loopback.
+  if (IPV6_RE.test(v) && !/^fe80:|^::$/i.test(v)) return v;
   return "";
 }
 

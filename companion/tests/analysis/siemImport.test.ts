@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSiemExport, extractRecords, isSuspiciousCmd } from "../../src/analysis/siemImport.js";
+import { parseSiemExport, extractRecords, isSuspiciousCmd, cleanIp } from "../../src/analysis/siemImport.js";
 
 // ── Representative Windows Event Log records (Elastic _source shape) ─────────────
 const LOGON_4624 = {
@@ -294,6 +294,32 @@ describe("parseSiemExport — Kerberoasting / AS-REP roasting (RC4 ticket verdic
     const r = parseSiemExport(elastic(normal));
     expect(r.events[0].severity).toBe("Low");
     expect(r.events[0].mitreTechniques).not.toContain("T1558.004");
+  });
+});
+
+describe("cleanIp — IPv6 shape validation (not just \"contains a colon\")", () => {
+  it("rejects a free-text blob that merely contains colons as a bogus IPv6 IOC", () => {
+    // A real observed case: a PowerShell cmdletization proxy-function dump (Get/Set-NetIPAddress
+    // source) reached a field whose key loosely matched /ip|addr/i, and the old "v.includes(':')"
+    // check accepted the WHOLE multi-KB blob as a "valid" IPv6 address.
+    const blob = "$__cmdletization_methodInvocationInfo = [Microsoft.PowerShell.Cmdletization.MethodInvocationInfo]::new('cim:ModifyInstance', $__cmdletization_methodParameters, $__cmdletization_returnValue)";
+    expect(cleanIp(blob)).toBe("");
+  });
+  it("rejects other colon-bearing non-IP text (timestamps, ratios, URLs sans scheme)", () => {
+    expect(cleanIp("14:32:10")).toBe("");
+    expect(cleanIp("ratio: 3:2:1")).toBe("");
+    expect(cleanIp("C:\\Windows\\System32\\cmd.exe")).toBe("");
+  });
+  it("still accepts real IPv6 addresses, full and compressed forms", () => {
+    expect(cleanIp("2001:0db8:85a3:0000:0000:8a2e:0370:7334")).toBe("2001:0db8:85a3:0000:0000:8a2e:0370:7334");
+    expect(cleanIp("2001:db8::8a2e:370:7334")).toBe("2001:db8::8a2e:370:7334");
+    expect(cleanIp("fe80::1")).toBe("");         // link-local excluded
+    expect(cleanIp("::")).toBe("");               // unspecified, in NOISE_IP
+  });
+  it("still accepts IPv4 and strips the IPv4-mapped IPv6 prefix", () => {
+    expect(cleanIp("10.0.0.5")).toBe("10.0.0.5");
+    expect(cleanIp("::ffff:10.0.0.5")).toBe("10.0.0.5");
+    expect(cleanIp("127.0.0.1")).toBe("");         // loopback, in NOISE_IP
   });
 });
 
