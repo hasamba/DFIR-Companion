@@ -2092,6 +2092,11 @@
               <input id="veloBundleName" placeholder="Bundle name (e.g. Best Practice)" style="flex:1;min-width:180px;padding:5px" />
               <input id="veloBundleDefaultWait" type="number" min="1" max="1440" placeholder="default wait (min)" title="Default minutes to wait before collecting (optional)" style="width:150px;padding:5px" />
               <input id="veloBundleTimeout" type="number" min="60" max="86400" placeholder="timeout (sec)" title="Per-collection timeout on each endpoint (Velociraptor default 600s). Bump it for slow artifacts like THOR." style="width:130px;padding:5px" />
+              <select id="veloBundleExpiry" title="How long the hunt keeps scheduling on clients that check in later (Velociraptor's own default is a week). Default: 1 hour." style="width:150px;padding:5px">
+                <option value="3600">expiry: 1 hour</option>
+                <option value="86400">expiry: 1 day</option>
+                <option value="604800">expiry: 1 week</option>
+              </select>
             </div>
             <input id="veloBundleDesc" placeholder="Description (optional)" style="padding:5px" />
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -5694,7 +5699,8 @@
           : `<button class="velo-del-btn" data-id="${escAttr(b.id)}" style="background:var(--c-3a2330);color:var(--c-ff9aa4)">Delete</button>`;
         const badge = b.builtIn ? ` <span style='color:var(--c-6aa9ff);font-size:11px'>built-in${b.customized ? " · edited" : ""}</span>` : "";
         const tuned = (b.params ? Object.keys(b.params).length : 0) + (b.filters ? Object.keys(b.filters).length : 0);
-        const meta = (b.defaultWaitMinutes ? ` · wait ${esc(b.defaultWaitMinutes)}m` : "") + (b.timeoutSeconds ? ` · timeout ${esc(b.timeoutSeconds)}s` : "") + (tuned ? ` · ${tuned} tuned` : "");
+        const expiryLbl = { 3600: "1h", 86400: "1d", 604800: "1w" }[b.expirySeconds || 3600] || `${Math.round((b.expirySeconds || 3600) / 3600)}h`;
+        const meta = (b.defaultWaitMinutes ? ` · wait ${esc(b.defaultWaitMinutes)}m` : "") + (b.timeoutSeconds ? ` · timeout ${esc(b.timeoutSeconds)}s` : "") + ` · expires ${expiryLbl}` + (tuned ? ` · ${tuned} tuned` : "");
         return `<div class="velo-bundle" style="border:1px solid var(--c-2a3146);border-radius:6px;padding:8px 10px;margin-bottom:8px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
             <div><strong>${esc(b.name)}</strong>${badge} <span style="color:var(--c-9aa4b2);font-size:11px">${esc(b.artifacts.length)} artifact(s)${meta}</span></div>
@@ -5726,9 +5732,14 @@
       const defWait = bundle.defaultWaitMinutes || 10;
       // The collection timeout is a BUNDLE property (set in the editor) — the run uses it, not a re-prompt.
       const timeoutNote = bundle.timeoutSeconds ? `${esc(bundle.timeoutSeconds)}s` : "600s (Velociraptor default)";
+      // Expiry defaults to the bundle's own default (1 hour when unset); it's overridable per run.
+      const defExpiry = bundle.expirySeconds || 3600;
+      const expiryOpts = [[3600, "1 hour"], [86400, "1 day"], [604800, "1 week"]]
+        .map(([v, lbl]) => `<option value="${v}"${v === defExpiry ? " selected" : ""}>expires: ${lbl}</option>`).join("");
       form.innerHTML = `
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <label style="font-size:12px;color:var(--c-9aa4b2)">Wait <input type="number" class="velo-wait" min="1" max="1440" value="${esc(defWait)}" style="width:64px;padding:4px" /> min</label>
+          <select class="velo-expiry" title="How long the hunt keeps scheduling on clients that check in later (Velociraptor's own default is a week)">${expiryOpts}</select>
           <select class="velo-os" title="Restrict to a client OS"><option value="">any OS</option><option value="windows">windows</option><option value="linux">linux</option><option value="darwin">darwin</option></select>
           <select class="velo-minsev" title="Only import events at or above this severity (keeps volume down). Telemetry with no severity is always kept."><option value="">all severities</option><option value="info">info+</option><option value="low">low+</option><option value="medium">medium+</option><option value="high">high+</option><option value="critical">critical only</option></select>
           <input class="velo-inc" placeholder="include labels (comma-sep)" style="flex:1;min-width:140px;padding:4px" />
@@ -5746,6 +5757,7 @@
       const msg = form.querySelector(".velo-run-msg");
       if (!caseId) { msg.textContent = "connect to a case first"; return; }
       const waitMinutes = Number(form.querySelector(".velo-wait").value) || 10;
+      const expirySeconds = Number(form.querySelector(".velo-expiry").value) || undefined;
       const os = form.querySelector(".velo-os").value;
       const minSeverity = form.querySelector(".velo-minsev").value;
       const includeLabels = form.querySelector(".velo-inc").value;
@@ -5755,7 +5767,7 @@
       // No timeoutSeconds here on purpose — the server uses the bundle's saved timeout (read fresh from disk).
       fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/run-bundle`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bundleId, waitMinutes, os, minSeverity, includeLabels, excludeLabels })
+        body: JSON.stringify({ bundleId, waitMinutes, expirySeconds, os, minSeverity, includeLabels, excludeLabels })
       }).then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }
@@ -6086,6 +6098,7 @@
       const description = (document.getElementById("veloBundleDesc").value || "").trim();
       const defaultWaitMinutes = Number(document.getElementById("veloBundleDefaultWait").value) || undefined;
       const timeoutSeconds = Number(document.getElementById("veloBundleTimeout").value) || undefined;
+      const expirySeconds = Number(document.getElementById("veloBundleExpiry").value) || undefined;
       const msg = document.getElementById("veloBuilderMsg");
       if (!name) { msg.textContent = "name is required"; return; }
       if (!veloSelected.size) { msg.textContent = "select at least one artifact"; return; }
@@ -6103,7 +6116,7 @@
       }
       const btn = document.getElementById("veloSaveBundleBtn");
       const wasEditing = !!veloEditingId;
-      const body = { name, description, artifacts: [...veloSelected], defaultWaitMinutes, timeoutSeconds, params, filters };
+      const body = { name, description, artifacts: [...veloSelected], defaultWaitMinutes, timeoutSeconds, expirySeconds, params, filters };
       if (veloEditingId) body.id = veloEditingId;   // editing a built-in or custom bundle overrides it in place
       btn.disabled = true; msg.textContent = wasEditing ? "updating…" : "saving…";
       fetch("/bundles", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
@@ -6124,6 +6137,7 @@
       document.getElementById("veloBundleDesc").value = b.description || "";
       document.getElementById("veloBundleDefaultWait").value = b.defaultWaitMinutes || "";
       document.getElementById("veloBundleTimeout").value = b.timeoutSeconds || "";
+      document.getElementById("veloBundleExpiry").value = String(b.expirySeconds || 3600);   // default 1 hour
       document.getElementById("veloBundleParams").value = (b.params && Object.keys(b.params).length) ? JSON.stringify(b.params, null, 2) : "";
       document.getElementById("veloBundleFilters").value = (b.filters && Object.keys(b.filters).length) ? JSON.stringify(b.filters, null, 2) : "";
       veloSelected = new Set(b.artifacts || []);
@@ -6147,6 +6161,7 @@
       document.getElementById("veloBundleDesc").value = "";
       document.getElementById("veloBundleDefaultWait").value = "";
       document.getElementById("veloBundleTimeout").value = "";
+      document.getElementById("veloBundleExpiry").value = "3600";   // back to the 1-hour default
       document.getElementById("veloBundleParams").value = "";
       document.getElementById("veloBundleFilters").value = "";
       veloSelected = new Set(); renderVeloSelected(); renderVeloPicker();

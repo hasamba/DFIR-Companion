@@ -77,6 +77,24 @@ export function sanitizeVqlDurations(vql: string): string {
     .replace(/([-+])\s*(\d+)m\b/g, "$1 $2 * 60");
 }
 
+// Hunt expiry (relative, not an absolute date). Velociraptor's own hunt() default keeps a hunt
+// scheduling NEW clients for a WEEK; a Companion triage hunt rarely needs that long, so we default to
+// ONE HOUR. The UI offers three relative presets and the value is carried as seconds.
+export const HUNT_EXPIRY_HOUR = 3600;
+export const HUNT_EXPIRY_DAY = 86_400;
+export const HUNT_EXPIRY_WEEK = 604_800;
+export const DEFAULT_HUNT_EXPIRY_SECONDS = HUNT_EXPIRY_HOUR;
+const MAX_HUNT_EXPIRY_SECONDS = 2_592_000;   // 30 days — a sane ceiling
+const MIN_HUNT_EXPIRY_SECONDS = 60;
+
+// Resolve a requested hunt expiry (seconds) to a positive integer, falling back to the one-hour default
+// and clamping to [60s, 30d]. Non-finite / non-positive input → the fallback.
+export function normalizeHuntExpirySeconds(v: unknown, fallback: number = DEFAULT_HUNT_EXPIRY_SECONDS): number {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(MAX_HUNT_EXPIRY_SECONDS, Math.max(MIN_HUNT_EXPIRY_SECONDS, Math.floor(n)));
+}
+
 // Split a VQL blob (e.g. the notebook pivots, separated by blank lines) into individual statements
 // and STRIP comment lines. Critical for the CLI: a query passed to `velociraptor query` that begins
 // with a `-- comment` is parsed by the flag lexer as an unknown long flag ("--"), so each statement
@@ -519,16 +537,19 @@ export class VelociraptorClient {
   // Launch a HUNT that runs the pivot VQL on ALL enrolled clients: package the (comment-stripped)
   // pivots as a CLIENT artifact, then create the hunt. Returns the hunt id; results arrive
   // asynchronously as endpoints check in (read them with huntResults()).
-  async launchHunt(vql: string, description: string): Promise<HuntLaunchResult> {
+  async launchHunt(vql: string, description: string, opts: { expirySeconds?: number } = {}): Promise<HuntLaunchResult> {
     const statements = splitVqlStatements(sanitizeVqlDurations(vql));
     if (statements.length === 0) throw new Error("No runnable VQL found (the query is empty or only comments)");
     const name = "Custom.Hunt.Companion." + slugify(description);
     const sources = statements.map((_, i) => `Pivot${i}`);
     const yaml = buildHuntArtifact(name, statements, sources, description);
+    // Relative expiry: `now()` is epoch seconds in this codebase's VQL usage (see sanitizeVqlDurations),
+    // so `now() + <sec>` is the expiry timestamp hunt() wants. Defaults to one hour when unset.
+    const expires = normalizeHuntExpirySeconds(opts.expirySeconds);
     const program =
       `LET def = '''${yaml}'''\n` +
       `LET _set <= artifact_set(definition=def)\n` +
-      `SELECT hunt(description='${oneLine("DFIR Companion: " + description)}', artifacts='${name}') AS Hunt FROM scope()`;
+      `SELECT hunt(description='${oneLine("DFIR Companion: " + description)}', artifacts='${name}', expires=now() + ${expires}) AS Hunt FROM scope()`;
     const rows = await this.runRaw(program);
     const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};
     const huntId = String(hunt.HuntId ?? hunt.hunt_id ?? "");
@@ -756,16 +777,18 @@ export class VelociraptorClient {
     artifacts: string[],
     description: string,
     target: HuntTarget = {},
-    opts: { timeoutSeconds?: number; params?: Record<string, Record<string, string>> } = {},
+    opts: { timeoutSeconds?: number; params?: Record<string, Record<string, string>>; expirySeconds?: number } = {},
   ): Promise<ArtifactHuntLaunchResult> {
     const names = (artifacts ?? []).map((a) => String(a ?? "").trim()).filter(Boolean);
     if (names.length === 0) throw new Error("no artifacts to hunt");
     for (const n of names) {
       if (!ARTIFACT_RE.test(n)) throw new Error(`invalid artifact name: ${n}`);
     }
+    const expires = normalizeHuntExpirySeconds(opts.expirySeconds);   // relative; defaults to one hour
     const clauses = [
       `description='${oneLine("DFIR Companion: " + description)}'`,
       `artifacts=[${names.map((n) => `'${n}'`).join(", ")}]`,
+      `expires=now() + ${expires}`,
     ];
     const inc = sanitizeLabels(target.includeLabels);
     const exc = sanitizeLabels(target.excludeLabels);

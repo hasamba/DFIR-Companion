@@ -63,6 +63,13 @@ describe("ArtifactBundleStore", () => {
       expect((await store2.get("persistent"))?.name).toBe("P");
     });
 
+    it("persists a positive relative expiry and drops a non-positive one", async () => {
+      const withExpiry = await store.save({ name: "E", description: "", artifacts: ["A.B"], expirySeconds: 86_400 });
+      expect(withExpiry.expirySeconds).toBe(86_400);
+      const noExpiry = await store.save({ name: "E2", description: "", artifacts: ["A.B"], expirySeconds: 0 });
+      expect(noExpiry.expirySeconds).toBeUndefined();
+    });
+
     it("saving with a built-in id stores an editable override (builtIn stays, customized flagged)", async () => {
       const saved = await store.save({ id: "best-practice", name: "Best Practice (mine)", description: "edited", artifacts: ["Windows.System.Pslist"] });
       expect(saved.builtIn).toBe(true);
