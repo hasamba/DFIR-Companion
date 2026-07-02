@@ -333,11 +333,15 @@ function vrHashes(row: Row): { sha256?: string; md5?: string } {
   return { sha256, md5 };
 }
 
+// A compiled Sigma signature file (Velociraptor's ".yms" convention) — never an observed
+// indicator, since a hit naming one is a match against the RULE's own content, not evidence.
+const isYmsPath = (v: string): boolean => /\.yms$/i.test(v.trim());
+
 // Extract IOCs from every column of a row (used by generic + YARA rows).
 function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string; md5?: string } {
   const pairs: [string, string][] = [];
   flatten(row, pairs);
-  genericIocs(pairs, sink);
+  genericIocs(pairs.filter(([, v]) => !isYmsPath(v)), sink);
   const { sha256, md5 } = vrHashes(row);
   if (sha256) addIoc(sink, "hash", sha256);
   else if (md5) addIoc(sink, "hash", md5);
@@ -461,7 +465,7 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
   const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path"]);
   const procName = firstStr(row, ["Exe", "ProcessName", "ImageName"]);
   const pid = firstStr(row, ["Pid", "ProcessId"]);
-  if (path) addIoc(sink, "file", path);
+  if (path && !isYmsPath(path)) addIoc(sink, "file", path);
   if (procName) addIoc(sink, "process", baseName(procName));
 
   const mitre = mitreFromText(flatStr(getCI(row, "Meta")), flatStr(getCI(row, "Tags")), ruleName);
@@ -531,7 +535,7 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
 // otherwise build the event from the row's file/process/pipe/path + hashes.
 function mapDetection(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const v = rowVerdict(row)!; // guaranteed by classify()
-  const severity = detectionSeverity(v);
+  let severity = detectionSeverity(v);
   scrapeEvidence(row, sink); // pull URLs/IPs/hashes out of the matched command line / file content
 
   const flat = winRowToFlat(row);
@@ -559,6 +563,12 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path", "KeyPath", "EntryPath", "EntryName"])
     || str(getPath(row, "FileInfo.OSPath")).trim()
     || str(getPath(row, "Detection.PathName"));
+  // The matched file is itself a Sigma rule (.yms — Velociraptor's compiled Sigma signature
+  // format): the "hit" is a keyword match against the RULE's own text (tool names, MITRE ids,
+  // etc. embedded in the signature), not against attacker-controlled content. Treat as Info
+  // regardless of what keyword tripped detectionSeverity, so shipping/updating detection content
+  // doesn't itself read as a Critical/High finding.
+  if (isYmsPath(path)) severity = "Info";
   // The matched CONTENT/evidence: the full matched line/Content the analyst needs to read, falling
   // back to the rule's own HitString (the substring it matched). Track the source field name so
   // it can be shown as a label (Line: / Content: / CommandLine: / etc.). NOT Detection.Regex /
@@ -580,7 +590,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   const parentName = parentRaw ? baseName(parentRaw) : undefined;
   const pipe = firstStr(row, ["PipeName"]);
   if (processName) addIoc(sink, "process", processName);
-  if (path) addIoc(sink, "file", path);
+  if (path && !isYmsPath(path)) addIoc(sink, "file", path);
 
   // Subject priority: the rendered event's high-signal fields (the actual LOLBIN/command line) win
   // over structured process/path, which win over the matched content/line. Every field is labeled
