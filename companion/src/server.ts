@@ -163,6 +163,7 @@ import { VelociraptorClientStore } from "./analysis/velociraptorClientStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
 import { VeloMonitorStore, monitorId, type VeloMonitor } from "./analysis/veloMonitorStore.js";
 import { pollMonitorOnce, monitorArtifactMap, type PollDeps } from "./integrations/velociraptor/monitorPoller.js";
+import { pollHuntStatusOnce, type HuntPollDeps } from "./integrations/velociraptor/huntStatusPoller.js";
 import { PushTokenStore, generatePushToken } from "./analysis/pushTokenStore.js";
 import { resolvePushAuth } from "./analysis/pushAuth.js";
 import { extractPushPayload } from "./analysis/pushPayload.js";
@@ -2314,6 +2315,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         const count = await refreshVeloClients();
         const inv = options.velociraptorClientStore ? await options.velociraptorClientStore.load() : { updatedAt: "", clients: [] };
         void resumeVeloMonitors();   // arm monitors that couldn't start while the client was absent
+        void resumeVeloHuntStatusPolls();   // and any hunt status polling that couldn't start either
         logLine(`[velociraptor] reconnected — ${count} enrolled client(s)`);
         return res.status(200).json({ configured: true, ok: true, clients: count, updatedAt: inv.updatedAt });
       } catch (err) {
@@ -2500,6 +2502,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // restart the dashboard still shows them and the analyst triggers "Collect now". .unref() so a
   // pending timer never blocks exit.
   const veloHuntTimers = new Map<string, NodeJS.Timeout>();
+  const collectingNow = new Set<string>();   // in-memory guard closing the TOCTOU race between the fixed-delay
+                                              // timer and the status poller both deciding to collect the same
+                                              // hunt around the same moment (VeloHuntStore has no lock/CAS) —
+                                              // checked+set synchronously before any await.
 
   type ImportBase = { label: string; idPrefix: string; importedAt: string; onProgress?: (done: number, total: number) => void; minSeverity?: Severity };
 
@@ -2937,8 +2943,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const huntStore = options.veloHuntStore;
     const pipeline = options.pipeline;
     if (!client || !huntStore || !pipeline) return;
+    if (collectingNow.has(huntId)) return;   // already collecting this hunt in this process — avoid a double-run
+    collectingNow.add(huntId);
+    try {
     const pending = veloHuntTimers.get(huntId);
     if (pending) { clearTimeout(pending); veloHuntTimers.delete(huntId); }
+    stopVeloHuntStatusPoll(caseId, huntId);   // an import is starting — it now owns this job's status
 
     let job = await huntStore.get(caseId, huntId);
     if (!job) return;
@@ -3041,6 +3051,89 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       options.onVeloHunt?.(caseId);
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: `Velociraptor hunt collect failed: ${(err as Error).message}` });
     }
+    } finally {
+      collectingNow.delete(huntId);
+    }
+  }
+
+  // ── Velociraptor hunt STATUS polling ─────────────────────────────────────────────────────────
+  // Independent from the fixed-delay auto-collect timer above (veloHuntTimers): every
+  // DFIR_VELO_HUNT_POLL_S (default 30s, clamped 5-300) asks Velociraptor for the hunt's real state,
+  // so a hunt deleted/stopped in Velociraptor is reflected promptly instead of waiting out the fixed
+  // delay. Keyed `caseId huntId`, self-rescheduling setTimeout (not setInterval, so a slow poll can't
+  // overlap itself), .unref()'d so a pending poll never blocks process exit. Mirrors the live-monitor
+  // scheduling above (veloMonitorTimers / scheduleVeloMonitor / pollVeloMonitor / resumeVeloMonitors).
+  const veloStatusTimers = new Map<string, NodeJS.Timeout>();
+  const statusKey = (caseId: string, huntId: string): string => `${caseId} ${huntId}`;
+
+  // One status-poll tick: load the job, poll (pure pollHuntStatusOnce), persist + broadcast only on
+  // an actual status change, then either reschedule, trigger an immediate collect, or stop. Never
+  // throws (pollHuntStatusOnce itself never throws; store I/O failures are best-effort).
+  async function pollVeloHuntStatus(caseId: string, huntId: string): Promise<void> {
+    const huntStore = options.veloHuntStore;
+    const client = options.velociraptorClient;
+    if (!huntStore || !client) { veloStatusTimers.delete(statusKey(caseId, huntId)); return; }
+    let job: VeloHuntJob | null = null;
+    try { job = await huntStore.get(caseId, huntId); } catch (err) { logLine(`[velo-hunt-status] failed to load hunt ${huntId} for status poll: ${(err as Error).message}`); }
+    if (!job) { veloStatusTimers.delete(statusKey(caseId, huntId)); return; }
+
+    const deps: HuntPollDeps = { getState: (id) => client.huntStatus(id), log: logLine };
+    const outcome = await pollHuntStatusOnce(job, deps);
+    if (outcome.job.status !== job.status) {
+      try { await huntStore.upsert(caseId, outcome.job); } catch { /* best-effort */ }
+      options.onVeloHunt?.(caseId);
+    }
+
+    if (outcome.action === "reschedule") {
+      if (veloStatusTimers.has(statusKey(caseId, huntId))) scheduleVeloHuntStatusPoll(caseId, huntId);
+    } else if (outcome.action === "collect") {
+      veloStatusTimers.delete(statusKey(caseId, huntId));
+      void importVeloHuntResults(caseId, huntId);   // clears the fixed-delay timer + status poll itself (see below)
+    } else {
+      veloStatusTimers.delete(statusKey(caseId, huntId));
+    }
+  }
+
+  // Arm (or re-arm) a hunt's status-poll timer for one interval out. Clears any existing timer first
+  // so start is idempotent. Clamped 5s..300s so a bad env value can't busy-loop or stall forever.
+  function scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void {
+    const key = statusKey(caseId, huntId);
+    const existing = veloStatusTimers.get(key);
+    if (existing) clearTimeout(existing);
+    const seconds = Math.min(300, Math.max(5, Number(process.env.DFIR_VELO_HUNT_POLL_S) || 30));
+    const timer = setTimeout(() => { void pollVeloHuntStatus(caseId, huntId); }, seconds * 1000);
+    timer.unref?.();
+    veloStatusTimers.set(key, timer);
+  }
+
+  function stopVeloHuntStatusPoll(caseId: string, huntId: string): void {
+    const key = statusKey(caseId, huntId);
+    const timer = veloStatusTimers.get(key);
+    if (timer) clearTimeout(timer);
+    veloStatusTimers.delete(key);
+  }
+
+  // Re-arm status polling for every non-terminal hunt job across all cases (server restart). As a
+  // side effect this also self-heals the pre-existing "fixed-delay auto-collect timer is lost on
+  // restart" gap: a resumed status poll will detect STOPPED/ARCHIVED on its own and trigger the
+  // collect even though the original setTimeout is gone. Best-effort per case.
+  async function resumeVeloHuntStatusPolls(): Promise<void> {
+    const huntStore = options.veloHuntStore;
+    if (!huntStore || !options.velociraptorClient) return;
+    let cases: { caseId: string }[] = [];
+    try { cases = await store.listCases(); } catch { return; }
+    let resumed = 0;
+    for (const c of cases) {
+      try {
+        for (const job of await huntStore.list(c.caseId)) {
+          if (job.status === "running" || job.status === "unreachable") {
+            scheduleVeloHuntStatusPoll(c.caseId, job.huntId);
+            resumed++;
+          }
+        }
+      } catch { /* skip this case */ }
+    }
+    if (resumed > 0) logLine(`[velo-hunt-status] resumed status polling for ${resumed} hunt(s) across ${cases.length} case(s)`);
   }
 
   // Record a deployed hunt in the per-case hunting feedback loop ledger (#157). Best-effort + never
@@ -3105,6 +3198,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const timer = setTimeout(() => { void importVeloHuntResults(caseId, launch.huntId); }, waitMinutes * 60_000);
       timer.unref?.();
       veloHuntTimers.set(launch.huntId, timer);
+      scheduleVeloHuntStatusPoll(caseId, launch.huntId);
 
       return res.status(202).json({ huntId: launch.huntId, guiUrl: launch.guiUrl, collectAt, waitMinutes, artifacts: launch.artifacts });
     } catch (err) {
@@ -3135,6 +3229,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!job) return res.status(404).json({ error: wantedHuntId ? `no Velociraptor hunt ${wantedHuntId} for this case` : "no Velociraptor hunt to collect for this case" });
     res.status(202).json({ accepted: true, huntId: job.huntId });
     void importVeloHuntResults(caseId, job.huntId);
+  });
+
+  // Manually run one status-poll tick for a hunt NOW instead of waiting for the next scheduled tick
+  // (mirrors the live-monitor .../poll route) — used by ops to force a check, and by tests instead of
+  // waiting out DFIR_VELO_HUNT_POLL_S. Awaits the poll so the response already reflects its outcome.
+  app.post("/cases/:id/velociraptor/hunt-jobs/:huntId/poll-status", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.veloHuntStore) return res.status(501).json({ error: "hunt store not configured" });
+    const caseId = req.params.id;
+    const huntId = req.params.huntId;
+    await pollVeloHuntStatus(caseId, huntId);
+    const job = await options.veloHuntStore.get(caseId, huntId);
+    if (!job) return res.status(404).json({ error: `no Velociraptor hunt ${huntId} for this case` });
+    return res.status(200).json(job);
   });
 
   // ── Hunting feedback loop (#157) ─────────────────────────────────────────────────────────────
@@ -3189,6 +3297,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         const timer = setTimeout(() => { void importVeloHuntResults(caseId, launch.huntId); }, waitMinutes * 60_000);
         timer.unref?.();
         veloHuntTimers.set(launch.huntId, timer);
+        scheduleVeloHuntStatusPoll(caseId, launch.huntId);
       }
       await recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, huntId: launch.huntId, deployedAt: new Date().toISOString() });
       options.onVeloHunt?.(caseId);
@@ -7469,6 +7578,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
   // tests and embeddings that don't use monitoring.
   void resumeVeloMonitors();
+  void resumeVeloHuntStatusPolls();
 
   // Arm the evidence drop-folder watcher (auto-import inbox). Gated on the status store being wired
   // (startServer), so createApp-only unit tests never start a filesystem poller.

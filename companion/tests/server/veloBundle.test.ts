@@ -196,3 +196,76 @@ describe("Velociraptor triage bundles — routes", () => {
     expect(res.status).toBe(501);
   });
 });
+
+describe("Velociraptor hunt status polling — routes", () => {
+  it("poll-status detects STOPPED and triggers an immediate collect", async () => {
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("hunt(") && p.includes("artifacts=[")) return { rows: [{ Hunt: { HuntId: "H.STOP1", state: "RUNNING" } }], raw: "" };
+      if (p.includes("FROM hunts()")) return { rows: [{ state: "STOPPED" }], raw: "" };
+      if (p.includes("hunt_results(")) return { rows: [{ Name: "cmd.exe", Timestamp: "2026-07-01T10:00:00Z" }], raw: "" };
+      return { rows: [], raw: "" };
+    };
+    const made = await makeApp(runner);
+    await request(made.app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
+
+    const poll = await request(made.app).post("/cases/c1/velociraptor/hunt-jobs/H.STOP1/poll-status");
+    expect(poll.status).toBe(200);
+
+    // The poll triggered importVeloHuntResults in the background (fire-and-forget) — wait for it.
+    let job: { status: string } | null = null;
+    for (let i = 0; i < 100; i++) {
+      job = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
+      if (job && (job.status === "imported" || job.status === "error")) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(job?.status).toBe("imported");
+  });
+
+  it("poll-status marks the job deleted when Velociraptor has no record of the hunt", async () => {
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("hunt(") && p.includes("artifacts=[")) return { rows: [{ Hunt: { HuntId: "H.DEL2", state: "RUNNING" } }], raw: "" };
+      if (p.includes("FROM hunts()")) return { rows: [], raw: "" };   // hunt not found — deleted
+      return { rows: [], raw: "" };
+    };
+    const made = await makeApp(runner);
+    await request(made.app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
+
+    const poll = await request(made.app).post("/cases/c1/velociraptor/hunt-jobs/H.DEL2/poll-status");
+    expect(poll.status).toBe(200);
+    expect(poll.body.status).toBe("deleted");
+
+    const jobs = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body;
+    expect(jobs[0].status).toBe("deleted");
+  });
+
+  it("poll-status marks the job unreachable when the Velociraptor query throws, without flipping it to deleted", async () => {
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("hunt(") && p.includes("artifacts=[")) return { rows: [{ Hunt: { HuntId: "H.UNR2", state: "RUNNING" } }], raw: "" };
+      if (p.includes("FROM hunts()")) throw new Error("velociraptor process spawn failed");
+      return { rows: [], raw: "" };
+    };
+    const made = await makeApp(runner);
+    await request(made.app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
+
+    const poll = await request(made.app).post("/cases/c1/velociraptor/hunt-jobs/H.UNR2/poll-status");
+    expect(poll.status).toBe(200);
+    expect(poll.body.status).toBe("unreachable");
+  });
+
+  it("poll-status is a 404 for an unknown hunt id", async () => {
+    const made = await makeApp();
+    const poll = await request(made.app).post("/cases/c1/velociraptor/hunt-jobs/H.NOPE/poll-status");
+    expect(poll.status).toBe(404);
+  });
+
+  it("poll-status is 501 when Velociraptor is not configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-velobundle-noclient2-"));
+    const store = new CaseStore(root);
+    const bare = createApp(store, {});
+    const res = await request(bare).post("/cases/c1/velociraptor/hunt-jobs/H.X/poll-status");
+    expect(res.status).toBe(501);
+  });
+});

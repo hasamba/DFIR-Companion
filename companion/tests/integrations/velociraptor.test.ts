@@ -304,6 +304,31 @@ describe("VelociraptorClient.flowStatus", () => {
   });
 });
 
+describe("VelociraptorClient.huntStatus", () => {
+  it("returns the hunt's state when found", async () => {
+    let program = "";
+    const runner: VqlRunner = async (s) => { program = s[0]; return { rows: [{ state: "RUNNING" }], raw: "" }; };
+    const st = await new VelociraptorClient(cfg, runner).huntStatus("H.ABC123");
+    expect(st).toEqual({ state: "RUNNING" });
+    expect(program).toContain("FROM hunts() WHERE hunt_id='H.ABC123'");
+  });
+
+  it("returns null when the hunt is not found (deleted)", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    expect(await new VelociraptorClient(cfg, runner).huntStatus("H.GONE1")).toBeNull();
+  });
+
+  it("trims a missing/blank state field to an empty string, not undefined", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{}], raw: "" });
+    expect(await new VelociraptorClient(cfg, runner).huntStatus("H.ABC123")).toEqual({ state: "" });
+  });
+
+  it("throws on an invalid hunt id", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).huntStatus("not-a-hunt-id")).rejects.toThrow(/invalid hunt id/);
+  });
+});
+
 describe("VelociraptorClient.collectFromHost (live resolve)", () => {
   it("enumerates the fleet, matches the host (FQDN ⇄ short name), and collects on that client", async () => {
     // Case asset is an FQDN, but the client enrolled with the SHORT name — the old whole-FQDN search missed it.
