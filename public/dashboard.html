@@ -1127,6 +1127,22 @@
       color: var(--c-6b7280); cursor: pointer; padding: 0 3px; font-size: 13px; line-height: 1; }
     #clearSearch:hover { color: var(--c-ff7a7a); }
     .sf-sep { width: 1px; align-self: stretch; background: var(--c-2a2f3a); margin: 0 2px; }
+    /* Exclude filter (#216): hide events/IOCs/findings matching any of several terms — a view-only lens. */
+    .sf-exclude-wrap { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    #excludeInput { font-size: 12px; padding: 4px 8px; width: 180px;
+      background: var(--c-161a22); color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); border-radius: 5px; }
+    #excludeInput:focus { outline: none; border-color: var(--c-ff7a7a); }
+    #excludeChips { display: flex; flex-wrap: wrap; gap: 4px; }
+    .exclude-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px;
+      background: var(--c-3a1f22); color: var(--c-ffb0b0); border: 1px solid var(--c-5a2a2e);
+      border-radius: 10px; padding: 2px 4px 2px 8px; max-width: 220px; }
+    .exclude-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .exclude-chip button { background: transparent; border: none; color: inherit; cursor: pointer;
+      padding: 0 3px; font-size: 12px; line-height: 1; opacity: 0.75; }
+    .exclude-chip button:hover { opacity: 1; }
+    #clearExcludeBtn { background: transparent; border: 1px solid var(--c-2a2f3a); border-radius: 4px;
+      color: var(--c-9aa4b2); cursor: pointer; padding: 2px 7px; font-size: 11px; }
+    #clearExcludeBtn:hover { color: var(--c-ff7a7a); border-color: var(--c-ff7a7a); }
     #filterFrom, #filterTo { font-size: 12px; padding: 3px 5px; background: var(--c-161a22);
       color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); border-radius: 5px; }
     #clearFiltersBtn { background: transparent; border: 1px solid var(--c-2a2f3a); border-radius: 4px;
@@ -2823,6 +2839,13 @@
       <button id="clearSearch" type="button" title="Clear filter (Esc)" hidden>✕</button>
     </div>
     <div class="sf-sep"></div>
+    <span>Exclude:</span>
+    <div class="sf-exclude-wrap">
+      <input id="excludeInput" type="text" placeholder="term to hide, Enter to add…" title="Hide events/IOCs/findings matching this text (case-insensitive, can be a multi-word phrase). Press Enter to add — you can add several terms; a row is hidden if it matches ANY of them. This is a view-only filter, it does not change the case." autocomplete="off" />
+      <div id="excludeChips"></div>
+      <button id="clearExcludeBtn" type="button" title="Clear all exclude terms" hidden>Clear</button>
+    </div>
+    <div class="sf-sep"></div>
     <span>Time range:</span>
     <label>from <input id="filterFrom" type="datetime-local" title="Filter timeline from (UTC)" /></label>
     <label>to <input id="filterTo" type="datetime-local" title="Filter timeline to (UTC)" /></label>
@@ -3556,6 +3579,28 @@
       } catch { return { key: "date", dir: "asc" }; }
     })();
     let searchTerm = "";                      // active text search (lower-cased; empty = no filter)
+    // Exclude filter (#216): hide events/IOCs/findings matching ANY of these terms — a view-only lens,
+    // never touches InvestigationState. Persisted per-browser so it survives reloads.
+    let excludeTerms = (() => {
+      try { return JSON.parse(localStorage.getItem("dfir.excludeTerms") || "[]"); } catch { return []; }
+    })();
+    if (!Array.isArray(excludeTerms)) excludeTerms = [];
+    // Persist + re-render the exclude-term chip list, then re-apply filters to whatever's on screen.
+    function setExcludeTerms(terms) {
+      excludeTerms = terms;
+      try { localStorage.setItem("dfir.excludeTerms", JSON.stringify(excludeTerms)); } catch {}
+      renderExcludeChips();
+      if (lastState) render(lastState);
+    }
+    function renderExcludeChips() {
+      const box = document.getElementById("excludeChips");
+      const clearBtn = document.getElementById("clearExcludeBtn");
+      if (!box) return;
+      box.innerHTML = excludeTerms.map((t, i) =>
+        `<span class="exclude-chip"><span title="${esc(t)}">${esc(t)}</span><button type="button" data-i="${i}" title="Remove this exclude term">✕</button></span>`
+      ).join("");
+      if (clearBtn) clearBtn.hidden = excludeTerms.length === 0;
+    }
     // Corroboration lens (#35): 0 = off; 2/3 = show only items observed by ≥N distinct tools. A LENS,
     // not a gate — it narrows the view but never drops state, so single-source evidence (a Sysmon-only
     // process, a syslog-only logon) is always one click away. Each of the three sections (Timeline /
@@ -3599,6 +3644,11 @@
         (f.description || "").toLowerCase().includes(q) ||
         (f.mitreTechniques || []).some(t => t.toLowerCase().includes(q));
     }
+    // Exclude filter (#216): true when the item matches ANY exclude term (mirrors
+    // companion/src/analysis/searchFilter.ts eventMatchesExclude/findingMatchesExclude/iocMatchesExclude).
+    function _evMatchesExclude(e, terms) { return terms.some(t => t && _evMatchesSearch(e, t.toLowerCase())); }
+    function _iocMatchesExclude(i, terms) { return terms.some(t => t && _iocMatchesSearch(i, t.toLowerCase())); }
+    function _findingMatchesExclude(f, terms) { return terms.some(t => t && _findingMatchesSearch(f, t.toLowerCase())); }
     function _evMatchesTimeRange(e, from, to) {
       const ts = e.timestamp; if (!ts) return true;
       const t = Date.parse(ts); if (isNaN(t)) return true;
@@ -3606,13 +3656,14 @@
       if (to)   { const u = Date.parse(to);   if (!isNaN(u) && t > u) return false; }
       return true;
     }
-    function _hasActiveFilter() { return !!(searchTerm || filterFrom || filterTo); }
-    // True when an event passes the GLOBAL search-bar filter (text search + time range). This is the
-    // filter the toolbar search applies to the timeline; we also feed it to the timeline-DERIVED views
-    // (Kill Chain, Attack Phases) so "I searched an IP" narrows every event-based section, not just the
+    function _hasActiveFilter() { return !!(searchTerm || filterFrom || filterTo || excludeTerms.length); }
+    // True when an event passes the GLOBAL search-bar filter (text search + time range + exclude terms).
+    // This is the filter the toolbar search applies to the timeline; we also feed it to the timeline-DERIVED
+    // views (Kill Chain, Attack Phases) so "I searched an IP" narrows every event-based section, not just the
     // timeline list. (Severity-legend + source toggles stay timeline-local — they're list facets.)
     function _matchesGlobalFilter(e) {
       if (searchTerm && !_evMatchesSearch(e, searchTerm)) return false;
+      if (excludeTerms.length && _evMatchesExclude(e, excludeTerms)) return false;
       if ((filterFrom || filterTo) && !_evMatchesTimeRange(e, filterFrom, filterTo)) return false;
       return true;
     }
@@ -9167,6 +9218,7 @@
       const sfBtn = document.getElementById("evStarFilterBtn");
       if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
       searchTerm = ""; filterFrom = null; filterTo = null;
+      setExcludeTerms([]);   // also un-hides anything the exclude filter was suppressing
       const gsEl = document.getElementById("globalSearch"); if (gsEl) gsEl.value = "";
       const ffEl = document.getElementById("filterFrom"); if (ffEl) ffEl.value = "";
       const ftEl = document.getElementById("filterTo"); if (ftEl) ftEl.value = "";
@@ -9755,6 +9807,7 @@
       if (cnt) cnt.textContent = flaggedTotal ? ` (${flaggedTotal} flagged)` : "";
       let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
       if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
+      if (excludeTerms.length) visible = visible.filter(i => !_iocMatchesExclude(i, excludeTerms));
       if (hiddenIocTypes.size > 0) visible = visible.filter(i => !hiddenIocTypes.has(i.type || "other"));
       if (corrobIocs > 1) visible = visible.filter(i => (iocSourcesById[i.id] || []).length >= corrobIocs);   // corroboration lens (#35)
       // Noise reduction (two independent, composable lenses — nothing is deleted, both persisted
@@ -9777,7 +9830,7 @@
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div style='color:var(--c-9aa4b2)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : (searchTerm || hiddenIocTypes.size > 0 || corrobIocs > 1 || noiseFiltersActive) && iocs.length > 0
+          : (searchTerm || excludeTerms.length > 0 || hiddenIocTypes.size > 0 || corrobIocs > 1 || noiseFiltersActive) && iocs.length > 0
             ? `<div style='color:var(--c-9aa4b2)'>No IOCs match the filter.${noiseFiltersActive ? " Turn off “Signal only” / “Hide legit/no-intel” / “Hide OS system paths” to see everything." : ""}</div>`
           : "<div style='color:var(--c-9aa4b2)'>No IOCs yet</div>";
         updateIocBulkBar();
@@ -9968,6 +10021,7 @@
       if (evIdFilter) visible = visible.filter(e => evIdFilter.has(String(e.id)));
       if (showStarredOnly) visible = visible.filter(e => starredEvents.has(String(e.id)));
       if (searchTerm) visible = visible.filter(e => _evMatchesSearch(e, searchTerm));
+      if (excludeTerms.length) visible = visible.filter(e => !_evMatchesExclude(e, excludeTerms));
       if (filterFrom || filterTo) visible = visible.filter(e => _evMatchesTimeRange(e, filterFrom, filterTo));
       const sourceFiltering = hiddenSources.size > 0;
       if (sourceFiltering) visible = visible.filter(e => {
@@ -10260,6 +10314,7 @@
       const filtered = sorted.filter(f =>
         (f.confidence === undefined || f.confidence >= minConf) &&
         (!searchTerm || _findingMatchesSearch(f, searchTerm)) &&
+        !(excludeTerms.length && _findingMatchesExclude(f, excludeTerms)) &&
         _findingCorrob(f) &&
         viewMeetsMinSev(f.severity));   // dashboard-view severity floor (#142)
       const capped = viewTopN() > 0 ? filtered.slice(0, viewTopN()) : filtered;   // view top-N cap
@@ -10268,7 +10323,7 @@
       if (findingsCountEl) {
         const totalFindings = sorted.length;
         const shownFindings = capped.length;
-        const findingsFiltering = minConf > 0 || !!searchTerm || corrobFindings > 1
+        const findingsFiltering = minConf > 0 || !!searchTerm || excludeTerms.length > 0 || corrobFindings > 1
           || !!(activeView && activeView.filters && (activeView.filters.minSeverity || viewTopN()));
         findingsCountEl.textContent = findingsFiltering
           ? `(${shownFindings} of ${totalFindings} findings)`
@@ -11094,10 +11149,46 @@
       const ft = document.getElementById("filterTo");
       const cfBtn = document.getElementById("clearFiltersBtn");
       const toggleBtn = document.getElementById("toggleSearchBar");
+      const exIn = document.getElementById("excludeInput");
+      const exChips = document.getElementById("excludeChips");
+      const exClearBtn = document.getElementById("clearExcludeBtn");
 
       toggleBtn.addEventListener("click", () => {
         setSearchBarOpen(document.getElementById("searchFilterBar").hidden);
       });
+
+      // Exclude filter (#216): each Enter (or comma) adds the current input as a new term; terms are
+      // OR'd — a row is hidden if it matches ANY of them. A term may contain spaces (a phrase).
+      renderExcludeChips();
+      function addExcludeTerm(raw) {
+        const term = raw.trim();
+        if (!term) return;
+        if (excludeTerms.some(t => t.toLowerCase() === term.toLowerCase())) return;   // no dupes
+        setExcludeTerms([...excludeTerms, term]);
+      }
+      if (exIn) {
+        exIn.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            addExcludeTerm(exIn.value);
+            exIn.value = "";
+          } else if (e.key === "Backspace" && !exIn.value && excludeTerms.length) {
+            setExcludeTerms(excludeTerms.slice(0, -1));   // Backspace on empty input pops the last chip
+          } else if (e.key === "Escape") {
+            exIn.value = ""; exIn.blur();
+          }
+        });
+        exIn.addEventListener("blur", () => { if (exIn.value.trim()) { addExcludeTerm(exIn.value); exIn.value = ""; } });
+      }
+      if (exChips) {
+        exChips.addEventListener("click", (e) => {
+          const btn = e.target.closest("button[data-i]");
+          if (!btn) return;
+          const i = parseInt(btn.dataset.i, 10);
+          setExcludeTerms(excludeTerms.filter((_, idx) => idx !== i));
+        });
+      }
+      if (exClearBtn) exClearBtn.addEventListener("click", () => setExcludeTerms([]));
 
       function applySearch() {
         searchTerm = gs.value.trim().toLowerCase();

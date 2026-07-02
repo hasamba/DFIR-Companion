@@ -4,6 +4,9 @@ import {
   findingMatchesSearch,
   iocMatchesSearch,
   eventMatchesTimeRange,
+  eventMatchesExclude,
+  findingMatchesExclude,
+  iocMatchesExclude,
 } from "../../src/analysis/searchFilter.js";
 import type { ForensicEvent, Finding, IOC } from "../../src/analysis/stateTypes.js";
 
@@ -101,6 +104,40 @@ describe("iocMatchesSearch", () => {
     const ioc = mkIoc({ type: "hash", value: "e3b0c44298fc1c149afb" });
     expect(iocMatchesSearch(ioc, "e3b0")).toBe(true);
     expect(iocMatchesSearch(ioc, "hash")).toBe(true);
+  });
+});
+
+describe("eventMatchesExclude", () => {
+  it("empty term list matches nothing (nothing excluded)", () => {
+    expect(eventMatchesExclude(mkEvent(), [])).toBe(false);
+  });
+  it("matches when any term hits (case-insensitive, multi-word)", () => {
+    expect(eventMatchesExclude(mkEvent(), ["encoded command"])).toBe(true);
+    expect(eventMatchesExclude(mkEvent(), ["mimikatz", "POWERSHELL"])).toBe(true);
+  });
+  it("does not match when no term hits", () => {
+    expect(eventMatchesExclude(mkEvent(), ["mimikatz", "ransomware"])).toBe(false);
+  });
+  it("ignores blank terms in the list", () => {
+    expect(eventMatchesExclude(mkEvent(), ["", "  "])).toBe(false);
+  });
+});
+
+describe("findingMatchesExclude", () => {
+  it("matches when any term hits", () => {
+    expect(findingMatchesExclude(mkFinding(), ["ransomware", "evade detection"])).toBe(true);
+  });
+  it("does not match when no term hits", () => {
+    expect(findingMatchesExclude(mkFinding(), ["ransomware"])).toBe(false);
+  });
+});
+
+describe("iocMatchesExclude", () => {
+  it("matches when any term hits", () => {
+    expect(iocMatchesExclude(mkIoc(), ["domain", "10.0.0.5"])).toBe(true);
+  });
+  it("does not match when no term hits", () => {
+    expect(iocMatchesExclude(mkIoc(), ["domain"])).toBe(false);
   });
 });
 

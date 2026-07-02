@@ -34,6 +34,21 @@ export function iocMatchesSearch(ioc: IOC, term: string): boolean {
   return ci(ioc.value, q) || ci(ioc.type, q);
 }
 
+/** Whether a forensic event matches ANY of a set of exclude terms (case-insensitive substring). */
+export function eventMatchesExclude(event: ForensicEvent, terms: readonly string[]): boolean {
+  return terms.some(t => t && eventMatchesSearch(event, t));
+}
+
+/** Whether a finding matches ANY of a set of exclude terms (case-insensitive substring). */
+export function findingMatchesExclude(finding: Finding, terms: readonly string[]): boolean {
+  return terms.some(t => t && findingMatchesSearch(finding, t));
+}
+
+/** Whether an IOC matches ANY of a set of exclude terms (case-insensitive substring). */
+export function iocMatchesExclude(ioc: IOC, terms: readonly string[]): boolean {
+  return terms.some(t => t && iocMatchesSearch(ioc, t));
+}
+
 /**
  * Whether a forensic event falls within an optional time range.
  * `from` and `to` are ISO UTC strings (or null/undefined = unbounded).
