@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { CaseStore } from "../src/storage/caseStore.js";
 import { StateStore } from "../src/analysis/stateStore.js";
 import { ScopeStore } from "../src/analysis/scope.js";
-import { LegitimateStore } from "../src/analysis/legitimate.js";
+import { FalsePositiveStore } from "../src/analysis/falsePositive.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
 import { ReportWriter } from "../src/reports/reportWriter.js";
 import { parseNotionPageId } from "../src/integrations/notion/notionClient.js";
@@ -61,7 +61,7 @@ async function main(): Promise<void> {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
   // Build a ReportWriter so the exported content matches the report (same scope/legitimate filters).
-  const reportWriter = new ReportWriter(store, stateStore, new ScopeStore(store), new LegitimateStore(store), new ReportMetaStore(store));
+  const reportWriter = new ReportWriter(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), new ReportMetaStore(store));
   const state = await reportWriter.filteredState(caseId);
   const meta = await new ReportMetaStore(store).load(caseId);
   const exportStore = new NotionExportStore(store);

@@ -82,9 +82,9 @@ describe("GET /cases/:id/geo-map (#133)", () => {
   });
 
   it("renders a legitimate IOC as gray with eventCount 0", async () => {
-    // Build a new root with the same case but wired with a LegitimateStore that marks
-    // 8.8.8.8 as a legitimate IOC. The marker should make the IP render gray, and the
-    // legitimated event should no longer count toward eventCount.
+    // Build a new root with the same case but wired with a FalsePositiveStore that marks
+    // 8.8.8.8 as a false-positive IOC. The marker should make the IP render gray, and the
+    // marked event should no longer count toward eventCount.
     const root2 = await mkdtemp(join(tmpdir(), "dfir-geomap-legit-"));
     const cases2 = new CaseStore(root2);
     await cases2.createCase({ caseId: "c1", name: "Geo Legit Test", investigator: "analyst", aiProvider: null });
