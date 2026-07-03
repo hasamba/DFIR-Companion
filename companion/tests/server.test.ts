@@ -1158,6 +1158,44 @@ describe("state and report routes", () => {
     expect(pinged).toBe(3);
   });
 
+  it("false-positive: rejects an empty ref, and rejects reason 'other' with no note (single + batch)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-reason-"));
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, {});
+
+    // No ref at all → 400.
+    const noRef = await request(app).post("/cases/c1/false-positive")
+      .send({ kind: "ioc", reason: "known-good-tool" });
+    expect(noRef.status).toBe(400);
+
+    // reason "other" with an empty note → 400.
+    const otherNoNote = await request(app).post("/cases/c1/false-positive")
+      .send({ kind: "ioc", ref: "9.9.9.9", reason: "other" });
+    expect(otherNoNote.status).toBe(400);
+
+    // reason "other" WITH a note → accepted.
+    const otherWithNote = await request(app).post("/cases/c1/false-positive")
+      .send({ kind: "ioc", ref: "9.9.9.9", reason: "other", note: "one-off manual exclusion" });
+    expect(otherWithNote.status).toBe(200);
+    expect(otherWithNote.body.find((m: { ref: string }) => m.ref === "9.9.9.9")).toMatchObject({ reason: "other" });
+
+    // Batch: an item with reason "other" and no note is silently skipped, not the whole batch rejected —
+    // unless it's the only item, in which case the batch itself has nothing valid to add → 400.
+    const batchAllInvalid = await request(app).post("/cases/c1/false-positive/batch")
+      .send({ items: [{ kind: "finding", ref: "f1", reason: "other" }] });
+    expect(batchAllInvalid.status).toBe(400);
+
+    const batchMixed = await request(app).post("/cases/c1/false-positive/batch")
+      .send({ items: [
+        { kind: "finding", ref: "f1", reason: "other" },                          // skipped: no note
+        { kind: "finding", ref: "f2", reason: "detection-misfire" },              // accepted
+      ] });
+    expect(batchMixed.status).toBe(200);
+    expect(batchMixed.body.some((m: { ref: string }) => m.ref === "f1")).toBe(false);
+    expect(batchMixed.body.some((m: { ref: string }) => m.ref === "f2")).toBe(true);
+  });
+
   it("scope: onScope callback fires with the new window when scope is saved", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-scope-cb-"));
     const store = new CaseStore(root);
