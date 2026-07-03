@@ -5,7 +5,7 @@ import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
-import { LegitimateStore } from "../../src/analysis/legitimate.js";
+import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
@@ -125,14 +125,16 @@ describe("GET /cases/:id/geo-map (#133)", () => {
         },
       ],
     });
-    const legitStore2 = new LegitimateStore(cases2);
+    const legitStore2 = new FalsePositiveStore(cases2);
     await legitStore2.save("c1", [
       {
         id: "ioc:8.8.8.8",
         kind: "ioc",
         ref: "8.8.8.8",
+        reason: "known-good-tool",
         note: "Google DNS — confirmed legitimate",
         markedAt: "2026-01-01T00:00:00Z",
+        markedBy: "anonymous",
       },
     ]);
     const app2 = createApp(cases2, {

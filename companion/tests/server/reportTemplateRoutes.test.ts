@@ -7,7 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ScopeStore } from "../../src/analysis/scope.js";
-import { LegitimateStore } from "../../src/analysis/legitimate.js";
+import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
 import { ReportMetaStore } from "../../src/reports/reportMeta.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { ReportTemplateStore } from "../../src/reports/reportTemplateStore.js";
@@ -21,7 +21,7 @@ async function harness() {
   const reportTemplateStore = new ReportTemplateStore(join(root, "report-templates"));
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
   const reportWriter = new ReportWriter(
-    store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore,
+    store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore,
     undefined, undefined, undefined, undefined, reportTemplateStore, reportTemplateControlStore,
   );
   const app = createApp(store, { stateStore, reportWriter, reportMetaStore, reportTemplateStore, reportTemplateControlStore });
