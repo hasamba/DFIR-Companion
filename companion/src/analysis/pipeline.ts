@@ -26,7 +26,7 @@ import { applySeverityFloor } from "./severityFloor.js";
 import { EXAMPLE_IMPORTER_SPEC } from "./importerSpec.js";
 import type { ExternalImporter } from "./declarativeImporter.js";
 import { parseJsonLoose } from "./extractJson.js";
-import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
+import { applyFalsePositive, buildFalsePositiveContext, filterFalsePositiveEvents, type FalsePositiveStore } from "./falsePositive.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
 import { resolveSynthThinkingBudget, type SynthThinkingInput } from "./synthThinking.js";
 import { detectTimelineGaps, backfillSilenceGapFindings, gapEnvOptions } from "./gapDetect.js";
@@ -1153,8 +1153,8 @@ export interface PipelineOptions {
   // whose VQL already ran and (b) feed a "PRIOR HUNTS" context block so the model pivots on what hit.
   // Server-only (absent in scripts/* like the other Velociraptor features) → loop simply off.
   huntOutcomeStore?: HuntOutcomeStore;
-  // Client-confirmed legitimate findings/IOCs to exclude from synthesis.
-  legitimateStore?: LegitimateStore;
+  // Client-confirmed false-positive findings/IOCs to exclude from synthesis.
+  falsePositiveStore?: FalsePositiveStore;
   // Optional investigation time-window — events outside it are excluded.
   scopeStore?: ScopeStore;
   // Per-case anonymization control. When a case has it enabled, the userPrompt is tokenized
@@ -3259,9 +3259,9 @@ export class AnalysisPipeline {
   async ask(caseId: string, question: string): Promise<AskAnswer> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("case questions");
     const loaded = await this.opts.stateStore.load(caseId);
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
     let events = selectSynthesisEvents(scopedEvents, max);
@@ -3419,9 +3419,9 @@ export class AnalysisPipeline {
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasHuntMaterial(loaded)) return [];   // nothing to pivot on — don't spend a call
 
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
     let events = selectSynthesisEvents(scopedEvents, max);
@@ -3525,9 +3525,9 @@ export class AnalysisPipeline {
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasMemoryMaterial(loaded)) return [];   // no Volatility/Rekall evidence — don't spend a call
 
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
     const memEvents = scopedEvents.filter(isMemoryEvent);
     if (!memEvents.length) return [];            // all memory evidence is out-of-scope / legitimate
 
@@ -3597,9 +3597,9 @@ export class AnalysisPipeline {
   async hypothesizeGaps(caseId: string): Promise<GapHypothesesResult> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("gap hypothesis");
     const loaded = await this.opts.stateStore.load(caseId);
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     // Use the SAME gap detection (and thresholds) the panel/report use, so the analyst hypothesises
     // about exactly the gaps they see flagged.
@@ -3641,9 +3641,9 @@ export class AnalysisPipeline {
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasPlaybookHuntMaterial(loaded, tasks)) return [];   // empty/closed playbook → don't spend a call
 
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     const endpointsByTaskId = buildTaskEndpointsMap(loaded, tasks);
     const endpoints = knownEndpoints(loaded);
@@ -3704,9 +3704,9 @@ export class AnalysisPipeline {
   async generateNarrative(caseId: string): Promise<{ narrativeTimeline: string }> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("narrative generation");
     const loaded = await this.opts.stateStore.load(caseId);
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
     let events = selectSynthesisEvents(scopedEvents, max);
@@ -3748,9 +3748,9 @@ export class AnalysisPipeline {
   async executiveSummary(caseId: string): Promise<ExecSummary> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("executive summary");
     const loaded = await this.opts.stateStore.load(caseId);
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
     let events = selectSynthesisEvents(scopedEvents, max);
@@ -3785,9 +3785,9 @@ export class AnalysisPipeline {
   async remediationPlan(caseId: string): Promise<RemediationPlan> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("remediation plan");
     const loaded = await this.opts.stateStore.load(caseId);
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
     const filtered: InvestigationState = { ...loaded, forensicTimeline: scopedEvents };
 
     const findingsText =
@@ -3849,14 +3849,14 @@ export class AnalysisPipeline {
       forensicTimeline: correlateEvents(loaded.forensicTimeline, { windowSeconds }),
     };
 
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
 
     // Scope: only events inside the investigation window feed synthesis, so
     // findings/IOCs/attacker-path/questions reflect only in-scope activity.
     // Then drop events the client confirmed legitimate so the model never derives
     // conclusions from benign activity (the raw events stay in state — reversible).
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(
+    const scopedEvents = filterFalsePositiveEvents(
       filterEventsByScope(state.forensicTimeline, scope),
       markers,
     );
@@ -3937,7 +3937,7 @@ export class AnalysisPipeline {
       .filter((t) => t.status === "open")
       .map((t) => `[${t.id}] ${t.description}`)
       .join("\n") || "(none open)";
-    const legitimateBlock = buildLegitimateContext(markers);
+    const falsePositiveBlock = buildFalsePositiveContext(markers);
     // Compact, corroborated context (compromised assets + threat-intel verdicts + KEV hits)
     // so the model grounds findings/attacker-path in structure instead of inferring blind.
     const kevCatalog = await this.getKevCatalog();
@@ -3965,7 +3965,7 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + existingFindings + openThreads + legitimateBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -3984,7 +3984,7 @@ export class AnalysisPipeline {
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
-      (legitimateBlock ? `${legitimateBlock}\n\n` : "") +
+      (falsePositiveBlock ? `${falsePositiveBlock}\n\n` : "") +
       `Running notes: ${state.lastSummary || "(none)"}\n\nReturn the JSON conclusions.`;
 
     const synthStart = Date.now();
@@ -4018,8 +4018,8 @@ export class AnalysisPipeline {
     // Threads and the forensic timeline are also preserved.
     const base = { ...state, findings: [], mitreTechniques: [] };
     const merged = mergeDelta(base, delta, { windowSequence: 0, timestamp: ts, sourceScreenshots: [] });
-    // Safety net: drop anything confirmed legitimate even if the model re-introduced it.
-    const filtered = applyLegitimate(merged, markers);
+    // Safety net: drop anything confirmed false-positive even if the model re-introduced it.
+    const filtered = applyFalsePositive(merged, markers);
 
     // Back-link forensic events to the CORRECT findings using the synthesis output
     // (each finding lists the event ids it's based on). Replaces extraction guesses.
