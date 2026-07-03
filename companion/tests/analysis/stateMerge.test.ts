@@ -249,6 +249,33 @@ describe("mergeDelta", () => {
     expect(e1.sourceScreenshots).toEqual(["s1.webp", "s3.webp"]);
   });
 
+  it("carries message + veloUrl through both the push and update forensic-event branches (#8/#9)", () => {
+    let state = emptyState("c1");
+    // Push branch: a NEW event with message + veloUrl.
+    state = mergeDelta(state, {
+      ...baseDelta,
+      forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "MFT: created evil.exe",
+        severity: "Info", mitreTechniques: [], relatedFindingIds: [],
+        message: "FULL rendered EVTX message that exceeds the description",
+        veloUrl: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC" }],
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: ["s1.webp"] });
+    const pushed = state.forensicTimeline.find((e) => e.id === "e1")!;
+    expect(pushed.message).toContain("FULL rendered EVTX message");
+    expect(pushed.veloUrl).toBe("https://velo.example/app/index.html?org_id=root#/hunts/H.ABC");
+
+    // Update branch: re-reporting the same id supplies fresh message/veloUrl — they must persist.
+    state = mergeDelta(state, {
+      ...baseDelta,
+      forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "MFT: created evil.exe",
+        severity: "Info", mitreTechniques: [], relatedFindingIds: [],
+        message: "UPDATED full message text",
+        veloUrl: "https://velo.example/app/index.html?org_id=root#/hunts/H.ZZZ" }],
+    }, { windowSequence: 2, timestamp: "2026-05-28T10:05:00.000Z", sourceScreenshots: ["s2.webp"] });
+    const updated = state.forensicTimeline.find((e) => e.id === "e1")!;
+    expect(updated.message).toBe("UPDATED full message text");
+    expect(updated.veloUrl).toBe("https://velo.example/app/index.html?org_id=root#/hunts/H.ZZZ");
+  });
+
   it("carries narrativeTimeline from delta into state, preserving prior value when omitted", () => {
     let state = emptyState("c1");
     expect(state.narrativeTimeline).toBe("");

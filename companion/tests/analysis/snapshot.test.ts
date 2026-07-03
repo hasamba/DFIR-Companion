@@ -141,4 +141,12 @@ describe("allowlist / exclusion sets are disjoint", () => {
   it("includes hypotheses.json (investigation data travels with the case) (#140)", () => {
     expect(new Set<string>(SNAPSHOT_STATE_FILES).has("hypotheses.json")).toBe(true);
   });
+
+  it("includes dwell-windows.json in the snapshot allowlist", () => {
+    expect(SNAPSHOT_STATE_FILES).toContain("dwell-windows.json");
+  });
+
+  it("excludes forensic-gate.json (a machine-local display preference, not investigation data)", () => {
+    expect(SNAPSHOT_STATE_FILES).not.toContain("forensic-gate.json");
+  });
 });

@@ -127,6 +127,15 @@ function isVelociraptor(s: Row, root: unknown): boolean {
   if (!!getCI(s, "CallChain") && (getCI(s, "Pid") != null || getCI(s, "Ppid") != null)) return true;
   // Velociraptor Windows.Network.Netstat: Laddr/Lport/Status combination is specific to VR's netstat
   if (getCI(s, "Laddr") != null && getCI(s, "Lport") != null && getCI(s, "Status") != null) return true;
+  // Bare single-artifact exports (a plain row array, no _Source / not an artifact-map): recognize the
+  // distinctive column sets of common raw host artifacts so they route to Velociraptor (and get
+  // artifactName stamped) instead of falling through to the SIEM catch-all (Problem 1 — MFT/USN were
+  // mis-detected as SIEM). Kept conservative (distinctive columns only) so genuine SIEM rows aren't claimed.
+  // Windows.NTFS.MFT: OSPath + an NTFS $STANDARD_INFO/$FILE_NAME timestamp column (Created0x10/…).
+  if (getCI(s, "OSPath") != null &&
+    (getCI(s, "Created0x10") != null || getCI(s, "LastModified0x10") != null || getCI(s, "Created0x30") != null)) return true;
+  // Windows.Forensics.Usn (journal): Usn record number + Reason bitmask are unique to the USN journal.
+  if (getCI(s, "Usn") != null && getCI(s, "Reason") != null) return true;
   return isArtifactMap(root);
 }
 function isArtifactMap(root: unknown): boolean {

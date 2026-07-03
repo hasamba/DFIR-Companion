@@ -75,6 +75,28 @@ describe("parseVelociraptorJson — detection rows", () => {
   });
 });
 
+describe("parseVelociraptorJson — artifactName provenance", () => {
+  // Every mapped event must carry artifactName = the VQL artifact that produced it, so downstream
+  // (dwell-time window, evidence graph) can tell "from the MFT" apart from "a Sigma detection".
+  it("persists the VQL artifact name onto each mapped event (artifactName)", () => {
+    // A multi-artifact map exercises several mappers at once: a Sigma detection, a YARA hit, and a
+    // netstat telemetry row — each event should be stamped with its own source artifact.
+    const raw = JSON.stringify({
+      "Windows.Detection.Sigma": [sigmaRow()],
+      "Windows.Detection.Yara.Glob": [yaraRow()],
+      "Windows.Network.Netstat": [netstatRow()],
+    });
+    const r = parseVelociraptorJson(raw);
+    expect(r.events.length).toBeGreaterThan(0);
+    // No event lacks provenance.
+    expect(r.events.every((e) => typeof e.artifactName === "string" && e.artifactName.length > 0)).toBe(true);
+    // And each is stamped with the artifact that actually produced it.
+    expect(r.events.some((e) => e.artifactName === "Windows.Detection.Sigma")).toBe(true);
+    expect(r.events.some((e) => e.artifactName === "Windows.Detection.Yara.Glob")).toBe(true);
+    expect(r.events.some((e) => e.artifactName === "Windows.Network.Netstat")).toBe(true);
+  });
+});
+
 // Velociraptor data indexed into Elasticsearch, then pushed from Kibana by the extension: rows
 // arrive reshaped (dotted keys, `.keyword` multi-fields, the artifact in the `artifact_<name>` index,
 // ES doc metadata). normalizeElasticRow should reverse that so the native mappers fire.
@@ -778,5 +800,93 @@ describe("parseVelociraptorJson — InUse field in MFT detection rows", () => {
     const row = { ...mftRow(true), InUse: "false" };
     const desc = parseVelociraptorJson(JSON.stringify([row])).events[0].description;
     expect(desc).toContain("[deleted]");
+  });
+});
+
+describe("parseVelociraptorJson — hostFallback (single-client flow attribution)", () => {
+  it("uses hostFallback as the asset when a row carries no host", () => {
+    const text = JSON.stringify({ "Windows.NTFS.MFT": [{ OSPath: "C:\\evil.exe", Created0x10: "2026-06-01T00:00:00Z", FileName: "evil.exe" }] });
+    const r = parseVelociraptorJson(text, { artifact: "Windows.NTFS.MFT", hostFallback: "DESKTOP-01" });
+    expect(r.events.length).toBeGreaterThan(0);
+    expect(r.events.every((e) => e.asset === "DESKTOP-01")).toBe(true);
+  });
+
+  it("keeps a row's own host over hostFallback", () => {
+    const text = JSON.stringify({ "Windows.NTFS.MFT": [{ OSPath: "C:\\x", Created0x10: "2026-06-01T00:00:00Z", Computer: "SERVER-9" }] });
+    const r = parseVelociraptorJson(text, { artifact: "Windows.NTFS.MFT", hostFallback: "DESKTOP-01" });
+    const withHost = r.events.find((e) => e.asset);
+    expect(withHost?.asset).toBe("SERVER-9");
+  });
+});
+
+describe("parseVelociraptorJson — bare NTFS/MFT timestamps", () => {
+  it("dates an MFT row from bare top-level $FN Created (0x30), preferred over $SI Created (0x10)", () => {
+    const text = JSON.stringify({ "Windows.NTFS.MFT": [{
+      OSPath: "C:\\Windows\\evil.exe", FileName: "evil.exe",
+      Created0x10: "2021-01-01T00:00:00Z",   // $SI (timestompable)
+      Created0x30: "2026-06-02T09:15:00Z",   // $FN (preferred)
+    }] });
+    const r = parseVelociraptorJson(text, { artifact: "Windows.NTFS.MFT" });
+    expect(r.events.length).toBeGreaterThan(0);
+    expect(r.events[0].timestamp).toBe("2026-06-02T09:15:00Z");   // used Created0x30, not epoch/blank
+  });
+
+  it("falls back to $SI Created (0x10) when there's no $FN Created", () => {
+    const text = JSON.stringify({ "Windows.NTFS.MFT": [{ OSPath: "C:\\x", FileName: "x", Created0x10: "2026-06-01T00:00:00Z" }] });
+    const r = parseVelociraptorJson(text, { artifact: "Windows.NTFS.MFT" });
+    expect(r.events[0].timestamp).toBe("2026-06-01T00:00:00Z");
+  });
+});
+
+describe("parseVelociraptorJson — timestamp coverage for raw artifacts", () => {
+  it("dates a Chrome/Edge history row from visit_time", () => {
+    const text = JSON.stringify({ "Windows.Applications.Chrome.History": [{ url: "http://evil.test/x", title: "x", visit_time: "2026-06-04T12:00:00Z", OSPath: "C:\\...\\History" }] });
+    const r = parseVelociraptorJson(text, { artifact: "Windows.Applications.Chrome.History" });
+    expect(r.events[0].timestamp).toBe("2026-06-04T12:00:00Z");
+  });
+
+  it("dates a row via the name-based fallback for a time column not in the explicit list", () => {
+    // A shellbags-style row whose only time is an unlisted, time-NAMED column → the fallback scan dates it.
+    const text = JSON.stringify({ "Windows.Forensics.Shellbags": [{ Path: "Desktop\\evil", ShellbagModifiedTime: "2026-06-05T08:00:00Z" }] });
+    const r = parseVelociraptorJson(text, { artifact: "Windows.Forensics.Shellbags" });
+    expect(r.events[0].timestamp).toBe("2026-06-05T08:00:00Z");
+  });
+
+  it("prefers a real artifact time over the _ts collection time", () => {
+    const text = JSON.stringify({ "Windows.Applications.Chrome.History": [{ url: "http://x", visit_time: "2026-06-01T00:00:00Z", _ts: 1893456000 }] });
+    const r = parseVelociraptorJson(text, { artifact: "Windows.Applications.Chrome.History" });
+    expect(r.events[0].timestamp).toBe("2026-06-01T00:00:00Z");   // visit_time, not the _ts epoch
+  });
+
+  it("uses _ts only as an absolute last resort (no real time anywhere)", () => {
+    const text = JSON.stringify({ "Custom.Thing": [{ foo: "bar", _ts: 1893456000 }] });   // 2030-01-01
+    const r = parseVelociraptorJson(text, { artifact: "Custom.Thing" });
+    expect(r.events[0].timestamp).toBe("2030-01-01T00:00:00.000Z");
+  });
+
+  it("ignores a 1601/epoch-0 sentinel in a fallback-scanned column (stays undated rather than year 1601)", () => {
+    const text = JSON.stringify({ "Custom.Thing": [{ foo: "bar", SomeTime: "1601-01-01T00:00:00Z" }] });
+    const r = parseVelociraptorJson(text, { artifact: "Custom.Thing" });
+    expect(r.events[0].timestamp).toBe("");
+  });
+
+  it("carries the full untruncated message beyond the truncated description (#9)", () => {
+    // A rendered EVTX-style message far longer than the 600-char description cap: `message` must carry
+    // the FULL text so the super-timeline row can reveal it expandably, while `description` stays short.
+    const longMsg = "ScriptBlock: " + "Invoke-Mimikatz -DumpCreds; ".repeat(60) + "END";
+    const text = JSON.stringify({ "Custom.PSScript": [{ Message: longMsg, SomeTime: "2026-06-01T00:00:00Z" }] });
+    const r = parseVelociraptorJson(text, { artifact: "Custom.PSScript", aggregate: false });
+    const ev = r.events[0];
+    expect(ev.message).toBeTruthy();
+    expect((ev.message as string).length).toBeGreaterThan(ev.description.length);
+    expect(ev.message).toContain("END");                      // the tail past the description cut-off survives
+    expect(ev.description.length).toBeLessThanOrEqual(600);   // description stays the short summary
+  });
+
+  it("does NOT set message when the description already contains the whole thing (#9)", () => {
+    // A short message wholly inside the (uncapped) description adds nothing to reveal → message stays unset.
+    const text = JSON.stringify({ "Custom.Thing": [{ Message: "short benign line", SomeTime: "2026-06-01T00:00:00Z" }] });
+    const r = parseVelociraptorJson(text, { artifact: "Custom.Thing", aggregate: false });
+    expect(r.events[0].message).toBeUndefined();
   });
 });

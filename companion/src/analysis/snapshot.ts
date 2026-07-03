@@ -19,6 +19,11 @@ export const SNAPSHOT_VERSION = 1 as const;
 // is the safe default for an OPSEC-sensitive export: a store added later is NOT exported until it
 // is deliberately added here, so nothing machine-specific leaks by accident. These are the files
 // that hold investigation data + analyst decisions and are meaningful on any machine.
+//
+// The dividing line: investigation data / analyst decisions go IN; machine/account/transient
+// PREFERENCES stay OUT. e.g. `forensic-gate.json` (the machine-local forensic-timeline severity
+// cut) is a per-analyst display preference, not investigation data, so it is deliberately NOT
+// listed here — a snapshot must not carry one machine's UI preference to another.
 export const SNAPSHOT_STATE_FILES = [
   "investigation.json",     // the core: forensic timeline, findings, IOCs, MITRE, attacker path, questions, next steps
   "legitimate.json",        // analyst false-positive / known-good markers
@@ -36,6 +41,7 @@ export const SNAPSHOT_STATE_FILES = [
   "synth-meta.json",        // when synthesis last ran + findings diff (investigation history)
   "import-meta.json",       // when the last import ran + timeline/IOC diff (investigation history)
   "hunt-outcomes.json",     // #157 per-case hunting profile (what was hunted, what hit/missed) — investigation data
+  "dwell-windows.json",     // analyst-defined attacker-presence windows (label/start/end) — investigation data
 ] as const;
 
 // Documented for intent: these state files exist but are DELIBERATELY excluded from a snapshot
@@ -53,6 +59,7 @@ export const SNAPSHOT_EXCLUDED_STATE_FILES = [
   "anon-discovered.json",
   "import-undo-stack.json", // #76 import undo/redo snapshots — machine-local convenience, large, transient
   "second-opinion.json",    // #116 second-LLM-opinion QA scratch — transient; ACCEPTED deltas already live in investigation.json
+  "forensic-gate.json",     // machine-local forensic-timeline severity cut (display preference) — recipient uses their own default
 ] as const;
 
 const ALLOWED = new Set<string>(SNAPSHOT_STATE_FILES);

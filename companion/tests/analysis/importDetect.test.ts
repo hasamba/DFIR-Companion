@@ -487,6 +487,20 @@ describe("detectImportWithCustom precedence", () => {
     expect(detectImportKind("Netstat.json", ndjson(row))).toBe("velociraptor");
   });
 
+  it("detects a bare MFT artifact export (no _Source) as velociraptor, not siem", () => {
+    const text = j([
+      { OSPath: "C:\\Windows\\evil.exe", Created0x10: "2026-06-01T00:00:00Z", LastModified0x10: "2026-06-01T00:00:00Z", InUse: true, FileName: "evil.exe" },
+    ]);
+    expect(detectImportKind("mft.json", text)).toBe("velociraptor");
+  });
+
+  it("detects a bare USN journal export (no _Source) as velociraptor, not siem", () => {
+    const text = j([
+      { OSPath: "C:\\Users\\x\\f.docx", Usn: 12345, Reason: "FILE_CREATE|CLOSE", TimeStamp: "2026-06-01T00:00:00Z", FileName: "f.docx" },
+    ]);
+    expect(detectImportKind("usn.json", text)).toBe("velociraptor");
+  });
+
   it("external-first: a custom importer can override even a specific built-in", () => {
     const r = parseImporterSpec({ ...EXAMPLE_IMPORTER_SPEC, id: "my-evtx", match: { format: "json", requireKeys: ["EventID"], priority: 1 } });
     if (!r.ok) throw new Error("bad");

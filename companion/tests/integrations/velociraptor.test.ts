@@ -366,6 +366,86 @@ describe("VelociraptorClient.huntStatus", () => {
   });
 });
 
+describe("VelociraptorClient.getHuntArtifacts", () => {
+  it("returns the hunt's configured artifact list", async () => {
+    let program = "";
+    const runner: VqlRunner = async (s) => { program = s[0]; return { rows: [{ artifacts: ["Windows.NTFS.MFT", "Windows.Forensics.Usn"] }], raw: "" }; };
+    const arts = await new VelociraptorClient(cfg, runner).getHuntArtifacts("H.ABC");
+    expect(arts).toEqual(["Windows.NTFS.MFT", "Windows.Forensics.Usn"]);
+    expect(program).toContain("FROM hunts() WHERE hunt_id='H.ABC'");
+  });
+
+  it("returns [] when the hunt is not found or has no artifacts", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    expect(await new VelociraptorClient(cfg, runner).getHuntArtifacts("H.ABC")).toEqual([]);
+  });
+
+  it("rejects an invalid hunt id", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).getHuntArtifacts("not-a-hunt")).rejects.toThrow(/hunt id/i);
+  });
+});
+
+describe("VelociraptorClient.getFlowInfo", () => {
+  // A runner branching on the flows() query vs the clients() inventory query listClients() issues.
+  function flowRunner(flowRow: Record<string, unknown>, clientRows: unknown[]): VqlRunner {
+    return async (statements) => {
+      const p = statements[0];
+      if (p.includes("FROM flows(")) return { rows: [flowRow], raw: "" };
+      if (p.includes("FROM clients(")) return { rows: clientRows, raw: "" };
+      return { rows: [], raw: "" };
+    };
+  }
+
+  it("returns the flow's artifacts (preferring artifacts_with_results) and resolves the host", async () => {
+    const runner = flowRunner(
+      { artifacts_with_results: ["Windows.NTFS.MFT"], req_artifacts: ["Windows.NTFS.MFT", "Windows.Forensics.Usn"] },
+      [{ client_id: "C.dead", os_info: { hostname: "DESKTOP-01" } }],
+    );
+    const info = await new VelociraptorClient(cfg, runner).getFlowInfo("C.dead", "F.001");
+    expect(info.artifacts).toEqual(["Windows.NTFS.MFT"]);
+    expect(info.hostname).toBe("DESKTOP-01");
+  });
+
+  it("falls back to request.artifacts when nothing produced results", async () => {
+    const runner = flowRunner(
+      { artifacts_with_results: [], req_artifacts: ["Windows.NTFS.MFT"] },
+      [{ client_id: "C.dead", os_info: { fqdn: "DESKTOP-01.corp.local" } }],
+    );
+    const info = await new VelociraptorClient(cfg, runner).getFlowInfo("C.dead", "F.001");
+    expect(info.artifacts).toEqual(["Windows.NTFS.MFT"]);
+    expect(info.hostname).toBe("DESKTOP-01.corp.local");   // fqdn fallback when no hostname
+  });
+
+  it("returns an empty hostname when the client id isn't in the inventory", async () => {
+    const runner = flowRunner({ req_artifacts: ["Windows.NTFS.MFT"] }, []);
+    const info = await new VelociraptorClient(cfg, runner).getFlowInfo("C.dead", "F.001");
+    expect(info).toEqual({ artifacts: ["Windows.NTFS.MFT"], hostname: "" });
+  });
+
+  it("rejects an invalid client id", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).getFlowInfo("not-an-id", "F.001")).rejects.toThrow(/client id/i);
+  });
+
+  it("rejects an invalid flow id", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).getFlowInfo("C.dead", "not-a-flow")).rejects.toThrow(/flow id/i);
+  });
+
+  it("accepts a hunt-launched flow id (the .H suffix) and queries it verbatim", async () => {
+    let queried = "";
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("FROM flows(")) { queried = p; return { rows: [{ artifacts_with_results: ["Windows.NTFS.MFT"] }], raw: "" }; }
+      return { rows: [], raw: "" };
+    };
+    const info = await new VelociraptorClient(cfg, runner).getFlowInfo("C.9e5afcaf10536cd9", "F.D93M3ERL39HVE.H");
+    expect(info.artifacts).toEqual(["Windows.NTFS.MFT"]);
+    expect(queried).toContain("F.D93M3ERL39HVE.H");   // the ".H" reached the query, not a truncated id
+  });
+});
+
 describe("VelociraptorClient.collectFromHost (live resolve)", () => {
   it("enumerates the fleet, matches the host (FQDN ⇄ short name), and collects on that client", async () => {
     // Case asset is an FQDN, but the client enrolled with the SHORT name — the old whole-FQDN search missed it.

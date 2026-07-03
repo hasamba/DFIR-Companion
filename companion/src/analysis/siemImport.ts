@@ -58,6 +58,10 @@ export interface SiemEvent {
   srcIp?: string;
   dstIp?: string;
   port?: number;
+  // The source artifact/rule that produced this event (e.g. a Velociraptor VQL artifact name).
+  artifactName?: string;
+  // Full, untruncated event message/detail (beyond the truncated `description`) when the mapper had it.
+  message?: string;
 }
 
 export interface SiemIoc {
@@ -542,6 +546,10 @@ export interface MappedEvent {
   srcIp?: string;
   dstIp?: string;
   port?: number;
+  // The source artifact/rule that produced this event (carried through aggregation to SiemEvent).
+  artifactName?: string;
+  // Full, untruncated event message/detail (beyond the truncated `description`) when available.
+  message?: string;
 }
 
 // Parse a Windows pid that may be decimal ("5292") or hex ("0x14ac", as 4688 renders it). Returns a
@@ -921,6 +929,8 @@ export function createEventAggregator(
         existing.severity = worst(existing.severity, m.severity);
         for (const mt of m.mitre) if (!existing.mitreTechniques.includes(mt)) existing.mitreTechniques.push(mt);
         if (m.sources) for (const s of m.sources) { (existing.sources ??= []); if (!existing.sources.includes(s)) existing.sources.push(s); }
+        if (!existing.artifactName && m.artifactName) existing.artifactName = m.artifactName; // first-wins provenance
+        if (!existing.message && m.message) existing.message = m.message; // first-wins full detail
       } else {
         byKey.set(key, {
           id: "",
@@ -940,6 +950,8 @@ export function createEventAggregator(
           ...(m.srcIp ? { srcIp: m.srcIp } : {}),
           ...(m.dstIp ? { dstIp: m.dstIp } : {}),
           ...(m.port ? { port: m.port } : {}),
+          ...(m.artifactName ? { artifactName: m.artifactName } : {}),
+          ...(m.message ? { message: m.message } : {}),
         });
         order.push(key);
       }

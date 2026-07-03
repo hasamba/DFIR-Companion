@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { diffTimeline, isEmptyTimelineDiff } from "../../src/analysis/timelineDiff.js";
+import { diffTimeline, isEmptyTimelineDiff, addedForensicEvents } from "../../src/analysis/timelineDiff.js";
 import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
 
 function e(timestamp: string, description: string, severity: Severity = "Medium", id = description): ForensicEvent {
@@ -57,5 +57,33 @@ describe("diffTimeline", () => {
   it("returns an empty diff for identical timelines", () => {
     const set = [e("2026-01-01T00:00:00Z", "a", "High"), e("2026-01-01T00:01:00Z", "b", "Low")];
     expect(isEmptyTimelineDiff(diffTimeline(set, set))).toBe(true);
+  });
+});
+
+describe("addedForensicEvents", () => {
+  it("resolves the FULL added events from the after-state, not the lossy diff", () => {
+    const before = [e("2026-01-01T00:00:00Z", "logon 4624", "Low", "old1")];
+    const richNew: ForensicEvent = {
+      ...e("2026-01-01T01:00:00Z", "ransomware note dropped", "Critical", "t2e1"),
+      asset: "WEB01", sources: ["EventLog"], sha256: "deadbeef",
+    };
+    const after = [before[0], richNew];
+    const diff = diffTimeline(before, after);
+    const added = addedForensicEvents(after, diff);
+    // The whole object comes back (id/sources/hash preserved) — the super-timeline needs these.
+    expect(added).toEqual([richNew]);
+  });
+
+  it("returns nothing on a no-op re-import (nothing added)", () => {
+    const set = [e("2026-01-01T00:00:00Z", "a"), e("2026-01-01T00:01:00Z", "b")];
+    const reimport = [e("2026-01-01T00:00:00Z", "a", "Medium", "x1"), e("2026-01-01T00:01:00Z", "b", "Medium", "x2")];
+    expect(addedForensicEvents(reimport, diffTimeline(set, reimport))).toEqual([]);
+  });
+
+  it("returns one full event per added key (first occurrence wins)", () => {
+    const dupA = e("2026-01-01T00:00:00Z", "a", "Medium", "first");
+    const dupB = e("2026-01-01T00:00:00Z", "a", "Medium", "second");   // same diff-key as dupA
+    const added = addedForensicEvents([dupA, dupB], diffTimeline([], [dupA, dupB]));
+    expect(added).toEqual([dupA]);
   });
 });

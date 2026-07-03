@@ -341,7 +341,23 @@ kill chain. Like the graphs, it's **derived on read** (not persisted to state): 
 corroboration (which tools observed each indicator) is **derived on read** by matching the IOC value
 against the events' `sources` (indexed exact-token match — boundary-aware so `10.0.0.1` ≠ `10.0.0.10`).
 `ReportWriter.iocSources` → `GET /cases/:id/ioc-sources`, the dashboard's *⊕ N sources* IOC badge +
-the report/CSV IOC `sources` column. **Adversary group hints** (`analysis/adversaryHints.ts`, pure) are the
+the report/CSV IOC `sources` column. **IOC provenance** (`analysis/iocProvenance.ts` `deriveIocProvenance`,
+pure) is the same derived-on-read shape but over the **forensic ∪ super** events: each IOC is classed
+**detection-linked** (appears in a Low+ event) or **telemetry-only** (only in Info events) — **distinct
+from the enrichment/threat-intel verdict** (a telemetry-only IOC can still be malicious). `GET
+/cases/:id/ioc-provenance`; dashboard per-IOC badge + an All/Detection-linked/Telemetry-only filter.
+**Severity-gated forensic timeline (Info → super-only).** Because the Companion is a post-detection
+layer, the forensic timeline should hold graded signal (source verdicts + our deterministic rules), not
+raw telemetry — so on import an event enters the forensic timeline only when severity ≥ a floor
+(`analysis/forensicGate.ts`: `SEVERITY_RANK`, `demoteBelowSeverity`, `resolveForensicMinSeverity`);
+**Info** telemetry is demoted to the **super-timeline only** (still promotable). Floor from global
+`DFIR_FORENSIC_MIN_SEVERITY` (default `Low`; `Info` restores the old everything-into-forensic behavior,
+`Medium`/`High`/`Critical` cut harder) with a per-case override (`ForensicGateControlStore`,
+`state/forensic-gate.json` — deliberately **NOT** in `SNAPSHOT_STATE_FILES`; `GET`/`PUT
+/cases/:id/forensic-gate`). Applied at the **5 server import seams** (super-append FIRST, then demote,
+then the import-meta diff runs on the **post-demote** state). **Promotion of a super event always
+bypasses the gate**, and **IOCs are still extracted from every event (Info included)** — only forensic
+*timeline events* are gated. NEW imports only; existing cases untouched. **Adversary group hints** (`analysis/adversaryHints.ts`, pure) are the
 same shape: the case's identified ATT&CK techniques (findings + events + the MITRE table) are scored for
 overlap against each known MITRE **Groups** entry from a bundled **offline dataset** (`data/attack-groups.json`,
 loaded+cached by `analysis/adversaryGroupsData.ts`; regenerate via `npm run data:update-attack` →

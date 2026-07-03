@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
@@ -89,6 +90,34 @@ describe("explainEvent()", () => {
     const prompt = provider.lastReq!.userPrompt;
     expect(prompt).toContain("ctx1");
     expect(prompt).toContain("ctx2");
+  });
+
+  it("resolves an event present ONLY in the super-timeline store (never promoted to forensic)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-explain-super-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    await stateStore.save(emptyState("c1"));   // forensic timeline is EMPTY
+    // The event lives only in the super-timeline store (a raw host-triage artifact, never promoted).
+    const superTimelineStore = new SuperTimelineStore(cases);
+    await superTimelineStore.append("c1", [
+      ev({ id: "super1", description: "prefetch: EVIL.EXE executed", severity: "Info",
+           processName: "EVIL.EXE", asset: "TRIAGE-HOST", path: "C:\\Users\\x\\evil.exe" }),
+      ev({ id: "super2", description: "amcache: EVIL.EXE first seen", severity: "Info",
+           asset: "TRIAGE-HOST", timestamp: "2026-01-01T00:05:00Z" }),
+    ]);
+    const provider = new CapturingProvider(VALID_RESPONSE);
+    const pipeline = new AnalysisPipeline({
+      provider, stateStore, superTimelineStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    const result = await pipeline.explainEvent("c1", "super1");
+    expect(result.summary).toBeTruthy();
+    const prompt = provider.lastReq!.userPrompt;
+    expect(prompt).toContain("FOCAL EVENT");
+    expect(prompt).toContain("super1");
+    expect(prompt).toContain("EVIL.EXE");
+    expect(prompt).toContain("super2");   // same-asset context event pulled from the super store
   });
 
   it("throws when the event id does not exist", async () => {

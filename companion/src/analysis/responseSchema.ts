@@ -51,6 +51,9 @@ export const deltaSchema = z.object({
     path: z.string().optional(),
     asset: z.string().optional(),                             // host/computer/FQDN the event pertains to
     sources: z.array(z.string()).optional(),
+    artifactName: z.string().optional(),
+    message: z.string().optional(),
+    veloUrl: z.string().optional(),
     processName: z.string().optional(),
     parentName: z.string().optional(),
     pid: z.number().int().positive().optional(),              // subject pid on process-creation events (cross-tool correlation)
