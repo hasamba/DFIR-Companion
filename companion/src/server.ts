@@ -19,6 +19,7 @@ import { extractOcrText, searchOcrIndex, isOcrSearchEnabled } from "./analysis/o
 import { resolveRedactedExportOptions, redactedExportFilename } from "./analysis/redactedExport.js";
 import { buildRedactedExport } from "./reports/redactedExportBuilder.js";
 import { FalsePositiveStore, markerId, type FalsePositiveMarker, FALSE_POSITIVE_REASONS } from "./analysis/falsePositive.js";
+import { findSimilarEvents, findSimilarFindings } from "./analysis/falsePositiveSimilarity.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { CorrelationProfileStore } from "./analysis/correlationProfile.js";
 import { parseSnapshot } from "./analysis/snapshot.js";
@@ -4783,6 +4784,30 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       options.onFalsePositive?.(req.params.id);
       resynthesizeInBackground(req.params.id);
       return res.status(200).json(next);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Deterministic "find similar items" for the mark-FP dialog (#227): given one anchor
+  // finding/event, rank other in-case findings/events by shared MITRE technique/process/hash/
+  // asset/source (events) or MITRE/related-IOC/title (findings). Suggestions only — nothing here
+  // is applied; the analyst checks which candidates to also mark in the /false-positive/batch call.
+  app.post("/cases/:id/false-positive/suggest", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    try {
+      const kind = req.body?.kind === "event" ? "event" : req.body?.kind === "finding" ? "finding" : null;
+      const ref = String(req.body?.ref ?? "").trim();
+      if (!kind || !ref) return res.status(400).json({ error: "kind ('event'|'finding') and ref are required" });
+      const state = await options.stateStore.load(req.params.id);
+      if (kind === "event") {
+        const anchor = state.forensicTimeline.find((e) => e.id === ref);
+        if (!anchor) return res.status(404).json({ error: `event ${ref} not found` });
+        return res.status(200).json({ candidates: findSimilarEvents(anchor, state.forensicTimeline) });
+      }
+      const anchor = state.findings.find((f) => f.id === ref);
+      if (!anchor) return res.status(404).json({ error: `finding ${ref} not found` });
+      return res.status(200).json({ candidates: findSimilarFindings(anchor, state.findings) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
