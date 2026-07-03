@@ -758,7 +758,7 @@ describe("server analysis wiring", () => {
     }
   });
 
-  it("marks a forensic event legitimate (kind=event), storing its label and re-synthesizing", async () => {
+  it("marks a forensic event false-positive (kind=event), storing its label and re-synthesizing", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-legit-ev-"));
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
@@ -776,20 +776,20 @@ describe("server analysis wiring", () => {
         timelineNote: "", summary: "", forensicEvents: [],
       })),
       stateStore,
-      legitimateStore: new (await import("../src/analysis/legitimate.js")).LegitimateStore(store),
+      falsePositiveStore: new (await import("../src/analysis/falsePositive.js")).FalsePositiveStore(store),
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const legitApp = createApp(store, { pipeline, stateStore });
 
-    const res = await request(legitApp).post("/cases/c1/legitimate")
-      .send({ kind: "event", ref: "e1", note: "client's own admin", label: "client admin task" });
+    const res = await request(legitApp).post("/cases/c1/false-positive")
+      .send({ kind: "event", ref: "e1", reason: "authorized-test", note: "client's own admin", label: "client admin task" });
     expect(res.status).toBe(200);
     const stored = res.body.find((m: { kind: string }) => m.kind === "event");
     expect(stored).toMatchObject({ kind: "event", ref: "e1", label: "client admin task" });
     expect(stored.id).toBe("event:e1");
   });
 
-  it("marks many events legitimate in one batch request (single write, fallback note, dedupe)", async () => {
+  it("marks many events false-positive in one batch request (single write, fallback note, dedupe)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-legit-batch-"));
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
@@ -809,12 +809,13 @@ describe("server analysis wiring", () => {
         timelineNote: "", summary: "", forensicEvents: [],
       })),
       stateStore,
-      legitimateStore: new (await import("../src/analysis/legitimate.js")).LegitimateStore(store),
+      falsePositiveStore: new (await import("../src/analysis/falsePositive.js")).FalsePositiveStore(store),
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const legitApp = createApp(store, { pipeline, stateStore });
 
-    const res = await request(legitApp).post("/cases/c1/legitimate/batch").send({
+    const res = await request(legitApp).post("/cases/c1/false-positive/batch").send({
+      reason: "authorized-test",
       note: "client's own admin",
       items: [
         { kind: "event", ref: "e1", label: "admin task 1" },
@@ -829,11 +830,11 @@ describe("server analysis wiring", () => {
     expect(events.find((m: { ref: string }) => m.ref === "e2")).toMatchObject({ id: "event:e2", note: "specific reason" });
 
     // Persisted (one write) — reload via GET reflects the same two markers.
-    const after = await request(legitApp).get("/cases/c1/legitimate");
+    const after = await request(legitApp).get("/cases/c1/false-positive");
     expect(after.body.filter((m: { kind: string }) => m.kind === "event")).toHaveLength(2);
 
     // Empty/invalid batch is rejected.
-    const bad = await request(legitApp).post("/cases/c1/legitimate/batch").send({ items: [] });
+    const bad = await request(legitApp).post("/cases/c1/false-positive/batch").send({ items: [] });
     expect(bad.status).toBe(400);
   });
 
@@ -1130,28 +1131,28 @@ describe("state and report routes", () => {
     expect((await request(app).delete("/cases/c1/comments/nope")).status).toBe(404);
   });
 
-  it("legitimate: onLegitimate callback fires on add, batch add, and remove", async () => {
+  it("false-positive: onFalsePositive callback fires on add, batch add, and remove", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-legit-cb-"));
     const store = new CaseStore(root);
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     let pinged = 0;
-    const app = createApp(store, { onLegitimate: () => { pinged++; } });
+    const app = createApp(store, { onFalsePositive: () => { pinged++; } });
 
     // Single add fires the callback.
-    const add = await request(app).post("/cases/c1/legitimate")
-      .send({ kind: "ioc", ref: "1.2.3.4", note: "internal scanner" });
+    const add = await request(app).post("/cases/c1/false-positive")
+      .send({ kind: "ioc", ref: "1.2.3.4", reason: "known-good-tool", note: "internal scanner" });
     expect(add.status).toBe(200);
     expect(pinged).toBe(1);
 
     // Batch add fires once (not per item).
-    const batch = await request(app).post("/cases/c1/legitimate/batch")
-      .send({ items: [{ kind: "finding", ref: "f1", note: "fp" }, { kind: "finding", ref: "f2" }] });
+    const batch = await request(app).post("/cases/c1/false-positive/batch")
+      .send({ items: [{ kind: "finding", ref: "f1", reason: "detection-misfire", note: "fp" }, { kind: "finding", ref: "f2", reason: "detection-misfire" }] });
     expect(batch.status).toBe(200);
     expect(pinged).toBe(2);
 
     // Remove fires the callback.
     const markerId = add.body.find((m: { kind: string }) => m.kind === "ioc")?.id;
-    const remove = await request(app).post("/cases/c1/legitimate/remove")
+    const remove = await request(app).post("/cases/c1/false-positive/remove")
       .send({ id: markerId });
     expect(remove.status).toBe(200);
     expect(pinged).toBe(3);

@@ -6,7 +6,7 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
-import { LegitimateStore } from "../../src/analysis/legitimate.js";
+import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
 import { IocWhitelistStore } from "../../src/analysis/iocWhitelistStore.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
@@ -18,7 +18,7 @@ async function harness() {
   const root = await tmp();
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
-  const legit = new LegitimateStore(store);
+  const legit = new FalsePositiveStore(store);
   const iocWhitelistStore = new IocWhitelistStore(join(root, "ioc-whitelist.json"));
   const app = createApp(store, { stateStore, iocWhitelistStore });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
