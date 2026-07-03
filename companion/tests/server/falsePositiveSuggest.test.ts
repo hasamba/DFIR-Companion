@@ -79,4 +79,11 @@ describe("POST /cases/:id/false-positive/suggest", () => {
     expect(res.status).toBe(200);
     expect(res.body.candidates.map((c: { id: string }) => c.id)).toEqual(["f2"]);
   });
+
+  it("returns aiUnavailable:true alongside deterministic candidates when no AI provider is configured", async () => {
+    const res = await request(app).post("/cases/c1/false-positive/suggest").send({ kind: "event", ref: "e1", ai: true });
+    expect(res.status).toBe(200);
+    expect(res.body.aiUnavailable).toBe(true);
+    expect(res.body.candidates.map((c: { id: string }) => c.id)).toEqual(["e2"]);
+  });
 });

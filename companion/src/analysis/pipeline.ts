@@ -13,7 +13,7 @@ import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity, TimelineEntry } from "./stateTypes.js";
-import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
+import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, fpSimilaritySchema, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
 import { buildMitigationsResult } from "./attackMitigations.js";
 import { loadMitigationsDataset } from "./attackMitigationsData.js";
 import { buildD3fendResult } from "./d3fendMap.js";
@@ -605,7 +605,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -705,6 +705,22 @@ export const REMEDIATION_PROMPT = [
   "",
   "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
   JSON.stringify({ plan: "the remediation plan as GitHub-flavored markdown (## headings + numbered lists)" }, null, 2),
+].join("\n");
+
+// Optional AI-assisted extension of the deterministic false-positive similarity pass (#227): given
+// one anchor item the analyst just marked false positive, identify other case items that look like
+// the SAME recurring benign pattern.
+export const FP_SIMILARITY_PROMPT = [
+  "You are assisting a DFIR analyst who just marked ONE item in a case as a false positive or",
+  "confirmed-benign activity (not a real threat). Given that anchor item and a list of OTHER",
+  "findings/events from the SAME case, identify any of the other items that look like the SAME",
+  "recurring pattern (same tool, same benign activity, same root cause) and would likely ALSO be",
+  "a false positive for the same reason.",
+  "",
+  "Only return items from the provided list, referenced by their EXACT id as given. Never invent an",
+  "id. Never include the anchor item. If nothing else matches, return an empty array.",
+  "",
+  'Respond as JSON: { "candidateIds": ["<id>", ...] }',
 ].join("\n");
 
 // Explain a SINGLE forensic event in context — what happened, why it matters, ATT&CK mapping,
@@ -1105,6 +1121,7 @@ export const getQueryTranslatePrompt = (): string => resolvePrompt("QUERYXLATE",
 export const getReconcilePrompt = (): string => resolvePrompt("RECONCILE", RECONCILE_PROMPT);
 export const getExplainEventPrompt = (): string => resolvePrompt("EXPLAIN", EXPLAIN_EVENT_PROMPT);
 export const getRemediationPrompt = (): string => resolvePrompt("REMEDIATION", REMEDIATION_PROMPT);
+export const getFpSimilarityPrompt = (): string => resolvePrompt("FPSIMILARITY", FP_SIMILARITY_PROMPT);
 
 export const IMPORTER_PROMPT = [
   "You are writing a DECLARATIVE IMPORTER DEFINITION for the DFIR Companion. Output ONLY a single",
@@ -3823,6 +3840,32 @@ export class AnalysisPipeline {
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getRemediationPrompt(), userPrompt, images: [] }, "remediation");
       return remediationPlanSchema.parse(parsed);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // Optional AI-assisted extension of the deterministic false-positive similarity suggestions
+  // (#227): one text-only call, given the anchor item + a candidate list already narrowed by the
+  // caller (e.g. the deterministic scorer's near-misses, or a capped slice of the case). Returned
+  // ids are validated against the candidate list so a hallucinated id can never be applied.
+  async suggestFalsePositiveSimilarAi(
+    caseId: string,
+    anchorId: string,
+    anchorLabel: string,
+    candidateIds: string[],
+    candidateLabels: string[],
+  ): Promise<string[]> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("false positive suggestions");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const list = candidateIds.map((id, i) => `[${id}] ${candidateLabels[i] ?? ""}`).join("\n") || "(none)";
+    const userPrompt =
+      `ANCHOR ITEM (just marked false positive): [${anchorId}] ${anchorLabel}\n\n` +
+      `OTHER ITEMS IN THIS CASE:\n${list}\n\n` +
+      "Which of the other items are likely the same false-positive pattern?";
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getFpSimilarityPrompt(), userPrompt, images: [] }, "fp-similarity");
+      const result = fpSimilaritySchema.parse(parsed);
+      const valid = new Set(candidateIds);
+      return result.candidateIds.filter((id) => valid.has(id));
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 

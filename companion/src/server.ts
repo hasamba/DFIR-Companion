@@ -93,7 +93,7 @@ import { HashlookupProvider } from "./enrichment/hashlookup.js";
 import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
-import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity, ForensicEvent, IOC } from "./analysis/stateTypes.js";
+import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity, ForensicEvent, IOC, Finding } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
@@ -4800,14 +4800,39 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const ref = String(req.body?.ref ?? "").trim();
       if (!kind || !ref) return res.status(400).json({ error: "kind ('event'|'finding') and ref are required" });
       const state = await options.stateStore.load(req.params.id);
-      if (kind === "event") {
-        const anchor = state.forensicTimeline.find((e) => e.id === ref);
-        if (!anchor) return res.status(404).json({ error: `event ${ref} not found` });
-        return res.status(200).json({ candidates: findSimilarEvents(anchor, state.forensicTimeline) });
+      const anchor = kind === "event" ? state.forensicTimeline.find((e) => e.id === ref) : state.findings.find((f) => f.id === ref);
+      if (!anchor) return res.status(404).json({ error: `${kind} ${ref} not found` });
+
+      const deterministic = kind === "event"
+        ? findSimilarEvents(anchor as ForensicEvent, state.forensicTimeline)
+        : findSimilarFindings(anchor as Finding, state.findings);
+
+      if (!req.body?.ai) return res.status(200).json({ candidates: deterministic });
+      if (!options.pipeline || !hasAiProvider()) {
+        return res.status(200).json({ candidates: deterministic, aiUnavailable: true });
       }
-      const anchor = state.findings.find((f) => f.id === ref);
-      if (!anchor) return res.status(404).json({ error: `finding ${ref} not found` });
-      return res.status(200).json({ candidates: findSimilarFindings(anchor, state.findings) });
+
+      const pool = kind === "event" ? state.forensicTimeline : state.findings;
+      const anchorLabel = kind === "event" ? (anchor as ForensicEvent).description : (anchor as Finding).title;
+      const seen = new Set(deterministic.map((c) => c.id));
+      const rest = pool.filter((item) => item.id !== ref && !seen.has(item.id)).slice(0, 100);
+      const aiIds = await options.pipeline.suggestFalsePositiveSimilarAi(
+        req.params.id,
+        ref,
+        anchorLabel,
+        rest.map((r) => r.id),
+        rest.map((r) => (kind === "event" ? (r as ForensicEvent).description : (r as Finding).title)),
+      );
+      const aiCandidates = rest
+        .filter((r) => aiIds.includes(r.id))
+        .map((r) => ({
+          id: r.id,
+          kind,
+          label: kind === "event" ? (r as ForensicEvent).description : (r as Finding).title,
+          score: 0,
+          reasons: ["suggested by AI"],
+        }));
+      return res.status(200).json({ candidates: [...deterministic, ...aiCandidates] });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

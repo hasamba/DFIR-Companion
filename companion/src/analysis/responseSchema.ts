@@ -123,6 +123,14 @@ export const remediationPlanSchema = z.object({
 
 export type RemediationPlan = z.infer<typeof remediationPlanSchema>;
 
+// Which OTHER case items (by id) likely share the same false-positive pattern as the anchor the
+// analyst just marked (#227). Lenient: an id list, defaulting to empty on a malformed response.
+export const fpSimilaritySchema = z.object({
+  candidateIds: z.array(z.string()).catch([]),
+});
+
+export type FpSimilarityResult = z.infer<typeof fpSimilaritySchema>;
+
 // AI explanation of a single forensic event in the context of the investigation (issue #141).
 // Lenient (.catch) so a slightly-off model response still parses.
 export const explainEventSchema = z.object({
