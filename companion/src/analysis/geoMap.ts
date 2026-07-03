@@ -67,7 +67,7 @@ export interface GeoMapData {
 }
 
 export interface GeoMapOptions {
-  legitimateValues?: string[];
+  falsePositiveValues?: string[];
   maxMarkers?: number;
   maxFlows?: number;
   topCountries?: number;
@@ -148,7 +148,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
   const maxMarkers = opts.maxMarkers && opts.maxMarkers > 0 ? opts.maxMarkers : 2000;
   const maxFlows = opts.maxFlows && opts.maxFlows > 0 ? opts.maxFlows : 500;
   const topN = opts.topCountries && opts.topCountries > 0 ? opts.topCountries : 10;
-  const legit = new Set((opts.legitimateValues ?? []).map((v) => v.trim().toLowerCase()));
+  const legit = new Set((opts.falsePositiveValues ?? []).map((v) => v.trim().toLowerCase()));
 
   const ipIocs = state.iocs.filter((i) => i.type === "ip");
   const byValue = new Map<string, IOC>();

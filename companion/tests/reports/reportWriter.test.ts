@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
-import { LegitimateStore, markerId } from "../../src/analysis/legitimate.js";
+import { FalsePositiveStore, markerId } from "../../src/analysis/falsePositive.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 let caseStore: CaseStore;
@@ -52,12 +52,12 @@ describe("ReportWriter", () => {
     );
     await stateStore.save(state);
 
-    const legitimate = new LegitimateStore(caseStore);
-    await legitimate.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", note: "client's maintenance", markedAt: "2026-05-28T10:00:00Z", label: "client admin maintenance window" },
+    const falsePositives = new FalsePositiveStore(caseStore);
+    await falsePositives.save("c1", [
+      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance", markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
     ]);
 
-    const writer = new ReportWriter(caseStore, stateStore, undefined, legitimate);
+    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
     const paths = await writer.writeAll("c1");
 
     const forensic = await readFile(paths.forensicTimelineCsv, "utf8");
@@ -78,12 +78,12 @@ describe("ReportWriter", () => {
     );
     await stateStore.save(state);
 
-    const legitimate = new LegitimateStore(caseStore);
-    await legitimate.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", note: "client's maintenance", markedAt: "2026-05-28T10:00:00Z", label: "client admin maintenance window" },
+    const falsePositives = new FalsePositiveStore(caseStore);
+    await falsePositives.save("c1", [
+      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance", markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
     ]);
 
-    const writer = new ReportWriter(caseStore, stateStore, undefined, legitimate);
+    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
     const csv = await writer.incidentTimelineCsv("c1");
 
     expect(csv).toContain("timestamp,endTimestamp,count,severity,description");
@@ -104,13 +104,13 @@ describe("ReportWriter", () => {
     );
     await stateStore.save(state);
 
-    const legitimate = new LegitimateStore(caseStore);
-    await legitimate.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", note: "client's maintenance",
-        markedAt: "2026-05-28T10:00:00Z", label: "client admin maintenance window" },
+    const falsePositives = new FalsePositiveStore(caseStore);
+    await falsePositives.save("c1", [
+      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance",
+        markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
     ]);
 
-    const writer = new ReportWriter(caseStore, stateStore, undefined, legitimate);
+    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
     const buf = await writer.docx("c1");
 
     expect(Buffer.isBuffer(buf)).toBe(true);
@@ -136,13 +136,13 @@ describe("ReportWriter", () => {
     );
     await stateStore.save(state);
 
-    const legitimate = new LegitimateStore(caseStore);
-    await legitimate.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", note: "client's maintenance",
-        markedAt: "2026-05-28T10:00:00Z", label: "client admin maintenance window" },
+    const falsePositives = new FalsePositiveStore(caseStore);
+    await falsePositives.save("c1", [
+      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance",
+        markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
     ]);
 
-    const writer = new ReportWriter(caseStore, stateStore, undefined, legitimate);
+    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
     const s = await writer.mobileSummary("c1");
 
     expect(s.caseId).toBe("c1");
@@ -167,13 +167,13 @@ describe("ReportWriter", () => {
     );
     await stateStore.save(state);
 
-    const legitimate = new LegitimateStore(caseStore);
-    await legitimate.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", note: "client's maintenance",
-        markedAt: "2026-05-28T10:00:00Z", label: "client admin maintenance window" },
+    const falsePositives = new FalsePositiveStore(caseStore);
+    await falsePositives.save("c1", [
+      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance",
+        markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
     ]);
 
-    const writer = new ReportWriter(caseStore, stateStore, undefined, legitimate);
+    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
     const layer = await writer.attackLayer("c1");
 
     const ids = layer.techniques.map((t) => t.techniqueID);
