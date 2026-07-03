@@ -49,6 +49,18 @@ describe("findSimilarEvents", () => {
     const out = findSimilarEvents(anchor, candidates, { maxResults: 5 });
     expect(out).toHaveLength(5);
   });
+
+  it("returns no match for a zero-signal pair (no comparable fields on either side)", () => {
+    const anchor = event({ id: "e1" });
+    const candidates = [event({ id: "e2" })];
+    expect(findSimilarEvents(anchor, candidates)).toEqual([]);
+  });
+
+  it("returns [] for an empty candidates array without throwing", () => {
+    const anchor = event({ id: "e1", mitreTechniques: ["T1569"], sha256: "abc123" });
+    expect(() => findSimilarEvents(anchor, [])).not.toThrow();
+    expect(findSimilarEvents(anchor, [])).toEqual([]);
+  });
 });
 
 describe("findSimilarFindings", () => {
@@ -66,5 +78,23 @@ describe("findSimilarFindings", () => {
     const anchor = finding({ id: "f1", title: "X", mitreTechniques: ["T1569"] });
     const out = findSimilarFindings(anchor, [anchor]);
     expect(out).toEqual([]);
+  });
+
+  it("returns no match for a zero-signal pair (no MITRE, no IOCs, no long title words)", () => {
+    const anchor = finding({ id: "f1", title: "IP to IP" });
+    const candidates = [finding({ id: "f2", title: "IP to IP" })];
+    expect(findSimilarFindings(anchor, candidates)).toEqual([]);
+  });
+
+  it("returns [] for an empty candidates array without throwing", () => {
+    const anchor = finding({ id: "f1", title: "PsExec lateral movement", mitreTechniques: ["T1569.002"] });
+    expect(() => findSimilarFindings(anchor, [])).not.toThrow();
+    expect(findSimilarFindings(anchor, [])).toEqual([]);
+  });
+
+  it("short titles with no words >=4 chars contribute nothing to the score (no crash, no false match)", () => {
+    const anchor = finding({ id: "f1", title: "IP to IP", mitreTechniques: [] });
+    const candidates = [finding({ id: "f2", title: "A to B", mitreTechniques: [] })];
+    expect(findSimilarFindings(anchor, candidates)).toEqual([]);
   });
 });
