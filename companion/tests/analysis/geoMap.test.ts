@@ -50,7 +50,7 @@ describe("buildGeoMap (#133)", () => {
       [ip("i1", "8.8.8.8", { lat: 1, lon: 1 })],
       [ev({ dstIp: "8.8.8.8", severity: "Critical" })],
     );
-    const g = buildGeoMap(s, { legitimateValues: ["8.8.8.8"] });
+    const g = buildGeoMap(s, { falsePositiveValues: ["8.8.8.8"] });
     expect(g.markers[0].legitimate).toBe(true);
     expect(g.markers[0].color).toBe("gray");
   });

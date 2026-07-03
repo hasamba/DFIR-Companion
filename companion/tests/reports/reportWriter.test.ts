@@ -182,4 +182,34 @@ describe("ReportWriter", () => {
     expect(ids).not.toContain("T1018"); // legit-event-only technique excluded
     expect(layer.domain).toBe("enterprise-attack");
   });
+
+  it("builds a geo map with a false-positive-marked IOC rendered gray (legitimate: true)", async () => {
+    const state = emptyState("c1");
+    state.iocs.push({
+      id: "i1",
+      type: "ip",
+      value: "8.8.8.8",
+      firstSeen: "2026-05-28T09:00:00Z",
+      enrichments: [{ source: "GeoIP", verdict: "unknown", fetchedAt: "2026-05-28T09:00:00Z", lat: 37.4, lon: -122.1, country: "US" }],
+    });
+    state.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "beacon to 8.8.8.8", severity: "Critical",
+        dstIp: "8.8.8.8", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    await stateStore.save(state);
+
+    const falsePositives = new FalsePositiveStore(caseStore);
+    await falsePositives.save("c1", [
+      { id: markerId("ioc", "8.8.8.8"), kind: "ioc", ref: "8.8.8.8", reason: "known-good-tool",
+        note: "known-good resolver", markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous" },
+    ]);
+
+    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
+    const geo = await writer.geoMap("c1");
+
+    expect(geo.markers).toHaveLength(1);
+    expect(geo.markers[0].ip).toBe("8.8.8.8");
+    expect(geo.markers[0].legitimate).toBe(true);
+    expect(geo.markers[0].color).toBe("gray");
+  });
 });
