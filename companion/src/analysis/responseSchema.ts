@@ -10,6 +10,7 @@ export const deltaSchema = z.object({
     id: z.string().min(1),
     severity: severity.catch("Medium"),
     confidence: z.number().min(0).max(100).optional().catch(undefined),
+    confidenceReason: z.string().max(500).optional().catch(undefined),
     title: z.string().min(1),
     description: z.string(),
     relatedIocs: z.array(z.string()),

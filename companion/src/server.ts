@@ -116,6 +116,7 @@ import { SuperTimelineStore } from "./analysis/superTimelineStore.js";
 import { deriveIocProvenance } from "./analysis/iocProvenance.js";
 import { ForensicGateControlStore } from "./analysis/forensicGateControl.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "./analysis/forensicGate.js";
+import { ConfidenceControlStore } from "./analysis/confidenceControl.js";
 import { PlaybookStore, type NewPlaybookTask, type PlaybookTaskPatch } from "./analysis/playbookStore.js";
 import { PLAYBOOK_STATUSES, playbookStats, type PlaybookStatus, type PlaybookTask } from "./analysis/playbook.js";
 import { PlaybookHuntStore } from "./analysis/playbookHuntStore.js";
@@ -312,6 +313,11 @@ export interface AppOptions {
   // clients over the WS to re-fetch after the per-case threshold changes.
   forensicGateControlStore?: ForensicGateControlStore;
   onForensicGate?: (caseId: string) => void;
+  // Per-case minimum-confidence display preference (#226) — a machine/analyst preference, not
+  // investigation data, mirroring forensicGateControlStore's shape. Purely a display filter: nothing
+  // is removed from state, only the dashboard's findings list defaults to this floor.
+  confidenceControlStore?: ConfidenceControlStore;
+  onConfidenceControl?: (caseId: string) => void;
   // Per-case playbook (issue #36): a trackable checklist auto-derived from the case's next
   // steps + high-severity findings (idempotent re-derive preserves analyst progress), plus
   // custom tasks. Persisted in state/playbook.json; survives synthesis. onPlaybook pings
@@ -8207,6 +8213,36 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Findings min-confidence display floor (#226): a per-case setting, persisted so it survives a
+  // page reload — purely a display preference (nothing is removed from state). `minConfidence: null`
+  // means "show all" (0). GET returns the current value; PUT sets/clears it.
+  app.get("/cases/:id/confidence-control", async (req: Request, res: Response) => {
+    if (!options.confidenceControlStore) return res.status(501).json({ error: "confidence control not configured" });
+    try {
+      const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
+      return res.status(200).json({ minConfidence });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.put("/cases/:id/confidence-control", async (req: Request, res: Response) => {
+    if (!options.confidenceControlStore) return res.status(501).json({ error: "confidence control not configured" });
+    const raw = req.body?.minConfidence;
+    const cleared = raw === null || raw === undefined || raw === "";
+    if (!cleared && (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0 || raw > 100)) {
+      return res.status(400).json({ error: "minConfidence must be a number 0-100, or null" });
+    }
+    try {
+      await options.confidenceControlStore.set(req.params.id, { minConfidence: cleared ? undefined : raw });
+      options.onConfidenceControl?.(req.params.id);
+      const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
+      return res.status(200).json({ minConfidence });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.put("/cases/:id/forensic-gate", async (req: Request, res: Response) => {
     if (!options.forensicGateControlStore) return res.status(501).json({ error: "forensic gate not configured" });
     const raw = req.body?.minSeverity;
@@ -8986,6 +9022,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const dwellWindowStore = new DwellWindowStore(store);
   const superTimelineStore = new SuperTimelineStore(store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined);
   const forensicGateControlStore = new ForensicGateControlStore(store);
+  const confidenceControlStore = new ConfidenceControlStore(store);
   const playbookStore = new PlaybookStore(store);
   const playbookHuntStore = new PlaybookHuntStore(store);
   const playbookControlStore = new PlaybookControlStore(store);
@@ -9107,6 +9144,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onSuperTimeline: (caseId) => hub.broadcastTo(caseId, { type: "super_timeline_changed" }),
     forensicGateControlStore,
     onForensicGate: (caseId) => hub.broadcastTo(caseId, { type: "forensic_gate_changed" }),
+    confidenceControlStore,
+    onConfidenceControl: (caseId) => hub.broadcastTo(caseId, { type: "confidence_control_changed" }),
     playbookStore,
     playbookHuntStore,
     playbookControlStore,

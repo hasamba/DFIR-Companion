@@ -3901,6 +3901,45 @@
       }).catch(() => {});
     }
 
+    // Findings min-confidence display floor (#226) — a per-case setting so it survives a page
+    // reload, unlike a plain in-browser filter. Loaded on case connect; saved (debounced) on change.
+    // A pending debounced save is flushed on unload (beforeunload/pagehide) via `keepalive: true` —
+    // otherwise a reload shortly after typing (well within the 500ms debounce) would cancel the
+    // in-flight timer and silently drop the edit, reverting to the last-saved value.
+    let confSaveTimer = null;
+    let confPending = null;   // { caseId, minConfidence } once a keystroke schedules a save, else null
+    function putConfidenceControl(caseId, minConfidence, opts) {
+      return fetch(`/cases/${caseId}/confidence-control`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ minConfidence: minConfidence > 0 ? minConfidence : null }),
+        ...opts,
+      });
+    }
+    function flushConfidenceControl() {
+      if (!confPending) return;
+      clearTimeout(confSaveTimer);
+      const { caseId, minConfidence } = confPending;
+      confPending = null;
+      putConfidenceControl(caseId, minConfidence, { keepalive: true }).catch(() => {});
+    }
+    window.addEventListener("beforeunload", flushConfidenceControl);
+    window.addEventListener("pagehide", flushConfidenceControl);
+    function loadConfidenceControl(caseId) {
+      fetch(`/cases/${caseId}/confidence-control`).then(r => r.json()).then(c => {
+        document.getElementById("confFilter").value = c.minConfidence ?? 0;
+        if (lastState) render(lastState);
+      }).catch(() => {});
+    }
+    function saveConfidenceControl(caseId, minConfidence) {
+      clearTimeout(confSaveTimer);
+      confPending = { caseId, minConfidence };
+      confSaveTimer = setTimeout(() => {
+        confPending = null;
+        putConfidenceControl(caseId, minConfidence).catch(() => {});
+      }, 500);
+    }
+
     // --- Case Details (human-authored report-meta) ------------------------------
     // List/table fields are edited as one-entry-per-line text; the server normalizes.
     function parseRows(text, keys) {
@@ -8551,6 +8590,9 @@
     // "" when there's nothing to show, so a bare finding gets no empty toggle.
     function findingEvidenceDetails(f, caseId, screenshots, events, iocs) {
       const rows = [];
+      if (f.confidenceReason) {
+        rows.push(`<div><small>Confidence: ${f.confidence !== undefined ? esc(String(f.confidence)) + "% — " : ""}${esc(f.confidenceReason)}</small></div>`);
+      }
       const evFiles = Array.from(new Set((screenshots || []).filter(Boolean)));
       if (caseId && evFiles.length) {
         const links = evFiles.map(fn =>
@@ -11135,9 +11177,12 @@
       renderTimelineEvents(lastFt);
     });
 
-    // Re-render findings when the confidence filter changes (no server round-trip).
+    // Re-render findings when the confidence filter changes, and persist the choice per-case
+    // (debounced) so it survives a page reload — see loadConfidenceControl/saveConfidenceControl.
     document.getElementById("confFilter").addEventListener("input", function() {
       if (lastState) render(lastState);
+      const caseId = document.getElementById("caseId").value.trim();
+      if (caseId) saveConfidenceControl(caseId, parseInt(this.value, 10) || 0);
     });
 
     function render(rawState) {
@@ -11239,7 +11284,8 @@
           let confBadge = "";
           if (f.confidence !== undefined) {
             const cls = f.confidence >= 80 ? "conf-high" : f.confidence >= 50 ? "conf-mid" : "conf-low";
-            confBadge = ` <span class="conf-badge ${cls}" title="AI confidence: ${f.confidence}%">${f.confidence}%</span>`;
+            const confTitle = `AI confidence: ${f.confidence}%` + (f.confidenceReason ? ` — ${f.confidenceReason}` : "");
+            confBadge = ` <span class="conf-badge ${cls}" title="${escAttr(confTitle)}">${f.confidence}%</span>`;
           }
           // Comment chip, tag icon button, severity badge, confidence score, tag pills, then finding id/title.
           return `<div class="finding" data-fid="${escAttr(f.id)}">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ${tagPills("finding", f.id)} ` +
@@ -11303,6 +11349,7 @@
       loadAnonToggle(caseId);
       loadFalsePositives(caseId);
       loadScope(caseId);
+      loadConfidenceControl(caseId);
       loadCorrProfile(caseId);
       loadReportMeta(caseId);
       loadCaseTemplatePicker(caseId);
