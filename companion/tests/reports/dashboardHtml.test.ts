@@ -198,4 +198,14 @@ describe("dashboard.html", () => {
     expect(html).toContain("function geoFocusIp");
     expect(html).toContain("/geo-map");
   });
+
+  it("wires the mark-false-positive modal (reason/note/candidates/whitelist) (#227)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="fpOverlay"');
+    expect(html).toContain('id="fpConfirmBtn"');
+    expect(html).toContain('id="fpAskAiBtn"');
+    expect(html).toContain("openFalsePositiveModal");
+    expect(html).toContain("/false-positive/suggest");
+    expect(html).toContain('id="sec-false-positive"');
+  });
 });
