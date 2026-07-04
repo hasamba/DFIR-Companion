@@ -108,7 +108,7 @@ Global known-good pattern list:
 - Add CIDR, exact, or regex rules
 - Optional type scoping (e.g. "only match IPs")
 - Import/export as CSV or JSON
-- **Apply to current case** — retroactively marks matching IOCs legitimate
+- **Apply to current case** — retroactively marks matching IOCs false-positive
 
 ---
 

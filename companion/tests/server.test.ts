@@ -15,6 +15,7 @@ import { ReportMetaStore } from "../src/reports/reportMeta.js";
 import { CommentsStore } from "../src/analysis/comments.js";
 import { PlaybookStore } from "../src/analysis/playbookStore.js";
 import { PlaybookControlStore } from "../src/analysis/playbookControl.js";
+import { IocWhitelistStore } from "../src/analysis/iocWhitelistStore.js";
 import { emptyState, type InvestigationState } from "../src/analysis/stateTypes.js";
 import type { CustomerExposureProvider } from "../src/analysis/customerExposure.js";
 
@@ -758,7 +759,7 @@ describe("server analysis wiring", () => {
     }
   });
 
-  it("marks a forensic event legitimate (kind=event), storing its label and re-synthesizing", async () => {
+  it("marks a forensic event false-positive (kind=event), storing its label and re-synthesizing", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-legit-ev-"));
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
@@ -776,20 +777,20 @@ describe("server analysis wiring", () => {
         timelineNote: "", summary: "", forensicEvents: [],
       })),
       stateStore,
-      legitimateStore: new (await import("../src/analysis/legitimate.js")).LegitimateStore(store),
+      falsePositiveStore: new (await import("../src/analysis/falsePositive.js")).FalsePositiveStore(store),
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const legitApp = createApp(store, { pipeline, stateStore });
 
-    const res = await request(legitApp).post("/cases/c1/legitimate")
-      .send({ kind: "event", ref: "e1", note: "client's own admin", label: "client admin task" });
+    const res = await request(legitApp).post("/cases/c1/false-positive")
+      .send({ kind: "event", ref: "e1", reason: "authorized-test", note: "client's own admin", label: "client admin task" });
     expect(res.status).toBe(200);
     const stored = res.body.find((m: { kind: string }) => m.kind === "event");
     expect(stored).toMatchObject({ kind: "event", ref: "e1", label: "client admin task" });
     expect(stored.id).toBe("event:e1");
   });
 
-  it("marks many events legitimate in one batch request (single write, fallback note, dedupe)", async () => {
+  it("marks many events false-positive in one batch request (single write, fallback note, dedupe)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-legit-batch-"));
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
@@ -809,12 +810,13 @@ describe("server analysis wiring", () => {
         timelineNote: "", summary: "", forensicEvents: [],
       })),
       stateStore,
-      legitimateStore: new (await import("../src/analysis/legitimate.js")).LegitimateStore(store),
+      falsePositiveStore: new (await import("../src/analysis/falsePositive.js")).FalsePositiveStore(store),
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const legitApp = createApp(store, { pipeline, stateStore });
 
-    const res = await request(legitApp).post("/cases/c1/legitimate/batch").send({
+    const res = await request(legitApp).post("/cases/c1/false-positive/batch").send({
+      reason: "authorized-test",
       note: "client's own admin",
       items: [
         { kind: "event", ref: "e1", label: "admin task 1" },
@@ -829,11 +831,11 @@ describe("server analysis wiring", () => {
     expect(events.find((m: { ref: string }) => m.ref === "e2")).toMatchObject({ id: "event:e2", note: "specific reason" });
 
     // Persisted (one write) — reload via GET reflects the same two markers.
-    const after = await request(legitApp).get("/cases/c1/legitimate");
+    const after = await request(legitApp).get("/cases/c1/false-positive");
     expect(after.body.filter((m: { kind: string }) => m.kind === "event")).toHaveLength(2);
 
     // Empty/invalid batch is rejected.
-    const bad = await request(legitApp).post("/cases/c1/legitimate/batch").send({ items: [] });
+    const bad = await request(legitApp).post("/cases/c1/false-positive/batch").send({ items: [] });
     expect(bad.status).toBe(400);
   });
 
@@ -1130,31 +1132,156 @@ describe("state and report routes", () => {
     expect((await request(app).delete("/cases/c1/comments/nope")).status).toBe(404);
   });
 
-  it("legitimate: onLegitimate callback fires on add, batch add, and remove", async () => {
+  it("false-positive: onFalsePositive callback fires on add, batch add, and remove", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-legit-cb-"));
     const store = new CaseStore(root);
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     let pinged = 0;
-    const app = createApp(store, { onLegitimate: () => { pinged++; } });
+    const app = createApp(store, { onFalsePositive: () => { pinged++; } });
 
     // Single add fires the callback.
-    const add = await request(app).post("/cases/c1/legitimate")
-      .send({ kind: "ioc", ref: "1.2.3.4", note: "internal scanner" });
+    const add = await request(app).post("/cases/c1/false-positive")
+      .send({ kind: "ioc", ref: "1.2.3.4", reason: "known-good-tool", note: "internal scanner" });
     expect(add.status).toBe(200);
     expect(pinged).toBe(1);
 
     // Batch add fires once (not per item).
-    const batch = await request(app).post("/cases/c1/legitimate/batch")
-      .send({ items: [{ kind: "finding", ref: "f1", note: "fp" }, { kind: "finding", ref: "f2" }] });
+    const batch = await request(app).post("/cases/c1/false-positive/batch")
+      .send({ items: [{ kind: "finding", ref: "f1", reason: "detection-misfire", note: "fp" }, { kind: "finding", ref: "f2", reason: "detection-misfire" }] });
     expect(batch.status).toBe(200);
     expect(pinged).toBe(2);
 
     // Remove fires the callback.
     const markerId = add.body.find((m: { kind: string }) => m.kind === "ioc")?.id;
-    const remove = await request(app).post("/cases/c1/legitimate/remove")
+    const remove = await request(app).post("/cases/c1/false-positive/remove")
       .send({ id: markerId });
     expect(remove.status).toBe(200);
     expect(pinged).toBe(3);
+  });
+
+  it("promotes an IOC false-positive to the global whitelist when addToWhitelist is set", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-whitelist-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const iocWhitelistStore = new IocWhitelistStore(join(root, "ioc-whitelist.json"));
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, { stateStore, iocWhitelistStore });
+
+    // seed an IOC on the case first
+    await request(app).post("/cases/c1/iocs").send({ type: "ip", value: "10.0.0.5" });
+    const res = await request(app).post("/cases/c1/false-positive").send({
+      kind: "ioc", ref: "10.0.0.5", reason: "known-good-tool", note: "internal scanner IP", addToWhitelist: true,
+    });
+    expect(res.status).toBe(200);
+    const rules = await request(app).get("/ioc-whitelist");
+    expect(rules.body.some((r: { pattern: string }) => r.pattern === "10.0.0.5")).toBe(true);
+    const rule = rules.body.find((r: { pattern: string }) => r.pattern === "10.0.0.5");
+    expect(rule).toMatchObject({ iocType: "ip" });
+    // Both the categorical reason AND the free-text note must survive into the whitelist note —
+    // neither should silently drop the other.
+    expect(rule.note).toContain("known-good-tool");
+    expect(rule.note).toContain("internal scanner IP");
+  });
+
+  it("falls back to just the reason in the whitelist note (no dangling separator) when no note was given", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-whitelist-noreason-note-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const iocWhitelistStore = new IocWhitelistStore(join(root, "ioc-whitelist.json"));
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, { stateStore, iocWhitelistStore });
+
+    const res = await request(app).post("/cases/c1/false-positive").send({
+      kind: "ioc", ref: "10.0.0.7", reason: "known-good-tool", addToWhitelist: true,
+    });
+    expect(res.status).toBe(200);
+
+    const rules = await request(app).get("/ioc-whitelist");
+    const rule = rules.body.find((r: { pattern: string }) => r.pattern === "10.0.0.7");
+    expect(rule.note).toContain("known-good-tool");
+    expect(rule.note.trim().endsWith(":")).toBe(false);
+  });
+
+  it("still promotes to the whitelist when the ref doesn't match any IOC in the case's current state (iocType left undefined)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-whitelist-notfound-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const iocWhitelistStore = new IocWhitelistStore(join(root, "ioc-whitelist.json"));
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, { stateStore, iocWhitelistStore });
+
+    // No IOC seeded — the ref refers to a value already removed/renamed from the case.
+    const res = await request(app).post("/cases/c1/false-positive").send({
+      kind: "ioc", ref: "203.0.113.9", reason: "known-good-tool", addToWhitelist: true,
+    });
+    expect(res.status).toBe(200);
+
+    const rules = await request(app).get("/ioc-whitelist");
+    const rule = rules.body.find((r: { pattern: string }) => r.pattern === "203.0.113.9");
+    expect(rule).toBeTruthy();
+    expect(rule.iocType).toBeUndefined();
+  });
+
+  it("does NOT promote to the whitelist when addToWhitelist is absent, or when the marker kind is not 'ioc'", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-no-whitelist-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const iocWhitelistStore = new IocWhitelistStore(join(root, "ioc-whitelist.json"));
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, { stateStore, iocWhitelistStore });
+
+    // IOC marker without addToWhitelist → no promotion.
+    const noFlag = await request(app).post("/cases/c1/false-positive").send({
+      kind: "ioc", ref: "10.0.0.6", reason: "known-good-tool",
+    });
+    expect(noFlag.status).toBe(200);
+
+    // Finding marker WITH addToWhitelist → still no promotion (only "ioc" kind qualifies).
+    const findingFlag = await request(app).post("/cases/c1/false-positive").send({
+      kind: "finding", ref: "f1", reason: "detection-misfire", addToWhitelist: true,
+    });
+    expect(findingFlag.status).toBe(200);
+
+    const rules = await request(app).get("/ioc-whitelist");
+    expect(rules.body).toEqual([]);
+  });
+
+  it("false-positive: rejects an empty ref, and rejects reason 'other' with no note (single + batch)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-reason-"));
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, {});
+
+    // No ref at all → 400.
+    const noRef = await request(app).post("/cases/c1/false-positive")
+      .send({ kind: "ioc", reason: "known-good-tool" });
+    expect(noRef.status).toBe(400);
+
+    // reason "other" with an empty note → 400.
+    const otherNoNote = await request(app).post("/cases/c1/false-positive")
+      .send({ kind: "ioc", ref: "9.9.9.9", reason: "other" });
+    expect(otherNoNote.status).toBe(400);
+
+    // reason "other" WITH a note → accepted.
+    const otherWithNote = await request(app).post("/cases/c1/false-positive")
+      .send({ kind: "ioc", ref: "9.9.9.9", reason: "other", note: "one-off manual exclusion" });
+    expect(otherWithNote.status).toBe(200);
+    expect(otherWithNote.body.find((m: { ref: string }) => m.ref === "9.9.9.9")).toMatchObject({ reason: "other" });
+
+    // Batch: an item with reason "other" and no note is silently skipped, not the whole batch rejected —
+    // unless it's the only item, in which case the batch itself has nothing valid to add → 400.
+    const batchAllInvalid = await request(app).post("/cases/c1/false-positive/batch")
+      .send({ items: [{ kind: "finding", ref: "f1", reason: "other" }] });
+    expect(batchAllInvalid.status).toBe(400);
+
+    const batchMixed = await request(app).post("/cases/c1/false-positive/batch")
+      .send({ items: [
+        { kind: "finding", ref: "f1", reason: "other" },                          // skipped: no note
+        { kind: "finding", ref: "f2", reason: "detection-misfire" },              // accepted
+      ] });
+    expect(batchMixed.status).toBe(200);
+    expect(batchMixed.body.some((m: { ref: string }) => m.ref === "f1")).toBe(false);
+    expect(batchMixed.body.some((m: { ref: string }) => m.ref === "f2")).toBe(true);
   });
 
   it("scope: onScope callback fires with the new window when scope is saved", async () => {

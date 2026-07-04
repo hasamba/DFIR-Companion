@@ -4,7 +4,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { StateStore } from "../analysis/stateStore.js";
 import { NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
 import { projectScope } from "../analysis/scopeProject.js";
-import { applyLegitimate, filterLegitimateEvents, type LegitimateStore } from "../analysis/legitimate.js";
+import { applyFalsePositive, filterFalsePositiveEvents, type FalsePositiveStore } from "../analysis/falsePositive.js";
 import { renderMarkdownReport } from "./markdown.js";
 import { renderHtmlReport } from "./html.js";
 import { renderDocxReport } from "./docx.js";
@@ -74,7 +74,7 @@ export class ReportWriter {
     private readonly cases: CaseStore,
     private readonly state: StateStore,
     private readonly scope?: ScopeStore,
-    private readonly legitimate?: LegitimateStore,
+    private readonly falsePositives?: FalsePositiveStore,
     private readonly reportMeta?: ReportMetaStore,
     private readonly customerExposure?: CustomerExposureStore,
     private readonly notebook?: NotebookStore,
@@ -98,14 +98,14 @@ export class ReportWriter {
 
   // Load the case state with the same deterministic report filters applied: drop
   // out-of-scope events (and the findings/IOCs/MITRE supported only by them) and exclude
-  // client-confirmed legitimate items — so every export is scope/legit-consistent even if
-  // AI re-synthesis hasn't run. Shared by the full report and single-section exports.
+  // client-confirmed false-positive items — so every export is scope/false-positive-consistent
+  // even if AI re-synthesis hasn't run. Shared by the full report and single-section exports.
   private async loadFilteredState(caseId: string): Promise<InvestigationState> {
     const loaded = await this.state.load(caseId);
     const scoped = projectScope(loaded, this.scope ? await this.scope.load(caseId) : NO_SCOPE);
-    const markers = this.legitimate ? await this.legitimate.load(caseId) : [];
-    return applyLegitimate(
-      { ...scoped, forensicTimeline: filterLegitimateEvents(scoped.forensicTimeline, markers) },
+    const markers = this.falsePositives ? await this.falsePositives.load(caseId) : [];
+    return applyFalsePositive(
+      { ...scoped, forensicTimeline: filterFalsePositiveEvents(scoped.forensicTimeline, markers) },
       markers,
     );
   }
@@ -311,23 +311,25 @@ export class ReportWriter {
   }
 
   // Geographic IP map (#133): markers for the case's geo-located IP IOCs (derived on read).
-  // Scope filter + legitimate-EVENT + legitimate-FINDING filters applied, but legitimate IOCs
-  // are KEPT and rendered gray (so whitelisted infra still shows). This prevents a legitimated
-  // Critical/High finding from inflating a whitelisted IP's severity label on the map.
+  // Scope filter + false-positive-EVENT + false-positive-FINDING filters applied, but
+  // false-positive IOCs are KEPT and rendered gray (so whitelisted infra still shows). This
+  // prevents a false-positive Critical/High finding from inflating a whitelisted IP's severity
+  // label on the map.
   async geoMap(caseId: string): Promise<GeoMapData> {
     const loaded = await this.state.load(caseId);
     const scoped = projectScope(loaded, this.scope ? await this.scope.load(caseId) : NO_SCOPE);
-    const markers = this.legitimate ? await this.legitimate.load(caseId) : [];
-    const legitimateValues = markers.filter((m) => m.kind === "ioc").map((m) => m.ref);
-    // applyLegitimate drops legit events (via the timeline we pass) + legit findings + legit IOCs.
+    const markers = this.falsePositives ? await this.falsePositives.load(caseId) : [];
+    const falsePositiveValues = markers.filter((m) => m.kind === "ioc").map((m) => m.ref);
+    // applyFalsePositive drops false-positive events (via the timeline we pass) + findings + IOCs.
     // We then RESTORE the scoped IOCs so whitelisted IPs still appear — rendered gray by
-    // `legitimateValues` — instead of vanishing. (Their severity no longer reflects a legit finding.)
-    const filtered = applyLegitimate(
-      { ...scoped, forensicTimeline: filterLegitimateEvents(scoped.forensicTimeline, markers) },
+    // `falsePositiveValues` — instead of vanishing. (Their severity no longer reflects a
+    // false-positive finding.)
+    const filtered = applyFalsePositive(
+      { ...scoped, forensicTimeline: filterFalsePositiveEvents(scoped.forensicTimeline, markers) },
       markers,
     );
     const state: InvestigationState = { ...filtered, iocs: scoped.iocs };
-    return buildGeoMap(state, { ...geoMapEnvOptions(), legitimateValues });
+    return buildGeoMap(state, { ...geoMapEnvOptions(), falsePositiveValues });
   }
 
   async geoMapCsv(caseId: string): Promise<string> {

@@ -17,9 +17,9 @@ The demo case has **17 IOCs**. Find these key ones:
 
 Each IOC shows **⊕ N sources** — how many independent tools observed it. Click the badge to see which tools saw it and in what context. A C2 IP seen by both Suricata (network) and the EDR (process) is stronger evidence than one seen by only one source.
 
-## Legitimacy markers
+## False-positive markers
 
-Three IOCs are pre-marked **legitimate** (the internal DNS server and WSUS server IPs). In a real case you'd mark known-good internal infrastructure so it doesn't pollute synthesis or the report.
+Three IOCs are pre-marked **false positive** (the internal DNS server and WSUS server IPs). In a real case you'd mark known-good internal infrastructure so it doesn't pollute synthesis or the report.
 
 ## Try querying from the terminal
 

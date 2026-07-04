@@ -13,7 +13,7 @@ import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity, TimelineEntry } from "./stateTypes.js";
-import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
+import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, fpSimilaritySchema, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
 import { buildMitigationsResult } from "./attackMitigations.js";
 import { loadMitigationsDataset } from "./attackMitigationsData.js";
 import { buildD3fendResult } from "./d3fendMap.js";
@@ -26,7 +26,7 @@ import { applySeverityFloor } from "./severityFloor.js";
 import { EXAMPLE_IMPORTER_SPEC } from "./importerSpec.js";
 import type { ExternalImporter } from "./declarativeImporter.js";
 import { parseJsonLoose } from "./extractJson.js";
-import { applyLegitimate, buildLegitimateContext, filterLegitimateEvents, type LegitimateStore } from "./legitimate.js";
+import { applyFalsePositive, buildFalsePositiveContext, filterFalsePositiveEvents, type FalsePositiveStore } from "./falsePositive.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
 import { resolveSynthThinkingBudget, type SynthThinkingInput } from "./synthThinking.js";
 import { detectTimelineGaps, backfillSilenceGapFindings, gapEnvOptions } from "./gapDetect.js";
@@ -606,7 +606,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -706,6 +706,22 @@ export const REMEDIATION_PROMPT = [
   "",
   "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
   JSON.stringify({ plan: "the remediation plan as GitHub-flavored markdown (## headings + numbered lists)" }, null, 2),
+].join("\n");
+
+// Optional AI-assisted extension of the deterministic false-positive similarity pass (#227): given
+// one anchor item the analyst just marked false positive, identify other case items that look like
+// the SAME recurring benign pattern.
+export const FP_SIMILARITY_PROMPT = [
+  "You are assisting a DFIR analyst who just marked ONE item in a case as a false positive or",
+  "confirmed-benign activity (not a real threat). Given that anchor item and a list of OTHER",
+  "findings/events from the SAME case, identify any of the other items that look like the SAME",
+  "recurring pattern (same tool, same benign activity, same root cause) and would likely ALSO be",
+  "a false positive for the same reason.",
+  "",
+  "Only return items from the provided list, referenced by their EXACT id as given. Never invent an",
+  "id. Never include the anchor item. If nothing else matches, return an empty array.",
+  "",
+  'Respond as JSON: { "candidateIds": ["<id>", ...] }',
 ].join("\n");
 
 // Explain a SINGLE forensic event in context — what happened, why it matters, ATT&CK mapping,
@@ -1106,6 +1122,7 @@ export const getQueryTranslatePrompt = (): string => resolvePrompt("QUERYXLATE",
 export const getReconcilePrompt = (): string => resolvePrompt("RECONCILE", RECONCILE_PROMPT);
 export const getExplainEventPrompt = (): string => resolvePrompt("EXPLAIN", EXPLAIN_EVENT_PROMPT);
 export const getRemediationPrompt = (): string => resolvePrompt("REMEDIATION", REMEDIATION_PROMPT);
+export const getFpSimilarityPrompt = (): string => resolvePrompt("FPSIMILARITY", FP_SIMILARITY_PROMPT);
 
 export const IMPORTER_PROMPT = [
   "You are writing a DECLARATIVE IMPORTER DEFINITION for the DFIR Companion. Output ONLY a single",
@@ -1158,8 +1175,8 @@ export interface PipelineOptions {
   // When set, explainEvent falls back to it so an event that was only imported into the super-timeline
   // (never promoted into the forensic timeline) can still be explained. Server-only (absent in scripts/*).
   superTimelineStore?: SuperTimelineStore;
-  // Client-confirmed legitimate findings/IOCs to exclude from synthesis.
-  legitimateStore?: LegitimateStore;
+  // Client-confirmed false-positive findings/IOCs to exclude from synthesis.
+  falsePositiveStore?: FalsePositiveStore;
   // Optional investigation time-window — events outside it are excluded.
   scopeStore?: ScopeStore;
   // Per-case anonymization control. When a case has it enabled, the userPrompt is tokenized
@@ -3287,9 +3304,9 @@ export class AnalysisPipeline {
   async ask(caseId: string, question: string): Promise<AskAnswer> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("case questions");
     const loaded = await this.opts.stateStore.load(caseId);
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
     let events = selectSynthesisEvents(scopedEvents, max);
@@ -3456,9 +3473,9 @@ export class AnalysisPipeline {
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasHuntMaterial(loaded)) return [];   // nothing to pivot on — don't spend a call
 
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
     let events = selectSynthesisEvents(scopedEvents, max);
@@ -3562,9 +3579,9 @@ export class AnalysisPipeline {
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasMemoryMaterial(loaded)) return [];   // no Volatility/Rekall evidence — don't spend a call
 
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
     const memEvents = scopedEvents.filter(isMemoryEvent);
     if (!memEvents.length) return [];            // all memory evidence is out-of-scope / legitimate
 
@@ -3634,9 +3651,9 @@ export class AnalysisPipeline {
   async hypothesizeGaps(caseId: string): Promise<GapHypothesesResult> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("gap hypothesis");
     const loaded = await this.opts.stateStore.load(caseId);
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     // Use the SAME gap detection (and thresholds) the panel/report use, so the analyst hypothesises
     // about exactly the gaps they see flagged.
@@ -3678,9 +3695,9 @@ export class AnalysisPipeline {
     const loaded = await this.opts.stateStore.load(caseId);
     if (!hasPlaybookHuntMaterial(loaded, tasks)) return [];   // empty/closed playbook → don't spend a call
 
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     const endpointsByTaskId = buildTaskEndpointsMap(loaded, tasks);
     const endpoints = knownEndpoints(loaded);
@@ -3741,9 +3758,9 @@ export class AnalysisPipeline {
   async generateNarrative(caseId: string): Promise<{ narrativeTimeline: string }> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("narrative generation");
     const loaded = await this.opts.stateStore.load(caseId);
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
     let events = selectSynthesisEvents(scopedEvents, max);
@@ -3785,9 +3802,9 @@ export class AnalysisPipeline {
   async executiveSummary(caseId: string): Promise<ExecSummary> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("executive summary");
     const loaded = await this.opts.stateStore.load(caseId);
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
     const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
     let events = selectSynthesisEvents(scopedEvents, max);
@@ -3822,9 +3839,9 @@ export class AnalysisPipeline {
   async remediationPlan(caseId: string): Promise<RemediationPlan> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("remediation plan");
     const loaded = await this.opts.stateStore.load(caseId);
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
     const filtered: InvestigationState = { ...loaded, forensicTimeline: scopedEvents };
 
     const findingsText =
@@ -3863,6 +3880,32 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
+  // Optional AI-assisted extension of the deterministic false-positive similarity suggestions
+  // (#227): one text-only call, given the anchor item + a candidate list already narrowed by the
+  // caller (e.g. the deterministic scorer's near-misses, or a capped slice of the case). Returned
+  // ids are validated against the candidate list so a hallucinated id can never be applied.
+  async suggestFalsePositiveSimilarAi(
+    caseId: string,
+    anchorId: string,
+    anchorLabel: string,
+    candidateIds: string[],
+    candidateLabels: string[],
+  ): Promise<string[]> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("false positive suggestions");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const list = candidateIds.map((id, i) => `[${id}] ${candidateLabels[i] ?? ""}`).join("\n") || "(none)";
+    const userPrompt =
+      `ANCHOR ITEM (just marked false positive): [${anchorId}] ${anchorLabel}\n\n` +
+      `OTHER ITEMS IN THIS CASE:\n${list}\n\n` +
+      "Which of the other items are likely the same false-positive pattern?";
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getFpSimilarityPrompt(), userPrompt, images: [] }, "fp-similarity");
+      const result = fpSimilaritySchema.parse(parsed);
+      const valid = new Set(candidateIds);
+      return result.candidateIds.filter((id) => valid.has(id));
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
   // `dryRun` produces the synthesized conclusions WITHOUT persisting them or firing any side effect
   // (no save, no synth-meta, no notifications, no accepted-delta re-apply) — used by the second
   // opinion (issue #116) to compute model B's analysis non-destructively. `provider` overrides the
@@ -3886,14 +3929,14 @@ export class AnalysisPipeline {
       forensicTimeline: correlateEvents(loaded.forensicTimeline, { windowSeconds }),
     };
 
-    const markers = this.opts.legitimateStore ? await this.opts.legitimateStore.load(caseId) : [];
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
 
     // Scope: only events inside the investigation window feed synthesis, so
     // findings/IOCs/attacker-path/questions reflect only in-scope activity.
     // Then drop events the client confirmed legitimate so the model never derives
     // conclusions from benign activity (the raw events stay in state — reversible).
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterLegitimateEvents(
+    const scopedEvents = filterFalsePositiveEvents(
       filterEventsByScope(state.forensicTimeline, scope),
       markers,
     );
@@ -3974,7 +4017,7 @@ export class AnalysisPipeline {
       .filter((t) => t.status === "open")
       .map((t) => `[${t.id}] ${t.description}`)
       .join("\n") || "(none open)";
-    const legitimateBlock = buildLegitimateContext(markers);
+    const falsePositiveBlock = buildFalsePositiveContext(markers);
     // Compact, corroborated context (compromised assets + threat-intel verdicts + KEV hits)
     // so the model grounds findings/attacker-path in structure instead of inferring blind.
     const kevCatalog = await this.getKevCatalog();
@@ -4002,7 +4045,7 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + existingFindings + openThreads + legitimateBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -4021,7 +4064,7 @@ export class AnalysisPipeline {
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
-      (legitimateBlock ? `${legitimateBlock}\n\n` : "") +
+      (falsePositiveBlock ? `${falsePositiveBlock}\n\n` : "") +
       `Running notes: ${state.lastSummary || "(none)"}\n\nReturn the JSON conclusions.`;
 
     const synthStart = Date.now();
@@ -4055,8 +4098,8 @@ export class AnalysisPipeline {
     // Threads and the forensic timeline are also preserved.
     const base = { ...state, findings: [], mitreTechniques: [] };
     const merged = mergeDelta(base, delta, { windowSequence: 0, timestamp: ts, sourceScreenshots: [] });
-    // Safety net: drop anything confirmed legitimate even if the model re-introduced it.
-    const filtered = applyLegitimate(merged, markers);
+    // Safety net: drop anything confirmed false-positive even if the model re-introduced it.
+    const filtered = applyFalsePositive(merged, markers);
 
     // Back-link forensic events to the CORRECT findings using the synthesis output
     // (each finding lists the event ids it's based on). Replaces extraction guesses.

@@ -199,4 +199,32 @@ describe("dashboard.html", () => {
     expect(html).toContain("function geoFocusIp");
     expect(html).toContain("/geo-map");
   });
+
+  it("wires the mark-false-positive modal (reason/note/candidates/whitelist) (#227)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="fpOverlay"');
+    expect(html).toContain('id="fpConfirmBtn"');
+    expect(html).toContain('id="fpAskAiBtn"');
+    expect(html).toContain("openFalsePositiveModal");
+    expect(html).toContain("/false-positive/suggest");
+    expect(html).toContain('id="sec-false-positive"');
+  });
+
+  it("renders each false-positive marker's reason in the False Positives panel (#227)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("function renderFalsePositives");
+    // The reason field must actually be read and rendered, not just captured by the mark-FP modal.
+    expect(html).toMatch(/m\.reason[\s\S]{0,200}esc\(m\.reason\)/);
+  });
+
+  it("visually distinguishes an already-marked-false-positive IOC in the main IOC list, independent of the Hide FP/no-intel toggle (#227)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // fpVals must be computed unconditionally (not just inside the hideFpNoIntel branch), so a
+    // marked-but-visible IOC (toggle off, or it also has enrichment data) can still show its state.
+    expect(html).toMatch(/const fpVals = fpIocValueSet\(\);\s*\n\s*if \(hideFpNoIntel\)/);
+    expect(html).toContain("const isFp = fpVals.has(");
+    // Struck-through value + an inline un-mark affordance, instead of an unmarked-looking row.
+    expect(html).toMatch(/isFp[\s\S]{0,200}text-decoration:line-through/);
+    expect(html).toMatch(/isFp[\s\S]{0,300}unfp-btn/);
+  });
 });

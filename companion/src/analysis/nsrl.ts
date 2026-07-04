@@ -4,8 +4,8 @@
 // applications, dev tools). The classic DFIR use is to filter known-good files out of the noise so
 // the analyst focuses on the unknown — "flag files that match known-good hashes to reduce false
 // positives in findings". A forensic event whose file hash, or an IOC whose value, is in the NSRL
-// set is auto-marked LEGITIMATE on import (reusing the legitimate machinery, so it's reversible and
-// shows in the "Confirmed Legitimate" panel). The store (nsrlStore.ts) holds the hash set; the
+// set is auto-marked FALSE POSITIVE on import (reusing the false-positive machinery, so it's
+// reversible and shows in the "False Positives" panel). The store (nsrlStore.ts) holds the hash set; the
 // auto-mark wiring lives in the /import route — exactly mirroring the IOC whitelist (#35).
 //
 // Pure logic only (normalize + parse + match) so it unit-tests without I/O.

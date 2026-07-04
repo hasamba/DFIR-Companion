@@ -417,7 +417,7 @@ describe("AnalysisPipeline", () => {
   });
 
   it("synthesize excludes client-confirmed legitimate findings/IOCs even if the model returns them", async () => {
-    const { LegitimateStore } = await import("../../src/analysis/legitimate.js");
+    const { FalsePositiveStore } = await import("../../src/analysis/falsePositive.js");
     const seeded = emptyState("c1");
     // Medium severity: this test is about finding/IOC legit-filtering, not the
     // high-severity backfill (which would auto-add a finding for an uncovered High event).
@@ -425,10 +425,10 @@ describe("AnalysisPipeline", () => {
       severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
     await stateStore.save(seeded);
 
-    const legitimateStore = new LegitimateStore(caseStore);
-    await legitimateStore.save("c1", [
-      { id: "finding:sharphound ad recon", kind: "finding", ref: "SharpHound AD recon", note: "authorized", markedAt: "" },
-      { id: "ioc:sharphound.exe", kind: "ioc", ref: "SharpHound.exe", note: "", markedAt: "" },
+    const falsePositiveStore = new FalsePositiveStore(caseStore);
+    await falsePositiveStore.save("c1", [
+      { id: "finding:sharphound ad recon", kind: "finding", ref: "SharpHound AD recon", reason: "authorized-test", note: "authorized", markedAt: "", markedBy: "anonymous" },
+      { id: "ioc:sharphound.exe", kind: "ioc", ref: "SharpHound.exe", reason: "authorized-test", note: "", markedAt: "", markedBy: "anonymous" },
     ]);
 
     // Model still (wrongly) returns the legitimate finding + IOC.
@@ -443,7 +443,7 @@ describe("AnalysisPipeline", () => {
     });
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", synthDelta),
-      legitimateStore,
+      falsePositiveStore,
       stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
@@ -548,7 +548,7 @@ describe("AnalysisPipeline", () => {
   });
 
   it("synthesize hides client-confirmed legitimate events from the model but preserves them in state", async () => {
-    const { LegitimateStore, markerId } = await import("../../src/analysis/legitimate.js");
+    const { FalsePositiveStore, markerId } = await import("../../src/analysis/falsePositive.js");
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push(
       { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "attacker process create", severity: "High",
@@ -558,9 +558,9 @@ describe("AnalysisPipeline", () => {
     );
     await stateStore.save(seeded);
 
-    const legitimateStore = new LegitimateStore(caseStore);
-    await legitimateStore.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", note: "client's own admin", markedAt: "2026-05-28T10:00:00Z", label: "client admin maintenance task" },
+    const falsePositiveStore = new FalsePositiveStore(caseStore);
+    await falsePositiveStore.save("c1", [
+      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "known-good-tool", note: "client's own admin", markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance task" },
     ]);
 
     let sentPrompt = "";
@@ -575,7 +575,7 @@ describe("AnalysisPipeline", () => {
       },
     };
     const pipeline = new AnalysisPipeline({
-      provider, legitimateStore, stateStore,
+      provider, falsePositiveStore, stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 

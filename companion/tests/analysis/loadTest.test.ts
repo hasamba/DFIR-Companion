@@ -3,7 +3,7 @@ import { emptyState, type ForensicEvent, type IOC, type InvestigationState, type
 import { selectSynthesisEvents, buildSynthesisContext } from "../../src/analysis/synthSelect.js";
 import { correlateEvents } from "../../src/analysis/correlate.js";
 import { filterEventsByScope } from "../../src/analysis/scope.js";
-import { applyLegitimate, type LegitimateMarker } from "../../src/analysis/legitimate.js";
+import { applyFalsePositive, type FalsePositiveMarker } from "../../src/analysis/falsePositive.js";
 import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 
@@ -300,11 +300,11 @@ describe("load test — 10k synthetic events", { timeout: 60_000 }, () => {
     expect(correlateEvents(pair, { windowSeconds: 2 }).length).toBe(1);
   });
 
-  it("filterEventsByScope + applyLegitimate stay fast", () => {
+  it("filterEventsByScope + applyFalsePositive stay fast", () => {
     const scope = { start: "2026-06-15T06:00:00.000Z", end: "2026-06-15T18:00:00.000Z" };
-    const markers: LegitimateMarker[] = [
-      { id: "ioc:10.0.0.10", kind: "ioc", ref: "10.0.0.10", note: "test", markedAt: "2026-06-15T00:00:00Z" },
-      { id: "event:evt-00000", kind: "event", ref: "evt-00000", note: "test", markedAt: "2026-06-15T00:00:00Z" },
+    const markers: FalsePositiveMarker[] = [
+      { id: "ioc:10.0.0.10", kind: "ioc", ref: "10.0.0.10", reason: "other", note: "test", markedAt: "2026-06-15T00:00:00Z", markedBy: "anonymous" },
+      { id: "event:evt-00000", kind: "event", ref: "evt-00000", reason: "other", note: "test", markedAt: "2026-06-15T00:00:00Z", markedBy: "anonymous" },
     ];
 
     const { ms: msScope, result: rScope } = timeMs(() => filterEventsByScope(state.forensicTimeline, scope));
@@ -314,11 +314,11 @@ describe("load test — 10k synthetic events", { timeout: 60_000 }, () => {
     expect(filtered.length).toBeLessThan(state.forensicTimeline.length);
     expect(msScope).toBeLessThan(200);
 
-    const { ms: msLegit, result: rLegit } = timeMs(() => applyLegitimate(state, markers));
-    const legit = rLegit as InvestigationState;
+    const { ms: msFp, result: rFp } = timeMs(() => applyFalsePositive(state, markers));
+    const fp = rFp as InvestigationState;
     // The IOC marker for "10.0.0.10" removes matching IOCs from the returned state.
-    expect(legit.iocs.length).toBeLessThan(state.iocs.length);
-    expect(msLegit).toBeLessThan(200);
+    expect(fp.iocs.length).toBeLessThan(state.iocs.length);
+    expect(msFp).toBeLessThan(200);
   });
 
   it("renderMarkdownReport stays fast", () => {

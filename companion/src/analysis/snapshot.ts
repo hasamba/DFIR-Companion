@@ -26,7 +26,7 @@ export const SNAPSHOT_VERSION = 1 as const;
 // listed here — a snapshot must not carry one machine's UI preference to another.
 export const SNAPSHOT_STATE_FILES = [
   "investigation.json",     // the core: forensic timeline, findings, IOCs, MITRE, attacker path, questions, next steps
-  "legitimate.json",        // analyst false-positive / known-good markers
+  "false-positive.json",    // analyst false-positive / known-good markers
   "scope.json",             // analyst investigation time-window
   "comments.json",          // investigator comments on entities
   "tags.json",              // analyst triage labels

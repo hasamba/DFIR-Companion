@@ -68,7 +68,7 @@ companion server" messages when this happens; preserve that behavior.
    — often 100s from a deterministic import the text-only pass can't re-derive). After the
    model returns, `synthesize` runs `correlateEvents` (dedup/merge), the **high-severity
    backfill** (`highSeverityFindings.ts` — every uncovered Critical/High event gets a
-   finding), and the scope/legitimate filters. Efficiency/quality (`synthSelect.ts`):
+   finding), and the scope/false-positive filters. Efficiency/quality (`synthSelect.ts`):
    **skip-if-unchanged** (an in-memory hash of the STABLE inputs — scoped events, IOCs+verdicts,
    scope, legit — skips the AI call when nothing changed; `synthesize(caseId, { force })` and the
    Synthesize button bypass it); **`selectSynthesisEvents`** picks events stratified (all
@@ -254,19 +254,45 @@ NEVER fatal; `config.json` holds the precedence). Detection seam in `importDetec
 fallback) and `detectImportWithCustom(filename, text, importers, precedence)` — the precedence setting
 (`builtin-first` default — a confident built-in wins, custom fills the gap; `external-first` — custom tried first).
 The `/import` route resolves a custom id and dispatches to `pipeline.importDeclarative`, which feeds the SAME downstream
-chain as every built-in: `mergeDelta` → import-meta diff → IOC-whitelist/NSRL auto-legitimate → re-synthesize. The
+chain as every built-in: `mergeDelta` → import-meta diff → IOC-whitelist/NSRL auto-false-positive → re-synthesize. The
 LLM-authoring prompt is `IMPORTER_PROMPT`/`getImporterPrompt()` (`GET /importers/prompt`, env override
 `DFIR_AI_IMPORTGEN_PROMPT`/`_FILE`); routes `GET/POST /importers` + `POST /importers/reload` + Settings → Importers tab.
 Security: declarative only (no code), user regexes ReDoS-guarded (length-bounded input), the description template engine
 is helper-free (no injection). **INVARIANT: when you add a new built-in `ImportKind`, ALSO add it to `BUILTIN_KINDS`
 in `importerSpec.ts`** (kept in sync with `importDetect.ts`) so a custom importer id can't shadow it.
 
-**IOC whitelist (auto-mark known-good legitimate).** A GLOBAL store (`IocWhitelistStore`, `whitelist/ioc-whitelist.json`
+**False-positive marking + feedback loop (#227).** The exclude-this-from-analysis mechanism (formerly
+"legitimate marking") — same reversible effect (writes a `finding`/`ioc`/`event` `FalsePositiveMarker`,
+excluded from synthesis via `applyFalsePositive`, un-marking fully restores it), renamed because "legitimate"
+conflated two different things an analyst means: authorized/benign activity vs. a tool/rule that simply
+mis-fired. Every marker now carries a structured **`reason`** (`FALSE_POSITIVE_REASONS`:
+`known-good-tool`/`authorized-test`/`detection-misfire`/`duplicate`/`other` — `other` requires the free-text
+`note`) plus **`markedBy`** analyst attribution, so false positives can be aggregated/reported on instead of
+read back as free text. **Find-similar-items at mark-time** (`analysis/falsePositiveSimilarity.ts`,
+pure/offline, same shape as `adversaryHints.ts`): given the anchor finding/event just marked, scores every
+other finding/event in the case by shared signals (MITRE technique, process name, hash, source, asset,
+related IOCs, title-word overlap) and returns ranked candidates — never auto-applied, just suggested, so a
+detection-misfire the analyst dismisses once can be dismissed everywhere it recurs in one pass.
+`POST /cases/:id/false-positive/suggest` `{ kind: "event"|"finding", ref, ai? }` returns the deterministic
+candidates alone by default; `ai: true` additionally asks the model (`getFpSimilarityPrompt()`) to scan the
+remaining pool for non-obvious matches the deterministic scorer's fixed signal set misses — gated on an AI
+provider being configured (`aiUnavailable: true` when not) — and any AI-returned id not actually in the
+candidate pool it was given (a hallucinated id) is filtered out **twice** (once inside the pipeline call,
+once again at the route as defense-in-depth) before reaching the client, since this feeds a batch marking
+action. **Whitelist promotion (opt-in):** marking a single IOC false-positive can also tick "add to IOC
+whitelist" (`addToWhitelist` on the request) — reuses the existing global `IocWhitelistStore` unchanged,
+building an exact-match rule from the IOC value via `sanitizeRuleInput` (the same validation the Settings →
+IOC Whitelist CRUD uses) so a malformed/oversized ref is skipped rather than corrupting the whitelist; this
+is a best-effort side effect — the false-positive marking itself always succeeds even if the promotion is
+rejected. Dashboard: the "Confirmed Legitimate" panel/button is now **"False Positives"** / **"🚫 Mark False
+Positive"**.
+
+**IOC whitelist (auto-mark known-good as false positive).** A GLOBAL store (`IocWhitelistStore`, `whitelist/ioc-whitelist.json`
 next to `cases/`, mirrors `ArtifactBundleStore`/`TemplateStore`) holds known-good patterns: **CIDR** (internal IP
 ranges), **exact** (hashes/values), **regex**, each optionally type-scoped. The pure matcher (`analysis/iocWhitelist.ts` —
 IPv4 CIDR containment, regex/exact, CSV/JSON parse+serialize, `sanitizeRuleInput`) is unit-tested independently of I/O.
-An IOC matching a rule is **auto-marked LEGITIMATE** — it reuses the existing legitimate machinery (writes an `ioc`
-`LegitimateMarker`), so it's reversible and synthesis already excludes it (`applyLegitimate`). Applied in the `/import`
+An IOC matching a rule is **auto-marked FALSE POSITIVE** — it reuses the existing false-positive machinery (writes an `ioc`
+`FalsePositiveMarker`), so it's reversible and synthesis already excludes it (`applyFalsePositive`). Applied in the `/import`
 route's `.then()` BEFORE re-synthesis (route-level, like import-meta — other import paths use the manual apply), and on
 demand via `POST /cases/:id/ioc-whitelist/apply`. Opt-in: the list starts empty (whitelisting internal ranges can hide
 lateral movement). Surfaced in **Settings → IOC Whitelist** (CRUD + CSV/JSON import-export). Use a SUBDIR for the file,
@@ -279,7 +305,7 @@ newline-delimited, normalized file loaded into an in-memory `Set` (cached, since
 the per-import sweep loads it each time). The pure logic (`analysis/nsrl.ts` — `normalizeHash` (MD5/SHA-1/SHA-256 only),
 `parseNsrlText` (NSRLFile.txt RDS CSV / hashdeep CSV / plain hash list), `nsrlMatchIocs`/`nsrlMatchEvents`) is unit-tested
 without I/O. A forensic **event** whose `sha256`/`md5` — or an **IOC** of type hash whose value — is in the set is a
-**known-good file, auto-marked LEGITIMATE** (event → `event` marker by id so the raw evidence is preserved + reversible;
+**known-good file, auto-marked FALSE POSITIVE** (event → `event` marker by id so the raw evidence is preserved + reversible;
 IOC → `ioc` marker), cutting false positives. Applied in the `/import` route's `.then()` BEFORE re-synthesis (alongside
 the whitelist apply) and on demand via `POST /cases/:id/nsrl/apply`. Opt-in: the set starts empty (NSRL is "known", not
 strictly "known-good" — some RDS sets include hacktools; a known hash can still be malicious in context). Surfaced in
@@ -416,7 +442,7 @@ served live at **`/cases/:id/present`**; the **standalone offline export** `GET 
 serves the SAME page with the deck injected via `window.__DECK__` (the `<!--DECK_INJECT-->` placeholder; deck
 JSON `<`-escaped so case content can't break out of the `<script>`) so it plays with no server. Read-only — no
 editing, no AI. Side files in `state/`:
-`ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (per-source enrichment
+`ai-control.json`, `false-positive.json`, `scope.json`, `enrich-control.json` (per-source enrichment
 selection — the enabled provider names; **default = local-only** (MISP/YETI/OpenCTI), external opt-in),
 `pending_analysis.json`, `report-meta.json` (human-authored report
 sections — title page, distribution, BIA, glossary, recommendations…), `comments.json`
@@ -454,8 +480,8 @@ same caching/anonymization invariants as synthesis. Server-only (no `scripts/*` 
 which **retries the rename through a transient `EPERM`/`EBUSY`/`EACCES` lock**, since `cases/` may live
 in a synced folder where Dropbox/OneDrive/AV briefly locks the file mid-rename; route every new store's
 save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
-`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `SecondOpinionStore`, `ImportMetaStore`, `PlaybookStore`, `PlaybookControlStore`, `HuntOutcomeStore` (`state/hunt-outcomes.json` — see the hunting feedback loop below; **IN `SNAPSHOT_STATE_FILES`**), `ReportTemplateControlStore` (`state/report-template.json` `{ templateId }`). Pure filters/transforms live next to
-them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
+`FalsePositiveStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`, `TagsStore`, `SynthMetaStore`, `SecondOpinionStore`, `ImportMetaStore`, `PlaybookStore`, `PlaybookControlStore`, `HuntOutcomeStore` (`state/hunt-outcomes.json` — see the hunting feedback loop below; **IN `SNAPSHOT_STATE_FILES`**), `ReportTemplateControlStore` (`state/report-template.json` `{ templateId }`). Pure filters/transforms live next to
+them (`applyFalsePositive`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`, `diffFindings`, `diffTimeline`, `diffIocs`, `buildSecondOpinionDeltas`, `applyAcceptedSecondOpinion`) and are unit-tested independently of I/O.
 
 **Custom report templates (#60).** A report is rendered through a **report template** that controls
@@ -803,8 +829,8 @@ deep-links back to the case; `DFIR_NOTIFY_CA`/`_INSECURE` for a self-hosted webh
 `scripts/*` pipeline wiring — `onSynth` is optional, so CLI synthesize/reanalyze just omit it).
 
 **Customizable prompts.** The prompts in `pipeline.ts` are built-in DEFAULTS; the pipeline
-consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`/`getNarrativePrompt()`/`getHuntSuggestPrompt()`/`getPlaybookHuntPrompt()`/`getGapHypothesisPrompt()`/`getMemoryNextStepPrompt()`/`getQueryTranslatePrompt()`/`getReconcilePrompt()`/`getRemediationPrompt()` (the `RECONCILE_PROMPT` lives in `analysis/secondOpinion.ts`),
-which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC|NARRATIVE|HUNTS|PBHUNTS|GAPHYP|MEMNEXT|QUERYXLATE|RECONCILE|REMEDIATION>_PROMPT` inline, or `…_PROMPT_FILE` —
+consumes them via `getSystemPrompt()`/`getCsvPrompt()`/`getLogPrompt()`/`getSynthesisPrompt()`/`getAskPrompt()`/`getExecSummaryPrompt()`/`getNarrativePrompt()`/`getHuntSuggestPrompt()`/`getPlaybookHuntPrompt()`/`getGapHypothesisPrompt()`/`getMemoryNextStepPrompt()`/`getQueryTranslatePrompt()`/`getReconcilePrompt()`/`getRemediationPrompt()`/`getFpSimilarityPrompt()` (the `RECONCILE_PROMPT` lives in `analysis/secondOpinion.ts`),
+which resolve env overrides (`DFIR_AI_<SYSTEM|CSV|LOG|SYNTH|ASK|EXEC|NARRATIVE|HUNTS|PBHUNTS|GAPHYP|MEMNEXT|QUERYXLATE|RECONCILE|REMEDIATION|FPSIMILARITY>_PROMPT` inline, or `…_PROMPT_FILE` —
 re-read each call, so file edits apply with no restart; bad file → warn + fall back to default).
 When you change a prompt's wording, keep the example JSON shape it dictates in sync with `responseSchema.ts`.
 When you add a prompt, also add its `<NAME>` token to `resolvePrompt`'s union type.

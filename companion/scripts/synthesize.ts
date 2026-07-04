@@ -14,7 +14,7 @@ import { CaseStore } from "../src/storage/caseStore.js";
 import { StateStore } from "../src/analysis/stateStore.js";
 import { AnalysisPipeline } from "../src/analysis/pipeline.js";
 import { makeImageLoader } from "../src/analysis/imageLoader.js";
-import { LegitimateStore } from "../src/analysis/legitimate.js";
+import { FalsePositiveStore } from "../src/analysis/falsePositive.js";
 import { ScopeStore } from "../src/analysis/scope.js";
 import { AnonControlStore } from "../src/analysis/anonControl.js";
 import { CustomEntitiesStore } from "../src/analysis/anonEntities.js";
@@ -50,7 +50,7 @@ async function main(): Promise<void> {
 
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
-  const pipeline = new AnalysisPipeline({ provider, stateStore, legitimateStore: new LegitimateStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), anonStore: new AnonControlStore(store), customEntitiesStore: new CustomEntitiesStore(store), discoveredStore: new DiscoveredEntitiesStore(store), synthMetaStore: new SynthMetaStore(store), hypothesisStore: new HypothesisStore(store) });
+  const pipeline = new AnalysisPipeline({ provider, stateStore, falsePositiveStore: new FalsePositiveStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), anonStore: new AnonControlStore(store), customEntitiesStore: new CustomEntitiesStore(store), discoveredStore: new DiscoveredEntitiesStore(store), synthMetaStore: new SynthMetaStore(store), hypothesisStore: new HypothesisStore(store) });
 
   const before = await stateStore.load(caseId);
   console.log(`Synthesizing "${caseId}" from ${before.forensicTimeline.length} forensic events (provider=${provider.name} model=${process.env.DFIR_AI_MODEL})…`);

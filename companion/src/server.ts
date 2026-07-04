@@ -18,7 +18,8 @@ import { TesseractOcrRunner, type OcrRunner } from "./analysis/ocrRedact.js";
 import { extractOcrText, searchOcrIndex, isOcrSearchEnabled } from "./analysis/ocrSearch.js";
 import { resolveRedactedExportOptions, redactedExportFilename } from "./analysis/redactedExport.js";
 import { buildRedactedExport } from "./reports/redactedExportBuilder.js";
-import { LegitimateStore, markerId, type LegitimateMarker } from "./analysis/legitimate.js";
+import { FalsePositiveStore, markerId, type FalsePositiveMarker, FALSE_POSITIVE_REASONS } from "./analysis/falsePositive.js";
+import { findSimilarEvents, findSimilarFindings } from "./analysis/falsePositiveSimilarity.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { CorrelationProfileStore } from "./analysis/correlationProfile.js";
 import { parseSnapshot } from "./analysis/snapshot.js";
@@ -93,7 +94,7 @@ import { HashlookupProvider } from "./enrichment/hashlookup.js";
 import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
-import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity, ForensicEvent, IOC } from "./analysis/stateTypes.js";
+import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity, ForensicEvent, IOC, Finding } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
@@ -328,9 +329,9 @@ export interface AppOptions {
   // pings dashboard clients over the WS to re-fetch the graph when overrides change.
   assetOverridesStore?: AssetOverridesStore;
   onAssetOverrides?: (caseId: string) => void;
-  // Confirmed-legitimate markers (false-positive exclusions). onLegitimate pings dashboard
+  // Confirmed false-positive markers. onFalsePositive pings dashboard
   // clients over the WS so other investigators see the change immediately, before synthesis.
-  onLegitimate?: (caseId: string) => void;
+  onFalsePositive?: (caseId: string) => void;
   // Investigation time-window changes. onScope pings dashboard clients with the new window so
   // other investigators can apply the same scope instantly, without waiting for re-synthesis.
   onScope?: (caseId: string, scope: ScopeWindow) => void;
@@ -4528,9 +4529,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // Client-confirmed legitimate findings/IOCs (false positives). Marking one
-  // re-runs synthesis so the AI re-derives its conclusions without it.
-  const legitimate = new LegitimateStore(store);
+  // Client-confirmed false-positive findings/IOCs. Marking one re-runs synthesis so the AI
+  // re-derives its conclusions without it.
+  const falsePositives = new FalsePositiveStore(store);
   // The active NSRL RDS SQLite connection (#63). Mutable: the Settings → NSRL connect/disconnect
   // routes can swap it at runtime (unless env-managed). Starts from the startup-resolved DB.
   let nsrlDb = options.nsrlDb;
@@ -4925,39 +4926,59 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return next;
   }
 
-  app.get("/cases/:id/legitimate", async (req: Request, res: Response) => {
+  app.get("/cases/:id/false-positive", async (req: Request, res: Response) => {
     try {
-      return res.status(200).json(await legitimate.load(req.params.id));
+      return res.status(200).json(await falsePositives.load(req.params.id));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
 
-  // Build a marker from one request item (kind/ref/note/label). Returns null when ref is empty
-  // so the caller can reject (single) or skip (batch). Shared by the single + batch routes.
-  const buildLegitMarker = (item: {
-    kind?: unknown; ref?: unknown; note?: unknown; label?: unknown;
-  }): LegitimateMarker | null => {
+  // Build a marker from one request item (kind/ref/reason/note/label/markedBy). Returns null when
+  // ref is empty, or when reason is "other" with no note, so the caller can reject (single) or skip
+  // (batch). Shared by the single + batch routes.
+  const buildFalsePositiveMarker = (item: {
+    kind?: unknown; ref?: unknown; reason?: unknown; note?: unknown; label?: unknown; markedBy?: unknown;
+  }): FalsePositiveMarker | null => {
     const rawKind = item?.kind;
-    const kind: LegitimateMarker["kind"] =
+    const kind: FalsePositiveMarker["kind"] =
       rawKind === "ioc" ? "ioc" : rawKind === "event" ? "event" : "finding";
     const ref = String(item?.ref ?? "").trim();
     if (!ref) return null;
+    const rawReason = item?.reason;
+    const reason: FalsePositiveMarker["reason"] =
+      (FALSE_POSITIVE_REASONS as readonly string[]).includes(String(rawReason)) ? (rawReason as FalsePositiveMarker["reason"]) : "other";
     const note = String(item?.note ?? "");
+    if (reason === "other" && !note.trim()) return null;
     // Optional human-readable label (e.g. a forensic event's description) so the
-    // "Confirmed Legitimate" panel can show something meaningful for opaque ids.
+    // "False Positives" panel can show something meaningful for opaque ids.
     const label = item?.label != null ? String(item.label) : undefined;
-    return { id: markerId(kind, ref), kind, ref, note, markedAt: new Date().toISOString(), ...(label ? { label } : {}) };
+    const markedBy = String(item?.markedBy ?? "").trim() || "anonymous";
+    return {
+      id: markerId(kind, ref), kind, ref, reason, note, markedAt: new Date().toISOString(), markedBy,
+      ...(label ? { label } : {}),
+    };
   };
 
-  app.post("/cases/:id/legitimate", async (req: Request, res: Response) => {
+  app.post("/cases/:id/false-positive", async (req: Request, res: Response) => {
     try {
-      const marker = buildLegitMarker(req.body ?? {});
-      if (!marker) return res.status(400).json({ error: "ref is required" });
-      const markers = await legitimate.load(req.params.id);
+      const marker = buildFalsePositiveMarker(req.body ?? {});
+      if (!marker) return res.status(400).json({ error: "ref is required (and note is required when reason is 'other')" });
+      const markers = await falsePositives.load(req.params.id);
       const next = [...markers.filter((m) => m.id !== marker.id), marker];
-      await legitimate.save(req.params.id, next);
-      options.onLegitimate?.(req.params.id);
+      await falsePositives.save(req.params.id, next);
+      if (marker.kind === "ioc" && req.body?.addToWhitelist && options.iocWhitelistStore) {
+        const state = options.stateStore ? await options.stateStore.load(req.params.id) : null;
+        const iocType = state?.iocs.find((i) => i.value.toLowerCase() === marker.ref.toLowerCase())?.type;
+        const note = marker.note?.trim()
+          ? `promoted from false-positive marking (${marker.reason}): ${marker.note}`
+          : `promoted from false-positive marking (${marker.reason})`;
+        const whitelistInput = sanitizeRuleInput({ match: "exact", pattern: marker.ref, iocType, note });
+        // Best-effort side effect: the false-positive marking itself must succeed even when the
+        // whitelist promotion is rejected (e.g. an oversized ref) — so skip silently, don't 400/500.
+        if (whitelistInput) await options.iocWhitelistStore.add(whitelistInput);
+      }
+      options.onFalsePositive?.(req.params.id);
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it
       return res.status(200).json(next);
     } catch (err) {
@@ -4965,27 +4986,35 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // Mark MANY entities legitimate in one shot — one read-modify-write + a SINGLE re-synthesis,
-  // instead of N concurrent /legitimate calls that would race on legitimate.json (last write wins)
-  // and each kick off their own re-synthesis. The dashboard's bulk "Mark Legitimate" uses this.
-  // Body: { items: [{ kind, ref, note?, label? }, …], note? } — a top-level note is the fallback
-  // reason for items that don't carry their own.
-  app.post("/cases/:id/legitimate/batch", async (req: Request, res: Response) => {
+  // Mark MANY entities false-positive in one shot — one read-modify-write + a SINGLE
+  // re-synthesis, instead of N concurrent /false-positive calls that would race on
+  // false-positive.json (last write wins) and each kick off their own re-synthesis. The
+  // dashboard's bulk "Mark False Positive" uses this.
+  // Body: { items: [{ kind, ref, reason?, note?, label? }, …], reason?, note? } — top-level
+  // reason/note are the fallback for items that don't carry their own.
+  app.post("/cases/:id/false-positive/batch", async (req: Request, res: Response) => {
     try {
       const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
+      const fallbackReason = req.body?.reason;
       const fallbackNote = req.body?.note != null ? String(req.body.note) : "";
+      const fallbackMarkedBy = req.body?.markedBy;
       const built = rawItems
-        .map((it: { kind?: unknown; ref?: unknown; note?: unknown; label?: unknown }) =>
-          buildLegitMarker({ ...it, note: it?.note ?? fallbackNote }))
-        .filter((m: LegitimateMarker | null): m is LegitimateMarker => m !== null);
+        .map((it: { kind?: unknown; ref?: unknown; reason?: unknown; note?: unknown; label?: unknown; markedBy?: unknown }) =>
+          buildFalsePositiveMarker({
+            ...it,
+            reason: it?.reason ?? fallbackReason,
+            note: it?.note ?? fallbackNote,
+            markedBy: it?.markedBy ?? fallbackMarkedBy,
+          }))
+        .filter((m: FalsePositiveMarker | null): m is FalsePositiveMarker => m !== null);
       if (!built.length) return res.status(400).json({ error: "at least one valid item (with a ref) is required" });
-      const markers = await legitimate.load(req.params.id);
+      const markers = await falsePositives.load(req.params.id);
       // De-dupe within the batch and against existing markers (last occurrence wins) by id.
-      const byId = new Map<string, LegitimateMarker>(markers.map((m) => [m.id, m]));
+      const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
       for (const m of built) byId.set(m.id, m);
       const next = [...byId.values()];
-      await legitimate.save(req.params.id, next);
-      options.onLegitimate?.(req.params.id);
+      await falsePositives.save(req.params.id, next);
+      options.onFalsePositive?.(req.params.id);
       resynthesizeInBackground(req.params.id); // ONE re-synthesis for the whole batch
       return res.status(200).json(next);
     } catch (err) {
@@ -5044,15 +5073,71 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  app.post("/cases/:id/legitimate/remove", async (req: Request, res: Response) => {
+  app.post("/cases/:id/false-positive/remove", async (req: Request, res: Response) => {
     try {
       const id = String(req.body?.id ?? "");
-      const markers = await legitimate.load(req.params.id);
+      const markers = await falsePositives.load(req.params.id);
       const next = markers.filter((m) => m.id !== id);
-      await legitimate.save(req.params.id, next);
-      options.onLegitimate?.(req.params.id);
+      await falsePositives.save(req.params.id, next);
+      options.onFalsePositive?.(req.params.id);
       resynthesizeInBackground(req.params.id);
       return res.status(200).json(next);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Deterministic "find similar items" for the mark-FP dialog (#227): given one anchor
+  // finding/event, rank other in-case findings/events by shared MITRE technique/process/hash/
+  // asset/source (events) or MITRE/related-IOC/title (findings). Suggestions only — nothing here
+  // is applied; the analyst checks which candidates to also mark in the /false-positive/batch call.
+  app.post("/cases/:id/false-positive/suggest", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    try {
+      const kind = req.body?.kind === "event" ? "event" : req.body?.kind === "finding" ? "finding" : null;
+      const ref = String(req.body?.ref ?? "").trim();
+      if (!kind || !ref) return res.status(400).json({ error: "kind ('event'|'finding') and ref are required" });
+      const state = await options.stateStore.load(req.params.id);
+      const anchor = kind === "event" ? state.forensicTimeline.find((e) => e.id === ref) : state.findings.find((f) => f.id === ref);
+      if (!anchor) return res.status(404).json({ error: `${kind} ${ref} not found` });
+
+      const deterministic = kind === "event"
+        ? findSimilarEvents(anchor as ForensicEvent, state.forensicTimeline)
+        : findSimilarFindings(anchor as Finding, state.findings);
+
+      if (!req.body?.ai) return res.status(200).json({ candidates: deterministic });
+      if (!options.pipeline || !hasAiProvider()) {
+        return res.status(200).json({ candidates: deterministic, aiUnavailable: true });
+      }
+
+      const pool = kind === "event" ? state.forensicTimeline : state.findings;
+      const anchorLabel = kind === "event" ? (anchor as ForensicEvent).description : (anchor as Finding).title;
+      const seen = new Set(deterministic.map((c) => c.id));
+      const rest = pool.filter((item) => item.id !== ref && !seen.has(item.id)).slice(0, 100);
+      const aiIds = await options.pipeline.suggestFalsePositiveSimilarAi(
+        req.params.id,
+        ref,
+        anchorLabel,
+        rest.map((r) => r.id),
+        rest.map((r) => (kind === "event" ? (r as ForensicEvent).description : (r as Finding).title)),
+      );
+      // Defense-in-depth, not redundant: suggestFalsePositiveSimilarAi already validates aiIds
+      // against the candidate list it was given (dropping any hallucinated id), but this is a
+      // safety-critical path (feeding a batch false-positive marker), so we re-filter here too
+      // rather than trusting the pipeline call's return value unchecked.
+      const aiCandidates = rest
+        .filter((r) => aiIds.includes(r.id))
+        .map((r) => ({
+          id: r.id,
+          kind,
+          label: kind === "event" ? (r as ForensicEvent).description : (r as Finding).title,
+          // Pinned to 0, not a "zero-confidence" match — this keeps AI-sourced candidates sorting
+          // after every scored deterministic candidate when a UI sorts descending by score.
+          // `reasons` (below) is what tells the dashboard this candidate came from the AI pass.
+          score: 0,
+          reasons: ["suggested by AI"],
+        }));
+      return res.status(200).json({ candidates: [...deterministic, ...aiCandidates] });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -5134,12 +5219,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // ── IOC whitelist (Phase 2 of #35) ─────────────────────────────────────────────────────────
   // A GLOBAL, environment-level set of "known-good" patterns the analyst maintains (internal IP
   // ranges as CIDR, known-good hashes, regexes for internal domains). An IOC matching a rule is
-  // auto-marked LEGITIMATE — reusing the legitimate machinery, so it's reversible and shows in the
-  // "Confirmed Legitimate" panel. Auto-applied on import; also on demand per case.
+  // auto-marked a FALSE POSITIVE — reusing the false-positive machinery, so it's reversible and
+  // shows in the "False Positives" panel. Auto-applied on import; also on demand per case.
 
-  // Apply the whitelist to a case's current IOCs: add a legitimate marker for each match that isn't
-  // already marked. Pure read-modify-write on legitimate.json (no re-synthesis here — the caller
-  // decides). Returns how many IOCs matched and how many NEW markers were added.
+  // Apply the whitelist to a case's current IOCs: add a false-positive marker for each match that
+  // isn't already marked. Pure read-modify-write on false-positive.json (no re-synthesis here —
+  // the caller decides). Returns how many IOCs matched and how many NEW markers were added.
   async function applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }> {
     if (!options.iocWhitelistStore || !options.stateStore) return { matched: 0, added: 0 };
     const rules = await options.iocWhitelistStore.load();
@@ -5147,20 +5232,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const state = await options.stateStore.load(caseId);
     const matches = whitelistMatches(state.iocs, rules);
     if (matches.length === 0) return { matched: 0, added: 0 };
-    const markers = await legitimate.load(caseId);
-    const byId = new Map<string, LegitimateMarker>(markers.map((m) => [m.id, m]));
+    const markers = await falsePositives.load(caseId);
+    const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
     let added = 0;
     for (const { ioc, rule } of matches) {
       const id = markerId("ioc", ioc.value);
       if (byId.has(id)) continue;
       byId.set(id, {
-        id, kind: "ioc", ref: ioc.value,
+        id, kind: "ioc", ref: ioc.value, reason: "known-good-tool",
         note: `auto-whitelist: ${rule.match} ${rule.pattern}${rule.note ? ` — ${rule.note}` : ""}`,
-        markedAt: new Date().toISOString(), label: ioc.value,
+        markedAt: new Date().toISOString(), markedBy: "anonymous", label: ioc.value,
       });
       added++;
     }
-    if (added > 0) await legitimate.save(caseId, [...byId.values()]);
+    if (added > 0) await falsePositives.save(caseId, [...byId.values()]);
     return { matched: matches.length, added };
   }
 
@@ -5295,7 +5380,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   });
 
   // Apply the whitelist to THIS case's current IOCs now (the analyst just added rules, or wants to
-  // sweep an already-imported case). Marks matches legitimate, then re-synthesizes so they drop.
+  // sweep an already-imported case). Marks matches false-positive, then re-synthesizes so they drop.
   app.post("/cases/:id/ioc-whitelist/apply", async (req: Request, res: Response) => {
     if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
@@ -5304,7 +5389,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const result = await applyWhitelistToCase(caseId);
       if (result.added > 0) resynthesizeInBackground(caseId);
       logLine(`[whitelist] ${caseId} apply — matched ${result.matched}, added ${result.added}`);
-      return res.status(200).json({ ...result, legitimate: await legitimate.load(caseId) });
+      return res.status(200).json({ ...result, legitimate: await falsePositives.load(caseId) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -5312,14 +5397,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   // ── NSRL known-good hashes (#63) ───────────────────────────────────────────────────────────────
   // A GLOBAL set of known-software file hashes (NIST NSRL / RDS). A forensic event whose file hash —
-  // or an IOC whose value — is in the set is a known-good file, auto-marked LEGITIMATE to reduce
-  // false positives. Reuses the legitimate machinery (reversible, shown in "Confirmed Legitimate").
+  // or an IOC whose value — is in the set is a known-good file, auto-marked a FALSE POSITIVE to
+  // reduce noise. Reuses the false-positive machinery (reversible, shown in "False Positives").
   // Auto-applied on import; also on demand per case. Opt-in (the set starts empty).
 
-  // Sweep a case's current IOCs + forensic events for NSRL matches, adding a legitimate marker for
-  // each that isn't already marked (ioc → by value, event → by id, so the raw evidence is preserved
-  // and un-marking restores it). Pure read-modify-write on legitimate.json (no re-synthesis here —
-  // the caller decides). Returns how many IOCs/events matched and how many NEW markers were added.
+  // Sweep a case's current IOCs + forensic events for NSRL matches, adding a false-positive marker
+  // for each that isn't already marked (ioc → by value, event → by id, so the raw evidence is
+  // preserved and un-marking restores it). Pure read-modify-write on false-positive.json (no
+  // re-synthesis here — the caller decides). Returns how many IOCs/events matched and how many NEW
+  // markers were added.
   async function applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }> {
     if (!options.stateStore) return { matchedIocs: 0, matchedEvents: 0, added: 0 };
     // A hash is known-good if EITHER backend has it: the flat in-memory set (small custom lists) or
@@ -5332,23 +5418,23 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const iocMatches = nsrlMatchIocs(state.iocs, lookup);
     const eventMatches = nsrlMatchEvents(state.forensicTimeline, lookup);
     if (iocMatches.length === 0 && eventMatches.length === 0) return { matchedIocs: 0, matchedEvents: 0, added: 0 };
-    const markers = await legitimate.load(caseId);
-    const byId = new Map<string, LegitimateMarker>(markers.map((m) => [m.id, m]));
+    const markers = await falsePositives.load(caseId);
+    const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
     const now = new Date().toISOString();
     let added = 0;
     for (const { ioc, hash } of iocMatches) {
       const id = markerId("ioc", ioc.value);
       if (byId.has(id)) continue;
-      byId.set(id, { id, kind: "ioc", ref: ioc.value, note: `NSRL known-good hash (${hash})`, markedAt: now, label: ioc.value });
+      byId.set(id, { id, kind: "ioc", ref: ioc.value, reason: "known-good-tool", note: `NSRL known-good hash (${hash})`, markedAt: now, markedBy: "anonymous", label: ioc.value });
       added++;
     }
     for (const { event, hash } of eventMatches) {
       const id = markerId("event", event.id);
       if (byId.has(id)) continue;
-      byId.set(id, { id, kind: "event", ref: event.id, note: `NSRL known-good file (${hash})`, markedAt: now, label: event.description });
+      byId.set(id, { id, kind: "event", ref: event.id, reason: "known-good-tool", note: `NSRL known-good file (${hash})`, markedAt: now, markedBy: "anonymous", label: event.description });
       added++;
     }
-    if (added > 0) await legitimate.save(caseId, [...byId.values()]);
+    if (added > 0) await falsePositives.save(caseId, [...byId.values()]);
     return { matchedIocs: iocMatches.length, matchedEvents: eventMatches.length, added };
   }
 
@@ -5475,7 +5561,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const result = await applyNsrlToCase(caseId);
       if (result.added > 0) resynthesizeInBackground(caseId);
       logLine(`[nsrl] ${caseId} apply — matched ${result.matchedIocs} IOC(s) + ${result.matchedEvents} event(s), added ${result.added}`);
-      return res.status(200).json({ ...result, legitimate: await legitimate.load(caseId) });
+      return res.status(200).json({ ...result, legitimate: await falsePositives.load(caseId) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -8743,7 +8829,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     secondOpinionModelLabel: params.secondOpinionModelLabel,
     stateLock: params.stateLock,
     stateStore: params.stateStore,
-    legitimateStore: new LegitimateStore(params.store),
+    falsePositiveStore: new FalsePositiveStore(params.store),
     scopeStore: new ScopeStore(params.store),
     imageLoader: params.imageLoader ?? makeImageLoader(params.store),
     onState: params.onState,
@@ -8898,7 +8984,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const importUndoStore = new ImportUndoStore(store, Number(process.env.DFIR_IMPORT_UNDO_DEPTH) || undefined);
   const notionExportStore = new NotionExportStore(store);
   const clickupExportStore = new ClickUpExportStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new LegitimateStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore);
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
   const backupConfig = resolveBackupConfig(process.env);
@@ -9012,7 +9098,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onPlaybook: (caseId) => hub.broadcastTo(caseId, { type: "playbook_changed" }),
     assetOverridesStore,
     onAssetOverrides: (caseId) => hub.broadcastTo(caseId, { type: "asset_overrides_changed" }),
-    onLegitimate: (caseId) => hub.broadcastTo(caseId, { type: "legitimate_changed" }),
+    onFalsePositive: (caseId) => hub.broadcastTo(caseId, { type: "false_positive_changed" }),
     onScope: (caseId, scope) => hub.broadcastTo(caseId, { type: "scope_changed", ...scope }),
     synthMetaStore,
     correlationProfileStore,

@@ -25,7 +25,7 @@ Your primary conclusions. Each finding has:
 - **MITRE techniques** — linked to attack.mitre.org
 - **Supporting events** — click to jump to each event in the timeline
 - **Supporting IOCs** — the indicators that back this finding
-- **⚑ Mark legitimate** — exclude from analysis
+- **🚫 Mark False Positive** — exclude from analysis
 
 The finding list is sorted worst-first. Click a finding to expand it.
 
@@ -60,7 +60,7 @@ Each row shows:
 - `NEW` badge if added in the last import
 - **💡 Explain** button — AI explains this event, gives ATT&CK context, and suggests pivot queries
 - **[Decoded]** expander — for events with base64/PowerShell encoded payloads, shows the decoded content
-- **⚑ Mark legitimate** — excludes this event from analysis
+- **🚫 Mark False Positive** — excludes this event from analysis
 
 ### Filters
 
@@ -180,7 +180,7 @@ Each IOC shows:
 
 - **Verdict badge** — reputation from enrichment providers (malicious / suspicious / clean / unknown)
 - **Source badge** — how many tools corroborated this indicator (e.g. ⊕ 3 sources)
-- **⚑ Mark legitimate** — known-good, excludes from analysis
+- **🚫 Mark False Positive** — known-good, excludes from analysis
 - Click to run enrichment on demand
 
 ---
@@ -364,6 +364,6 @@ Requires GeoIP enrichment to be configured and enabled.
 
 ---
 
-## Confirmed Legitimate (Excluded from Analysis)
+## False Positives (Excluded from Analysis)
 
 Everything you have marked as a false positive or known-good. Shows findings, events, and IOCs with their exclusion reason. Click any item to reinstate it.

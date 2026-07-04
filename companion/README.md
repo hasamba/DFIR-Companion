@@ -194,15 +194,17 @@ Examples:
 | `GET /cases/:id/captures/count` | Number of captures recorded for the case. |
 | `GET /cases/:id/scope` | Current investigation time-window: `{ start, end }` (ISO or null). |
 | `POST /cases/:id/scope` | `{ start, end }` — set the window; re-synthesizes using only in-scope events. The dashboard's scope bar calls this. |
-| `GET /cases/:id/legitimate` | List client-confirmed legitimate findings/IOCs/events (excluded from analysis). |
-| `POST /cases/:id/legitimate` | `{ kind: "finding"\|"ioc"\|"event", ref, note, label? }` — mark a finding (ref = title), IOC (ref = value), or **forensic event** (ref = event id; `label` = its description for display) legitimate; re-runs synthesis without it. The dashboard's per-item **⚑ mark legitimate** button calls this. Legit **events** are hidden from the timeline and excluded from synthesis input but the raw event is preserved in state, so un-marking restores it. |
-| `POST /cases/:id/legitimate/remove` | `{ id }` — un-mark; re-runs synthesis. |
+| `GET /cases/:id/false-positive` | List client-confirmed false-positive findings/IOCs/events (excluded from analysis). |
+| `POST /cases/:id/false-positive` | `{ kind: "finding"\|"ioc"\|"event", ref, reason, note, label?, markedBy?, addToWhitelist? }` — mark a finding (ref = title), IOC (ref = value), or **forensic event** (ref = event id; `label` = its description for display) as a false positive; `reason` is one of `known-good-tool`/`authorized-test`/`detection-misfire`/`duplicate`/`other`, `markedBy` records who marked it, and re-runs synthesis without it. The dashboard's per-item **🚫 Mark False Positive** button calls this. For an **IOC**, `addToWhitelist: true` also promotes it to the global IOC whitelist. False-positive **events** are hidden from the timeline and excluded from synthesis input but the raw event is preserved in state, so un-marking restores it. |
+| `POST /cases/:id/false-positive/batch` | `{ items: [{ kind, ref, label? }], reason, note, markedBy?, addToWhitelist? }` — mark multiple findings/IOCs/events as false positives in one call; re-runs synthesis once afterward. |
+| `POST /cases/:id/false-positive/remove` | `{ id }` — un-mark; re-runs synthesis. |
+| `POST /cases/:id/false-positive/suggest` | `{ kind, ref, ai? }` — suggest other findings/IOCs/events similar to the one just marked, so the analyst can bulk-clear related noise; pass `{ ai: true }` to have the AI help rank/explain the suggestions (falls back to deterministic similarity otherwise). |
 | `GET /ioc-whitelist` | List the **global IOC whitelist** rules (known-good CIDR/exact/regex patterns). |
-| `POST /ioc-whitelist` | `{ match: "cidr"\|"regex"\|"exact", pattern, iocType?, note? }` — add a rule (validated; idempotent). Matching IOCs are auto-marked legitimate on import. |
+| `POST /ioc-whitelist` | `{ match: "cidr"\|"regex"\|"exact", pattern, iocType?, note? }` — add a rule (validated; idempotent). Matching IOCs are auto-marked false positive on import. |
 | `DELETE /ioc-whitelist/:ruleId` | Remove a whitelist rule. |
 | `POST /ioc-whitelist/import` | `{ text }` — bulk-import rules from pasted **CSV** (header `match,pattern,type,note`) or **JSON**; skips duplicates. |
 | `GET /ioc-whitelist/export?format=csv\|json` | Download the whitelist as CSV or JSON. |
-| `POST /cases/:id/ioc-whitelist/apply` | Apply the whitelist to this case's current IOCs now — marks matches legitimate, re-synthesizes; returns `{ matched, added, legitimate }`. |
+| `POST /cases/:id/ioc-whitelist/apply` | Apply the whitelist to this case's current IOCs now — marks matches false-positive, re-synthesizes; returns `{ matched, added, legitimate }`. |
 | `GET /nsrl` | **NSRL known-good hash set** stats: `{ count, enabled }` (count of loaded NIST NSRL / RDS hashes). |
 | `POST /nsrl/import` | `{ text }` — import known-good hashes from a pasted **NSRLFile.txt** (RDS CSV), a **hashdeep CSV**, or a **hash-per-line / comma list** (MD5/SHA-1/SHA-256); dedups, returns `{ added, parsed, total }`. |
 | `POST /nsrl/import-file` | `{ path }` — load hashes from file(s) on the **server's filesystem** (`;`-separated for multiple) — the in-UI equivalent of `DFIR_NSRL_FILE`, for big RDS sets you don't want to paste. Best-effort per file; returns `{ added, total, files[] }`. |
@@ -210,7 +212,7 @@ Examples:
 | `DELETE /nsrl/db` | Disconnect the RDS database (the flat set is unaffected). |
 | `POST /nsrl/clear` | Wipe the global NSRL set (e.g. to swap RDS releases). |
 | `GET /nsrl/export` | Download the set as a newline-delimited hash list. |
-| `POST /cases/:id/nsrl/apply` | Apply the NSRL set to this case now — marks events/IOCs with a known-good file hash legitimate, re-synthesizes; returns `{ matchedIocs, matchedEvents, added, legitimate }`. Auto-runs on every import; also pre-load big sets at startup via `DFIR_NSRL_FILE`. |
+| `POST /cases/:id/nsrl/apply` | Apply the NSRL set to this case now — marks events/IOCs with a known-good file hash false-positive, re-synthesizes; returns `{ matchedIocs, matchedEvents, added, legitimate }`. Auto-runs on every import; also pre-load big sets at startup via `DFIR_NSRL_FILE`. |
 | `GET /kev` | **CISA KEV catalog** stats: `{ count, enabled, catalogVersion?, dateReleased? }`. |
 | `POST /kev/import-url` | `{ url? }` — fetch the CISA KEV JSON from a URL (defaults to the official CISA feed); stores the catalog and invalidates the synthesis cache. Returns `{ total }`. Requires server outbound internet access. |
 | `POST /kev/import-file` | `{ path }` — load the KEV JSON from a server-local file path (for air-gapped deployments). Returns `{ total }`. |
@@ -333,7 +335,7 @@ The webhook URL is stored in `notifications/config.json` and **redacted** in eve
 ## NSRL known-good hashes (#63)
 
 A known-software hash matches a benign OS/application file, so flagging it lets the Companion
-**auto-mark the matching forensic event / IOC legitimate** (reversibly) and drop it from findings —
+**auto-mark the matching forensic event / IOC false-positive** (reversibly) and drop it from findings —
 cutting false positives. Two backends, used together (a hash is known-good if **either** has it):
 
 **1. Flat hash set** — for a small, curated list. Manage it in **Settings → NSRL**: paste an
@@ -365,7 +367,7 @@ The hash column lives on the `METADATA` base table (`FILE` is a view), which the
 
 **Opt-in by design:** both backends start empty/disconnected. NSRL is *known*, not strictly
 *known-good* — some RDS sets include hacktools, and a known hash can still be malicious in context
-(DLL side-loading, a renamed LOLBin) — and every match is reversible from *Confirmed Legitimate*.
+(DLL side-loading, a renamed LOLBin) — and every match is reversible from *False Positives*.
 
 ## CISA KEV integration (#99)
 
@@ -551,15 +553,20 @@ from the threat-intel verdict** — a telemetry-only IOC can still be malicious,
 one still needs enrichment. Surfaced at `GET /cases/:id/ioc-provenance`; the dashboard shows a per-IOC
 badge and an **All / Detection-linked / Telemetry-only** filter.
 
-**Confirmed-legitimate items (false positives).** When the client confirms an alert,
-tool, IOC, or a specific forensic-timeline event was their own benign activity, click
-**⚑ mark legitimate** on that finding / IOC / **event** in the dashboard (add a reason).
-It's stored per case (`state/legitimate.json`), synthesis is re-run **excluding it**, and
-it's listed in the "Confirmed Legitimate (excluded from analysis)" panel where you can
+**False positives.** When the client confirms an alert, tool, IOC, or a specific
+forensic-timeline event was their own authorized/benign activity — or a detection tool
+simply mis-fired — click **🚫 Mark False Positive** on that finding / IOC / **event** in
+the dashboard, pick a reason (known-good tool, authorized test, detection misfire,
+duplicate, or other), and confirm. It's stored per case (`state/false-positive.json`
+— reason + free-text note + the marking analyst), synthesis is re-run **excluding it**,
+and it's listed in the "False Positives (excluded from analysis)" panel where you can
 un-mark it. Findings/IOCs are dropped via both the prompt and a hard post-filter.
-A legitimate **event** is hidden from the timeline view and excluded from the synthesis
-input — but the raw event stays in state (it's evidence), so un-marking fully restores
-it. Reports honor all of these exclusions too.
+A false-positive **event** is hidden from the timeline view and excluded from the
+synthesis input — but the raw event stays in state (it's evidence), so un-marking fully
+restores it. Reports honor all of these exclusions too. Marking a finding/event also
+suggests other similar items in the case (shared MITRE technique/process/hash/related
+IOCs, plus an optional AI-assisted pass) to mark in the same action; marking a single
+IOC can also promote it to the global IOC whitelist.
 
 **Log import (firewall / syslog / VPN / access logs).** Log files are mostly
 repetition, so importing one does **not** add a timeline row per line. The raw lines
@@ -582,10 +589,10 @@ log file from the dashboard.)
 Severity / Level / Criticality column reading **Critical**, **High**, or **Severe**
 (e.g. a Microsoft Defender or EDR detection), it is treated as a finding by default —
 the extraction and synthesis prompts are told a high-severity row is ~90% of the time a
-finding. As a deterministic safety net, after each synthesis any in-scope, non-legitimate
+finding. As a deterministic safety net, after each synthesis any in-scope, non-false-positive
 **Critical/High** forensic event that synthesis left without a finding gets one
 auto-created and linked (id prefix `f-auto-`, badged **AUTO** in the dashboard) so a
-severe detection can never be silently missed. Refine or mark it legitimate as needed.
+severe detection can never be silently missed. Refine or mark it false-positive as needed.
 
 **Capture-only mode (the default).** AI analysis is **off by default** per case, so a
 fresh app start or a new case captures screenshots as evidence without running any AI
