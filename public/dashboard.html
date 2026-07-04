@@ -3903,7 +3903,28 @@
 
     // Findings min-confidence display floor (#226) — a per-case setting so it survives a page
     // reload, unlike a plain in-browser filter. Loaded on case connect; saved (debounced) on change.
+    // A pending debounced save is flushed on unload (beforeunload/pagehide) via `keepalive: true` —
+    // otherwise a reload shortly after typing (well within the 500ms debounce) would cancel the
+    // in-flight timer and silently drop the edit, reverting to the last-saved value.
     let confSaveTimer = null;
+    let confPending = null;   // { caseId, minConfidence } once a keystroke schedules a save, else null
+    function putConfidenceControl(caseId, minConfidence, opts) {
+      return fetch(`/cases/${caseId}/confidence-control`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ minConfidence: minConfidence > 0 ? minConfidence : null }),
+        ...opts,
+      });
+    }
+    function flushConfidenceControl() {
+      if (!confPending) return;
+      clearTimeout(confSaveTimer);
+      const { caseId, minConfidence } = confPending;
+      confPending = null;
+      putConfidenceControl(caseId, minConfidence, { keepalive: true }).catch(() => {});
+    }
+    window.addEventListener("beforeunload", flushConfidenceControl);
+    window.addEventListener("pagehide", flushConfidenceControl);
     function loadConfidenceControl(caseId) {
       fetch(`/cases/${caseId}/confidence-control`).then(r => r.json()).then(c => {
         document.getElementById("confFilter").value = c.minConfidence ?? 0;
@@ -3912,12 +3933,10 @@
     }
     function saveConfidenceControl(caseId, minConfidence) {
       clearTimeout(confSaveTimer);
+      confPending = { caseId, minConfidence };
       confSaveTimer = setTimeout(() => {
-        fetch(`/cases/${caseId}/confidence-control`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ minConfidence: minConfidence > 0 ? minConfidence : null }),
-        }).catch(() => {});
+        confPending = null;
+        putConfidenceControl(caseId, minConfidence).catch(() => {});
       }, 500);
     }
 
