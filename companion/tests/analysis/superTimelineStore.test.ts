@@ -22,7 +22,7 @@ describe("SuperTimelineStore", () => {
 
   it("query on an empty case returns an empty result", async () => {
     const r = await store.query("c1", {});
-    expect(r).toEqual({ events: [], total: 0, origins: [], labelsAvailable: [] });
+    expect(r).toEqual({ events: [], total: 0, origins: [], hosts: [], labelsAvailable: [] });
   });
 
   it("append persists events; query returns them; re-append dedups by id", async () => {
