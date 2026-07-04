@@ -155,6 +155,7 @@ Standard DFIR questions auto-answered from the synthesized case
 - **Findings** — per-technique analytic conclusions with severity + MITRE ATT&CK mapping
 - **Pinned findings** — pin the key findings (📌) to a sticky top strip that stays visible while you scroll the timeline/graph; drag-to-reorder, one-click jump, capped shortlist, persisted per case (travels in the snapshot)
 - **IOCs, MITRE coverage, attacker-path narrative** — cross-source corroboration badges + kill chain
+- **Inline IOC quick-actions** — click any detected value (IP/hash/domain/**SID**/URL/path) in an event row or an IOC value for a one-click tray: copy, mark benign, mark confirmed-malicious, suggest hunt — each outcome recorded to the investigation log
 - **Attack phases** — timeline grouped into activity bursts by time gap, labeled by dominant tactic (deterministic, no AI)
 - **Beacon/C2 candidates** — outbound channels with regular inter-arrival intervals (a hunting lead, not proof)
 - **Timeline anomalies** — per-asset event-rate spikes, two baselines: **peer** (an asset far busier than other assets in the same bucket) and **self** (an asset bursting above its own typical rate — catches a normally-quiet host that bursts, which broad telemetry can't mask); ranked Critical/High/Medium, linked to timeline events (deterministic, no AI)

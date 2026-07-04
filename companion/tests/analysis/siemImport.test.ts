@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSiemExport, extractRecords, isSuspiciousCmd, cleanIp } from "../../src/analysis/siemImport.js";
+import { parseSiemExport, extractRecords, isSuspiciousCmd, cleanIp, textIocs, type SiemIoc } from "../../src/analysis/siemImport.js";
 
 // ── Representative Windows Event Log records (Elastic _source shape) ─────────────
 const LOGON_4624 = {
@@ -474,5 +474,29 @@ describe("parseSiemExport — robustness", () => {
     expect(parseSiemExport("").total).toBe(0);
     expect(parseSiemExport("   ").events).toEqual([]);
     expect(parseSiemExport("not json at all").total).toBe(0);
+  });
+});
+
+describe("textIocs — Windows account SID extraction (#221)", () => {
+  const scrape = (text: string): SiemIoc[] => {
+    const sink = new Map<string, SiemIoc>();
+    textIocs(text, sink);
+    return [...sink.values()];
+  };
+
+  it("extracts a domain/account SID (S-1-5-21-…-RID) as a `sid` IOC, upper-cased", () => {
+    const iocs = scrape("Logon by S-1-5-21-1004336348-1177238915-682003330-1107 succeeded");
+    expect(iocs).toContainEqual({ type: "sid", value: "S-1-5-21-1004336348-1177238915-682003330-1107" });
+  });
+
+  it("normalizes case so a lower-case rendering dedupes with the canonical form", () => {
+    const iocs = scrape("s-1-5-21-1-2-3-500 and S-1-5-21-1-2-3-500");
+    expect(iocs.filter((i) => i.type === "sid")).toHaveLength(1);
+    expect(iocs[0].value).toBe("S-1-5-21-1-2-3-500");
+  });
+
+  it("does NOT flood on well-known service/builtin SIDs (S-1-5-18, S-1-5-32-544)", () => {
+    const iocs = scrape("SYSTEM S-1-5-18 and Administrators S-1-5-32-544 ran the task");
+    expect(iocs.filter((i) => i.type === "sid")).toHaveLength(0);
   });
 });

@@ -57,7 +57,7 @@ export interface ThorEvent {
 }
 
 export interface ThorIoc {
-  type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "other";
+  type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "sid" | "other";
   value: string;
 }
 

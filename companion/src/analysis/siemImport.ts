@@ -65,7 +65,7 @@ export interface SiemEvent {
 }
 
 export interface SiemIoc {
-  type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "other";
+  type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "sid" | "other";
   value: string;
 }
 
@@ -806,6 +806,11 @@ export function genericIocs(pairs: [string, string][], iocSink: Map<string, Siem
 const TEXT_URL_RE = /\bhttps?:\/\/[^\s'"|;>]+/gi;
 const TEXT_IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
 const TEXT_HASH_RE = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
+// Windows domain/local ACCOUNT SIDs only (S-1-5-21-<3 domain ids>-<RID>). These name a specific
+// principal and are genuinely investigative. Deliberately NOT the well-known service/builtin SIDs
+// (S-1-5-18/19/20 LocalSystem etc., S-1-5-32-* builtin groups) — those ride nearly every Windows
+// event and would flood the IOC list, exactly the signal-to-noise trap the analyst wants avoided.
+const TEXT_SID_RE = /\bS-1-5-21(?:-\d{1,10}){4}\b/gi;
 const TEXT_DOMAIN_RE = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b/gi;
 // Internal-only zones — an AD/mDNS hostname is an asset, not an indicator; don't flood the IOC list.
 const TEXT_DOMAIN_SKIP_RE = /\.(?:local|localdomain|internal|lan|home|corp|arpa)$/i;
@@ -816,6 +821,7 @@ const TEXT_FILE_EXT_RE = /\.(?:exe|dll|sys|ps1|bat|cmd|vbs|js|jar|sh|bin|conf|lo
 export function textIocs(text: string, sink: Map<string, SiemIoc>): void {
   if (!text) return;
   for (const m of text.match(TEXT_URL_RE) ?? []) addIoc(sink, "url", m.replace(/[).,;]+$/, "").slice(0, 300));
+  for (const m of text.match(TEXT_SID_RE) ?? []) addIoc(sink, "sid", m.toUpperCase());
   for (const m of text.match(TEXT_HASH_RE) ?? []) addIoc(sink, "hash", m.toLowerCase());
   for (const m of text.match(TEXT_IPV4_RE) ?? []) { const ip = cleanIp(m); if (ip) addIoc(sink, "ip", ip); }
   for (const m of text.matchAll(TEXT_DOMAIN_RE)) {

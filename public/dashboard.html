@@ -890,6 +890,26 @@
       color: var(--c-9aa4b2); border: 1px solid var(--c-2a2f3a); border-radius: 4px; cursor: pointer;
     }
     .unfp-btn:hover { color: var(--c-6bcb77); border-color: var(--c-6bcb77); }
+
+    /* Inline IOC quick-actions (#221). A detected value inside an event description / an IOC value
+       becomes a clickable target; clicking it opens the floating action tray anchored below it. */
+    .qa-val { border-bottom: 1px dotted var(--c-52617a); cursor: pointer; }
+    .qa-val:hover { border-bottom-color: var(--c-6aa9ff); background: var(--c-16324d); }
+    .qa-tray {
+      position: absolute; z-index: 60; display: flex; gap: 2px; align-items: center;
+      background: var(--c-0f1115); border: 1px solid var(--c-2a2f3a); border-radius: 8px;
+      padding: 3px; box-shadow: 0 6px 20px rgba(0,0,0,.5); font-size: 12px;
+    }
+    .qa-tray .qa-head { color: var(--c-9aa4b2); font-size: 10px; max-width: 220px; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; padding: 0 6px 0 4px; border-right: 1px solid var(--c-2a2f3a); }
+    .qa-tray button {
+      background: transparent; border: 1px solid transparent; color: var(--c-cbd3df);
+      border-radius: 6px; padding: 3px 7px; cursor: pointer; white-space: nowrap; font-size: 12px;
+    }
+    .qa-tray button:hover { border-color: var(--c-2a2f3a); background: var(--c-161a22); }
+    .qa-tray button.qa-mal:hover { color: var(--c-ff6b6b); border-color: var(--c-ff6b6b); }
+    .qa-tray button.qa-ben:hover { color: var(--c-6bcb77); border-color: var(--c-6bcb77); }
+    .qa-tray button.qa-copied { color: var(--c-6bcb77); }
     /* Report-details form: human-authored sections merged into the generated report. */
     #reportMeta .rm-hint { color: var(--c-9aa4b2); font-size: 12px; margin: 0 0 10px; }
     #reportMeta .rm-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 12px; margin-bottom: 8px; }
@@ -8508,6 +8528,182 @@
     }
     function escAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
 
+    // ── Inline IOC quick-actions (#221) ──────────────────────────────────────────────────────
+    // A detected value inside an event description — or an IOC value — becomes a clickable target
+    // (.qa-val); clicking it opens a small floating tray anchored below it with copy / mark-benign /
+    // mark-confirmed-malicious / suggest-hunt. It REUSES the existing false-positive modal + tag /
+    // hunt / comment routes (no new backend), and records each outcome to the investigation log via
+    // a best-effort comment. Detection is client-side so it also works on values that never became a
+    // structured IOC (a SID / path buried in a command line).
+    // Matchers are tried most-specific-first so an IP inside a URL, or a path, wins over a looser hit.
+    const QA_MATCHERS = [
+      ["url",    /\bhttps?:\/\/[^\s"'<>|)]+/gi],
+      ["path",   /\b[A-Za-z]:\\[^\s"'<>|]+|\\\\[^\s"'<>|]+/g],
+      ["sid",    /\bS-1-\d{1,2}(?:-\d{1,10}){1,15}\b/gi],
+      ["hash",   /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi],
+      ["ip",     /\b\d{1,3}(?:\.\d{1,3}){3}\b/g],
+      ["domain", /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b/gi],
+    ];
+    // A "domain" that is really a filename (evil.exe, report.json) — keep it plain, not clickable.
+    const QA_FILE_EXT = /\.(?:exe|dll|sys|ps1|bat|cmd|vbs|js|jar|sh|bin|conf|log|txt|json|xml|ya?ml|cfg|ini|py|pl|so|gz|tar|zip|7z|rar|tmp|bak|dat|pid|sock|key|pem|crt|docx?|xlsx?|pdf|png|jpe?g|gif)$/i;
+
+    function qaSpan(type, val, ctx) {
+      const evid = ctx && ctx.evid != null ? ` data-evid="${escAttr(String(ctx.evid))}"` : "";
+      const iocid = ctx && ctx.iocid != null ? ` data-iocid="${escAttr(String(ctx.iocid))}"` : "";
+      return `<span class="qa-val" data-vtype="${escAttr(type)}" data-val="${escAttr(val)}"${evid}${iocid}>${esc(val)}</span>`;
+    }
+
+    // Escape `rawText`, but wrap detected values in clickable .qa-val spans. Truncated to the same
+    // limit as descHtml so a linkified title reads identically to a plain one. Operates on the RAW
+    // string (esc()-ing the gaps itself) so an entity like &amp; can never land inside a data-val.
+    function qaLinkify(rawText, ctx) {
+      const text = truncate(String(rawText == null ? "" : rawText), DESC_TITLE_LIMIT);
+      const claims = [];
+      const overlaps = (s, e) => claims.some(c => s < c.end && e > c.start);
+      for (const [type, re] of QA_MATCHERS) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(text)) !== null) {
+          const val = m[0];
+          if (!val) { re.lastIndex++; continue; }
+          const s = m.index, e = s + val.length;
+          if (overlaps(s, e)) continue;
+          if (type === "domain" && QA_FILE_EXT.test(val)) continue;   // a filename, not a domain
+          claims.push({ start: s, end: e, type, val });
+        }
+      }
+      if (!claims.length) return esc(text);
+      claims.sort((a, b) => a.start - b.start);
+      let out = "", pos = 0;
+      for (const c of claims) {
+        if (c.start < pos) continue;
+        out += esc(text.slice(pos, c.start)) + qaSpan(c.type, c.val, ctx);
+        pos = c.end;
+      }
+      return out + esc(text.slice(pos));
+    }
+
+    let qaTrayEl = null;   // the floating tray element while open
+    let qaCur = null;      // { val, vtype, evid, iocid } for the value the tray is acting on
+    const qaCaseId = () => document.getElementById("caseId").value.trim();
+    function qaCloseTray() { if (qaTrayEl) { qaTrayEl.remove(); qaTrayEl = null; } qaCur = null; }
+
+    function qaOpenTray(anchor) {
+      qaCloseTray();
+      const val = anchor.getAttribute("data-val") || "";
+      if (!val) return;
+      qaCur = {
+        val, vtype: anchor.getAttribute("data-vtype") || "other",
+        evid: anchor.getAttribute("data-evid"), iocid: anchor.getAttribute("data-iocid"),
+      };
+      const tray = document.createElement("div");
+      tray.className = "qa-tray";
+      tray.innerHTML =
+        `<span class="qa-head" title="${escAttr(qaCur.vtype + ": " + val)}">${esc(qaCur.vtype)}</span>`
+        + `<button type="button" data-qa="copy" title="Copy value to clipboard">📋 Copy</button>`
+        + `<button type="button" class="qa-ben" data-qa="benign" title="Mark this value a false positive (benign) — opens the reason picker">🚫 Benign</button>`
+        + `<button type="button" class="qa-mal" data-qa="malicious" title="Tag this value confirmed-malicious">⚠ Malicious</button>`
+        + `<button type="button" data-qa="hunt" title="Generate hunt / pivot queries">🔍 Hunt</button>`;
+      tray.addEventListener("click", (e) => {
+        const b = e.target.closest("button[data-qa]");
+        if (!b) return;
+        e.stopPropagation();
+        qaAction(b.getAttribute("data-qa"), b);
+      });
+      document.body.appendChild(tray);
+      const r = anchor.getBoundingClientRect();
+      const top = r.bottom + window.scrollY + 4;
+      const maxLeft = window.scrollX + document.documentElement.clientWidth - tray.offsetWidth - 8;
+      const left = Math.max(window.scrollX + 8, Math.min(r.left + window.scrollX, maxLeft));
+      tray.style.left = left + "px";
+      tray.style.top = top + "px";
+      qaTrayEl = tray;
+    }
+
+    // Resolve a clicked value to its tracked IOC id (so tags/comments key consistently with how the
+    // IOC panel renders them); fall back to the raw value when it isn't a tracked IOC.
+    function qaResolveIocId(val, iocid) {
+      if (iocid) return iocid;
+      const m = ((lastState && lastState.iocs) || []).find(i => String(i.value).toLowerCase() === String(val).toLowerCase());
+      return (m && m.id) || val;
+    }
+
+    // A quick-action outcome is recorded as a durable comment (comments survive synthesis, unlike
+    // state.timeline which the benign-mark re-synthesis would race). It carries this leading mark so
+    // render() can surface it in the Investigation Log panel — where the analyst looks for it.
+    const QA_AUDIT_MARK = "⚑";
+    function qaAudit(caseId, targetType, targetId, text) {
+      if (!caseId) return;
+      fetch(`/cases/${caseId}/comments`, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ targetType, targetId, text: `${QA_AUDIT_MARK} ${text}`, author: investigatorName() }) })
+        .then(r => { if (r.ok) loadComments(caseId); }).catch(() => {});
+    }
+
+    function qaAction(kind, btn) {
+      if (!qaCur) return;
+      const { val, evid, iocid } = qaCur;
+      const caseId = qaCaseId();
+      if (kind === "copy") {
+        navigator.clipboard.writeText(val).then(() => {
+          btn.textContent = "✓ Copied"; btn.classList.add("qa-copied");
+          setTimeout(qaCloseTray, 900);
+        }).catch(() => { btn.textContent = "copy failed"; });
+        return;
+      }
+      if (!caseId) { qaCloseTray(); return; }
+      if (kind === "benign") {
+        qaCloseTray();
+        // Reuse the #227 reason-capture modal (records a reversible marker = the audit trail); on
+        // confirm, drop a narrative line into the Investigation Log, keyed to the IOC.
+        const rid = qaResolveIocId(val, iocid);
+        openFalsePositiveModal("ioc", val, val, [], () =>
+          qaAudit(caseId, "ioc", rid, `marked benign (false positive): ${val}`));
+        return;
+      }
+      if (kind === "malicious") {
+        // IOC tags render keyed by the IOC *id* (tagPills("ioc", i.id)), NOT the value — so key the
+        // tag the same way or the red pill never shows and the action looks like it did nothing.
+        // Resolve the clicked value to its tracked IOC id (an IOC-row click already carries it; an
+        // event-description value is looked up by value); fall back to the raw value otherwise.
+        const iocs = (lastState && lastState.iocs) || [];
+        const match = iocs.find(i => String(i.value).toLowerCase() === String(val).toLowerCase());
+        const targetId = iocid || (match && match.id) || val;
+        const tracked = !!(iocid || match);
+        btn.disabled = true; btn.textContent = "…";
+        fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ targetType: "ioc", targetId, label: "confirmed-malicious", author: investigatorName() }) })
+          .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+          .then(() => {
+            btn.textContent = "✓ tagged"; btn.classList.add("qa-copied");
+            loadTags(caseId);   // repaints the IOC row with the red confirmed-malicious pill
+            qaAudit(caseId, "ioc", targetId, `marked confirmed-malicious: ${val}`);
+            document.getElementById("status").textContent = tracked
+              ? `tagged “${val}” confirmed-malicious — red pill now on its IOC row`
+              : `recorded “${val}” confirmed-malicious (not a tracked IOC — logged as a note)`;
+            setTimeout(qaCloseTray, 700);
+          })
+          .catch(() => { btn.textContent = "failed"; document.getElementById("status").textContent = "tag failed — restart the companion server."; });
+        return;
+      }
+      if (kind === "hunt") {
+        qaCloseTray();
+        // The hunt builder harvests every indicator from the owning entity; scope to the IOC when the
+        // value is an IOC row, else to the event the value was found in.
+        if (iocid) openHuntModal("ioc", iocid);
+        else if (evid) openHuntModal("event", evid);
+        return;
+      }
+    }
+
+    // Open the tray on a .qa-val click; close it on any outside click / Escape / resize.
+    document.addEventListener("click", (e) => {
+      const anchor = e.target.closest && e.target.closest(".qa-val");
+      if (anchor) { e.stopPropagation(); qaOpenTray(anchor); return; }
+      if (qaTrayEl && !(e.target.closest && e.target.closest(".qa-tray"))) qaCloseTray();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") qaCloseTray(); });
+    window.addEventListener("resize", qaCloseTray);
+
     // --- Screenshot OCR full-text search (#176) ---------------------------------------------
     // Queries GET /cases/:id/ocr-search and links each hit back to the screenshot it came from.
     (function wireOcrSearch() {
@@ -10772,10 +10968,20 @@
       }
       const un = e.target.closest(".unfp-btn");
       if (un) {
+        // Parse the marker id (`<kind>:<ref>`) so the reversal can be recorded in the Investigation
+        // Log too — symmetric with the mark action (#221).
+        const mid = un.dataset.id || "";
+        const ci = mid.indexOf(":");
+        const unKind = ci >= 0 ? mid.slice(0, ci) : "ioc";
+        const unRef = ci >= 0 ? mid.slice(ci + 1) : mid;
         fetch(`/cases/${caseId}/false-positive/remove`, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ id: un.dataset.id }) })
           .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-          .then(renderFalsePositives)
+          .then(markers => {
+            renderFalsePositives(markers);
+            const tid = unKind === "ioc" ? qaResolveIocId(unRef, null) : unRef;
+            qaAudit(caseId, unKind, tid, `un-marked false positive: ${unRef}`);
+          })
           .catch(() => document.getElementById("status").textContent = "un-mark failed — restart the companion server.");
       }
     });
@@ -10883,7 +11089,7 @@
           // Mirror the forensic timeline: control cluster (comment + tag-add + hunt icons),
           // then the id, then the tag PILLS, then the indicator itself.
           +   `${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
-          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> ${valueHtml}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)} ${fpAction}${enrichBadges(i)}`
+          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> <span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)} ${fpAction}${enrichBadges(i)}`
           + `</span>`
           + `</div>`;
       }).join("");
@@ -11330,7 +11536,7 @@
           + (tlShow("badges", tld) ? `${newBadge}${badge}${corro}${chain}` : "")
           + (showHost ? host : "")
           + (details.toggle ? ` ${details.toggle}` : "")
-          + ` ${descHtml(details.title)} ${fpBtn("event", e.id, desc)}${veloLink}`
+          + ` ${qaLinkify(details.title, { evid: id })} ${fpBtn("event", e.id, desc)}${veloLink}`
           + (tlShow("badges", tld) && e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:var(--c-ff8a8a)">${esc(e.chainCheck.note)}</small>` : "")
           + details.panel
           + `</div>`
@@ -11571,8 +11777,18 @@
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs)}</div>`;
         }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
+      // Investigation Log = state.timeline (import / AI notes) + analyst quick-action audit lines
+      // (durable comments tagged with QA_AUDIT_MARK), merged chronologically.
+      const _logRows = state.timeline.map(t => ({ ts: t.timestamp, html: esc(t.description) }));
+      commentsByTarget.forEach(list => (list || []).forEach(c => {
+        if (typeof c.text === "string" && c.text.indexOf(QA_AUDIT_MARK) === 0) {
+          const who = c.author ? ` <span style="color:var(--c-9aa4b2)">— ${esc(c.author)}</span>` : "";
+          _logRows.push({ ts: c.createdAt, html: esc(c.text) + who });
+        }
+      }));
+      _logRows.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
       document.getElementById("timeline").innerHTML =
-        state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
+        _logRows.map(r => `<div>• <small>${esc(r.ts)}</small> ${r.html}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
         state.mitreTechniques.map(m => `<div>${mitreLinks([m.id])} — ${esc(m.name)} (${esc(m.findingIds.join(", "))})</div>`).join("") || "—";
       renderPinned();   // pinned-strip titles resolve against the just-rendered findings (#220)

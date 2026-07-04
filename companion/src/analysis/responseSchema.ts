@@ -3,7 +3,7 @@ import { z } from "zod";
 // Enums use .catch(fallback) so ONE unexpected value (e.g. an IOC type of "malware")
 // maps to the fallback instead of rejecting the ENTIRE synthesis response.
 const severity = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
-const iocType = z.enum(["ip", "domain", "hash", "file", "process", "url", "other"]);
+const iocType = z.enum(["ip", "domain", "hash", "file", "process", "url", "sid", "other"]);
 
 export const deltaSchema = z.object({
   findings: z.array(z.object({

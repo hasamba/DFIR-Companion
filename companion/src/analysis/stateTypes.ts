@@ -23,7 +23,7 @@ export interface IocEnrichment {
 
 export interface IOC {
   id: string;
-  type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "other";
+  type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "sid" | "other";
   value: string;
   firstSeen: string;
   enrichments?: IocEnrichment[];                               // threat-intel HITS (added by the enrich pass)
