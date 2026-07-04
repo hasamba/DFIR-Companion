@@ -385,6 +385,48 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
   });
 });
 
+// ── A Velociraptor artifact that shells out to Chainsaw and streams its rows back as VQL:
+// Chainsaw's own flat Sigma-mapping shape (Detection/Severity/Rule Group siblings), NOT
+// Velociraptor's DetectRaptor {Detection:{Name,Criticality}} convention. Must NOT be
+// misclassified as a generic `detection` row, or the real Severity is lost.
+describe("parseVelociraptorJson — Chainsaw rows shelled out via a Velociraptor artifact", () => {
+  function chainsawLogClearedRow(): object {
+    return {
+      _Source: "Custom.Windows.Detection.Chainsaw",
+      EventTime: "2026-07-02T09:12:00Z",
+      Detection: "Security Audit Logs Cleared",
+      Severity: "critical",
+      Status: "stable",
+      "Rule Group": "Log Tampering",
+      Computer: "WIN-UK1GV882OK6",
+      Channel: "Security",
+      EventID: 1102,
+      SystemData: { EventID: 1102, Provider_attributes: { Name: "Microsoft-Windows-Eventlog" }, Computer: "WIN-UK1GV882OK6" },
+      EventData: { SubjectUserName: "vagrant", SubjectDomainName: "DESKTOP-MNNUHHU" },
+      Authors: ["frack113"],
+    };
+  }
+
+  it("reads the sibling Severity field instead of guessing from the title keyword", () => {
+    const r = parseVelociraptorJson(JSON.stringify([chainsawLogClearedRow()]));
+    expect(r.detections).toBe(1);
+    const e = r.events[0];
+    // A generic DetectRaptor-style read would find no keyword match on "Security Audit Logs
+    // Cleared" and default to Medium — this MUST come from the row's own "critical".
+    expect(e.severity).toBe("Critical");
+    expect(e.description).toContain("Chainsaw/Log Tampering: Security Audit Logs Cleared");
+    expect(e.asset).toBe("WIN-UK1GV882OK6");
+    expect(e.sources).toEqual(["Chainsaw"]); // corroboration stays keyed to the real tool, not "Velociraptor"
+  });
+
+  it("does not confuse a real DetectRaptor bare-string Detection (no EventID) for the flat Chainsaw shape", () => {
+    const row = { EventTime: "2025-03-14T21:25:03Z", Detection: "Cobalt Strike: trick_ryuk.profile", Exe: "C:\\x.exe" };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.events[0].description).toContain("Velociraptor detection: Cobalt Strike: trick_ryuk.profile");
+    expect(r.events[0].sources).toEqual(["Velociraptor"]);
+  });
+});
+
 describe("parseVelociraptorJson — IOC hygiene & extra time keys (#102)", () => {
   it("a YARA hit extracts only the matched file — NOT the rule's Meta references / HitContext bytes", () => {
     const row = {
