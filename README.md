@@ -251,7 +251,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Case memory** — synthesis logs each run to a durable, never-wiped Investigation Log; a *known unknowns* block (timeline gaps, uncovered ATT&CK phases, lookalike actors' next techniques) grounds synthesis + hunt suggestions; opt-in candidate-actor hypotheses (`DFIR_SYNTH_ADVERSARY_HINTS`)
 - **Response Playbook** — trackable checklist (status/priority/assignee/due/custom tasks); opt-in IR-templates expand findings into Contain→Investigate→Eradicate→Recover
 - **Triage tags & comments** — label entities + attach notes; live WebSocket sync; survive synthesis
-- **Bulk actions** — multi-select events/IOCs: star/tag/mark-legitimate/enrich/copy
+- **Bulk actions** — multi-select events/IOCs: star/tag/mark-false-positive/enrich/copy
 - **IOC whitelist** (Settings) — CIDR/exact/regex patterns auto-mark matching IOCs legitimate; global; opt-in
 - **NSRL known-good hashes** (Settings) — flat hash set or direct SQLite DB query (~160 GB); auto-marks matching events/IOCs legitimate
 - **Payload deobfuscation** — auto-decodes base64 PowerShell (`-enc`, `[Convert]::FromBase64String`); extracts hidden IOCs; shows [Decoded] blocks
@@ -267,7 +267,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Hunting feedback loop** — records each deployed hunt's outcome (new evidence + counts) per case; suggestions skip an already-run query and pivot on what hit, with a *Hunting Profile* of hunted/hit/missed
 - **Webhook push ingest** (opt-in, token) — external tools push alerts via `POST /cases/:id/push` (SIEM webhook, Velociraptor monitor, scripts)
 - **Velociraptor live monitoring** (opt-in) — stream CLIENT_EVENT artifacts (e.g., ProcessCreation) as events fire; auto-collect on interval; one-click auto-monitor for all enabled artifacts
-- **Scope + legitimacy** — set time window; mark findings/IOCs/events legitimate (reversible); all views re-project
+- **Scope + false-positive marking** — set time window; mark findings/IOCs/events false-positive with a structured reason (known-good tool/authorized test/detection misfire/duplicate/other) + analyst attribution (reversible); all views re-project
+- **False-positive similarity suggestions** — mark one item false-positive and get ranked "similar items" candidates (shared MITRE/process/hash/asset/IOCs), deterministic or AI-assisted, to dismiss the same pattern in one pass; single-IOC marks can also one-click-promote to the global IOC whitelist
 - **Freshness** — "last synthesized N ago" + diff (duration/event/IOC counts); "last import N ago" + NEW row highlights; ⚠ advisory for cases >5 000 events
 - **Timeline pagination** — 100/250/500/all rows per page (user-selectable); prev/next controls
 - **Timeline source filter** — faceted dropdown (beside the severity legend) to show/hide events by the tool/source that produced them; multi-source events stay visible unless every source is hidden
