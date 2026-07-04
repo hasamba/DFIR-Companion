@@ -1676,10 +1676,17 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Duplicate screenshot detection<span class="sfield-hint">DFIR_DEDUP — skips a capture only if it's byte-identical to the one before it (screen didn't change). Any change is analyzed. Set <code>off</code> to analyze every screenshot regardless</span></label><input id="env-DFIR_DEDUP" placeholder="on" /></div>
+          <div class="sfield"><label>Screenshot OCR search<span class="sfield-hint">DFIR_OCR_SEARCH — local Tesseract OCR indexing of every capture, searchable from the filter bar; local-only, no AI. Set <code>off</code> to disable if performance is a concern</span></label><input id="env-DFIR_OCR_SEARCH" placeholder="on" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>
           <div class="sfield"><label>Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
+        </div>
+        <div class="settings-group-head">Evidence drop folder (auto-import inbox)</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Enabled<span class="sfield-hint">DFIR_DROP_ENABLED — set "off" to disable the per-case drop/ folder watcher entirely</span></label><input id="env-DFIR_DROP_ENABLED" placeholder="on" /></div>
+          <div class="sfield"><label>Poll interval (s)<span class="sfield-hint">DFIR_DROP_POLL_S — how often each case's drop folder is swept (clamped 2..600)</span></label><input id="env-DFIR_DROP_POLL_S" placeholder="10" /></div>
+          <div class="sfield"><label>Max file size (bytes)<span class="sfield-hint">DFIR_DROP_MAX_BYTES — per-file size cap (default 200 MB); larger files fail with a hint to use Import-from-path</span></label><input id="env-DFIR_DROP_MAX_BYTES" placeholder="209715200" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Disk-space warning threshold (%)<span class="sfield-hint">DFIR_DISK_WARN_PCT — "danger" usage % that triggers the orange disk-space banner; warning is 15 pp below, critical 10 pp above. Leave blank for defaults (70/85/95%). Set to 0 to disable the check</span></label><input id="env-DFIR_DISK_WARN_PCT" placeholder="85" /></div>
@@ -2282,6 +2289,7 @@
           <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_HAYABUSA_UPDATE_CMD — full command; blank = &lt;binary&gt; update-rules</span></label><input id="env-DFIR_TOOL_HAYABUSA_UPDATE_CMD" placeholder="(default: <binary> update-rules)" /></div>
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_HAYABUSA_AUTO_RUN — opt-in; default OFF (a raw drop asks first). Set "on" to run without asking</span></label><input id="env-DFIR_TOOL_HAYABUSA_AUTO_RUN" placeholder="off (opt-in)" /></div>
           <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_HAYABUSA_TIMEOUT_MS (default 300000)</span></label><input id="env-DFIR_TOOL_HAYABUSA_TIMEOUT_MS" placeholder="300000" /></div>
+          <div class="sfield"><label>Max output (bytes)<span class="sfield-hint">DFIR_TOOL_HAYABUSA_MAX_OUTPUT (default 104857600 = 100 MB)</span></label><input id="env-DFIR_TOOL_HAYABUSA_MAX_OUTPUT" placeholder="104857600" /></div>
         </div>
         <div style="margin:4px 0 14px"><button class="tool-update" data-tool="hayabusa" type="button">↻ Update rules</button></div>
 
@@ -2293,6 +2301,7 @@
           <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_RUN_ARGS — &lt;targetdir&gt;/&lt;definitions&gt; substituted; blank = default</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_RUN_ARGS" placeholder="--definitions <definitions> -r Windows.Hayabusa.Rules --ROOT <targetdir> --nobanner --no-debug > <output>" /></div>
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_AUTO_RUN — opt-in; default OFF</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_AUTO_RUN" placeholder="off (opt-in)" /></div>
           <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_TIMEOUT_MS</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_TIMEOUT_MS" placeholder="300000" /></div>
+          <div class="sfield"><label>Max output (bytes)<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_MAX_OUTPUT (default 104857600 = 100 MB)</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_MAX_OUTPUT" placeholder="104857600" /></div>
         </div>
 
         <div class="settings-group-head">Suricata <span style="color:var(--c-7e8aa0);font-weight:400">(PCAP → eve.json · <a href="https://suricata.io/download/" target="_blank" rel="noopener">download</a>)</span></div>
@@ -2303,6 +2312,7 @@
           <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_SURICATA_UPDATE_CMD — blank = no button (Windows: update rules manually, see above)</span></label><input id="env-DFIR_TOOL_SURICATA_UPDATE_CMD" placeholder="(none on Windows)" /></div>
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_SURICATA_AUTO_RUN — on/off</span></label><input id="env-DFIR_TOOL_SURICATA_AUTO_RUN" placeholder="off (opt-in)" /></div>
           <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_SURICATA_TIMEOUT_MS</span></label><input id="env-DFIR_TOOL_SURICATA_TIMEOUT_MS" placeholder="300000" /></div>
+          <div class="sfield"><label>Max output (bytes)<span class="sfield-hint">DFIR_TOOL_SURICATA_MAX_OUTPUT (default 104857600 = 100 MB)</span></label><input id="env-DFIR_TOOL_SURICATA_MAX_OUTPUT" placeholder="104857600" /></div>
         </div>
         <div style="margin:4px 0 14px"><button class="tool-update" data-tool="suricata" type="button">↻ Update rules</button> <span style="font-size:11px;color:var(--c-7e8aa0)">(only if you configured an update command above)</span></div>
 
@@ -2313,6 +2323,8 @@
           <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_SNORT_RUN_ARGS — output on stdout; blank = default</span></label><input id="env-DFIR_TOOL_SNORT_RUN_ARGS" placeholder="-r <target> -c <rules> -A fast -q" /></div>
           <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_SNORT_UPDATE_CMD — e.g. your PulledPork command; blank = no button</span></label><input id="env-DFIR_TOOL_SNORT_UPDATE_CMD" placeholder="(none — e.g. pulledpork)" /></div>
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_SNORT_AUTO_RUN — on/off</span></label><input id="env-DFIR_TOOL_SNORT_AUTO_RUN" placeholder="off (opt-in)" /></div>
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_SNORT_TIMEOUT_MS</span></label><input id="env-DFIR_TOOL_SNORT_TIMEOUT_MS" placeholder="300000" /></div>
+          <div class="sfield"><label>Max output (bytes)<span class="sfield-hint">DFIR_TOOL_SNORT_MAX_OUTPUT (default 104857600 = 100 MB)</span></label><input id="env-DFIR_TOOL_SNORT_MAX_OUTPUT" placeholder="104857600" /></div>
         </div>
         <div style="margin:4px 0 14px"><button class="tool-update" data-tool="snort" type="button">↻ Update rules</button></div>
 
@@ -2323,6 +2335,8 @@
           <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_YARA_RUN_ARGS — output on stdout; blank = default</span></label><input id="env-DFIR_TOOL_YARA_RUN_ARGS" placeholder="-s -m -r <rules> <target>" /></div>
           <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_YARA_UPDATE_CMD — e.g. git -C &lt;rulesDir&gt; pull; blank = no button</span></label><input id="env-DFIR_TOOL_YARA_UPDATE_CMD" placeholder="(none — e.g. git -C ... pull)" /></div>
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_YARA_AUTO_RUN — on/off (no drop extension; manual run only by default)</span></label><input id="env-DFIR_TOOL_YARA_AUTO_RUN" placeholder="off (opt-in)" /></div>
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_YARA_TIMEOUT_MS</span></label><input id="env-DFIR_TOOL_YARA_TIMEOUT_MS" placeholder="300000" /></div>
+          <div class="sfield"><label>Max output (bytes)<span class="sfield-hint">DFIR_TOOL_YARA_MAX_OUTPUT (default 104857600 = 100 MB)</span></label><input id="env-DFIR_TOOL_YARA_MAX_OUTPUT" placeholder="104857600" /></div>
         </div>
         <div style="margin:4px 0 14px"><button class="tool-update" data-tool="yara" type="button">↻ Update rules</button></div>
 
@@ -2806,6 +2820,12 @@
           <span id="diagMsg" class="manual-msg"></span>
         </div>
         <div id="diagBody" style="font-size:12.5px;color:var(--c-cbd3df)">Loading…</div>
+        <div class="settings-group-head" style="margin-top:14px">Automatic state backup configuration<span style="color:var(--c-7e8aa0);font-weight:400"> — created before each synthesis + on an interval</span></div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Max backups kept per case<span class="sfield-hint">DFIR_STATE_BACKUP_RETAIN — oldest pruned once exceeded (default 24); 0 = unbounded</span></label><input id="env-DFIR_STATE_BACKUP_RETAIN" placeholder="24" /></div>
+          <div class="sfield"><label>Pre-synthesis slots reserved<span class="sfield-hint">DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN — of the slots above, how many stay reserved for pre-synthesis backups so interval backups can't crowd them out (default 10)</span></label><input id="env-DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN" placeholder="10" /></div>
+          <div class="sfield"><label>Interval backup (ms)<span class="sfield-hint">DFIR_STATE_BACKUP_INTERVAL_MS — time-based backup interval (default 3600000 = 1h); 0 = interval backups off</span></label><input id="env-DFIR_STATE_BACKUP_INTERVAL_MS" placeholder="3600000" /></div>
+        </div>
         <!-- Case backup restore (#180) -->
         <div id="diagCaseBackups" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--c-2a2f3a,#2a2f3a)">
           <div style="font-weight:600;color:var(--c-9aa4b2,#9aa4b2);font-size:12.5px;margin-bottom:6px">Restore a case backup</div>

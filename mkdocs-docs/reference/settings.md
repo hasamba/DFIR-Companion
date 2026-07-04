@@ -15,6 +15,8 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 - Theme (dark / light)
 - **Import severity** — manage or clear the remembered minimum-severity import floor (see [Importing Evidence](importing.md#optional-severity-floor))
 - **Timeline row display** — choose which sub-elements show on each forensic-timeline row (see [Dashboard → Forensic Timeline](dashboard.md#forensic-timeline))
+- **Screenshot OCR search** — enable/disable local Tesseract OCR indexing of captures
+- **Evidence drop folder** — enable/disable the per-case auto-import watcher, poll interval, and per-file size cap (see [Importing Evidence](importing.md#evidence-drop-folder-auto-import-inbox))
 
 ---
 

@@ -183,6 +183,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-d3fend",
       "sec-hypotheses",
       "sec-super-timeline",
+      "sec-false-positive",
       "sec-notebook",
     ],
     defaultSort: "time",

@@ -49,27 +49,21 @@ Phases with evidence are highlighted. Gaps may indicate coverage blind spots.
 
 The core of the investigation. A table of all forensic events, sorted by timestamp (or severity — click the column header to sort).
 
-Each row shows:
+Each row shows a compact title line (timestamp, severity badge, description, source tool(s), asset, `NEW` badge if added in the last import); a **[details ▶]** toggle expands the full description, MITRE, related findings, decoded payloads, evidence link, and the raw tool message in one shared panel below the row. Row actions:
 
-- Timestamp
-- Severity badge (color-coded)
-- Description
-- Source tool(s) — e.g. Chainsaw, Velociraptor, SIEM
-- Asset (affected host)
-- Evidence link (click to open the screenshot or imported file)
-- `NEW` badge if added in the last import
 - **💡 Explain** button — AI explains this event, gives ATT&CK context, and suggests pivot queries
-- **[Decoded]** expander — for events with base64/PowerShell encoded payloads, shows the decoded content
 - **🚫 Mark False Positive** — excludes this event from analysis
 
 ### Filters
 
 - **Severity** — Critical / High / Medium / Low / Info
 - **Source** — show/hide by tool (e.g. hide all Chainsaw, show only Velociraptor)
+- **Origins** — one level more specific than Source: show/hide by the exact artifact that produced the event (e.g. `DetectRaptor.Windows.Detection.MFT`)
 - **Date range** — filter by time window (or use the **Scope** bar to set the investigation scope)
 - **🔍 Screenshot text** — full-text search across OCR'd screenshots
+- **Exclude** — chip-list control next to the toolbar search bar; hides timeline events / IOCs / findings matching any of several exclude terms
 - **Corroboration lens** — show only events observed by 2+ or 3+ distinct tools (see below)
-- **Pagination** — 100 / 250 / 500 / All rows per page
+- **Pagination** — 100 / 250 / 500 / All rows per page; the Prev/Next bar sits above the event rows
 
 !!! tip
     Drag a time range on the **Timeline Swimlane** (below) to instantly scope the timeline to that window.
@@ -174,7 +168,7 @@ Every indicator extracted from all evidence:
 - File paths
 - Process names
 
-**Filters:** by type (ip/domain/url/hash/file/process/other), by flagged-only, text search, corroboration lens (see below).
+**Filters:** by type (ip/domain/url/hash/file/process/other), by flagged-only, text search, corroboration lens (see below), plus three composable noise-reduction toggles (default on, per-browser): **Hide FP/no-intel** (drops IOCs marked false-positive or with no enrichment result), **Hide OS system paths** (drops `file` IOCs under well-known system-binary directories), and **🎯 Signal only** (narrows to flagged, corroborated, or enriched IOCs).
 
 Each IOC shows:
 
@@ -364,6 +358,25 @@ Requires GeoIP enrichment to be configured and enabled.
 
 ---
 
+## Super-Timeline
+
+A Timesketch-style complete record of **every** imported event, kept separately from the forensic timeline so the AI never synthesizes it — the forensic timeline stays detections-focused while nothing is ever lost.
+
+- **Filter** by time, origin (artifact), or label — e.g. hide Sigma/YARA/Hayabusa detections to see only raw host artifacts
+- **Save named timeframes** for quick recall
+- **Label** events for your own triage
+- **Promote** selected events into the forensic timeline so AI synthesis picks them up
+- Each row can expand a **[details ▶]** toggle for the full untruncated message, and a Velociraptor-sourced row shows a **↗ Velociraptor** link back to the originating hunt/flow
+
+A **"Super-Timeline Triage"** Velociraptor bundle collects raw Windows host artifacts (MFT, USN, EVTX, registry, Prefetch, Amcache, LNK, browser history, RecycleBin, scheduled tasks, ActivitiesCache) directly into the super-timeline only.
+
+!!! info "Why events don't all reach the forensic timeline"
+    Info-severity telemetry routes to the super-timeline only by default (the forensic timeline keeps Low+ graded signal) so synthesis isn't swamped by raw noise. Configure the floor via **Settings → General** (`DFIR_FORENSIC_MIN_SEVERITY`) globally, with a per-case override. Promoting an event always bypasses the gate, and IOCs are still extracted from every event regardless.
+
+---
+
 ## False Positives (Excluded from Analysis)
 
-Everything you have marked as a false positive or known-good. Shows findings, events, and IOCs with their exclusion reason. Click any item to reinstate it.
+Everything you have marked as a false positive or known-good. Shows findings, events, and IOCs with their exclusion reason and analyst attribution. Click any item to reinstate it.
+
+Marking an item asks for a **structured reason** (known-good tool / authorized test / detection misfire / duplicate / other) and offers ranked **"find similar items"** suggestions (shared MITRE technique, process, hash, asset, or IOCs) so the same recurring pattern can be dismissed in one pass — deterministic by default, or AI-assisted for less obvious matches. Marking a single IOC can also **one-click-promote** it to the global IOC whitelist so future imports auto-exclude it.

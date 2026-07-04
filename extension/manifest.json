@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DFIR Companion — Evidence Capture & Push",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "description": "Connects to your local DFIR Companion server. Captures screenshots and pushes detections from DFIR consoles to the dashboard.",
   "icons": {
     "16": "icons/icon16.png",
