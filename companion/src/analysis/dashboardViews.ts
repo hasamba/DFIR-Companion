@@ -66,7 +66,7 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-mitre",
   "sec-adversary",
   "sec-d3fend",
-  "sec-legitimate",
+  "sec-false-positive",
   "sec-hypotheses",
   "sec-notebook",
   "sec-inv-log",
