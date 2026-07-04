@@ -236,6 +236,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Providers** — OpenAI, OpenRouter, Ollama, LiteLLM, Gemini; optional two-tier (cheap extract + strong synth) with context budgeting
 - **EDR/SIEM consoles as evidence** — detections extracted; analyst navigation filtered (real detections never dropped)
 - **Severity-aware findings** — Critical/High rows become findings; deterministic auto-creation for missed high-severity events
+- **Confidence scoring + reasoning** — every finding carries a 0–100% confidence (weighing evidence strength, tool corroboration, and model certainty) plus a one-line reason; a persistent per-case min-confidence filter (survives reload) hides low-confidence findings on demand
 - **Efficient synthesis** — live debounced re-synthesis; skip-if-unchanged; stratified event selection + asset↔IOC digest
 - **Second LLM opinion** — on-demand QA: different model re-synthesizes case, reconciles disagreements (per-item accept/reject); durable across re-synthesis
 - **AI-input anonymization** — reversibly tokenizes IPs/users/hosts/domains/emails/paths, PowerShell encoded-command blobs, and victim SIDs; one-way-redacts secrets (adversary IOCs preserved)

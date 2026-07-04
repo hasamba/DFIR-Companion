@@ -22,12 +22,19 @@ Your primary conclusions. Each finding has:
 
 - **Title** — what happened
 - **Severity** — Critical / High / Medium / Low / Info
+- **Confidence** — a 0–100% badge (color-coded: ≥80% high, ≥50% medium, else low) — the AI's certainty
+  this finding is real attacker activity rather than a false positive, weighing evidence strength,
+  corroboration from multiple tools, and its own certainty. Hover the badge, or expand the finding's
+  evidence details, for the one-line **reason** behind the score. A deterministic auto-flagged finding
+  (backfilled from an uncovered Critical/High event — see below) always shows 100%.
 - **MITRE techniques** — linked to attack.mitre.org
 - **Supporting events** — click to jump to each event in the timeline
 - **Supporting IOCs** — the indicators that back this finding
 - **🚫 Mark False Positive** — exclude from analysis
 
-The finding list is sorted worst-first. Click a finding to expand it.
+The finding list is sorted worst-first. Click a finding to expand it. The **Min confidence** box above
+the list hides findings below the chosen floor (findings with no confidence score always show); the
+floor is a per-case setting, so it's remembered the next time you open the case.
 
 ---
 

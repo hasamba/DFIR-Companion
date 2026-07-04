@@ -34,6 +34,7 @@ export interface Finding {
   id: string;
   severity: Severity;
   confidence?: number;          // 0–100: AI certainty this finding is real (absent = unknown)
+  confidenceReason?: string;    // one-sentence why (evidence strength, source corroboration, model certainty)
   title: string;
   description: string;
   relatedIocs: string[];        // IOC ids

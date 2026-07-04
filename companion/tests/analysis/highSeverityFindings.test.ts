@@ -27,8 +27,20 @@ describe("backfillHighSeverityFindings", () => {
     expect(out.findings).toHaveLength(1);
     expect(out.findings[0]).toMatchObject({ id: "f-auto-e1", severity: "Critical", status: "open", mitreTechniques: ["T1003"], sourceScreenshots: ["s1.webp"] });
     expect(out.findings[0].title).toBe("Microsoft Defender flagged Rubeus.exe");
+    // A deterministic backfill is maximally confident — it's a graded artifact row, not a guess.
+    expect(out.findings[0].confidence).toBe(100);
+    expect(out.findings[0].confidenceReason).toMatch(/backfill/i);
     // The event is linked back to the new finding.
     expect(out.forensicTimeline[0].relatedFindingIds).toEqual(["f-auto-e1"]);
+  });
+
+  it("mentions tool corroboration in confidenceReason when 2+ distinct sources back the event", () => {
+    const state = emptyState("c1");
+    state.forensicTimeline.push(
+      ev({ id: "e1", severity: "Critical", sources: ["Velociraptor", "THOR"] }),
+    );
+    const out = backfillHighSeverityFindings(state, new Set(["e1"]), "t");
+    expect(out.findings[0].confidenceReason).toMatch(/2 distinct tools/);
   });
 
   it("does NOT touch events already covered by a synthesis finding", () => {
