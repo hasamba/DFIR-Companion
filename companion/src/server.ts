@@ -4683,7 +4683,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (marker.kind === "ioc" && req.body?.addToWhitelist && options.iocWhitelistStore) {
         const state = options.stateStore ? await options.stateStore.load(req.params.id) : null;
         const iocType = state?.iocs.find((i) => i.value.toLowerCase() === marker.ref.toLowerCase())?.type;
-        await options.iocWhitelistStore.add({ match: "exact", pattern: marker.ref, iocType, note: `promoted from false-positive marking: ${marker.note || marker.reason}` });
+        const note = marker.note?.trim()
+          ? `promoted from false-positive marking (${marker.reason}): ${marker.note}`
+          : `promoted from false-positive marking (${marker.reason})`;
+        const whitelistInput = sanitizeRuleInput({ match: "exact", pattern: marker.ref, iocType, note });
+        // Best-effort side effect: the false-positive marking itself must succeed even when the
+        // whitelist promotion is rejected (e.g. an oversized ref) — so skip silently, don't 400/500.
+        if (whitelistInput) await options.iocWhitelistStore.add(whitelistInput);
       }
       options.onFalsePositive?.(req.params.id);
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it

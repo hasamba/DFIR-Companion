@@ -1170,12 +1170,56 @@ describe("state and report routes", () => {
     // seed an IOC on the case first
     await request(app).post("/cases/c1/iocs").send({ type: "ip", value: "10.0.0.5" });
     const res = await request(app).post("/cases/c1/false-positive").send({
-      kind: "ioc", ref: "10.0.0.5", reason: "known-good-tool", addToWhitelist: true,
+      kind: "ioc", ref: "10.0.0.5", reason: "known-good-tool", note: "internal scanner IP", addToWhitelist: true,
     });
     expect(res.status).toBe(200);
     const rules = await request(app).get("/ioc-whitelist");
     expect(rules.body.some((r: { pattern: string }) => r.pattern === "10.0.0.5")).toBe(true);
-    expect(rules.body.find((r: { pattern: string }) => r.pattern === "10.0.0.5")).toMatchObject({ iocType: "ip" });
+    const rule = rules.body.find((r: { pattern: string }) => r.pattern === "10.0.0.5");
+    expect(rule).toMatchObject({ iocType: "ip" });
+    // Both the categorical reason AND the free-text note must survive into the whitelist note —
+    // neither should silently drop the other.
+    expect(rule.note).toContain("known-good-tool");
+    expect(rule.note).toContain("internal scanner IP");
+  });
+
+  it("falls back to just the reason in the whitelist note (no dangling separator) when no note was given", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-whitelist-noreason-note-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const iocWhitelistStore = new IocWhitelistStore(join(root, "ioc-whitelist.json"));
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, { stateStore, iocWhitelistStore });
+
+    const res = await request(app).post("/cases/c1/false-positive").send({
+      kind: "ioc", ref: "10.0.0.7", reason: "known-good-tool", addToWhitelist: true,
+    });
+    expect(res.status).toBe(200);
+
+    const rules = await request(app).get("/ioc-whitelist");
+    const rule = rules.body.find((r: { pattern: string }) => r.pattern === "10.0.0.7");
+    expect(rule.note).toContain("known-good-tool");
+    expect(rule.note.trim().endsWith(":")).toBe(false);
+  });
+
+  it("still promotes to the whitelist when the ref doesn't match any IOC in the case's current state (iocType left undefined)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-whitelist-notfound-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const iocWhitelistStore = new IocWhitelistStore(join(root, "ioc-whitelist.json"));
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, { stateStore, iocWhitelistStore });
+
+    // No IOC seeded — the ref refers to a value already removed/renamed from the case.
+    const res = await request(app).post("/cases/c1/false-positive").send({
+      kind: "ioc", ref: "203.0.113.9", reason: "known-good-tool", addToWhitelist: true,
+    });
+    expect(res.status).toBe(200);
+
+    const rules = await request(app).get("/ioc-whitelist");
+    const rule = rules.body.find((r: { pattern: string }) => r.pattern === "203.0.113.9");
+    expect(rule).toBeTruthy();
+    expect(rule.iocType).toBeUndefined();
   });
 
   it("does NOT promote to the whitelist when addToWhitelist is absent, or when the marker kind is not 'ioc'", async () => {
