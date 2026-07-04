@@ -15,7 +15,7 @@ When importing a large Velociraptor collection or Plaso super-timeline, set the 
 ---
 
 **Mark false positives immediately.**
-Every time you see an event or finding that's clearly benign, mark it legitimate. It improves synthesis quality and keeps the timeline clean.
+Every time you see an event or finding that's clearly benign, mark it as a false positive. It improves synthesis quality and keeps the timeline clean.
 
 ---
 

@@ -50,7 +50,7 @@ Add known-good patterns in **Settings → IOC Whitelist**:
 - **Exact** — specific hashes or values
 - **Regex** — patterns (length-bounded to prevent ReDoS)
 
-Any IOC matching a whitelist rule is **automatically marked legitimate on import** and excluded from enrichment and synthesis.
+Any IOC matching a whitelist rule is **automatically marked false-positive on import** and excluded from enrichment and synthesis.
 
 !!! tip
     Add your internal CIDR ranges to the whitelist early. It cuts false-positive IOC noise significantly.
@@ -64,4 +64,4 @@ Upload or point to an NSRL (NIST National Software Reference Library) hash list 
 For large NSRL RDS databases (hundreds of millions of hashes), point to the SQLite `.db` file instead of importing — it queries on demand without loading into memory. Requires Node 22.5+.
 
 !!! note
-    NSRL is "known software", not strictly "known-good" — some RDS sets include hacktools. A known hash can still be malicious in context. Treat the auto-legitimate marking as noise reduction, not a verdict.
+    NSRL is "known software", not strictly "known-good" — some RDS sets include hacktools. A known hash can still be malicious in context. Treat the auto-false-positive marking as noise reduction, not a verdict.

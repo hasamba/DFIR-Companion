@@ -27,7 +27,7 @@ Understanding this avoids confusion:
 
 - **It is NOT a detection engine.** It does not run Sigma rules, YARA rules, or write detections. That is your SIEM/EDR/Chainsaw/Hayabusa's job. DFIR Companion consumes *their* results and makes sense of them.
 - **It is NOT a SIEM.** It does not ingest raw events in real time (except via the optional push-ingest webhook). It is a case-analysis layer that runs *after* your detection tools have already fired.
-- **It is NOT a replacement for analyst judgment.** The AI assists. Every finding, timeline entry, and IOC is shown to you so you can confirm, reject, or mark it legitimate.
+- **It is NOT a replacement for analyst judgment.** The AI assists. Every finding, timeline entry, and IOC is shown to you so you can confirm, reject, or mark it false-positive.
 
 ---
 
