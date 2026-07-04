@@ -742,6 +742,14 @@
     .tl-page-btn:disabled { opacity: 0.35; cursor: default; }
     .tl-page-btn:not(:disabled):hover { background: var(--c-2a3050); border-color: var(--c-6aa9ff); color: #fff; }
     .tl-page-info { color: var(--c-9aa4b2); }
+    /* Event-density heatmap (#219): a thin bar strip above the timeline, one bar per time bucket,
+       height ~ event count, color ~ worst severity in the bucket. Click a bar to zoom the timeline
+       to that window (reuses the same filterFrom/filterTo path as the search-bar date filters). */
+    .tl-heatmap { display: flex; align-items: flex-end; gap: 1px; height: 34px; margin: 0 0 8px; padding: 3px 4px 2px; background: var(--c-1a1f2a); border: 1px solid var(--c-2a2f3a); border-radius: 4px; box-sizing: border-box; }
+    .tl-heatmap-bar { flex: 1 1 0; min-width: 2px; min-height: 2px; border-radius: 1px 1px 0 0; cursor: pointer; opacity: 0.85; }
+    .tl-heatmap-bar:hover { opacity: 1; outline: 1px solid var(--c-cdd9e5); outline-offset: -1px; }
+    .tl-heatmap-empty { flex: 1; font-size: 11px; color: var(--c-6b7280); text-align: center; align-self: center; }
+    @media (max-width: 768px) { .tl-heatmap { height: 16px; padding: 2px; } .tl-heatmap-bar { border-radius: 0; } }
     .ev-bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 0 4px; font-size: 12px; color: var(--c-9aa4b2); border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 4px; }
     .ev-bulk-bar.active { display: flex; }
     .ev-bulk-btn { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-cbd3df); border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
@@ -3002,6 +3010,8 @@
       </div>
       <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="evIdFilterChip" style="display:none;margin:0 0 8px;font-size:12px;background:var(--c-1a1f2a);border:1px solid var(--c-2a2f3a);border-radius:4px;padding:6px 10px;"></div>
+      <div id="timelineHeatmapCaption" style="font-size:11px;color:var(--c-9aa4b2);margin:0 0 3px;" hidden>📊 Event density — taller/redder bars mean more/worse events; click a bar to zoom the timeline into that window (a <strong>Clear</strong> button appears in the filter panel to reset)</div>
+      <div id="timelineHeatmap" class="tl-heatmap" title="Event density over time — click a bar to zoom the timeline to that window" hidden></div>
       <div id="forensicTimeline">—</div></section>
     <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain<span class="ev-sub">events bucketed by their ATT&amp;CK tactic (derived, no AI); a categorization, not a confirmed kill-chain stage — e.g. valid-account use can span entry and lateral movement</span></h2><div id="killChain">—</div></section>
     <!-- Memory Next-Step agent (#101): shown only when Volatility/Rekall memory output is imported. -->
@@ -10902,6 +10912,76 @@
       }
     }
 
+    // --- Event-density heatmap (#219) -------------------------------------------------
+    // Buckets the CURRENT filtered timeline (the same "visible" array renderTimelineEvents computes,
+    // before its pagination slice) into a fixed number of equal-width time buckets, so the heatmap
+    // always reflects the full filtered dataset rather than just the current page.
+    const HM_SEV_ORDER = ['Critical', 'High', 'Medium', 'Low', 'Info'];
+    const HM_MAX_BUCKETS = 60;
+    function computeTimelineHeatmapBuckets(visible) {
+      const dated = visible.filter(e => e.timestamp && !isNaN(Date.parse(e.timestamp)));
+      if (!dated.length) return [];
+      const times = dated.map(e => Date.parse(e.timestamp));
+      const minMs = Math.min(...times), maxMs = Math.max(...times);
+      const span = maxMs - minMs;
+      const bucketCount = Math.max(1, Math.min(HM_MAX_BUCKETS, dated.length));
+      const buckets = Array.from({ length: bucketCount }, (_, i) => ({
+        startMs: minMs + Math.round((span * i) / bucketCount),
+        endMs: minMs + Math.round((span * (i + 1)) / bucketCount),
+        count: 0,
+        maxSeverity: null,
+      }));
+      for (const e of dated) {
+        const t = Date.parse(e.timestamp);
+        let idx = span > 0 ? Math.floor(((t - minMs) / span) * bucketCount) : 0;
+        if (idx >= bucketCount) idx = bucketCount - 1;
+        if (idx < 0) idx = 0;
+        const b = buckets[idx];
+        b.count += e.count || 1;
+        if (!b.maxSeverity || HM_SEV_ORDER.indexOf(e.severity) < HM_SEV_ORDER.indexOf(b.maxSeverity)) b.maxSeverity = e.severity;
+      }
+      return buckets;
+    }
+    // Zooms the main timeline to a time window — reuses the same filterFrom/filterTo path the
+    // search-bar date inputs and the swimlane time-brush already use, so a heatmap click behaves
+    // identically to typing a date range (and composes with every other active filter).
+    function zoomToTimeWindow(fromIso, toIso) {
+      const ffEl = document.getElementById("filterFrom");
+      const ftEl = document.getElementById("filterTo");
+      const cfBtn = document.getElementById("clearFiltersBtn");
+      if (ffEl) ffEl.value = isoToUtcInput(fromIso);
+      if (ftEl) ftEl.value = isoToUtcInput(toIso);
+      filterFrom = fromIso;
+      filterTo = toIso;
+      if (cfBtn) cfBtn.hidden = false;
+      // Open the (possibly collapsed) filter panel so the populated from/to fields and the Clear
+      // button are actually visible — otherwise the zoom silently narrows the timeline with no
+      // obvious way back (the Clear button lives inside that panel).
+      setSearchBarOpen(true, false);
+      renderTimelineEvents(lastFt);
+      refreshFilteredViews();
+      if (lastSuperData) loadSuperTimeline();
+    }
+    function renderTimelineHeatmap(visible) {
+      const el = document.getElementById("timelineHeatmap");
+      const caption = document.getElementById("timelineHeatmapCaption");
+      if (!el) return;
+      const buckets = computeTimelineHeatmapBuckets(visible);
+      if (buckets.length < 2) { el.hidden = true; el.innerHTML = ""; if (caption) caption.hidden = true; return; }
+      el.hidden = false;
+      if (caption) caption.hidden = false;
+      const maxCount = Math.max(...buckets.map(b => b.count), 1);
+      el.innerHTML = buckets.map(b => {
+        if (!b.count) return `<div class="tl-heatmap-bar" style="height:2px;background:var(--c-2a2f3a);cursor:default"></div>`;
+        const heightPct = Math.max(8, Math.round((b.count / maxCount) * 100));
+        const color = KC_SEV_COLOR[b.maxSeverity] || "#9aa4b2";
+        const from = new Date(b.startMs).toISOString();
+        const to = new Date(b.endMs).toISOString();
+        const label = `${b.count} event${b.count === 1 ? "" : "s"} · ${b.maxSeverity} · ${from.slice(0, 16).replace("T", " ")}–${to.slice(0, 16).replace("T", " ")} UTC (click to zoom)`;
+        return `<div class="tl-heatmap-bar" style="height:${heightPct}%;background:${color}" title="${esc(label)}" onclick="zoomToTimeWindow('${from}','${to}')"></div>`;
+      }).join("");
+    }
+
     function renderTimelineEvents(ft) {
       if (!_tlKeepPage) tlPage = 0;
       _tlKeepPage = false;
@@ -10943,6 +11023,7 @@
       const viewSevFiltering = !!(activeView && activeView.filters && activeView.filters.minSeverity);
       if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity));   // dashboard-view severity floor (#142)
       visible = sortTimelineEvents(visible);
+      renderTimelineHeatmap(visible);   // buckets the FULL filtered set, not the paginated slice below (#219)
 
       const totalFiltered = visible.length;
       const totalPages = tlPageSize > 0 ? Math.max(1, Math.ceil(totalFiltered / tlPageSize)) : 1;

@@ -227,4 +227,33 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/isFp[\s\S]{0,200}text-decoration:line-through/);
     expect(html).toMatch(/isFp[\s\S]{0,300}unfp-btn/);
   });
+
+  it("renders an event-density heatmap above the timeline that buckets the full filtered set and zooms on click (#219)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="timelineHeatmap"');
+    expect(html).toContain('class="tl-heatmap"');
+    expect(html).toContain("function computeTimelineHeatmapBuckets");
+    expect(html).toContain("function renderTimelineHeatmap");
+    expect(html).toContain("function zoomToTimeWindow");
+    // Bucketed from the SAME `visible` array renderTimelineEvents computes (post-filter, pre-pagination
+    // slice), not the paginated page or the raw unfiltered `ft` — so density reflects every active filter
+    // and the full dataset across all pages, not just the current page.
+    expect(html).toMatch(/visible = sortTimelineEvents\(visible\);\s*\n\s*renderTimelineHeatmap\(visible\)/);
+    // Click-to-zoom reuses the same filterFrom/filterTo path as the search-bar date filters.
+    expect(html).toMatch(/zoomToTimeWindow[\s\S]{0,400}filterFrom = fromIso/);
+    expect(html).toMatch(/zoomToTimeWindow\('\$\{from\}','\$\{to\}'\)/);
+    // Bars colored by the bucket's worst severity, reusing the existing severity color palette.
+    expect(html).toContain("KC_SEV_COLOR[b.maxSeverity]");
+    // Mobile: collapses to a thin sparkline instead of the full-height bars.
+    expect(html).toMatch(/@media \(max-width: 768px\)[\s\S]{0,80}\.tl-heatmap \{ height: 16px/);
+    // A click must open the (possibly collapsed) filter panel — otherwise the Clear button and the
+    // populated from/to fields it reveals stay invisible inside that hidden panel, leaving no
+    // apparent way to undo the zoom.
+    expect(html).toMatch(/function zoomToTimeWindow[\s\S]{0,700}setSearchBarOpen\(true, false\)/);
+    // A persistent caption explains what the bars mean (not just a hover-only tooltip), and toggles
+    // with the heatmap itself.
+    expect(html).toContain('id="timelineHeatmapCaption"');
+    expect(html).toMatch(/buckets\.length < 2\)[\s\S]{0,60}caption\.hidden = true/);
+    expect(html).toMatch(/caption\.hidden = false/);
+  });
 });
