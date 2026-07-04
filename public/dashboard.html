@@ -9775,6 +9775,7 @@
             const shown = (m.kind === "event" && m.label) ? m.label : m.ref;
             return `<div style="margin-bottom:4px"><span style="color:var(--c-9aa4b2)">${esc(m.kind)}:</span> ` +
               `<span style="text-decoration:line-through">${esc(shown)}</span>` +
+              `${m.reason ? ` <span style="border:1px solid var(--c-2a2f3a);border-radius:3px;padding:0 4px;font-size:11px;color:var(--c-9aa4b2)">${esc(m.reason)}</span>` : ""}` +
               `${m.note ? ` — <small>${esc(m.note)}</small>` : ""} ` +
               `<button class="unfp-btn" data-id="${escAttr(m.id)}">un-mark</button></div>`;
           }).join("")

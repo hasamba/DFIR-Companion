@@ -208,4 +208,11 @@ describe("dashboard.html", () => {
     expect(html).toContain("/false-positive/suggest");
     expect(html).toContain('id="sec-false-positive"');
   });
+
+  it("renders each false-positive marker's reason in the False Positives panel (#227)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("function renderFalsePositives");
+    // The reason field must actually be read and rendered, not just captured by the mark-FP modal.
+    expect(html).toMatch(/m\.reason[\s\S]{0,200}esc\(m\.reason\)/);
+  });
 });
