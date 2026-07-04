@@ -1034,14 +1034,17 @@
       display: flex; align-items: center; border-radius: 7px; line-height: 0;
       transition: color .15s, background .15s; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
     #settingsBtn:hover { color: var(--c-cbd3df); background: var(--hover-wash); }
-    /* Settings modal */
-    .settings-modal { width: min(820px, 96vw); max-height: 90vh; }
-    .stab-bar { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--c-2a2f3a); margin: 8px 0 14px; }
+    /* Settings modal — flex column so the tab-bar (top) and footer (bottom) stay fixed and only the
+       active .stab-pane scrolls in between. Avoids a fixed-px header/footer height assumption, which broke
+       (footer clipped) whenever the .stab-bar wrapped to two lines. */
+    .settings-modal { width: min(820px, 96vw); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+    .settings-modal > h3 { flex-shrink: 0; }
+    .stab-bar { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--c-2a2f3a); margin: 8px 0 14px; flex-shrink: 0; }
     .stab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--c-9aa4b2);
       padding: 6px 16px; cursor: pointer; font-size: 12px; font-family: inherit; transition: color .12s; }
     .stab:hover { color: var(--c-cbd3df); }
     .stab.active { color: var(--c-6aa9ff); border-bottom-color: var(--c-6aa9ff); }
-    .stab-pane { display: none; overflow-y: auto; max-height: calc(90vh - 130px); padding-right: 4px; }
+    .stab-pane { display: none; overflow-y: auto; flex: 1 1 auto; min-height: 0; padding-right: 4px; }
     .stab-pane.active { display: block; }
     .sfield { margin-bottom: 10px; }
     .sfield > label { display: block; font-size: 11px; color: var(--c-9aa4b2); margin-bottom: 3px; }
@@ -1069,7 +1072,7 @@
     .sec-selall { display: flex; gap: 6px; margin: 3px 0 5px; }
     .sec-selall button { font-size: 11px; padding: 2px 8px; background: var(--c-2a2f3a); border: none; border-radius: 4px; color: var(--c-9aa4b2); cursor: pointer; }
     .sec-selall button:hover { background: var(--c-353b47); color: var(--c-cbd3df); }
-    .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--c-2a2f3a); padding-top: 12px; }
+    .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--c-2a2f3a); padding-top: 12px; flex-shrink: 0; }
     .settings-msg { font-size: 11px; margin-left: 4px; }
     /* Global search + time-range filter row — revealed by the toolbar search icon, hidden by default. */
     #searchFilterBar { padding: 5px 16px; background: var(--c-0e1116); border-bottom: 1px solid var(--c-1a1f28);
