@@ -42,6 +42,7 @@ export const SNAPSHOT_STATE_FILES = [
   "import-meta.json",       // when the last import ran + timeline/IOC diff (investigation history)
   "hunt-outcomes.json",     // #157 per-case hunting profile (what was hunted, what hit/missed) — investigation data
   "dwell-windows.json",     // analyst-defined attacker-presence windows (label/start/end) — investigation data
+  "pinned-findings.json",   // #220 analyst-pinned key findings (ordered shortlist) — analyst decision, travels with the case
 ] as const;
 
 // Documented for intent: these state files exist but are DELIBERATELY excluded from a snapshot

@@ -108,6 +108,7 @@ import { DashboardViewStore } from "./analysis/dashboardViewStore.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore, type Tag } from "./analysis/tags.js";
+import { PinnedFindingsStore, PinLimitError } from "./analysis/pinnedFindings.js";
 import { NotebookStore, type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "./analysis/notebookStore.js";
 import { HypothesisStore } from "./analysis/hypothesisStore.js";
 import { HYPOTHESIS_STATUSES, type HypothesisStatus, type HypothesisPatch, type NewHypothesis } from "./analysis/hypothesis.js";
@@ -290,6 +291,11 @@ export interface AppOptions {
   // re-fetch when a tag is added/removed.
   tagsStore?: TagsStore;
   onTags?: (caseId: string) => void;
+  // Analyst-pinned findings (#220): a small ordered shortlist the analyst pins so the most
+  // important findings stay visible in a dedicated strip while scrolling. onPins pings dashboard
+  // clients over the WS to re-fetch when a finding is pinned/unpinned/reordered.
+  pinnedFindingsStore?: PinnedFindingsStore;
+  onPins?: (caseId: string) => void;
   // Per-case analyst notebook (hypotheses, notes, open questions). onNotebook pings dashboard
   // clients over the WS to re-fetch when an entry is added, updated, or removed.
   notebookStore?: NotebookStore;
@@ -7727,6 +7733,62 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Analyst-pinned findings (#220). A small ordered shortlist of the findings the analyst cares
+  // about most, kept in a per-case side file (survives synthesis). Every mutation returns the
+  // full list + the cap so the dashboard can render the pinned strip and hint "N of MAX pinned".
+  // GET lists; POST pins one (409 at the cap); PUT /order reorders (drag-to-reorder); DELETE
+  // /:findingId unpins. Mutations ping live clients over the WS.
+  app.get("/cases/:id/pinned-findings", async (req: Request, res: Response) => {
+    if (!options.pinnedFindingsStore) return res.status(501).json({ error: "pinned findings not configured" });
+    try {
+      const pins = await options.pinnedFindingsStore.load(req.params.id);
+      return res.status(200).json({ pins, limit: options.pinnedFindingsStore.limit });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/pinned-findings", async (req: Request, res: Response) => {
+    if (!options.pinnedFindingsStore) return res.status(501).json({ error: "pinned findings not configured" });
+    const findingId = typeof req.body?.findingId === "string" ? req.body.findingId.trim() : "";
+    if (!findingId) return res.status(400).json({ error: "findingId is required" });
+    try {
+      const pins = await options.pinnedFindingsStore.pin(req.params.id, {
+        findingId,
+        pinnedBy: typeof req.body?.pinnedBy === "string" ? req.body.pinnedBy : "",
+      });
+      options.onPins?.(req.params.id);
+      return res.status(201).json({ pins, limit: options.pinnedFindingsStore.limit });
+    } catch (err) {
+      if (err instanceof PinLimitError) return res.status(409).json({ error: err.message, limit: err.max });
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.put("/cases/:id/pinned-findings/order", async (req: Request, res: Response) => {
+    if (!options.pinnedFindingsStore) return res.status(501).json({ error: "pinned findings not configured" });
+    const order = Array.isArray(req.body?.order) ? req.body.order.filter((x: unknown): x is string => typeof x === "string") : null;
+    if (!order) return res.status(400).json({ error: "order must be an array of findingId strings" });
+    try {
+      const pins = await options.pinnedFindingsStore.reorder(req.params.id, order);
+      options.onPins?.(req.params.id);
+      return res.status(200).json({ pins, limit: options.pinnedFindingsStore.limit });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/cases/:id/pinned-findings/:findingId", async (req: Request, res: Response) => {
+    if (!options.pinnedFindingsStore) return res.status(501).json({ error: "pinned findings not configured" });
+    try {
+      const pins = await options.pinnedFindingsStore.unpin(req.params.id, req.params.findingId);
+      options.onPins?.(req.params.id);
+      return res.status(200).json({ pins, limit: options.pinnedFindingsStore.limit });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Per-case playbook (issue #36): a trackable checklist auto-derived from the case's next
   // steps + Critical/High findings, plus analyst-added custom tasks. The list is re-derived
   // idempotently on every GET (write-if-changed) so it tracks the latest synthesis without
@@ -9017,6 +9079,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
+  const pinnedFindingsStore = new PinnedFindingsStore(store, Number(process.env.DFIR_MAX_PINNED_FINDINGS) || undefined);
   const notebookStore = new NotebookStore(store);
   const hypothesisStore = new HypothesisStore(store);
   const dwellWindowStore = new DwellWindowStore(store);
@@ -9134,6 +9197,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     tagsStore,
     onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
+    pinnedFindingsStore,
+    onPins: (caseId) => hub.broadcastTo(caseId, { type: "pins_changed" }),
     notebookStore,
     onNotebook: (caseId) => hub.broadcastTo(caseId, { type: "notebook_changed" }),
     hypothesisStore,

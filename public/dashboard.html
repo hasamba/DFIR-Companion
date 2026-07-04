@@ -621,6 +621,26 @@
     .tag-add { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-9aa4b2); border-radius: 10px;
       padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .tag-add:hover { color: var(--c-ffd93b); border-color: var(--c-ffd93b); }
+    /* Pinned findings (#220): pin toggle on each finding card + the sticky top strip. */
+    .pin-btn { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-9aa4b2); border-radius: 10px;
+      padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+    .pin-btn:hover { color: var(--c-ffd93b); border-color: var(--c-ffd93b); }
+    .pin-btn.pinned { color: var(--c-ffd93b); border-color: var(--c-4a3f1a); background: var(--c-241f10); }
+    /* The strip stays visible while scrolling the timeline/graph — a sticky, capped, curated list. */
+    #sec-pinned.pinned-strip { position: sticky; top: 0; z-index: 6; }
+    .pinned-list { display: flex; flex-direction: column; gap: 4px; }
+    /* touch-action:none so a touchpad/touchscreen drag reorders instead of scrolling the page
+       (otherwise the browser fires pointercancel and the drag never runs). */
+    .pinned-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--c-2a2f3a);
+      border-radius: 6px; background: var(--c-0f1115); font-size: 12px; cursor: grab; user-select: none; touch-action: none; }
+    .pinned-item.dragging { cursor: grabbing; border-color: var(--c-6aa9ff); background: var(--c-11202e);
+      box-shadow: 0 4px 12px rgba(0,0,0,.4); }
+    .pinned-grip { cursor: grab; color: var(--c-6a7280); user-select: none; flex-shrink: 0; font-size: 13px; padding: 0 2px; }
+    .pinned-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+    .pinned-title:hover { color: var(--c-6aa9ff); }
+    .pinned-unpin { background: transparent; border: 0; color: var(--c-9aa4b2); cursor: pointer; font-size: 12px; flex-shrink: 0; padding: 0 2px; }
+    .pinned-unpin:hover { color: var(--c-ff6b6b); }
+    .pinned-empty { color: var(--c-9aa4b2); font-size: 12px; }
     .tag-suggest-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
     .tag-suggest-btn { background: var(--c-0f1115); border: 1px solid; border-radius: 9px; padding: 2px 9px;
       font-size: 11px; cursor: pointer; }
@@ -2993,6 +3013,7 @@
     <section id="sec-next-steps" style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2>Narrative Timeline<button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
+    <section id="sec-pinned" style="grid-column: 1 / -1" class="pinned-strip"><h2>📌 Pinned Findings<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></h2><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></section>
     <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div><div id="findings">—</div></section>
     <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" style="display:none" title="Show or hide events by origin (the artifact that produced them)" onclick="event.stopPropagation()"><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" onclick="event.stopPropagation()"><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkFpBtn" title="Mark all selected events as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
@@ -4803,6 +4824,181 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
       fetch(`/cases/${caseId}/tags/${id}`, { method: "DELETE" }).then(() => loadTags(caseId)).catch(() => {});
+    }
+
+    // --- Pinned findings (#220) ---------------------------------------------------
+    // A small ordered shortlist the analyst pins so the most important findings stay visible in a
+    // sticky top strip while scrolling the timeline/graph. Server-backed (state/pinned-findings.json),
+    // capped, drag-to-reorder, one-click jump. Each finding card gets a 📌 pin toggle.
+    let pinnedList = [];              // ordered [{ findingId, pinnedBy, pinnedAt }]
+    let pinnedSet = new Set();        // findingIds, for O(1) button state
+    let pinLimit = 5;                 // server-reported cap
+
+    function pinBtn(fid) {
+      const pinned = pinnedSet.has(String(fid));
+      return `<button class="pin-btn${pinned ? " pinned" : ""}" data-pin="${escAttr(String(fid))}" `
+        + `title="${pinned ? "Unpin — remove from the pinned strip" : "Pin — keep this finding in the top strip"}">📌</button>`;
+    }
+
+    function loadPins(caseId) {
+      fetch(`/cases/${caseId}/pinned-findings`).then(r => r.json()).then(data => {
+        pinnedList = Array.isArray(data && data.pins) ? data.pins : [];
+        pinnedSet = new Set(pinnedList.map(p => String(p.findingId)));
+        if (typeof (data && data.limit) === "number") pinLimit = data.limit;
+        renderPinned();
+        if (lastState) render(lastState);   // refresh the 📌 button state on the finding cards
+      }).catch(() => {});
+    }
+
+    // Resolve pins against the live findings, worst-severity label preserved. A pin whose finding
+    // no longer exists (dropped by a later synthesis) is skipped — the raw pin stays on the server
+    // so it reappears if the finding comes back, but it isn't rendered as a dangling row.
+    let pinDragActive = false;   // true while a drag is in flight — don't rebuild the DOM under it
+    let _pinnedSig = null;       // signature of the last-rendered strip, to skip no-op rebuilds
+    function renderPinned() {
+      const el = document.getElementById("pinnedList");
+      const countEl = document.getElementById("pinnedCount");
+      if (!el) return;
+      // Never rebuild the strip DOM mid-drag: render() fires often (every state/tags/comments
+      // refresh), and replacing innerHTML under an in-progress drag cancels the browser's drag
+      // gesture — the #1 cause of "can't reorder". The dragend handler re-renders once settled.
+      if (pinDragActive) return;
+      const byId = new Map((lastState && lastState.findings ? lastState.findings : []).map(f => [String(f.id), f]));
+      const rows = pinnedList.map(p => ({ pin: p, f: byId.get(String(p.findingId)) })).filter(x => x.f);
+      if (countEl) countEl.textContent = rows.length ? ` (${rows.length} of ${pinLimit})` : "";
+      // Skip the rebuild when nothing visible changed (same ids/order/severity/title) so frequent
+      // render() calls don't needlessly thrash the DOM (and can't clobber a just-started drag).
+      const sig = rows.map(({ f }) => `${f.id}|${f.severity}|${f.title}`).join("~~");
+      if (sig === _pinnedSig && el.querySelector(".pinned-item")) return;
+      _pinnedSig = sig;
+      if (!rows.length) {
+        el.innerHTML = `<div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div>`;
+        return;
+      }
+      el.innerHTML = rows.map(({ pin, f }) =>
+        `<div class="pinned-item" data-fid="${escAttr(String(f.id))}">`
+        + `<span class="pinned-grip" title="Drag to reorder">⠿</span>`
+        + `<span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>`
+        + `<span class="pinned-title" data-jump="${escAttr(String(f.id))}" title="Jump to this finding">`
+        + `<span style="color:var(--c-6aa9ff)">${esc(f.id)}</span> ${esc(f.title)}</span>`
+        + `<button class="pinned-unpin" data-unpin="${escAttr(String(f.id))}" title="Unpin">✕</button></div>`
+      ).join("");
+      wirePinnedDrag();
+    }
+
+    function togglePin(fid) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !fid) return;
+      const id = String(fid);
+      if (pinnedSet.has(id)) {
+        fetch(`/cases/${caseId}/pinned-findings/${encodeURIComponent(id)}`, { method: "DELETE" })
+          .then(r => r.json()).then(applyPinResponse).catch(() => {});
+      } else {
+        fetch(`/cases/${caseId}/pinned-findings`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ findingId: id, pinnedBy: investigatorName() }) })
+          .then(async r => {
+            if (r.status === 409) { const b = await r.json().catch(() => ({})); flashPinMsg(`Pin limit reached (max ${b.limit || pinLimit}) — unpin one first`); return null; }
+            return r.json();
+          }).then(d => { if (d) applyPinResponse(d); }).catch(() => {});
+      }
+    }
+    // Briefly show a message in the strip header (e.g. the cap-reached notice), then restore the count.
+    let pinMsgTimer = null;
+    function flashPinMsg(text) {
+      const sec = document.getElementById("sec-pinned");
+      if (sec) sec.classList.remove("collapsed");   // make sure the strip is visible to read it
+      const countEl = document.getElementById("pinnedCount");
+      if (!countEl) return;
+      countEl.textContent = " — " + text;
+      countEl.style.color = "var(--c-ffd93b)";
+      if (pinMsgTimer) clearTimeout(pinMsgTimer);
+      pinMsgTimer = setTimeout(() => { countEl.style.color = ""; renderPinned(); }, 3500);
+    }
+    // Apply a mutation response ({pins, limit}) locally so the UI updates instantly; the WS
+    // pins_changed broadcast will also arrive and reconcile (idempotent).
+    function applyPinResponse(data) {
+      if (!data) return;
+      pinnedList = Array.isArray(data.pins) ? data.pins : pinnedList;
+      pinnedSet = new Set(pinnedList.map(p => String(p.findingId)));
+      if (typeof data.limit === "number") pinLimit = data.limit;
+      renderPinned();
+      if (lastState) render(lastState);
+    }
+
+    // Drag-to-reorder within the strip — POINTER-based, NOT native HTML5 drag-and-drop. Native DnD
+    // proved unreliable to initiate here (the gesture never started for the analyst), so we drive it
+    // with pointerdown/move/up which we fully control: press anywhere on a row (except the jump title
+    // / unpin ✕, which stay clickable) and drag it up or down; rows shuffle live and the new order is
+    // persisted on release. Testable with synthetic pointer events, unlike native DnD.
+    function wirePinnedDrag() {
+      const el = document.getElementById("pinnedList");
+      if (!el) return;
+      el.querySelectorAll(".pinned-item").forEach(item => {
+        item.addEventListener("pointerdown", e => {
+          if (e.button !== 0 && e.pointerType === "mouse") return;          // primary mouse button only
+          if (e.target.closest(".pinned-title") || e.target.closest(".pinned-unpin")) return;  // let jump/unpin click
+          e.preventDefault();
+          startPinDrag(item, el, e);
+        });
+      });
+    }
+    // Live pointer-drag of one row. Moves the row in the DOM as the pointer passes each neighbour's
+    // midpoint (so the layout previews the result), then persists the DOM order on release.
+    // CRITICAL: the pointermove/up/cancel listeners live on DOCUMENT, not the row. setPointerCapture
+    // isn't guaranteed to route moves to the row in every Chromium build (Comet included) — when it
+    // doesn't, moves fire on whatever element is under the cursor, so a row-scoped listener never sees
+    // them and the row highlights but won't budge. document always sees every pointer move. Capture is
+    // kept only as a bonus (lets pointerup land even if the cursor leaves the window).
+    function startPinDrag(item, el, downEvt) {
+      pinDragActive = true;                 // freeze renderPinned() so a background refresh can't yank the row
+      item.classList.add("dragging");
+      const pid = downEvt.pointerId;
+      let moved = false;
+      try { item.setPointerCapture(pid); } catch {}
+      const onMove = e => {
+        if (e.pointerId !== pid) return;
+        moved = true;
+        const rows = [...el.querySelectorAll(".pinned-item")];
+        const y = e.clientY;
+        let placed = false;
+        for (const other of rows) {
+          if (other === item) continue;
+          const r = other.getBoundingClientRect();
+          if (y < r.top + r.height / 2) { el.insertBefore(item, other); placed = true; break; }
+        }
+        if (!placed) el.appendChild(item);   // past the last midpoint → drop at the end
+      };
+      const finish = commit => {
+        document.removeEventListener("pointermove", onMove, true);
+        document.removeEventListener("pointerup", onUp, true);
+        document.removeEventListener("pointercancel", onCancel, true);
+        try { item.releasePointerCapture(pid); } catch {}
+        item.classList.remove("dragging");
+        pinDragActive = false;
+        if (commit && moved) {
+          const order = [...el.querySelectorAll(".pinned-item")].map(i => i.getAttribute("data-fid"));
+          persistPinOrder(order);
+        } else {
+          _pinnedSig = null; renderPinned();   // no move (or cancelled) → restore the clean layout
+        }
+      };
+      const onUp = e => { if (e.pointerId === pid) finish(true); };
+      const onCancel = e => { if (e.pointerId === pid) finish(false); };
+      document.addEventListener("pointermove", onMove, true);
+      document.addEventListener("pointerup", onUp, true);
+      document.addEventListener("pointercancel", onCancel, true);
+    }
+    // Persist a new pinned order. Optimistic: reorder the local list + re-render instantly, then PUT;
+    // applyPinResponse reconciles with the server and the pins_changed WS broadcast syncs other clients.
+    function persistPinOrder(order) {
+      const byId = new Map(pinnedList.map(p => [String(p.findingId), p]));
+      pinnedList = order.map(id => byId.get(id)).filter(Boolean);
+      pinnedSet = new Set(pinnedList.map(p => String(p.findingId)));
+      _pinnedSig = null; renderPinned();     // settle: rebuild once against the new order
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      fetch(`/cases/${caseId}/pinned-findings/order`, { method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ order }) }).then(r => r.json()).then(applyPinResponse).catch(() => {});
     }
 
     // --- Mark-false-positive modal (#227) -------------------------------------------
@@ -11369,7 +11565,7 @@
             confBadge = ` <span class="conf-badge ${cls}" title="${escAttr(confTitle)}">${f.confidence}%</span>`;
           }
           // Comment chip, tag icon button, severity badge, confidence score, tag pills, then finding id/title.
-          return `<div class="finding" data-fid="${escAttr(f.id)}">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ${tagPills("finding", f.id)} ` +
+          return `<div class="finding" data-fid="${escAttr(f.id)}">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ${tagPills("finding", f.id)} ` +
             `<span style="color:var(--c-6aa9ff)">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${fpBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
@@ -11379,6 +11575,7 @@
         state.timeline.map(t => `<div>• <small>${esc(t.timestamp)}</small> ${esc(t.description)}</div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
         state.mitreTechniques.map(m => `<div>${mitreLinks([m.id])} — ${esc(m.name)} (${esc(m.findingIds.join(", "))})</div>`).join("") || "—";
+      renderPinned();   // pinned-strip titles resolve against the just-rendered findings (#220)
     }
 
     // ── Cross-case capture warning ───────────────────────────────────────────────────────────
@@ -11452,6 +11649,7 @@
       loadIocProvenance(caseId);
       loadComments(caseId);
       loadTags(caseId);
+      loadPins(caseId);
       loadNotebook(caseId);
       loadNbAiToggle(caseId);
       loadHypotheses(caseId);
@@ -11544,6 +11742,7 @@
         }
         else if (msg.type === "comments_changed") loadComments(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
+        else if (msg.type === "pins_changed") loadPins(caseId);
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
         else if (msg.type === "hypotheses_changed") loadHypotheses(caseId);
         else if (msg.type === "dwell_window_changed") loadSavedTimeframes(caseId);
@@ -12031,6 +12230,13 @@
       if (chip) { openCommentModal(chip.getAttribute("data-ct"), chip.getAttribute("data-ci")); return; }
       const tag = e.target.closest && e.target.closest(".tag-add");
       if (tag) { openTagModal(tag.getAttribute("data-tt"), tag.getAttribute("data-ti")); return; }
+      // Pinned findings (#220): pin/unpin toggle on a finding card, plus jump/unpin inside the strip.
+      const pin = e.target.closest && e.target.closest(".pin-btn");
+      if (pin) { e.stopPropagation(); togglePin(pin.getAttribute("data-pin")); return; }
+      const pjump = e.target.closest && e.target.closest(".pinned-title");
+      if (pjump) { jumpToFinding(pjump.getAttribute("data-jump")); return; }
+      const punpin = e.target.closest && e.target.closest(".pinned-unpin");
+      if (punpin) { togglePin(punpin.getAttribute("data-unpin")); return; }
       const hunt = e.target.closest && e.target.closest(".hunt-add");
       if (hunt) { openHuntModal(hunt.getAttribute("data-hk"), hunt.getAttribute("data-hi")); return; }
       const explain = e.target.closest && e.target.closest(".explain-btn");
@@ -13236,6 +13442,7 @@
       { id: "sec-playbook",     label: "Playbook" },
       { id: "sec-attack-path",  label: "Attack Path" },
       { id: "sec-narrative",    label: "Narrative Timeline" },
+      { id: "sec-pinned",       label: "Pinned Findings" },
       { id: "sec-findings",     label: "Findings" },
       // Recommended Next Steps is hidden by default — the Playbook (above) supersedes it for
       // action-tracking. Its data still feeds the Playbook, report, and exports; re-enable it

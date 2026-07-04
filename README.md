@@ -153,6 +153,7 @@ Standard DFIR questions auto-answered from the synthesized case
 
 - **Forensic timeline** — real events with timestamps from artifacts, sortable/filterable by date/severity/source
 - **Findings** — per-technique analytic conclusions with severity + MITRE ATT&CK mapping
+- **Pinned findings** — pin the key findings (📌) to a sticky top strip that stays visible while you scroll the timeline/graph; drag-to-reorder, one-click jump, capped shortlist, persisted per case (travels in the snapshot)
 - **IOCs, MITRE coverage, attacker-path narrative** — cross-source corroboration badges + kill chain
 - **Attack phases** — timeline grouped into activity bursts by time gap, labeled by dominant tactic (deterministic, no AI)
 - **Beacon/C2 candidates** — outbound channels with regular inter-arrival intervals (a hunting lead, not proof)
