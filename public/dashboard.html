@@ -9861,9 +9861,11 @@
       // Noise reduction (two independent, composable lenses — nothing is deleted, both persisted
       // per-browser): "Hide FP/no-intel" drops confirmed-false-positive + checked-nothing-found
       // IOCs; "Signal only" narrows further to IOCs that are flagged, corroborated by 2+ tools, or
-      // carry ANY enrichment data.
+      // carry ANY enrichment data. Computed unconditionally (not just when the toggle is on) so a
+      // marked-but-still-visible row (toggle off, or it also has enrichment data) can still show a
+      // struck-through/un-mark state instead of looking identical to an unmarked IOC (#227).
+      const fpVals = fpIocValueSet();
       if (hideFpNoIntel) {
-        const fpVals = fpIocValueSet();
         visible = visible.filter(i => !fpVals.has(String(i.value).trim().toLowerCase()) && !(Array.isArray(i.enrichments) && i.enrichments.length === 0));
       }
       if (showSignalIocsOnly) {
@@ -9897,14 +9899,22 @@
       const rows = visible.map(i => {
         const isNew = newIocKeys.has(i.value);
         const isSel = selectedIocs.has(i.id);
+        const isFp = fpVals.has(String(i.value).trim().toLowerCase());
         const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
+        // Already marked false-positive: show it (strikethrough) even when the "Hide FP/no-intel"
+        // toggle is off or the IOC also carries enrichment data, and offer un-mark inline instead of
+        // the normal mark button — otherwise the row looks identical to an unmarked IOC (#227).
+        const valueHtml = isFp ? `<span style="text-decoration:line-through">${esc(i.value)}</span>` : esc(i.value);
+        const fpAction = isFp
+          ? `<button class="unfp-btn" data-id="ioc:${escAttr(String(i.value).trim().toLowerCase())}" title="Un-mark false positive">un-mark</button>`
+          : fpBtn("ioc", i.value);
         return `<div class="ioc-row${isSel ? " ioc-selected" : ""}${isNew ? " ioc-new" : ""}" data-iocid="${escAttr(i.id)}">`
           + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
           + `<span class="ioc-body">`
           // Mirror the forensic timeline: control cluster (comment + tag-add + hunt icons),
           // then the id, then the tag PILLS, then the indicator itself.
           +   `${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
-          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> ${esc(i.value)}${iocCorroBadge(i.id)} ${fpBtn("ioc", i.value)}${enrichBadges(i)}`
+          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> ${valueHtml}${iocCorroBadge(i.id)} ${fpAction}${enrichBadges(i)}`
           + `</span>`
           + `</div>`;
       }).join("");
