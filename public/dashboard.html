@@ -829,18 +829,18 @@
     /* Secondary action — muted by default, only lights up on hover so it reads as
        "click to mark", not as a status tag. Hidden until you hover the row. */
     .finding, #iocs > div { position: relative; }
-    .legit-btn {
+    .fp-btn {
       float: right; font-size: 10px; padding: 1px 7px; margin-left: 8px;
       background: transparent; color: var(--c-5b6472); border: 1px solid var(--c-2a2f3a);
       border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity .12s, color .12s, border-color .12s;
     }
-    .finding:hover .legit-btn, #iocs > div:hover .legit-btn, .ev-row:hover .legit-btn, .legit-btn:focus { opacity: 1; }
-    .legit-btn:hover { color: var(--c-ffd93b); border-color: var(--c-ffd93b); }
-    .unlegit-btn {
+    .finding:hover .fp-btn, #iocs > div:hover .fp-btn, .ev-row:hover .fp-btn, .fp-btn:focus { opacity: 1; }
+    .fp-btn:hover { color: var(--c-ffd93b); border-color: var(--c-ffd93b); }
+    .unfp-btn {
       font-size: 10px; padding: 1px 7px; margin-left: 6px; background: transparent;
       color: var(--c-9aa4b2); border: 1px solid var(--c-2a2f3a); border-radius: 4px; cursor: pointer;
     }
-    .unlegit-btn:hover { color: var(--c-6bcb77); border-color: var(--c-6bcb77); }
+    .unfp-btn:hover { color: var(--c-6bcb77); border-color: var(--c-6bcb77); }
     /* Report-details form: human-authored sections merged into the generated report. */
     #reportMeta .rm-hint { color: var(--c-9aa4b2); font-size: 12px; margin: 0 0 10px; }
     #reportMeta .rm-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 12px; margin-bottom: 8px; }
@@ -1326,6 +1326,31 @@
       </div>
     </div>
   </div>
+  <div id="fpOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3 id="fpTitle">Mark False Positive</h3>
+      <label for="fpReason" style="display:block;margin-top:6px">Reason</label>
+      <select id="fpReason" style="width:100%">
+        <option value="known-good-tool">Known admin tool / known-good software</option>
+        <option value="authorized-test">Authorized test / red-team activity</option>
+        <option value="detection-misfire">Detection rule/sensor misfire</option>
+        <option value="duplicate">Duplicate of another finding</option>
+        <option value="other">Other (explain below)</option>
+      </select>
+      <label for="fpNote" style="display:block;margin-top:6px">Note <span id="fpNoteRequired" style="display:none;color:var(--c-ff9f43)">(required for "Other")</span></label>
+      <textarea id="fpNote" rows="2" style="width:100%"></textarea>
+      <label id="fpWhitelistRow" style="display:none;margin-top:6px">
+        <input type="checkbox" id="fpAddToWhitelist" /> Also add this IOC value to the global whitelist
+      </label>
+      <div id="fpCandidates" style="margin-top:10px"></div>
+      <button id="fpAskAiBtn" type="button" style="display:none;margin-top:6px">🔎 Ask AI for more</button>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <button id="fpConfirmBtn" type="button">Confirm</button>
+        <button id="fpCancelBtn" type="button" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="fpMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
   <div id="importSevOverlay" class="comment-overlay">
     <div class="comment-modal">
       <h3>Minimum severity to import</h3>
@@ -1494,7 +1519,7 @@
     <div class="comment-modal">
       <h3>IOC block-list</h3>
       <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
-        Export a clean, targeted indicator list for network/firewall teams. Scope and legitimate
+        Export a clean, targeted indicator list for network/firewall teams. Scope and false-positive
         IOC filters are always applied. Severity is derived from the worst enrichment verdict
         (no enrichment = Info).</p>
       <label style="display:block; font-size:12px; margin-bottom:8px;">Minimum severity
@@ -2284,8 +2309,8 @@
       <!-- IOC Whitelist (Phase 2 of #35) -->
       <div class="stab-pane" id="stab-whitelist">
         <div class="sfield-hint" style="display:block;margin-bottom:8px">
-          Known-good patterns that <strong>auto-mark matching IOCs as legitimate on import</strong> (and on demand).
-          Global — shared across all cases. Reversible: matches appear in <em>Confirmed Legitimate</em> and can be un-marked.
+          Known-good patterns that <strong>auto-mark matching IOCs as a false positive on import</strong> (and on demand).
+          Global — shared across all cases. Reversible: matches appear in <em>False Positives</em> and can be un-marked.
         </div>
         <div style="background:var(--c-211405);border:1px solid var(--c-5a4a1a);border-radius:6px;padding:6px 9px;font-size:12px;color:var(--c-ffce8a);margin-bottom:12px">
           ⚠ Whitelisting is opt-in for a reason — auto-excluding internal IP ranges can hide lateral movement. Only add patterns you trust.
@@ -2347,7 +2372,7 @@
             <button id="wlApplyBtn" type="button">Apply whitelist to loaded case</button>
             <span id="wlApplyMsg" class="manual-msg"></span>
           </div>
-          <span class="sfield-hint">Scans the loaded case's current IOCs and marks matches legitimate (already auto-runs on every import).</span>
+          <span class="sfield-hint">Scans the loaded case's current IOCs and marks matches as a false positive (already auto-runs on every import).</span>
         </div>
       </div>
 
@@ -2355,8 +2380,8 @@
       <div class="stab-pane" id="stab-nsrl">
         <div class="sfield-hint" style="display:block;margin-bottom:8px">
           A set of <strong>known-software file hashes</strong> (NIST NSRL / RDS). A forensic event whose file hash —
-          or an IOC whose value — matches is a <strong>known-good file, auto-marked legitimate on import</strong> (and on demand),
-          reducing false positives. Global — shared across all cases. Reversible: matches appear in <em>Confirmed Legitimate</em>.
+          or an IOC whose value — matches is a <strong>known-good file, auto-marked a false positive on import</strong> (and on demand),
+          reducing false positives. Global — shared across all cases. Reversible: matches appear in <em>False Positives</em>.
         </div>
         <div style="background:#211405;border:1px solid #5a4a1a;border-radius:6px;padding:6px 9px;font-size:12px;color:#ffce8a;margin-bottom:12px">
           ⚠ NSRL lists <em>known</em>, not strictly known-<em>good</em>, software — some RDS sets include hacktools, and a known hash can still be malicious in context (DLL side-loading, a renamed LOLBin). Opt-in for a reason.
@@ -2418,7 +2443,7 @@
             <button id="nsrlApplyBtn" type="button">Apply NSRL to loaded case</button>
             <span id="nsrlApplyMsg" class="manual-msg"></span>
           </div>
-          <span class="sfield-hint">Scans the loaded case's IOCs + forensic events and marks known-good matches legitimate (already auto-runs on every import).</span>
+          <span class="sfield-hint">Scans the loaded case's IOCs + forensic events and marks known-good matches as a false positive (already auto-runs on every import).</span>
         </div>
       </div>
 
@@ -2905,7 +2930,7 @@
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2>Narrative Timeline<button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
     <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div><div id="findings">—</div></section>
     <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
-      <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkLegitBtn" title="Mark all selected events as legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
+      <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkFpBtn" title="Mark all selected events as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div style="font-size:11px; color:var(--c-9aa4b2); margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
@@ -2997,7 +3022,7 @@
     </style>
     <section id="sec-swimlane" style="grid-column: 1 / -1">
       <h2>Timeline Swimlane<span class="ev-sub" id="swimlaneSub">visual chart — Y-axis: assets · X-axis: time · color: severity (derived, no AI)</span></h2>
-      <div class="swimlane-hint">💡 <strong>Click</strong> a dot for details and to flash its row in the Forensic Timeline · <strong>Shift-click</strong> a dot (or <strong>Shift-drag</strong> a box) to select events, then <strong>⚑ Mark Legitimate</strong> · <strong>Drag the time axis</strong> (bottom bar) to filter the Forensic Timeline to that range</div>
+      <div class="swimlane-hint">💡 <strong>Click</strong> a dot for details and to flash its row in the Forensic Timeline · <strong>Shift-click</strong> a dot (or <strong>Shift-drag</strong> a box) to select events, then <strong>🚫 Mark False Positive</strong> · <strong>Drag the time axis</strong> (bottom bar) to filter the Forensic Timeline to that range</div>
       <div class="swimlane-controls">
         <span>Group by:</span>
         <select id="swimlaneGroupBy" title="Choose the Y-axis grouping for the swimlane">
@@ -3017,7 +3042,7 @@
       </div>
       <div class="swimlane-selbar" id="swimlaneSelBar">
         <span id="swimlaneSelCount" style="font-weight:600;color:var(--c-6aa9ff)"></span>
-        <button class="ev-bulk-btn" id="swimlaneSelLegit" title="Mark every selected event legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button>
+        <button class="ev-bulk-btn" id="swimlaneSelFp" title="Mark every selected event as a false positive (exclude from analysis)">🚫 Mark False Positive</button>
         <button class="ev-bulk-btn" id="swimlaneSelClear" style="color:var(--c-9aa4b2)">✕ Clear</button>
       </div>
       <div class="swimlane-wrap" id="swimlaneWrap">
@@ -3148,7 +3173,7 @@
       </div>
     </section>
 
-    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><label class="ioc-noise-chk" title="Hide IOCs marked legitimate (false positive) or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide legit/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><label class="ioc-noise-chk" title="Hide IOCs marked as a false positive or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide FP/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
@@ -3158,7 +3183,7 @@
         </form>
       </div>
       <div id="iocImportMeta" class="synth-meta" style="display:none"></div>
-      <div class="ioc-bulk-bar" id="iocBulkBar"><span id="iocBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ioc-bulk-btn" id="iocBulkEnrichBtn" title="Enrich selected IOCs against enabled threat-intel providers">🔬 Enrich</button> <button class="ioc-bulk-btn" id="iocBulkTagBtn" title="Add a tag to all selected IOCs">🏷 Tag</button> <button class="ioc-bulk-btn" id="iocBulkLegitBtn" title="Mark selected IOCs as legitimate (benign — exclude from analysis)">⚑ Mark Legitimate</button> <button class="ioc-bulk-btn" id="iocBulkCopyBtn" title="Copy selected IOC values to clipboard (one per line)">📋 Copy</button> <button class="ioc-bulk-btn" id="iocBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
+      <div class="ioc-bulk-bar" id="iocBulkBar"><span id="iocBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ioc-bulk-btn" id="iocBulkEnrichBtn" title="Enrich selected IOCs against enabled threat-intel providers">🔬 Enrich</button> <button class="ioc-bulk-btn" id="iocBulkTagBtn" title="Add a tag to all selected IOCs">🏷 Tag</button> <button class="ioc-bulk-btn" id="iocBulkFpBtn" title="Mark selected IOCs as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ioc-bulk-btn" id="iocBulkCopyBtn" title="Copy selected IOC values to clipboard (one per line)">📋 Copy</button> <button class="ioc-bulk-btn" id="iocBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div id="iocs">—</div></section>
     <section id="sec-exposure" style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
       <div class="ce-body">
@@ -3329,7 +3354,7 @@
       #sec-nlquery .nlq-deploy:disabled{opacity:.6;cursor:default}
       #sec-nlquery .nlq-res{margin-top:6px}
     </style>
-    <section id="sec-legitimate" style="grid-column: 1 / -1"><h2>Confirmed Legitimate (excluded from analysis)</h2><div id="legitimate">—</div></section>
+    <section id="sec-false-positive" style="grid-column: 1 / -1"><h2>False Positives (excluded from analysis)</h2><div id="false-positive">—</div></section>
     <style>
       #sec-playbook .pb-badge{font-size:12px;color:var(--c-9aa4b2);font-weight:normal;margin-left:8px}
       .pb-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px}
@@ -3567,8 +3592,8 @@
     let aiEnabled = false;   // AI defaults OFF per case; loadAiToggle() syncs the real state
     let scope = { start: null, end: null };  // active investigation window (ISO or null)
     let lastState = null;                    // last raw state from server, for re-render on scope change
-    let legitMarkers = [];                    // confirmed-legitimate markers; events here are hidden from the timeline
-    let lastFt = [];                          // last scoped+legit-filtered forensic timeline, for severity re-filter without re-fetching
+    let fpMarkers = [];                       // false-positive markers; events here are hidden from the timeline
+    let lastFt = [];                          // last scoped+FP-filtered forensic timeline, for severity re-filter without re-fetching
     // Forensic-timeline sort order (#104): { key: "date" | "severity", dir: "asc" | "desc" }.
     // date asc = oldest first (default/chronological), date desc = newest first;
     // severity desc = most-severe first, severity asc = least-severe first. Persisted "key:dir".
@@ -4579,6 +4604,50 @@
       fetch(`/cases/${caseId}/tags/${id}`, { method: "DELETE" }).then(() => loadTags(caseId)).catch(() => {});
     }
 
+    // --- Mark-false-positive modal (#227) -------------------------------------------
+    // Reason + note capture, deterministic (+ optional AI) "similar items" suggestions,
+    // and — for the single-IOC case — an option to promote the value into the global
+    // IOC whitelist. Same overlay/modal structural pattern as the tag modal above.
+    let fpTarget = null;   // { kind, ref, label, extraRefs: [{kind, ref, label}], onDone? } while the modal is open
+
+    function openFalsePositiveModal(kind, ref, label, extraRefs, onDone) {
+      fpTarget = { kind, ref, label, extraRefs: extraRefs || [], onDone: onDone || null };
+      document.getElementById("fpReason").value = "known-good-tool";
+      document.getElementById("fpNote").value = "";
+      document.getElementById("fpNoteRequired").style.display = "none";
+      // Bulk marks (extraRefs non-empty) skip the whitelist-promotion checkbox — the batch route
+      // has no per-item addToWhitelist support (only the single-item route does); see the Confirm
+      // handler below.
+      document.getElementById("fpWhitelistRow").style.display = (kind === "ioc" && !fpTarget.extraRefs.length) ? "" : "none";
+      document.getElementById("fpAddToWhitelist").checked = false;
+      document.getElementById("fpMsg").textContent = "";
+      document.getElementById("fpCandidates").innerHTML = "";
+      document.getElementById("fpAskAiBtn").style.display = "none";
+      document.getElementById("fpOverlay").classList.add("open");
+      if (kind === "event" || kind === "finding") {
+        document.getElementById("fpCandidates").innerHTML = "loading similar items…";
+        const caseId = document.getElementById("caseId").value.trim();
+        fetch(`/cases/${caseId}/false-positive/suggest`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ kind, ref }),
+        }).then(r => r.json()).then(renderFpCandidates).catch(() => { document.getElementById("fpCandidates").innerHTML = ""; });
+        document.getElementById("fpAskAiBtn").style.display = fpAiConfigured ? "inline-block" : "none";
+      }
+    }
+
+    function renderFpCandidates(data) {
+      const list = (data && data.candidates) || [];
+      const el = document.getElementById("fpCandidates");
+      if (!list.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No similar items found.</div>"; return; }
+      el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px;margin-bottom:4px'>Also mark as false positive:</div>" +
+        list.map(c => `<label style="display:block"><input type="checkbox" class="fp-candidate" value="${escAttr(c.id)}" data-kind="${escAttr(c.kind)}" data-label="${escAttr(c.label)}"> ${esc(c.label)} <span style="color:var(--c-9aa4b2);font-size:11px">(${esc((c.reasons || []).join(", "))})</span></label>`).join("");
+    }
+
+    function closeFalsePositiveModal() {
+      fpTarget = null;
+      document.getElementById("fpOverlay").classList.remove("open");
+    }
+
     // --- Analyst notebook ---------------------------------------------------------
     let notebookEntries = [];
     let nbEditingId = null;
@@ -5219,12 +5288,12 @@
     let evIdFilterLabel = "";     // human label shown in the chip (e.g. the anomaly bucket)
     let showFlaggedIocsOnly = false;   // IOCs section: show only malicious/suspicious (any enrichment engine)
     // Noise-reduction defaults for a case with hundreds/thousands of IOCs (every file/process/hash seen
-    // anywhere becomes one — see the "too many IOCs" discussion): hide legitimate-marked + no-intel IOCs,
+    // anywhere becomes one — see the "too many IOCs" discussion): hide false-positive-marked + no-intel IOCs,
     // and default to a "signal only" view (flagged, corroborated by 2+ tools, or has ANY enrichment data).
     // Both are pure display filters — nothing is deleted; each persists per-browser (default ON) and
     // can be toggled off per case/session, mirroring the corroboration lens's localStorage pattern.
     const _boolPref = (k, dflt) => { const v = localStorage.getItem("dfir.ioc." + k); return v === null ? dflt : v === "1"; };
-    let hideLegitNoIntel = _boolPref("hideNoise", true);
+    let hideFpNoIntel = _boolPref("hideNoise", true);
     let showSignalIocsOnly = _boolPref("signalOnly", true);
     // Well-known OS system-binary paths (Windows/Linux/macOS) — a "file" IOC under one of these is
     // almost always a benign system process observed by an EDR/telemetry artifact (Amcache, MFT,
@@ -5288,31 +5357,24 @@
       renderTagModal();
       document.getElementById("tagInput").focus();
     }
-    // Mark every selected event legitimate (benign, excluded from analysis) in ONE request —
-    // the /legitimate/batch route writes all markers with a single read-modify-write and a single
-    // re-synthesis, avoiding the race (and N re-synths) of firing one /legitimate call per event.
-    async function bulkMarkLegitimate() {
+    // Mark every selected event as a false positive (benign, excluded from analysis) in ONE
+    // request — the /false-positive/batch route writes all markers with a single
+    // read-modify-write and a single re-synthesis, avoiding the race (and N re-synths) of firing
+    // one /false-positive call per event. Opens the mark-FP modal on the first selected event as
+    // the anchor (for the similarity suggestions); the rest ride along as extraRefs regardless of
+    // what's checked in the modal.
+    function bulkMarkFalsePositive() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId || !selectedEvents.size) return;
       const ids = [...selectedEvents];
-      const note = prompt(`Mark ${ids.length} selected event${ids.length !== 1 ? "s" : ""} as legitimate (benign — exclude from analysis). Reason (optional):`, "");
-      if (note === null) return; // cancelled
       const descById = new Map((lastFt || []).map(e => [String(e.id), String(e.description || "")]));
-      const items = ids.map(id => ({ kind: "event", ref: id, label: descById.get(id) ?? "" }));
-      const statusEl = document.getElementById("status");
-      statusEl.textContent = `marking ${ids.length} legitimate…`;
-      try {
-        const r = await fetch(`/cases/${caseId}/legitimate/batch`, { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ items, note }) });
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        renderLegitimate(await r.json());
+      const [firstId, ...restIds] = ids;
+      const extraRefs = restIds.map(id => ({ kind: "event", ref: id, label: descById.get(id) ?? "" }));
+      openFalsePositiveModal("event", firstId, descById.get(firstId) ?? "", extraRefs, () => {
         selectedEvents.clear();
         renderTimelineEvents(lastFt);
         swSelToolbar(); swRenderCanvas();   // clear the rings + hide the swimlane selection bar
-        statusEl.textContent = "marked legitimate — AI is re-synthesizing (see AI status)";
-      } catch {
-        statusEl.textContent = "mark failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
-      }
+      });
     }
 
     // --- Bulk IOC operations -------------------------------------------------------
@@ -5337,27 +5399,21 @@
     function bulkTagIocs() {
       if (selectedIocs.size) openBulkTagModal([...selectedIocs], "ioc");
     }
-    async function bulkMarkIocsLegitimate() {
+    // Opens the mark-FP modal on the first selected IOC as the anchor; the rest ride along as
+    // extraRefs regardless of what's checked in the modal (bulk IOC marking has no per-item
+    // whitelist-promotion — see the "Confirm" handler's addToWhitelist note).
+    function bulkMarkIocsFalsePositive() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId || !selectedIocs.size) return;
       const ids = [...selectedIocs];
-      const note = prompt(`Mark ${ids.length} IOC${ids.length !== 1 ? "s" : ""} as legitimate (benign — exclude from analysis). Reason (optional):`, "");
-      if (note === null) return;
       const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
-      const items = ids.map(id => ({ kind: "ioc", ref: iocById.get(id) ?? id, label: iocById.get(id) ?? id }));
-      const statusEl = document.getElementById("status");
-      statusEl.textContent = `marking ${ids.length} IOC${ids.length !== 1 ? "s" : ""} legitimate…`;
-      try {
-        const r = await fetch(`/cases/${caseId}/legitimate/batch`, { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ items, note }) });
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        renderLegitimate(await r.json());
+      const [firstId, ...restIds] = ids;
+      const firstVal = iocById.get(firstId) ?? firstId;
+      const extraRefs = restIds.map(id => ({ kind: "ioc", ref: iocById.get(id) ?? id, label: iocById.get(id) ?? id }));
+      openFalsePositiveModal("ioc", firstVal, firstVal, extraRefs, () => {
         selectedIocs.clear();
         if (lastState) renderIocs(lastState.iocs || []);
-        statusEl.textContent = "marked legitimate — AI is re-synthesizing (see AI status)";
-      } catch {
-        statusEl.textContent = "mark failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
-      }
+      });
     }
     function bulkCopyIocs() {
       const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
@@ -6622,6 +6678,10 @@
     // synthesis (findings it adds/drops, severity, ATT&CK technique) and the analyst accepts/rejects
     // each. Accept is durable (re-applied across re-synthesis); decisions are forward-only in v1.
     let secondOpinionEnabled = false;   // set from /health — whether DFIR_AI_SECOND_OPINION_MODEL is configured
+    // Whether ANY AI provider is configured server-wide (h.aiEnabled from /health) — gates the mark-FP
+    // modal's "Ask AI for more" button. Distinct from the per-case `aiEnabled` toggle above (whether
+    // AI analysis is turned ON for the currently-loaded case) — do not conflate the two.
+    let fpAiConfigured = false;
     function loadSecondOpinion(caseId) {
       fetch(`/cases/${caseId}/second-opinion`).then(r => r.json()).then(renderSecondOpinion).catch(() => {});
     }
@@ -7492,7 +7552,7 @@
       const el = document.getElementById("status");
       // "catching up" is the optimistic message toggleAi() writes when AI is switched on; it must
       // be cleared once the backfill reports idle, or it stays stuck (it's not a live indicator).
-      if (/synthesiz|applying scope|marking legitimate|import|catching up/i.test(el.textContent)) {
+      if (/synthesiz|applying scope|marking false positive|import|catching up/i.test(el.textContent)) {
         el.textContent = ws && ws.readyState === 1 ? "connected (live)" : "disconnected";
       }
     }
@@ -7589,11 +7649,11 @@
       clearBtn.addEventListener("click", clear);
     })();
 
-    function legitBtn(kind, ref, label) {
+    function fpBtn(kind, ref, label) {
       const labelAttr = label != null ? ` data-label="${escAttr(label)}"` : "";
-      return `<button class="legit-btn" data-kind="${escAttr(kind)}" data-ref="${escAttr(ref)}"${labelAttr} ` +
+      return `<button class="fp-btn" data-kind="${escAttr(kind)}" data-ref="${escAttr(ref)}"${labelAttr} ` +
         `title="Mark as a false positive — client confirmed this is benign; exclude it from analysis">` +
-        `⚑ mark legitimate</button>`;
+        `🚫 mark false positive</button>`;
     }
 
     // Threat-intel enrichment badges for an IOC (VirusTotal / MalwareBazaar / AbuseIPDB).
@@ -8137,7 +8197,7 @@
     const MNS_SEV_COLOR = { Critical:"#ff5c5c", High:"#ff9f43", Medium:"#ffd93b", Low:"#6bcb77", Info:"#6aa9ff" };
     const MNS_SEV_RANK = { Critical:0, High:1, Medium:2, Low:3, Info:4 };
 
-    // Show the section iff the (in-scope, non-legit) timeline has any Volatility/Rekall events.
+    // Show the section iff the (in-scope, non-FP) timeline has any Volatility/Rekall events.
     function toggleMemNextSteps(ft) {
       const sec = document.getElementById("sec-mem-nextsteps");
       if (!sec) return;
@@ -8633,7 +8693,7 @@
         const cm = L.circleMarker([m.lat, m.lon], opts);
         const verdict = m.verdict && m.verdict !== "unknown" ? ` · ${esc(m.verdict)}` : "";
         const approxNote = m.approximate ? " · <em>country-level (approx)</em>" : "";
-        cm.bindPopup(`<b>${esc(m.ip)}</b>${m.legitimate ? " (legit)" : ""}<br>${esc([m.city, m.country].filter(Boolean).join(", ") || "unknown location")}${approxNote}<br>${esc(m.asn || "")}<br>${esc(m.severity)}${verdict} · ${esc(m.eventCount)} event(s)`);
+        cm.bindPopup(`<b>${esc(m.ip)}</b>${m.legitimate ? " (false positive)" : ""}<br>${esc([m.city, m.country].filter(Boolean).join(", ") || "unknown location")}${approxNote}<br>${esc(m.asn || "")}<br>${esc(m.severity)}${verdict} · ${esc(m.eventCount)} event(s)`);
         cm.addTo(geoLayer);
         bounds.push([m.lat, m.lon]);
         byIp[m.ip.toLowerCase()] = cm;
@@ -8938,7 +8998,7 @@
 
     // ── Timeline Swimlane ───────────────────────────────────────────────────────────────
     // Canvas-based swimlane chart: assets/severity/tactics on Y-axis, time on X-axis.
-    // Data comes from GET /cases/:id/swimlane?groupBy=... (server applies scope+legit filtering).
+    // Data comes from GET /cases/:id/swimlane?groupBy=... (server applies scope+FP filtering).
     // View window (swViewStartMs…swViewEndMs) drives all rendering; zoom/pan mutate it.
 
     const SW_LANE_H = 36;    // px per lane row
@@ -9499,8 +9559,8 @@
       });
       document.getElementById("swimlaneScopeView").addEventListener("click", swScopeToView);
       document.getElementById("swimlanePng").addEventListener("click", swExportPng);
-      document.getElementById("swimlaneSelLegit").addEventListener("click", function() {
-        if (selectedEvents.size) bulkMarkLegitimate();   // shared with the table's bulk bar
+      document.getElementById("swimlaneSelFp").addEventListener("click", function() {
+        if (selectedEvents.size) bulkMarkFalsePositive();   // shared with the table's bulk bar
       });
       document.getElementById("swimlaneSelClear").addEventListener("click", function() {
         selectedEvents.clear(); swSelectionChanged();
@@ -9705,66 +9765,53 @@
       return `<br><small style="color:var(--c-9aa4b2)">evidence: ${links}</small>`;
     }
 
-    function renderLegitimate(markers) {
-      legitMarkers = markers || [];
-      const el = document.getElementById("legitimate");
+    function renderFalsePositives(markers) {
+      fpMarkers = markers || [];
+      const el = document.getElementById("false-positive");
       // For event markers, prefer the human-readable label (the event description)
       // over the opaque event id stored as ref.
-      el.innerHTML = (legitMarkers.length)
-        ? legitMarkers.map(m => {
+      el.innerHTML = (fpMarkers.length)
+        ? fpMarkers.map(m => {
             const shown = (m.kind === "event" && m.label) ? m.label : m.ref;
             return `<div style="margin-bottom:4px"><span style="color:var(--c-9aa4b2)">${esc(m.kind)}:</span> ` +
               `<span style="text-decoration:line-through">${esc(shown)}</span>` +
               `${m.note ? ` — <small>${esc(m.note)}</small>` : ""} ` +
-              `<button class="unlegit-btn" data-id="${escAttr(m.id)}">un-mark</button></div>`;
+              `<button class="unfp-btn" data-id="${escAttr(m.id)}">un-mark</button></div>`;
           }).join("")
-        : "<div style='color:var(--c-9aa4b2)'>Nothing marked legitimate.</div>";
-      // Legit events are hidden from the timeline — re-render it with the new set.
+        : "<div style='color:var(--c-9aa4b2)'>Nothing marked false positive.</div>";
+      // FP events are hidden from the timeline — re-render it with the new set.
       if (lastState) render(lastState);
     }
-    // Event ids the client confirmed legitimate (hidden from the forensic timeline view).
-    function legitEventIdSet() {
-      return new Set(legitMarkers.filter(m => m.kind === "event").map(m => String(m.ref).trim().toLowerCase()));
+    // Event ids the client confirmed as a false positive (hidden from the forensic timeline view).
+    function fpEventIdSet() {
+      return new Set(fpMarkers.filter(m => m.kind === "event").map(m => String(m.ref).trim().toLowerCase()));
     }
-    // IOC VALUES the client confirmed legitimate (an IOC legit marker's ref is the indicator value,
-    // not its id — see legitBtn("ioc", i.value)) — used by the "Hide legit/no-intel" checkbox.
-    function legitIocValueSet() {
-      return new Set(legitMarkers.filter(m => m.kind === "ioc").map(m => String(m.ref).trim().toLowerCase()));
-    }
-
-    function loadLegitimate(caseId) {
-      fetch(`/cases/${caseId}/legitimate`).then(r => r.json()).then(renderLegitimate).catch(() => {});
+    // IOC VALUES the client confirmed as a false positive (an IOC marker's ref is the indicator value,
+    // not its id — see fpBtn("ioc", i.value)) — used by the "Hide FP/no-intel" checkbox.
+    function fpIocValueSet() {
+      return new Set(fpMarkers.filter(m => m.kind === "ioc").map(m => String(m.ref).trim().toLowerCase()));
     }
 
-    // Event delegation for the dynamically-rendered legit / un-mark buttons.
+    function loadFalsePositives(caseId) {
+      fetch(`/cases/${caseId}/false-positive`).then(r => r.json()).then(renderFalsePositives).catch(() => {});
+    }
+
+    // Event delegation for the dynamically-rendered mark-FP / un-mark buttons.
     document.addEventListener("click", (e) => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
-      const mark = e.target.closest(".legit-btn");
+      const mark = e.target.closest(".fp-btn");
       if (mark) {
         const kind = mark.dataset.kind, ref = mark.dataset.ref, label = mark.dataset.label;
-        const what = kind === "event" ? "forensic event" : kind;
-        const note = prompt(`Mark this ${what} as legitimate (benign — exclude from analysis). Reason (optional):`, "");
-        if (note === null) return; // cancelled
-        document.getElementById("status").textContent = "marking legitimate…";
-        fetch(`/cases/${caseId}/legitimate`, { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ kind, ref, note, ...(label != null ? { label } : {}) }) })
-          .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-          .then(markers => {
-            renderLegitimate(markers);
-            // The actual progress now shows in the AI status (synthesizing → idle).
-            document.getElementById("status").textContent = "marked legitimate — AI is re-synthesizing (see AI status)";
-          })
-          .catch(() => document.getElementById("status").textContent =
-            "mark failed — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.");
+        openFalsePositiveModal(kind, ref, label != null ? label : ref, []);
         return;
       }
-      const un = e.target.closest(".unlegit-btn");
+      const un = e.target.closest(".unfp-btn");
       if (un) {
-        fetch(`/cases/${caseId}/legitimate/remove`, { method: "POST", headers: { "content-type": "application/json" },
+        fetch(`/cases/${caseId}/false-positive/remove`, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ id: un.dataset.id }) })
           .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-          .then(renderLegitimate)
+          .then(renderFalsePositives)
           .catch(() => document.getElementById("status").textContent = "un-mark failed — restart the companion server.");
       }
     });
@@ -9811,12 +9858,12 @@
       if (hiddenIocTypes.size > 0) visible = visible.filter(i => !hiddenIocTypes.has(i.type || "other"));
       if (corrobIocs > 1) visible = visible.filter(i => (iocSourcesById[i.id] || []).length >= corrobIocs);   // corroboration lens (#35)
       // Noise reduction (two independent, composable lenses — nothing is deleted, both persisted
-      // per-browser): "Hide legit/no-intel" drops confirmed-false-positive + checked-nothing-found
+      // per-browser): "Hide FP/no-intel" drops confirmed-false-positive + checked-nothing-found
       // IOCs; "Signal only" narrows further to IOCs that are flagged, corroborated by 2+ tools, or
       // carry ANY enrichment data.
-      if (hideLegitNoIntel) {
-        const legitVals = legitIocValueSet();
-        visible = visible.filter(i => !legitVals.has(String(i.value).trim().toLowerCase()) && !(Array.isArray(i.enrichments) && i.enrichments.length === 0));
+      if (hideFpNoIntel) {
+        const fpVals = fpIocValueSet();
+        visible = visible.filter(i => !fpVals.has(String(i.value).trim().toLowerCase()) && !(Array.isArray(i.enrichments) && i.enrichments.length === 0));
       }
       if (showSignalIocsOnly) {
         visible = visible.filter(i => iocFlagged(i) || (iocSourcesById[i.id] || []).length >= 2 || (Array.isArray(i.enrichments) && i.enrichments.length > 0));
@@ -9826,12 +9873,12 @@
       // attacker's binary renamed to a real system filename) is exactly the case an analyst still
       // wants to catch, so this stays its own opt-out rather than being folded into "signal only".
       if (hideSystemPaths) visible = visible.filter(i => !isSystemPathIoc(i));
-      const noiseFiltersActive = hideLegitNoIntel || showSignalIocsOnly || hideSystemPaths;
+      const noiseFiltersActive = hideFpNoIntel || showSignalIocsOnly || hideSystemPaths;
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div style='color:var(--c-9aa4b2)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
           : (searchTerm || excludeTerms.length > 0 || hiddenIocTypes.size > 0 || corrobIocs > 1 || noiseFiltersActive) && iocs.length > 0
-            ? `<div style='color:var(--c-9aa4b2)'>No IOCs match the filter.${noiseFiltersActive ? " Turn off “Signal only” / “Hide legit/no-intel” / “Hide OS system paths” to see everything." : ""}</div>`
+            ? `<div style='color:var(--c-9aa4b2)'>No IOCs match the filter.${noiseFiltersActive ? " Turn off “Signal only” / “Hide FP/no-intel” / “Hide OS system paths” to see everything." : ""}</div>`
           : "<div style='color:var(--c-9aa4b2)'>No IOCs yet</div>";
         updateIocBulkBar();
         return;
@@ -9856,7 +9903,7 @@
           // Mirror the forensic timeline: control cluster (comment + tag-add + hunt icons),
           // then the id, then the tag PILLS, then the indicator itself.
           +   `${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
-          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> ${esc(i.value)}${iocCorroBadge(i.id)} ${legitBtn("ioc", i.value)}${enrichBadges(i)}`
+          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> ${esc(i.value)}${iocCorroBadge(i.id)} ${fpBtn("ioc", i.value)}${enrichBadges(i)}`
           + `</span>`
           + `</div>`;
       }).join("");
@@ -9947,7 +9994,7 @@
       return `<span class="tl-sortarrows">${btn("asc")}${btn("desc")}</span>`;
     }
 
-    // Render the forensic timeline from a pre-scoped+legit-filtered list.
+    // Render the forensic timeline from a pre-scoped+FP-filtered list.
     // Called both from render() (new state) and from the severity-filter checkboxes (re-filter only).
     // The option set for the source filter: distinct real source/tool names across the in-scope
     // timeline (excludes the "unknown source" placeholder), sorted, plus a trailing "(no source)"
@@ -10153,7 +10200,7 @@
           + (tlShow("tags", tld) ? tagPills("event", e.id) : "")
           + (tlShow("badges", tld) ? `${newBadge}${badge}${corro}${chain}` : "")
           + (showHost ? host : "")
-          + ` ${descHtml(desc, e.id)} ${legitBtn("event", e.id, desc)}`
+          + ` ${descHtml(desc, e.id)} ${fpBtn("event", e.id, desc)}`
           + (tlShow("badges", tld) && e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:var(--c-ff8a8a)">${esc(e.chainCheck.note)}</small>` : "")
           + (tlShow("mitre", tld) && e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : "")
           + (tlShow("findings", tld) ? findingLinks : "")
@@ -10274,10 +10321,10 @@
       renderIocs(state.iocs || []);
 
       // Already scope-projected above (events + findings/IOCs/MITRE consistently).
-      // Then hide events the client confirmed legitimate (preserved in state; just
+      // Then hide events the client confirmed as a false positive (preserved in state; just
       // not shown here and excluded from synthesis — un-mark restores them).
-      const legitIds = legitEventIdSet();
-      const ft = (state.forensicTimeline || []).filter(e => !legitIds.has(String(e.id).trim().toLowerCase()));
+      const fpIds = fpEventIdSet();
+      const ft = (state.forensicTimeline || []).filter(e => !fpIds.has(String(e.id).trim().toLowerCase()));
       // Aggregate each finding's evidence from the events that back it: synthesis-made
       // findings carry no sourceScreenshots themselves, but their events do.
       const evByFinding = {};
@@ -10344,7 +10391,7 @@
           }
           // Comment chip, tag icon button, severity badge, confidence score, tag pills, then finding id/title.
           return `<div class="finding" data-fid="${escAttr(f.id)}">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ${tagPills("finding", f.id)} ` +
-            `<span style="color:var(--c-6aa9ff)">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${legitBtn("finding", f.title)}` +
+            `<span style="color:var(--c-6aa9ff)">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${fpBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs)}</div>`;
@@ -10402,7 +10449,7 @@
       loadAiToggle(caseId);
       loadEnrichToggle(caseId);
       loadAnonToggle(caseId);
-      loadLegitimate(caseId);
+      loadFalsePositives(caseId);
       loadScope(caseId);
       loadCorrProfile(caseId);
       loadReportMeta(caseId);
@@ -10438,7 +10485,7 @@
       showFlaggedIocsOnly = false;
       const ifBtn = document.getElementById("iocFlaggedBtn");
       if (ifBtn) ifBtn.classList.remove("active");
-      // hideLegitNoIntel / showSignalIocsOnly are NOT reset here — like the corroboration lens
+      // hideFpNoIntel / showSignalIocsOnly are NOT reset here — like the corroboration lens
       // controls, they're per-browser preferences (localStorage-backed), not per-case session state.
       hiddenIocTypes.clear(); _iocTypeMenuSig = "";
       searchTerm = ""; filterFrom = null; filterTo = null;
@@ -10474,6 +10521,7 @@
         secondOpinionEnabled = !!h.secondOpinionEnabled;   // gates the "2nd opinion" button (#116)
         const soBtn = document.getElementById("secondOpinion");
         if (soBtn) soBtn.style.display = secondOpinionEnabled ? "" : "none";
+        fpAiConfigured = !!h.aiEnabled;   // gates the mark-FP modal's "Ask AI for more" button (#227)
       }).catch(() => setAi("unknown", "unknown"));
       loadUpdateCheck();
 
@@ -10519,7 +10567,7 @@
         else if (msg.type === "velo_monitor_changed") loadVeloMonitors(caseId);
         else if (msg.type === "push_token_changed") loadPushToken(caseId);
         else if (msg.type === "importers_changed") { if (document.getElementById("stab-importers")) loadImporters(); }
-        else if (msg.type === "legitimate_changed") loadLegitimate(caseId);
+        else if (msg.type === "false_positive_changed") loadFalsePositives(caseId);
         else if (msg.type === "scope_changed") {
           scope = { start: msg.start ?? null, end: msg.end ?? null };
           document.getElementById("scopeStart").value = isoToUtcInput(scope.start);
@@ -10908,12 +10956,12 @@
       // Bulk action bar buttons (events)
       if (e.target.id === "evBulkStarBtn") { bulkToggleStar(); return; }
       if (e.target.id === "evBulkTagBtn") { if (selectedEvents.size) openBulkTagModal([...selectedEvents]); return; }
-      if (e.target.id === "evBulkLegitBtn") { bulkMarkLegitimate(); return; }
+      if (e.target.id === "evBulkFpBtn") { bulkMarkFalsePositive(); return; }
       if (e.target.id === "evBulkClearBtn") { clearSelection(); return; }
       // Bulk action bar buttons (IOCs)
       if (e.target.id === "iocBulkEnrichBtn") { bulkEnrichIocs(); return; }
       if (e.target.id === "iocBulkTagBtn") { bulkTagIocs(); return; }
-      if (e.target.id === "iocBulkLegitBtn") { bulkMarkIocsLegitimate(); return; }
+      if (e.target.id === "iocBulkFpBtn") { bulkMarkIocsFalsePositive(); return; }
       if (e.target.id === "iocBulkCopyBtn") { bulkCopyIocs(); return; }
       if (e.target.id === "iocBulkClearBtn") { clearIocSelection(); return; }
       // Star filter toggle
@@ -11028,6 +11076,72 @@
     document.getElementById("tagClose").onclick = closeTagModal;
     document.getElementById("tagOverlay").addEventListener("click", (e) => { if (e.target.id === "tagOverlay") closeTagModal(); });
     document.getElementById("tagInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTag(e.target.value); } });
+    // Mark-false-positive modal (#227) (the 🚫 mark-FP buttons are handled by the main click handler above).
+    document.getElementById("fpReason").addEventListener("change", (e) => {
+      document.getElementById("fpNoteRequired").style.display = e.target.value === "other" ? "inline" : "none";
+    });
+    document.getElementById("fpAskAiBtn").addEventListener("click", async () => {
+      if (!fpTarget) return;
+      const btn = document.getElementById("fpAskAiBtn");
+      btn.disabled = true; btn.textContent = "asking…";
+      try {
+        const caseId = document.getElementById("caseId").value.trim();
+        const r = await fetch(`/cases/${caseId}/false-positive/suggest`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ kind: fpTarget.kind, ref: fpTarget.ref, ai: true }),
+        });
+        renderFpCandidates(await r.json());
+      } finally { btn.disabled = false; btn.textContent = "🔎 Ask AI for more"; }
+    });
+    document.getElementById("fpCancelBtn").addEventListener("click", closeFalsePositiveModal);
+    document.getElementById("fpOverlay").addEventListener("click", (e) => { if (e.target.id === "fpOverlay") closeFalsePositiveModal(); });
+    document.getElementById("fpConfirmBtn").addEventListener("click", async () => {
+      if (!fpTarget) return;
+      const reason = document.getElementById("fpReason").value;
+      const note = document.getElementById("fpNote").value.trim();
+      if (reason === "other" && !note) { document.getElementById("fpMsg").textContent = "a note is required for 'Other'"; return; }
+      const checked = [...document.querySelectorAll(".fp-candidate:checked")].map(cb => ({
+        kind: cb.dataset.kind, ref: cb.value, label: cb.dataset.label,
+      }));
+      const items = [
+        { kind: fpTarget.kind, ref: fpTarget.ref, label: fpTarget.label },
+        ...fpTarget.extraRefs,
+        ...checked,
+      ];
+      // The batch route (items.length > 1) has no per-item addToWhitelist support — only the
+      // single-item /false-positive route does — so whitelist promotion is offered (and honored)
+      // only for a true single-item mark of an IOC; see openFalsePositiveModal's fpWhitelistRow
+      // visibility rule above.
+      const addToWhitelist = fpTarget.kind === "ioc" && !fpTarget.extraRefs.length &&
+        document.getElementById("fpAddToWhitelist").checked;
+      const caseId = document.getElementById("caseId").value.trim();
+      const onDone = fpTarget.onDone;
+      document.getElementById("fpMsg").textContent = `marking ${items.length} false positive…`;
+      try {
+        let markers;
+        if (items.length === 1) {
+          const r = await fetch(`/cases/${caseId}/false-positive`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ...items[0], reason, note, addToWhitelist }),
+          });
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          markers = await r.json();
+        } else {
+          const r = await fetch(`/cases/${caseId}/false-positive/batch`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ items, reason, note }),
+          });
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          markers = await r.json();
+        }
+        renderFalsePositives(markers);
+        closeFalsePositiveModal();
+        if (onDone) onDone();
+        document.getElementById("status").textContent = "marked false positive — AI is re-synthesizing (see AI status)";
+      } catch (err) {
+        document.getElementById("fpMsg").textContent = `error: ${err.message}`;
+      }
+    });
     // Hunt-pivot modal (the 🔍 buttons are handled by the main click handler above).
     document.getElementById("huntClose").onclick = closeHuntModal;
     document.getElementById("huntOverlay").addEventListener("click", (e) => { if (e.target.id === "huntOverlay") closeHuntModal(); });
@@ -11265,10 +11379,10 @@
       if (signalBtn) signalBtn.classList.toggle("active", showSignalIocsOnly);
       const noiseChk = document.getElementById("iocHideNoiseChk");
       if (noiseChk) {
-        noiseChk.checked = hideLegitNoIntel;
+        noiseChk.checked = hideFpNoIntel;
         noiseChk.addEventListener("change", () => {
-          hideLegitNoIntel = noiseChk.checked;
-          localStorage.setItem("dfir.ioc.hideNoise", hideLegitNoIntel ? "1" : "0");
+          hideFpNoIntel = noiseChk.checked;
+          localStorage.setItem("dfir.ioc.hideNoise", hideFpNoIntel ? "1" : "0");
           if (lastState) renderIocs(lastState.iocs || []);
         });
       }
@@ -12130,7 +12244,7 @@
       { id: "sec-adversary",    label: "Adversary Hints" },
       { id: "sec-d3fend",       label: "Mitigation & Defensive Countermeasures" },
       { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
-      { id: "sec-legitimate",   label: "Confirmed Legitimate" },
+      { id: "sec-false-positive", label: "False Positives" },
       { id: "sec-hypotheses",   label: "Hypotheses" },
       { id: "sec-notebook",     label: "Analyst Notebook" },
       { id: "sec-inv-log",      label: "Investigation Log" },
@@ -12617,7 +12731,7 @@
           F("DFIR_PUSH_TOKEN", "Push token (you choose this)", { secret: true, hint: "A random secret you make up — e.g. a 32-char string from a password manager. Senders must send the SAME value as their X-DFIR-Key header." }),
         ] },
       { id: "nsrl", icon: "🗄️", label: "NSRL known-good", status: "nsrl",
-        blurb: "Auto-mark known-software hashes legitimate. Flat hash file and/or an RDS SQLite DB.",
+        blurb: "Auto-mark known-software hashes as a false positive. Flat hash file and/or an RDS SQLite DB.",
         reload: "DFIR_NSRL_", test: { method: "GET", url: "/setup/status", statusKey: "nsrl" },
         fields: [
           F("DFIR_NSRL_DB", "RDS SQLite DB path", { hint: "RDS_*.db queried on demand (needs Node 22.5+)." }),
@@ -13463,8 +13577,8 @@
       fetch(`/cases/${caseId}/ioc-whitelist/apply`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
         .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
         .then(j => {
-          msg.textContent = `${j.matched} matched · ${j.added} newly marked legitimate`;
-          if (j.legitimate) renderLegitimate(j.legitimate);
+          msg.textContent = `${j.matched} matched · ${j.added} newly marked false positive`;
+          if (j.legitimate) renderFalsePositives(j.legitimate);
         })
         .catch(e => { msg.textContent = "failed: " + e.message + " — restart the server if the endpoint 404s."; });
     }
@@ -13477,7 +13591,7 @@
         const n = j.count || 0;
         if (cnt) cnt.textContent = n ? `(${n.toLocaleString()})` : "";
         if (status) status.textContent = n
-          ? `${n.toLocaleString()} known-good hash${n !== 1 ? "es" : ""} loaded — matches auto-marked legitimate on import.`
+          ? `${n.toLocaleString()} known-good hash${n !== 1 ? "es" : ""} loaded — matches auto-marked as a false positive on import.`
           : "No hashes loaded yet — import an NSRL set below to start filtering known-good files.";
         renderNsrlDb(j);
       }).catch(() => { if (status) status.textContent = "could not load — restart the server if this persists."; });
@@ -13562,8 +13676,8 @@
       fetch(`/cases/${caseId}/nsrl/apply`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
         .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
         .then(j => {
-          msg.textContent = `${j.matchedIocs} IOC(s) + ${j.matchedEvents} event(s) matched · ${j.added} newly marked legitimate`;
-          if (j.legitimate) renderLegitimate(j.legitimate);
+          msg.textContent = `${j.matchedIocs} IOC(s) + ${j.matchedEvents} event(s) matched · ${j.added} newly marked false positive`;
+          if (j.legitimate) renderFalsePositives(j.legitimate);
         })
         .catch(e => { msg.textContent = "failed: " + e.message + " — restart the server if the endpoint 404s."; });
     }
