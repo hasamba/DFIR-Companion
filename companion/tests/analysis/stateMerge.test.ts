@@ -49,6 +49,25 @@ describe("mergeDelta", () => {
     expect(f.sourceScreenshots).toEqual(["a.webp", "b.webp"]); // accumulated, deduped
   });
 
+  it("carries confidence + confidenceReason through both the new-finding and update branches", () => {
+    let state = emptyState("c1");
+    state = mergeDelta(state, {
+      ...baseDelta,
+      findings: [{ id: "f1", severity: "High", confidence: 60, confidenceReason: "One uncorroborated hit",
+        title: "PS abuse", description: "v1", relatedIocs: [], mitreTechniques: [], status: "open" }],
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+    expect(state.findings[0].confidence).toBe(60);
+    expect(state.findings[0].confidenceReason).toBe("One uncorroborated hit");
+
+    state = mergeDelta(state, {
+      ...baseDelta,
+      findings: [{ id: "f1", severity: "High", confidence: 90, confidenceReason: "Now corroborated by a second tool",
+        title: "PS abuse", description: "v2", relatedIocs: [], mitreTechniques: [], status: "confirmed" }],
+    }, { windowSequence: 2, timestamp: "2026-05-28T10:05:00.000Z", sourceScreenshots: [] });
+    expect(state.findings[0].confidence).toBe(90);
+    expect(state.findings[0].confidenceReason).toBe("Now corroborated by a second tool");
+  });
+
   it("dedupes IOCs by value and closes threads", () => {
     let state = emptyState("c1");
     state = mergeDelta(state, {

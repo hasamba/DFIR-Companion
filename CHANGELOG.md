@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Timeline event-density heatmap** — a bar strip above the Forensic Timeline buckets the full filtered dataset (not just the current page) by time, colored by each bucket's worst severity; click a bar to zoom the timeline to that window (closes #219).
+- **Confidence reasoning + persistent min-confidence floor** — findings now carry a `confidenceReason` one-liner alongside the existing 0–100 confidence score (synthesis weighs evidence strength, source corroboration, and model certainty; shown on the confidence badge and in each finding's evidence details); the dashboard's min-confidence filter is now a per-case setting that survives a page reload instead of resetting to 0 (closes #226).
 
 ## [0.29.0] - 2026-07-04
 

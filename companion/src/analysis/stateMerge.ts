@@ -70,6 +70,7 @@ export function mergeDelta(
     if (existing) {
       existing.severity = incoming.severity;
       if (incoming.confidence !== undefined) existing.confidence = Math.round(incoming.confidence);
+      if (incoming.confidenceReason !== undefined) existing.confidenceReason = incoming.confidenceReason;
       existing.title = incoming.title;
       existing.description = incoming.description;
       existing.status = incoming.status;
@@ -82,6 +83,7 @@ export function mergeDelta(
         id: incoming.id,
         severity: incoming.severity,
         ...(incoming.confidence !== undefined ? { confidence: Math.round(incoming.confidence) } : {}),
+        ...(incoming.confidenceReason !== undefined ? { confidenceReason: incoming.confidenceReason } : {}),
         title: incoming.title,
         description: incoming.description,
         relatedIocs: remapIocRefs(incoming.relatedIocs),

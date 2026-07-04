@@ -36,4 +36,28 @@ describe("deltaSchema", () => {
     expect(delta.iocs.map((i) => i.type)).toEqual(["other", "other"]);
     expect(delta.iocs.map((i) => i.value)).toEqual(["evil.exe", "nxc"]); // kept, not dropped
   });
+
+  it("parses confidence + confidenceReason on a finding", () => {
+    const delta = deltaSchema.parse({
+      findings: [{
+        id: "f1", severity: "High", confidence: 85, confidenceReason: "Two tools corroborate the hash",
+        title: "x", description: "y", relatedIocs: [], mitreTechniques: [], status: "open",
+      }],
+      iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [], timelineNote: "n", summary: "s",
+    });
+    expect(delta.findings[0].confidence).toBe(85);
+    expect(delta.findings[0].confidenceReason).toBe("Two tools corroborate the hash");
+  });
+
+  it("falls back confidence/confidenceReason to undefined instead of rejecting on a bad type", () => {
+    const delta = deltaSchema.parse({
+      findings: [{
+        id: "f1", severity: "High", confidence: "very sure", confidenceReason: 12345,
+        title: "x", description: "y", relatedIocs: [], mitreTechniques: [], status: "open",
+      }],
+      iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [], timelineNote: "n", summary: "s",
+    });
+    expect(delta.findings[0].confidence).toBeUndefined();
+    expect(delta.findings[0].confidenceReason).toBeUndefined();
+  });
 });
