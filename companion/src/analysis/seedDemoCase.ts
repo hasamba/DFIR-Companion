@@ -495,10 +495,10 @@ export async function seedDemoCase(
     end:   "2026-05-23T23:59:59.999Z",
   });
 
-  await write(join(caseDir, "state", "legitimate.json"), [
-    { id: "ioc:10.10.0.1",  kind: "ioc", ref: "10.10.0.1",  note: "GlobalTech primary DNS server — legitimate infrastructure", markedAt: "2026-05-22T10:15:00.000Z", label: "Internal DNS" },
-    { id: "ioc:10.10.0.50", kind: "ioc", ref: "10.10.0.50", note: "GlobalTech WSUS server — seen in update traffic, not malicious", markedAt: "2026-05-22T10:16:00.000Z", label: "WSUS Server" },
-    { id: "finding:routine software update", kind: "finding", ref: "routine software update", note: "Scheduled Patch Tuesday activity on May 14 — pre-dates incident and is benign", markedAt: "2026-05-22T10:17:00.000Z" },
+  await write(join(caseDir, "state", "false-positive.json"), [
+    { id: "ioc:10.10.0.1",  kind: "ioc", ref: "10.10.0.1",  reason: "known-good-tool", note: "GlobalTech primary DNS server — legitimate infrastructure", markedAt: "2026-05-22T10:15:00.000Z", markedBy: "demo-analyst", label: "Internal DNS" },
+    { id: "ioc:10.10.0.50", kind: "ioc", ref: "10.10.0.50", reason: "known-good-tool", note: "GlobalTech WSUS server — seen in update traffic, not malicious", markedAt: "2026-05-22T10:16:00.000Z", markedBy: "demo-analyst", label: "WSUS Server" },
+    { id: "finding:routine software update", kind: "finding", ref: "routine software update", reason: "known-good-tool", note: "Scheduled Patch Tuesday activity on May 14 — pre-dates incident and is benign", markedAt: "2026-05-22T10:17:00.000Z", markedBy: "demo-analyst" },
   ]);
 
   await write(join(caseDir, "state", "ai-control.json"), { enabled: false, lastAnalyzedSeq: 5 });
