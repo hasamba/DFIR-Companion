@@ -3010,6 +3010,7 @@
       </div>
       <div id="importMeta" class="synth-meta" style="display:none"></div>
       <div id="evIdFilterChip" style="display:none;margin:0 0 8px;font-size:12px;background:var(--c-1a1f2a);border:1px solid var(--c-2a2f3a);border-radius:4px;padding:6px 10px;"></div>
+      <div id="timelineHeatmapCaption" style="font-size:11px;color:var(--c-9aa4b2);margin:0 0 3px;" hidden>📊 Event density — taller/redder bars mean more/worse events; click a bar to zoom the timeline into that window (a <strong>Clear</strong> button appears in the filter panel to reset)</div>
       <div id="timelineHeatmap" class="tl-heatmap" title="Event density over time — click a bar to zoom the timeline to that window" hidden></div>
       <div id="forensicTimeline">—</div></section>
     <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain<span class="ev-sub">events bucketed by their ATT&amp;CK tactic (derived, no AI); a categorization, not a confirmed kill-chain stage — e.g. valid-account use can span entry and lateral movement</span></h2><div id="killChain">—</div></section>
@@ -10911,16 +10912,22 @@
       filterFrom = fromIso;
       filterTo = toIso;
       if (cfBtn) cfBtn.hidden = false;
+      // Open the (possibly collapsed) filter panel so the populated from/to fields and the Clear
+      // button are actually visible — otherwise the zoom silently narrows the timeline with no
+      // obvious way back (the Clear button lives inside that panel).
+      setSearchBarOpen(true, false);
       renderTimelineEvents(lastFt);
       refreshFilteredViews();
       if (lastSuperData) loadSuperTimeline();
     }
     function renderTimelineHeatmap(visible) {
       const el = document.getElementById("timelineHeatmap");
+      const caption = document.getElementById("timelineHeatmapCaption");
       if (!el) return;
       const buckets = computeTimelineHeatmapBuckets(visible);
-      if (buckets.length < 2) { el.hidden = true; el.innerHTML = ""; return; }
+      if (buckets.length < 2) { el.hidden = true; el.innerHTML = ""; if (caption) caption.hidden = true; return; }
       el.hidden = false;
+      if (caption) caption.hidden = false;
       const maxCount = Math.max(...buckets.map(b => b.count), 1);
       el.innerHTML = buckets.map(b => {
         if (!b.count) return `<div class="tl-heatmap-bar" style="height:2px;background:var(--c-2a2f3a);cursor:default"></div>`;

@@ -246,5 +246,14 @@ describe("dashboard.html", () => {
     expect(html).toContain("KC_SEV_COLOR[b.maxSeverity]");
     // Mobile: collapses to a thin sparkline instead of the full-height bars.
     expect(html).toMatch(/@media \(max-width: 768px\)[\s\S]{0,80}\.tl-heatmap \{ height: 16px/);
+    // A click must open the (possibly collapsed) filter panel — otherwise the Clear button and the
+    // populated from/to fields it reveals stay invisible inside that hidden panel, leaving no
+    // apparent way to undo the zoom.
+    expect(html).toMatch(/function zoomToTimeWindow[\s\S]{0,700}setSearchBarOpen\(true, false\)/);
+    // A persistent caption explains what the bars mean (not just a hover-only tooltip), and toggles
+    // with the heatmap itself.
+    expect(html).toContain('id="timelineHeatmapCaption"');
+    expect(html).toMatch(/buckets\.length < 2\)[\s\S]{0,60}caption\.hidden = true/);
+    expect(html).toMatch(/caption\.hidden = false/);
   });
 });
