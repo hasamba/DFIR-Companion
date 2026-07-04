@@ -1,7 +1,7 @@
 // IOC whitelist — persistent, environment-level "known-good" patterns the analyst maintains
 // (internal IP ranges as CIDR, known-good file hashes, regexes for internal domains). An IOC that
-// matches a rule is auto-marked LEGITIMATE on import (and on demand), reusing the existing
-// legitimate machinery so it's reversible and shows in the "Confirmed Legitimate" panel.
+// matches a rule is auto-marked FALSE POSITIVE on import (and on demand), reusing the existing
+// false-positive machinery so it's reversible and shows in the "False Positives" panel.
 //
 // Pure logic only (match + parse/serialize + validation) so it unit-tests without I/O. The store
 // (iocWhitelistStore.ts) handles persistence; the auto-mark wiring lives in the /import route.
