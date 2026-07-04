@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Timeline event-density heatmap** — a bar strip above the Forensic Timeline buckets the full filtered dataset (not just the current page) by time, colored by each bucket's worst severity; click a bar to zoom the timeline to that window (closes #219).
+
 ## [0.29.0] - 2026-07-04
 
 ### Added
