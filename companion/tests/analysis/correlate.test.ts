@@ -168,17 +168,32 @@ describe("correlateEvents", () => {
     expect(correlateEvents([a, b])).toHaveLength(1);
   });
 
-  it("preserves artifactName from a NON-primary event in a merged group", () => {
-    // mergeGroup picks `primary` by worst-severity then longest-description. Put artifactName on the
-    // event that will NOT be chosen as primary, so this exercises the `events.find(...)` fallback —
-    // the `...primary` spread alone would drop it. Merge is forced by a shared sha256.
+  it("does NOT borrow artifactName from a non-primary event — it must match the shown description", () => {
+    // mergeGroup picks `primary` by worst-severity then longest-description; `description` always comes
+    // from primary. artifactName is an ATTRIBUTION of that description (which artifact produced it), not
+    // a neutral shared fact — so it must follow primary too. Regression: a Chainsaw/Sigma detection
+    // correlated with a Velociraptor Pstree record sharing host+pid (a genuine cross-tool corroboration,
+    // not a same-import duplicate) showed "Generic.System.Pstree" as the origin of a Chainsaw finding,
+    // because artifactName fell back to whichever contributing event happened to carry one. Merge is
+    // forced by a shared sha256.
     const HASH = "a".repeat(64);
     const a = ev({ id: "e1", description: "Sigma detection: suspicious file creation flagged on the host",
       severity: "High", sha256: HASH, sources: ["Velociraptor"] }); // longer + more severe → primary, NO artifactName
     const b = ev({ id: "e2", description: "MFT: created evil.exe",
       severity: "Info", sha256: HASH, sources: ["Velociraptor"], artifactName: "Windows.NTFS.MFT" });
     const [merged] = correlateEvents([a, b]);
-    expect(merged.artifactName).toBe("Windows.NTFS.MFT");
+    expect(merged.description).toContain("Sigma detection");
+    expect(merged.artifactName).toBeUndefined();
+  });
+
+  it("keeps artifactName when primary itself carries one (no cross-event borrowing needed)", () => {
+    const HASH = "c".repeat(64);
+    const a = ev({ id: "e1", description: "Sigma detection: suspicious file creation flagged on the host",
+      severity: "High", sha256: HASH, sources: ["Velociraptor"], artifactName: "Windows.EventLogs.Chainsaw" });
+    const b = ev({ id: "e2", description: "MFT: created evil.exe",
+      severity: "Info", sha256: HASH, sources: ["Velociraptor"], artifactName: "Windows.NTFS.MFT" });
+    const [merged] = correlateEvents([a, b]);
+    expect(merged.artifactName).toBe("Windows.EventLogs.Chainsaw");
   });
 
   it("preserves message + veloUrl from a NON-primary event in a merged group (#8/#9 survive promote)", () => {

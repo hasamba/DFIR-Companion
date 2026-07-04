@@ -3,6 +3,7 @@
 // by a cap; filtered by time/origin/label; never synthesized by AI. I/O lives in superTimelineStore.ts.
 
 import type { ForensicEvent } from "./stateTypes.js";
+import { eventMatchesSearch, eventMatchesExclude } from "./searchFilter.js";
 
 export type SuperLabelMap = Record<string, string[]>;
 
@@ -18,6 +19,8 @@ export interface SuperQuery {
   excludeHosts?: string[]; // drop these hosts (the dashboard's unchecked host boxes); use NO_HOST_FACET for undated-host rows
   labels?: string[];    // keep only events carrying at least one of these labels
   taggedOnly?: boolean; // keep only events carrying at least one tag/label (any)
+  search?: string;      // free-text search (dashboard's main filter bar), same fields as the forensic timeline
+  excludeText?: string[]; // hide events matching ANY of these terms (dashboard's main filter "Exclude" chips)
   offset?: number;
   limit?: number;
 }
@@ -95,6 +98,10 @@ export function querySuper(events: ForensicEvent[], labelMap: SuperLabelMap, q: 
     }
     // "Tagged only": keep only events carrying at least one tag/label (any).
     if (q.taggedOnly && !(labelMap[e.id] ?? []).length) return false;
+    // Main dashboard filter bar (search + exclude terms) — same matching as the forensic timeline,
+    // so scoping the case narrows the super-timeline too instead of only the forensic view.
+    if (q.search && !eventMatchesSearch(e, q.search)) return false;
+    if (q.excludeText && q.excludeText.length && eventMatchesExclude(e, q.excludeText)) return false;
     return true;
   });
 

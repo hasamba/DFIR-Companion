@@ -159,6 +159,25 @@ describe("Velociraptor triage bundles — routes", () => {
     expect(state.forensicTimeline.length).toBeGreaterThan(0);
   });
 
+  it("stamps veloUrl on the FORENSIC timeline events a bundle collect produces, not just super-only imports (#7 regression)", async () => {
+    // Bug: importVeloHuntResults computed the hunt's GUI deep-link only inside the superTimelineOnly
+    // branch and never passed it to pipeline.importVelociraptor on the normal (forensic) branch — so a
+    // plain triage-bundle collection (e.g. Best Practice) never carried a veloUrl and the forensic
+    // timeline's "↗ Velociraptor" row link never rendered.
+    await request(app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
+    await request(app).post("/cases/c1/velociraptor/collect");
+    let job: { status: string } | null = null;
+    for (let i = 0; i < 100; i++) {
+      job = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
+      if (job && (job.status === "imported" || job.status === "error")) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(job?.status).toBe("imported");
+    const state = await stateStore.load("c1");
+    expect(state.forensicTimeline.length).toBeGreaterThan(0);
+    expect(state.forensicTimeline.every((e) => e.veloUrl === "https://velo.example/app/index.html?org_id=root#/hunts/H.TEST1")).toBe(true);
+  });
+
   it("ingests an uploaded JSON report (THOR) from the hunt even when result rows are empty", async () => {
     const thorLine = JSON.stringify({
       time: "2025-03-14T21:18:18Z", hostname: "WIN11", level: "Alert", module: "Filescan",

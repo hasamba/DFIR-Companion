@@ -453,7 +453,7 @@
       color: var(--c-cdd9e5); text-transform: none; letter-spacing: 0; padding: 2px 4px;
       border-radius: 3px; cursor: pointer; white-space: nowrap; }
     .src-filter-menu .src-item:hover { background: var(--c-1c2330); }
-    .src-filter-menu .src-filter, .src-filter-menu .ioc-type-cb { width: 12px; height: 12px; margin: 0; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; }
+    .src-filter-menu .src-filter, .src-filter-menu .ioc-type-cb, .src-filter-menu .origin-filter, .src-filter-menu .host-filter { width: 12px; height: 12px; margin: 0; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; }
     .src-filter-menu .src-item-none span { font-style: italic; color: var(--c-9aa4b2); }
     .src-menu-actions { display: flex; gap: 10px; padding: 2px 4px 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 3px; }
     .src-menu-link { background: transparent; border: none; color: var(--c-6aa9ff); font-size: 10px;
@@ -726,12 +726,18 @@
     .ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; padding-top: 2px; font-family: ui-monospace, Menlo, Consolas, monospace; }
     .ev-col-content { flex: 1; min-width: 0; padding-top: 1px; }
     .ev-more-btn { background: none; border: none; color: var(--c-6aa9ff); cursor: pointer; font-size: 0.78em; padding: 0 3px; margin-left: 2px; vertical-align: middle; }
+    /* Unified per-row [details] disclosure — shared by the forensic timeline and super-timeline so both
+       consolidate their "extra" content (full text, MITRE, findings, chain-check, decoded payloads,
+       evidence, Velociraptor link) into one collapsed panel instead of always-on inline noise. */
+    .ev-details-toggle { background: none; border: 1px solid var(--c-2a4a6b); border-radius: 3px; color: var(--c-6aa9ff); font-size: 11px; padding: 1px 5px; cursor: pointer; margin-top: 3px; }
+    .ev-details-panel { margin-top: 4px; padding: 6px 8px; background: var(--c-0d1117, #0d1117); border-left: 2px solid var(--c-2a4a6b); border-radius: 2px; font-size: 11px; color: var(--c-c9d1d9); }
+    .ev-details-panel > * + * { margin-top: 4px; }
     .ev-header-row { display: flex; align-items: center; padding: 2px 0 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 1px; font-size: 11px; color: var(--c-6b7280); }
     .ev-header-ctrl { width: 162px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
     .ev-header-time { width: 192px; flex-shrink: 0; }
     .tl-pagesize-wrap { margin-left: auto; flex-shrink: 0; }
     .tl-pagesize-sel { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-9aa4b2); border-radius: 4px; padding: 1px 5px; font-size: 11px; cursor: pointer; }
-    .tl-page-bar { display: flex; align-items: center; gap: 8px; padding: 6px 0 2px; font-size: 11px; color: var(--c-9aa4b2); border-top: 1px solid var(--c-2a2f3a); margin-top: 4px; }
+    .tl-page-bar { display: flex; align-items: center; gap: 8px; padding: 2px 0 6px; font-size: 11px; color: var(--c-9aa4b2); border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 4px; }
     .tl-page-btn { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-cbd3df); border-radius: 4px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
     .tl-page-btn:disabled { opacity: 0.35; cursor: default; }
     .tl-page-btn:not(:disabled):hover { background: var(--c-2a3050); border-color: var(--c-6aa9ff); color: #fff; }
@@ -2172,7 +2178,7 @@
             <button id="veloExtGo">Import</button>
           </div>
           <div id="veloExtMsg" style="font-size:12px;color:var(--c-9aa4b2);margin-top:4px"></div>
-          <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:2px">Reads collected rows. Upload-only artifacts (THOR/Hayabusa JSON reports) aren't read by this path yet.</div>
+          <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:2px">Reads the flow/hunt's complete collected rows. Upload-only artifacts (THOR/Hayabusa JSON reports) aren't read by this path yet. A <strong>notebook</strong> URL (analyst-filtered VQL results) is rejected — use the DFIR Companion browser extension's "Push rows" button from that notebook page instead, which imports exactly what it shows.</div>
         </div>
 
         <details id="veloBuilder" style="border:1px solid var(--c-2a3146);border-radius:6px;padding:10px;background:var(--c-161b28)">
@@ -2891,7 +2897,7 @@
   <div id="searchFilterBar" hidden>
     <span>Filter:</span>
     <div class="sf-search-wrap">
-      <input id="globalSearch" type="search" placeholder="Filter events, findings, IOCs…" title="Filter events, findings, IOCs — press / to focus, Esc to clear" autocomplete="off" />
+      <input id="globalSearch" type="text" placeholder="Filter events, findings, IOCs…" title="Filter events, findings, IOCs — press / to focus, Esc to clear" autocomplete="off" />
       <button id="clearSearch" type="button" title="Clear filter (Esc)" hidden>✕</button>
     </div>
     <div class="sf-sep"></div>
@@ -2910,7 +2916,7 @@
     <div class="sf-sep"></div>
     <span title="Full-text search across captured screenshots using local OCR (#176)">🔍 Screenshot text:</span>
     <div class="sf-search-wrap">
-      <input id="ocrSearch" type="search" placeholder="e.g. mimikatz, a hostname, a hash…" title="Search the text OCR read from every screenshot in this case (local, no AI). Enter to search." autocomplete="off" />
+      <input id="ocrSearch" type="text" placeholder="e.g. mimikatz, a hostname, a hash…" title="Search the text OCR read from every screenshot in this case (local, no AI). Enter to search." autocomplete="off" />
       <button id="ocrSearchClear" type="button" title="Clear" hidden>✕</button>
     </div>
     <span id="ocrSearchInfo" style="color:var(--c-9aa4b2);font-size:11px"></span>
@@ -2960,7 +2966,7 @@
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2>Narrative Timeline<button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
     <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div><div id="findings">—</div></section>
-    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" onclick="event.stopPropagation()"><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
+    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" style="display:none" title="Show or hide events by origin (the artifact that produced them)" onclick="event.stopPropagation()"><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" onclick="event.stopPropagation()"><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkFpBtn" title="Mark all selected events as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div style="font-size:11px; color:var(--c-9aa4b2); margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
@@ -3507,15 +3513,14 @@
     <section id="sec-super-timeline" style="grid-column: 1 / -1" class="collapsed">
       <h2>Super-Timeline<span class="ev-sub" id="superTimelineBadge"></span></h2>
       <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">The complete record of every event ever imported (from any source — Velociraptor, firewall, VPN, host triage, anything), before scope/legitimate filtering. Filter by time, origin, and tag; star / comment / tag rows for triage; then <em>promote</em> the events that matter up into the analyzed forensic timeline (where the AI synthesizes them). Nothing here is removed — this is a superset view.</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:6px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
         <label style="font-size:11px;color:var(--c-9aa4b2)">From<br /><input id="stFrom" type="datetime-local" title="UTC" onchange="superPage(0)" /></label>
         <label style="font-size:11px;color:var(--c-9aa4b2)">To<br /><input id="stTo" type="datetime-local" title="UTC" onchange="superPage(0)" /></label>
         <label style="font-size:11px;color:var(--c-9aa4b2)">Saved timeframe<br /><select id="stTimeframe" onchange="applyTimeframe()"><option value="">— none —</option></select></label>
         <button class="ev-bulk-btn" onclick="saveTimeframe()" title="Save the current From/To as a reusable named timeframe">Save current range</button>
         <button class="ev-bulk-btn" onclick="clearSuperTime()" title="Clear the time range (show all)">Clear time</button>
         <span id="stSaveMsg" style="font-size:12px;color:var(--c-9aa4b2);white-space:nowrap"></span>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <div class="sf-sep"></div>
         <span class="src-legend st-dd" id="stOriginWrap" style="display:none;margin-left:0" title="Show or hide events by origin (the artifact/source that produced them)"><button type="button" class="src-filter-btn" id="stOriginBtn">⛏ Origins</button><div class="src-filter-menu" id="stOriginMenu" hidden></div></span>
         <span class="src-legend st-dd" id="stHostWrap" style="display:none;margin-left:0" title="Show or hide events by affected host"><button type="button" class="src-filter-btn" id="stHostBtn">🖥 Hosts</button><div class="src-filter-menu" id="stHostMenu" hidden></div></span>
         <span class="src-legend st-dd" id="stTagWrap" style="display:none;margin-left:0" title="Filter to events carrying specific tag(s)"><button type="button" class="src-filter-btn" id="stTagBtn">🏷 Tags</button><div class="src-filter-menu" id="stTagMenu" hidden></div></span>
@@ -3678,6 +3683,7 @@
       try { localStorage.setItem("dfir.excludeTerms", JSON.stringify(excludeTerms)); } catch {}
       renderExcludeChips();
       if (lastState) render(lastState);
+      if (lastSuperData) loadSuperTimeline();   // the main filter's exclude terms scope the super-timeline too
     }
     function renderExcludeChips() {
       const box = document.getElementById("excludeChips");
@@ -3707,6 +3713,8 @@
     }
     let hiddenSources = new Set();            // source/tool names the user unchecked in the source filter (empty = show all)
     let _srcMenuSig = "";                      // signature of the source-filter menu's last build (skip rebuild when unchanged)
+    let hiddenOrigins = new Set();            // origins (artifact names) the user unchecked in the forensic origin filter (empty = show all)
+    let _originMenuSig = "";                   // signature of the origin-filter menu's last build
     let hiddenHosts = new Set();              // host names the user unchecked in the forensic host filter (empty = show all)
     let _hostMenuSig = "";                     // signature of the host-filter menu's last build
     let hiddenIocTypes = new Set();           // IOC types the user unchecked in the IOC type filter (#169; empty = show all)
@@ -3998,14 +4006,69 @@
 
     function truncate(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
-    const DESC_INLINE_LIMIT = 300;
-    function descHtml(desc, id) {
-      if (desc.length <= DESC_INLINE_LIMIT) return `<strong>${esc(desc)}</strong>`;
-      const uid = `evdesc-${escAttr(id)}`;
-      const shown = esc(desc.slice(0, DESC_INLINE_LIMIT));
-      const rest  = esc(desc.slice(DESC_INLINE_LIMIT));
-      const toggle = `var r=document.getElementById('${uid}');var m=document.getElementById('${uid}-more');r.hidden=!r.hidden;m.style.display=r.hidden?'':'none';`;
-      return `<strong>${shown}<button id="${uid}-more" class="ev-more-btn" onclick="${toggle}">[more]</button><span id="${uid}" hidden>${rest}<button class="ev-more-btn" onclick="${toggle}">[less]</button></span></strong>`;
+    // The compact, always-visible row title: a plain-weight (not bold — a whole sentence in bold reads
+    // as noise, not signal) truncated description. Anything beyond this — the untruncated text, MITRE,
+    // related findings, chain-check, decoded payloads, evidence, the tool's raw message — lives in the
+    // one collapsible [details] panel built by eventDetailsBlock(), shared by the forensic timeline and
+    // the super-timeline so both look and behave the same.
+    const DESC_TITLE_LIMIT = 200;
+    function descHtml(desc) { return esc(truncate(desc, DESC_TITLE_LIMIT)); }
+
+    // Nearly every deterministic importer (Chainsaw/Sigma, the generic Windows/Sysmon mapper,
+    // Velociraptor's own mapGeneric, …) joins a human rule/finding NAME with its raw technical
+    // trailer (EID/Image/CommandLine/host/etc.) using " - ", e.g. "Potential Shim Database
+    // Persistence via Sdbinst.EXE - Sysmon Process create (EID 1) - Image=... - CommandLine=...".
+    // Split at the FIRST such separator so the row shows just the finding name; the raw trailer
+    // moves into the [details] panel instead of always rendering inline. No separator (a plain
+    // one-sentence description) → the whole thing is the title, nothing to split off.
+    function splitEventTitle(desc) {
+      const i = desc.indexOf(" - ");
+      return i < 0 ? { title: desc, rest: "" } : { title: desc.slice(0, i), rest: desc.slice(i + 3) };
+    }
+
+    // Builds the unified per-row [details ▶] disclosure (and the split title for the caller's title
+    // line). Returns an empty toggle/panel when there's truly nothing beyond the compact title, so a
+    // plain, fully-described-in-one-line event legitimately shows no toggle — any row carrying extra
+    // context (a raw technical trailer, MITRE, a related finding, a raw tool message, a decoded
+    // payload, evidence, a reassuring chain-check note) gets one. Compact/actionable bits (badges, the
+    // chain-check ⛓/⚠ badge itself, host chip, the Velociraptor deep-link) stay inline in the title
+    // row — this is for the verbose stuff that used to always render.
+    function eventDetailsBlock(e, id, desc, caseId, opts) {
+      opts = opts || {};
+      const show = (k) => opts[k] !== false;   // per-field Settings → Timeline row display toggles; default on (ST has none)
+      const { title, rest } = splitEventTitle(desc);
+      const parts = [];
+      if (rest) parts.push(esc(rest));
+      if (title.length > DESC_TITLE_LIMIT) parts.push(esc(title));   // the title itself got truncated on display
+      const msg = e.message != null ? String(e.message).trim() : "";
+      if (msg && msg !== desc.trim()) {
+        parts.push(`<div style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all">${esc(e.message)}</div>`);
+      }
+      if (show("mitre") && e.mitreTechniques && e.mitreTechniques.length) parts.push(`MITRE: ${mitreLinks(e.mitreTechniques)}`);
+      if (show("findings") && e.relatedFindingIds && e.relatedFindingIds.length) {
+        parts.push(`Findings: ${e.relatedFindingIds.map(fid => `<a class="finding-jump" data-fid="${escAttr(fid)}" title="Jump to finding ${escAttr(fid)}">${esc(fid)}</a>`).join(", ")}`);
+      }
+      // The chain-check BADGE (⛓/⚠) and, when the parent is unusual, its warning note stay inline in
+      // the title row (an anomaly is signal, not noise) — only the reassuring "chain seen" note is
+      // extra detail worth tucking away here.
+      if (e.chainCheck && e.chainCheck.observed && e.chainCheck.note) {
+        parts.push(`<span style="color:#6bcB77">${esc(e.chainCheck.note)}</span>`);
+      }
+      if (e.deobfuscated) {
+        const iocRefs = (e.deobfuscated.iocs || []).length ? ` (IOCs: ${e.deobfuscated.iocs.map(i => esc(i)).join(", ")})` : "";
+        parts.push(`<div style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all">Decoded: ${esc(e.deobfuscated.decoded)}${iocRefs}</div>`);
+      }
+      const ev = (show("evidence") && caseId) ? evidenceLinks(caseId, e.sourceScreenshots) : "";
+      if (ev) parts.push(ev.replace(/^<br>/, ""));
+      if (!parts.length) return { title, toggle: "", panel: "" };
+      const uid = `evdetails-${escAttr(id)}`;
+      return {
+        title,
+        // Placed right after the host chip (before the description) to save a line — the panel itself
+        // stays block-level wherever it's placed, so it still drops to its own row when expanded.
+        toggle: `<button type="button" class="ev-details-toggle" onclick="var d=document.getElementById('${uid}');d.hidden=!d.hidden;this.textContent=d.hidden?'[details ▶]':'[details ▼]'">[details ▶]</button>`,
+        panel: `<div id="${uid}" hidden class="ev-details-panel">${parts.map(p => `<div>${p}</div>`).join("")}</div>`,
+      };
     }
 
     function loadAssetGraph(caseId) {
@@ -4989,11 +5052,17 @@
     }
 
     function superQueryString() {
-      const from = utcInputToIso((document.getElementById("stFrom") || {}).value || "");
-      const to = utcInputToIso((document.getElementById("stTo") || {}).value || "");
+      const stFromIso = utcInputToIso((document.getElementById("stFrom") || {}).value || "");
+      const stToIso = utcInputToIso((document.getElementById("stTo") || {}).value || "");
+      // Intersect with the main dashboard filter bar's time range (#8) — ISO UTC strings sort
+      // lexically, so max()/min() picks the tighter bound on each side without a Date parse.
+      const from = [stFromIso, filterFrom].filter(Boolean).sort().pop() || "";
+      const to = [stToIso, filterTo].filter(Boolean).sort()[0] || "";
       const p = new URLSearchParams();
       if (from) p.set("from", from);
       if (to) p.set("to", to);
+      if (searchTerm) p.set("q", searchTerm);
+      if (excludeTerms.length) p.set("excludeText", excludeTerms.join(","));
       // Origins + hosts are EXCLUDE-model checklists: send the UNCHECKED items as the exclude list, so
       // all checked → exclude nothing → all shown; some unchecked → those hidden; ALL unchecked → 0
       // events. (An include list would treat "none checked" as "show all" — the bug this avoids.)
@@ -5126,6 +5195,17 @@
         // "@ <host>" many importers append stripped off the description.
         let desc = String(e.description || "");
         if (e.asset) desc = desc.replace(new RegExp("\\s*@\\s*" + e.asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "i"), "");
+        // The origin is already its own column (below) — several importers also repeat it inside the
+        // description, showing it twice per row. Three known shapes: a leading "<origin>: " / "<origin> "
+        // prefix (Volatility/Rekall, Falcon Sandbox…); "<origin>/<subcategory>: …" (Chainsaw's own
+        // "Chainsaw/Sigma: …" / "Chainsaw/Service Installation: …" format); or a bracketed
+        // "<tool> [<origin>] …" prefix (the Velociraptor/DetectRaptor importer's "Velociraptor
+        // [artifact] detection: …" format).
+        if (origin && origin !== "Unknown") {
+          const escOrigin = origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          desc = desc.replace(new RegExp("^\\s*" + escOrigin + "(?:/[^:]+)?\\s*[:\\-]?\\s+", "i"), "");
+          desc = desc.replace(new RegExp("^\\s*(?:\\S+\\s+)?\\[" + escOrigin + "\\]\\s*[:\\-]?\\s*", "i"), "");
+        }
         const host = e.asset ? `<span class="ev-host" title="Affected host / asset">🖥 ${esc(e.asset)}</span> ` : "";
         // Per-row controls unified with the forensic timeline: ⭐ star, 💬 comment, 🏷 tag (all keyed by
         // ("event", e.id)). The delegated click handler on <main> already routes these for super rows.
@@ -5137,16 +5217,11 @@
         const veloLink = e.veloUrl
           ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--c-6aa9ff);white-space:nowrap" title="Open this hunt/flow in the Velociraptor GUI">↗ Velociraptor</a>`
           : "";
-        // #9 Full untruncated message: an expandable [details ▶] block (mirrors the forensic timeline's
-        // deobBlock). Only when the message adds detail beyond the (already-cleaned) description.
-        const messageBlock = (e.message && String(e.message).trim() && String(e.message).trim() !== desc.trim()) ? (() => {
-          const uid = `stmsg-${escAttr(e.id)}`;
-          return `<br><button onclick="var d=document.getElementById('${uid}');d.hidden=!d.hidden;this.textContent=d.hidden?'[details ▶]':'[details ▼]'" `
-            + `style="background:none;border:1px solid var(--c-2a4a6b);border-radius:3px;color:var(--c-6aa9ff);font-size:11px;padding:1px 5px;cursor:pointer;margin-top:4px">[details ▶]</button>`
-            + `<div id="${uid}" hidden style="margin-top:4px;padding:6px 8px;background:var(--c-0d1117,#0d1117);border-left:2px solid var(--c-2a4a6b);border-radius:2px;font-size:11px;font-family:monospace;white-space:pre-wrap;word-break:break-all;color:var(--c-c9d1d9)">`
-            + esc(e.message)
-            + `</div>`;
-        })() : "";
+        // Everything beyond the compact title collapses into one shared [details] panel (#1/#2/#3) —
+        // same helper the forensic timeline uses, so ST no longer only shows details for the rare event
+        // whose raw `message` differs from its description; MITRE/findings/evidence/decoded payloads
+        // (fields ST didn't previously surface at all) now show up here too.
+        const details = eventDetailsBlock(e, e.id, desc, caseId);
         return `<div style="display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:1px solid var(--c-2a2f3a);font-size:13px">
           <input type="checkbox" class="st-row-cb" data-evid="${escAttr(e.id)}" ${superPromote.has(e.id) ? "checked" : ""} title="Select (for promotion / bulk star / bulk tag)" onchange="toggleSuperPromote('${escAttr(e.id)}', this.checked)" />
           <span class="ev-col-ctrl" style="display:inline-flex;align-items:center;gap:2px">
@@ -5156,7 +5231,7 @@
           <span style="color:var(--c-9aa4b2);white-space:nowrap">${esc(e.timestamp || "")}</span>
           <span class="sev-${escAttr(sev)}" style="white-space:nowrap">${esc(sev)}</span>
           <span style="color:var(--c-7e8aa0);white-space:nowrap" title="origin">${esc(origin)}</span>
-          <span style="flex:1">${superTagPills("event", e.id)}${host}${esc(desc)}${veloLink}${messageBlock}</span>
+          <span style="flex:1">${superTagPills("event", e.id)}${host}${details.toggle} ${descHtml(details.title)}${veloLink}${details.panel}</span>
         </div>`;
       }).join("");
       updateSuperSelBar(rows);
@@ -9891,6 +9966,7 @@
     function resetTimelineViewFilters() {
       document.querySelectorAll(".sev-filter").forEach(cb => { cb.checked = true; });
       hiddenSources.clear(); _srcMenuSig = "";
+      hiddenOrigins.clear(); _originMenuSig = "";
       hiddenHosts.clear(); _hostMenuSig = "";
       showStarredOnly = false;
       evIdFilter = null; evIdFilterLabel = "";
@@ -10470,8 +10546,6 @@
       const iocs = sortIocsForDisplay(dedupeIocsById(iocsRaw));
       renderIocTypeFilter(iocs);
       const flaggedTotal = iocs.filter(iocFlagged).length;
-      const cnt = document.getElementById("iocFlaggedCount");
-      if (cnt) cnt.textContent = flaggedTotal ? ` (${flaggedTotal} flagged)` : "";
       let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
       if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
       if (excludeTerms.length) visible = visible.filter(i => !_iocMatchesExclude(i, excludeTerms));
@@ -10497,6 +10571,13 @@
       // wants to catch, so this stays its own opt-out rather than being folded into "signal only".
       if (hideSystemPaths) visible = visible.filter(i => !isSystemPathIoc(i));
       const noiseFiltersActive = hideFpNoIntel || showSignalIocsOnly || hideSystemPaths;
+      // Mirror the forensic/super timeline badges: "(N of M IOCs)" when a filter narrows the list,
+      // else just the total — plus the flagged count, which always reflects the FULL unfiltered set.
+      const cnt = document.getElementById("iocFlaggedCount");
+      if (cnt) {
+        const scope = visible.length === iocs.length ? `${iocs.length} IOC${iocs.length !== 1 ? "s" : ""}` : `${visible.length} of ${iocs.length} IOCs`;
+        cnt.textContent = ` (${scope}${flaggedTotal ? ` · ${flaggedTotal} flagged` : ""})`;
+      }
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div style='color:var(--c-9aa4b2)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
@@ -10680,6 +10761,46 @@
       }
     }
 
+    // The origin of a forensic event — the specific artifact when known, else the first tool in
+    // `sources`, else "Unknown". Mirrors the super-timeline's superOriginOf() so "origin" means the
+    // same thing (and shows the same facet values) in both timelines.
+    function ftOriginOf(e) { return e.artifactName || (Array.isArray(e.sources) && e.sources[0]) || "Unknown"; }
+
+    // Forensic origin filter (mirrors the source filter, but one level more specific — the artifact
+    // that produced the event, not just the tool): distinct origins across the in-scope timeline.
+    function originFacets(ft) {
+      const set = new Set();
+      for (const e of (ft || [])) set.add(ftOriginOf(e));
+      return [...set].sort((a, b) => a.localeCompare(b));
+    }
+
+    // Build/refresh the origin-filter dropdown. Hidden when there are fewer than 2 origins (nothing to
+    // filter). Rebuilt only when the origin set changes; otherwise just sync checkbox state.
+    function renderOriginFilter(ft) {
+      const wrap = document.getElementById("originLegendWrap");
+      const menu = document.getElementById("originFilterMenu");
+      const btn = document.getElementById("originFilterBtn");
+      if (!wrap || !menu || !btn) return;
+      const origins = originFacets(ft);
+      for (const o of [...hiddenOrigins]) if (!origins.includes(o)) hiddenOrigins.delete(o);   // drop stale
+      if (origins.length < 2) { wrap.style.display = "none"; menu.hidden = true; _originMenuSig = ""; return; }
+      wrap.style.display = "";
+      const hiddenInView = origins.filter(o => hiddenOrigins.has(o)).length;
+      const shown = origins.length - hiddenInView;
+      btn.classList.toggle("active", hiddenInView > 0);
+      btn.textContent = hiddenInView > 0 ? `⛏ Origins (${shown}/${origins.length})` : "⛏ Origins";
+      const sig = origins.join("");
+      if (sig !== _originMenuSig) {
+        const items = origins.map(o =>
+          `<label class="src-item"><input type="checkbox" class="origin-filter" value="${escAttr(o)}"${hiddenOrigins.has(o) ? "" : " checked"}><span>${esc(o)}</span></label>`
+        ).join("");
+        menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-origin-all="1">All</button><button type="button" class="src-menu-link" data-origin-none="1">None</button></div>${items}`;
+        _originMenuSig = sig;
+      } else {
+        menu.querySelectorAll(".origin-filter").forEach(cb => { cb.checked = !hiddenOrigins.has(cb.value); });
+      }
+    }
+
     // Forensic host filter (mirrors the source filter): the distinct affected hosts across the in-scope
     // timeline, plus a trailing "(no host)" pseudo-facet for events with no asset (so those are
     // controllable and "None" truly empties the timeline).
@@ -10729,11 +10850,14 @@
         ? ft.filter(e => realSourceCount(e.sources) >= corrobTimeline)
         : null;
       renderSourceFilter(ft, lensFt);
+      renderOriginFilter(ft);
       renderHostFilter(ft);
 
       const checked = document.querySelectorAll('.sev-filter:checked');
       const activeSevs = new Set([...checked].map(cb => cb.value));
-      const allSevs = ['Critical', 'High', 'Medium', 'Low', 'Info'];
+      // Info excluded: forensicGate demotes Info-severity events out of the forensic timeline server-side
+      // (they live in the super-timeline instead), so the forensic timeline never actually holds any.
+      const allSevs = ['Critical', 'High', 'Medium', 'Low'];
       const filtering = activeSevs.size < allSevs.length;
       let visible = filtering ? ft.filter(e => activeSevs.has(e.severity)) : ft;
       if (evIdFilter) visible = visible.filter(e => evIdFilter.has(String(e.id)));
@@ -10747,6 +10871,8 @@
         if (!real.length) return !hiddenSources.has(NO_SOURCE_FACET);  // unsourced events ride the "(no source)" facet
         return real.some(s => !hiddenSources.has(s));                   // hidden only when ALL its sources are unchecked
       });
+      const originFiltering = hiddenOrigins.size > 0;
+      if (originFiltering) visible = visible.filter(e => !hiddenOrigins.has(ftOriginOf(e)));
       if (hiddenHosts.size > 0) visible = visible.filter(e => !hiddenHosts.has(e.asset || NO_HOST_FACET));
       // Corroboration lens (#35): count only DISTINCT sources the analyst is still looking at (excludes
       // ones unchecked in the Sources filter), so the two filters compose — isolating to a single source
@@ -10768,7 +10894,7 @@
       const countEl = document.getElementById('timelineCount');
       if (countEl) {
         const total = ft.length;
-        const baseText = (filtering || showStarredOnly || sourceFiltering || viewSevFiltering || evIdFilter || corrobTimeline > 1 || _hasActiveFilter())
+        const baseText = (filtering || showStarredOnly || sourceFiltering || originFiltering || viewSevFiltering || evIdFilter || corrobTimeline > 1 || _hasActiveFilter())
           ? `${totalFiltered} of ${total} events`
           : `${total} event${total !== 1 ? 's' : ''}`;
         countEl.textContent = (tlPageSize > 0 && totalFiltered > tlPageSize)
@@ -10781,7 +10907,7 @@
 
       if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
-          ((filtering || showStarredOnly || sourceFiltering || viewSevFiltering || evIdFilter || corrobTimeline > 1 || _hasActiveFilter()) && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
+          ((filtering || showStarredOnly || sourceFiltering || originFiltering || viewSevFiltering || evIdFilter || corrobTimeline > 1 || _hasActiveFilter()) && ft.length > 0) ? "<div style='color:var(--c-9aa4b2)'>No events match the current filters.</div>" : "—";
         return;
       }
 
@@ -10840,23 +10966,15 @@
           desc = desc.replace(new RegExp("\\s*@\\s*" + e.asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "i"), "");
         }
         const host = e.asset ? ` <span class="ev-host" title="Affected host / asset">🖥 ${esc(e.asset)}</span>` : "";
-        // Findings this event backs — clickable, jump to the finding in the Findings section.
-        const findingLinks = (e.relatedFindingIds && e.relatedFindingIds.length)
-          ? `<br><small>findings: ${e.relatedFindingIds.map(fid => `<a class="finding-jump" data-fid="${escAttr(fid)}" title="Jump to finding ${escAttr(fid)}">${esc(fid)}</a>`).join(", ")}</small>`
+        // Velociraptor deep-link back to the originating hunt/flow — mirrors the super-timeline (#7).
+        const veloLink = e.veloUrl
+          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--c-6aa9ff);white-space:nowrap" title="Open this hunt/flow in the Velociraptor GUI">↗ Velociraptor</a>`
           : "";
-
-        const deobBlock = e.deobfuscated ? (() => {
-          const uid = `deob-${escAttr(id)}`;
-          const iocRefs = (e.deobfuscated.iocs || []).length
-            ? `<div style="margin-top:4px;font-size:11px;color:var(--c-9aa4b2)">IOCs: ${e.deobfuscated.iocs.map(i=>`<span style="color:var(--c-6aa9ff)">${esc(i)}</span>`).join(", ")}</div>`
-            : "";
-          return `<br><button onclick="var d=document.getElementById('${uid}');d.hidden=!d.hidden;this.textContent=d.hidden?'[Decoded ▶]':'[Decoded ▼]'" `
-            + `style="background:none;border:1px solid var(--c-2a4a6b);border-radius:3px;color:var(--c-6aa9ff);font-size:11px;padding:1px 5px;cursor:pointer;margin-top:4px">[Decoded ▶]</button>`
-            + `<div id="${uid}" hidden style="margin-top:4px;padding:6px 8px;background:var(--c-0d1117,#0d1117);border-left:2px solid var(--c-2a4a6b);border-radius:2px;font-size:11px;font-family:monospace;white-space:pre-wrap;word-break:break-all;color:var(--c-c9d1d9)">`
-            + esc(e.deobfuscated.decoded)
-            + iocRefs
-            + `</div>`;
-        })() : "";
+        // Everything beyond the compact title — untruncated text, MITRE, findings, decoded payloads,
+        // evidence, a benign chain-check note — collapses into one shared [details] panel (#1/#3).
+        const details = eventDetailsBlock(e, id, desc, caseId, {
+          mitre: tlShow("mitre", tld), findings: tlShow("findings", tld), evidence: tlShow("evidence", tld),
+        });
 
         return `<div class="ev-row${isSelected ? " ev-selected" : ""}${isNew ? " ev-new" : ""}" data-evid="${escAttr(id)}">`
           + `<div class="ev-col-ctrl">`
@@ -10872,18 +10990,16 @@
           + (tlShow("tags", tld) ? tagPills("event", e.id) : "")
           + (tlShow("badges", tld) ? `${newBadge}${badge}${corro}${chain}` : "")
           + (showHost ? host : "")
-          + ` ${descHtml(desc, e.id)} ${fpBtn("event", e.id, desc)}`
+          + (details.toggle ? ` ${details.toggle}` : "")
+          + ` ${descHtml(details.title)} ${fpBtn("event", e.id, desc)}${veloLink}`
           + (tlShow("badges", tld) && e.chainCheck && !e.chainCheck.observed ? `<br><small style="color:var(--c-ff8a8a)">${esc(e.chainCheck.note)}</small>` : "")
-          + (tlShow("mitre", tld) && e.mitreTechniques && e.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(e.mitreTechniques)}</small>` : "")
-          + (tlShow("findings", tld) ? findingLinks : "")
-          + deobBlock
-          + (tlShow("evidence", tld) ? evidenceLinks(caseId, e.sourceScreenshots) : "")
+          + details.panel
           + `</div>`
           + `</div>`;
       }).join("");
 
       const tlEl = document.getElementById("forensicTimeline");
-      tlEl.innerHTML = headerRow + rows + paginationBar;
+      tlEl.innerHTML = headerRow + paginationBar + rows;
       // When action icons are hidden, narrow the control column so its empty space is reclaimed.
       tlEl.classList.toggle("tl-no-icons", !tlShow("icons", tld));
 
@@ -10915,6 +11031,29 @@
         else if (e.target.dataset.srcNone) { sourceFacets(lastFt).forEach(s => hiddenSources.add(s)); renderTimelineEvents(lastFt); }
       });
       // Close the menu when clicking outside it (clicks inside #srcLegendWrap are stopped at the wrap).
+      document.addEventListener("click", (e) => {
+        if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
+      });
+    })();
+
+    // Forensic origin filter dropdown — mirrors the source filter exactly, scoped to its own menu
+    // element. Origin is one level more specific than Source (the artifact, not just the tool) —
+    // matches the super-timeline's Origins filter.
+    (function () {
+      const wrap = document.getElementById("originLegendWrap");
+      const btn = document.getElementById("originFilterBtn");
+      const menu = document.getElementById("originFilterMenu");
+      if (!wrap || !btn || !menu) return;
+      btn.addEventListener("click", () => { menu.hidden = !menu.hidden; });
+      menu.addEventListener("change", (e) => {
+        if (!e.target.classList.contains("origin-filter")) return;
+        if (e.target.checked) hiddenOrigins.delete(e.target.value); else hiddenOrigins.add(e.target.value);
+        renderTimelineEvents(lastFt);
+      });
+      menu.addEventListener("click", (e) => {
+        if (e.target.dataset.originAll) { hiddenOrigins.clear(); renderTimelineEvents(lastFt); }
+        else if (e.target.dataset.originNone) { originFacets(lastFt).forEach(o => hiddenOrigins.add(o)); renderTimelineEvents(lastFt); }
+      });
       document.addEventListener("click", (e) => {
         if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
       });
@@ -11175,6 +11314,7 @@
       selectedEvents.clear();
       selectedIocs.clear();
       hiddenSources.clear(); _srcMenuSig = "";
+      hiddenOrigins.clear(); _originMenuSig = "";
       hiddenHosts.clear(); _hostMenuSig = "";
       showStarredOnly = false;
       const sfBtn = document.getElementById("evStarFilterBtn");
@@ -12046,6 +12186,7 @@
         searchTerm = gs.value.trim().toLowerCase();
         cs.hidden = !searchTerm;
         if (lastState) render(lastState);
+        if (lastSuperData) loadSuperTimeline();   // the main filter's search term scopes the super-timeline too
       }
       function applyTimeRange() {
         filterFrom = utcInputToIso(ff.value);
@@ -12053,6 +12194,7 @@
         cfBtn.hidden = !filterFrom && !filterTo;
         renderTimelineEvents(lastFt);
         refreshFilteredViews();   // keep Kill Chain + Attack Phases in sync with the time range
+        if (lastSuperData) loadSuperTimeline();   // and the super-timeline's own (intersected) time range
       }
 
       gs.addEventListener("input", () => {

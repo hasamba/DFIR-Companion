@@ -77,6 +77,19 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400s on a notebook URL instead of silently importing the flow's complete raw rows", async () => {
+    // A notebook URL shows the analyst's own filtered VQL results — this server can only pull the
+    // flow's complete raw collection (a much larger, differently-scoped row set), so it must refuse
+    // rather than silently import the wrong data (#notebook regression).
+    const { app, stateStore } = await makeApp();
+    const res = await request(app).post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "https://velo.example/app/index.html?org_id=root#/collected/C.dead/F.001/notebook" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/notebook/i);
+    expect(res.body.error).toMatch(/extension/i);
+    expect((await stateStore.load("c1")).forensicTimeline).toHaveLength(0);   // nothing imported
+  });
+
   it("imports an external hunt into the forensic timeline", async () => {
     const { app, stateStore } = await makeApp();
     const res = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.ABC" });
@@ -84,6 +97,18 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
     expect(res.body.kind).toBe("hunt");
     expect(res.body.addedEvents).toBeGreaterThan(0);
     expect((await stateStore.load("c1")).forensicTimeline.length).toBeGreaterThan(0);
+  });
+
+  it("stamps veloUrl on FORENSIC-timeline hunt events too, not just the super-only path (#7 regression)", async () => {
+    // Bug: the super-only branch stamped veloUrl on every event, but the normal (forensic-timeline-
+    // bound) branch dropped it entirely when calling pipeline.importVelociraptor — so a plain hunt/flow
+    // import never carried a veloUrl and the forensic timeline's "↗ Velociraptor" link never rendered.
+    const { app, stateStore } = await makeApp();
+    const res = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.ABC" });
+    expect(res.status).toBe(200);
+    const forensic = (await stateStore.load("c1")).forensicTimeline;
+    expect(forensic.length).toBeGreaterThan(0);
+    expect(forensic.every((e) => e.veloUrl === "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC")).toBe(true);
   });
 
   it("imports an external flow attributing events to the resolved host", async () => {

@@ -74,6 +74,7 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Windows.Detection.Yara.Process",
       "Windows.Detection.Malfind",
       "Windows.Hayabusa.Rules",
+      "Windows.EventLogs.Chainsaw",
       "DetectRaptor.Generic.Detection.BrowserExtensions",
       "DetectRaptor.Generic.Detection.YaraFile",
       "DetectRaptor.Generic.Detection.YaraWebshell",

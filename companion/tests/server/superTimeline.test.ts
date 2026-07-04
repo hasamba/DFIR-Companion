@@ -197,6 +197,21 @@ describe("super-timeline query + label routes", () => {
     expect(paged.body.events.length).toBe(1);
   });
 
+  // The dashboard's main filter bar (search box + Exclude chips) narrows the super-timeline too, not
+  // just the forensic timeline — wired via ?q= and ?excludeText=.
+  it("q= narrows to events matching the main filter's free-text search", async () => {
+    const { app } = await makeQueryApp();
+    const r = await request(app).get(`/cases/c1/super-timeline?q=in-range`);
+    expect(r.body.events.map((e: { id: string }) => e.id)).toEqual(["e-mid"]);
+    expect(r.body.total).toBe(1);
+  });
+
+  it("excludeText= hides events matching any exclude term", async () => {
+    const { app } = await makeQueryApp();
+    const r = await request(app).get(`/cases/c1/super-timeline?excludeText=early,late`);
+    expect(r.body.events.map((e: { id: string }) => e.id)).toEqual(["e-mid"]);
+  });
+
   it("POST label sets labels that then filter the query", async () => {
     const { app } = await makeQueryApp();
     const listed = await request(app).get(`/cases/c1/super-timeline`);

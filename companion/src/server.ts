@@ -3376,6 +3376,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         const { storedName, importedAt, seq } = await persistEvidence(caseId, `velo-hunt_${job.huntId}.json`, json);
         lastFile = storedName;
         options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing Velociraptor hunt ${job.huntId} rows (${Object.keys(map).length} artifact(s), ${totalRows} row(s))` });
+        // Deep-link back to the hunt in the Velociraptor GUI: reuse the URL saved on the job when
+        // present, else build it from the hunt id. Shared by every event from this hunt, on EITHER
+        // path — previously only the super-only branch stamped it, so a normal (forensic-timeline-
+        // bound) bundle/hunt collection never carried a veloUrl and the FT's "↗ Velociraptor" link
+        // never rendered for its events.
+        const huntId = job.huntId;   // hoisted so the .map closure below doesn't re-narrow the reassignable `job`
+        const veloUrl = job.guiUrl || client.huntGuiUrlFor(huntId);
         if (superOnly) {
           // Parse WITHOUT merging into forensic; append the mapped events to the super-timeline only.
           // The artifact-map carries each row's _Source, so `artifact` is just a filename fallback.
@@ -3389,10 +3396,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           // stable. Same rows in the same order → same ids → deduped; a straggler that checks in later
           // gets a higher index and appends. (Forensic imports get this from correlation dedup; the
           // super-only path has no such guard, so the ids must be stable across re-collects.)
-          const huntId = job.huntId;   // hoisted so the .map closure doesn't re-narrow the reassignable `job`
-          // Deep-link back to the hunt in the Velociraptor GUI: reuse the URL saved on the job when
-          // present, else build it from the hunt id. Shared by every event from this hunt.
-          const veloUrl = job.guiUrl || client.huntGuiUrlFor(huntId);
           const events: ForensicEvent[] = floored.map((e, i) => ({
             id: `${huntId}-e${i + 1}`,
             timestamp: e.timestamp,
@@ -3414,7 +3417,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           options.onSuperTimeline?.(caseId);   // live dashboards refresh as super-only events stream in
           importedAny = true;   // report success even though nothing hit the forensic timeline
         } else {
-          await pipeline.importVelociraptor(caseId, json, { label: storedName, idPrefix: `${seq}`, importedAt, minSeverity });
+          await pipeline.importVelociraptor(caseId, json, { label: storedName, idPrefix: `${seq}`, importedAt, minSeverity, veloUrl });
           importedAny = true;
         }
       }
@@ -3557,6 +3560,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     await pipeline.importVelociraptor(caseId, mapJson, {
       label: storedName, idPrefix: `${seq}`, importedAt, minSeverity: opts.minSeverity,
       velociraptor: opts.hostFallback ? { hostFallback: opts.hostFallback } : undefined,
+      veloUrl: opts.veloUrl,
     });
 
     let addedEvents = 0, addedIocs = 0;
@@ -3780,6 +3784,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const caseId = req.params.id;
     const ref = parseVeloRef(String(req.body?.ref ?? ""));
     if (!ref) return res.status(400).json({ error: "paste a hunt id (H.…), a flow (C.…/F.…), or a Velociraptor GUI URL" });
+    // A notebook URL shows the analyst's OWN filtered VQL query results — this server can only pull the
+    // flow/hunt's complete raw collected rows (a different, much larger row set), which silently imports
+    // far more than the analyst is looking at. Only the browser extension's "Push rows" button captures
+    // the notebook's actual rendered/filtered results (it reads the GUI's own table), so redirect there.
+    if (ref.isNotebookUrl) {
+      return res.status(400).json({
+        error: "this is a Velociraptor NOTEBOOK URL — importing it here would pull the flow/hunt's complete raw results, not your notebook's filtered query. Open the notebook in your browser and use the DFIR Companion extension's \"Push rows → DFIR-Companion\" button instead, which imports exactly what the notebook shows.",
+      });
+    }
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
     const superOnly = req.body?.superTimelineOnly === true;
     const client = options.velociraptorClient;
@@ -8241,6 +8254,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         excludeHosts: csv(req.query.excludeHosts),
         labels: csv(req.query.labels),
         taggedOnly: req.query.tagged === "1" || req.query.tagged === "true",
+        search: typeof req.query.q === "string" ? req.query.q : undefined,
+        excludeText: csv(req.query.excludeText),
         offset: num(req.query.offset),
         limit: num(req.query.limit),
       }, tagLabelMap);

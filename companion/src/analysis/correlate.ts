@@ -114,7 +114,14 @@ function mergeGroup(events: ForensicEvent[]): ForensicEvent {
     relatedFindingIds: uniq(events.flatMap((e) => e.relatedFindingIds)),
     sourceScreenshots: uniq(events.flatMap((e) => e.sourceScreenshots)),
     sources: sources.length ? sources : undefined,
-    artifactName: primary.artifactName ?? events.find((e) => e.artifactName)?.artifactName,
+    // artifactName, unlike the fields below, is an ATTRIBUTION of the shown description (which artifact
+    // produced this text) — not a neutral shared fact about the underlying process/host/connection — so
+    // it must come from the SAME event as `description` (primary), never borrowed from a different
+    // contributor. A same-tool duplicate merge that splits artifactName across near-identical rows
+    // legitimately loses it here (falls back to that source's own sources[0] in the UI); the alternative
+    // — a genuinely cross-tool correlation (e.g. a Chainsaw/Sigma detection + a Velociraptor Pstree
+    // record sharing host+pid) — otherwise showed the WRONG artifact next to the detection's own text.
+    artifactName: primary.artifactName,
     message: primary.message ?? events.find((e) => e.message)?.message,
     veloUrl: primary.veloUrl ?? events.find((e) => e.veloUrl)?.veloUrl,
     sha256: events.find((e) => e.sha256)?.sha256,

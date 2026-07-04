@@ -148,4 +148,30 @@ describe("querySuper", () => {
     expect(r.total).toBe(4);
     expect(r.events).toHaveLength(1);
   });
+
+  it("search narrows to events matching the main dashboard filter's free-text term (#see searchFilter.ts)", () => {
+    const withDesc = [
+      ev({ id: "s1", timestamp: "2026-06-01T09:00:00Z", description: "mimikatz observed on host" }),
+      ev({ id: "s2", timestamp: "2026-06-01T10:00:00Z", description: "benign login" }),
+    ];
+    const r = querySuper(withDesc, {}, { search: "mimikatz" });
+    expect(r.events.map((e) => e.id)).toEqual(["s1"]);
+    expect(r.total).toBe(1);
+  });
+
+  it("excludeText hides events matching any exclude term, same semantics as the forensic timeline", () => {
+    const withDesc = [
+      ev({ id: "s1", timestamp: "2026-06-01T09:00:00Z", description: "noisy heartbeat" }),
+      ev({ id: "s2", timestamp: "2026-06-01T10:00:00Z", description: "suspicious login" }),
+    ];
+    const r = querySuper(withDesc, {}, { excludeText: ["heartbeat"] });
+    expect(r.events.map((e) => e.id)).toEqual(["s2"]);
+  });
+
+  it("search and excludeText compose with time/origin filters", () => {
+    const r = querySuper(events, labels, { from: "2026-06-01T00:00:00Z", to: "2026-06-02T00:00:00Z", search: "d" });
+    expect(r.events.map((e) => e.id)).toEqual(["in1", "in2"]);   // all fixture events share description "d"
+    const none = querySuper(events, labels, { from: "2026-06-01T00:00:00Z", to: "2026-06-02T00:00:00Z", search: "nomatch" });
+    expect(none.events).toEqual([]);
+  });
 });

@@ -1965,6 +1965,7 @@ export class AnalysisPipeline {
       importedAt: string;
       velociraptor?: VelociraptorImportOptions;
       minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      veloUrl?: string;          // the originating hunt/flow's GUI URL (only known for a live hunt/flow import) — stamped onto every event so the forensic timeline's "↗ Velociraptor" link resolves, mirroring the super-only path
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
@@ -1983,6 +1984,7 @@ export class AnalysisPipeline {
       mitreTechniques: [],
       forensicEvents: parsed.events.map((e, i) => ({
         ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Velociraptor"],
+        ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
       })),
       threadsOpened: [],
       threadsClosed: [],
