@@ -142,7 +142,7 @@ double), shared hash, or same path within a time window. The merged event unions
 `processName`/`parentName`, `chainCheck`); `IOC` carries optional `enrichments[]`. The
 **asset ↔ IoC graph** (`analysis/assetGraph.ts`, pure) derives compromised assets (hosts from
 `event.asset`; accounts from `DOMAIN\user`/UPN in event text) and the IoCs that touched each. Side files in `state/`:
-`ai-control.json`, `legitimate.json`, `scope.json`, `enrich-control.json` (per-source enrichment
+`ai-control.json`, `false-positive.json`, `scope.json`, `enrich-control.json` (per-source enrichment
 selection — the enabled provider names; **default = local-only** (MISP/YETI/OpenCTI), external opt-in),
 `pending_analysis.json`, `report-meta.json` (human-authored report
 sections — title page, distribution, BIA, glossary, recommendations…), `comments.json`
@@ -152,8 +152,8 @@ sections — title page, distribution, BIA, glossary, recommendations…), `comm
 which **retries the rename through a transient `EPERM`/`EBUSY`/`EACCES` lock**, since `cases/` may live
 in a synced folder where Dropbox/OneDrive/AV briefly locks the file mid-rename; route every new store's
 save through it, never a bare `writeFile`+`rename`): `AiControlStore`,
-`LegitimateStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`. Pure filters/transforms live next to
-them (`applyLegitimate`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
+`FalsePositiveStore`, `ScopeStore`, `EnrichControlStore`, `ReportMetaStore`, `CommentsStore`. Pure filters/transforms live next to
+them (`applyFalsePositive`, `filterEventsByScope`, `isAnalystWorkLog`, `correlateEvents`,
 `backfillHighSeverityFindings`) and are unit-tested independently of I/O.
 
 **Threat-intel enrichment** (`enrichment/`): `EnrichmentProvider`s (VirusTotal, Hunting.ch,

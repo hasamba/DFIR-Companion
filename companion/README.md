@@ -515,15 +515,20 @@ timeline view, and the report all reflect only that window. The raw events are p
 synthesis is an authoritative reassessment, it now **replaces** the analytic layer each run
 rather than accumulating — so out-of-scope (or removed) conclusions drop cleanly.
 
-**Confirmed-legitimate items (false positives).** When the client confirms an alert,
-tool, IOC, or a specific forensic-timeline event was their own benign activity, click
-**⚑ mark legitimate** on that finding / IOC / **event** in the dashboard (add a reason).
-It's stored per case (`state/legitimate.json`), synthesis is re-run **excluding it**, and
-it's listed in the "Confirmed Legitimate (excluded from analysis)" panel where you can
+**False positives.** When the client confirms an alert, tool, IOC, or a specific
+forensic-timeline event was their own authorized/benign activity — or a detection tool
+simply mis-fired — click **🚫 Mark False Positive** on that finding / IOC / **event** in
+the dashboard, pick a reason (known-good tool, authorized test, detection misfire,
+duplicate, or other), and confirm. It's stored per case (`state/false-positive.json`
+— reason + free-text note + the marking analyst), synthesis is re-run **excluding it**,
+and it's listed in the "False Positives (excluded from analysis)" panel where you can
 un-mark it. Findings/IOCs are dropped via both the prompt and a hard post-filter.
-A legitimate **event** is hidden from the timeline view and excluded from the synthesis
-input — but the raw event stays in state (it's evidence), so un-marking fully restores
-it. Reports honor all of these exclusions too.
+A false-positive **event** is hidden from the timeline view and excluded from the
+synthesis input — but the raw event stays in state (it's evidence), so un-marking fully
+restores it. Reports honor all of these exclusions too. Marking a finding/event also
+suggests other similar items in the case (shared MITRE technique/process/hash/related
+IOCs, plus an optional AI-assisted pass) to mark in the same action; marking a single
+IOC can also promote it to the global IOC whitelist.
 
 **Log import (firewall / syslog / VPN / access logs).** Log files are mostly
 repetition, so importing one does **not** add a timeline row per line. The raw lines
