@@ -83,9 +83,9 @@ Walk through the dashboard panels (see [Dashboard Panels](reference/dashboard.md
 
 ## Step 6 — Mark false positives and known-good items
 
-Every finding, IOC, and forensic event has a **⚑ Mark legitimate** button. Click it to exclude an item from analysis. It moves to the **Confirmed Legitimate** panel. You can reverse the decision any time.
+Every finding, IOC, and forensic event has a **🚫 Mark False Positive** button. Click it, pick a reason (known-good tool, authorized test, detection misfire, duplicate, or other), and confirm to exclude the item from analysis. It moves to the **False Positives** panel. You can reverse the decision any time. Marking a finding/event also suggests similar items in the case to mark in the same action; marking a single IOC can also promote it to the global IOC whitelist.
 
-For bulk exclusions (e.g. an entire internal IP range), use **Settings → IOC Whitelist** to add a CIDR rule. Any IOC matching the rule is automatically marked legitimate on import.
+For bulk exclusions (e.g. an entire internal IP range), use **Settings → IOC Whitelist** to add a CIDR rule. Any IOC matching the rule is automatically marked false-positive on import.
 
 ---
 

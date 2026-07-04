@@ -364,6 +364,6 @@ Requires GeoIP enrichment to be configured and enabled.
 
 ---
 
-## Confirmed Legitimate (Excluded from Analysis)
+## False Positives (Excluded from Analysis)
 
 Everything you have marked as a false positive or known-good. Shows findings, events, and IOCs with their exclusion reason. Click any item to reinstate it.
