@@ -4680,6 +4680,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const markers = await falsePositives.load(req.params.id);
       const next = [...markers.filter((m) => m.id !== marker.id), marker];
       await falsePositives.save(req.params.id, next);
+      if (marker.kind === "ioc" && req.body?.addToWhitelist && options.iocWhitelistStore) {
+        const state = options.stateStore ? await options.stateStore.load(req.params.id) : null;
+        const iocType = state?.iocs.find((i) => i.value.toLowerCase() === marker.ref.toLowerCase())?.type;
+        await options.iocWhitelistStore.add({ match: "exact", pattern: marker.ref, iocType, note: `promoted from false-positive marking: ${marker.note || marker.reason}` });
+      }
       options.onFalsePositive?.(req.params.id);
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it
       return res.status(200).json(next);

@@ -15,6 +15,7 @@ import { ReportMetaStore } from "../src/reports/reportMeta.js";
 import { CommentsStore } from "../src/analysis/comments.js";
 import { PlaybookStore } from "../src/analysis/playbookStore.js";
 import { PlaybookControlStore } from "../src/analysis/playbookControl.js";
+import { IocWhitelistStore } from "../src/analysis/iocWhitelistStore.js";
 import { emptyState, type InvestigationState } from "../src/analysis/stateTypes.js";
 import type { CustomerExposureProvider } from "../src/analysis/customerExposure.js";
 
@@ -1156,6 +1157,49 @@ describe("state and report routes", () => {
       .send({ id: markerId });
     expect(remove.status).toBe(200);
     expect(pinged).toBe(3);
+  });
+
+  it("promotes an IOC false-positive to the global whitelist when addToWhitelist is set", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-whitelist-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const iocWhitelistStore = new IocWhitelistStore(join(root, "ioc-whitelist.json"));
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, { stateStore, iocWhitelistStore });
+
+    // seed an IOC on the case first
+    await request(app).post("/cases/c1/iocs").send({ type: "ip", value: "10.0.0.5" });
+    const res = await request(app).post("/cases/c1/false-positive").send({
+      kind: "ioc", ref: "10.0.0.5", reason: "known-good-tool", addToWhitelist: true,
+    });
+    expect(res.status).toBe(200);
+    const rules = await request(app).get("/ioc-whitelist");
+    expect(rules.body.some((r: { pattern: string }) => r.pattern === "10.0.0.5")).toBe(true);
+    expect(rules.body.find((r: { pattern: string }) => r.pattern === "10.0.0.5")).toMatchObject({ iocType: "ip" });
+  });
+
+  it("does NOT promote to the whitelist when addToWhitelist is absent, or when the marker kind is not 'ioc'", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-legit-no-whitelist-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const iocWhitelistStore = new IocWhitelistStore(join(root, "ioc-whitelist.json"));
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, { stateStore, iocWhitelistStore });
+
+    // IOC marker without addToWhitelist → no promotion.
+    const noFlag = await request(app).post("/cases/c1/false-positive").send({
+      kind: "ioc", ref: "10.0.0.6", reason: "known-good-tool",
+    });
+    expect(noFlag.status).toBe(200);
+
+    // Finding marker WITH addToWhitelist → still no promotion (only "ioc" kind qualifies).
+    const findingFlag = await request(app).post("/cases/c1/false-positive").send({
+      kind: "finding", ref: "f1", reason: "detection-misfire", addToWhitelist: true,
+    });
+    expect(findingFlag.status).toBe(200);
+
+    const rules = await request(app).get("/ioc-whitelist");
+    expect(rules.body).toEqual([]);
   });
 
   it("false-positive: rejects an empty ref, and rejects reason 'other' with no note (single + batch)", async () => {
