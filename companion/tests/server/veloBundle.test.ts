@@ -192,9 +192,13 @@ describe("Velociraptor triage bundles — routes", () => {
     const mixedRunner: VqlRunner = async (statements) => {
       const p = statements[0];
       if (p.includes("artifact_definitions()")) {
+        // All three bundle artifacts exist on the server (so the run-bundle pre-flight passes them
+        // through); the DetectRaptor one still FAILS at collect time (too-large fetch) below — the
+        // distinction this test asserts is collect-time skipped-vs-empty, not launch-time unknown.
         return { rows: [
           { name: "Windows.System.Pslist", description: "Running processes", type: "CLIENT" },
           { name: "Generic.System.Pstree", description: "Process tree", type: "CLIENT" },
+          { name: "DetectRaptor.Windows.Detection.Amcache", description: "Amcache detections", type: "CLIENT" },
         ], raw: "" };
       }
       if (p.includes("hunt(") && p.includes("artifacts=[")) return { rows: [{ Hunt: { HuntId: "H.MIX1", state: "RUNNING" } }], raw: "" };

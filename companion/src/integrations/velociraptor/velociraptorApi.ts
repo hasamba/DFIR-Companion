@@ -395,7 +395,7 @@ export function extractMonitoredArtifacts(rows: readonly unknown[]): string[] {
 export const ALL_CLIENTS = "*";             // sentinel client id meaning "every enrolled client"
 const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;     // valid Velociraptor artifact / source name
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/;        // valid hunt id
-const FLOW_RE = /^F\.[A-Za-z0-9]+$/;        // valid collection flow id (collect_client)
+const FLOW_RE = /^F\.[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$/;   // flow id; hunt-launched flows carry a ".H" suffix (F.<base>.H)
 const CLIENT_RE = /^C\.[A-Za-z0-9]+$/;      // valid Velociraptor client id
 
 // One enrolled endpoint as the Companion records it in the persisted client INVENTORY (issue #70).
@@ -534,6 +534,15 @@ export class VelociraptorClient {
     const base = this.config.guiUrl.replace(/\/+$/, "");
     const org = encodeURIComponent(this.config.guiOrg?.trim() || "root");
     return `${base}/app/index.html?org_id=${org}#/collected/${clientId}/${flowId}`;
+  }
+
+  // Public wrappers over the private GUI-URL builders, so import paths can stamp a per-event
+  // deep-link back to the originating hunt/flow. Return undefined when no GUI base URL is configured.
+  huntGuiUrlFor(huntId: string): string | undefined {
+    return this.huntGuiUrl(huntId);
+  }
+  flowGuiUrlFor(clientId: string, flowId: string): string | undefined {
+    return this.collectGuiUrl(clientId, flowId);
   }
 
   // Run a single VQL program verbatim (no statement-splitting) — for internal orchestration VQL.
@@ -675,6 +684,36 @@ export class VelociraptorClient {
     if (!rows.length) return null;
     const r = (rows[0] ?? {}) as { state?: unknown };
     return { state: String(r.state ?? "").trim() };
+  }
+
+  // The artifacts an EXTERNAL hunt collected — so the Companion can read the results of a hunt it did
+  // NOT launch (a Companion-launched hunt already stores its own artifact list). `start_request.artifacts`
+  // is the hunt's configured artifact set. HUNT_RE-validated so the id is safe in the VQL literal. [] when
+  // the hunt is unknown or carries no artifacts.
+  async getHuntArtifacts(huntId: string): Promise<string[]> {
+    if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
+    const rows = await this.runRaw(`SELECT start_request.artifacts AS artifacts FROM hunts() WHERE hunt_id='${huntId}' LIMIT 1`);
+    const raw = (rows[0] as { artifacts?: unknown })?.artifacts;
+    return Array.isArray(raw) ? raw.map((a) => String(a).trim()).filter(Boolean) : [];
+  }
+
+  // An external FLOW's collected artifacts + the HOST it ran on, so a GUI-launched collection can be
+  // imported without having launched it. Reads flows(client_id=) for the artifact list (prefer
+  // `artifacts_with_results` — the ones that actually produced output — else the requested
+  // `request.artifacts`), and resolves the hostname from the client id via the enrolled-client inventory
+  // (empty when the client isn't found). CLIENT_RE/FLOW_RE-validated so both ids are safe in the literals.
+  async getFlowInfo(clientId: string, flowId: string): Promise<{ artifacts: string[]; hostname: string }> {
+    if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
+    if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
+    const rows = await this.runRaw(`SELECT artifacts_with_results, request.artifacts AS req_artifacts FROM flows(client_id='${clientId}') WHERE session_id='${flowId}' LIMIT 1`);
+    const r = (rows[0] ?? {}) as { artifacts_with_results?: unknown; req_artifacts?: unknown };
+    const src = Array.isArray(r.artifacts_with_results) && r.artifacts_with_results.length
+      ? r.artifacts_with_results
+      : (Array.isArray(r.req_artifacts) ? r.req_artifacts : []);
+    const artifacts = src.map((a) => String(a).trim()).filter(Boolean);
+    const rec = (await this.listClients()).find((c) => c.clientId === clientId);
+    const hostname = rec?.hostname || rec?.fqdn || "";
+    return { artifacts, hostname };
   }
 
   // Convenience: resolve a hostname LIVE (enumerate the fleet + match in TS, short-name ⇄ FQDN

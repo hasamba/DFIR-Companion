@@ -21,7 +21,7 @@ export interface GeoMarker {
   color: GeoColor;
   verdict?: string;
   internal: boolean;
-  legitimate: boolean;
+  falsePositive: boolean;
   eventCount: number;
   sources: string[];
   firstSeen?: string;
@@ -224,7 +224,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
       color: colorFor(sev, isLegit),
       verdict: worstVerdict(i),
       internal: isInternalIp(i.value),
-      legitimate: isLegit,
+      falsePositive: isLegit,
       eventCount: a?.count ?? 0,
       sources: a ? [...a.sources].sort() : [],
       firstSeen: a?.first,

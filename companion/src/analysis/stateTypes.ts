@@ -79,6 +79,20 @@ export interface ForensicEvent {
   path?: string;                // file path the event concerns (normalized lowercased for matching)
   asset?: string;               // host/computer/FQDN this event pertains to (the affected asset)
   sources?: string[];           // distinct tools/imports that reported this event (corroboration)
+  // The specific artifact/source-tool identifier that produced this event, at a finer grain than
+  // `sources` (e.g. "Windows.NTFS.MFT" vs "Windows.Detection.Sigma" — both would otherwise show as
+  // just "Velociraptor"). Set only by importers that know it (currently velociraptorImport.ts);
+  // used by the super-timeline's origin filter (analysis/superTimeline.ts) so a raw artifact
+  // row and the detection built from it can be told apart and filtered independently.
+  artifactName?: string;
+  // Full, untruncated event message/detail (e.g. the raw EVTX rendered Message or ScriptBlock
+  // text). `description` is a truncated title/summary; `message` carries the complete text so the
+  // super-timeline row can reveal it expandably. Set by importers that have the extra text
+  // (currently velociraptorImport.ts); optional — only set when it adds beyond `description`.
+  message?: string;
+  // Deep-link back to the originating Velociraptor hunt/flow in the Velociraptor GUI. Built at
+  // import time from the client's gui-url config; every event from one flow/hunt shares it. Optional.
+  veloUrl?: string;
   // Process-chain fields (for RockyRaccoon parent→child validation). processName/parentName
   // are filled by importers that know them (e.g. THOR ProcessCheck); chainCheck is set by
   // the validation pass when enrichment is on.

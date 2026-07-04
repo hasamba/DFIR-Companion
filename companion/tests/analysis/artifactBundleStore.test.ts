@@ -134,6 +134,22 @@ describe("ArtifactBundleStore", () => {
     expect(saved.params).toEqual({ "A.B": { Keep: "5" } });
   });
 
+  it("ships a super-timeline triage built-in flagged superTimelineOnly (no detection artifacts)", async () => {
+    const bundle = await store.get("super-timeline-triage");
+    expect(bundle).not.toBeNull();
+    expect(bundle?.superTimelineOnly).toBe(true);
+    expect(bundle?.builtIn).toBe(true);
+    expect(bundle?.artifacts).toContain("Windows.NTFS.MFT");
+    expect(bundle?.artifacts.some((a) => /sigma|yara|hayabusa/i.test(a))).toBe(false);
+  });
+
+  it("preserves superTimelineOnly across an edit (override round-trip)", async () => {
+    const original = await store.get("super-timeline-triage");
+    await store.save({ ...original!, artifacts: [...original!.artifacts, "Windows.Some.Extra"] });
+    const reloaded = await store.get("super-timeline-triage");
+    expect(reloaded?.superTimelineOnly).toBe(true);
+  });
+
   it("every built-in bundle has a name, description, and at least one artifact", () => {
     for (const b of BUILT_IN_BUNDLES) {
       expect(b.name).toBeTruthy();

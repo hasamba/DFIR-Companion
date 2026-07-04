@@ -62,3 +62,6 @@ dist-choco/
 # Local planning / process scratch (not part of the shipped project)
 .planning/
 docs/superpowers/
+
+# Claude Code local tooling / config (per-machine, not part of the shipped project)
+.claude/

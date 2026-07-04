@@ -16,6 +16,10 @@ export type VeloHuntStatus = "running" | "collecting" | "imported" | "error" | "
 
 export interface VeloHuntJob {
   bundleId: string;
+  // Set when this job was launched for a specific DwellWindow (the "Dwell-Time Triage" bundle
+  // requires one). Bookkeeping only — VeloHuntStore itself is NOT in SNAPSHOT_STATE_FILES (it's
+  // live-server-tied/transient); the durable window definition lives in DwellWindowStore.
+  dwellWindowId?: string;
   bundleName: string;
   artifacts: string[];
   sources?: string[];     // named sources for a single-artifact fleet-hunt (Companion launchHunt → Pivot0…); collect reads `artifact/source`

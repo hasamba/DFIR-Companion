@@ -26,6 +26,10 @@ export interface ArtifactBundle {
   // Analyst-authored VQL boolean expression (no "WHERE" keyword).
   filters?: Record<string, string>;
   customized?: boolean;         // a built-in that has a saved override on disk (so the UI can offer "reset to default"); derived, not persisted
+  // When true, this bundle's collected results go to the SUPER-TIMELINE ONLY (never the forensic
+  // timeline) — for raw host-triage artifacts (MFT/USN/Prefetch) that would otherwise flood the
+  // forensic timeline + IOC list. The analyst promotes individual events up when they matter.
+  superTimelineOnly?: boolean;
 }
 
 // Per-artifact VQL WHERE filters: keep string values, strip newlines/trailing ';', cap length.
@@ -124,6 +128,60 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "DetectRaptor.Windows.Detection.Evtx": "NOT Detection =~ 'Powershell large Base64 blob'",
     },
   },
+  {
+    id: "super-timeline-triage",
+    name: "Super-Timeline Triage",
+    description: "Raw host artifacts (MFT/USN/registry/execution) for the super-timeline",
+    builtIn: true,
+    superTimelineOnly: true,
+    // A broad host-triage super-timeline sweep (file activity, registry, execution, user interaction,
+    // event logs). Names the analyst can verify/trim against their server via the bundle editor — the
+    // run-bundle route drops any artifact the server doesn't have (so a missing one won't fail the hunt).
+    artifacts: [
+      "Windows.NTFS.MFT",
+      "Windows.Registry.UserAssist",
+      "Windows.Registry.AppCompatCache",
+      "Windows.Forensics.Shellbags",
+      "Windows.Forensics.Prefetch",
+      "Windows.Forensics.Amcache",
+      "Windows.Forensics.Lnk",
+      "Windows.Applications.Chrome.History",
+      "Windows.Applications.Edge.History",
+      "Windows.Forensics.RecycleBin",
+      "Windows.System.TaskScheduler",
+      "Windows.Forensics.ActivitiesCache",
+      "Windows.Forensics.Bam",
+      "Windows.Forensics.CertUtil",
+      "Windows.Forensics.Clipboard",
+      "Windows.Forensics.JumpLists",
+      "Windows.Forensics.NotepadParser",
+      "Windows.Forensics.RecentApps",
+      "Windows.Forensics.RecentFileCache",
+      "Windows.Forensics.SAM",
+      "Windows.Forensics.SRUM",
+      "Windows.Forensics.Timeline",
+      "Windows.Forensics.UserAccessLogs",
+      "Windows.Forensics.Usn",
+      "Windows.Timeline.Prefetch.Improved",
+      "Windows.Office.MRU",
+      "Windows.Registry.RDP",
+      "Windows.Registry.ScheduledTasks",
+      "Windows.Registry.Sysinternals.Eulacheck",
+      "Windows.Registry.RecentDocs",
+      "Windows.Registry.TaskCache.HiddenTasks",
+      "Windows.Sys.AllUsers",
+      "Windows.Sys.Programs",
+      "Windows.Sys.Users",
+      "Windows.Timeline.Registry.RunMRU",
+      "Windows.Registry.Hunter",
+      "Windows.EventLogs.Evtx",
+      "Windows.EventLogs.ScheduledTasks",
+      "Windows.System.AppCompatPCAExtend",
+      "Generic.Forensic.SQLiteHunter",
+    ],
+    defaultWaitMinutes: 10,
+    timeoutSeconds: 6000,   // a broad forensic sweep (MFT/SRUM/SQLiteHunter) runs well past the 600s default
+  },
 ];
 
 export class ArtifactBundleStore {
@@ -214,6 +272,9 @@ export class ArtifactBundleStore {
       expirySeconds: typeof input.expirySeconds === "number" && input.expirySeconds > 0 ? Math.floor(input.expirySeconds) : undefined,
       params: sanitizeBundleParams(input.params),
       filters: sanitizeBundleFilters(input.filters),
+      // Carry the super-timeline routing flag through an edit/override; only `true` persists (a missing
+      // field stays undefined, not `false` noise) — mirrors the other optionals above.
+      superTimelineOnly: input.superTimelineOnly === true ? true : undefined,
     };
     await mkdir(this.root, { recursive: true });
     await atomicWrite(this.path(id), JSON.stringify(bundle, null, 2));

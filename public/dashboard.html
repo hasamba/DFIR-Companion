@@ -683,6 +683,13 @@
     .explain-btn { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
       padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .explain-btn:hover { color: var(--c-ffd93b); border-color: var(--c-a88200); }
+    /* Super-timeline ⌖ context button + its inline ±window chips — match the other row-action chips. */
+    .st-ctx { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
+      padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+    .st-ctx:hover { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); }
+    .st-ctx-win { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-cbd3df); border-radius: 5px;
+      padding: 1px 7px; font-size: 11px; cursor: pointer; line-height: 16px; white-space: nowrap; }
+    .st-ctx-win:hover { background: var(--c-2a3050); color: #fff; border-color: var(--c-6aa9ff); }
     .explain-modal { width: min(640px, 95vw); max-height: 85vh; overflow-y: auto; }
     .explain-section { margin-bottom: 10px; }
     .explain-section strong { display: block; margin-bottom: 3px; color: var(--c-c9d1d9); }
@@ -739,6 +746,14 @@
     #iocFlaggedBtn.active { color: var(--c-ff9f43); border-color: var(--c-ff9f43); background: var(--c-211405); }
     #iocSignalBtn { background: transparent; border: 1px solid var(--c-3a4050); color: var(--c-6b7280); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
     #iocSignalBtn.active { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); background: var(--c-0d1b2e); }
+    /* Provenance filter buttons (All / Detection-linked / Telemetry-only) — mirror the signal-only toggle style. */
+    .ioc-prov-filter { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
+    .ioc-prov-btn { background: transparent; border: 1px solid var(--c-3a4050); color: var(--c-6b7280); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; text-transform: none; letter-spacing: 0; font-weight: 400; }
+    .ioc-prov-btn.active { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); background: var(--c-0d1b2e); }
+    /* Per-IOC provenance badge — distinct from the verdict badge. Accent for detection, muted grey for telemetry. */
+    .ioc-prov-badge { border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: bold; }
+    .ioc-prov-detection { background: var(--c-0d1b2e); color: var(--c-6aa9ff); border: 1px solid var(--c-2a3a52); }
+    .ioc-prov-telemetry { background: var(--c-1a1f28); color: var(--c-6b7280); border: 1px solid var(--c-3a4050); }
     .ioc-noise-chk { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--c-9aa4b2); cursor: pointer; }
     .ioc-noise-chk input { cursor: pointer; }
     /* IOC multi-select + bulk action bar */
@@ -1019,14 +1034,17 @@
       display: flex; align-items: center; border-radius: 7px; line-height: 0;
       transition: color .15s, background .15s; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
     #settingsBtn:hover { color: var(--c-cbd3df); background: var(--hover-wash); }
-    /* Settings modal */
-    .settings-modal { width: min(820px, 96vw); max-height: 90vh; }
-    .stab-bar { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--c-2a2f3a); margin: 8px 0 14px; }
+    /* Settings modal — flex column so the tab-bar (top) and footer (bottom) stay fixed and only the
+       active .stab-pane scrolls in between. Avoids a fixed-px header/footer height assumption, which broke
+       (footer clipped) whenever the .stab-bar wrapped to two lines. */
+    .settings-modal { width: min(820px, 96vw); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+    .settings-modal > h3 { flex-shrink: 0; }
+    .stab-bar { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--c-2a2f3a); margin: 8px 0 14px; flex-shrink: 0; }
     .stab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--c-9aa4b2);
       padding: 6px 16px; cursor: pointer; font-size: 12px; font-family: inherit; transition: color .12s; }
     .stab:hover { color: var(--c-cbd3df); }
     .stab.active { color: var(--c-6aa9ff); border-bottom-color: var(--c-6aa9ff); }
-    .stab-pane { display: none; overflow-y: auto; max-height: calc(90vh - 130px); padding-right: 4px; }
+    .stab-pane { display: none; overflow-y: auto; flex: 1 1 auto; min-height: 0; padding-right: 4px; }
     .stab-pane.active { display: block; }
     .sfield { margin-bottom: 10px; }
     .sfield > label { display: block; font-size: 11px; color: var(--c-9aa4b2); margin-bottom: 3px; }
@@ -1054,7 +1072,7 @@
     .sec-selall { display: flex; gap: 6px; margin: 3px 0 5px; }
     .sec-selall button { font-size: 11px; padding: 2px 8px; background: var(--c-2a2f3a); border: none; border-radius: 4px; color: var(--c-9aa4b2); cursor: pointer; }
     .sec-selall button:hover { background: var(--c-353b47); color: var(--c-cbd3df); }
-    .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--c-2a2f3a); padding-top: 12px; }
+    .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--c-2a2f3a); padding-top: 12px; flex-shrink: 0; }
     .settings-msg { font-size: 11px; margin-left: 4px; }
     /* Global search + time-range filter row — revealed by the toolbar search icon, hidden by default. */
     #searchFilterBar { padding: 5px 16px; background: var(--c-0e1116); border-bottom: 1px solid var(--c-1a1f28);
@@ -2144,6 +2162,19 @@
         <div id="veloJobCard" style="display:none;margin:0 0 12px"></div>
         <div id="veloBundleList" style="margin-bottom:14px">—</div>
 
+        <div style="margin-top:14px;border-top:1px solid var(--c-2a2f3a);padding-top:10px">
+          <div style="font-weight:600;margin-bottom:4px">Import external hunt/flow</div>
+          <div style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:6px">Pull results from a hunt or collection launched directly in the Velociraptor GUI. Paste a hunt id (<code>H.…</code>), a flow (<code>C.…/F.…</code>), or the GUI URL of either. For a flow, the host is resolved automatically.</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <input id="veloExtRef" placeholder="H.xxxx  ·  C.xxxx/F.xxxx  ·  or a Velociraptor URL" style="flex:1;min-width:220px;padding:4px" />
+            <select id="veloExtMinsev" title="Only import events at or above this severity"><option value="">all severities</option><option value="info">info+</option><option value="low">low+</option><option value="medium">medium+</option><option value="high">high+</option><option value="critical">critical only</option></select>
+            <label style="font-size:12px;color:var(--c-9aa4b2)"><input type="checkbox" id="veloExtSuper" /> super-timeline only</label>
+            <button id="veloExtGo">Import</button>
+          </div>
+          <div id="veloExtMsg" style="font-size:12px;color:var(--c-9aa4b2);margin-top:4px"></div>
+          <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:2px">Reads collected rows. Upload-only artifacts (THOR/Hayabusa JSON reports) aren't read by this path yet.</div>
+        </div>
+
         <details id="veloBuilder" style="border:1px solid var(--c-2a3146);border-radius:6px;padding:10px;background:var(--c-161b28)">
           <summary id="veloBuilderSummary" style="cursor:pointer;font-size:13px;color:var(--c-cdd6e4);font-weight:600">Build a new bundle</summary>
           <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
@@ -2929,7 +2960,7 @@
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2>Narrative Timeline<button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
     <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div><div id="findings">—</div></section>
-    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
+    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info"><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" onclick="event.stopPropagation()"><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkFpBtn" title="Mark all selected events as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div style="font-size:11px; color:var(--c-9aa4b2); margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
@@ -3173,7 +3204,7 @@
       </div>
     </section>
 
-    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><label class="ioc-noise-chk" title="Hide IOCs marked as a false positive or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide FP/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><span class="ioc-prov-filter" title="Provenance lens — how each IOC entered the case: detection-linked (appears in a graded Low+ event) vs telemetry-only (only in Info telemetry). Distinct from the threat-intel verdict."><button type="button" class="ioc-prov-btn active" data-prov="all">All IOCs</button><button type="button" class="ioc-prov-btn" data-prov="detection">Detection-linked</button><button type="button" class="ioc-prov-btn" data-prov="telemetry">Telemetry-only</button></span><label class="ioc-noise-chk" title="Hide IOCs marked as a false positive or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide FP/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
@@ -3473,6 +3504,37 @@
         </div>
       </div>
     </section>
+    <section id="sec-super-timeline" style="grid-column: 1 / -1" class="collapsed">
+      <h2>Super-Timeline<span class="ev-sub" id="superTimelineBadge"></span></h2>
+      <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">The complete record of every event ever imported (from any source — Velociraptor, firewall, VPN, host triage, anything), before scope/legitimate filtering. Filter by time, origin, and tag; star / comment / tag rows for triage; then <em>promote</em> the events that matter up into the analyzed forensic timeline (where the AI synthesizes them). Nothing here is removed — this is a superset view.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:6px">
+        <label style="font-size:11px;color:var(--c-9aa4b2)">From<br /><input id="stFrom" type="datetime-local" title="UTC" onchange="superPage(0)" /></label>
+        <label style="font-size:11px;color:var(--c-9aa4b2)">To<br /><input id="stTo" type="datetime-local" title="UTC" onchange="superPage(0)" /></label>
+        <label style="font-size:11px;color:var(--c-9aa4b2)">Saved timeframe<br /><select id="stTimeframe" onchange="applyTimeframe()"><option value="">— none —</option></select></label>
+        <button class="ev-bulk-btn" onclick="saveTimeframe()" title="Save the current From/To as a reusable named timeframe">Save current range</button>
+        <button class="ev-bulk-btn" onclick="clearSuperTime()" title="Clear the time range (show all)">Clear time</button>
+        <span id="stSaveMsg" style="font-size:12px;color:var(--c-9aa4b2);white-space:nowrap"></span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <span class="src-legend st-dd" id="stOriginWrap" style="display:none;margin-left:0" title="Show or hide events by origin (the artifact/source that produced them)"><button type="button" class="src-filter-btn" id="stOriginBtn">⛏ Origins</button><div class="src-filter-menu" id="stOriginMenu" hidden></div></span>
+        <span class="src-legend st-dd" id="stHostWrap" style="display:none;margin-left:0" title="Show or hide events by affected host"><button type="button" class="src-filter-btn" id="stHostBtn">🖥 Hosts</button><div class="src-filter-menu" id="stHostMenu" hidden></div></span>
+        <span class="src-legend st-dd" id="stTagWrap" style="display:none;margin-left:0" title="Filter to events carrying specific tag(s)"><button type="button" class="src-filter-btn" id="stTagBtn">🏷 Tags</button><div class="src-filter-menu" id="stTagMenu" hidden></div></span>
+        <button id="stTaggedOnly" class="ev-bulk-btn" title="Show only events carrying at least one tag">☐ Tagged only</button>
+        <button id="stStarredOnly" class="ev-bulk-btn" title="Show only starred events (this page)">☆ Starred only</button>
+      </div>
+      <div id="superTimelineMsg" style="font-size:12px;color:var(--c-ff6b6b);margin:4px 0"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+        <label style="font-size:12px;color:var(--c-9aa4b2);white-space:nowrap"><input type="checkbox" id="stSelectAll" title="Select every row on this page" /> All</label>
+        <span id="stSelCount" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+        <button class="ev-bulk-btn" onclick="promoteSuperSelected()" title="Copy the selected events up into the analyzed forensic timeline">⬆ Promote selected → forensic timeline</button>
+        <button id="stBulkStar" class="ev-bulk-btn" title="Star / unstar every selected event">★ Star selected</button>
+        <button id="stBulkTag" class="ev-bulk-btn" title="Add a tag to every selected event">🏷️ Tag selected</button>
+        <span id="stPager" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+        <button id="stPrev" class="ev-bulk-btn" onclick="superPage(-1)">‹ Prev</button>
+        <button id="stNext" class="ev-bulk-btn" onclick="superPage(1)">Next ›</button>
+      </div>
+      <div id="superTimelineList">—</div>
+    </section>
     <section id="sec-notebook" style="grid-column: 1 / -1" class="collapsed">
       <h2>Analyst Notebook</h2>
       <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Free-form notes and open questions. Entries survive synthesis and are never wiped. Optionally included in AI synthesis context (opt-in below). Got a testable claim? Use <em>→ Hypothesis</em> to track it in the Hypotheses panel above.</p>
@@ -3645,6 +3707,8 @@
     }
     let hiddenSources = new Set();            // source/tool names the user unchecked in the source filter (empty = show all)
     let _srcMenuSig = "";                      // signature of the source-filter menu's last build (skip rebuild when unchanged)
+    let hiddenHosts = new Set();              // host names the user unchecked in the forensic host filter (empty = show all)
+    let _hostMenuSig = "";                     // signature of the host-filter menu's last build
     let hiddenIocTypes = new Set();           // IOC types the user unchecked in the IOC type filter (#169; empty = show all)
     let _iocTypeMenuSig = "";                  // signature of the IOC-type-filter menu's last build (skip rebuild when unchanged)
     let filterFrom = null;                    // timeline view lower bound (ISO UTC string or null)
@@ -4435,6 +4499,7 @@
           arr.push(c);
         });
         if (lastState) render(lastState);          // refresh chip counts
+        refreshSuperRows();                          // super-timeline rows share the comment chips
         if (commentTarget) renderCommentModal();    // refresh an open thread (live collaboration)
       }).catch(() => {});
     }
@@ -4523,6 +4588,10 @@
           arr.push(t);
         });
         if (lastState) render(lastState);     // refresh inline pills
+        // A tag change alters the super-timeline's Tags filter facet + tag-filtered results (both now
+        // server-driven by tags), so reload it rather than a cache re-render — but only when its section
+        // has already been loaded, so we don't fire a fetch on the initial case-load loadTags().
+        if (lastSuperData) loadSuperTimeline();
         if (tagTarget) renderTagModal();        // refresh an open editor (live collaboration)
       }).catch(() => {});
     }
@@ -4875,6 +4944,477 @@
         // Never swallow silently — a 404 here means a stale server (the #1 gotcha), and the analyst
         // must see why nothing happened instead of a dead button.
         .catch(e => { if (msg) msg.textContent = "promote failed: " + e.message + " — restart the companion server if this 404s"; });
+    }
+
+    // --- Super-Timeline -----------------------------------------------------------
+    // The COMPLETE record of every imported event (superset of the forensic timeline, before
+    // scope/legitimate filtering). A Timesketch-style filter/paginate/triage/promote view over
+    // GET /cases/:id/super-timeline → { events, total, origins, labelsAvailable }. "Saved
+    // timeframes" are the dwell-windows store (label + start + end). Per-row triage (star/comment/tag)
+    // is unified with the forensic timeline (keyed by ("event", id)); the Tags filter box + the
+    // labelsAvailable facet are driven by the case's analyst TAGS. Nothing here is mutated except
+    // promotion into the forensic timeline (POST .../promote).
+    const ST_PAGE = 100;
+    let superOffset = 0;            // pagination cursor
+    let superTotal = 0;
+    let superOrigins = [];          // origin facet from the last query
+    let superSelectedOrigins = null; // Set of CHECKED origins, or null = all checked
+    let superKnownOrigins = new Set(); // origins ever seen — so a NEW origin (new import) defaults to checked
+    let superHosts = [];            // host facet from the last query
+    let superSelectedHosts = null;  // Set of CHECKED hosts, or null = all checked (exclude model, like origins)
+    let superKnownHosts = new Set(); // hosts ever seen — a NEW host defaults to checked
+    let superLabelsAvail = [];      // tag/label facet from the last query
+    let superSelectedLabels = new Set(); // INCLUDE model: checked tags to filter to (empty = no tag filter = all)
+    // Id maps for the three super-timeline filter dropdowns (origin/host exclude-model, tag include-model).
+    const ST_DD = {
+      origin: { wrap: "stOriginWrap", btn: "stOriginBtn", menu: "stOriginMenu", label: "⛏ Origins" },
+      host:   { wrap: "stHostWrap",   btn: "stHostBtn",   menu: "stHostMenu",   label: "🖥 Hosts" },
+      tag:    { wrap: "stTagWrap",    btn: "stTagBtn",    menu: "stTagMenu",     label: "🏷 Tags" },
+    };
+    let superPromote = new Set();   // event ids ticked for promotion — ALSO the general multi-select set
+                                    // (bulk star/tag/promote all act on it), keyed by ("event", id) so it
+                                    // unifies with the forensic timeline's tag/star machinery.
+    let superTaggedOnly = false;    // filter: only events carrying ≥1 tag (server-side, tagged=1)
+    let superStarredOnly = false;   // filter: only starred events (client-side, current page only)
+    let superSavedTimeframes = [];  // dwell-windows (saved timeframes)
+    let lastSuperData = null;       // last super-timeline query response (for client-side re-render on tag/comment/star change)
+    const superCaseId = () => document.getElementById("caseId").value.trim();
+
+    // Re-render the currently-loaded super-timeline page from cache so its inline tag pills / comment
+    // counts / star state update after a tag/comment/star change — without a server round-trip. The
+    // caller (loadTags/loadComments/toggleStar) has already refreshed tagsByTarget/commentsByTarget/
+    // starredEvents, so the cached rows pick up the new state. No-op if the section was never loaded.
+    function refreshSuperRows() {
+      if (lastSuperData && document.getElementById("superTimelineList")) renderSuperTimeline(lastSuperData, superCaseId());
+    }
+
+    function superQueryString() {
+      const from = utcInputToIso((document.getElementById("stFrom") || {}).value || "");
+      const to = utcInputToIso((document.getElementById("stTo") || {}).value || "");
+      const p = new URLSearchParams();
+      if (from) p.set("from", from);
+      if (to) p.set("to", to);
+      // Origins + hosts are EXCLUDE-model checklists: send the UNCHECKED items as the exclude list, so
+      // all checked → exclude nothing → all shown; some unchecked → those hidden; ALL unchecked → 0
+      // events. (An include list would treat "none checked" as "show all" — the bug this avoids.)
+      if (superSelectedOrigins && superOrigins.length) {
+        const excluded = superOrigins.filter(o => !superSelectedOrigins.has(o));
+        if (excluded.length) p.set("exclude", excluded.join(","));
+      }
+      if (superSelectedHosts && superHosts.length) {
+        const excluded = superHosts.filter(h => !superSelectedHosts.has(h));
+        if (excluded.length) p.set("excludeHosts", excluded.join(","));
+      }
+      // Tags are an INCLUDE-model filter: checked tags narrow to events carrying at least one of them
+      // (empty = no tag filter = all).
+      if (superSelectedLabels.size) p.set("labels", [...superSelectedLabels].join(","));
+      if (superTaggedOnly) p.set("tagged", "1");
+      p.set("offset", String(superOffset));
+      p.set("limit", String(ST_PAGE));
+      return p.toString();
+    }
+
+    function loadSuperTimeline(caseId) {
+      caseId = caseId || superCaseId();
+      const list = document.getElementById("superTimelineList");
+      if (!caseId) { if (list) list.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>Open a case to view its super-timeline.</div>"; return; }
+      const msg = document.getElementById("superTimelineMsg");
+      if (msg) msg.textContent = "";
+      fetch(`/cases/${encodeURIComponent(caseId)}/super-timeline?${superQueryString()}`)
+        .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+        .then(data => renderSuperTimeline(data, caseId))
+        .catch(e => { if (msg) msg.textContent = "failed to load super-timeline: " + e.message + " — restart the companion server if this 404s"; });
+    }
+
+    function renderSuperFilters(data) {
+      superOrigins = Array.isArray(data.origins) ? data.origins : [];
+      superHosts = Array.isArray(data.hosts) ? data.hosts : [];
+      superLabelsAvail = Array.isArray(data.labelsAvailable) ? data.labelsAvailable : [];
+      // Origins + hosts are EXCLUDE-model: seed the checked set to "all" on first sight, and a NEW facet
+      // (a fresh import) defaults to CHECKED so exclude-filtering never silently hides fresh data; a box
+      // the analyst actually unchecked stays unchecked. Then drop any stale selection that no longer exists.
+      if (superSelectedOrigins === null) superSelectedOrigins = new Set(superOrigins);
+      for (const o of superOrigins) if (!superKnownOrigins.has(o)) { superKnownOrigins.add(o); superSelectedOrigins.add(o); }
+      for (const o of [...superSelectedOrigins]) if (!superOrigins.includes(o)) superSelectedOrigins.delete(o);
+      if (superSelectedHosts === null) superSelectedHosts = new Set(superHosts);
+      for (const h of superHosts) if (!superKnownHosts.has(h)) { superKnownHosts.add(h); superSelectedHosts.add(h); }
+      for (const h of [...superSelectedHosts]) if (!superHosts.includes(h)) superSelectedHosts.delete(h);
+      // Tags are INCLUDE-model: prune selected tags that vanished so a stale filter can't hide everything.
+      for (const l of [...superSelectedLabels]) if (!superLabelsAvail.includes(l)) superSelectedLabels.delete(l);
+      renderStDropdown("origin", superOrigins, superSelectedOrigins, false);
+      renderStDropdown("host", superHosts, superSelectedHosts, false);
+      renderStDropdown("tag", superLabelsAvail, superSelectedLabels, true);
+    }
+
+    // Build one super-timeline filter dropdown (mirrors the forensic ⛏ Sources menu). `include` picks the
+    // model: exclude-model (origins/hosts) shows "(shown/total)" and defaults all-checked; include-model
+    // (tags) shows "(N)" selected and defaults none. Hidden when the facet is empty (nothing to filter).
+    function renderStDropdown(kind, facet, selectedSet, include) {
+      const ids = ST_DD[kind];
+      const wrap = document.getElementById(ids.wrap), btn = document.getElementById(ids.btn), menu = document.getElementById(ids.menu);
+      if (!wrap || !btn || !menu) return;
+      if (!facet.length) { wrap.style.display = "none"; menu.hidden = true; return; }
+      wrap.style.display = "";
+      if (include) {
+        const n = selectedSet.size;
+        btn.classList.toggle("active", n > 0);
+        btn.textContent = n > 0 ? `${ids.label} (${n})` : ids.label;
+      } else {
+        const shown = facet.filter(f => selectedSet.has(f)).length;
+        btn.classList.toggle("active", shown < facet.length);
+        btn.textContent = shown < facet.length ? `${ids.label} (${shown}/${facet.length})` : ids.label;
+      }
+      const actions = include
+        ? `<button type="button" class="src-menu-link" data-stnone="${kind}">Clear</button>`
+        : `<button type="button" class="src-menu-link" data-stall="${kind}">All</button><button type="button" class="src-menu-link" data-stnone="${kind}">None</button>`;
+      menu.innerHTML = `<div class="src-menu-actions">${actions}</div>` +
+        facet.map(f => `<label class="src-item"><input type="checkbox" class="st-dd-cb" data-kind="${kind}" value="${escAttr(f)}"${selectedSet.has(f) ? " checked" : ""}><span>${esc(f)}</span></label>`).join("");
+    }
+
+    function stFacet(kind) { return kind === "origin" ? superOrigins : kind === "host" ? superHosts : superLabelsAvail; }
+    function stSelectedSet(kind) { return kind === "origin" ? superSelectedOrigins : kind === "host" ? superSelectedHosts : superSelectedLabels; }
+    function stToggleFacet(kind, val, checked) {
+      const set = stSelectedSet(kind);
+      if (!set) return;
+      if (checked) set.add(val); else set.delete(val);
+      superPage(0);
+    }
+    function stSetAllFacet(kind, checked) {
+      const facet = stFacet(kind), set = stSelectedSet(kind);
+      if (!set) return;
+      if (checked) facet.forEach(f => set.add(f)); else set.clear();
+      superPage(0);
+    }
+    function stCloseDropdowns() { document.querySelectorAll(".st-dd .src-filter-menu").forEach(m => { m.hidden = true; }); }
+
+    function renderSuperTimeline(data, caseId) {
+      lastSuperData = data;   // cache for client-side re-render on tag/comment/star change
+      superTotal = Number(data.total) || 0;
+      const badge = document.getElementById("superTimelineBadge");
+      if (badge) {
+        // Match the forensic timeline badge format: "(N events — page X of Y)".
+        const pages = superTotal ? Math.ceil(superTotal / ST_PAGE) : 0;
+        const page = superTotal ? Math.floor(superOffset / ST_PAGE) + 1 : 0;
+        badge.textContent = superTotal ? ` (${superTotal} events — page ${page} of ${pages})` : "";
+      }
+      renderSuperFilters(data);
+      const pager = document.getElementById("stPager");
+      const events = Array.isArray(data.events) ? data.events : [];
+      const shownFrom = superTotal ? superOffset + 1 : 0;
+      const shownTo = superOffset + events.length;
+      if (pager) pager.textContent = superTotal ? `${shownFrom}–${shownTo} of ${superTotal}` : "0 events";
+      const prev = document.getElementById("stPrev"), next = document.getElementById("stNext");
+      if (prev) prev.disabled = superOffset <= 0;
+      if (next) next.disabled = superOffset + ST_PAGE >= superTotal;
+      const el = document.getElementById("superTimelineList");
+      if (!el) return;
+      // "Starred only" is a CLIENT-side, page-local filter: keep only starred rows of the loaded page
+      // (server-side pagination means we can only see the current page here).
+      const rows = superStarredOnly ? events.filter(e => starredEvents.has(e.id)) : events;
+      if (!rows.length) {
+        el.innerHTML = superStarredOnly && events.length
+          ? "<div style='color:var(--c-9aa4b2);font-size:12px'>No starred events on this page. (Starred-only filters the current page only.)</div>"
+          : "<div style='color:var(--c-9aa4b2);font-size:12px'>No events yet — import evidence (or run the Super-Timeline Triage bundle) and they'll appear here.</div>";
+        updateSuperSelBar(rows);
+        return;
+      }
+      el.innerHTML = rows.map(e => {
+        const origin = e.artifactName || (Array.isArray(e.sources) && e.sources[0]) || "Unknown";
+        const sev = e.severity || "Info";
+        const starred = starredEvents.has(e.id);
+        // Affected host as a leading chip (like the forensic timeline), with the redundant trailing
+        // "@ <host>" many importers append stripped off the description.
+        let desc = String(e.description || "");
+        if (e.asset) desc = desc.replace(new RegExp("\\s*@\\s*" + e.asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "i"), "");
+        const host = e.asset ? `<span class="ev-host" title="Affected host / asset">🖥 ${esc(e.asset)}</span> ` : "";
+        // Per-row controls unified with the forensic timeline: ⭐ star, 💬 comment, 🏷 tag (all keyed by
+        // ("event", e.id)). The delegated click handler on <main> already routes these for super rows.
+        // ⌖ context: scope From/To to this event's timestamp ± a window. Data-attr carries the ISO ts.
+        const ctx = e.timestamp
+          ? `<button class="st-ctx" data-ts="${escAttr(e.timestamp)}" title="Scope the timeline to a window around this event">⌖</button>`
+          : "";
+        // #8 Velociraptor deep-link: a small "↗ Velociraptor" link back to the originating hunt/flow.
+        const veloLink = e.veloUrl
+          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--c-6aa9ff);white-space:nowrap" title="Open this hunt/flow in the Velociraptor GUI">↗ Velociraptor</a>`
+          : "";
+        // #9 Full untruncated message: an expandable [details ▶] block (mirrors the forensic timeline's
+        // deobBlock). Only when the message adds detail beyond the (already-cleaned) description.
+        const messageBlock = (e.message && String(e.message).trim() && String(e.message).trim() !== desc.trim()) ? (() => {
+          const uid = `stmsg-${escAttr(e.id)}`;
+          return `<br><button onclick="var d=document.getElementById('${uid}');d.hidden=!d.hidden;this.textContent=d.hidden?'[details ▶]':'[details ▼]'" `
+            + `style="background:none;border:1px solid var(--c-2a4a6b);border-radius:3px;color:var(--c-6aa9ff);font-size:11px;padding:1px 5px;cursor:pointer;margin-top:4px">[details ▶]</button>`
+            + `<div id="${uid}" hidden style="margin-top:4px;padding:6px 8px;background:var(--c-0d1117,#0d1117);border-left:2px solid var(--c-2a4a6b);border-radius:2px;font-size:11px;font-family:monospace;white-space:pre-wrap;word-break:break-all;color:var(--c-c9d1d9)">`
+            + esc(e.message)
+            + `</div>`;
+        })() : "";
+        return `<div style="display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:1px solid var(--c-2a2f3a);font-size:13px">
+          <input type="checkbox" class="st-row-cb" data-evid="${escAttr(e.id)}" ${superPromote.has(e.id) ? "checked" : ""} title="Select (for promotion / bulk star / bulk tag)" onchange="toggleSuperPromote('${escAttr(e.id)}', this.checked)" />
+          <span class="ev-col-ctrl" style="display:inline-flex;align-items:center;gap:2px">
+            <button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(e.id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>
+            ${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)} ${ctx}
+          </span>
+          <span style="color:var(--c-9aa4b2);white-space:nowrap">${esc(e.timestamp || "")}</span>
+          <span class="sev-${escAttr(sev)}" style="white-space:nowrap">${esc(sev)}</span>
+          <span style="color:var(--c-7e8aa0);white-space:nowrap" title="origin">${esc(origin)}</span>
+          <span style="flex:1">${superTagPills("event", e.id)}${host}${esc(desc)}${veloLink}${messageBlock}</span>
+        </div>`;
+      }).join("");
+      updateSuperSelBar(rows);
+    }
+
+    // Tag pills for a super row, each clickable to filter the super-timeline to that single tag (sets the
+    // Tags box and reloads). Mirrors tagPills() but adds the st-tag-filter affordance.
+    function superTagPills(type, id) {
+      const list = tagsByTarget.get(targetKey(type, id)) || [];
+      return list.map(t => {
+        const c = tagColor(t.label);
+        return `<span class="tag-pill st-tag-filter" data-label="${escAttr(t.label)}" style="color:${c};border-color:${c};cursor:pointer" title="Filter the super-timeline to this tag">${esc(t.label)}</span>`;
+      }).join("");
+    }
+
+    // Reflect the current multi-selection (superPromote) onto the select-all checkbox + count, scoped to
+    // the rows currently shown on this page.
+    function updateSuperSelBar(rows) {
+      const ids = rows.map(e => e.id);
+      const sa = document.getElementById("stSelectAll");
+      if (sa) {
+        const allSel = ids.length > 0 && ids.every(id => superPromote.has(id));
+        const someSel = ids.some(id => superPromote.has(id));
+        sa.checked = allSel;
+        sa.indeterminate = someSel && !allSel;
+      }
+      const cnt = document.getElementById("stSelCount");
+      if (cnt) cnt.textContent = superPromote.size ? `${superPromote.size} selected` : "";
+    }
+
+    // Super-timeline filter dropdowns: open/close on the button, All/None/Clear links, and outside-click
+    // to close. Checkbox changes are handled by the 'change' listener below. (Mirrors the forensic ⛏
+    // Sources menu, but for three menus keyed by data-kind.)
+    document.addEventListener("click", (e) => {
+      const openBtn = e.target.closest && e.target.closest(".st-dd .src-filter-btn");
+      if (openBtn) {
+        const menu = openBtn.parentElement.querySelector(".src-filter-menu");
+        const willOpen = menu && menu.hidden;
+        stCloseDropdowns();
+        if (menu) menu.hidden = !willOpen;
+        return;
+      }
+      const allLink = e.target.closest && e.target.closest("[data-stall]");
+      if (allLink) { stSetAllFacet(allLink.getAttribute("data-stall"), true); return; }
+      const noneLink = e.target.closest && e.target.closest("[data-stnone]");
+      if (noneLink) { stSetAllFacet(noneLink.getAttribute("data-stnone"), false); return; }
+      // A click anywhere outside the dropdowns (and not on a checkbox inside a menu) closes them.
+      if (!(e.target.closest && e.target.closest(".st-dd"))) stCloseDropdowns();
+    });
+    document.addEventListener("change", (e) => {
+      const cb = e.target.closest && e.target.closest(".st-dd-cb");
+      if (!cb) return;
+      stToggleFacet(cb.getAttribute("data-kind"), cb.value, cb.checked);
+    });
+
+    function toggleSuperPromote(id, checked) {
+      if (checked) superPromote.add(id); else superPromote.delete(id);
+      if (lastSuperData) updateSuperSelBar(currentSuperRows());
+    }
+
+    // The rows currently on screen (honoring the client-side starred-only page filter), used by
+    // select-all + the selection bar so they stay in sync with what's actually rendered.
+    function currentSuperRows() {
+      const events = (lastSuperData && Array.isArray(lastSuperData.events)) ? lastSuperData.events : [];
+      return superStarredOnly ? events.filter(e => starredEvents.has(e.id)) : events;
+    }
+
+    // Select-all: tick/untick every row currently shown on this page.
+    function toggleSuperSelectAll(checked) {
+      const rows = currentSuperRows();
+      rows.forEach(e => { if (checked) superPromote.add(e.id); else superPromote.delete(e.id); });
+      refreshSuperRows();
+    }
+
+    // Bulk star: star all selected if any is unstarred, else unstar all (mirrors bulkToggleStar).
+    function superBulkStar() {
+      const caseId = superCaseId();
+      const ids = [...superPromote];
+      if (!caseId || !ids.length) { const m = document.getElementById("superTimelineMsg"); if (m) { m.style.color = "var(--c-9aa4b2)"; m.textContent = "tick some events first"; } return; }
+      const anyUnstarred = ids.some(id => !starredEvents.has(id));
+      ids.forEach(id => { if (anyUnstarred) starredEvents.add(id); else starredEvents.delete(id); });
+      saveStarred(caseId);
+      renderTimelineEvents(lastFt);   // the star key is shared with the forensic timeline
+      refreshSuperRows();
+    }
+
+    // Bulk tag: reuse the forensic bulk-tag modal (it applies a tag to every id in the list, keyed by
+    // ("event", id)) against the super selection set.
+    function superBulkTag() {
+      const ids = [...superPromote];
+      if (!ids.length) { const m = document.getElementById("superTimelineMsg"); if (m) { m.style.color = "var(--c-9aa4b2)"; m.textContent = "tick some events first"; } return; }
+      openBulkTagModal(ids, "event");
+    }
+
+    // Toggle "Tagged only" (server-side tagged=1) and reload from the first page.
+    function toggleSuperTaggedOnly() {
+      superTaggedOnly = !superTaggedOnly;
+      const b = document.getElementById("stTaggedOnly");
+      if (b) { b.textContent = superTaggedOnly ? "☑ Tagged only" : "☐ Tagged only"; b.classList.toggle("active", superTaggedOnly); }
+      superPage(0);
+    }
+
+    // Toggle "Starred only" (client-side, current page) and re-render the loaded page.
+    function toggleSuperStarredOnly() {
+      superStarredOnly = !superStarredOnly;
+      const b = document.getElementById("stStarredOnly");
+      if (b) { b.textContent = superStarredOnly ? "★ Starred only" : "☆ Starred only"; b.classList.toggle("active", superStarredOnly); }
+      refreshSuperRows();
+    }
+
+    // Inline ±window menu anchored to a ⌖ button. Only one is open at a time.
+    function closeSuperCtxMenu() {
+      const m = document.getElementById("stCtxMenu");
+      if (m) { if (m.__outside) document.removeEventListener("mousedown", m.__outside); m.remove(); }
+    }
+    // ⌖ context menu: a floating popover anchored under the ⌖ button. It's position:fixed on <body>
+    // (NOT inline in the row) so its ±window chips never crowd the adjacent timestamp column.
+    function openSuperCtxMenu(btn) {
+      const existing = document.getElementById("stCtxMenu");
+      // Second click on the same ⌖ toggles the menu closed.
+      if (existing && existing.__anchor === btn) { closeSuperCtxMenu(); return; }
+      closeSuperCtxMenu();
+      const ts = btn.getAttribute("data-ts") || "";
+      const wins = [["±1s", 1000], ["±5s", 5000], ["±10s", 10000], ["±1m", 60000], ["±5m", 300000], ["±10m", 600000], ["±1h", 3600000]];
+      const menu = document.createElement("div");
+      menu.id = "stCtxMenu";
+      menu.__anchor = btn;
+      menu.style.cssText = "position:fixed;z-index:9999;display:flex;flex-wrap:wrap;gap:4px;max-width:230px;"
+        + "background:var(--c-141821,#141821);border:1px solid var(--c-3a4050);border-radius:6px;padding:6px;box-shadow:0 4px 14px rgba(0,0,0,.5)";
+      menu.innerHTML = `<div style="width:100%;font-size:10px;color:var(--c-6b7280);margin-bottom:1px">Scope timeline to a window around this event</div>`
+        + wins.map(([label, ms]) =>
+          `<button class="st-ctx-win" data-ts="${escAttr(ts)}" data-ms="${ms}" title="Scope From/To to this event ${esc(label)}">${esc(label)}</button>`).join("");
+      // Chip clicks handled here (the menu lives outside <main>, so the delegated handler won't see it).
+      menu.addEventListener("click", (ev) => {
+        const w = ev.target.closest && ev.target.closest(".st-ctx-win");
+        if (!w) return;
+        superScopeToWindow(w.getAttribute("data-ts"), Number(w.getAttribute("data-ms")));
+        closeSuperCtxMenu();
+      });
+      document.body.appendChild(menu);
+      // Anchor below the ⌖, clamped into the viewport (flip above if it would overflow the bottom).
+      const r = btn.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;
+      let left = r.left, top = r.bottom + 4;
+      if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+      if (top + mh > window.innerHeight - 8) top = r.top - mh - 4;
+      menu.style.left = Math.max(8, left) + "px";
+      menu.style.top = Math.max(8, top) + "px";
+      // Click anywhere outside the menu (or the ⌖ itself) closes it.
+      menu.__outside = (ev) => {
+        if (menu.contains(ev.target) || (ev.target.closest && ev.target.closest(".st-ctx"))) return;
+        closeSuperCtxMenu();
+      };
+      setTimeout(() => document.addEventListener("mousedown", menu.__outside), 0);
+    }
+
+    // ⌖ context: set From/To to an event's timestamp ± a window (ms) and reload.
+    function superScopeToWindow(iso, windowMs) {
+      const t = Date.parse(iso);
+      if (Number.isNaN(t)) return;
+      const from = new Date(t - windowMs).toISOString();
+      const to = new Date(t + windowMs).toISOString();
+      const f = document.getElementById("stFrom"), tt = document.getElementById("stTo"), tf = document.getElementById("stTimeframe");
+      if (f) f.value = isoToUtcInput(from);
+      if (tt) tt.value = isoToUtcInput(to);
+      if (tf) tf.value = "";
+      superPage(0);
+    }
+
+    function superPage(delta) {
+      const next = superOffset + delta * ST_PAGE;
+      // delta 0 = re-query current page after a filter change (reset to first page).
+      superOffset = delta === 0 ? 0 : Math.max(0, next);
+      loadSuperTimeline();
+    }
+
+    function promoteSuperSelected() {
+      const caseId = superCaseId();
+      const msg = document.getElementById("superTimelineMsg");
+      if (!caseId) { if (msg) msg.textContent = "open a case first"; return; }
+      const eventIds = [...superPromote];
+      if (!eventIds.length) { if (msg) { msg.textContent = "tick some events first"; } return; }
+      if (msg) { msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "promoting…"; }
+      fetch(`/cases/${encodeURIComponent(caseId)}/super-timeline/promote`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ eventIds })
+      }).then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { if (msg) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "promote failed: " + (j.error || "failed"); } return; }
+          superPromote.clear();
+          if (msg) { msg.style.color = "var(--c-9aa4b2)"; msg.textContent = `promoted ${j.promoted} → forensic timeline (synthesis may run)`; }
+          loadSuperTimeline(caseId);
+        })
+        .catch(e => { if (msg) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "promote failed: " + e.message + " — restart the companion server if this 404s"; } });
+    }
+
+    // --- Saved timeframes (the dwell-windows store: label + start + end) ----------
+    function loadSavedTimeframes(caseId) {
+      caseId = caseId || superCaseId();
+      if (!caseId) return;
+      fetch(`/cases/${encodeURIComponent(caseId)}/dwell-windows`).then(r => r.json()).then(list => {
+        superSavedTimeframes = Array.isArray(list) ? list : [];
+        const sel = document.getElementById("stTimeframe");
+        if (!sel) return;
+        const cur = sel.value;
+        sel.innerHTML = `<option value="">— none —</option>` + superSavedTimeframes.map(w =>
+          `<option value="${escAttr(w.id)}">${esc(w.label)}</option>`).join("");
+        sel.value = cur;
+      }).catch(() => {});
+    }
+
+    function applyTimeframe() {
+      const sel = document.getElementById("stTimeframe");
+      if (!sel) return;
+      const w = superSavedTimeframes.find(x => x.id === sel.value);
+      if (!w) return;
+      const f = document.getElementById("stFrom"), t = document.getElementById("stTo");
+      if (f) f.value = isoToUtcInput(w.start);
+      if (t) t.value = isoToUtcInput(w.end);
+      superPage(0);
+    }
+
+    // Transient inline confirmation next to the "Save current range" button (first line), auto-clearing
+    // after 5s so it never occupies its own line or lingers.
+    let superSaveMsgTimer = null;
+    function superSaveMsg(text, ok) {
+      const el = document.getElementById("stSaveMsg");
+      if (!el) return;
+      if (superSaveMsgTimer) { clearTimeout(superSaveMsgTimer); superSaveMsgTimer = null; }
+      el.style.color = ok ? "var(--c-4cd964)" : "var(--c-ff6b6b)";
+      el.textContent = text;
+      superSaveMsgTimer = setTimeout(() => { el.textContent = ""; superSaveMsgTimer = null; }, 5000);
+    }
+
+    // Clear the From/To time scope (and reset the saved-timeframe dropdown) → show the whole timeline.
+    function clearSuperTime() {
+      const f = document.getElementById("stFrom"), t = document.getElementById("stTo"), tf = document.getElementById("stTimeframe");
+      if (f) f.value = "";
+      if (t) t.value = "";
+      if (tf) tf.value = "";
+      superPage(0);
+    }
+
+    function saveTimeframe() {
+      const caseId = superCaseId();
+      if (!caseId) { superSaveMsg("open a case first", false); return; }
+      const start = utcInputToIso((document.getElementById("stFrom") || {}).value || "");
+      const end = utcInputToIso((document.getElementById("stTo") || {}).value || "");
+      const label = window.prompt("Name this timeframe (e.g. Attacker session 1):", "");
+      if (!label) return;
+      fetch(`/cases/${encodeURIComponent(caseId)}/dwell-windows`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label, start, end })
+      }).then(r => r.json().then(body => ({ ok: r.ok, body })))
+        .then(({ ok, body }) => {
+          if (!ok) { superSaveMsg((body && body.error) || "failed to save timeframe", false); return; }
+          superSaveMsg("timeframe saved ✓", true);
+          loadSavedTimeframes(caseId);
+        }).catch(() => superSaveMsg("failed to save timeframe — restart the companion server if this 404s", false));
     }
 
     // --- Playbook (issue #36) -----------------------------------------------------
@@ -5317,6 +5857,7 @@
       if (starredEvents.has(id)) starredEvents.delete(id); else starredEvents.add(id);
       saveStarred(caseId);
       renderTimelineEvents(lastFt);
+      refreshSuperRows();   // the star may belong to a super-timeline row (shared ("event", id) key)
     }
 
     // --- Multi-select (session-only, cleared on re-render) ----------------------
@@ -5685,9 +6226,14 @@
     }
 
     function openHuntModal(kind, id) {
-      const entity = kind === "ioc"
+      let entity = kind === "ioc"
         ? ((lastState && lastState.iocs) || []).find((i) => String(i.id) === String(id))
         : (lastFt || []).find((e) => String(e.id) === String(id));
+      // Super-timeline rows may reference a RAW super event that was never promoted into the
+      // forensic state, so it's absent from lastFt — fall back to the cached super page data.
+      if (!entity && kind === "event") {
+        entity = ((lastSuperData && lastSuperData.events) || []).find((e) => String(e.id) === String(id));
+      }
       if (!entity) return;
       const c = huntContextFor(kind, entity);
       if (kind === "event" && entity.mitreTechniques) c._mitre = entity.mitreTechniques;
@@ -5994,13 +6540,51 @@
       const go = form.querySelector(".velo-run-go");
       go.disabled = true; msg.textContent = "launching hunt…";
       // No timeoutSeconds here on purpose — the server uses the bundle's saved timeout (read fresh from disk).
+      const body = { bundleId, waitMinutes, expirySeconds, os, minSeverity, includeLabels, excludeLabels };
       fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/run-bundle`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bundleId, waitMinutes, expirySeconds, os, minSeverity, includeLabels, excludeLabels })
+        body: JSON.stringify(body)
       }).then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }
-          msg.textContent = ""; form.style.display = "none";
+          // The server drops bundle artifacts that don't exist on THIS Velociraptor (else the whole hunt
+          // fails) — surface which were skipped so the analyst can fix the names in the bundle editor,
+          // and keep the form open so the note is visible; otherwise hide it as usual.
+          const skipped = Array.isArray(j.unknownArtifacts) ? j.unknownArtifacts : [];
+          if (skipped.length) {
+            msg.innerHTML = `launched ✓ — skipped ${skipped.length} artifact(s) not on this server: <span style="color:var(--c-ff9f43)">${esc(skipped.join(", "))}</span> (fix the names via Edit)`;
+          } else {
+            msg.textContent = ""; form.style.display = "none";
+          }
+          loadVeloHuntJobs(caseId);
+        })
+        .catch(e => msg.textContent = "error: " + e.message + " — restart the companion server if this 404s")
+        .finally(() => { go.disabled = false; });
+    }
+
+    // Import the results of a hunt/flow launched directly in the Velociraptor GUI (paste id or URL).
+    function veloImportExternal() {
+      const caseId = veloCaseId();
+      const msg = document.getElementById("veloExtMsg");
+      if (!caseId) { msg.textContent = "connect to a case first"; return; }
+      const ref = document.getElementById("veloExtRef").value.trim();
+      if (!ref) { msg.textContent = "paste a hunt id, flow, or Velociraptor URL"; return; }
+      const minSeverity = document.getElementById("veloExtMinsev").value;
+      const superTimelineOnly = document.getElementById("veloExtSuper").checked;
+      const go = document.getElementById("veloExtGo");
+      go.disabled = true; msg.textContent = "importing…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/import-external`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ref, minSeverity, superTimelineOnly })
+      }).then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }
+          const where = j.kind === "flow" ? `Flow ${esc(j.flowId)} on host ${esc(j.hostname || j.clientId)}` : `Hunt ${esc(j.huntId)}`;
+          const dest = j.superTimelineOnly ? " → super-timeline" : "";
+          // Super-only imports report their super-timeline event count and never add main-list IOCs, so
+          // the "+IOCs" suffix (always 0 there) is dropped to avoid the misleading "+0 IOCs".
+          const counts = j.superTimelineOnly ? `+${j.addedEvents||0} events` : `+${j.addedEvents||0} events, +${j.addedIocs||0} IOCs`;
+          msg.innerHTML = `${where}${dest} — imported ${(j.artifacts||[]).length} artifact(s), ${counts}` + (j.note ? ` (${esc(j.note)})` : "");
           loadVeloHuntJobs(caseId);
         })
         .catch(e => msg.textContent = "error: " + e.message + " — restart the companion server if this 404s")
@@ -6456,6 +7040,7 @@
       const monStart = document.getElementById("veloMonStartBtn"); if (monStart) monStart.onclick = veloMonStart;
       const monAuto = document.getElementById("veloMonAutoBtn"); if (monAuto) monAuto.onclick = veloMonAuto;
       const monAll = document.getElementById("veloMonAllClients"); if (monAll) monAll.onchange = veloMonSyncAllClients;
+      const extGo = document.getElementById("veloExtGo"); if (extGo) extGo.onclick = veloImportExternal;
       loadVeloBundles();   // populate the bundle list even before a case is connected
     })();
 
@@ -7831,6 +8416,39 @@
       iocSourcesTimer = setTimeout(() => loadIocSources(caseId), 800);
     }
 
+    // Per-IOC provenance (#): { iocId: "detection" | "telemetry" }, derived server-side. DISTINCT
+    // from the threat-intel verdict badge — this is about HOW the IOC entered the case (does it appear
+    // in a graded Low+ event, or only in Info telemetry), not what threat intel says about it. Powers
+    // the provenance badge + the detection/telemetry filter in the IOC panel. Mirrors loadIocSources.
+    let iocProvenance = {};
+    let iocProvenanceTimer = null;
+    // "All" (default) / "detection" / "telemetry" — client-side lens over the rendered IOC rows.
+    let iocProvenanceFilter = "all";
+    function loadIocProvenance(caseId) {
+      fetch(`/cases/${caseId}/ioc-provenance`).then(r => r.json()).then(m => {
+        iocProvenance = (m && typeof m === "object") ? m : {};
+        if (lastState) renderIocs((projectScope(lastState).iocs) || []);
+      }).catch(() => {});
+    }
+    function scheduleIocProvenanceReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(iocProvenanceTimer);
+      iocProvenanceTimer = setTimeout(() => loadIocProvenance(caseId), 800);
+    }
+    // Provenance for an IOC — absent from the map = telemetry (safe default: recede, don't over-signal).
+    function iocProvenanceOf(iocId) {
+      return iocProvenance[iocId] === "detection" ? "detection" : "telemetry";
+    }
+    // Small provenance badge shown near the corroboration badge. detection-linked = accent (signal);
+    // telemetry-only = muted grey (recedes). Kept visually separate from the verdict badge.
+    function iocProvenanceBadge(iocId) {
+      if (iocProvenanceOf(iocId) === "detection") {
+        return ` <span class="ioc-prov-badge ioc-prov-detection" title="Detection-linked: this IOC appears in a graded (Low or higher) event — not just Info telemetry">detection-linked</span>`;
+      }
+      return ` <span class="ioc-prov-badge ioc-prov-telemetry" title="Telemetry-only: this IOC appears only in Info telemetry, not in any graded detection event">telemetry-only</span>`;
+    }
+
     // Collapsible "Evidence" disclosure under a finding (derived client-side, no extra request):
     // evidence (screenshot artifacts), Supporting events (the forensic events that back it — built in
     // render() from each event's relatedFindingIds, click to jump to the timeline row), and Supporting
@@ -8693,7 +9311,7 @@
         const cm = L.circleMarker([m.lat, m.lon], opts);
         const verdict = m.verdict && m.verdict !== "unknown" ? ` · ${esc(m.verdict)}` : "";
         const approxNote = m.approximate ? " · <em>country-level (approx)</em>" : "";
-        cm.bindPopup(`<b>${esc(m.ip)}</b>${m.legitimate ? " (false positive)" : ""}<br>${esc([m.city, m.country].filter(Boolean).join(", ") || "unknown location")}${approxNote}<br>${esc(m.asn || "")}<br>${esc(m.severity)}${verdict} · ${esc(m.eventCount)} event(s)`);
+        cm.bindPopup(`<b>${esc(m.ip)}</b>${m.falsePositive ? " (false positive)" : ""}<br>${esc([m.city, m.country].filter(Boolean).join(", ") || "unknown location")}${approxNote}<br>${esc(m.asn || "")}<br>${esc(m.severity)}${verdict} · ${esc(m.eventCount)} event(s)`);
         cm.addTo(geoLayer);
         bounds.push([m.lat, m.lon]);
         byIp[m.ip.toLowerCase()] = cm;
@@ -9273,6 +9891,7 @@
     function resetTimelineViewFilters() {
       document.querySelectorAll(".sev-filter").forEach(cb => { cb.checked = true; });
       hiddenSources.clear(); _srcMenuSig = "";
+      hiddenHosts.clear(); _hostMenuSig = "";
       showStarredOnly = false;
       evIdFilter = null; evIdFilterLabel = "";
       const sfBtn = document.getElementById("evStarFilterBtn");
@@ -9858,6 +10477,7 @@
       if (excludeTerms.length) visible = visible.filter(i => !_iocMatchesExclude(i, excludeTerms));
       if (hiddenIocTypes.size > 0) visible = visible.filter(i => !hiddenIocTypes.has(i.type || "other"));
       if (corrobIocs > 1) visible = visible.filter(i => (iocSourcesById[i.id] || []).length >= corrobIocs);   // corroboration lens (#35)
+      if (iocProvenanceFilter !== "all") visible = visible.filter(i => iocProvenanceOf(i.id) === iocProvenanceFilter);   // provenance lens
       // Noise reduction (two independent, composable lenses — nothing is deleted, both persisted
       // per-browser): "Hide FP/no-intel" drops confirmed-false-positive + checked-nothing-found
       // IOCs; "Signal only" narrows further to IOCs that are flagged, corroborated by 2+ tools, or
@@ -9880,7 +10500,7 @@
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div style='color:var(--c-9aa4b2)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : (searchTerm || excludeTerms.length > 0 || hiddenIocTypes.size > 0 || corrobIocs > 1 || noiseFiltersActive) && iocs.length > 0
+          : (searchTerm || excludeTerms.length > 0 || hiddenIocTypes.size > 0 || corrobIocs > 1 || iocProvenanceFilter !== "all" || noiseFiltersActive) && iocs.length > 0
             ? `<div style='color:var(--c-9aa4b2)'>No IOCs match the filter.${noiseFiltersActive ? " Turn off “Signal only” / “Hide FP/no-intel” / “Hide OS system paths” to see everything." : ""}</div>`
           : "<div style='color:var(--c-9aa4b2)'>No IOCs yet</div>";
         updateIocBulkBar();
@@ -9914,7 +10534,7 @@
           // Mirror the forensic timeline: control cluster (comment + tag-add + hunt icons),
           // then the id, then the tag PILLS, then the indicator itself.
           +   `${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
-          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> ${valueHtml}${iocCorroBadge(i.id)} ${fpAction}${enrichBadges(i)}`
+          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> ${valueHtml}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)} ${fpAction}${enrichBadges(i)}`
           + `</span>`
           + `</div>`;
       }).join("");
@@ -10060,6 +10680,45 @@
       }
     }
 
+    // Forensic host filter (mirrors the source filter): the distinct affected hosts across the in-scope
+    // timeline, plus a trailing "(no host)" pseudo-facet for events with no asset (so those are
+    // controllable and "None" truly empties the timeline).
+    const NO_HOST_FACET = "(no host)";
+    function hostFacets(ft) {
+      const set = new Set();
+      let hasNone = false;
+      for (const e of (ft || [])) { if (e.asset) set.add(e.asset); else hasNone = true; }
+      const list = [...set].sort((a, b) => a.localeCompare(b));
+      if (hasNone) list.push(NO_HOST_FACET);
+      return list;
+    }
+    // Build/refresh the host-filter dropdown. Hidden when there are fewer than 2 hosts (nothing to filter).
+    // Rebuilt only when the host set changes; otherwise just sync checkbox state (don't disrupt an open menu).
+    function renderHostFilter(ft) {
+      const wrap = document.getElementById("hostLegendWrap");
+      const menu = document.getElementById("hostFilterMenu");
+      const btn = document.getElementById("hostFilterBtn");
+      if (!wrap || !menu || !btn) return;
+      const hosts = hostFacets(ft);
+      for (const h of [...hiddenHosts]) if (!hosts.includes(h)) hiddenHosts.delete(h);   // drop hosts that no longer exist
+      if (hosts.length < 2) { wrap.style.display = "none"; menu.hidden = true; _hostMenuSig = ""; return; }
+      wrap.style.display = "";
+      const hiddenInView = hosts.filter(h => hiddenHosts.has(h)).length;
+      const shown = hosts.length - hiddenInView;
+      btn.classList.toggle("active", hiddenInView > 0);
+      btn.textContent = hiddenInView > 0 ? `🖥 Hosts (${shown}/${hosts.length})` : "🖥 Hosts";
+      const sig = hosts.join("");
+      if (sig !== _hostMenuSig) {
+        const items = hosts.map(h =>
+          `<label class="src-item${h === NO_HOST_FACET ? " src-item-none" : ""}"><input type="checkbox" class="host-filter" value="${escAttr(h)}"${hiddenHosts.has(h) ? "" : " checked"}><span>${esc(h)}</span></label>`
+        ).join("");
+        menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-host-all="1">All</button><button type="button" class="src-menu-link" data-host-none="1">None</button></div>${items}`;
+        _hostMenuSig = sig;
+      } else {
+        menu.querySelectorAll(".host-filter").forEach(cb => { cb.checked = !hiddenHosts.has(cb.value); });
+      }
+    }
+
     function renderTimelineEvents(ft) {
       if (!_tlKeepPage) tlPage = 0;
       _tlKeepPage = false;
@@ -10070,6 +10729,7 @@
         ? ft.filter(e => realSourceCount(e.sources) >= corrobTimeline)
         : null;
       renderSourceFilter(ft, lensFt);
+      renderHostFilter(ft);
 
       const checked = document.querySelectorAll('.sev-filter:checked');
       const activeSevs = new Set([...checked].map(cb => cb.value));
@@ -10087,6 +10747,7 @@
         if (!real.length) return !hiddenSources.has(NO_SOURCE_FACET);  // unsourced events ride the "(no source)" facet
         return real.some(s => !hiddenSources.has(s));                   // hidden only when ALL its sources are unchecked
       });
+      if (hiddenHosts.size > 0) visible = visible.filter(e => !hiddenHosts.has(e.asset || NO_HOST_FACET));
       // Corroboration lens (#35): count only DISTINCT sources the analyst is still looking at (excludes
       // ones unchecked in the Sources filter), so the two filters compose — isolating to a single source
       // under 2+ correctly shows nothing (you can't be corroborated by 2 distinct tools within 1).
@@ -10254,6 +10915,27 @@
         else if (e.target.dataset.srcNone) { sourceFacets(lastFt).forEach(s => hiddenSources.add(s)); renderTimelineEvents(lastFt); }
       });
       // Close the menu when clicking outside it (clicks inside #srcLegendWrap are stopped at the wrap).
+      document.addEventListener("click", (e) => {
+        if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
+      });
+    })();
+
+    // Forensic host filter dropdown — mirrors the source filter exactly, scoped to its own menu element.
+    (function () {
+      const wrap = document.getElementById("hostLegendWrap");
+      const btn = document.getElementById("hostFilterBtn");
+      const menu = document.getElementById("hostFilterMenu");
+      if (!wrap || !btn || !menu) return;
+      btn.addEventListener("click", () => { menu.hidden = !menu.hidden; });
+      menu.addEventListener("change", (e) => {
+        if (!e.target.classList.contains("host-filter")) return;
+        if (e.target.checked) hiddenHosts.delete(e.target.value); else hiddenHosts.add(e.target.value);
+        renderTimelineEvents(lastFt);
+      });
+      menu.addEventListener("click", (e) => {
+        if (e.target.dataset.hostAll) { hiddenHosts.clear(); renderTimelineEvents(lastFt); }
+        else if (e.target.dataset.hostNone) { hostFacets(lastFt).forEach(h => hiddenHosts.add(h)); renderTimelineEvents(lastFt); }
+      });
       document.addEventListener("click", (e) => {
         if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
       });
@@ -10480,22 +11162,29 @@
       loadGeoMap(caseId);
       loadSwimlane(caseId);
       loadIocSources(caseId);
+      loadIocProvenance(caseId);
       loadComments(caseId);
       loadTags(caseId);
       loadNotebook(caseId);
       loadNbAiToggle(caseId);
       loadHypotheses(caseId);
+      loadSavedTimeframes(caseId);
+      loadSuperTimeline(caseId);
       loadPlaybook(caseId);
       loadStarred(caseId);
       selectedEvents.clear();
       selectedIocs.clear();
       hiddenSources.clear(); _srcMenuSig = "";
+      hiddenHosts.clear(); _hostMenuSig = "";
       showStarredOnly = false;
       const sfBtn = document.getElementById("evStarFilterBtn");
       if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
       showFlaggedIocsOnly = false;
       const ifBtn = document.getElementById("iocFlaggedBtn");
       if (ifBtn) ifBtn.classList.remove("active");
+      // Provenance filter is per-case session state (not a persisted pref) — reset to "All IOCs" on case load.
+      iocProvenanceFilter = "all";
+      document.querySelectorAll(".ioc-prov-btn").forEach(b => b.classList.toggle("active", b.getAttribute("data-prov") === "all"));
       // hideFpNoIntel / showSignalIocsOnly are NOT reset here — like the corroboration lens
       // controls, they're per-browser preferences (localStorage-backed), not per-case session state.
       hiddenIocTypes.clear(); _iocTypeMenuSig = "";
@@ -10550,7 +11239,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "capture_ingest") {
@@ -10569,6 +11258,8 @@
         else if (msg.type === "tags_changed") loadTags(caseId);
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
         else if (msg.type === "hypotheses_changed") loadHypotheses(caseId);
+        else if (msg.type === "dwell_window_changed") loadSavedTimeframes(caseId);
+        else if (msg.type === "super_timeline_changed") loadSuperTimeline(caseId);
         else if (msg.type === "playbook_changed") loadPlaybook(caseId);
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
@@ -10969,6 +11660,32 @@
       if (e.target.id === "evBulkTagBtn") { if (selectedEvents.size) openBulkTagModal([...selectedEvents]); return; }
       if (e.target.id === "evBulkFpBtn") { bulkMarkFalsePositive(); return; }
       if (e.target.id === "evBulkClearBtn") { clearSelection(); return; }
+      // Super-timeline bulk actions + filter toggles
+      if (e.target.id === "stBulkStar") { superBulkStar(); return; }
+      if (e.target.id === "stBulkTag") { superBulkTag(); return; }
+      if (e.target.id === "stTaggedOnly") { toggleSuperTaggedOnly(); return; }
+      if (e.target.id === "stStarredOnly") { toggleSuperStarredOnly(); return; }
+      // Super-timeline: click a tag pill to filter the timeline to that tag.
+      const stTag = e.target.closest && e.target.closest(".st-tag-filter");
+      if (stTag) {
+        const lbl = stTag.getAttribute("data-label") || "";
+        // Set the Tags dropdown (include-model) to just this tag, then reload.
+        superSelectedLabels = lbl ? new Set([lbl]) : new Set();
+        superPage(0);
+        return;
+      }
+      // Super-timeline: ⌖ context button opens an inline ±window menu.
+      const stCtx = e.target.closest && e.target.closest(".st-ctx");
+      if (stCtx) { openSuperCtxMenu(stCtx); return; }
+      // A ±window choice inside the context menu.
+      const stCtxW = e.target.closest && e.target.closest(".st-ctx-win");
+      if (stCtxW) {
+        superScopeToWindow(stCtxW.getAttribute("data-ts"), Number(stCtxW.getAttribute("data-ms")));
+        closeSuperCtxMenu();
+        return;
+      }
+      // A click anywhere else closes an open context menu.
+      closeSuperCtxMenu();
       // Bulk action bar buttons (IOCs)
       if (e.target.id === "iocBulkEnrichBtn") { bulkEnrichIocs(); return; }
       if (e.target.id === "iocBulkTagBtn") { bulkTagIocs(); return; }
@@ -10995,6 +11712,15 @@
         showSignalIocsOnly = !showSignalIocsOnly;
         localStorage.setItem("dfir.ioc.signalOnly", showSignalIocsOnly ? "1" : "0");
         e.target.classList.toggle("active", showSignalIocsOnly);
+        if (lastState) renderIocs(lastState.iocs || []);
+        return;
+      }
+      // IOC provenance filter: All IOCs / Detection-linked / Telemetry-only.
+      const provBtn = e.target.closest && e.target.closest(".ioc-prov-btn");
+      if (provBtn) {
+        iocProvenanceFilter = provBtn.getAttribute("data-prov") || "all";
+        const wrap = provBtn.closest(".ioc-prov-filter");
+        if (wrap) wrap.querySelectorAll(".ioc-prov-btn").forEach(b => b.classList.toggle("active", b === provBtn));
         if (lastState) renderIocs(lastState.iocs || []);
         return;
       }
@@ -11043,6 +11769,7 @@
         swReflectSelection();   // mirror onto the swimlane dots
         return;
       }
+      if (e.target.id === "stSelectAll") { toggleSuperSelectAll(e.target.checked); return; }
       if (e.target.id === "evSelectAll") {
         document.querySelectorAll(".ev-row-cb").forEach(cb => {
           const id = cb.getAttribute("data-evid");
@@ -12125,28 +12852,11 @@
     const loadCollapsed = () => { try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "{}"); } catch { return {}; } };
     const saveCollapsed = (map) => localStorage.setItem(COLLAPSE_KEY, JSON.stringify(map));
 
-    // Drag-to-reorder sections. Order persists per-browser in localStorage and is reapplied
-    // on load. render() rewrites inner divs (not <section>s), so a reordered layout sticks.
-    const ORDER_KEY = "dfir.sectionOrder";
-    function saveSectionOrder() {
-      localStorage.setItem(ORDER_KEY, JSON.stringify(sections().map(sectionKey)));
-    }
-    function applySectionOrder() {
-      let saved; try { saved = JSON.parse(localStorage.getItem(ORDER_KEY) || "null"); } catch { saved = null; }
-      if (!Array.isArray(saved)) return;                 // no saved order → use the HTML default
-      const main = document.querySelector("main");
-      const all = sections();                            // current DOM order == the HTML default order
-      const byKey = new Map(all.map(s => [sectionKey(s), s]));
-      const savedExisting = saved.filter(k => byKey.has(k)); // saved keys that still exist
-      const savedSet = new Set(savedExisting);
-      // Sections missing from the saved order (added in a newer build) stay ANCHORED at their
-      // natural HTML slot instead of being dumped at the end; the saved order only reshuffles the
-      // sections it actually names. So a new default-first section like "Ask the LLM" still renders
-      // first for users whose saved order predates it.
-      let si = 0;
-      const ordered = all.map(s => (savedSet.has(sectionKey(s)) ? byKey.get(savedExisting[si++]) : s));
-      ordered.forEach(s => main.appendChild(s));
-    }
+    // Drag-to-reorder sections (via the ⠿ grip on a section header). The order is persisted to the
+    // SAME authoritative store as the Settings → section-list reorder (SECTIONS_ORDER_KEY, keyed by
+    // <section> id) — NOT a separate key — so the two ordering systems can't fight. On load the order
+    // is applied by applySectionsVis() → applySecOrder() (which runs last in init), so a drag survives
+    // a refresh. render() rewrites inner divs (not <section>s), so a reordered layout sticks.
     function setupReorder() {
       const main = document.querySelector("main");
       let dragged = null;
@@ -12169,10 +12879,16 @@
           const r = sec.getBoundingClientRect();
           const after = (e.clientY - r.top) > r.height / 2;   // drop in the lower half → place after
           main.insertBefore(dragged, after ? sec.nextSibling : sec);
-          saveSectionOrder();
+          // Persist to the authoritative order store (by <section> id) that the load path applies
+          // last — the same store the Settings section-list reorder writes — so the drag survives a
+          // refresh and the two systems agree. renderSecChecks() re-reads it, so the Settings list
+          // and its up/down arrows reflect the new order too.
+          saveSectionsOrder([...main.querySelectorAll(":scope > section[id]")].map(s => s.id));
+          if (typeof renderSecChecks === "function") renderSecChecks();
         });
       });
-      applySectionOrder();
+      // The initial order is applied by applySectionsVis() → applySecOrder() (runs last in init),
+      // so no separate apply here (a second, key-mismatched apply is exactly what caused #6).
     }
 
     function updateToggleAllLabel() {
@@ -12257,6 +12973,7 @@
       { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
       { id: "sec-false-positive", label: "False Positives" },
       { id: "sec-hypotheses",   label: "Hypotheses" },
+      { id: "sec-super-timeline", label: "Super-Timeline" },
       { id: "sec-notebook",     label: "Analyst Notebook" },
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-case-details", label: "Case Details" },

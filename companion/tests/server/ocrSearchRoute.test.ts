@@ -21,6 +21,10 @@ let app: ReturnType<typeof createApp>;
 let cases: CaseStore;
 
 beforeEach(async () => {
+  // The suite defaults DFIR_OCR_SEARCH=off (see vitest.config.ts) so tests that don't care
+  // about OCR never spin up real Tesseract; this file exercises the indexing path itself,
+  // so it opts back in here (the one "off" test below overrides it again mid-test).
+  process.env.DFIR_OCR_SEARCH = "on";
   _resetDedupCache();
   const root = await mkdtemp(join(tmpdir(), "dfir-ocrsearch-"));
   cases = new CaseStore(root);

@@ -112,12 +112,13 @@ describe("dashboard.html", () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain("setupReorder");
     expect(html).toContain("drag-grip");
-    expect(html).toContain('"dfir.sectionOrder"');
+    expect(html).toContain('"dfir.sectionsOrder"');   // unified section-order store (#6 — drag + Settings agree)
     // Ask section comes before Executive Summary in the default markup.
     expect(html.indexOf("Ask the LLM about this case")).toBeLessThan(html.indexOf("Executive Summary"));
-    // A saved order that predates a section keeps that section ANCHORED at its natural HTML
-    // slot (so the default-first Ask panel still shows first), instead of dumping it at the end.
-    expect(html).toContain("savedExisting");
+    // A section missing from a saved order is inserted at its CANONICAL slot (right after its nearest
+    // already-placed sibling) rather than dumped at the end — so the default-first Ask panel still
+    // shows first even against an older saved order that predates a section.
+    expect(html).toContain("getEffectiveOrder");
     expect(html).not.toContain("new/unknown sections go to the end");
   });
 

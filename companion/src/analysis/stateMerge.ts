@@ -160,6 +160,9 @@ export function mergeDelta(
       if (incoming.path) existing.path = incoming.path;
       if (incoming.asset) existing.asset = incoming.asset;
       if (incoming.sources?.length) existing.sources = uniq([...(existing.sources ?? []), ...incoming.sources]);
+      if (incoming.artifactName) existing.artifactName = incoming.artifactName;
+      if (incoming.message) existing.message = incoming.message;
+      if (incoming.veloUrl) existing.veloUrl = incoming.veloUrl;
       if (incoming.processName) existing.processName = incoming.processName;
       if (incoming.parentName) existing.parentName = incoming.parentName;
       if (incoming.pid !== undefined) existing.pid = incoming.pid;
@@ -183,6 +186,9 @@ export function mergeDelta(
         ...(incoming.path ? { path: incoming.path } : {}),
         ...(incoming.asset ? { asset: incoming.asset } : {}),
         ...(incoming.sources?.length ? { sources: uniq(incoming.sources) } : {}),
+        ...(incoming.artifactName ? { artifactName: incoming.artifactName } : {}),
+        ...(incoming.message ? { message: incoming.message } : {}),
+        ...(incoming.veloUrl ? { veloUrl: incoming.veloUrl } : {}),
         ...(incoming.processName ? { processName: incoming.processName } : {}),
         ...(incoming.parentName ? { parentName: incoming.parentName } : {}),
         ...(incoming.pid !== undefined ? { pid: incoming.pid } : {}),

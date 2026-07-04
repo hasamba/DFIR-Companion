@@ -171,6 +171,90 @@ describe("parseChainsawReport — raw EVTX dumps (no verdict)", () => {
   });
 });
 
+// ── The flattened shape seen from a Velociraptor artifact that shells out to Chainsaw with
+// a Sigma event-log mapping: verdict at the top level, SystemData/_attributes instead of
+// Event.System, no attack tags.
+function flatSigmaFirewallRule(): object {
+  return {
+    EventTime: "2025-12-05T02:43:41.735285Z",
+    Detection: "Uncommon New Firewall Rule Added In Windows Firewall Exception List",
+    Severity: "medium",
+    Status: "experimental",
+    "Rule Group": "Sigma",
+    Computer: "WIN-UK1GV882OK6",
+    Channel: "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
+    EventID: 2097,
+    SystemData: {
+      EventID: 2097,
+      Level: 4,
+      Provider_attributes: { Name: "Microsoft-Windows-Windows Firewall With Advanced Security" },
+      TimeCreated_attributes: { SystemTime: "2025-12-05T02:43:41.735285Z" },
+      EventRecordID: 229,
+      Channel: "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
+      Computer: "WIN-UK1GV882OK6",
+    },
+    EventData: { RuleName: "SSHD Port OpenSSH (chocolatey package: openssh)", LocalPorts: "22" },
+    Authors: ["frack113"],
+  };
+}
+
+// ── The same shape with no verdict fired at Info (bare telemetry, e.g. RDS session events).
+function flatInfoRdsEvent(): object {
+  return {
+    EventTime: "2025-12-05T02:41:39.012742Z",
+    Detection: "User Profile Disk - Registry file loaded",
+    Severity: "info",
+    Status: "stable",
+    "Rule Group": "Microsoft RDS Events - User Profile Disk",
+    Computer: "WIN-UK1GV882OK6",
+    Channel: "Microsoft-Windows-User Profile Service/Operational",
+    EventID: 5,
+    SystemData: {
+      EventID: 5,
+      Provider_attributes: { Name: "Microsoft-Windows-User Profiles Service" },
+      TimeCreated_attributes: { SystemTime: "2025-12-05T02:41:39.012742Z" },
+      Computer: "WIN-UK1GV882OK6",
+    },
+    EventData: { File: "C:\\Users\\defaultuser0\\ntuser.dat" },
+    Authors: ["Catarina de Faria"],
+  };
+}
+
+describe("parseChainsawReport — flat Chainsaw/Sigma JSON (Velociraptor-shelled-out shape)", () => {
+  it("maps a flat Sigma detection: Detection leads, Severity → severity, no MITRE tags", () => {
+    const r = parseChainsawReport(JSON.stringify([flatSigmaFirewallRule()]));
+    expect(r.format).toBe("chainsaw");
+    expect(r.detections).toBe(1);
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e.description).toContain("Chainsaw/Sigma: Uncommon New Firewall Rule Added In Windows Firewall Exception List");
+    expect(e.severity).toBe("Medium");
+    expect(e.asset).toBe("WIN-UK1GV882OK6");
+    expect(e.sources).toEqual(["Chainsaw"]);
+    expect(e.timestamp).toBe("2025-12-05T02:43:41.735285Z"); // the event's own EventTime
+  });
+
+  it("keeps an Info-graded flat detection (no verdict bump) but still tags it Chainsaw", () => {
+    const r = parseChainsawReport(JSON.stringify([flatInfoRdsEvent()]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].severity).toBe("Info");
+    expect(r.events[0].description).toContain("Chainsaw/Microsoft RDS Events - User Profile Disk: User Profile Disk - Registry file loaded");
+  });
+
+  it("reads NDJSON of the flat shape and aggregates per distinct rule", () => {
+    const text = [JSON.stringify(flatSigmaFirewallRule()), JSON.stringify(flatInfoRdsEvent())].join("\n");
+    const r = parseChainsawReport(text);
+    expect(r.detections).toBe(2);
+    expect(r.events).toHaveLength(2);
+    expect(r.hostname).toBe("WIN-UK1GV882OK6");
+  });
+
+  it("does not mistake a nested-document Chainsaw record for the flat shape", () => {
+    const r = parseChainsawReport(JSON.stringify([sigmaPowershell()]));
+    expect(r.events[0].description).toContain("Chainsaw/Sigma: Suspicious Encoded PowerShell Command Line");
+  });
+});
+
 describe("parseChainsawReport — options & edge cases", () => {
   it("applies a minSeverity floor", () => {
     const text = JSON.stringify([sigmaPowershell(), rawLogonDataArray()]); // High + Low(4624)

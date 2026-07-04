@@ -52,6 +52,14 @@ describe("detectImportKind — JSON formats", () => {
   it("chainsaw: raw evtx_dump { Event: { System } }", () => {
     expect(detectImportKind("evtx.json", ndjson({ Event: { System: { EventID: 1 }, EventData: {} } }))).toBe("chainsaw");
   });
+  it("chainsaw: flat Sigma-mapping JSON (Velociraptor-shelled-out shape)", () => {
+    expect(detectImportKind("cs_flat.json", ndjson({
+      EventTime: "2025-12-05T02:43:41Z", Detection: "Uncommon New Firewall Rule Added",
+      Severity: "medium", "Rule Group": "Sigma", Computer: "WIN-01",
+      Channel: "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall", EventID: 2097,
+      SystemData: { EventID: 2097 }, EventData: { RuleName: "x" }, Authors: ["frack113"],
+    }))).toBe("chainsaw");
+  });
   it("velociraptor: _Source-tagged rows", () => {
     expect(detectImportKind("vr.json", ndjson({ _Source: "Windows.EventLogs.Evtx", System: { EventID: 1 }, EventData: {} }))).toBe("velociraptor");
   });
@@ -485,6 +493,20 @@ describe("detectImportWithCustom precedence", () => {
   it("velociraptor: netstat NDJSON (Laddr + Lport + Status, no _Source)", () => {
     const row = { Pid: "1004", Name: "svchost.exe", Family: "TCP", Type: "SOCK_STREAM", Laddr: "0.0.0.0", Lport: "445", Raddr: "", Rport: "0", Status: "LISTEN", Timestamp: "2026-06-12T11:15:00Z" };
     expect(detectImportKind("Netstat.json", ndjson(row))).toBe("velociraptor");
+  });
+
+  it("detects a bare MFT artifact export (no _Source) as velociraptor, not siem", () => {
+    const text = j([
+      { OSPath: "C:\\Windows\\evil.exe", Created0x10: "2026-06-01T00:00:00Z", LastModified0x10: "2026-06-01T00:00:00Z", InUse: true, FileName: "evil.exe" },
+    ]);
+    expect(detectImportKind("mft.json", text)).toBe("velociraptor");
+  });
+
+  it("detects a bare USN journal export (no _Source) as velociraptor, not siem", () => {
+    const text = j([
+      { OSPath: "C:\\Users\\x\\f.docx", Usn: 12345, Reason: "FILE_CREATE|CLOSE", TimeStamp: "2026-06-01T00:00:00Z", FileName: "f.docx" },
+    ]);
+    expect(detectImportKind("usn.json", text)).toBe("velociraptor");
   });
 
   it("external-first: a custom importer can override even a specific built-in", () => {

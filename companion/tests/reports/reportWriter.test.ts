@@ -183,7 +183,7 @@ describe("ReportWriter", () => {
     expect(layer.domain).toBe("enterprise-attack");
   });
 
-  it("builds a geo map with a false-positive-marked IOC rendered gray (legitimate: true)", async () => {
+  it("builds a geo map with a false-positive-marked IOC rendered gray (falsePositive: true)", async () => {
     const state = emptyState("c1");
     state.iocs.push({
       id: "i1",
@@ -209,7 +209,7 @@ describe("ReportWriter", () => {
 
     expect(geo.markers).toHaveLength(1);
     expect(geo.markers[0].ip).toBe("8.8.8.8");
-    expect(geo.markers[0].legitimate).toBe(true);
+    expect(geo.markers[0].falsePositive).toBe(true);
     expect(geo.markers[0].color).toBe("gray");
   });
 });

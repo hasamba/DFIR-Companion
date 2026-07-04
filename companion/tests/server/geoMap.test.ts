@@ -146,7 +146,7 @@ describe("GET /cases/:id/geo-map (#133)", () => {
     expect(res.status).toBe(200);
     expect(res.body.markers).toHaveLength(1);
     expect(res.body.markers[0].ip).toBe("8.8.8.8");
-    expect(res.body.markers[0].legitimate).toBe(true);
+    expect(res.body.markers[0].falsePositive).toBe(true);
     expect(res.body.markers[0].color).toBe("gray");
   });
 

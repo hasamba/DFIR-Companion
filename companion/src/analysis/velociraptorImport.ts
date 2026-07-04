@@ -45,6 +45,13 @@ import {
   type SiemEvent,
   type SiemIoc,
 } from "./siemImport.js";
+// A row from a Velociraptor artifact that shells out to Chainsaw and streams its rows back as
+// VQL (e.g. a custom "run chainsaw" artifact) carries Chainsaw's flat Sigma-mapping shape
+// (Detection/Severity/Rule Group siblings), not Velociraptor's own DetectRaptor {Detection:{Name,
+// Criticality}} convention — reuse chainsawImport's shape check + mapper so it isn't misclassified
+// as a generic detection() row, which would read no severity from a sibling field and silently
+// downgrade a real Critical (e.g. "Security Audit Logs Cleared") to a keyword-guessed Medium.
+import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 
 type Row = Record<string, unknown>;
 
@@ -110,6 +117,7 @@ export interface VelociraptorImportOptions {
   maxEvents?: number;
   maxIocs?: number;
   artifact?: string;   // fallback artifact/source label (e.g. the filename) when rows carry no _Source
+  hostFallback?: string;   // asset to stamp on events whose row carries no host (single-client flow import)
 }
 
 export interface VelociraptorParseResult {
@@ -162,6 +170,20 @@ function rowMessage(row: Row): string {
   if (m) return m;
   const ev = getCI(row, "_Event");
   return isObject(ev) ? str(getCI(ev, "Message")) : "";
+}
+
+// The FULL untruncated event detail (raw EVTX rendered Message / ScriptBlock text, etc.) that the
+// analyst may want to read in full, beyond the truncated one-line `description`. Generously capped
+// so it stays bounded in state. Returns "" when there's no message OR the message adds nothing
+// beyond what's already in `description` (so we don't stamp a redundant expandable block).
+const MESSAGE_CAP = 4000;
+function fullMessage(row: Row, description: string): string {
+  const raw = rowMessage(row).trim();
+  if (!raw) return "";
+  const capped = raw.length > MESSAGE_CAP ? `${raw.slice(0, MESSAGE_CAP)}…` : raw;
+  // If the description already contains (nearly) the whole message there's no extra detail to reveal.
+  if (description.includes(raw) || raw.length <= 80) return "";
+  return capped;
 }
 
 // High-signal labels in a RENDERED Windows event message (4688 process creation, Sysmon, service
@@ -292,19 +314,54 @@ const TIME_KEYS = [
   "Ctime", "Created", "CreationTime", "LastWriteTime", "KeyLastWriteTimestamp", "KeyMTime", "TimeGenerated",
   "Timestamp", "timestamp", "time", "StartTime",
   "SITimestamps.LastModified0x10", "SITimestamps.LastRecordChange0x10", "SITimestamps.Created0x10", "FNTimestamps.Created0x30",
+  // Bare NTFS $FILE_NAME / $STANDARD_INFO timestamps: Windows.NTFS.MFT (and USN) emit these as TOP-LEVEL
+  // columns on many server versions (not nested under SITimestamps/FNTimestamps), so an MFT row would
+  // otherwise land with NO time. Prefer $FN Created (0x30 — harder to timestomp) per analyst preference,
+  // then $SI Created, then last-modified / record-change / access.
+  "Created0x30", "Created0x10", "LastModified0x10", "LastModified0x30", "LastRecordChange0x10", "LastAccess0x10",
+  // Windows.Forensics.Lnk buries the target's birth time under OSPath (the stat object), so the shortcut
+  // lands dated at its target's creation. Browser-history (visit) + registry (UserAssist/Shellbags) time
+  // columns whose exact names vary by version.
+  "OSPath.Btime", "visit_time", "last_visit_time", "LastVisited", "LastExecution", "LastExecutionTime", "last_run",
   // Nested file-stat blocks: FileInfo.* (DetectRaptor PSReadline), Stat.* (the Generic PSReadline /
   // QuickWins shape), so history-line + Amcache/LolDrivers (KeyMTime) rows land dated, not at epoch 0.
   "FileInfo.Mtime", "FileInfo.Ctime", "FileInfo.Btime", "Stat.Mtime", "Stat.Ctime", "Stat.Btime", "HitContext.Mtime",
   "@timestamp", // Elasticsearch-indexed rows (Kibana push) carry the event time here
-  "_ts",
 ];
+
+// A column whose NAME denotes an event time — used by the fallback scan when no explicit TIME_KEY matched.
+const TIME_NAME_RE = /(?:time|date|created|modif|written|changed|access|visit|execut|last.?run|last.?used|btime|mtime|ctime|atime|\bborn\b)/i;
+// Plausibility window for the fallback: skip FILETIME (1601) / Unix (1970) / epoch-0 "unset" sentinels
+// and absurd far-future values, so a blank timestamp field can't date an event to the year 1601.
+const MIN_TIME_MS = Date.parse("2000-01-01T00:00:00Z");
+const MAX_TIME_MS = Date.parse("2100-01-01T00:00:00Z");
+
 function pickTime(row: Row): string {
   for (const k of TIME_KEYS) {
     const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
     const t = vrTime(v);
     if (t) return t;
   }
-  return "";
+  // Fallback: no known column matched (browser history, shellbags, userassist, and other raw artifacts
+  // whose time column varies by Velociraptor version). Scan every time-NAMED column (incl. one nesting
+  // level) for the EARLIEST plausible timestamp — a real artifact time beats the `_ts` collection time
+  // below, and a blank/sentinel field can't win.
+  let best = "", bestMs = Infinity;
+  const scan = (obj: Row, prefix: string, depth: number): void => {
+    for (const [k, v] of Object.entries(obj)) {
+      if (v == null) continue;
+      if (isObject(v)) { if (depth < 1) scan(v as Row, `${prefix}${k}.`, depth + 1); continue; }
+      if (Array.isArray(v)) continue;
+      if (!TIME_NAME_RE.test(prefix + k)) continue;
+      const t = vrTime(v);
+      if (!t) continue;
+      const ms = Date.parse(t);
+      if (ms >= MIN_TIME_MS && ms <= MAX_TIME_MS && ms < bestMs) { bestMs = ms; best = t; }
+    }
+  };
+  scan(row, "", 0);
+  if (best) return best;
+  return vrTime(getCI(row, "_ts"));   // collection time — absolute last resort, only when nothing else dated the row
 }
 
 const HOST_KEYS = ["Fqdn", "Hostname", "Computer", "System.Computer", "Host", "ClientName"];
@@ -408,7 +465,7 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
 
 // ───────────────────────────── per-row mapping ─────────────────────────────
 
-type Kind = "sigma" | "yara" | "detection" | "eventlog" | "pslist" | "netstat" | "download" | "startup" | "taskscheduler" | "generic";
+type Kind = "sigma" | "yara" | "chainsaw" | "detection" | "eventlog" | "pslist" | "netstat" | "download" | "startup" | "taskscheduler" | "generic";
 
 function artifactName(row: Row): string {
   return firstStr(row, ["_Source", "Artifact", "_Artifact", "artifact", "Source", "ArtifactName"]);
@@ -428,6 +485,11 @@ function classify(row: Row, artifact: string): Kind {
   const rule = getCI(row, "Rule");
   if (typeof rule === "string" && rule.trim() && (getCI(row, "Strings") || getCI(row, "Meta") || getCI(row, "Namespace") || getCI(row, "Rules"))) return "yara";
   if (isObject(rule) && (getCI(rule, "Title") || getCI(rule, "Level"))) return "sigma";
+
+  // Chainsaw's flat Sigma-mapping row (Detection/Severity/Rule Group siblings) — BEFORE the
+  // generic rowVerdict() check below, which would otherwise treat the bare `Detection` string
+  // as a DetectRaptor verdict and never read the sibling `Severity`/`Rule Group` fields.
+  if (isFlatChainsawRow(row)) return "chainsaw";
 
   // A `Detection`/`RuleName` verdict → verdict-first, BEFORE the eventlog branch so a detection
   // that also carries a parsed Windows event (DetectRaptor's Evtx) is overlaid, not flattened.
@@ -983,17 +1045,21 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
   let detections = 0;
 
   const fallbackArtifact = (opts.artifact ?? "").trim();
+  // A single-client FLOW export has no per-row host column — the whole collection is implicitly for
+  // one client — so the resolved hostname is threaded in here to attribute rows that carry no host.
+  const fallbackHost = (opts.hostFallback ?? "").trim();
 
   for (const rawRow of rows) {
     const row = normalizeElasticRow(rawRow); // reshape an ES-indexed push back to native form (gated)
     const artifact = artifactName(row) || fallbackArtifact;
-    const host = pickHost(row);
+    const host = pickHost(row) || fallbackHost; // a row's own host always wins; fallback only fills the gap
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
 
     const kind = classify(row, artifact);
     let m: MappedEvent | null;
     if (kind === "yara") { m = mapYara(row, artifact, host, iocSink); detections++; }
     else if (kind === "sigma") { m = mapSigma(row, host, iocSink); detections++; }
+    else if (kind === "chainsaw") { m = mapFlatChainsawRow(row, host, iocSink); detections++; }
     else if (kind === "detection") { m = mapDetection(row, artifact, host, iocSink); detections++; }
     else if (kind === "eventlog") { m = mapEventlog(row, host, iocSink) ?? mapGeneric(row, artifact, host, iocSink); }
     else if (kind === "pslist") { m = mapPslist(row, host, iocSink); }
@@ -1003,6 +1069,19 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     else if (kind === "taskscheduler") { m = mapTaskScheduler(row, host, iocSink); }
     else { m = mapGeneric(row, artifact, host, iocSink); }
     if (m) {
+      // Stamp the produced event with the VQL artifact that emitted it. Done once here (rather than in
+      // each map* function) because `artifact` is already resolved in this dispatch loop and every
+      // mapper's result flows through — so downstream (dwell-time window, evidence graph) can tell
+      // "from the MFT" apart from "a Sigma detection". Uses the resolved `artifact` (the row's
+      // _Source/_Artifact, or the filename fallback) so telemetry rows without _Source still carry it.
+      if (artifact) m.artifactName = artifact;
+      // Carry the FULL untruncated event message so the super-timeline row can reveal it expandably,
+      // when it adds detail beyond the truncated `description`. Stamped here (like artifactName) so
+      // every mapper's result benefits. Set only if the mapper didn't already provide one.
+      if (!m.message) {
+        const full = fullMessage(row, m.description);
+        if (full) m.message = full;
+      }
       // Tag every event with the SOURCE artifact (from the row's _Source/_Artifact — stamped by the
       // browser push, or carried by an artifact-map import) so the analyst can navigate back to it.
       // Place it consistently right after "Velociraptor" (the same spot mapGeneric already uses), so

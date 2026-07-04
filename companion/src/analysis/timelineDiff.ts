@@ -47,3 +47,20 @@ export function diffTimeline(before: readonly ForensicEvent[], after: readonly F
 export function isEmptyTimelineDiff(diff: TimelineDiff): boolean {
   return diff.added.length === 0 && diff.removed.length === 0;
 }
+
+// Resolve the FULL ForensicEvents an import added, from the after-state. `diffTimeline` intentionally
+// returns lossy {timestamp,description,severity} DiffEvents (it keys by normalized time+description), but
+// the super-timeline needs the complete events (ids, sources, hashes, asset…). Match the after-state's
+// events back against the added keys — one per added key (first occurrence wins, mirroring `byKey`), so
+// a re-import that added nothing yields nothing.
+export function addedForensicEvents(after: readonly ForensicEvent[], diff: TimelineDiff): ForensicEvent[] {
+  if (!diff.added.length) return [];
+  const wanted = new Set(diff.added.map(keyOf));
+  const seen = new Set<string>();
+  const out: ForensicEvent[] = [];
+  for (const e of after) {
+    const key = keyOf(e);
+    if (wanted.has(key) && !seen.has(key)) { seen.add(key); out.push(e); }
+  }
+  return out;
+}

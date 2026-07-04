@@ -610,7 +610,7 @@ function geographicDistribution(state: InvestigationState, lines: string[]): voi
   for (const m of geo.markers) {
     lines.push(
       `| ${cellMd(m.ip)} | ${cellMd(m.country ?? "—")} | ${cellMd(m.city ?? (m.approximate ? "— (country-level)" : "—"))} | ` +
-        `${cellMd(m.asn ?? "—")} | ${m.severity}${m.legitimate ? " (legit)" : ""} | ${cellMd(m.verdict ?? "—")} |`,
+        `${cellMd(m.asn ?? "—")} | ${m.severity}${m.falsePositive ? " (false positive)" : ""} | ${cellMd(m.verdict ?? "—")} |`,
     );
   }
   lines.push("");

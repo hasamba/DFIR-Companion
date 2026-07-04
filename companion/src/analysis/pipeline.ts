@@ -133,6 +133,7 @@ import {
   type HuntOutcome,
 } from "./huntOutcomes.js";
 import type { HuntOutcomeStore } from "./huntOutcomeStore.js";
+import type { SuperTimelineStore } from "./superTimelineStore.js";
 import {
   memoryNextStepResponseSchema,
   sanitizeMemoryNextSteps,
@@ -1170,6 +1171,10 @@ export interface PipelineOptions {
   // whose VQL already ran and (b) feed a "PRIOR HUNTS" context block so the model pivots on what hit.
   // Server-only (absent in scripts/* like the other Velociraptor features) → loop simply off.
   huntOutcomeStore?: HuntOutcomeStore;
+  // Per-case super-timeline store (the raw imported host-triage events not in InvestigationState).
+  // When set, explainEvent falls back to it so an event that was only imported into the super-timeline
+  // (never promoted into the forensic timeline) can still be explained. Server-only (absent in scripts/*).
+  superTimelineStore?: SuperTimelineStore;
   // Client-confirmed false-positive findings/IOCs to exclude from synthesis.
   falsePositiveStore?: FalsePositiveStore;
   // Optional investigation time-window — events outside it are excluded.
@@ -1822,6 +1827,29 @@ export class AnalysisPipeline {
     await this.opts.stateStore.save(state);
     this.opts.onState?.(state);
     opts.onProgress?.(1, 1);
+    return state;
+  }
+
+  // "Promote" copies already-imported super-timeline events UP into the forensic timeline so AI
+  // synthesis runs over them. The raw super-timeline is a complete record (incl. host-triage artifacts
+  // routed there exclusively) that is never synthesized; this is how the analyst pulls the events that
+  // matter into the analyzed timeline. Reuses mergeDelta (dedups forensic events by id) — a stored super
+  // event keeps its id, so a double-promote is a no-op. No AI here; the caller re-synthesizes.
+  async promoteSuperTimeline(
+    caseId: string,
+    events: ForensicEvent[],
+    opts: { importedAt: string },
+  ): Promise<InvestigationState> {
+    let state = await this.opts.stateStore.load(caseId);
+    if (!events.length) return state;
+    const delta = deltaSchema.parse({
+      findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+      timelineNote: `Promoted ${events.length} event(s) from the super-timeline`, summary: "",
+      forensicEvents: events.map((e) => ({ ...e })),
+    });
+    state = mergeDelta(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [] });
+    await this.opts.stateStore.save(state);
+    this.opts.onState?.(state);
     return state;
   }
 
@@ -3322,11 +3350,20 @@ export class AnalysisPipeline {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("event explanation");
     const loaded = await this.opts.stateStore.load(caseId);
 
-    const event = loaded.forensicTimeline.find((e) => e.id === eventId);
+    // Resolve the focal event + the universe of events to build context from. Normally the forensic
+    // timeline, but a raw super-timeline event (imported into the super-timeline and never promoted) is
+    // NOT in InvestigationState — fall back to the super-timeline store so it can still be explained.
+    let event = loaded.forensicTimeline.find((e) => e.id === eventId);
+    let universe = loaded.forensicTimeline;
+    if (!event && this.opts.superTimelineStore) {
+      const superEvents = (await this.opts.superTimelineStore.query(caseId, {})).events;
+      event = superEvents.find((e) => e.id === eventId);
+      if (event) universe = superEvents;
+    }
     if (!event) throw new Error(`event not found: ${eventId}`);
 
     // Context: events adjacent in time + events on the same asset (up to 15 total).
-    const sorted = [...loaded.forensicTimeline].sort((a, b) =>
+    const sorted = [...universe].sort((a, b) =>
       (a.timestamp || "").localeCompare(b.timestamp || ""),
     );
     const focalIdx = sorted.findIndex((e) => e.id === eventId);
@@ -3335,11 +3372,11 @@ export class AnalysisPipeline {
       ...sorted.slice(focalIdx + 1, focalIdx + 8),
     ];
     const sameAsset = event.asset
-      ? loaded.forensicTimeline.filter((e) => e.id !== eventId && e.asset === event.asset).slice(0, 10)
+      ? universe.filter((e) => e.id !== eventId && e.asset === event!.asset).slice(0, 10)
       : [];
     const contextIds = new Set([...nearby.map((e) => e.id), ...sameAsset.map((e) => e.id)]);
     const contextEvents = [...contextIds]
-      .map((id) => loaded.forensicTimeline.find((e) => e.id === id)!)
+      .map((id) => universe.find((e) => e.id === id)!)
       .filter(Boolean)
       .slice(0, 15);
 

@@ -168,6 +168,33 @@ describe("correlateEvents", () => {
     expect(correlateEvents([a, b])).toHaveLength(1);
   });
 
+  it("preserves artifactName from a NON-primary event in a merged group", () => {
+    // mergeGroup picks `primary` by worst-severity then longest-description. Put artifactName on the
+    // event that will NOT be chosen as primary, so this exercises the `events.find(...)` fallback —
+    // the `...primary` spread alone would drop it. Merge is forced by a shared sha256.
+    const HASH = "a".repeat(64);
+    const a = ev({ id: "e1", description: "Sigma detection: suspicious file creation flagged on the host",
+      severity: "High", sha256: HASH, sources: ["Velociraptor"] }); // longer + more severe → primary, NO artifactName
+    const b = ev({ id: "e2", description: "MFT: created evil.exe",
+      severity: "Info", sha256: HASH, sources: ["Velociraptor"], artifactName: "Windows.NTFS.MFT" });
+    const [merged] = correlateEvents([a, b]);
+    expect(merged.artifactName).toBe("Windows.NTFS.MFT");
+  });
+
+  it("preserves message + veloUrl from a NON-primary event in a merged group (#8/#9 survive promote)", () => {
+    // Same fallback pattern as artifactName: put message/veloUrl on the NON-primary (Info) event so the
+    // `...primary` spread alone would drop them — the `events.find(...)` fallback must carry them through.
+    const HASH = "b".repeat(64);
+    const a = ev({ id: "e1", description: "Sigma detection: suspicious file creation flagged on the host",
+      severity: "High", sha256: HASH, sources: ["Velociraptor"] }); // longer + more severe → primary
+    const b = ev({ id: "e2", description: "MFT: created evil.exe", severity: "Info", sha256: HASH,
+      sources: ["Velociraptor"], message: "FULL rendered event message ".repeat(20),
+      veloUrl: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC" });
+    const [merged] = correlateEvents([a, b]);
+    expect(merged.message).toContain("FULL rendered event message");
+    expect(merged.veloUrl).toBe("https://velo.example/app/index.html?org_id=root#/hunts/H.ABC");
+  });
+
   it("preserves process-chain fields from any event in a merged group", () => {
     const HASH = "d".repeat(64);
     const primary = ev({ id: "a", description: "longer Velociraptor detection text", sha256: HASH, sources: ["Velociraptor"] });
