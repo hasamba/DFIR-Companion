@@ -3,7 +3,7 @@
 // useful one for Windows IR: it carries the *artifact's own* Windows event PLUS, for
 // Chainsaw, the Sigma/built-in rule verdict that matched it.
 //
-// Two related inputs are handled, auto-detected per record:
+// Three related inputs are handled, auto-detected per record:
 //
 //   1. CHAINSAW HUNT JSON (`chainsaw hunt -r rules/ --json|--jsonl evtx/`) — an array (or
 //      NDJSON) of detections. Each detection embeds the raw EVTX event(s) it fired on
@@ -15,6 +15,16 @@
 //   2. RAW EVTX JSON (`evtx_dump -o json|jsonl`) — an array (or NDJSON) of bare
 //      `{ "Event": { "System": {...}, "EventData": {...} } }` records with no verdict.
 //      These fall back to the same per-EID severity/MITRE derivation as the SIEM importer.
+//   3. FLAT CHAINSAW/SIGMA JSON — seen from a Velociraptor artifact that shells out to
+//      Chainsaw with a Sigma event-log mapping and streams rows back as VQL: one flattened
+//      record per line with the verdict at the TOP level (`Detection`/`Severity`/`Rule
+//      Group`/`Authors`/`Status`) instead of a nested `rule{}` object, and the raw System
+//      block under `SystemData` (`..._attributes`-suffixed keys) instead of `Event.System`.
+//      `EventID`/`Channel`/`EventData`/`Computer` are ALREADY top-level and directly
+//      consumable by `mapWindows` as-is — no document-unwrapping needed for this shape, just
+//      a different verdict reader (`readFlatSigmaMeta`). Carries no `attack.tXXXX` tags, so
+//      MITRE techniques for this shape come only from `mapWindows`'s own per-EID/tradecraft
+//      derivation, never from the rule.
 //
 // The valuable per-EID Windows mapping, IOC/hash extraction, aggregation, sort and cap all
 // come from `siemImport.ts` (shared, unit-tested) — this module only NORMALIZES the nested
@@ -216,6 +226,26 @@ function isDetection(rec: Row): boolean {
     || (getCI(rec, "group") && getCI(rec, "kind")));
 }
 
+// ───────────────────────────── flat Chainsaw/Sigma shape ─────────────────────────────
+
+// True for the flattened Chainsaw output (input #3 above): the verdict fields sit at the
+// top level (Detection/Severity) alongside an already-flat EventID/Channel, so it needs
+// neither eventDocs() unwrapping nor isDetection()'s nested-shape check.
+function isFlatDetection(rec: Row): boolean {
+  return typeof getCI(rec, "Detection") === "string" && typeof getCI(rec, "Severity") === "string" &&
+    getCI(rec, "EventID") != null && (!!getCI(rec, "Channel") || isObject(getCI(rec, "SystemData")));
+}
+
+function readFlatSigmaMeta(rec: Row): SigmaMeta {
+  return {
+    group: str(getCI(rec, "Rule Group")),
+    ruleName: str(getCI(rec, "Detection")) || "detection",
+    level: str(getCI(rec, "Severity")),
+    tags: undefined, // this shape carries no attack.tXXXX tags
+    ts: str(getCI(rec, "EventTime")),
+  };
+}
+
 // ───────────────────────────── top-level parse ─────────────────────────────
 
 export function parseChainsawReport(text: string, opts: ChainsawImportOptions = {}): ChainsawParseResult {
@@ -234,6 +264,16 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   let sawEvtx = false;
 
   for (const rec of records) {
+    if (isFlatDetection(rec)) {
+      detections++;
+      const meta = readFlatSigmaMeta(rec);
+      const host = str(getCI(rec, "Computer")).trim();
+      if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
+      const win = mapWindows(rec, host, iocSink);
+      if (win) { sawEvtx = true; mapped.push(applySigma(win, meta)); }
+      else mapped.push(genericDetection(meta));
+      continue;
+    }
     const detection = isDetection(rec);
     if (detection) detections++;
     const docs = eventDocs(rec);

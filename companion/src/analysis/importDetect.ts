@@ -109,8 +109,13 @@ function isM365(s: Row): boolean {
 }
 function isChainsaw(s: Row): boolean {
   // Chainsaw hunt (embedded document/rule) or a raw evtx_dump record ({ Event: { System } }).
-  return !!getCI(s, "document") || !!getCI(s, "documents") ||
-    (isObject(getCI(s, "Event")) && isObject(getPath(s, "Event.System")));
+  if (!!getCI(s, "document") || !!getCI(s, "documents") ||
+    (isObject(getCI(s, "Event")) && isObject(getPath(s, "Event.System")))) return true;
+  // Chainsaw's flattened Sigma-mapping JSON (e.g. a Velociraptor artifact that shells out to
+  // Chainsaw): verdict at the top level (Detection/Severity) instead of a nested rule{}
+  // object, alongside an already-flat EventID/Channel/SystemData instead of Event.System.
+  return typeof getCI(s, "Detection") === "string" && typeof getCI(s, "Severity") === "string" &&
+    getCI(s, "EventID") != null && (!!getCI(s, "Channel") || isObject(getCI(s, "SystemData")));
 }
 function isVelociraptor(s: Row, root: unknown): boolean {
   if (!!getCI(s, "_Source") || !!getCI(s, "Artifact") || !!getCI(s, "_Artifact")) return true;

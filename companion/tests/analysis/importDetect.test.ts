@@ -52,6 +52,14 @@ describe("detectImportKind — JSON formats", () => {
   it("chainsaw: raw evtx_dump { Event: { System } }", () => {
     expect(detectImportKind("evtx.json", ndjson({ Event: { System: { EventID: 1 }, EventData: {} } }))).toBe("chainsaw");
   });
+  it("chainsaw: flat Sigma-mapping JSON (Velociraptor-shelled-out shape)", () => {
+    expect(detectImportKind("cs_flat.json", ndjson({
+      EventTime: "2025-12-05T02:43:41Z", Detection: "Uncommon New Firewall Rule Added",
+      Severity: "medium", "Rule Group": "Sigma", Computer: "WIN-01",
+      Channel: "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall", EventID: 2097,
+      SystemData: { EventID: 2097 }, EventData: { RuleName: "x" }, Authors: ["frack113"],
+    }))).toBe("chainsaw");
+  });
   it("velociraptor: _Source-tagged rows", () => {
     expect(detectImportKind("vr.json", ndjson({ _Source: "Windows.EventLogs.Evtx", System: { EventID: 1 }, EventData: {} }))).toBe("velociraptor");
   });
