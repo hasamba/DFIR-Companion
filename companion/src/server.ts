@@ -4823,12 +4823,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         rest.map((r) => r.id),
         rest.map((r) => (kind === "event" ? (r as ForensicEvent).description : (r as Finding).title)),
       );
+      // Defense-in-depth, not redundant: suggestFalsePositiveSimilarAi already validates aiIds
+      // against the candidate list it was given (dropping any hallucinated id), but this is a
+      // safety-critical path (feeding a batch false-positive marker), so we re-filter here too
+      // rather than trusting the pipeline call's return value unchecked.
       const aiCandidates = rest
         .filter((r) => aiIds.includes(r.id))
         .map((r) => ({
           id: r.id,
           kind,
           label: kind === "event" ? (r as ForensicEvent).description : (r as Finding).title,
+          // Pinned to 0, not a "zero-confidence" match — this keeps AI-sourced candidates sorting
+          // after every scored deterministic candidate when a UI sorts descending by score.
+          // `reasons` (below) is what tells the dashboard this candidate came from the AI pass.
           score: 0,
           reasons: ["suggested by AI"],
         }));

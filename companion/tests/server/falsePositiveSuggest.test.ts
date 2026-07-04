@@ -7,6 +7,12 @@ import { createApp } from "../../src/server.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { emptyState, type ForensicEvent, type Finding } from "../../src/analysis/stateTypes.js";
+import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
+import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+
+function fakeProvider(rawText: string): AIProvider {
+  return { name: "fake", analyze: async (_req: AnalyzeRequest): Promise<AnalyzeResult> => ({ rawText }) };
+}
 
 function ev(id: string, ts: string, overrides: Partial<ForensicEvent> = {}): ForensicEvent {
   return {
@@ -85,5 +91,31 @@ describe("POST /cases/:id/false-positive/suggest", () => {
     expect(res.status).toBe(200);
     expect(res.body.aiUnavailable).toBe(true);
     expect(res.body.candidates.map((c: { id: string }) => c.id)).toEqual(["e2"]);
+  });
+
+  it("appends AI-suggested candidates after deterministic ones, deduped, when an AI provider is configured", async () => {
+    // e1's deterministic match is e2 (shared "PsExec" description/technique — see the test above).
+    // The fake AI response deliberately re-suggests e2 (already deterministic) plus e3 (genuinely
+    // new) to prove the route dedupes against the deterministic set instead of double-listing.
+    const provider = fakeProvider(JSON.stringify({ candidateIds: ["e2", "e3"] }));
+    const pipeline = new AnalysisPipeline({
+      provider,
+      synthesisProvider: provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    const aiApp = createApp(store, { stateStore, pipeline });
+
+    const res = await request(aiApp).post("/cases/c1/false-positive/suggest").send({ kind: "event", ref: "e1", ai: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.aiUnavailable).toBeUndefined();
+    const ids = res.body.candidates.map((c: { id: string }) => c.id);
+    expect(ids).toEqual(["e2", "e3"]);
+    expect(ids.filter((id: string) => id === "e2")).toHaveLength(1);
+
+    const aiCandidate = res.body.candidates.find((c: { id: string }) => c.id === "e3");
+    expect(aiCandidate.score).toBe(0);
+    expect(aiCandidate.reasons).toEqual(["suggested by AI"]);
   });
 });
