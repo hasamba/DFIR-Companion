@@ -227,11 +227,16 @@ function isDetection(rec: Row): boolean {
 }
 
 // ───────────────────────────── flat Chainsaw/Sigma shape ─────────────────────────────
+//
+// Exported so OTHER importers that might receive this same shape wrapped in their own
+// container (e.g. a Velociraptor artifact that shells out to Chainsaw and streams its rows
+// back as VQL — velociraptorImport.ts) can recognize and map it identically, instead of
+// falling into their own generic/verdict handling and losing the real Severity grading.
 
 // True for the flattened Chainsaw output (input #3 above): the verdict fields sit at the
 // top level (Detection/Severity) alongside an already-flat EventID/Channel, so it needs
 // neither eventDocs() unwrapping nor isDetection()'s nested-shape check.
-function isFlatDetection(rec: Row): boolean {
+export function isFlatChainsawRow(rec: Row): boolean {
   return typeof getCI(rec, "Detection") === "string" && typeof getCI(rec, "Severity") === "string" &&
     getCI(rec, "EventID") != null && (!!getCI(rec, "Channel") || isObject(getCI(rec, "SystemData")));
 }
@@ -244,6 +249,16 @@ function readFlatSigmaMeta(rec: Row): SigmaMeta {
     tags: undefined, // this shape carries no attack.tXXXX tags
     ts: str(getCI(rec, "EventTime")),
   };
+}
+
+// Map ONE flat-Chainsaw row (already confirmed via isFlatChainsawRow) into a MappedEvent,
+// given a resolved host (the caller's own host-picking convention may differ from ours).
+// Always returns a MappedEvent — falls back to genericDetection() when the row's EventID/
+// Channel don't resolve through mapWindows (e.g. a non-Windows-shaped edge case).
+export function mapFlatChainsawRow(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent {
+  const meta = readFlatSigmaMeta(rec);
+  const win = mapWindows(rec, host, iocSink);
+  return win ? applySigma(win, meta) : genericDetection(meta);
 }
 
 // ───────────────────────────── top-level parse ─────────────────────────────
@@ -264,14 +279,12 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   let sawEvtx = false;
 
   for (const rec of records) {
-    if (isFlatDetection(rec)) {
+    if (isFlatChainsawRow(rec)) {
       detections++;
-      const meta = readFlatSigmaMeta(rec);
       const host = str(getCI(rec, "Computer")).trim();
       if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
-      const win = mapWindows(rec, host, iocSink);
-      if (win) { sawEvtx = true; mapped.push(applySigma(win, meta)); }
-      else mapped.push(genericDetection(meta));
+      sawEvtx = true; // this shape always has EventID/Channel/EventData, i.e. a real EVTX row
+      mapped.push(mapFlatChainsawRow(rec, host, iocSink));
       continue;
     }
     const detection = isDetection(rec);

@@ -45,6 +45,13 @@ import {
   type SiemEvent,
   type SiemIoc,
 } from "./siemImport.js";
+// A row from a Velociraptor artifact that shells out to Chainsaw and streams its rows back as
+// VQL (e.g. a custom "run chainsaw" artifact) carries Chainsaw's flat Sigma-mapping shape
+// (Detection/Severity/Rule Group siblings), not Velociraptor's own DetectRaptor {Detection:{Name,
+// Criticality}} convention — reuse chainsawImport's shape check + mapper so it isn't misclassified
+// as a generic detection() row, which would read no severity from a sibling field and silently
+// downgrade a real Critical (e.g. "Security Audit Logs Cleared") to a keyword-guessed Medium.
+import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 
 type Row = Record<string, unknown>;
 
@@ -458,7 +465,7 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
 
 // ───────────────────────────── per-row mapping ─────────────────────────────
 
-type Kind = "sigma" | "yara" | "detection" | "eventlog" | "pslist" | "netstat" | "download" | "startup" | "taskscheduler" | "generic";
+type Kind = "sigma" | "yara" | "chainsaw" | "detection" | "eventlog" | "pslist" | "netstat" | "download" | "startup" | "taskscheduler" | "generic";
 
 function artifactName(row: Row): string {
   return firstStr(row, ["_Source", "Artifact", "_Artifact", "artifact", "Source", "ArtifactName"]);
@@ -478,6 +485,11 @@ function classify(row: Row, artifact: string): Kind {
   const rule = getCI(row, "Rule");
   if (typeof rule === "string" && rule.trim() && (getCI(row, "Strings") || getCI(row, "Meta") || getCI(row, "Namespace") || getCI(row, "Rules"))) return "yara";
   if (isObject(rule) && (getCI(rule, "Title") || getCI(rule, "Level"))) return "sigma";
+
+  // Chainsaw's flat Sigma-mapping row (Detection/Severity/Rule Group siblings) — BEFORE the
+  // generic rowVerdict() check below, which would otherwise treat the bare `Detection` string
+  // as a DetectRaptor verdict and never read the sibling `Severity`/`Rule Group` fields.
+  if (isFlatChainsawRow(row)) return "chainsaw";
 
   // A `Detection`/`RuleName` verdict → verdict-first, BEFORE the eventlog branch so a detection
   // that also carries a parsed Windows event (DetectRaptor's Evtx) is overlaid, not flattened.
@@ -1047,6 +1059,7 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     let m: MappedEvent | null;
     if (kind === "yara") { m = mapYara(row, artifact, host, iocSink); detections++; }
     else if (kind === "sigma") { m = mapSigma(row, host, iocSink); detections++; }
+    else if (kind === "chainsaw") { m = mapFlatChainsawRow(row, host, iocSink); detections++; }
     else if (kind === "detection") { m = mapDetection(row, artifact, host, iocSink); detections++; }
     else if (kind === "eventlog") { m = mapEventlog(row, host, iocSink) ?? mapGeneric(row, artifact, host, iocSink); }
     else if (kind === "pslist") { m = mapPslist(row, host, iocSink); }
