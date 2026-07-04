@@ -287,7 +287,7 @@ is a best-effort side effect — the false-positive marking itself always succee
 rejected. Dashboard: the "Confirmed Legitimate" panel/button is now **"False Positives"** / **"🚫 Mark False
 Positive"**.
 
-**IOC whitelist (auto-mark known-good legitimate).** A GLOBAL store (`IocWhitelistStore`, `whitelist/ioc-whitelist.json`
+**IOC whitelist (auto-mark known-good as false positive).** A GLOBAL store (`IocWhitelistStore`, `whitelist/ioc-whitelist.json`
 next to `cases/`, mirrors `ArtifactBundleStore`/`TemplateStore`) holds known-good patterns: **CIDR** (internal IP
 ranges), **exact** (hashes/values), **regex**, each optionally type-scoped. The pure matcher (`analysis/iocWhitelist.ts` —
 IPv4 CIDR containment, regex/exact, CSV/JSON parse+serialize, `sanitizeRuleInput`) is unit-tested independently of I/O.

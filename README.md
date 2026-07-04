@@ -252,8 +252,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Response Playbook** — trackable checklist (status/priority/assignee/due/custom tasks); opt-in IR-templates expand findings into Contain→Investigate→Eradicate→Recover
 - **Triage tags & comments** — label entities + attach notes; live WebSocket sync; survive synthesis
 - **Bulk actions** — multi-select events/IOCs: star/tag/mark-false-positive/enrich/copy
-- **IOC whitelist** (Settings) — CIDR/exact/regex patterns auto-mark matching IOCs legitimate; global; opt-in
-- **NSRL known-good hashes** (Settings) — flat hash set or direct SQLite DB query (~160 GB); auto-marks matching events/IOCs legitimate
+- **IOC whitelist** (Settings) — CIDR/exact/regex patterns auto-mark matching IOCs false-positive; global; opt-in
+- **NSRL known-good hashes** (Settings) — flat hash set or direct SQLite DB query (~160 GB); auto-marks matching events/IOCs false-positive
 - **Payload deobfuscation** — auto-decodes base64 PowerShell (`-enc`, `[Convert]::FromBase64String`); extracts hidden IOCs; shows [Decoded] blocks
 - **CISA KEV integration** (Settings) — cross-reference CVEs against CISA catalog; strong initial-access signal
 - **IOC corroboration** — ⊕ N badge shows how many tools observed each indicator
