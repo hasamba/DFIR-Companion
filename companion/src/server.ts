@@ -7425,7 +7425,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       options.onSecondOpinion?.(caseId);
       logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai", action: "second-opinion",
-        detail: `second opinion ran — ${record.deltas?.length ?? 0} delta(s)${deepReasoning ? " (deep reasoning)" : ""}`,
+        detail: `second opinion ran — ${record.deltas.length} delta(s)${deepReasoning ? " (deep reasoning)" : ""}`,
       });
       return res.status(200).json(record);
     } catch (err) {
