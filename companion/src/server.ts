@@ -107,6 +107,7 @@ import { defaultReportTemplate, isReportSectionEnabled, type ReportSectionKey } 
 import { BUILT_IN_DASHBOARD_VIEWS } from "./analysis/dashboardViews.js";
 import { DashboardViewStore } from "./analysis/dashboardViewStore.js";
 import { injectPrintTrigger } from "./reports/html.js";
+import { ActivityLogStore, ACTIVITY_CATEGORIES, type ActivityCategory } from "./analysis/activityLog.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore, type Tag } from "./analysis/tags.js";
 import { PinnedFindingsStore, PinLimitError } from "./analysis/pinnedFindings.js";
@@ -283,6 +284,10 @@ export interface AppOptions {
   // Dashboard view presets (#142): GLOBAL role/phase layouts (sections + severity/top-N filter +
   // matching report template) the dashboard applies. Built-ins editable in place, custom via CRUD.
   dashboardViewStore?: DashboardViewStore;
+  // Per-case investigation activity log (#238): chronological record of security-relevant
+  // actions. onActivity pings dashboard clients over the WS to re-fetch on a new entry.
+  activityLogStore?: ActivityLogStore;
+  onActivity?: (caseId: string) => void;
   // Investigator comments on case entities (collaboration). onComments pings dashboard
   // clients over the WS to re-fetch when a comment is added/removed.
   commentsStore?: CommentsStore;
@@ -7714,6 +7719,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Per-case investigation activity log (#238): every security-relevant action taken on this
+  // case, newest first. Filter by category; cap by limit (default 200, so a long-lived case
+  // doesn't dump its entire history in one response).
+  app.get("/cases/:id/activity-log", async (req: Request, res: Response) => {
+    if (!options.activityLogStore) return res.status(501).json({ error: "activity log not configured" });
+    const rawCategory = typeof req.query.category === "string" ? req.query.category : "";
+    const category = (ACTIVITY_CATEGORIES as readonly string[]).includes(rawCategory) ? (rawCategory as ActivityCategory) : undefined;
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(1000, Math.floor(rawLimit)) : 200;
+    try {
+      return res.status(200).json(await options.activityLogStore.load(req.params.id, { category, limit }));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Investigator comments on case entities (collaboration). GET lists them; POST adds one
   // to a `(targetType, targetId)` entity; DELETE removes by id. Add/remove ping live clients.
   app.get("/cases/:id/comments", async (req: Request, res: Response) => {
@@ -9147,6 +9168,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   });
   const reportMetaStore = new ReportMetaStore(store);
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
+  const activityLogStore = new ActivityLogStore(store);
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
   const pinnedFindingsStore = new PinnedFindingsStore(store, Number(process.env.DFIR_MAX_PINNED_FINDINGS) || undefined);
@@ -9263,6 +9285,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     reportTemplateControlStore,
     dashboardViewStore,
     onReportTemplate: (caseId) => hub.broadcastTo(caseId, { type: "report_template_changed" }),
+    activityLogStore,
+    onActivity: (caseId) => hub.broadcastTo(caseId, { type: "activity_changed" }),
     commentsStore,
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     tagsStore,
