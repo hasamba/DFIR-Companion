@@ -276,4 +276,15 @@ describe("dashboard.html", () => {
     expect(html).not.toContain('(a.relatedEventIds || []).map(esc).join(", ")');
     expect(html).not.toContain('(result.relatedEventIds || []).map(esc).join(", ")');
   });
+
+  it("makes citation footnotes inside the Explain Event modal clickable, even though #explainOverlay lives outside <main> (#222)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // #explainOverlay must be OUTSIDE <main> (a sibling, not a descendant) — this is what makes the
+    // <main>-scoped delegated .ev-jump handler blind to clicks inside it, and is the precondition
+    // for needing a dedicated listener here.
+    expect(html.indexOf('id="explainOverlay"')).toBeLessThan(html.indexOf("<main>"));
+    // A dedicated click listener scoped to #explainOverlay must handle .ev-jump clicks by calling
+    // jumpToEvent — mirroring the existing #explainOverlay backdrop-close listener right above it.
+    expect(html).toMatch(/document\.getElementById\("explainOverlay"\)\.addEventListener\("click", \(e\) => \{\s*\n\s*const ejump = e\.target\.closest[\s\S]{0,200}jumpToEvent\(ejump\.getAttribute\("data-evid"\)\)/);
+  });
 });

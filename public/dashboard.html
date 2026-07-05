@@ -12698,6 +12698,13 @@
     // Explain-event modal (#141).
     document.getElementById("explainClose").onclick = () => document.getElementById("explainOverlay").classList.remove("open");
     document.getElementById("explainOverlay").addEventListener("click", (e) => { if (e.target.id === "explainOverlay") document.getElementById("explainOverlay").classList.remove("open"); });
+    // Citation footnotes inside the Explain panel (#222) — #explainOverlay lives outside <main>, so
+    // the main-scoped .ev-jump delegated handler (above) never sees these clicks; handle them here
+    // instead. Close the overlay first so the analyst actually sees the highlighted timeline row.
+    document.getElementById("explainOverlay").addEventListener("click", (e) => {
+      const ejump = e.target.closest && e.target.closest(".ev-jump");
+      if (ejump) { e.preventDefault(); document.getElementById("explainOverlay").classList.remove("open"); jumpToEvent(ejump.getAttribute("data-evid")); }
+    });
     // Executive summary generator (stopPropagation so the h2 click doesn't collapse the section).
     document.getElementById("genExecBtn").addEventListener("click", (e) => { e.stopPropagation(); genExecSummary(); });
     // Suggested Fleet Hunts generator (#57) — same stopPropagation guard so clicking ✨ doesn't toggle the section.
