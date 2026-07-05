@@ -6033,6 +6033,7 @@
           return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="pbh-tech">${esc(t)}</a>` : `<span class="pbh-tech">${esc(t)}</span>`;
         }).join("");
         const rationale = s.rationale ? `<div class="pbh-rationale">${esc(s.rationale)}</div>` : "";
+        const cites = citeFindings(s.relatedFindingIds);
         const deployLabel = isCollection ? `▶ Collect on ${esc(s.targetHost)}` : "▶ Deploy hunt (all clients)";
         const deployTitle = isCollection ? `Run this VQL as a collection on ${escAttr(s.targetHost)} only` : "Launch this hunt across ALL enrolled Velociraptor clients";
         const deployBtn = veloEnabled
@@ -6048,6 +6049,7 @@
           + `</div>`
           + `<div class="pbh-body" ${collapsed ? 'style="display:none"' : ""}>`
             + rationale
+            + (cites ? `<div class="pbh-rationale" style="color:var(--c-9aa4b2)">Cites: ${cites}</div>` : "")
             + (techs ? `<div class="pbh-techs">${techs}</div>` : "")
             + `<textarea class="pbh-vql" id="pbhQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
             + `<div class="pbh-actions"><button class="pbh-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}<button class="pbh-regen" data-idx="${idx}" title="Generate a different VQL for this task approaching from a different angle">🔄 Regenerate</button></div>`
@@ -9082,6 +9084,16 @@
       if (!list.length) return "";
       return list.map((id, i) =>
         `<a class="ev-jump cite-badge" data-evid="${escAttr(id)}" title="Jump to event ${escAttr(id)} in the timeline">[${i + 1}]</a>`
+      ).join(" ");
+    }
+    // Numbered, clickable citation footnotes for the findings an AI-suggested hunt names as its
+    // trigger (issue #222). Mirrors citeEvents but jumps to a Finding card (reuses the existing
+    // .finding-jump / jumpToFinding delegated-click mechanism).
+    function citeFindings(ids) {
+      const list = Array.from(new Set((ids || []).map(String).filter(Boolean)));
+      if (!list.length) return "";
+      return list.map((id, i) =>
+        `<a class="finding-jump cite-badge" data-fid="${escAttr(id)}" title="Jump to finding ${escAttr(id)}">[${i + 1}]</a>`
       ).join(" ");
     }
 

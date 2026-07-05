@@ -287,4 +287,11 @@ describe("dashboard.html", () => {
     // jumpToEvent — mirroring the existing #explainOverlay backdrop-close listener right above it.
     expect(html).toMatch(/document\.getElementById\("explainOverlay"\)\.addEventListener\("click", \(e\) => \{\s*\n\s*const ejump = e\.target\.closest[\s\S]{0,200}jumpToEvent\(ejump\.getAttribute\("data-evid"\)\)/);
   });
+
+  it("cites the triggering finding(s) on each AI-suggested playbook hunt card, clickable (#222)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("function citeFindings(");
+    expect(html).toMatch(/function citeFindings[\s\S]{0,400}class="finding-jump/);
+    expect(html).toMatch(/citeFindings\(s\.relatedFindingIds\)/);
+  });
 });
