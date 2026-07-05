@@ -499,6 +499,18 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
     lines.push("_No findings yet._", "");
   } else {
     const sorted = [...state.findings].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+    // Citations (#222): which events each finding cites as its supporting evidence. Prefer the
+    // finding's own relatedEventIds (set by synthesis); fall back to the reverse relatedFindingIds
+    // link on the events themselves for findings persisted before that field existed.
+    const eventsByFinding = new Map<string, ForensicEvent[]>();
+    for (const e of state.forensicTimeline) {
+      for (const fid of e.relatedFindingIds) {
+        const arr = eventsByFinding.get(fid) ?? [];
+        arr.push(e);
+        eventsByFinding.set(fid, arr);
+      }
+    }
+    const eventById = new Map(state.forensicTimeline.map((e) => [e.id, e] as const));
     for (const f of sorted) {
       const confLabel = f.confidence !== undefined ? ` [${f.confidence}% confidence]` : "";
       lines.push(`#### [${f.severity}]${confLabel} ${f.title} (${f.id})`);
@@ -506,6 +518,14 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
       if (f.relatedIocs.length) lines.push(`- IOCs: ${f.relatedIocs.join(", ")}`);
       if (f.mitreTechniques.length) lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);
       if (f.sourceScreenshots.length) lines.push(`- Evidence: ${f.sourceScreenshots.join(", ")}`);
+      const citedIds = (f.relatedEventIds && f.relatedEventIds.length) ? f.relatedEventIds : (eventsByFinding.get(f.id) ?? []).map((e) => e.id);
+      if (citedIds.length) {
+        lines.push(`- Cited events: ${citedIds.map((id, i) => `[${i + 1}] ${cellMd(id)}`).join(", ")}`);
+        for (const [i, id] of citedIds.entries()) {
+          const ev = eventById.get(id);
+          if (ev) lines.push(`  - [${i + 1}] ${ev.timestamp || "(undated)"} [${ev.severity}] ${cellMd(ev.description.slice(0, 200))}`);
+        }
+      }
       lines.push(`- Status: ${f.status} | First seen: ${f.firstSeen} | Updated: ${f.lastUpdated}`, "");
     }
   }

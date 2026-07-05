@@ -4,6 +4,38 @@ import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 describe("renderMarkdownReport", () => {
+  it("cites each finding's supporting forensic events as a numbered footnote list (#222)", () => {
+    const state = emptyState("c1");
+    state.findings.push({ id: "f1", severity: "High", title: "Lateral movement", description: "PsExec used",
+      relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "2026-05-28T10:00:00.000Z",
+      lastUpdated: "2026-05-28T10:00:00.000Z", status: "open", relatedEventIds: ["e1", "e2"] });
+    state.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-28T09:00:00.000Z", description: "PsExec service installed on DC01",
+        severity: "High", mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [] },
+      { id: "e2", timestamp: "2026-05-28T09:05:00.000Z", description: "PsExec connected to FS01",
+        severity: "High", mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [] },
+    );
+
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("Cited events: [1] e1, [2] e2");
+    expect(md).toContain("[1] 2026-05-28T09:00:00.000Z [High] PsExec service installed on DC01");
+    expect(md).toContain("[2] 2026-05-28T09:05:00.000Z [High] PsExec connected to FS01");
+  });
+
+  it("falls back to the reverse relatedFindingIds link when a finding has no relatedEventIds of its own (#222)", () => {
+    const state = emptyState("c1");
+    state.findings.push({ id: "f1", severity: "High", title: "Legacy finding", description: "no citations field",
+      relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "2026-05-28T10:00:00.000Z",
+      lastUpdated: "2026-05-28T10:00:00.000Z", status: "open" });
+    state.forensicTimeline.push(
+      { id: "e9", timestamp: "2026-05-28T09:00:00.000Z", description: "legacy backlinked event",
+        severity: "High", mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [] },
+    );
+
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("Cited events: [1] e9");
+  });
+
   it("renders the derived technical sections under the template structure", () => {
     const state = emptyState("c1");
     state.lastSummary = "Host WIN-01 compromised via phishing.";
