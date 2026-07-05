@@ -1702,6 +1702,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const result = await options.pipeline.hypothesizeGaps(req.params.id);
       logLine(`[gaps] hypothesised ${result.hypotheses.length} timeline gap(s) for ${req.params.id}`);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "hypothesize-gaps", detail: `hypothesized ${result.hypotheses.length} timeline gap(s)`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -2717,6 +2720,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const suggestions = await options.pipeline.suggestMemoryNextSteps(req.params.id);
       logLine(`[memory] suggested ${suggestions.length} next step(s) for ${req.params.id}`);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "memory-next-steps", detail: `suggested ${suggestions.length} next step(s)`,
+      });
       return res.status(200).json({ suggestions });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7493,6 +7499,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!question) return res.status(400).json({ error: "question is required" });
     try {
       const answer = await options.pipeline.ask(req.params.id, question);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "ask", detail: `asked: "${question.slice(0, 120)}"`,
+      });
       return res.status(200).json(answer);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7535,6 +7544,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const result = await options.pipeline.translateQuery(req.params.id, request, platforms);
       logLine(`[translate-query] produced ${result.queries.length} query/ies for ${req.params.id}`);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "translate-query", detail: `translated: "${request.slice(0, 120)}" — ${result.queries.length} quer(y/ies)`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7550,6 +7562,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(409).json({ error: "The Executive summary section is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "executiveSummary" });
     try {
       const result = await options.pipeline.executiveSummary(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "executive-summary", detail: "executive summary generated",
+      });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7563,6 +7578,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for remediation plan" });
     try {
       const result = await options.pipeline.remediationPlan(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "remediation-plan", detail: "remediation plan generated",
+      });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7580,6 +7598,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(409).json({ error: "The Timeline section (which contains the narrative) is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "timeline" });
     try {
       const result = await options.pipeline.generateNarrative(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "narrative", detail: "narrative timeline generated",
+      });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
