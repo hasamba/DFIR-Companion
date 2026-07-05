@@ -7828,6 +7828,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         author: typeof req.body?.author === "string" ? req.body.author : "",
       });
       options.onComments?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "collaboration", action: "comment-added", actor: comment.author,
+        detail: `comment on ${targetType} ${targetId}`, targetType, targetId,
+      });
       return res.status(201).json(comment);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7840,6 +7844,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const removed = await options.commentsStore.remove(req.params.id, req.params.commentId);
       if (!removed) return res.status(404).json({ error: "comment not found" });
       options.onComments?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "collaboration", action: "comment-removed", detail: `comment ${req.params.commentId} removed`,
+      });
       return res.status(204).end();
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7870,6 +7877,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         author: typeof req.body?.author === "string" ? req.body.author : "",
       });
       options.onTags?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "collaboration", action: "tag-added", actor: tag.author,
+        detail: `tagged ${targetType} ${targetId} "${label}"`, targetType, targetId,
+      });
       return res.status(201).json(tag);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7882,6 +7893,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const removed = await options.tagsStore.remove(req.params.id, req.params.tagId);
       if (!removed) return res.status(404).json({ error: "tag not found" });
       options.onTags?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "collaboration", action: "tag-removed", detail: `tag ${req.params.tagId} removed`,
+      });
       return res.status(204).end();
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
