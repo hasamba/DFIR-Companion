@@ -7381,6 +7381,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         } catch { /* non-fatal */ }
       }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "ai", action: "synthesis",
+        detail: `synthesis ran — ${state.findings.length} finding(s), ${state.mitreTechniques.length} technique(s)${deepReasoning ? " (deep reasoning)" : ""}`,
+      });
       return res.status(200).json({
         findings: state.findings.length,
         mitreTechniques: state.mitreTechniques.length,
@@ -7396,6 +7400,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         return res.status(499).json({ error: "synthesis cancelled" });
       }
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "ai", action: "synthesis", detail: (err as Error).message, outcome: "error",
+      });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -7416,6 +7423,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const record = await options.pipeline.secondOpinion(caseId, { deepReasoning });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       options.onSecondOpinion?.(caseId);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "ai", action: "second-opinion",
+        detail: `second opinion ran — ${record.deltas?.length ?? 0} delta(s)${deepReasoning ? " (deep reasoning)" : ""}`,
+      });
       return res.status(200).json(record);
     } catch (err) {
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
@@ -7444,6 +7455,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const { record } = await options.pipeline.applySecondOpinion(req.params.id, deltaId, accept);
       options.onSecondOpinion?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "second-opinion-apply", detail: `delta ${deltaId} — ${accept ? "accepted" : "rejected"}`,
+      });
       return res.status(200).json(record);
     } catch (err) {
       const msg = (err as Error).message;
@@ -7460,6 +7474,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const { record } = await options.pipeline.applyAllSecondOpinion(req.params.id, accept);
       options.onSecondOpinion?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "second-opinion-apply-all", detail: `all pending deltas — ${accept ? "accepted" : "rejected"}`,
+      });
       return res.status(200).json(record);
     } catch (err) {
       const msg = (err as Error).message;
