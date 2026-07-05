@@ -292,6 +292,23 @@ describe("dashboard.html", () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain("function citeFindings(");
     expect(html).toMatch(/function citeFindings[\s\S]{0,400}class="finding-jump/);
-    expect(html).toMatch(/citeFindings\(s\.relatedFindingIds\)/);
+    // PlaybookHuntSuggestion (playbookHunt.ts) has NO relatedFindingIds field of its own — unlike
+    // huntSuggest.ts's HuntSuggestion. `citeFindings(s.relatedFindingIds)` would always be "" (dead
+    // code that only type-checks because JS has no runtime field check). The real citation must be
+    // derived from the enclosing task's own (singular) relatedFindingId via playbookTasks.find(...).
+    // Scoped to renderTaskHunts specifically — the sibling fleet-hunt panel legitimately DOES call
+    // citeFindings(s.relatedFindingIds) (see the next test), so a file-wide assertion would be wrong.
+    expect(html).toMatch(/function renderTaskHunts[\s\S]{0,3000}playbookTasks\.find\(t => t\.id === taskId\)/);
+    expect(html).toMatch(/function renderTaskHunts[\s\S]{0,3000}_pbhTask\.relatedFindingId/);
+    expect(html).toMatch(/function renderTaskHunts[\s\S]{0,3000}citeFindings\(_pbhFindingIds\)/);
+    expect(html).not.toMatch(/function renderTaskHunts[\s\S]{0,3000}citeFindings\(s\.relatedFindingIds\)/);
+  });
+
+  it("cites the triggering finding(s) on each AI-suggested fleet-hunt card (#222)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // Unlike the playbook-hunt suggestions above, HuntSuggestion (huntSuggest.ts) DOES carry a real,
+    // AI-populated relatedFindingIds array — so the fleet-hunt panel can cite it directly.
+    expect(html).toMatch(/function renderVeloHuntSuggest[\s\S]{0,2000}citeFindings\(s\.relatedFindingIds\)/);
+    expect(html).toMatch(/citeFindings\(s\.relatedFindingIds\)[\s\S]{0,1200}class="vhs-card"/);
   });
 });

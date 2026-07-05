@@ -6019,6 +6019,12 @@
       const items = [];
       pbHuntFlat.forEach((s, idx) => { if (s.taskId === taskId) items.push({ s, idx }); });
       if (!items.length) return "";
+      // PlaybookHuntSuggestion (playbookHunt.ts) has NO relatedFindingIds field of its own — unlike
+      // huntSuggest.ts's HuntSuggestion (the sibling fleet-hunt panel). Every suggestion in THIS call
+      // belongs to the same enclosing task, so derive the citation from that task's own (singular)
+      // relatedFindingId, set when the task was auto-derived from a Critical/High finding (#222).
+      const _pbhTask = playbookTasks.find(t => t.id === taskId);
+      const _pbhFindingIds = _pbhTask && _pbhTask.relatedFindingId ? [_pbhTask.relatedFindingId] : [];
       return items.map(({ s, idx }) => {
         const sev = s.severity || "Medium";
         const sevColor = VHS_SEV_COLOR[sev] || "#9aa4b2";
@@ -6033,7 +6039,7 @@
           return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="pbh-tech">${esc(t)}</a>` : `<span class="pbh-tech">${esc(t)}</span>`;
         }).join("");
         const rationale = s.rationale ? `<div class="pbh-rationale">${esc(s.rationale)}</div>` : "";
-        const cites = citeFindings(s.relatedFindingIds);
+        const cites = citeFindings(_pbhFindingIds);
         const deployLabel = isCollection ? `▶ Collect on ${esc(s.targetHost)}` : "▶ Deploy hunt (all clients)";
         const deployTitle = isCollection ? `Run this VQL as a collection on ${escAttr(s.targetHost)} only` : "Launch this hunt across ALL enrolled Velociraptor clients";
         const deployBtn = veloEnabled
@@ -10196,6 +10202,7 @@
           return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="vhs-tech">${esc(t)}</a>` : `<span class="vhs-tech">${esc(t)}</span>`;
         }).join("");
         const rationale = s.rationale ? `<div class="vhs-rationale">${esc(s.rationale)}</div>` : "";
+        const cites = citeFindings(s.relatedFindingIds);
         const deployBtn = veloEnabled
           ? `<button class="vhs-deploy" data-idx="${idx}" title="Launch this hunt across ALL enrolled Velociraptor clients">▶ Deploy hunt (all clients)</button>`
           : `<button class="vhs-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">▶ Deploy hunt (all clients)</button>`;
@@ -10207,6 +10214,7 @@
         return `<div class="vhs-card">`
           + `<div class="vhs-head"><span class="vhs-title">${esc(s.title)}</span>${sevBadge}</div>`
           + rationale
+          + (cites ? `<div class="vhs-rationale" style="color:var(--c-9aa4b2)">Cites: ${cites}</div>` : "")
           + (techs ? `<div class="vhs-techs">${techs}</div>` : "")
           + `<textarea class="vhs-vql" id="vhsQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
           + `<div class="vhs-actions"><button class="vhs-copy" data-idx="${idx}">Copy VQL</button>${regenBtn}${deployBtn}</div>`
