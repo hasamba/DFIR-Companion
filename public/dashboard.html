@@ -8009,7 +8009,7 @@
       fetch(`/cases/${caseId}/ask`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: q }) })
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
         .then(a => {
-          const events = (a.relatedEventIds || []).map(esc).join(", ");
+          const events = citeEvents(a.relatedEventIds);
           box.innerHTML =
             `<div class="finding">` +
             `<div>${askStatusBadge(a.status)} <strong>${esc(q)}</strong></div>` +
@@ -8056,7 +8056,7 @@
               + (q.rationale ? `<div style="padding:6px 10px;font-size:11px;color:var(--c-9aa4b2)">${esc(q.rationale)}</div>` : "")
               + `</div>`;
           }).join("");
-          const cited = (result.relatedEventIds || []).map(esc).join(", ");
+          const cited = citeEvents(result.relatedEventIds);
           bodyEl.innerHTML =
             section("What happened", result.summary, "var(--c-c9d1d9)") +
             section("Why it matters", result.whyItMatters, "var(--c-6aa9ff)") +

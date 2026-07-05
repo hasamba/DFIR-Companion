@@ -267,4 +267,13 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/buckets\.length < 2\)[\s\S]{0,60}caption\.hidden = true/);
     expect(html).toMatch(/caption\.hidden = false/);
   });
+
+  it("renders Ask-the-case and Explain-Event citations as clickable jump-to-event footnotes, not plain text (#222)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toMatch(/const events = citeEvents\(a\.relatedEventIds\)/);
+    expect(html).toMatch(/const cited = citeEvents\(result\.relatedEventIds\)/);
+    // The old plain esc-and-join rendering must be gone, not just supplemented.
+    expect(html).not.toContain('(a.relatedEventIds || []).map(esc).join(", ")');
+    expect(html).not.toContain('(result.relatedEventIds || []).map(esc).join(", ")');
+  });
 });
