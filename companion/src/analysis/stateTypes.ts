@@ -40,6 +40,10 @@ export interface Finding {
   relatedIocs: string[];        // IOC ids
   sourceScreenshots: string[];  // screenshot filenames
   mitreTechniques: string[];    // technique ids, e.g. "T1059"
+  // Forensic-event ids this finding cites as its supporting evidence (issue #222 — cited AI
+  // answers). Only synthesis populates it (extraction can't know finding ids yet); optional so
+  // findings persisted before this field existed still validate.
+  relatedEventIds?: string[];
   firstSeen: string;
   lastUpdated: string;
   status: FindingStatus;
