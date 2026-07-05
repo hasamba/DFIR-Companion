@@ -1,4 +1,4 @@
-import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, ProviderError, httpErrorKind, httpErrorMessage } from "./provider.js";
+import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, ProviderError, httpErrorKind, httpErrorMessage, requestSignal } from "./provider.js";
 
 type FetchFn = typeof fetch;
 
@@ -39,7 +39,7 @@ export class GeminiProvider implements AIProvider {
             ...(this.opts.maxTokens ? { maxOutputTokens: this.opts.maxTokens } : {}),
           },
         }),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: requestSignal(timeoutMs, req.signal),
       });
     } catch (err) {
       const msg = (err as Error).name === "TimeoutError"

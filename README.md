@@ -299,6 +299,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Dashboard & reports
 - **Live dashboard** over WebSocket — collapsible, drag-to-reorder sections, scope bar, clickable evidence links, badges
+- **Background jobs** — a toolbar badge/popover tracks running imports, synthesis, and enrichment (`/api/jobs`); Cancel hard-aborts a long/stuck run
 - **Dark/light theme** — toggle or OS preference
 - **Forensic timeline rows** — affected host + clickable finding links; report has Host column
 - **Manual add** — record missed events/IOCs (tagged `manual`, survives re-analysis)

@@ -29,6 +29,10 @@ export interface EnrichOptions {
   monotonic?: () => number;               // injected ms clock for call timing (default Date.now)
   onProgress?: (done: number, total: number) => void;
   onLookup?: (event: EnrichLookupEvent) => void;   // fired per provider call (for logging)
+  // External cancellation (#225). Checked between IOCs so a long throttled run (up to maxIocs ×
+  // delayMs) can be stopped by the analyst; already-enriched IOCs from this run are still returned
+  // (enrichment is additive, so a partial result is safe to persist).
+  signal?: AbortSignal;
   // Reachability gate. When provided, each provider is health-checked (cached ~60s) before we
   // send it any indicator; a provider probed DOWN is skipped — not queried, not recorded as
   // "checked" — so a dead MISP/YETI isn't hit once per IOC, and recovers retry on a later run.
@@ -94,6 +98,7 @@ export async function enrichIocs(
   const downReported = new Set<string>();          // providers we've already logged as unreachable this run
 
   for (const { ioc, idx, kind, todo } of toQuery) {
+    if (opts.signal?.aborted) break;   // #225: analyst cancelled — stop before the next IOC, keep what's done
     const succeeded = new Set<string>();   // providers whose call returned (hit OR miss) — NOT errors
     const fresh: IocEnrichment[] = [];
     let queriedThisIoc = false;            // a real provider call was made for this IOC

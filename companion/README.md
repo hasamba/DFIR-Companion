@@ -470,6 +470,25 @@ the WebSocket), and any sweep with failures also fires a notification to your co
 Slack/Teams/email channel. Closed cases are skipped. Tune with `DFIR_DROP_ENABLED` /
 `DFIR_DROP_POLL_S` / `DFIR_DROP_MAX_BYTES` (see `.env.example`).
 
+## Background jobs (#225)
+
+Heavy async operations already run off the HTTP response (imports return `202`, synthesis and
+enrichment run in the background). They are now also tracked as **jobs** so the dashboard can show
+what is running and cancel a long/stuck one:
+
+- `GET /api/jobs?caseId=<id>` — list jobs (newest first, optionally per case).
+- `GET /api/jobs/:id` — one job.
+- `POST /api/jobs/:id/cancel` — cancel a running **cancellable** job (`200`); `409` if it already
+  finished, `422` if it is not cancellable, `404` if unknown.
+
+Only AI/network jobs are cancellable — **synthesis**, **enrichment**, and **CSV/log imports** thread
+an `AbortSignal` into the provider call (combined with the request timeout via `AbortSignal.any`), so
+a cancel truly aborts the call and stops token spend. A **deterministic** import parses synchronously
+and finishes before a cancel could arrive, so it is tracked but not cancellable. Every transition is
+broadcast over the WebSocket (`job_changed`), driving the toolbar **⚙ Jobs** badge + popover. The
+registry is in-memory (not persisted — in-flight jobs are lost on restart) and capped by
+`DFIR_JOBS_MAX` (default 100; oldest finished jobs evicted, running ones never).
+
 ## Case folder layout
 
     cases/<caseId>/

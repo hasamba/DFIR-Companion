@@ -1,4 +1,4 @@
-import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, type ProviderUsage, ProviderError, httpErrorKind, httpErrorMessage } from "./provider.js";
+import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, type ProviderUsage, ProviderError, httpErrorKind, httpErrorMessage, requestSignal } from "./provider.js";
 
 type FetchFn = typeof fetch;
 
@@ -70,7 +70,7 @@ export class AnthropicProvider implements AIProvider {
           system: [{ type: "text", text: req.systemPrompt, cache_control: { type: "ephemeral" } }],
           messages: [{ role: "user", content }],
         }),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: requestSignal(timeoutMs, req.signal),
       });
     } catch (err) {
       const msg = (err as Error).name === "TimeoutError"

@@ -11,6 +11,9 @@ export interface AnalyzeRequest {
   // supporting provider lets the model reason step-by-step BEFORE answering — used for the complex
   // synthesis call. Ignored by providers/models without a thinking/reasoning mode (graceful no-op).
   thinkingTokens?: number;
+  // External cancellation (#225). A background job (e.g. synthesis) threads its AbortSignal here so
+  // the analyst can cancel a long call; providers combine it with their own timeout via requestSignal.
+  signal?: AbortSignal;
 }
 
 // Token accounting a provider reports back, when it does. All optional — most providers
@@ -69,6 +72,14 @@ export function httpErrorMessage(provider: string, status: number, body?: string
     default:
       return `${provider} HTTP ${status}${snippet}`;
   }
+}
+
+// Build the AbortSignal for a provider request: the per-request timeout, combined with an optional
+// external cancel signal (#225) via AbortSignal.any so EITHER firing aborts the fetch. When the
+// caller passes no external signal this is just the timeout (unchanged behavior).
+export function requestSignal(timeoutMs: number, external?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return external ? AbortSignal.any([external, timeout]) : timeout;
 }
 
 export interface AIProvider {

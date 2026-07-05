@@ -1478,6 +1478,7 @@ export class AnalysisPipeline {
       rowsPerBatch?: number;
       minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
+      signal?: AbortSignal;      // #225: analyst cancel — aborts the in-flight AI call + stops between batches
     },
   ): Promise<InvestigationState> {
     const provider = this.requireProvider("CSV analysis");
@@ -1499,6 +1500,7 @@ export class AnalysisPipeline {
     const batches = batchByBudget(rows, opts.rowsPerBatch ?? 50, (r) => r.join(","), rowBudget);
 
     for (let b = 0; b < batches.length; b++) {
+      if (opts.signal?.aborted) break;   // #225: cancelled — stop before the next batch, keep prior batches
       const csvChunk = chunkToCsvText(headers, batches[b]);
       const userPrompt =
         `${buildStateSummary(state)}\n\nCSV ARTIFACT ROWS (source: ${opts.label}; batch ${b + 1}/${batches.length}). ` +
@@ -1506,7 +1508,7 @@ export class AnalysisPipeline {
         `Return the JSON delta.`;
 
       const delta = await withRetry(async () => {
-        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [] }, "csv");
+        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "csv");
         return deltaSchema.parse(parsed);
       }, retries, backoffMs);
 
@@ -1546,6 +1548,7 @@ export class AnalysisPipeline {
       patternsPerBatch?: number; // how many distinct patterns to triage per AI call
       minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
       onProgress?: (done: number, total: number) => void;
+      signal?: AbortSignal;      // #225: analyst cancel — aborts the in-flight AI call + stops between batches
     },
   ): Promise<InvestigationState> {
     const provider = this.requireProvider("log analysis");
@@ -1569,6 +1572,7 @@ export class AnalysisPipeline {
     const batches = batchByBudget(templates, opts.patternsPerBatch ?? 120, renderPattern, patternBudget);
 
     for (let b = 0; b < batches.length; b++) {
+      if (opts.signal?.aborted) break;   // #225: cancelled — stop before the next batch, keep prior batches
       // Present each pattern with its occurrence count, time span, and an example.
       const patternText = batches[b]
         .map((t, i) =>
@@ -1585,7 +1589,7 @@ export class AnalysisPipeline {
         `Return the JSON delta.`;
 
       const delta = await withRetry(async () => {
-        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [] }, "log");
+        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "log");
         return deltaSchema.parse(parsed);
       }, retries, backoffMs);
 
@@ -3925,7 +3929,7 @@ export class AnalysisPipeline {
   // (no save, no synth-meta, no notifications, no accepted-delta re-apply) — used by the second
   // opinion (issue #116) to compute model B's analysis non-destructively. `provider` overrides the
   // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
-  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider } & SynthThinkingInput = {}): Promise<InvestigationState> {
+  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal } & SynthThinkingInput = {}): Promise<InvestigationState> {
     const synthProvider = opts.provider ?? this.opts.synthesisProvider ?? this.requireProvider("synthesis");
     const loaded = await this.opts.stateStore.load(caseId);
     if (loaded.forensicTimeline.length === 0) return loaded;
@@ -4096,7 +4100,7 @@ export class AnalysisPipeline {
         caseId,
         state,
         synthProvider,
-        { systemPrompt: getSynthesisPrompt(), userPrompt, images: [], ...(synthThinkingTokens > 0 ? { thinkingTokens: synthThinkingTokens } : {}) },
+        { systemPrompt: getSynthesisPrompt(), userPrompt, images: [], ...(synthThinkingTokens > 0 ? { thinkingTokens: synthThinkingTokens } : {}), ...(opts.signal ? { signal: opts.signal } : {}) },
         "synthesis",
       );
       return deltaSchema.parse(parsed);

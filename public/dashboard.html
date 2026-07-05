@@ -868,6 +868,26 @@
     .report-links a { color: var(--c-6aa9ff); text-decoration: none; }
     .report-links a:hover { text-decoration: underline; }
     #aiStatus { font-size: 12px; padding: 3px 8px; border-radius: 10px; }
+    /* Background jobs widget (#225) — badge + popover in the toolbar. */
+    #jobsBadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #6aa9ff22; border: 1px solid #6aa9ff55; }
+    .jobs-menu { position: fixed; right: 12px; top: 52px; z-index: 1000; width: 340px; max-height: 70vh; overflow-y: auto;
+      background: var(--c-161b22); border: 1px solid var(--c-2a2f3a); border-radius: 8px; padding: 8px; box-shadow: 0 8px 24px #0009; }
+    .jobs-menu h3 { margin: 2px 4px 8px; font-size: 12px; color: var(--c-9aa4b2); font-weight: normal; text-transform: uppercase; letter-spacing: .04em; }
+    .job-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; background: var(--c-0d1117); border: 1px solid var(--c-232a33);
+      border-radius: 5px; padding: 5px 8px; font-size: 12px; margin-bottom: 6px; }
+    .job-kind { text-transform: uppercase; font-size: 10px; letter-spacing: .04em; color: var(--c-9aa4b2); }
+    .job-label { color: var(--c-d6deea); word-break: break-all; flex: 1 1 140px; min-width: 0; }
+    .job-st { border-radius: 3px; padding: 0 6px; font-size: 10px; font-weight: bold; white-space: nowrap; flex: 0 0 auto; align-self: center; }
+    .job-running { background: #6aa9ff22; color: #6aa9ff; border: 1px solid #6aa9ff55; }
+    .job-done { background: #2f8f4e22; color: #6bcb77; border: 1px solid #2f8f4e55; }
+    .job-error { background: #ff5a5a22; color: #ff8f8f; border: 1px solid #ff5a5a55; }
+    .job-cancelled { background: #9aa4b222; color: #9aa4b2; border: 1px solid #9aa4b255; }
+    .job-cancel { margin-left: auto; flex: 0 0 auto; align-self: center; white-space: nowrap; background: var(--c-ff9f43); border: 1px solid var(--c-ff9f43);
+      color: #1a1f29; border-radius: 4px; padding: 3px 12px; font-size: 11px; font-weight: bold; line-height: 1.4; cursor: pointer; }
+    .job-cancel:hover { filter: brightness(1.1); }
+    .job-cancel:disabled { opacity: .5; cursor: default; }
+    .job-detail { flex-basis: 100%; color: var(--c-9aa4b2); font-size: 11px; }
+    .jobs-empty { color: var(--c-9aa4b2); font-size: 12px; padding: 4px; }
     .ai-unknown { background: var(--c-2a2f3a); color: var(--c-9aa4b2); }
     .ai-off { background: var(--c-2a2f3a); color: var(--c-9aa4b2); }
     .ai-idle { background: var(--c-1e3a2a); color: var(--c-6bcb77); }
@@ -1299,6 +1319,8 @@
     <span id="aiStatus" class="ai-unknown" style="margin-left:auto; font-weight:bold;">AI: —</span>
     <span id="captureCount" style="font-weight:bold;"><span class="cc-label">Screenshots:</span> <span id="captureCountNum">0</span></span>
     <span id="veloMonitorBadge" title="Live Velociraptor monitoring active — click to manage in Settings → Velociraptor" style="display:none;cursor:pointer;font-weight:bold;color:#ff5a5a;"></span>
+    <span id="jobsBadge" title="Background jobs — click to view or cancel running work" style="display:none;cursor:pointer;font-weight:bold;color:#6aa9ff;"></span>
+    <div id="jobsMenu" class="jobs-menu" style="display:none"></div>
     </div>
     <button id="themeToggle" type="button" title="Toggle light / dark theme" aria-label="Toggle light or dark theme" aria-pressed="false"><svg class="ti-moon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg class="ti-sun" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
     <button id="settingsBtn" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.07 7.07 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 3h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 9.47a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41H14c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.09-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
@@ -8502,6 +8524,67 @@
       }
     }
 
+    // ── Background jobs (#225) ──────────────────────────────────────────────────
+    // A toolbar badge shows the count of RUNNING heavy operations (import / synthesis / enrichment);
+    // clicking it opens a popover to view recent jobs and cancel a long/stuck one. Fed by GET
+    // /api/jobs and refreshed on the job_changed WS event.
+    let _jobsCache = [];
+    // Resolve the connected case id from the input element. NOTE: a bare `caseId` at this outer
+    // script scope resolves to the #caseId DOM ELEMENT (browsers expose id'd elements as window
+    // globals), NOT the string — so we must read `.value` here rather than trust any argument.
+    function jobsCaseId() { const el = document.getElementById("caseId"); return el && typeof el.value === "string" ? el.value.trim() : ""; }
+    function loadJobs() {
+      const cid = jobsCaseId();
+      if (!cid) return;
+      fetch(`/api/jobs?caseId=${encodeURIComponent(cid)}`)
+        .then(r => (r.ok ? r.json() : { jobs: [] }))
+        .then(d => { _jobsCache = Array.isArray(d.jobs) ? d.jobs : []; renderJobs(); })
+        .catch(() => {});
+    }
+    function renderJobs() {
+      const badge = document.getElementById("jobsBadge");
+      const menu = document.getElementById("jobsMenu");
+      if (!badge || !menu) return;
+      const running = _jobsCache.filter(j => j.status === "running");
+      const menuOpen = menu.style.display !== "none";
+      if (running.length) { badge.style.display = ""; badge.textContent = `⚙ ${running.length} job${running.length > 1 ? "s" : ""}`; }
+      else if (menuOpen && _jobsCache.length) { badge.style.display = ""; badge.textContent = "⚙ jobs"; } // keep it clickable while the popover is open so it can't vanish under the cursor
+      else { badge.style.display = "none"; if (menuOpen && !_jobsCache.length) menu.style.display = "none"; }
+      const recent = _jobsCache.slice(0, 12); // running + recently finished
+      menu.innerHTML = `<h3>Background jobs</h3>` + (recent.length
+        ? recent.map(j => {
+            const cancelBtn = (j.status === "running" && j.cancellable)
+              ? `<button class="job-cancel" data-job="${esc(j.id)}">Cancel</button>` : "";
+            const prog = j.progress ? ` ${j.progress.done}/${j.progress.total}` : "";
+            const detail = (j.detail || prog)
+              ? `<span class="job-detail">${esc(j.detail || "")}${esc(prog)}</span>` : "";
+            return `<div class="job-row"><span class="job-kind">${esc(j.kind)}</span>`
+              + `<span class="job-label">${esc(j.label || "")}</span>`
+              + `<span class="job-st job-${esc(j.status)}">${esc(j.status)}</span>`
+              + cancelBtn + detail + `</div>`;
+          }).join("")
+        : `<div class="jobs-empty">No jobs yet.</div>`);
+      menu.querySelectorAll(".job-cancel").forEach(b => b.addEventListener("click", () => cancelJob(b.dataset.job, b)));
+    }
+    function cancelJob(id, btn) {
+      if (btn) { btn.disabled = true; btn.textContent = "Cancelling…"; }
+      fetch(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" })
+        .then(r => { if (!r.ok && r.status === 404) document.getElementById("status").textContent = "Job endpoint missing — restart the companion server."; })
+        .catch(() => {})
+        .finally(() => loadJobs(caseId));
+    }
+    document.getElementById("jobsBadge").addEventListener("click", () => {
+      const menu = document.getElementById("jobsMenu");
+      const show = menu.style.display === "none";
+      menu.style.display = show ? "" : "none";
+      if (show) loadJobs(caseId);
+    });
+    document.addEventListener("click", (e) => {
+      const menu = document.getElementById("jobsMenu");
+      if (!menu || menu.style.display === "none") return;
+      if (!menu.contains(e.target) && e.target.id !== "jobsBadge") menu.style.display = "none";
+    });
+
     // Poll the capture count (new screenshots arrive via the extension, not the WS) every 5s while
     // the tab is VISIBLE; pause entirely when it's hidden — background tabs were just emitting an
     // idle GET/min (browser-throttled) for no benefit. Resumes (and refreshes once) on re-focus.
@@ -11902,6 +11985,7 @@
       loadSecondOpinion(caseId);
       loadImportMeta(caseId);
       loadDropStatus(caseId);
+      loadJobs(caseId);   // #225 background-jobs badge/popover
       loadUndoStack(caseId);
       loadCustomerExposure(caseId);
       loadCaseLifecycle(caseId);
@@ -11944,6 +12028,7 @@
         if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
+        else if (msg.type === "job_changed") loadJobs(caseId);
         else if (msg.type === "capture_ingest") {
           // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
           // otherwise the extension is feeding a different case than we're viewing — warn.

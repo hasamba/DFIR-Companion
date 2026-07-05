@@ -1,5 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { ProviderRegistry, MockProvider, type AnalyzeRequest } from "../../src/providers/provider.js";
+import { ProviderRegistry, MockProvider, requestSignal, type AnalyzeRequest } from "../../src/providers/provider.js";
+
+describe("requestSignal (#225 cancel)", () => {
+  it("returns a plain timeout signal when no external signal is given", () => {
+    const s = requestSignal(50_000);
+    expect(s).toBeInstanceOf(AbortSignal);
+    expect(s.aborted).toBe(false);
+  });
+
+  it("aborts immediately when the external signal is already aborted", () => {
+    const external = AbortSignal.abort();
+    const s = requestSignal(50_000, external);
+    expect(s.aborted).toBe(true);
+  });
+
+  it("aborts when the external signal fires later (combined via AbortSignal.any)", () => {
+    const controller = new AbortController();
+    const s = requestSignal(50_000, controller.signal);
+    expect(s.aborted).toBe(false);
+    controller.abort();
+    expect(s.aborted).toBe(true);
+  });
+});
 
 describe("ProviderRegistry", () => {
   it("registers and resolves a provider by name", () => {

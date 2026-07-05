@@ -9,6 +9,7 @@ import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
 import { atomicWrite } from "./storage/atomicWrite.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
+import { JobManager } from "./analysis/jobManager.js";
 import { AnonControlStore, type AnonControl } from "./analysis/anonControl.js";
 import { CustomEntitiesStore, sanitizeCustomEntities } from "./analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
@@ -441,6 +442,10 @@ export interface AppOptions {
   artifactBundleStore?: ArtifactBundleStore;
   veloHuntStore?: VeloHuntStore;
   onVeloHunt?: (caseId: string) => void;
+  // Background-job registry (#225): tracks heavy async operations (import / synthesis / enrichment)
+  // as cancellable Jobs for the dashboard Jobs panel + /api/jobs. Constructed in startServer (its
+  // onJob hook WS-broadcasts job_changed); absent in createApp-only unit tests + scripts/* pipelines.
+  jobManager?: JobManager;
   // Hunting feedback loop (#157): per-case ledger of deployed hunts + their outcomes (hit/miss +
   // counts). Recorded on deploy (bundle + suggested fleet/playbook/technique hunts), filled on collect,
   // read by the suggestion routes (exclude + "PRIOR HUNTS" context) and the dashboard hunting profile.
@@ -2778,7 +2783,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
                                               // hunt around the same moment (VeloHuntStore has no lock/CAS) —
                                               // checked+set synchronously before any await.
 
-  type ImportBase = { label: string; idPrefix: string; importedAt: string; onProgress?: (done: number, total: number) => void; minSeverity?: Severity };
+  type ImportBase = { label: string; idPrefix: string; importedAt: string; onProgress?: (done: number, total: number) => void; minSeverity?: Severity; signal?: AbortSignal };
 
   // User-authored declarative importers (external plugin layer). Loaded async at startup; empty
   // until the load resolves (parity with the velociraptor inventory / iris reconnect self-heals).
@@ -4807,9 +4812,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   function enrichInBackground(caseId: string, force = false): void {
     if (allProviders.length === 0 || !options.stateStore) return;
+    let job: { jobId: string; signal?: AbortSignal } | undefined; // #225: registered once providers are known
     void (async () => {
       const providers = await enabledProvidersFor(caseId);
       if (providers.length === 0) { enrichPending.delete(caseId); return; }     // nothing enabled — drop any stale pending mark so the poller can idle
+      // #225: track enrichment as a cancellable job — a throttled run (up to maxIocs × delayMs) can be long.
+      job = options.jobManager?.register({ caseId, kind: "enrichment", label: `enrich (${providers.map((p) => p.name).join(", ")})`, cancellable: true });
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `enriching IOCs (${providers.map((p) => p.name).join(", ")})` });
       const state = await options.stateStore!.load(caseId);
       logLine(`[enrich] ${caseId} START providers=[${providers.map((p) => p.name).join(", ")}] force=${force} iocs=${state.iocs.length}`);
@@ -4819,6 +4827,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         perProviderDelayMs: options.enrichProviderDelayMs,
         maxIocs: options.enrichMaxIocs,
         force,
+        signal: job?.signal,    // #225: analyst cancel — stop between IOCs (partial enrichment is additive/safe)
         health: enrichHealth,   // probe each provider (cached ~60s) before sending — skip the dead ones
         onProgress: (done, total) => options.onAiStatus?.(caseId, {
           status: "analyzing", phase: "extracting", at: new Date().toISOString(),
@@ -4864,8 +4873,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       });
       const chainNote = chainSummary ? `; chains ${chainSummary.anomalies} anomalous/${chainSummary.checked}` : "";
       const skipNote = summary.unavailable.length ? `; skipped ${summary.unavailable.join(", ")} (unreachable — will retry)` : "";
+      if (job) options.jobManager?.finish(job.jobId); // no-op if a cancel already marked it cancelled
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}${skipNote}` });
-    })().catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+    })().catch((err) => {
+      if (job) options.jobManager?.fail(job.jobId, err); // no-op if already terminal (cancelled)
+      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+    });
   }
 
   // After IOCs change (synthesis/import), enrich the new ones if the toggle is on. The
@@ -4915,13 +4928,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // re-synthesized. Enrichment is a separate, independently-gated feature (threat-intel
       // lookups, not an LLM call), so it still runs regardless of the AI toggle.
       if (!(await getControl(caseId)).enabled) { autoEnrichIfEnabled(caseId); return; }
+      // #225: track synthesis as a cancellable job so the dashboard can list it + abort a long/stuck run.
+      const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "re-synthesis", cancellable: true });
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "re-synthesizing without legitimate items" });
       try {
-        await pipeline.synthesize(caseId);
+        await pipeline.synthesize(caseId, job?.signal ? { signal: job.signal } : {});
+        if (job) options.jobManager?.finish(job.jobId);
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
         autoEnrichIfEnabled(caseId);
       } catch (err) {
-        options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+        const aborted = job?.signal?.aborted === true;
+        if (job) options.jobManager?.fail(job.jobId, err); // no-op if the job was already cancelled
+        options.onAiStatus?.(caseId, aborted
+          ? { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" }
+          : { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
       }
     })();
   }
@@ -5702,6 +5722,27 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Background jobs (#225): list + inspect + cancel the heavy async operations (import / synthesis /
+  // enrichment) tracked by the JobManager, so the dashboard can render a Jobs panel and stop a
+  // long/stuck run. Read-only when no jobManager is wired (createApp-only unit tests) — empty list.
+  app.get("/api/jobs", (req: Request, res: Response) => {
+    const caseId = typeof req.query.caseId === "string" ? req.query.caseId : undefined;
+    return res.status(200).json({ jobs: options.jobManager?.list(caseId) ?? [] });
+  });
+  app.get("/api/jobs/:id", (req: Request, res: Response) => {
+    const job = options.jobManager?.get(req.params.id);
+    if (!job) return res.status(404).json({ error: `unknown job: ${req.params.id}` });
+    return res.status(200).json(job);
+  });
+  app.post("/api/jobs/:id/cancel", (req: Request, res: Response) => {
+    if (!options.jobManager) return res.status(501).json({ error: "job manager not configured" });
+    const result = options.jobManager.cancel(req.params.id);
+    if (result.ok) return res.status(200).json(result.job);
+    if (result.reason === "unknown") return res.status(404).json({ error: `unknown job: ${req.params.id}` });
+    if (result.reason === "terminal") return res.status(409).json({ error: "job already finished" });
+    return res.status(422).json({ error: "this job cannot be cancelled" });
+  });
+
   // Unified import: ONE endpoint the dashboard's single "Import" button posts any data file to.
   // The server SNIFFS the file (filename + content) — JSON/NDJSON vs CSV vs log, then per-format
   // signatures — and dispatches to the matching importer (deterministic ones, or the AI CSV/log
@@ -5773,10 +5814,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
 
       const pipeline = options.pipeline;
-      const onProgress = (done: number, total: number): void => options.onAiStatus?.(caseId, {
-        status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}`,
-      });
-      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress, minSeverity };
+      // #225: track the import as a job. Only AI imports (CSV/log — an LLM call) are cancellable;
+      // deterministic imports parse synchronously and finish before a cancel could arrive.
+      const job = options.jobManager?.register({ caseId, kind: "import", label: `${kind}: ${storedName}`, cancellable: aiDependent });
+      const onProgress = (done: number, total: number): void => {
+        options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}`,
+        });
+        if (job) options.jobManager?.progress(job.jobId, done, total, `${kind} import`);
+      };
+      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress, minSeverity, ...(job?.signal ? { signal: job.signal } : {}) };
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}` });
 
       const run = (): Promise<unknown> => dispatchImport(kind, caseId, text, base);
@@ -5791,6 +5838,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
       run()
         .then(async () => {
+          if (job) options.jobManager?.finish(job.jobId); // no-op if a cancel already marked it cancelled
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
           // Record what this import added to the forensic timeline + IOCs, BEFORE resynthesis (which
           // preserves both). Best-effort: a meta failure must not break the import.
@@ -5840,7 +5888,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           } catch { /* non-fatal */ }
           resynthesizeInBackground(caseId);
         })
-        .catch((err) => { recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
+        .catch((err) => { if (job) options.jobManager?.fail(job.jobId, err); recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
       return;
     } catch (err) {
       recordImportFailure(caseId, kind, originalName, err);
@@ -5938,10 +5986,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
 
       const pipeline = options.pipeline;
-      const onProgress = (done: number, total: number): void => options.onAiStatus?.(caseId, {
-        status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}`,
-      });
-      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress, minSeverity };
+      // #225: track the local-path import as a job (this is the large-file path, so a cancel matters
+      // most here). Only AI imports (CSV/log) are cancellable; deterministic parses finish quickly.
+      const job = options.jobManager?.register({ caseId, kind: "import", label: `${kind}: ${storedName}`, cancellable: aiDependent });
+      const onProgress = (done: number, total: number): void => {
+        options.onAiStatus?.(caseId, {
+          status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}`,
+        });
+        if (job) options.jobManager?.progress(job.jobId, done, total, `${kind} import`);
+      };
+      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress, minSeverity, ...(job?.signal ? { signal: job.signal } : {}) };
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind}) from path${minSeverity ? ` — min severity ${minSeverity}` : ""}` });
 
       let stateBefore: InvestigationState | null = null;
@@ -5955,6 +6009,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
       run()
         .then(async () => {
+          if (job) options.jobManager?.finish(job.jobId); // no-op if a cancel already marked it cancelled
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
           if (options.stateStore && stateBefore) {
             try {
@@ -5994,7 +6049,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           } catch { /* non-fatal */ }
           resynthesizeInBackground(caseId);
         })
-        .catch((err) => { recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
+        .catch((err) => { if (job) options.jobManager?.fail(job.jobId, err); recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
       return;
     } catch (err) {
       recordImportFailure(caseId, kind, originalName, err);
@@ -7282,13 +7337,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const reqThinking = Number((req.body as { thinkingTokens?: unknown })?.thinkingTokens);
     const thinkingTokens = Number.isFinite(reqThinking) && reqThinking > 0 ? Math.floor(reqThinking) : undefined;
     options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: deepReasoning ? "synthesizing (deep reasoning)" : "synthesizing conclusions" });
+    // #225: track this manual synthesis as a cancellable job so the analyst can abort a long run.
+    const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "synthesis", cancellable: true });
     // Pre-synthesis backup (#180): snapshot state before overwriting conclusions. Best-effort.
     if (options.backupManager) {
       await options.backupManager.createBackup(caseId, "pre-synthesis").catch(() => {});
     }
     try {
       // Explicit user action → force, so it always runs even if inputs are unchanged.
-      const state = await options.pipeline.synthesize(caseId, { force: true, deepReasoning, ...(thinkingTokens !== undefined ? { thinkingTokens } : {}) });
+      const state = await options.pipeline.synthesize(caseId, { force: true, deepReasoning, ...(thinkingTokens !== undefined ? { thinkingTokens } : {}), ...(job?.signal ? { signal: job.signal } : {}) });
+      if (job) options.jobManager?.finish(job.jobId);
       // Keep the playbook checklist aligned with the fresh next steps/findings (idempotent —
       // preserves analyst status/edits). Best-effort: never fail synthesis on a playbook hiccup.
       if (options.playbookStore) {
@@ -7307,6 +7365,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         narrativeTimeline: Boolean(state.narrativeTimeline),
       });
     } catch (err) {
+      const aborted = job?.signal?.aborted === true;
+      if (job) options.jobManager?.fail(job.jobId, err); // no-op if a cancel already marked it cancelled
+      if (aborted) {
+        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" });
+        return res.status(499).json({ error: "synthesis cancelled" });
+      }
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -9075,6 +9139,12 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const velociraptorClient = buildVelociraptorClient();
   const velociraptorClientStore = new VelociraptorClientStore(join(dirname(casesRoot), "velociraptor", "clients.json"));
   const hub = new LiveHub();
+  // #225: background-job registry. onJob WS-broadcasts job_changed so the dashboard Jobs panel
+  // re-fetches; capped by DFIR_JOBS_MAX (oldest terminal jobs evicted).
+  const jobManager = new JobManager({
+    onJob: (caseId) => hub.broadcastTo(caseId, { type: "job_changed" }),
+    max: Number(process.env.DFIR_JOBS_MAX) || undefined,
+  });
   const reportMetaStore = new ReportMetaStore(store);
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
   const commentsStore = new CommentsStore(store);
@@ -9234,6 +9304,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     customToolStore,
     importUndoStore,
     onImportUndo: (caseId) => hub.broadcastTo(caseId, { type: "import_undo_changed" }),
+    jobManager,
     autoSynthesize,
     autoSynthesizeDebounceMs,
     onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
