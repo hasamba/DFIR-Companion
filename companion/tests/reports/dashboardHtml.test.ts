@@ -90,6 +90,17 @@ describe("dashboard.html", () => {
     expect(html).toContain("/questions");
   });
 
+  it("renders numbered, clickable citation footnotes for a finding's supporting events (#222)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("function citeEvents(");
+    // Citations reuse the EXISTING jump-to-event mechanism (ev-jump + data-evid), not a new one.
+    expect(html).toMatch(/function citeEvents[\s\S]{0,400}class="ev-jump/);
+    expect(html).toContain("Cited events:");
+    // Findings prefer their own relatedEventIds, falling back to the events that back-link to them
+    // (older findings persisted before this field existed).
+    expect(html).toMatch(/f\.relatedEventIds[\s\S]{0,200}suppEventsByFinding\[f\.id\]/);
+  });
+
   it("offers per-source enrichment selection (local/external) via a modal", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="enrichOverlay"');

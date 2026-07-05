@@ -9073,6 +9073,18 @@
     // render() from each event's relatedFindingIds, click to jump to the timeline row), and Supporting
     // IOCs (the finding's own related IOCs plus any IOC value referenced by a backing event). Returns
     // "" when there's nothing to show, so a bare finding gets no empty toggle.
+    // Numbered, clickable citation footnotes for the forensic events an AI response names as its
+    // supporting evidence (issue #222). Reused by Findings, Ask-the-case, and Explain Event so every
+    // AI-cited response looks and behaves the same way; clicking a number jumps to that timeline row
+    // (reuses the existing .ev-jump / jumpToEvent delegated-click mechanism — no new wiring needed).
+    function citeEvents(ids) {
+      const list = Array.from(new Set((ids || []).map(String).filter(Boolean)));
+      if (!list.length) return "";
+      return list.map((id, i) =>
+        `<a class="ev-jump cite-badge" data-evid="${escAttr(id)}" title="Jump to event ${escAttr(id)} in the timeline">[${i + 1}]</a>`
+      ).join(" ");
+    }
+
     function findingEvidenceDetails(f, caseId, screenshots, events, iocs) {
       const rows = [];
       if (f.confidenceReason) {
@@ -9085,10 +9097,9 @@
         ).join(" · ");
         rows.push(`<div><small style="color:var(--c-9aa4b2)">evidence: ${links}</small></div>`);
       }
-      if (events.length) {
-        const links = events.map(e => `<a class="ev-jump" data-evid="${escAttr(e.id)}" title="Jump to event ${escAttr(e.id)} in the timeline">${esc(e.id)}</a>`).join(", ");
-        rows.push(`<div><small>Supporting events: ${links}</small></div>`);
-      }
+      // Supporting events are now shown as numbered citation footnotes directly under the finding's
+      // description (see citeEvents() in renderState()) — this panel keeps only what's unique to it:
+      // confidence reasoning, evidence screenshots, and supporting IOCs.
       const byVal = new Map((iocs || []).map(i => [String(i.value).trim().toLowerCase(), i.value]));
       const vals = new Set();
       for (const id of (f.relatedIocs || [])) { const ioc = (iocs || []).find(x => x.id === id); if (ioc) vals.add(ioc.value); }
@@ -11842,6 +11853,11 @@
       document.getElementById("findings").innerHTML =
         capped.map(f => {
           const evidence = [...(f.sourceScreenshots || []), ...(evByFinding[f.id] || [])];
+          // Citations (#222): prefer the finding's own relatedEventIds (set by synthesis); fall back
+          // to the events that back-link to it via relatedFindingIds for findings persisted before
+          // this field existed, so nothing regresses.
+          const citeIds = (f.relatedEventIds && f.relatedEventIds.length) ? f.relatedEventIds : (suppEventsByFinding[f.id] || []).map(e => e.id);
+          const cites = citeEvents(citeIds);
           // Auto-flagged findings (from a Critical/High artifact row synthesis didn't cover)
           // carry the f-auto- id prefix — badge them so the analyst knows to review/refine.
           const auto = String(f.id).startsWith("f-auto-")
@@ -11857,6 +11873,7 @@
           return `<div class="finding" data-fid="${escAttr(f.id)}">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ${tagPills("finding", f.id)} ` +
             `<span style="color:var(--c-6aa9ff)">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${fpBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
+            `${cites ? `<br><small style="color:var(--c-9aa4b2)">Cited events: ${cites}</small>` : ""}` +
             `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
             `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs)}</div>`;
         }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
