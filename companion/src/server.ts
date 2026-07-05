@@ -107,7 +107,7 @@ import { defaultReportTemplate, isReportSectionEnabled, type ReportSectionKey } 
 import { BUILT_IN_DASHBOARD_VIEWS } from "./analysis/dashboardViews.js";
 import { DashboardViewStore } from "./analysis/dashboardViewStore.js";
 import { injectPrintTrigger } from "./reports/html.js";
-import { ActivityLogStore, ACTIVITY_CATEGORIES, type ActivityCategory } from "./analysis/activityLog.js";
+import { ActivityLogStore, ACTIVITY_CATEGORIES, logActivity, type ActivityCategory } from "./analysis/activityLog.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore, type Tag } from "./analysis/tags.js";
 import { PinnedFindingsStore, PinLimitError } from "./analysis/pinnedFindings.js";
@@ -5867,6 +5867,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
                 await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff });
                 options.onImportMeta?.(caseId);
               }
+              logActivity(options.activityLogStore, options.onActivity, caseId, {
+                category: "import", action: "import",
+                detail: `${kind} (${storedName}) — +${tDiff.added.length} event(s), +${iDiff.added.length} IOC(s)`,
+              });
               // #76: snapshot the pre-import state for undo — but only when the import actually changed
               // something (skip a no-op re-import so undo doesn't pile up dead levels).
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
