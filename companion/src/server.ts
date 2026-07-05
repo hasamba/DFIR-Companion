@@ -4616,6 +4616,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (next.enabled !== cur.enabled && options.pipeline && hasAiProvider()) {
         void options.pipeline.synthesize(req.params.id, { force: true }).catch(() => {});
       }
+      if (next.enabled !== cur.enabled) {
+        logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+          category: "anonymization", action: "anon-control", detail: `anonymization ${next.enabled ? "enabled" : "disabled"}`,
+        });
+      }
       return res.status(200).json({ ...next, screenshotWarning: next.enabled && !visionIsLocal });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7328,6 +7333,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await enrichControl.save(caseId, { providers });
       if (providers.length > 0) enrichInBackground(caseId);   // re-check; cache only queries newly-enabled / un-checked
       else enrichPending.delete(caseId);                      // disabled — stop the poller from waiting on a down provider for this case
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "enrichment", action: "enrich-control",
+        detail: providers.length ? `enrichment enabled: ${providers.join(", ")}` : "enrichment disabled (no providers)",
+      });
       return res.status(200).json({ providers });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
