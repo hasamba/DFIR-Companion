@@ -5746,6 +5746,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const scope: ScopeWindow = { start: norm(req.body?.start), end: norm(req.body?.end) };
       await scopeStore.save(req.params.id, scope);
       options.onScope?.(req.params.id, scope);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "settings", action: "scope-changed",
+        detail: (scope.start || scope.end) ? `scope set: ${scope.start ?? "…"} to ${scope.end ?? "…"}` : "scope cleared",
+      });
       resynthesizeInBackground(req.params.id); // re-derive within the window
       return res.status(200).json(scope);
     } catch (err) {
@@ -7989,6 +7993,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const control = await options.playbookControlStore.set(req.params.id, { useTemplates: req.body.useTemplates });
       const tasks = await syncPlaybook(req.params.id);   // re-derive immediately under the new mode
       options.onPlaybook?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "settings", action: "playbook-control", detail: `IR templates ${control.useTemplates ? "enabled" : "disabled"}`,
+      });
       return res.status(200).json({ control, tasks, stats: playbookStats(tasks) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -8450,6 +8457,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await options.confidenceControlStore.set(req.params.id, { minConfidence: cleared ? undefined : raw });
       options.onConfidenceControl?.(req.params.id);
       const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "settings", action: "confidence-control", detail: minConfidence === null ? "minConfidence cleared" : `minConfidence set to ${minConfidence}`,
+      });
       return res.status(200).json({ minConfidence });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -8469,6 +8479,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       options.onForensicGate?.(req.params.id);
       const perCase = (await options.forensicGateControlStore.load(req.params.id)).minSeverity ?? null;
       const effective = resolveForensicMinSeverity(perCase ?? undefined, process.env.DFIR_FORENSIC_MIN_SEVERITY);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "settings", action: "forensic-gate", detail: perCase === null ? "forensic gate cleared (using global default)" : `forensic gate set to ${perCase}`,
+      });
       return res.status(200).json({ minSeverity: perCase, effective });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
