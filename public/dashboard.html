@@ -3783,7 +3783,7 @@
       const clearBtn = document.getElementById("clearExcludeBtn");
       if (!box) return;
       box.innerHTML = excludeTerms.map((t, i) =>
-        `<span class="exclude-chip"><span title="${esc(t)}">${esc(t)}</span><button type="button" data-i="${i}" title="Remove this exclude term">✕</button></span>`
+        `<span class="exclude-chip"><span title="${escAttr(t)}">${esc(t)}</span><button type="button" data-i="${i}" title="Remove this exclude term">✕</button></span>`
       ).join("");
       if (clearBtn) clearBtn.hidden = excludeTerms.length === 0;
     }
@@ -9610,7 +9610,7 @@
         const aliases = (h.aliases && h.aliases.length) ? `<span class="adv-aliases">aka ${esc(h.aliases.join(", "))}</span>` : "";
         const ratio = `${esc(h.overlapCount)} / ${esc(h.groupTechniqueCount)}`;
         const exactSet = new Set(h.exactTechniques || []);
-        const exactBadge = h.exactCount ? `<span class="adv-exact" title="${esc(h.exactCount)} exact sub-technique match(es) — the strong signal">${esc(h.exactCount)} exact</span>` : "";
+        const exactBadge = h.exactCount ? `<span class="adv-exact" title="${escAttr(h.exactCount)} exact sub-technique match(es) — the strong signal">${esc(h.exactCount)} exact</span>` : "";
         const techs = (h.overlapTechniques || []).map(t => {
           const u = attackUrl(t);
           const cls = exactSet.has(t) ? "adv-tech adv-tech-exact" : "adv-tech adv-tech-base";
@@ -9621,7 +9621,7 @@
           `<div class="adv-card-head">` +
             `<a href="${escAttr(h.url)}" target="_blank" rel="noopener" class="adv-name">${esc(h.id)} ${esc(h.name)}</a>` +
             aliases +
-            `<span class="adv-score" title="${esc(h.overlapCount)} of the case's techniques overlap this group (${esc(h.exactCount)} exact sub-technique), of ${esc(h.groupTechniqueCount)} it is known to use">⊕ ${ratio}</span>` +
+            `<span class="adv-score" title="${escAttr(h.overlapCount)} of the case's techniques overlap this group (${escAttr(h.exactCount)} exact sub-technique), of ${escAttr(h.groupTechniqueCount)} it is known to use">⊕ ${ratio}</span>` +
             exactBadge +
           `</div>` +
           desc +
@@ -11463,7 +11463,7 @@
         const from = new Date(b.startMs).toISOString();
         const to = new Date(b.endMs).toISOString();
         const label = `${b.count} event${b.count === 1 ? "" : "s"} · ${b.maxSeverity} · ${from.slice(0, 16).replace("T", " ")}–${to.slice(0, 16).replace("T", " ")} UTC (click to zoom)`;
-        return `<div class="tl-heatmap-bar" style="height:${heightPct}%;background:${color}" title="${esc(label)}" onclick="zoomToTimeWindow('${from}','${to}')"></div>`;
+        return `<div class="tl-heatmap-bar" style="height:${heightPct}%;background:${color}" title="${escAttr(label)}" onclick="zoomToTimeWindow('${from}','${to}')"></div>`;
       }).join("");
     }
 
@@ -11573,7 +11573,7 @@
         const span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
           ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
         const badge = (e.count && e.count > 1)
-          ? ` <span title="${esc(e.count)} occurrences collapsed into one event" style="background:var(--c-3a2f1a);color:var(--c-ffd93b);border:1px solid var(--c-5a4a1a);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">×${esc(e.count)}</span>` : "";
+          ? ` <span title="${escAttr(e.count)} occurrences collapsed into one event" style="background:var(--c-3a2f1a);color:var(--c-ffd93b);border:1px solid var(--c-5a4a1a);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">×${esc(e.count)}</span>` : "";
         const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
         const corro = (realSrc.length > 1)
           ? ` <span title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}" style="background:var(--c-13331f);color:var(--c-6bcb77);border:1px solid var(--c-1f5a35);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">⊕ ${esc(realSrc.length)}</span>` : "";
