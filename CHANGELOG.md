@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Inline IOC quick-actions** — click any detected value (IP/hash/domain/SID/URL/path) in an event row or an IOC value to open a tray: copy, mark benign, mark confirmed-malicious, suggest hunt; outcomes recorded to the investigation log (closes #221).
 - **Windows account SIDs are now a detected IOC type** — domain/account SIDs (`S-1-5-21-…`) extracted from event text; well-known service/builtin SIDs skipped to avoid noise.
 
+### Fixed
+- **robocopy/xcopy always grade High (T1074.001)** — previously ungraded (Low), so a bulk-copy data-staging/exfil chain (share → local staging → archive → removable drive) could get buried under noise and never reach synthesis; unconditional by design since no argument pattern reliably separates theft from routine backup use — mark false-positive + "mark similar" (by process name) to bulk-suppress an org's routine usage.
+
 ## [0.29.0] - 2026-07-04
 
 ### Added

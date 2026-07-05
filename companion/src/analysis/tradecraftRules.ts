@@ -12,7 +12,11 @@
 // fixes): only behaviour that is almost never benign on a server earns "strong" (→ High); dual-use
 // tooling that is suspicious in an incident context is "weak" (→ Medium). PURE host *discovery* /
 // enumeration (nltest, AdFind queries, BloodHound, port scanners) is deliberately NOT here — it is
-// tag-only in `reconTechniques.ts` so it never manufactures a false High/Medium.
+// tag-only in `reconTechniques.ts` so it never manufactures a false High/Medium. The one deliberate
+// exception is robocopy/xcopy (see the Collection section below): graded "strong" UNCONDITIONALLY
+// even though both are common in routine admin/backup use, because no argument pattern reliably
+// separates that from insider bulk-copy staging — the false-positive-marking workflow (backed by
+// "mark similar" on process name) is the intended way to suppress an org's routine usage in bulk.
 //
 // Pure + table-driven + unit-tested; reused by the Windows/Sysmon/EVTX/Chainsaw/Velociraptor path
 // (siemImport), the ECAR EDR feed and the memory-forensics importer. No AI.
@@ -174,6 +178,18 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
   // Unattended-install flags are the attacker fingerprint → strong; bare presence is dual-use → weak.
   { re: /\b(?:anydesk|rustdesk)\b[^\n]*(?:--set-password|--start-with-win|--tray|--silent)/i, weight: "strong", ids: ["T1219"] },
   { re: /\b(?:anydesk|rustdesk|screenconnect|connectwise|atera|splashtop|meshagent|tacticalrmm|gotoresolve|goto\s*resolve|netsupport|client32\.ini|dwagent|remoteutilities|pulseway|action1|level\.io|supremo)/i, weight: "weak", ids: ["T1219"] },
+
+  // ───────────── Collection: bulk-copy staging tools (T1074.001) ─────────────
+  // Deliberately UNCONDITIONAL — any robocopy/xcopy invocation, regardless of arguments. These are
+  // the #1 bulk-copy primitive behind insider data theft (mirror a share to a local staging dir,
+  // archive it, move it to removable media/USB) and no argument pattern reliably separates that from
+  // routine admin/backup use — see the halcyon-insider-usb benchmark, where the real exfil staging
+  // (`Robocopy.exe \\FS-01\Engineering\...`, `xcopy.exe ...\q2_rollup.7z E:\`) graded Low and never
+  // surfaced. Per product decision: always grade High and rely on false-positive marking + "mark
+  // similar" (falsePositiveSimilarity.ts scores by process name) to bulk-suppress an org's routine use
+  // in one pass, rather than trying to regex-distinguish theft from backup up front.
+  { re: /\brobocopy(?:\.exe)?\b/i, weight: "strong", ids: ["T1074.001"] },
+  { re: /\bxcopy(?:\.exe)?\b/i, weight: "strong", ids: ["T1074.001"] },
 
   // ───────────── Named offensive C2 / exploitation tooling (dual-use → weak) ─────────────
   { re: /\bcobalt\s*strike\b|\bbrute\s*ratel\b|\bbruteratel\b|\bposh\s*c2\b|\bkoadic\b|\badaptixc2\b|\bmeterpreter\b|\bmetasploit\b|\bsliver\b|\bpeerblight\b|\bzinfoq\b|\bcowtunnel\b/i, weight: "weak", ids: ["T1071"] },

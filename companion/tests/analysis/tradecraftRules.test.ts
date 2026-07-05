@@ -89,6 +89,20 @@ describe("tradecraftRules — strong (High) attacker tradecraft", () => {
     expect(sig("iwr https://example.com/tool.exe -OutFile tool.exe")?.mitre ?? []).not.toContain("T1041");
   });
 
+  it("flags ANY robocopy/xcopy invocation as strong T1074.001, even routine-looking backup usage", () => {
+    // The real halcyon-insider-usb exfil staging — must be strong.
+    expect(sig("Robocopy.exe \\\\FS-01\\Engineering\\Projects\\TX-940 C:\\Windows\\Temp\\dfsr_stage\\TX-940 /E /Z /R:1 /W:1 /NP")?.weight).toBe("strong");
+    expect(sig("xcopy.exe C:\\Windows\\Temp\\dfsr_stage\\q2_rollup.7z E:\\ /Y")?.mitre).toContain("T1074.001");
+    // A routine-looking SYSTEM/admin backup job — deliberately ALSO strong (no argument distinguishes
+    // it from theft); the analyst is expected to suppress recurring legitimate use via false-positive
+    // marking + "mark similar" instead of the rule guessing intent from arguments.
+    expect(sig("Robocopy.exe D:\\Shares\\Engineering D:\\VeeamRepo\\Engineering /MIR /R:1 /W:1")?.weight).toBe("strong");
+    expect(sig('xcopy.exe "C:\\Users\\helen.osei\\Documents\\Board\\Q2-Review.pptx" E:\\ /Y')?.mitre).toContain("T1074.001");
+    // Bare image name alone (no arguments) still flags.
+    expect(sig("", "C:\\Windows\\System32\\Robocopy.exe")?.weight).toBe("strong");
+    expect(sig("C:\\Windows\\System32\\xcopy.exe", "")?.weight).toBe("strong");
+  });
+
   it("flags AnyDesk/RustDesk unattended setup as strong, bare presence as weak", () => {
     expect(sig("anydesk.exe --install C:\\ProgramData\\AnyDesk --start-with-win --silent")?.weight).toBe("strong");
     expect(sig("echo pw | anydesk.exe --set-password")?.weight).toBe("strong");
