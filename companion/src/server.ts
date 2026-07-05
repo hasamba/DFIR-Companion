@@ -5029,6 +5029,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         if (whitelistInput) await options.iocWhitelistStore.add(whitelistInput);
       }
       options.onFalsePositive?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "triage", action: "mark-false-positive", actor: marker.markedBy ?? "",
+        detail: `${marker.kind} ${marker.ref} (${marker.reason})`, targetType: marker.kind, targetId: marker.ref,
+      });
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it
       return res.status(200).json(next);
     } catch (err) {
@@ -5065,6 +5069,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const next = [...byId.values()];
       await falsePositives.save(req.params.id, next);
       options.onFalsePositive?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "triage", action: "mark-false-positive-batch", actor: fallbackMarkedBy ?? "",
+        detail: `${built.length} item(s) marked false-positive`,
+      });
       resynthesizeInBackground(req.params.id); // ONE re-synthesis for the whole batch
       return res.status(200).json(next);
     } catch (err) {
@@ -5127,9 +5135,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const id = String(req.body?.id ?? "");
       const markers = await falsePositives.load(req.params.id);
+      const removedMarker = markers.find((m) => m.id === id);
       const next = markers.filter((m) => m.id !== id);
       await falsePositives.save(req.params.id, next);
       options.onFalsePositive?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "triage", action: "unmark-false-positive",
+        actor: typeof req.body?.actor === "string" ? req.body.actor : "",
+        detail: removedMarker ? `${removedMarker.kind} ${removedMarker.ref}` : `marker ${id}`,
+        ...(removedMarker ? { targetType: removedMarker.kind, targetId: removedMarker.ref } : {}),
+      });
       resynthesizeInBackground(req.params.id);
       return res.status(200).json(next);
     } catch (err) {
