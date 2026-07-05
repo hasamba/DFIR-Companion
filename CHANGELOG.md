@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Per-case activity log**: chronological, filterable record of security-relevant actions on a case — imports, mark/unmark false-positive, AI runs (synthesis/2nd opinion/ask/…), enrichment/anonymization toggles, settings changes, playbook edits, comments/tags, hunt runs, exports (closes #238, supersedes #224).
 - **Background-job registry + cancel** — heavy async operations (import / synthesis / enrichment) are now tracked as jobs with a toolbar badge + popover (`GET /api/jobs`, `job_changed` WS); a Cancel button hard-aborts a long/stuck synthesis, enrichment, or CSV/log import via `AbortSignal` (closes #225).
 - **Pinned findings** — pin key findings (📌) to a sticky top strip that stays visible while scrolling, with drag-to-reorder and one-click jump; persisted per case and travels in the investigation snapshot (closes #220).
 - **Timeline event-density heatmap** — a bar strip above the Forensic Timeline buckets the full filtered dataset (not just the current page) by time, colored by each bucket's worst severity; click a bar to zoom the timeline to that window (closes #219).
