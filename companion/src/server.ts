@@ -3793,6 +3793,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // #157: record the bundle deploy (no VQL — bundles are artifact lists; outcome filled on collect).
       await recordHuntDeploy(caseId, { source: "bundle", title: bundle.name, huntId: launch.huntId, deployedAt: new Date().toISOString() });
       options.onVeloHunt?.(caseId);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "hunt", action: "run-bundle", detail: `ran bundle "${bundle.name}" (${artifactsToRun.length} artifact(s))`,
+      });
 
       const timer = setTimeout(() => { void importVeloHuntResults(caseId, launch.huntId); }, waitMinutes * 60_000);
       timer.unref?.();
@@ -3923,6 +3926,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         // the deploy still excludes it from re-proposal and surfaces it in the hunting profile.
         await recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, deployedAt: new Date().toISOString() });
         options.onVeloHunt?.(caseId);
+        logActivity(options.activityLogStore, options.onActivity, caseId, {
+          category: "hunt", action: "deploy-collection", detail: `collection "${title}" on ${hostname}`,
+        });
         return res.status(200).json({ mode, ...result });
       }
       const expirySeconds = normalizeHuntExpirySeconds(req.body?.expirySeconds);   // relative; defaults to one hour
@@ -3949,6 +3955,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
       await recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, huntId: launch.huntId, deployedAt: new Date().toISOString() });
       options.onVeloHunt?.(caseId);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "hunt", action: "deploy-hunt", detail: `fleet hunt "${title}" deployed (${source})`,
+      });
       return res.status(200).json({ mode, waitMinutes, ...launch });
     } catch (err) {
       logLine(`[velociraptor] deploy-hunt ERROR: ${(err as Error).message}`);
