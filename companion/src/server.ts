@@ -8148,7 +8148,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       options.onPlaybook?.(req.params.id);
       dispatchNotify(playbookTaskEvent(req.params.id, task, "added", new Date().toISOString()));
       logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "playbook", action: "task-added", actor: task.assignee ?? "",
+        category: "playbook", action: "task-added",
         detail: `task added: "${task.title}"`, targetType: "playbook-task", targetId: task.id,
       });
       return res.status(201).json(task);
@@ -8177,7 +8177,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         dispatchNotify(playbookTaskEvent(req.params.id, updated, updated.status === "done" ? "completed" : "updated", new Date().toISOString()));
       }
       logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "playbook", action: "task-updated", actor: updated.assignee ?? "",
+        category: "playbook", action: "task-updated",
         detail: `task "${updated.title}" — ${Object.keys(patch).join(", ")} changed${patch.status ? ` (status: ${updated.status})` : ""}`,
         targetType: "playbook-task", targetId: updated.id,
       });
