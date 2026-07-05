@@ -1566,6 +1566,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const paths = await options.reportWriter.writeAll(req.params.id);
       dispatchNotify(milestoneEvent(req.params.id, "Report generated", ["The case report (Markdown + HTML) was (re)generated."], new Date().toISOString()));
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "export", action: "report-generated", detail: "report (Markdown + HTML) regenerated",
+      });
       return res.status(200).json(paths);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -4220,6 +4223,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         `assets +${result.assets.added}/${result.assets.existing}, iocs +${result.iocs.added}/${result.iocs.existing}, ` +
         `timeline +${result.timeline.added}/${result.timeline.existing}, tasks +${result.tasks.added}/${result.tasks.existing}, ` +
         `notes ${result.notes}, warnings ${result.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-iris", detail: `pushed to DFIR-IRIS case ${result.caseId} (${result.created ? "created" : "updated"})`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[iris] ${caseId} push ERROR: ${(err as Error).message}`);
@@ -4333,6 +4339,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const result = await pushCaseToTimesketch(options.timesketchClient, { sketchName: caseId, state }, options.timesketchOptions);
       logLine(`[timesketch] ${caseId} push DONE -> sketch ${result.sketchId} (${result.created ? "created" : "updated"}); ` +
         `timeline "${result.timelineName}" events ${result.events}${result.replacedTimeline ? " (replaced)" : ""}, warnings ${result.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-timesketch", detail: `pushed to Timesketch sketch ${result.sketchId} (${result.created ? "created" : "updated"})`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[timesketch] ${caseId} push ERROR: ${(err as Error).message}`);
@@ -4358,6 +4367,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const result = await pushCaseToMisp(options.mispPushClient, { caseId, state }, options.mispPushOptions);
       logLine(`[misp] ${caseId} push DONE -> event ${result.eventId} (${result.created ? "created" : "updated"}); ` +
         `attributes +${result.attributes.added}/${result.attributes.existing}, tags +${result.tags}, warnings ${result.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-misp", detail: `pushed to MISP event ${result.eventId} (${result.created ? "created" : "updated"})`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[misp] ${caseId} push ERROR: ${(err as Error).message}`);
@@ -4411,6 +4423,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       );
       logLine(`[notion] ${caseId} export DONE -> page ${result.pageId} (${result.created ? "created" : "updated"}); ` +
         `+${result.blocksAppended} block(s) in ${result.batches} batch(es), archived ${result.blocksArchived}, warnings ${result.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-notion", detail: `pushed to Notion page ${result.pageId} (${result.created ? "created" : "updated"})`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[notion] ${caseId} export ERROR: ${(err as Error).message}`);
@@ -4460,6 +4475,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         new Date().toISOString(),
       );
       logLine(`[clickup] ${caseId} push DONE: +${result.created} created, ${result.updated} updated, ${result.skipped} skipped, warnings ${result.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-clickup", detail: `pushed playbook to ClickUp list ${listId} — +${result.created} created, ${result.updated} updated`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[clickup] ${caseId} push ERROR: ${(err as Error).message}`);
