@@ -10030,6 +10030,7 @@
     let activityFilterValue = "";
     function activityTimeAgo(iso) {
       const ms = Date.now() - new Date(iso).getTime();
+      if (Number.isNaN(ms)) return "—";
       const mins = Math.floor(ms / 60000);
       if (mins < 1) return "just now";
       if (mins < 60) return `${mins}m ago`;
@@ -10043,7 +10044,7 @@
       if (!entries.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No activity recorded yet.</div>"; return; }
       el.innerHTML = "<table style='width:100%;font-size:12px;border-collapse:collapse'>" +
         entries.map(e => `<tr style="border-bottom:1px solid var(--c-2a2f3a)">
-          <td style="padding:4px 8px;white-space:nowrap;color:var(--c-9aa4b2)" title="${esc(e.timestamp)}">${activityTimeAgo(e.timestamp)}</td>
+          <td style="padding:4px 8px;white-space:nowrap;color:var(--c-9aa4b2)" title="${escAttr(e.timestamp)}">${activityTimeAgo(e.timestamp)}</td>
           <td style="padding:4px 8px;white-space:nowrap">${esc(ACTIVITY_CATEGORY_LABELS[e.category] || e.category)}</td>
           <td style="padding:4px 8px;white-space:nowrap;color:var(--c-9aa4b2)">${esc(e.actor)}</td>
           <td style="padding:4px 8px">${esc(e.detail)}</td>
