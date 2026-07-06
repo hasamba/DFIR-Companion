@@ -135,15 +135,18 @@ function benchDataset(dir: string): void {
 }
 
 const argDir = process.argv[2];
-const DEFAULT_ROOT = "C:/Users/yaniv/10Root Dropbox/Yaniv Radunsky/Documents/30-39 DFIR/34-Sample_Data/36.29-Full-Incidends-from-EvidenceForge";
+const DEFAULT_ROOT = process.env.DFIR_BENCH_DATA_ROOT;
 const targets = argDir
   ? [argDir]
-  : ["meridian-tax-ransomware", "veridia-breach", "branch-office-example"]
-      .map((d) => join(DEFAULT_ROOT, d))
-      .filter((d) => existsSync(d));
+  : DEFAULT_ROOT
+    ? ["meridian-tax-ransomware", "veridia-breach", "branch-office-example"]
+        .map((d) => join(DEFAULT_ROOT, d))
+        .filter((d) => existsSync(d))
+    : [];
 
 if (!targets.length) {
   console.error('usage: tsx scripts/bench-tradecraft.ts "<dataset dir>"');
+  console.error("       (or set DFIR_BENCH_DATA_ROOT to a folder containing the named datasets)");
   process.exit(1);
 }
 for (const t of targets) benchDataset(t);
