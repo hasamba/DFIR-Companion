@@ -69,3 +69,4 @@ docs/backups/
 # Claude Code local tooling / config (per-machine, not part of the shipped project)
 .claude/
 /CLAUDE.md
+/AGENTS.md
