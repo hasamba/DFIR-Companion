@@ -6027,6 +6027,12 @@
       const items = [];
       pbHuntFlat.forEach((s, idx) => { if (s.taskId === taskId) items.push({ s, idx }); });
       if (!items.length) return "";
+      // PlaybookHuntSuggestion (playbookHunt.ts) has NO relatedFindingIds field of its own — unlike
+      // huntSuggest.ts's HuntSuggestion (the sibling fleet-hunt panel). Every suggestion in THIS call
+      // belongs to the same enclosing task, so derive the citation from that task's own (singular)
+      // relatedFindingId, set when the task was auto-derived from a Critical/High finding (#222).
+      const _pbhTask = playbookTasks.find(t => t.id === taskId);
+      const _pbhFindingIds = _pbhTask && _pbhTask.relatedFindingId ? [_pbhTask.relatedFindingId] : [];
       return items.map(({ s, idx }) => {
         const sev = s.severity || "Medium";
         const sevColor = VHS_SEV_COLOR[sev] || "#9aa4b2";
@@ -6041,6 +6047,7 @@
           return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="pbh-tech">${esc(t)}</a>` : `<span class="pbh-tech">${esc(t)}</span>`;
         }).join("");
         const rationale = s.rationale ? `<div class="pbh-rationale">${esc(s.rationale)}</div>` : "";
+        const cites = citeFindings(_pbhFindingIds);
         const deployLabel = isCollection ? `▶ Collect on ${esc(s.targetHost)}` : "▶ Deploy hunt (all clients)";
         const deployTitle = isCollection ? `Run this VQL as a collection on ${escAttr(s.targetHost)} only` : "Launch this hunt across ALL enrolled Velociraptor clients";
         const deployBtn = veloEnabled
@@ -6056,6 +6063,7 @@
           + `</div>`
           + `<div class="pbh-body" ${collapsed ? 'style="display:none"' : ""}>`
             + rationale
+            + (cites ? `<div class="pbh-rationale" style="color:var(--c-9aa4b2)">Cites: ${cites}</div>` : "")
             + (techs ? `<div class="pbh-techs">${techs}</div>` : "")
             + `<textarea class="pbh-vql" id="pbhQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
             + `<div class="pbh-actions"><button class="pbh-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}<button class="pbh-regen" data-idx="${idx}" title="Generate a different VQL for this task approaching from a different angle">🔄 Regenerate</button></div>`
@@ -8017,7 +8025,7 @@
       fetch(`/cases/${caseId}/ask`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: q }) })
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
         .then(a => {
-          const events = (a.relatedEventIds || []).map(esc).join(", ");
+          const events = citeEvents(a.relatedEventIds);
           box.innerHTML =
             `<div class="finding">` +
             `<div>${askStatusBadge(a.status)} <strong>${esc(q)}</strong></div>` +
@@ -8064,7 +8072,7 @@
               + (q.rationale ? `<div style="padding:6px 10px;font-size:11px;color:var(--c-9aa4b2)">${esc(q.rationale)}</div>` : "")
               + `</div>`;
           }).join("");
-          const cited = (result.relatedEventIds || []).map(esc).join(", ");
+          const cited = citeEvents(result.relatedEventIds);
           bodyEl.innerHTML =
             section("What happened", result.summary, "var(--c-c9d1d9)") +
             section("Why it matters", result.whyItMatters, "var(--c-6aa9ff)") +
@@ -9081,8 +9089,36 @@
     // render() from each event's relatedFindingIds, click to jump to the timeline row), and Supporting
     // IOCs (the finding's own related IOCs plus any IOC value referenced by a backing event). Returns
     // "" when there's nothing to show, so a bare finding gets no empty toggle.
-    function findingEvidenceDetails(f, caseId, screenshots, events, iocs) {
+    // Numbered, clickable citation footnotes for the forensic events an AI response names as its
+    // supporting evidence (issue #222). Reused by Findings, Ask-the-case, and Explain Event so every
+    // AI-cited response looks and behaves the same way; clicking a number jumps to that timeline row
+    // (reuses the existing .ev-jump / jumpToEvent delegated-click mechanism — no new wiring needed).
+    function citeEvents(ids) {
+      const list = Array.from(new Set((ids || []).map(String).filter(Boolean)));
+      if (!list.length) return "";
+      return list.map((id, i) =>
+        `<a class="ev-jump cite-badge" data-evid="${escAttr(id)}" title="Jump to event ${escAttr(id)} in the timeline">[${i + 1}]</a>`
+      ).join(" ");
+    }
+    // Numbered, clickable citation footnotes for the findings an AI-suggested hunt names as its
+    // trigger (issue #222). Mirrors citeEvents but jumps to a Finding card (reuses the existing
+    // .finding-jump / jumpToFinding delegated-click mechanism).
+    function citeFindings(ids) {
+      const list = Array.from(new Set((ids || []).map(String).filter(Boolean)));
+      if (!list.length) return "";
+      return list.map((id, i) =>
+        `<a class="finding-jump cite-badge" data-fid="${escAttr(id)}" title="Jump to finding ${escAttr(id)}">[${i + 1}]</a>`
+      ).join(" ");
+    }
+
+    function findingEvidenceDetails(f, caseId, screenshots, events, iocs, cites) {
       const rows = [];
+      // Cited events + MITRE live inside this collapsible panel (issue #222) rather than always
+      // visible under the description, so the finding card itself stays compact.
+      if (cites) rows.push(`<div><small>Cited events: ${cites}</small></div>`);
+      if (f.mitreTechniques && f.mitreTechniques.length) {
+        rows.push(`<div><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small></div>`);
+      }
       if (f.confidenceReason) {
         rows.push(`<div><small>Confidence: ${f.confidence !== undefined ? esc(String(f.confidence)) + "% — " : ""}${esc(f.confidenceReason)}</small></div>`);
       }
@@ -9092,10 +9128,6 @@
           `<a href="/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(fn)}" target="_blank" rel="noopener" style="color:var(--c-6aa9ff)" title="Open evidence: ${escAttr(fn)}">📎 ${esc(fn)}</a>`
         ).join(" · ");
         rows.push(`<div><small style="color:var(--c-9aa4b2)">evidence: ${links}</small></div>`);
-      }
-      if (events.length) {
-        const links = events.map(e => `<a class="ev-jump" data-evid="${escAttr(e.id)}" title="Jump to event ${escAttr(e.id)} in the timeline">${esc(e.id)}</a>`).join(", ");
-        rows.push(`<div><small>Supporting events: ${links}</small></div>`);
       }
       const byVal = new Map((iocs || []).map(i => [String(i.value).trim().toLowerCase(), i.value]));
       const vals = new Set();
@@ -10230,6 +10262,7 @@
           return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="vhs-tech">${esc(t)}</a>` : `<span class="vhs-tech">${esc(t)}</span>`;
         }).join("");
         const rationale = s.rationale ? `<div class="vhs-rationale">${esc(s.rationale)}</div>` : "";
+        const cites = citeFindings(s.relatedFindingIds);
         const deployBtn = veloEnabled
           ? `<button class="vhs-deploy" data-idx="${idx}" title="Launch this hunt across ALL enrolled Velociraptor clients">▶ Deploy hunt (all clients)</button>`
           : `<button class="vhs-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">▶ Deploy hunt (all clients)</button>`;
@@ -10241,6 +10274,7 @@
         return `<div class="vhs-card">`
           + `<div class="vhs-head"><span class="vhs-title">${esc(s.title)}</span>${sevBadge}</div>`
           + rationale
+          + (cites ? `<div class="vhs-rationale" style="color:var(--c-9aa4b2)">Cites: ${cites}</div>` : "")
           + (techs ? `<div class="vhs-techs">${techs}</div>` : "")
           + `<textarea class="vhs-vql" id="vhsQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>`
           + `<div class="vhs-actions"><button class="vhs-copy" data-idx="${idx}">Copy VQL</button>${regenBtn}${deployBtn}</div>`
@@ -11899,6 +11933,11 @@
       document.getElementById("findings").innerHTML =
         capped.map(f => {
           const evidence = [...(f.sourceScreenshots || []), ...(evByFinding[f.id] || [])];
+          // Citations (#222): prefer the finding's own relatedEventIds (set by synthesis); fall back
+          // to the events that back-link to it via relatedFindingIds for findings persisted before
+          // this field existed, so nothing regresses.
+          const citeIds = (f.relatedEventIds && f.relatedEventIds.length) ? f.relatedEventIds : (suppEventsByFinding[f.id] || []).map(e => e.id);
+          const cites = citeEvents(citeIds);
           // Auto-flagged findings (from a Critical/High artifact row synthesis didn't cover)
           // carry the f-auto- id prefix — badge them so the analyst knows to review/refine.
           const auto = String(f.id).startsWith("f-auto-")
@@ -11914,8 +11953,7 @@
           return `<div class="finding" data-fid="${escAttr(f.id)}">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ${tagPills("finding", f.id)} ` +
             `<span style="color:var(--c-6aa9ff)">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${fpBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
-            `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
-            `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs)}</div>`;
+            `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs, cites)}</div>`;
         }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
       // Investigation Log = state.timeline (import / AI notes) + analyst quick-action audit lines
       // (durable comments tagged with QA_AUDIT_MARK), merged chronologically.
@@ -12740,6 +12778,13 @@
     // Explain-event modal (#141).
     document.getElementById("explainClose").onclick = () => document.getElementById("explainOverlay").classList.remove("open");
     document.getElementById("explainOverlay").addEventListener("click", (e) => { if (e.target.id === "explainOverlay") document.getElementById("explainOverlay").classList.remove("open"); });
+    // Citation footnotes inside the Explain panel (#222) — #explainOverlay lives outside <main>, so
+    // the main-scoped .ev-jump delegated handler (above) never sees these clicks; handle them here
+    // instead. Close the overlay first so the analyst actually sees the highlighted timeline row.
+    document.getElementById("explainOverlay").addEventListener("click", (e) => {
+      const ejump = e.target.closest && e.target.closest(".ev-jump");
+      if (ejump) { e.preventDefault(); document.getElementById("explainOverlay").classList.remove("open"); jumpToEvent(ejump.getAttribute("data-evid")); }
+    });
     // Executive summary generator (stopPropagation so the h2 click doesn't collapse the section).
     document.getElementById("genExecBtn").addEventListener("click", (e) => { e.stopPropagation(); genExecSummary(); });
     // Suggested Fleet Hunts generator (#57) — same stopPropagation guard so clicking ✨ doesn't toggle the section.

@@ -90,6 +90,17 @@ describe("dashboard.html", () => {
     expect(html).toContain("/questions");
   });
 
+  it("renders numbered, clickable citation footnotes for a finding's supporting events (#222)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("function citeEvents(");
+    // Citations reuse the EXISTING jump-to-event mechanism (ev-jump + data-evid), not a new one.
+    expect(html).toMatch(/function citeEvents[\s\S]{0,400}class="ev-jump/);
+    expect(html).toContain("Cited events:");
+    // Findings prefer their own relatedEventIds, falling back to the events that back-link to them
+    // (older findings persisted before this field existed).
+    expect(html).toMatch(/f\.relatedEventIds[\s\S]{0,200}suppEventsByFinding\[f\.id\]/);
+  });
+
   it("offers per-source enrichment selection (local/external) via a modal", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="enrichOverlay"');
@@ -255,5 +266,49 @@ describe("dashboard.html", () => {
     expect(html).toContain('id="timelineHeatmapCaption"');
     expect(html).toMatch(/buckets\.length < 2\)[\s\S]{0,60}caption\.hidden = true/);
     expect(html).toMatch(/caption\.hidden = false/);
+  });
+
+  it("renders Ask-the-case and Explain-Event citations as clickable jump-to-event footnotes, not plain text (#222)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toMatch(/const events = citeEvents\(a\.relatedEventIds\)/);
+    expect(html).toMatch(/const cited = citeEvents\(result\.relatedEventIds\)/);
+    // The old plain esc-and-join rendering must be gone, not just supplemented.
+    expect(html).not.toContain('(a.relatedEventIds || []).map(esc).join(", ")');
+    expect(html).not.toContain('(result.relatedEventIds || []).map(esc).join(", ")');
+  });
+
+  it("makes citation footnotes inside the Explain Event modal clickable, even though #explainOverlay lives outside <main> (#222)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // #explainOverlay must be OUTSIDE <main> (a sibling, not a descendant) — this is what makes the
+    // <main>-scoped delegated .ev-jump handler blind to clicks inside it, and is the precondition
+    // for needing a dedicated listener here.
+    expect(html.indexOf('id="explainOverlay"')).toBeLessThan(html.indexOf("<main>"));
+    // A dedicated click listener scoped to #explainOverlay must handle .ev-jump clicks by calling
+    // jumpToEvent — mirroring the existing #explainOverlay backdrop-close listener right above it.
+    expect(html).toMatch(/document\.getElementById\("explainOverlay"\)\.addEventListener\("click", \(e\) => \{\s*\n\s*const ejump = e\.target\.closest[\s\S]{0,200}jumpToEvent\(ejump\.getAttribute\("data-evid"\)\)/);
+  });
+
+  it("cites the triggering finding(s) on each AI-suggested playbook hunt card, clickable (#222)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("function citeFindings(");
+    expect(html).toMatch(/function citeFindings[\s\S]{0,400}class="finding-jump/);
+    // PlaybookHuntSuggestion (playbookHunt.ts) has NO relatedFindingIds field of its own — unlike
+    // huntSuggest.ts's HuntSuggestion. `citeFindings(s.relatedFindingIds)` would always be "" (dead
+    // code that only type-checks because JS has no runtime field check). The real citation must be
+    // derived from the enclosing task's own (singular) relatedFindingId via playbookTasks.find(...).
+    // Scoped to renderTaskHunts specifically — the sibling fleet-hunt panel legitimately DOES call
+    // citeFindings(s.relatedFindingIds) (see the next test), so a file-wide assertion would be wrong.
+    expect(html).toMatch(/function renderTaskHunts[\s\S]{0,3000}playbookTasks\.find\(t => t\.id === taskId\)/);
+    expect(html).toMatch(/function renderTaskHunts[\s\S]{0,3000}_pbhTask\.relatedFindingId/);
+    expect(html).toMatch(/function renderTaskHunts[\s\S]{0,3000}citeFindings\(_pbhFindingIds\)/);
+    expect(html).not.toMatch(/function renderTaskHunts[\s\S]{0,3000}citeFindings\(s\.relatedFindingIds\)/);
+  });
+
+  it("cites the triggering finding(s) on each AI-suggested fleet-hunt card (#222)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // Unlike the playbook-hunt suggestions above, HuntSuggestion (huntSuggest.ts) DOES carry a real,
+    // AI-populated relatedFindingIds array — so the fleet-hunt panel can cite it directly.
+    expect(html).toMatch(/function renderVeloHuntSuggest[\s\S]{0,2000}citeFindings\(s\.relatedFindingIds\)/);
+    expect(html).toMatch(/citeFindings\(s\.relatedFindingIds\)[\s\S]{0,1200}class="vhs-card"/);
   });
 });

@@ -76,6 +76,9 @@ export function mergeDelta(
       existing.status = incoming.status;
       existing.relatedIocs = uniq([...existing.relatedIocs, ...remapIocRefs(incoming.relatedIocs)]);
       existing.mitreTechniques = uniq([...existing.mitreTechniques, ...incoming.mitreTechniques]);
+      if (incoming.relatedEventIds !== undefined) {
+        existing.relatedEventIds = uniq([...(existing.relatedEventIds ?? []), ...incoming.relatedEventIds]);
+      }
       existing.sourceScreenshots = uniq([...existing.sourceScreenshots, ...ctx.sourceScreenshots]);
       existing.lastUpdated = ctx.timestamp;
     } else {
@@ -88,6 +91,7 @@ export function mergeDelta(
         description: incoming.description,
         relatedIocs: remapIocRefs(incoming.relatedIocs),
         mitreTechniques: uniq(incoming.mitreTechniques),
+        ...(incoming.relatedEventIds !== undefined ? { relatedEventIds: uniq(incoming.relatedEventIds) } : {}),
         sourceScreenshots: uniq(ctx.sourceScreenshots),
         firstSeen: ctx.timestamp,
         lastUpdated: ctx.timestamp,

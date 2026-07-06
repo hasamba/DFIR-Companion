@@ -68,6 +68,33 @@ describe("mergeDelta", () => {
     expect(state.findings[0].confidenceReason).toBe("Now corroborated by a second tool");
   });
 
+  it("carries relatedEventIds through both the new-finding and update branches, deduped", () => {
+    let state = emptyState("c1");
+    state = mergeDelta(state, {
+      ...baseDelta,
+      findings: [{ id: "f1", severity: "High", title: "PS abuse", description: "v1",
+        relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e1", "e2"] }],
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+    expect(state.findings[0].relatedEventIds).toEqual(["e1", "e2"]);
+
+    state = mergeDelta(state, {
+      ...baseDelta,
+      findings: [{ id: "f1", severity: "High", title: "PS abuse", description: "v2",
+        relatedIocs: [], mitreTechniques: [], status: "confirmed", relatedEventIds: ["e2", "e3"] }],
+    }, { windowSequence: 2, timestamp: "2026-05-28T10:05:00.000Z", sourceScreenshots: [] });
+    expect(state.findings[0].relatedEventIds).toEqual(["e1", "e2", "e3"]);
+  });
+
+  it("leaves relatedEventIds undefined when the delta omits it (extraction deltas never set it)", () => {
+    const state = emptyState("c1");
+    const next = mergeDelta(state, {
+      ...baseDelta,
+      findings: [{ id: "f1", severity: "High", title: "PS abuse", description: "v1",
+        relatedIocs: [], mitreTechniques: [], status: "open" }],
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+    expect(next.findings[0].relatedEventIds).toBeUndefined();
+  });
+
   it("dedupes IOCs by value and closes threads", () => {
     let state = emptyState("c1");
     state = mergeDelta(state, {
