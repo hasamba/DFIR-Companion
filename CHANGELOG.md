@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **IOC provenance chain panel** — per-IOC 🔗 button showing the full timestamped chain (extraction event(s), enrichment lookups, citing findings) with a JSON export; extraction is approximate (value-matched, not a stored link — no importer records which event produced an IOC). Playbook linkage is not tracked yet (part of #247).
 - **Per-case activity log** — chronological, filterable record of security-relevant actions on a case: imports, mark/unmark false-positive, AI runs (synthesis/2nd opinion/ask/…), enrichment/anonymization toggles, settings changes, playbook edits, comments/tags, hunt runs, exports (closes #238, supersedes #224).
 - **Cited AI answers** — findings, Ask-the-case, Explain Event, and AI-suggested hunts (playbook + fleet) now show numbered, clickable citations to their supporting forensic events/findings, in both the dashboard and the exported report (closes #222).
 - **Background-job registry + cancel** — heavy async operations (import / synthesis / enrichment) are now tracked as jobs with a toolbar badge + popover (`GET /api/jobs`, `job_changed` WS); a Cancel button hard-aborts a long/stuck synthesis, enrichment, or CSV/log import via `AbortSignal` (closes #225).
