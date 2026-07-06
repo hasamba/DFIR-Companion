@@ -372,6 +372,15 @@ pure) is the same derived-on-read shape but over the **forensic ∪ super** even
 **detection-linked** (appears in a Low+ event) or **telemetry-only** (only in Info events) — **distinct
 from the enrichment/threat-intel verdict** (a telemetry-only IOC can still be malicious). `GET
 /cases/:id/ioc-provenance`; dashboard per-IOC badge + an All/Detection-linked/Telemetry-only filter.
+**IOC provenance CHAIN** (`analysis/iocProvenanceChain.ts` `buildIocProvenanceChains`, pure, #247) is a
+different question again — not a classification but the full per-IOC story: extraction event(s),
+enrichment lookups, and citing findings, each timestamped. Enrichment (`IOC.enrichments[].fetchedAt`) and
+findings (`Finding.relatedIocs`) legs are authoritative; extraction is **approximate** — the same indexed
+exact-token match as `iocCorroboration`/`iocProvenance`, since no importer records which specific event
+produced an IOC (`addIoc()` takes only a type+value). Playbook linkage is deliberately **not** included —
+playbook tasks carry no IOC references, so faking an always-empty field would be worse than omitting it;
+tracked as remaining scope on #247. `GET /cases/:id/ioc-provenance-chain`; dashboard per-IOC 🔗 panel +
+JSON export.
 **Severity-gated forensic timeline (Info → super-only).** Because the Companion is a post-detection
 layer, the forensic timeline should hold graded signal (source verdicts + our deterministic rules), not
 raw telemetry — so on import an event enters the forensic timeline only when severity ≥ a floor

@@ -262,6 +262,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **CISA KEV integration** (Settings) — cross-reference CVEs against CISA catalog; strong initial-access signal
 - **IOC corroboration** — ⊕ N badge shows how many tools observed each indicator
 - **IOC provenance** — each IOC classed detection-linked (seen in a Low+ event) vs telemetry-only (Info only), distinct from the threat-intel verdict; per-IOC badge + All/Detection-linked/Telemetry-only filter
+- **IOC provenance chain** — per-IOC 🔗 panel showing extraction event(s), enrichment lookups, and citing findings, each timestamped, with a JSON export
 - **IOC flagged-only filter** — hide everything except threat-intel-confirmed indicators
 - **IOC type filter** — faceted dropdown (ip/domain/url/hash/file/process/other) with per-type counts; composes with the flagged-only + search filters
 - **IOC list noise-reduction controls** — three composable display-only filters, default on: hide false-positive/no-intel IOCs, hide OS system-path files, and a "🎯 Signal only" narrow-to-flagged/corroborated/enriched view

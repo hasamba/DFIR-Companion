@@ -703,6 +703,10 @@
     .explain-btn { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
       padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .explain-btn:hover { color: var(--c-ffd93b); border-color: var(--c-a88200); }
+    /* IOC provenance chain panel button (#247) — matches the other row-action chips. */
+    .ioc-chain-btn { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
+      padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+    .ioc-chain-btn:hover { color: var(--c-6bcb77); border-color: var(--c-1f5a35); }
     /* Super-timeline ⌖ context button + its inline ±window chips — match the other row-action chips. */
     .st-ctx { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
       padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
@@ -713,6 +717,15 @@
     .explain-modal { width: min(640px, 95vw); max-height: 85vh; overflow-y: auto; }
     .explain-section { margin-bottom: 10px; }
     .explain-section strong { display: block; margin-bottom: 3px; color: var(--c-c9d1d9); }
+    /* IOC provenance chain panel (#247) — wider than the base explain-modal since extraction event
+       descriptions (raw VQL/EVTX field dumps) are long; dedicated row classes (not the Phases panel's
+       .ph-ev-row/.ph-ev-time/.ph-ev-desc) so time and text render at the SAME font size here. */
+    .ioc-chain-modal { width: min(920px, 96vw); }
+    .iocchain-row { padding: 6px 0; border-bottom: 1px solid var(--c-1a1f28); display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+    .iocchain-row:last-child { border-bottom: none; }
+    .iocchain-time { flex-shrink: 0; font-size: 12px; color: var(--c-9aa4b2); }
+    .iocchain-desc { flex: 1; min-width: 0; word-break: break-word; font-size: 12px; }
+    .iocchain-tag { flex-shrink: 0; font-size: 11px; color: var(--c-9aa4b2); }
     .hunt-modal { width: min(740px, 95vw); }
     .hunt-card { border: 1px solid var(--c-2a2f3a); border-radius: 6px; margin: 8px 0; overflow: hidden; }
     .hunt-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -1564,6 +1577,17 @@
       <div id="explainBody"></div>
       <div style="margin-top:12px">
         <button id="explainClose" style="background:var(--c-2a2f3a);">Close</button>
+      </div>
+    </div>
+  </div>
+  <div id="iocChainOverlay" class="comment-overlay">
+    <div class="comment-modal explain-modal ioc-chain-modal">
+      <h3>🔗 IOC Provenance Chain</h3>
+      <div id="iocChainTitle" style="color:var(--c-9aa4b2);font-size:12px;margin-bottom:10px;font-style:italic"></div>
+      <div id="iocChainBody"></div>
+      <div style="margin-top:12px">
+        <button id="iocChainExport" style="background:var(--c-2a2f3a);">Export JSON</button>
+        <button id="iocChainClose" style="background:var(--c-2a2f3a);">Close</button>
       </div>
     </div>
   </div>
@@ -9071,6 +9095,13 @@
       clearTimeout(iocProvenanceTimer);
       iocProvenanceTimer = setTimeout(() => loadIocProvenance(caseId), 800);
     }
+    let iocProvenanceChainTimer = null;
+    function scheduleIocProvenanceChainReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(iocProvenanceChainTimer);
+      iocProvenanceChainTimer = setTimeout(() => loadIocProvenanceChains(caseId), 800);
+    }
     // Provenance for an IOC — absent from the map = telemetry (safe default: recede, don't over-signal).
     function iocProvenanceOf(iocId) {
       return iocProvenance[iocId] === "detection" ? "detection" : "telemetry";
@@ -9082,6 +9113,61 @@
         return ` <span class="ioc-prov-badge ioc-prov-detection" title="Detection-linked: this IOC appears in a graded (Low or higher) event — not just Info telemetry">detection-linked</span>`;
       }
       return ` <span class="ioc-prov-badge ioc-prov-telemetry" title="Telemetry-only: this IOC appears only in Info telemetry, not in any graded detection event">telemetry-only</span>`;
+    }
+
+    // IOC provenance CHAIN (#247): { iocId: { extraction, extractionTruncated, enrichment, findings } },
+    // derived server-side. Distinct from iocProvenance above (detection-vs-telemetry classification) —
+    // this is the full timestamped chain shown in the per-IOC chain panel. Loaded once per case connect
+    // (same bulk-fetch shape as loadIocSources/loadIocProvenance); the panel itself only reads from it.
+    let iocProvenanceChains = {};
+    function loadIocProvenanceChains(caseId) {
+      fetch(`/cases/${caseId}/ioc-provenance-chain`).then(r => r.json()).then(m => {
+        iocProvenanceChains = (m && typeof m === "object") ? m : {};
+      }).catch(() => {});
+    }
+    // Chip that opens the chain panel for one IOC (mirrors explainChip's button shape).
+    function iocChainChip(iocId) {
+      return `<button class="ioc-chain-btn" data-iocchain="${escAttr(String(iocId))}" title="Show provenance chain — extraction event(s), enrichment lookups, and citing findings">🔗</button>`;
+    }
+    // Renders the pre-fetched chain for one IOC into the panel. Read-only, no AI, no extra request.
+    function openIocChainPanel(caseId, iocId) {
+      const chain = iocProvenanceChains[iocId];
+      const overlay = document.getElementById("iocChainOverlay");
+      const titleEl = document.getElementById("iocChainTitle");
+      const bodyEl = document.getElementById("iocChainBody");
+      overlay.classList.add("open");
+      overlay.dataset.iocid = iocId;
+      titleEl.textContent = chain ? `${chain.type}: ${chain.value}` : iocId;
+      if (!chain) { bodyEl.innerHTML = "<div style='color:var(--c-9aa4b2)'>no provenance data for this IOC yet</div>"; return; }
+      const extractionRows = chain.extraction.length
+        ? chain.extraction.map(e =>
+            `<div class="iocchain-row">` +
+            `<span class="iocchain-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
+            `<a class="ev-jump iocchain-desc" data-evid="${escAttr(e.eventId)}" title="Jump to this event in the timeline">${esc(e.description || e.eventId)}</a>` +
+            (e.artifactName ? `<span class="iocchain-tag">${esc(e.artifactName)}</span>`
+              : (e.sources && e.sources.length ? `<span class="iocchain-tag">${esc(e.sources.join(", "))}</span>` : "")) +
+            `</div>`).join("")
+        : "<div style='color:var(--c-9aa4b2);font-size:12px'>no matching event found</div>";
+      const truncNote = chain.extractionTruncated > 0
+        ? `<div style="color:var(--c-9aa4b2);font-size:11px;margin-top:3px">+${esc(chain.extractionTruncated)} more matching event(s) not shown</div>` : "";
+      const enrichRows = chain.enrichment.length
+        ? chain.enrichment.map(en =>
+            `<div class="iocchain-row"><span class="iocchain-time">${esc(en.fetchedAt)}</span>` +
+            `<span class="iocchain-desc">${esc(en.source)}: ${esc(en.verdict)}${en.score ? " (" + esc(en.score) + ")" : ""}</span>` +
+            (en.link ? `<a class="iocchain-tag" href="${escAttr(en.link)}" target="_blank" rel="noopener" style="color:var(--c-6aa9ff)">↗</a>` : "") +
+            `</div>`).join("")
+        : "<div style='color:var(--c-9aa4b2);font-size:12px'>no enrichment lookups recorded</div>";
+      const findingRows = chain.findings.length
+        ? chain.findings.map(f =>
+            `<div class="iocchain-row"><span class="iocchain-time">${esc(f.firstSeen)}</span>` +
+            `<a class="finding-jump iocchain-desc" data-fid="${escAttr(f.findingId)}" title="Jump to this finding">${esc(f.title)}</a>` +
+            `<span class="iocchain-tag">${esc(f.severity)}, ${esc(f.status)}</span></div>`).join("")
+        : "<div style='color:var(--c-9aa4b2);font-size:12px'>no findings cite this IOC yet</div>";
+      bodyEl.innerHTML =
+        `<div class="explain-section"><strong>Extraction — event(s) this IOC was seen in <small style="color:var(--c-9aa4b2)">(approximate — matched by value, not a stored link)</small></strong>${extractionRows}${truncNote}</div>` +
+        `<div class="explain-section"><strong>Enrichment — threat-intel lookups</strong>${enrichRows}</div>` +
+        `<div class="explain-section"><strong>Findings citing this IOC</strong>${findingRows}</div>` +
+        `<div style="color:var(--c-9aa4b2);font-size:11px;margin-top:6px">Playbook references aren't tracked yet — playbook tasks don't carry IOC links.</div>`;
     }
 
     // Collapsible "Evidence" disclosure under a finding (derived client-side, no extra request):
@@ -11263,7 +11349,7 @@
           // Mirror the forensic timeline: control cluster (comment + tag-add + hunt icons),
           // then the id, then the tag PILLS, then the indicator itself.
           +   `${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
-          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> <span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)} ${fpAction}${enrichBadges(i)}`
+          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> <span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)} ${fpAction}${enrichBadges(i)} ${iocChainChip(i.id)}`
           + `</span>`
           + `</div>`;
       }).join("");
@@ -12041,6 +12127,7 @@
       loadSwimlane(caseId);
       loadIocSources(caseId);
       loadIocProvenance(caseId);
+      loadIocProvenanceChains(caseId);
       loadComments(caseId);
       loadActivityLog(caseId);
       loadTags(caseId);
@@ -12121,7 +12208,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "job_changed") loadJobs(caseId);
@@ -12641,6 +12728,12 @@
       if (explain) {
         const caseId = document.getElementById("caseId").value.trim();
         if (caseId) openExplainPanel(caseId, explain.getAttribute("data-exid"));
+        return;
+      }
+      const iocChain = e.target.closest && e.target.closest(".ioc-chain-btn");
+      if (iocChain) {
+        const caseId = document.getElementById("caseId").value.trim();
+        if (caseId) openIocChainPanel(caseId, iocChain.getAttribute("data-iocchain"));
       }
     });
     // Row checkboxes + select-all (change, not click, so we read the post-toggle checked state)
@@ -12778,12 +12871,33 @@
     // Explain-event modal (#141).
     document.getElementById("explainClose").onclick = () => document.getElementById("explainOverlay").classList.remove("open");
     document.getElementById("explainOverlay").addEventListener("click", (e) => { if (e.target.id === "explainOverlay") document.getElementById("explainOverlay").classList.remove("open"); });
+    // IOC provenance chain panel (#247) — close + backdrop click + JSON export of the currently-open chain.
+    document.getElementById("iocChainClose").onclick = () => document.getElementById("iocChainOverlay").classList.remove("open");
+    document.getElementById("iocChainOverlay").addEventListener("click", (e) => { if (e.target.id === "iocChainOverlay") document.getElementById("iocChainOverlay").classList.remove("open"); });
+    document.getElementById("iocChainExport").onclick = () => {
+      const iocId = document.getElementById("iocChainOverlay").dataset.iocid;
+      const chain = iocId && iocProvenanceChains[iocId];
+      if (!chain) return;
+      const blob = new Blob([JSON.stringify(chain, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `ioc-provenance-${iocId}.json`; a.click();
+      URL.revokeObjectURL(url);
+    };
     // Citation footnotes inside the Explain panel (#222) — #explainOverlay lives outside <main>, so
     // the main-scoped .ev-jump delegated handler (above) never sees these clicks; handle them here
     // instead. Close the overlay first so the analyst actually sees the highlighted timeline row.
     document.getElementById("explainOverlay").addEventListener("click", (e) => {
       const ejump = e.target.closest && e.target.closest(".ev-jump");
       if (ejump) { e.preventDefault(); document.getElementById("explainOverlay").classList.remove("open"); jumpToEvent(ejump.getAttribute("data-evid")); }
+    });
+    // Event/finding jump links inside the IOC provenance chain panel (#247) — #iocChainOverlay also
+    // lives outside <main>, same reason as the Explain panel above.
+    document.getElementById("iocChainOverlay").addEventListener("click", (e) => {
+      const ejump = e.target.closest && e.target.closest(".ev-jump");
+      if (ejump) { e.preventDefault(); document.getElementById("iocChainOverlay").classList.remove("open"); jumpToEvent(ejump.getAttribute("data-evid")); return; }
+      const fjump = e.target.closest && e.target.closest(".finding-jump");
+      if (fjump) { e.preventDefault(); document.getElementById("iocChainOverlay").classList.remove("open"); jumpToFinding(fjump.getAttribute("data-fid")); }
     });
     // Executive summary generator (stopPropagation so the h2 click doesn't collapse the section).
     document.getElementById("genExecBtn").addEventListener("click", (e) => { e.stopPropagation(); genExecSummary(); });

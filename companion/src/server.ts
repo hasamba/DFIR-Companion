@@ -117,6 +117,7 @@ import { HYPOTHESIS_STATUSES, type HypothesisStatus, type HypothesisPatch, type 
 import { DwellWindowStore } from "./analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "./analysis/superTimelineStore.js";
 import { deriveIocProvenance } from "./analysis/iocProvenance.js";
+import { buildIocProvenanceChains } from "./analysis/iocProvenanceChain.js";
 import { ForensicGateControlStore } from "./analysis/forensicGateControl.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "./analysis/forensicGate.js";
 import { ConfidenceControlStore } from "./analysis/confidenceControl.js";
@@ -1745,6 +1746,29 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         superEvents = (await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER })).events;
       }
       return res.status(200).json(deriveIocProvenance(state.iocs, [...state.forensicTimeline, ...superEvents]));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // IOC provenance CHAIN (#247): for every IOC, the full story — extraction event(s), enrichment
+  // lookups, and citing findings, each timestamped. Distinct from /ioc-provenance above (which only
+  // classes detection-linked vs telemetry-only). Extraction is APPROXIMATE (indexed exact-token
+  // match against forensic ∪ super events — no importer records which specific event produced an
+  // IOC); enrichment + findings legs are authoritative. Powers the dashboard's per-IOC provenance
+  // panel + its "export as JSON" button.
+  app.get("/cases/:id/ioc-provenance-chain", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    try {
+      if (!(await store.caseExists(req.params.id))) {
+        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+      }
+      const state = await options.stateStore.load(req.params.id);
+      let superEvents: ForensicEvent[] = [];
+      if (options.superTimelineStore) {
+        superEvents = (await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER })).events;
+      }
+      return res.status(200).json(buildIocProvenanceChains(state.iocs, [...state.forensicTimeline, ...superEvents], state.findings));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
