@@ -9103,8 +9103,14 @@
       ).join(" ");
     }
 
-    function findingEvidenceDetails(f, caseId, screenshots, events, iocs) {
+    function findingEvidenceDetails(f, caseId, screenshots, events, iocs, cites) {
       const rows = [];
+      // Cited events + MITRE live inside this collapsible panel (issue #222) rather than always
+      // visible under the description, so the finding card itself stays compact.
+      if (cites) rows.push(`<div><small>Cited events: ${cites}</small></div>`);
+      if (f.mitreTechniques && f.mitreTechniques.length) {
+        rows.push(`<div><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small></div>`);
+      }
       if (f.confidenceReason) {
         rows.push(`<div><small>Confidence: ${f.confidence !== undefined ? esc(String(f.confidence)) + "% — " : ""}${esc(f.confidenceReason)}</small></div>`);
       }
@@ -9115,9 +9121,6 @@
         ).join(" · ");
         rows.push(`<div><small style="color:var(--c-9aa4b2)">evidence: ${links}</small></div>`);
       }
-      // Supporting events are now shown as numbered citation footnotes directly under the finding's
-      // description (see citeEvents() in renderState()) — this panel keeps only what's unique to it:
-      // confidence reasoning, evidence screenshots, and supporting IOCs.
       const byVal = new Map((iocs || []).map(i => [String(i.value).trim().toLowerCase(), i.value]));
       const vals = new Set();
       for (const id of (f.relatedIocs || [])) { const ioc = (iocs || []).find(x => x.id === id); if (ioc) vals.add(ioc.value); }
@@ -11893,9 +11896,7 @@
           return `<div class="finding" data-fid="${escAttr(f.id)}">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ${tagPills("finding", f.id)} ` +
             `<span style="color:var(--c-6aa9ff)">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${fpBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
-            `${cites ? `<br><small style="color:var(--c-9aa4b2)">Cited events: ${cites}</small>` : ""}` +
-            `${f.mitreTechniques && f.mitreTechniques.length ? `<br><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small>` : ""}` +
-            `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs)}</div>`;
+            `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs, cites)}</div>`;
         }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
       // Investigation Log = state.timeline (import / AI notes) + analyst quick-action audit lines
       // (durable comments tagged with QA_AUDIT_MARK), merged chronologically.
