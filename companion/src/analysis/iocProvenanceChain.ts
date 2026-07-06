@@ -23,6 +23,8 @@ export interface ProvenanceExtractionEvent {
   description: string;
   severity: ForensicEvent["severity"];
   sources?: string[];
+  artifactName?: string;   // the specific artifact/source-tool identifier (e.g. "Windows.Network.DNS"),
+                           // finer-grained than `sources` (e.g. "Velociraptor") — set by importers that know it
 }
 
 export interface ProvenanceEnrichmentLookup {
@@ -97,6 +99,7 @@ export function buildIocProvenanceChains(
     const extraction: ProvenanceExtractionEvent[] = dedup.slice(0, MAX_EXTRACTION_EVENTS).map((e) => ({
       eventId: e.id, timestamp: e.timestamp, description: e.description, severity: e.severity,
       sources: e.sources && e.sources.length ? e.sources : undefined,
+      artifactName: e.artifactName,
     }));
 
     const enrichment: ProvenanceEnrichmentLookup[] = (ioc.enrichments ?? [])

@@ -717,6 +717,15 @@
     .explain-modal { width: min(640px, 95vw); max-height: 85vh; overflow-y: auto; }
     .explain-section { margin-bottom: 10px; }
     .explain-section strong { display: block; margin-bottom: 3px; color: var(--c-c9d1d9); }
+    /* IOC provenance chain panel (#247) — wider than the base explain-modal since extraction event
+       descriptions (raw VQL/EVTX field dumps) are long; dedicated row classes (not the Phases panel's
+       .ph-ev-row/.ph-ev-time/.ph-ev-desc) so time and text render at the SAME font size here. */
+    .ioc-chain-modal { width: min(920px, 96vw); }
+    .iocchain-row { padding: 6px 0; border-bottom: 1px solid var(--c-1a1f28); display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+    .iocchain-row:last-child { border-bottom: none; }
+    .iocchain-time { flex-shrink: 0; font-size: 12px; color: var(--c-9aa4b2); }
+    .iocchain-desc { flex: 1; min-width: 0; word-break: break-word; font-size: 12px; }
+    .iocchain-tag { flex-shrink: 0; font-size: 11px; color: var(--c-9aa4b2); }
     .hunt-modal { width: min(740px, 95vw); }
     .hunt-card { border: 1px solid var(--c-2a2f3a); border-radius: 6px; margin: 8px 0; overflow: hidden; }
     .hunt-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -1572,7 +1581,7 @@
     </div>
   </div>
   <div id="iocChainOverlay" class="comment-overlay">
-    <div class="comment-modal explain-modal">
+    <div class="comment-modal explain-modal ioc-chain-modal">
       <h3>🔗 IOC Provenance Chain</h3>
       <div id="iocChainTitle" style="color:var(--c-9aa4b2);font-size:12px;margin-bottom:10px;font-style:italic"></div>
       <div id="iocChainBody"></div>
@@ -9132,26 +9141,27 @@
       if (!chain) { bodyEl.innerHTML = "<div style='color:var(--c-9aa4b2)'>no provenance data for this IOC yet</div>"; return; }
       const extractionRows = chain.extraction.length
         ? chain.extraction.map(e =>
-            `<div class="ph-ev-row">` +
-            `<span class="ph-ev-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
-            `<a class="ev-jump ph-ev-desc" data-evid="${escAttr(e.eventId)}" title="Jump to this event in the timeline">${esc(e.description || e.eventId)}</a>` +
-            (e.sources && e.sources.length ? `<small style="color:var(--c-9aa4b2)"> · ${esc(e.sources.join(", "))}</small>` : "") +
+            `<div class="iocchain-row">` +
+            `<span class="iocchain-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
+            `<a class="ev-jump iocchain-desc" data-evid="${escAttr(e.eventId)}" title="Jump to this event in the timeline">${esc(e.description || e.eventId)}</a>` +
+            (e.artifactName ? `<span class="iocchain-tag">${esc(e.artifactName)}</span>`
+              : (e.sources && e.sources.length ? `<span class="iocchain-tag">${esc(e.sources.join(", "))}</span>` : "")) +
             `</div>`).join("")
         : "<div style='color:var(--c-9aa4b2);font-size:12px'>no matching event found</div>";
       const truncNote = chain.extractionTruncated > 0
         ? `<div style="color:var(--c-9aa4b2);font-size:11px;margin-top:3px">+${esc(chain.extractionTruncated)} more matching event(s) not shown</div>` : "";
       const enrichRows = chain.enrichment.length
         ? chain.enrichment.map(en =>
-            `<div class="ph-ev-row"><span class="ph-ev-time">${esc(en.fetchedAt)}</span>` +
-            `<span class="ph-ev-desc">${esc(en.source)}: ${esc(en.verdict)}${en.score ? " (" + esc(en.score) + ")" : ""}</span>` +
-            (en.link ? ` <a href="${escAttr(en.link)}" target="_blank" rel="noopener" style="color:var(--c-6aa9ff)">↗</a>` : "") +
+            `<div class="iocchain-row"><span class="iocchain-time">${esc(en.fetchedAt)}</span>` +
+            `<span class="iocchain-desc">${esc(en.source)}: ${esc(en.verdict)}${en.score ? " (" + esc(en.score) + ")" : ""}</span>` +
+            (en.link ? `<a class="iocchain-tag" href="${escAttr(en.link)}" target="_blank" rel="noopener" style="color:var(--c-6aa9ff)">↗</a>` : "") +
             `</div>`).join("")
         : "<div style='color:var(--c-9aa4b2);font-size:12px'>no enrichment lookups recorded</div>";
       const findingRows = chain.findings.length
         ? chain.findings.map(f =>
-            `<div class="ph-ev-row"><span class="ph-ev-time">${esc(f.firstSeen)}</span>` +
-            `<a class="finding-jump ph-ev-desc" data-fid="${escAttr(f.findingId)}" title="Jump to this finding">${esc(f.title)}</a>` +
-            ` <small style="color:var(--c-9aa4b2)">(${esc(f.severity)}, ${esc(f.status)})</small></div>`).join("")
+            `<div class="iocchain-row"><span class="iocchain-time">${esc(f.firstSeen)}</span>` +
+            `<a class="finding-jump iocchain-desc" data-fid="${escAttr(f.findingId)}" title="Jump to this finding">${esc(f.title)}</a>` +
+            `<span class="iocchain-tag">${esc(f.severity)}, ${esc(f.status)}</span></div>`).join("")
         : "<div style='color:var(--c-9aa4b2);font-size:12px'>no findings cite this IOC yet</div>";
       bodyEl.innerHTML =
         `<div class="explain-section"><strong>Extraction — event(s) this IOC was seen in <small style="color:var(--c-9aa4b2)">(approximate — matched by value, not a stored link)</small></strong>${extractionRows}${truncNote}</div>` +
@@ -12880,6 +12890,14 @@
     document.getElementById("explainOverlay").addEventListener("click", (e) => {
       const ejump = e.target.closest && e.target.closest(".ev-jump");
       if (ejump) { e.preventDefault(); document.getElementById("explainOverlay").classList.remove("open"); jumpToEvent(ejump.getAttribute("data-evid")); }
+    });
+    // Event/finding jump links inside the IOC provenance chain panel (#247) — #iocChainOverlay also
+    // lives outside <main>, same reason as the Explain panel above.
+    document.getElementById("iocChainOverlay").addEventListener("click", (e) => {
+      const ejump = e.target.closest && e.target.closest(".ev-jump");
+      if (ejump) { e.preventDefault(); document.getElementById("iocChainOverlay").classList.remove("open"); jumpToEvent(ejump.getAttribute("data-evid")); return; }
+      const fjump = e.target.closest && e.target.closest(".finding-jump");
+      if (fjump) { e.preventDefault(); document.getElementById("iocChainOverlay").classList.remove("open"); jumpToFinding(fjump.getAttribute("data-fid")); }
     });
     // Executive summary generator (stopPropagation so the h2 click doesn't collapse the section).
     document.getElementById("genExecBtn").addEventListener("click", (e) => { e.stopPropagation(); genExecSummary(); });

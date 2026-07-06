@@ -39,6 +39,13 @@ describe("buildIocProvenanceChains", () => {
     expect(chains.i1.extraction).toEqual([]);
   });
 
+  it("carries the event's artifactName (finer-grained than sources) when set", () => {
+    const events = [ev({ id: "e1", severity: "High", dstIp: "8.8.8.8", sources: ["Velociraptor"], artifactName: "Windows.Network.DNS" })];
+    const chains = buildIocProvenanceChains([ioc({ id: "i1", type: "ip", value: "8.8.8.8" })], events, []);
+    expect(chains.i1.extraction[0].artifactName).toBe("Windows.Network.DNS");
+    expect(chains.i1.extraction[0].sources).toEqual(["Velociraptor"]);
+  });
+
   it("dedupes an event matching on multiple fields and sorts extraction chronologically", () => {
     const events = [
       ev({ id: "e2", severity: "High", dstIp: "1.2.3.4", timestamp: "2026-01-02T00:00:00Z" }),
