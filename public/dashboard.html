@@ -3657,6 +3657,14 @@
       </div>
     </section>
     <section id="sec-inv-log" style="grid-column: 1 / -1"><h2>Investigation Log</h2><div id="timeline">—</div></section>
+    <section id="sec-activity" style="grid-column: 1 / -1"><h2>Activity Log<span class="ev-sub">Every security-relevant action taken on this case</span></h2>
+      <div style="margin-bottom:8px">
+        <select id="activityFilter" style="font-size:12px">
+          <option value="">All categories</option>
+        </select>
+      </div>
+      <div id="activityLogPanel">—</div>
+    </section>
     <section id="sec-case-details" style="grid-column: 1 / -1" class="collapsed">
       <h2>Case Details (for the generated report)</h2>
       <div id="reportMeta">
@@ -3783,7 +3791,7 @@
       const clearBtn = document.getElementById("clearExcludeBtn");
       if (!box) return;
       box.innerHTML = excludeTerms.map((t, i) =>
-        `<span class="exclude-chip"><span title="${esc(t)}">${esc(t)}</span><button type="button" data-i="${i}" title="Remove this exclude term">✕</button></span>`
+        `<span class="exclude-chip"><span title="${escAttr(t)}">${esc(t)}</span><button type="button" data-i="${i}" title="Remove this exclude term">✕</button></span>`
       ).join("");
       if (clearBtn) clearBtn.hidden = excludeTerms.length === 0;
     }
@@ -9642,7 +9650,7 @@
         const aliases = (h.aliases && h.aliases.length) ? `<span class="adv-aliases">aka ${esc(h.aliases.join(", "))}</span>` : "";
         const ratio = `${esc(h.overlapCount)} / ${esc(h.groupTechniqueCount)}`;
         const exactSet = new Set(h.exactTechniques || []);
-        const exactBadge = h.exactCount ? `<span class="adv-exact" title="${esc(h.exactCount)} exact sub-technique match(es) — the strong signal">${esc(h.exactCount)} exact</span>` : "";
+        const exactBadge = h.exactCount ? `<span class="adv-exact" title="${escAttr(h.exactCount)} exact sub-technique match(es) — the strong signal">${esc(h.exactCount)} exact</span>` : "";
         const techs = (h.overlapTechniques || []).map(t => {
           const u = attackUrl(t);
           const cls = exactSet.has(t) ? "adv-tech adv-tech-exact" : "adv-tech adv-tech-base";
@@ -9653,7 +9661,7 @@
           `<div class="adv-card-head">` +
             `<a href="${escAttr(h.url)}" target="_blank" rel="noopener" class="adv-name">${esc(h.id)} ${esc(h.name)}</a>` +
             aliases +
-            `<span class="adv-score" title="${esc(h.overlapCount)} of the case's techniques overlap this group (${esc(h.exactCount)} exact sub-technique), of ${esc(h.groupTechniqueCount)} it is known to use">⊕ ${ratio}</span>` +
+            `<span class="adv-score" title="${escAttr(h.overlapCount)} of the case's techniques overlap this group (${escAttr(h.exactCount)} exact sub-technique), of ${escAttr(h.groupTechniqueCount)} it is known to use">⊕ ${ratio}</span>` +
             exactBadge +
           `</div>` +
           desc +
@@ -10044,6 +10052,55 @@
     // The currently-rendered fleet-hunt suggestions (sorted), kept at module scope so a per-card
     // ↻ Regenerate can swap one entry and re-render (#157 — mirrors the playbook pbHuntFlat pattern).
     let vhsFlat = [];
+
+    // ── Activity Log (#238) ───────────────────────────────────────────────────────────────
+    const ACTIVITY_CATEGORY_LABELS = {
+      import: "Import", triage: "Mark/Unmark", ai: "AI run", enrichment: "Enrichment",
+      anonymization: "Anonymization", settings: "Settings", playbook: "Playbook",
+      collaboration: "Comment/Tag", hunt: "Hunt", export: "Export",
+    };
+    let activityFilterValue = "";
+    function activityTimeAgo(iso) {
+      const ms = Date.now() - new Date(iso).getTime();
+      if (Number.isNaN(ms)) return "—";
+      const mins = Math.floor(ms / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+      return `${Math.floor(hrs / 24)}d ago`;
+    }
+    function renderActivityLog(entries) {
+      const el = document.getElementById("activityLogPanel");
+      if (!el) return;
+      if (!entries.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No activity recorded yet.</div>"; return; }
+      el.innerHTML = "<table style='width:100%;font-size:12px;border-collapse:collapse'>" +
+        entries.map(e => `<tr style="border-bottom:1px solid var(--c-2a2f3a)">
+          <td style="padding:4px 8px;white-space:nowrap;color:var(--c-9aa4b2)" title="${escAttr(e.timestamp)}">${activityTimeAgo(e.timestamp)}</td>
+          <td style="padding:4px 8px;white-space:nowrap">${esc(ACTIVITY_CATEGORY_LABELS[e.category] || e.category)}</td>
+          <td style="padding:4px 8px;white-space:nowrap;color:var(--c-9aa4b2)">${esc(e.actor)}</td>
+          <td style="padding:4px 8px">${esc(e.detail)}</td>
+          <td style="padding:4px 8px;white-space:nowrap">${e.outcome === "error" ? "<span style='color:#e5484d'>error</span>" : ""}</td>
+        </tr>`).join("") + "</table>";
+    }
+    function loadActivityLog(caseId) {
+      const qs = activityFilterValue ? `?category=${encodeURIComponent(activityFilterValue)}` : "";
+      fetch(`/cases/${caseId}/activity-log${qs}`).then(r => r.ok ? r.json() : []).then(renderActivityLog).catch(() => {});
+    }
+    (function initActivityFilter() {
+      const sel = document.getElementById("activityFilter");
+      if (!sel) return;
+      Object.entries(ACTIVITY_CATEGORY_LABELS).forEach(([value, label]) => {
+        const opt = document.createElement("option");
+        opt.value = value; opt.textContent = label;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener("change", () => {
+        activityFilterValue = sel.value;
+        const caseId = document.getElementById("caseId").value.trim();
+        if (caseId) loadActivityLog(caseId);
+      });
+    })();
 
     // ── Hunting Profile (#157) ────────────────────────────────────────────────────────────
     // The per-case hunt feedback loop, surfaced read-only: every hunt deployed in this case (fleet /
@@ -11497,7 +11554,7 @@
         const from = new Date(b.startMs).toISOString();
         const to = new Date(b.endMs).toISOString();
         const label = `${b.count} event${b.count === 1 ? "" : "s"} · ${b.maxSeverity} · ${from.slice(0, 16).replace("T", " ")}–${to.slice(0, 16).replace("T", " ")} UTC (click to zoom)`;
-        return `<div class="tl-heatmap-bar" style="height:${heightPct}%;background:${color}" title="${esc(label)}" onclick="zoomToTimeWindow('${from}','${to}')"></div>`;
+        return `<div class="tl-heatmap-bar" style="height:${heightPct}%;background:${color}" title="${escAttr(label)}" onclick="zoomToTimeWindow('${from}','${to}')"></div>`;
       }).join("");
     }
 
@@ -11607,7 +11664,7 @@
         const span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
           ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
         const badge = (e.count && e.count > 1)
-          ? ` <span title="${esc(e.count)} occurrences collapsed into one event" style="background:var(--c-3a2f1a);color:var(--c-ffd93b);border:1px solid var(--c-5a4a1a);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">×${esc(e.count)}</span>` : "";
+          ? ` <span title="${escAttr(e.count)} occurrences collapsed into one event" style="background:var(--c-3a2f1a);color:var(--c-ffd93b);border:1px solid var(--c-5a4a1a);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">×${esc(e.count)}</span>` : "";
         const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
         const corro = (realSrc.length > 1)
           ? ` <span title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}" style="background:var(--c-13331f);color:var(--c-6bcb77);border:1px solid var(--c-1f5a35);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">⊕ ${esc(realSrc.length)}</span>` : "";
@@ -11985,6 +12042,7 @@
       loadIocSources(caseId);
       loadIocProvenance(caseId);
       loadComments(caseId);
+      loadActivityLog(caseId);
       loadTags(caseId);
       loadPins(caseId);
       loadNotebook(caseId);
@@ -12080,6 +12138,7 @@
           else hideCaseMismatch();
         }
         else if (msg.type === "comments_changed") loadComments(caseId);
+        else if (msg.type === "activity_changed") loadActivityLog(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
         else if (msg.type === "pins_changed") loadPins(caseId);
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
@@ -13819,6 +13878,7 @@
       { id: "sec-super-timeline", label: "Super-Timeline" },
       { id: "sec-notebook",     label: "Analyst Notebook" },
       { id: "sec-inv-log",      label: "Investigation Log" },
+      { id: "sec-activity",     label: "Activity Log" },
       { id: "sec-case-details", label: "Case Details" },
     ];
 

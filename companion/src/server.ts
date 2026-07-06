@@ -107,6 +107,7 @@ import { defaultReportTemplate, isReportSectionEnabled, type ReportSectionKey } 
 import { BUILT_IN_DASHBOARD_VIEWS } from "./analysis/dashboardViews.js";
 import { DashboardViewStore } from "./analysis/dashboardViewStore.js";
 import { injectPrintTrigger } from "./reports/html.js";
+import { ActivityLogStore, ACTIVITY_CATEGORIES, logActivity, type ActivityCategory } from "./analysis/activityLog.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore, type Tag } from "./analysis/tags.js";
 import { PinnedFindingsStore, PinLimitError } from "./analysis/pinnedFindings.js";
@@ -283,6 +284,10 @@ export interface AppOptions {
   // Dashboard view presets (#142): GLOBAL role/phase layouts (sections + severity/top-N filter +
   // matching report template) the dashboard applies. Built-ins editable in place, custom via CRUD.
   dashboardViewStore?: DashboardViewStore;
+  // Per-case investigation activity log (#238): chronological record of security-relevant
+  // actions. onActivity pings dashboard clients over the WS to re-fetch on a new entry.
+  activityLogStore?: ActivityLogStore;
+  onActivity?: (caseId: string) => void;
   // Investigator comments on case entities (collaboration). onComments pings dashboard
   // clients over the WS to re-fetch when a comment is added/removed.
   commentsStore?: CommentsStore;
@@ -1561,6 +1566,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const paths = await options.reportWriter.writeAll(req.params.id);
       dispatchNotify(milestoneEvent(req.params.id, "Report generated", ["The case report (Markdown + HTML) was (re)generated."], new Date().toISOString()));
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "export", action: "report-generated", detail: "report (Markdown + HTML) regenerated",
+      });
       return res.status(200).json(paths);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -1697,6 +1705,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const result = await options.pipeline.hypothesizeGaps(req.params.id);
       logLine(`[gaps] hypothesised ${result.hypotheses.length} timeline gap(s) for ${req.params.id}`);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "hypothesize-gaps", detail: `hypothesized ${result.hypotheses.length} timeline gap(s)`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -2712,6 +2723,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const suggestions = await options.pipeline.suggestMemoryNextSteps(req.params.id);
       logLine(`[memory] suggested ${suggestions.length} next step(s) for ${req.params.id}`);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "memory-next-steps", detail: `suggested ${suggestions.length} next step(s)`,
+      });
       return res.status(200).json({ suggestions });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -3779,6 +3793,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // #157: record the bundle deploy (no VQL — bundles are artifact lists; outcome filled on collect).
       await recordHuntDeploy(caseId, { source: "bundle", title: bundle.name, huntId: launch.huntId, deployedAt: new Date().toISOString() });
       options.onVeloHunt?.(caseId);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "hunt", action: "run-bundle", detail: `ran bundle "${bundle.name}" (${artifactsToRun.length} artifact(s))`,
+      });
 
       const timer = setTimeout(() => { void importVeloHuntResults(caseId, launch.huntId); }, waitMinutes * 60_000);
       timer.unref?.();
@@ -3909,6 +3926,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         // the deploy still excludes it from re-proposal and surfaces it in the hunting profile.
         await recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, deployedAt: new Date().toISOString() });
         options.onVeloHunt?.(caseId);
+        logActivity(options.activityLogStore, options.onActivity, caseId, {
+          category: "hunt", action: "deploy-collection", detail: `collection "${title}" on ${hostname}`,
+        });
         return res.status(200).json({ mode, ...result });
       }
       const expirySeconds = normalizeHuntExpirySeconds(req.body?.expirySeconds);   // relative; defaults to one hour
@@ -3935,6 +3955,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
       await recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, huntId: launch.huntId, deployedAt: new Date().toISOString() });
       options.onVeloHunt?.(caseId);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "hunt", action: "deploy-hunt", detail: `fleet hunt "${title}" deployed (${source})`,
+      });
       return res.status(200).json({ mode, waitMinutes, ...launch });
     } catch (err) {
       logLine(`[velociraptor] deploy-hunt ERROR: ${(err as Error).message}`);
@@ -4209,6 +4232,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         `assets +${result.assets.added}/${result.assets.existing}, iocs +${result.iocs.added}/${result.iocs.existing}, ` +
         `timeline +${result.timeline.added}/${result.timeline.existing}, tasks +${result.tasks.added}/${result.tasks.existing}, ` +
         `notes ${result.notes}, warnings ${result.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-iris", detail: `pushed to DFIR-IRIS case ${result.caseId} (${result.created ? "created" : "updated"})`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[iris] ${caseId} push ERROR: ${(err as Error).message}`);
@@ -4322,6 +4348,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const result = await pushCaseToTimesketch(options.timesketchClient, { sketchName: caseId, state }, options.timesketchOptions);
       logLine(`[timesketch] ${caseId} push DONE -> sketch ${result.sketchId} (${result.created ? "created" : "updated"}); ` +
         `timeline "${result.timelineName}" events ${result.events}${result.replacedTimeline ? " (replaced)" : ""}, warnings ${result.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-timesketch", detail: `pushed to Timesketch sketch ${result.sketchId} (${result.created ? "created" : "updated"})`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[timesketch] ${caseId} push ERROR: ${(err as Error).message}`);
@@ -4347,6 +4376,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const result = await pushCaseToMisp(options.mispPushClient, { caseId, state }, options.mispPushOptions);
       logLine(`[misp] ${caseId} push DONE -> event ${result.eventId} (${result.created ? "created" : "updated"}); ` +
         `attributes +${result.attributes.added}/${result.attributes.existing}, tags +${result.tags}, warnings ${result.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-misp", detail: `pushed to MISP event ${result.eventId} (${result.created ? "created" : "updated"})`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[misp] ${caseId} push ERROR: ${(err as Error).message}`);
@@ -4400,6 +4432,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       );
       logLine(`[notion] ${caseId} export DONE -> page ${result.pageId} (${result.created ? "created" : "updated"}); ` +
         `+${result.blocksAppended} block(s) in ${result.batches} batch(es), archived ${result.blocksArchived}, warnings ${result.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-notion", detail: `pushed to Notion page ${result.pageId} (${result.created ? "created" : "updated"})`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[notion] ${caseId} export ERROR: ${(err as Error).message}`);
@@ -4449,6 +4484,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         new Date().toISOString(),
       );
       logLine(`[clickup] ${caseId} push DONE: +${result.created} created, ${result.updated} updated, ${result.skipped} skipped, warnings ${result.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-clickup", detail: `pushed playbook to ClickUp list ${listId} — +${result.created} created, ${result.updated} updated`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[clickup] ${caseId} push ERROR: ${(err as Error).message}`);
@@ -4604,6 +4642,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await anonControl.save(req.params.id, next);
       if (next.enabled !== cur.enabled && options.pipeline && hasAiProvider()) {
         void options.pipeline.synthesize(req.params.id, { force: true }).catch(() => {});
+      }
+      if (next.enabled !== cur.enabled) {
+        logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+          category: "anonymization", action: "anon-control", detail: `anonymization ${next.enabled ? "enabled" : "disabled"}`,
+        });
       }
       return res.status(200).json({ ...next, screenshotWarning: next.enabled && !visionIsLocal });
     } catch (err) {
@@ -5024,6 +5067,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         if (whitelistInput) await options.iocWhitelistStore.add(whitelistInput);
       }
       options.onFalsePositive?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "triage", action: "mark-false-positive", actor: marker.markedBy ?? "",
+        detail: `${marker.kind} ${marker.ref} (${marker.reason})`, targetType: marker.kind, targetId: marker.ref,
+      });
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it
       return res.status(200).json(next);
     } catch (err) {
@@ -5060,6 +5107,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const next = [...byId.values()];
       await falsePositives.save(req.params.id, next);
       options.onFalsePositive?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "triage", action: "mark-false-positive-batch", actor: fallbackMarkedBy ?? "",
+        detail: `${built.length} item(s) marked false-positive`,
+      });
       resynthesizeInBackground(req.params.id); // ONE re-synthesis for the whole batch
       return res.status(200).json(next);
     } catch (err) {
@@ -5122,9 +5173,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const id = String(req.body?.id ?? "");
       const markers = await falsePositives.load(req.params.id);
+      const removedMarker = markers.find((m) => m.id === id);
       const next = markers.filter((m) => m.id !== id);
       await falsePositives.save(req.params.id, next);
       options.onFalsePositive?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "triage", action: "unmark-false-positive",
+        actor: typeof req.body?.actor === "string" ? req.body.actor : "",
+        detail: removedMarker ? `${removedMarker.kind} ${removedMarker.ref}` : `marker ${id}`,
+        ...(removedMarker ? { targetType: removedMarker.kind, targetId: removedMarker.ref } : {}),
+      });
       resynthesizeInBackground(req.params.id);
       return res.status(200).json(next);
     } catch (err) {
@@ -5715,6 +5773,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const scope: ScopeWindow = { start: norm(req.body?.start), end: norm(req.body?.end) };
       await scopeStore.save(req.params.id, scope);
       options.onScope?.(req.params.id, scope);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "settings", action: "scope-changed",
+        detail: (scope.start || scope.end) ? `scope set: ${scope.start ?? "…"} to ${scope.end ?? "…"}` : "scope cleared",
+      });
       resynthesizeInBackground(req.params.id); // re-derive within the window
       return res.status(200).json(scope);
     } catch (err) {
@@ -5862,6 +5924,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
                 await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff });
                 options.onImportMeta?.(caseId);
               }
+              logActivity(options.activityLogStore, options.onActivity, caseId, {
+                category: "import", action: "import",
+                detail: `${kind} (${storedName}) — +${tDiff.added.length} event(s), +${iDiff.added.length} IOC(s)`,
+              });
               // #76: snapshot the pre-import state for undo — but only when the import actually changed
               // something (skip a no-op re-import so undo doesn't pile up dead levels).
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
@@ -7298,6 +7364,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await enrichControl.save(caseId, { providers });
       if (providers.length > 0) enrichInBackground(caseId);   // re-check; cache only queries newly-enabled / un-checked
       else enrichPending.delete(caseId);                      // disabled — stop the poller from waiting on a down provider for this case
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "enrichment", action: "enrich-control",
+        detail: providers.length ? `enrichment enabled: ${providers.join(", ")}` : "enrichment disabled (no providers)",
+      });
       return res.status(200).json({ providers });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7357,6 +7427,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         } catch { /* non-fatal */ }
       }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "ai", action: "synthesis",
+        detail: `synthesis ran — ${state.findings.length} finding(s), ${state.mitreTechniques.length} technique(s)${deepReasoning ? " (deep reasoning)" : ""}`,
+      });
       return res.status(200).json({
         findings: state.findings.length,
         mitreTechniques: state.mitreTechniques.length,
@@ -7372,6 +7446,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         return res.status(499).json({ error: "synthesis cancelled" });
       }
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "ai", action: "synthesis", detail: (err as Error).message, outcome: "error",
+      });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -7392,6 +7469,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const record = await options.pipeline.secondOpinion(caseId, { deepReasoning });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       options.onSecondOpinion?.(caseId);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "ai", action: "second-opinion",
+        detail: `second opinion ran — ${record.deltas.length} delta(s)${deepReasoning ? " (deep reasoning)" : ""}`,
+      });
       return res.status(200).json(record);
     } catch (err) {
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
@@ -7420,6 +7501,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const { record } = await options.pipeline.applySecondOpinion(req.params.id, deltaId, accept);
       options.onSecondOpinion?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "second-opinion-apply", detail: `delta ${deltaId} — ${accept ? "accepted" : "rejected"}`,
+      });
       return res.status(200).json(record);
     } catch (err) {
       const msg = (err as Error).message;
@@ -7436,6 +7520,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const { record } = await options.pipeline.applyAllSecondOpinion(req.params.id, accept);
       options.onSecondOpinion?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "second-opinion-apply-all", detail: `all pending deltas — ${accept ? "accepted" : "rejected"}`,
+      });
       return res.status(200).json(record);
     } catch (err) {
       const msg = (err as Error).message;
@@ -7452,6 +7539,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!question) return res.status(400).json({ error: "question is required" });
     try {
       const answer = await options.pipeline.ask(req.params.id, question);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "ask", detail: `asked: "${question.slice(0, 120)}"`,
+      });
       return res.status(200).json(answer);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7494,6 +7584,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const result = await options.pipeline.translateQuery(req.params.id, request, platforms);
       logLine(`[translate-query] produced ${result.queries.length} query/ies for ${req.params.id}`);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "translate-query", detail: `translated: "${request.slice(0, 120)}" — ${result.queries.length} quer(y/ies)`,
+      });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7509,6 +7602,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(409).json({ error: "The Executive summary section is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "executiveSummary" });
     try {
       const result = await options.pipeline.executiveSummary(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "executive-summary", detail: "executive summary generated",
+      });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7522,6 +7618,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for remediation plan" });
     try {
       const result = await options.pipeline.remediationPlan(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "remediation-plan", detail: "remediation plan generated",
+      });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7539,6 +7638,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(409).json({ error: "The Timeline section (which contains the narrative) is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "timeline" });
     try {
       const result = await options.pipeline.generateNarrative(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "narrative", detail: "narrative timeline generated",
+      });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7714,6 +7816,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Per-case investigation activity log (#238): every security-relevant action taken on this
+  // case, newest first. Filter by category; cap by limit (default 200, so a long-lived case
+  // doesn't dump its entire history in one response).
+  app.get("/cases/:id/activity-log", async (req: Request, res: Response) => {
+    if (!options.activityLogStore) return res.status(501).json({ error: "activity log not configured" });
+    const rawCategory = typeof req.query.category === "string" ? req.query.category : "";
+    const category = (ACTIVITY_CATEGORIES as readonly string[]).includes(rawCategory) ? (rawCategory as ActivityCategory) : undefined;
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(1000, Math.floor(rawLimit)) : 200;
+    try {
+      return res.status(200).json(await options.activityLogStore.load(req.params.id, { category, limit }));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Investigator comments on case entities (collaboration). GET lists them; POST adds one
   // to a `(targetType, targetId)` entity; DELETE removes by id. Add/remove ping live clients.
   app.get("/cases/:id/comments", async (req: Request, res: Response) => {
@@ -7737,6 +7855,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         author: typeof req.body?.author === "string" ? req.body.author : "",
       });
       options.onComments?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "collaboration", action: "comment-added", actor: comment.author,
+        detail: `comment on ${targetType} ${targetId}`, targetType, targetId,
+      });
       return res.status(201).json(comment);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7749,6 +7871,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const removed = await options.commentsStore.remove(req.params.id, req.params.commentId);
       if (!removed) return res.status(404).json({ error: "comment not found" });
       options.onComments?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "collaboration", action: "comment-removed", detail: `comment ${req.params.commentId} removed`,
+      });
       return res.status(204).end();
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7779,6 +7904,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         author: typeof req.body?.author === "string" ? req.body.author : "",
       });
       options.onTags?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "collaboration", action: "tag-added", actor: tag.author,
+        detail: `tagged ${targetType} ${targetId} "${label}"`, targetType, targetId,
+      });
       return res.status(201).json(tag);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7791,6 +7920,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const removed = await options.tagsStore.remove(req.params.id, req.params.tagId);
       if (!removed) return res.status(404).json({ error: "tag not found" });
       options.onTags?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "collaboration", action: "tag-removed", detail: `tag ${req.params.tagId} removed`,
+      });
       return res.status(204).end();
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -7902,6 +8034,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const control = await options.playbookControlStore.set(req.params.id, { useTemplates: req.body.useTemplates });
       const tasks = await syncPlaybook(req.params.id);   // re-derive immediately under the new mode
       options.onPlaybook?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "settings", action: "playbook-control", detail: `IR templates ${control.useTemplates ? "enabled" : "disabled"}`,
+      });
       return res.status(200).json({ control, tasks, stats: playbookStats(tasks) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -8053,6 +8188,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const task = await options.playbookStore.add(req.params.id, input);
       options.onPlaybook?.(req.params.id);
       dispatchNotify(playbookTaskEvent(req.params.id, task, "added", new Date().toISOString()));
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "playbook", action: "task-added",
+        detail: `task added: "${task.title}"`, targetType: "playbook-task", targetId: task.id,
+      });
       return res.status(201).json(task);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -8078,6 +8217,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (patch.status) {
         dispatchNotify(playbookTaskEvent(req.params.id, updated, updated.status === "done" ? "completed" : "updated", new Date().toISOString()));
       }
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "playbook", action: "task-updated",
+        detail: `task "${updated.title}" — ${Object.keys(patch).join(", ")} changed${patch.status ? ` (status: ${updated.status})` : ""}`,
+        targetType: "playbook-task", targetId: updated.id,
+      });
       return res.status(200).json(updated);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -8090,6 +8234,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const removed = await options.playbookStore.remove(req.params.id, req.params.taskId);
       if (!removed) return res.status(404).json({ error: "playbook task not found" });
       options.onPlaybook?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "playbook", action: "task-removed", detail: `task ${req.params.taskId} removed`,
+        targetType: "playbook-task", targetId: req.params.taskId,
+      });
       return res.status(204).end();
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -8363,6 +8511,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await options.confidenceControlStore.set(req.params.id, { minConfidence: cleared ? undefined : raw });
       options.onConfidenceControl?.(req.params.id);
       const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "settings", action: "confidence-control", detail: minConfidence === null ? "minConfidence cleared" : `minConfidence set to ${minConfidence}`,
+      });
       return res.status(200).json({ minConfidence });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -8382,6 +8533,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       options.onForensicGate?.(req.params.id);
       const perCase = (await options.forensicGateControlStore.load(req.params.id)).minSeverity ?? null;
       const effective = resolveForensicMinSeverity(perCase ?? undefined, process.env.DFIR_FORENSIC_MIN_SEVERITY);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "settings", action: "forensic-gate", detail: perCase === null ? "forensic gate cleared (using global default)" : `forensic gate set to ${perCase}`,
+      });
       return res.status(200).json({ minSeverity: perCase, effective });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -9147,6 +9301,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   });
   const reportMetaStore = new ReportMetaStore(store);
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
+  const activityLogStore = new ActivityLogStore(store);
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
   const pinnedFindingsStore = new PinnedFindingsStore(store, Number(process.env.DFIR_MAX_PINNED_FINDINGS) || undefined);
@@ -9263,6 +9418,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     reportTemplateControlStore,
     dashboardViewStore,
     onReportTemplate: (caseId) => hub.broadcastTo(caseId, { type: "report_template_changed" }),
+    activityLogStore,
+    onActivity: (caseId) => hub.broadcastTo(caseId, { type: "activity_changed" }),
     commentsStore,
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     tagsStore,

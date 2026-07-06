@@ -72,6 +72,7 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-super-timeline",
   "sec-notebook",
   "sec-inv-log",
+  "sec-activity",
   "sec-case-details",
 ];
 
@@ -190,6 +191,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-super-timeline",
       "sec-false-positive",
       "sec-notebook",
+      "sec-activity",
     ],
     defaultSort: "time",
     reportTemplateId: "technical-detailed",
