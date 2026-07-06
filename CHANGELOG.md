@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **robocopy/xcopy always grade High (T1074.001)** — previously ungraded (Low), so a bulk-copy data-staging/exfil chain (share → local staging → archive → removable drive) could get buried under noise and never reach synthesis; unconditional by design since no argument pattern reliably separates theft from routine backup use — mark false-positive + "mark similar" (by process name) to bulk-suppress an org's routine usage.
+- **Sysmon EID 8 (CreateRemoteThread) false positives from routine shell/UI brokers** — `SearchIndexer.exe`→`SearchProtocolHost.exe`, `dllhost.exe`, `taskhostw.exe`→`RuntimeBroker.exe` are now exempted alongside the existing core-OS/Defender list, so ordinary desktop activity no longer grades High/T1055 and crowds out real injection signal during synthesis.
+- **Concurrent imports for the same case could silently drop events** — every `AnalysisPipeline` import/analyze method's load→merge→save (plus the forensic-gate demote and deobfuscation pass in `server.ts`) now serializes per case via the existing `StateLock`, so two imports landing close together no longer race (the later save clobbering the earlier one's merged events with no error). Affects any rapid-fire import sequence: scripted bulk import, the push/Velociraptor-monitor streaming paths, or quickly pasting several files in the dashboard.
 
 ## [0.29.0] - 2026-07-04
 

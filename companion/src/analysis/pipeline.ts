@@ -1284,6 +1284,16 @@ export class AnalysisPipeline {
     this.log = opts.logger ?? createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
   }
 
+  // Serializes the load->merge->save critical section of every import/analyze method per
+  // caseId, so two concurrent imports for the same case can't race (second save clobbering
+  // the first's merged delta). See src/analysis/stateLock.ts. Falls back to running fn
+  // immediately when no lock is configured (e.g. some script/test call sites).
+  // CAUTION: never call this from inside another withStateLock/runExclusive callback for the
+  // SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.
+  private withStateLock<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
+    return this.opts.stateLock ? this.opts.stateLock.runExclusive(caseId, fn) : fn();
+  }
+
   private async getKevCatalog(): Promise<KevCatalog | undefined> {
     if (!this.opts.kevStore) return undefined;
     if (!this.kevCatalogCache) this.kevCatalogCache = await this.opts.kevStore.loadCatalog();
@@ -1427,41 +1437,43 @@ export class AnalysisPipeline {
     const analyzable = captures.filter((c) => !c.isDuplicate);
     if (analyzable.length === 0) return this.opts.stateStore.load(caseId);
 
-    const state = await this.opts.stateStore.load(caseId);
-    const images = await Promise.all(
-      analyzable.map((c) => this.opts.imageLoader(caseId, c.screenshotFile)),
-    );
-    // Note: we deliberately do NOT put the capture time on these lines — the model
-    // would otherwise copy it into forensicEvents instead of reading the artifact's
-    // own timestamp column shown in the image.
-    const contextLines = analyzable
-      .map((c) => `Screenshot ${c.screenshotFile} — ${c.tabTitle} (${c.url})`)
-      .join("\n");
-    const userPrompt =
-      `${buildStateSummary(state)}\n\nNEW SCREENSHOTS (read each artifact's OWN timestamp column ` +
-      `for event times — do not use any capture/current time):\n${contextLines}\n\nReturn the JSON delta.`;
+    return this.withStateLock(caseId, async () => {
+      const state = await this.opts.stateStore.load(caseId);
+      const images = await Promise.all(
+        analyzable.map((c) => this.opts.imageLoader(caseId, c.screenshotFile)),
+      );
+      // Note: we deliberately do NOT put the capture time on these lines — the model
+      // would otherwise copy it into forensicEvents instead of reading the artifact's
+      // own timestamp column shown in the image.
+      const contextLines = analyzable
+        .map((c) => `Screenshot ${c.screenshotFile} — ${c.tabTitle} (${c.url})`)
+        .join("\n");
+      const userPrompt =
+        `${buildStateSummary(state)}\n\nNEW SCREENSHOTS (read each artifact's OWN timestamp column ` +
+        `for event times — do not use any capture/current time):\n${contextLines}\n\nReturn the JSON delta.`;
 
-    const retries = this.opts.retries ?? 3;
-    const backoffMs = this.opts.backoffMs ?? 500;
+      const retries = this.opts.retries ?? 3;
+      const backoffMs = this.opts.backoffMs ?? 500;
 
-    const delta = await withRetry(async () => {
-      const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getSystemPrompt(), userPrompt, images }, "extract");
-      return deltaSchema.parse(parsed);
-    }, retries, backoffMs);
+      const delta = await withRetry(async () => {
+        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getSystemPrompt(), userPrompt, images }, "extract");
+        return deltaSchema.parse(parsed);
+      }, retries, backoffMs);
 
-    const windowSequence = analyzable[analyzable.length - 1].sequenceNumber;
-    // Tag each event's source for correlation/corroboration: detect the real tool from the
-    // captured tab titles (e.g. "Velociraptor", "CrowdStrike Falcon"), else generic "screenshot".
-    const winSource = detectTool(analyzable.map((c) => c.tabTitle).join(" ")) ?? "screenshot";
-    const tagged = { ...delta, forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, sources: e.sources?.length ? e.sources : [winSource] })) };
-    const next = mergeDelta(state, tagged, {
-      windowSequence,
-      timestamp: analyzable[analyzable.length - 1].timestamp,
-      sourceScreenshots: analyzable.map((c) => c.screenshotFile),
+      const windowSequence = analyzable[analyzable.length - 1].sequenceNumber;
+      // Tag each event's source for correlation/corroboration: detect the real tool from the
+      // captured tab titles (e.g. "Velociraptor", "CrowdStrike Falcon"), else generic "screenshot".
+      const winSource = detectTool(analyzable.map((c) => c.tabTitle).join(" ")) ?? "screenshot";
+      const tagged = { ...delta, forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, sources: e.sources?.length ? e.sources : [winSource] })) };
+      const next = mergeDelta(state, tagged, {
+        windowSequence,
+        timestamp: analyzable[analyzable.length - 1].timestamp,
+        sourceScreenshots: analyzable.map((c) => c.screenshotFile),
+      });
+      await this.opts.stateStore.save(next);
+      this.opts.onState?.(next);
+      return next;
     });
-    await this.opts.stateStore.save(next);
-    this.opts.onState?.(next);
-    return next;
   }
 
   // Import an uploaded CSV (e.g. a Velociraptor result export) as evidence: extract
@@ -1488,47 +1500,49 @@ export class AnalysisPipeline {
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
 
-    let state = await this.opts.stateStore.load(caseId);
-    let evSeq = 0; // running counter → globally unique forensic-event ids for this import
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      let evSeq = 0; // running counter → globally unique forensic-event ids for this import
 
-    // Batch by BOTH the row cap and a token budget: wide rows (long EDR/SIEM command-lines)
-    // could otherwise pack 50 rows into a prompt that overflows the model context. Reserve
-    // room for the system prompt + the state-summary that's prepended to every batch.
-    const csvOverhead = estimateTokens(getCsvPrompt()) + estimateTokens(buildStateSummary(state))
-      + estimateTokens(chunkToCsvText(headers, [])) + 64;
-    const rowBudget = Math.max(0, inputTokenBudget() - csvOverhead);
-    const batches = batchByBudget(rows, opts.rowsPerBatch ?? 50, (r) => r.join(","), rowBudget);
+      // Batch by BOTH the row cap and a token budget: wide rows (long EDR/SIEM command-lines)
+      // could otherwise pack 50 rows into a prompt that overflows the model context. Reserve
+      // room for the system prompt + the state-summary that's prepended to every batch.
+      const csvOverhead = estimateTokens(getCsvPrompt()) + estimateTokens(buildStateSummary(state))
+        + estimateTokens(chunkToCsvText(headers, [])) + 64;
+      const rowBudget = Math.max(0, inputTokenBudget() - csvOverhead);
+      const batches = batchByBudget(rows, opts.rowsPerBatch ?? 50, (r) => r.join(","), rowBudget);
 
-    for (let b = 0; b < batches.length; b++) {
-      if (opts.signal?.aborted) break;   // #225: cancelled — stop before the next batch, keep prior batches
-      const csvChunk = chunkToCsvText(headers, batches[b]);
-      const userPrompt =
-        `${buildStateSummary(state)}\n\nCSV ARTIFACT ROWS (source: ${opts.label}; batch ${b + 1}/${batches.length}). ` +
-        `Read each row's OWN time column for event times — do not use the current time:\n\n${csvChunk}\n\n` +
-        `Return the JSON delta.`;
+      for (let b = 0; b < batches.length; b++) {
+        if (opts.signal?.aborted) break;   // #225: cancelled — stop before the next batch, keep prior batches
+        const csvChunk = chunkToCsvText(headers, batches[b]);
+        const userPrompt =
+          `${buildStateSummary(state)}\n\nCSV ARTIFACT ROWS (source: ${opts.label}; batch ${b + 1}/${batches.length}). ` +
+          `Read each row's OWN time column for event times — do not use the current time:\n\n${csvChunk}\n\n` +
+          `Return the JSON delta.`;
 
-      const delta = await withRetry(async () => {
-        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "csv");
-        return deltaSchema.parse(parsed);
-      }, retries, backoffMs);
+        const delta = await withRetry(async () => {
+          const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "csv");
+          return deltaSchema.parse(parsed);
+        }, retries, backoffMs);
 
-      // Renumber event ids so chunked imports don't overwrite each other (merge
-      // dedupes forensic events by id, and each batch independently emits e1, e2…).
-      const renumbered = {
-        ...delta,
-        forensicEvents: applySeverityFloor(delta.forensicEvents ?? [], opts.minSeverity).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "CSV import"] })),
-      };
+        // Renumber event ids so chunked imports don't overwrite each other (merge
+        // dedupes forensic events by id, and each batch independently emits e1, e2…).
+        const renumbered = {
+          ...delta,
+          forensicEvents: applySeverityFloor(delta.forensicEvents ?? [], opts.minSeverity).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "CSV import"] })),
+        };
 
-      state = mergeDelta(state, renumbered, {
-        windowSequence: -(b + 1), // negative: distinguishes import batches from capture windows
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label], // evidence traceability: the CSV file
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(b + 1, batches.length);
-    }
-    return state;
+        state = mergeDelta(state, renumbered, {
+          windowSequence: -(b + 1), // negative: distinguishes import batches from capture windows
+          timestamp: opts.importedAt,
+          sourceScreenshots: [opts.label], // evidence traceability: the CSV file
+        });
+        await this.opts.stateStore.save(state);
+        this.opts.onState?.(state);
+        opts.onProgress?.(b + 1, batches.length);
+      }
+      return state;
+    });
   }
 
   // Import an uploaded generic log file (firewall logs, syslog, sshd, IIS, etc.)
@@ -1560,54 +1574,56 @@ export class AnalysisPipeline {
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
 
-    let state = await this.opts.stateStore.load(caseId);
-    let evSeq = 0; // running counter → globally unique forensic-event ids for this import
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      let evSeq = 0; // running counter → globally unique forensic-event ids for this import
 
-    // Batch by BOTH the pattern cap and a token budget — a few patterns with very long
-    // examples shouldn't form a prompt that overflows the model context.
-    const renderPattern = (t: typeof templates[number]) =>
-      `×${t.count} ${t.firstTimestamp ?? ""} ${t.lastTimestamp ?? ""} ${t.example}`;
-    const logOverhead = estimateTokens(getLogPrompt()) + estimateTokens(buildStateSummary(state)) + 96;
-    const patternBudget = Math.max(0, inputTokenBudget() - logOverhead);
-    const batches = batchByBudget(templates, opts.patternsPerBatch ?? 120, renderPattern, patternBudget);
+      // Batch by BOTH the pattern cap and a token budget — a few patterns with very long
+      // examples shouldn't form a prompt that overflows the model context.
+      const renderPattern = (t: typeof templates[number]) =>
+        `×${t.count} ${t.firstTimestamp ?? ""} ${t.lastTimestamp ?? ""} ${t.example}`;
+      const logOverhead = estimateTokens(getLogPrompt()) + estimateTokens(buildStateSummary(state)) + 96;
+      const patternBudget = Math.max(0, inputTokenBudget() - logOverhead);
+      const batches = batchByBudget(templates, opts.patternsPerBatch ?? 120, renderPattern, patternBudget);
 
-    for (let b = 0; b < batches.length; b++) {
-      if (opts.signal?.aborted) break;   // #225: cancelled — stop before the next batch, keep prior batches
-      // Present each pattern with its occurrence count, time span, and an example.
-      const patternText = batches[b]
-        .map((t, i) =>
-          `[p${i + 1}] ×${t.count}` +
-          (t.firstTimestamp ? ` first=${t.firstTimestamp}` : "") +
-          (t.lastTimestamp && t.lastTimestamp !== t.firstTimestamp ? ` last=${t.lastTimestamp}` : "") +
-          `\n     e.g. ${t.example}`,
-        )
-        .join("\n");
-      const userPrompt =
-        `${buildStateSummary(state)}\n\nDEDUPLICATED LOG PATTERNS (source: ${opts.label}; ` +
-        `batch ${b + 1}/${batches.length}; ${lines.length} raw line(s) → ${templates.length} pattern(s)). ` +
-        `Emit an aggregated event ONLY for security-relevant patterns; skip routine noise:\n\n${patternText}\n\n` +
-        `Return the JSON delta.`;
+      for (let b = 0; b < batches.length; b++) {
+        if (opts.signal?.aborted) break;   // #225: cancelled — stop before the next batch, keep prior batches
+        // Present each pattern with its occurrence count, time span, and an example.
+        const patternText = batches[b]
+          .map((t, i) =>
+            `[p${i + 1}] ×${t.count}` +
+            (t.firstTimestamp ? ` first=${t.firstTimestamp}` : "") +
+            (t.lastTimestamp && t.lastTimestamp !== t.firstTimestamp ? ` last=${t.lastTimestamp}` : "") +
+            `\n     e.g. ${t.example}`,
+          )
+          .join("\n");
+        const userPrompt =
+          `${buildStateSummary(state)}\n\nDEDUPLICATED LOG PATTERNS (source: ${opts.label}; ` +
+          `batch ${b + 1}/${batches.length}; ${lines.length} raw line(s) → ${templates.length} pattern(s)). ` +
+          `Emit an aggregated event ONLY for security-relevant patterns; skip routine noise:\n\n${patternText}\n\n` +
+          `Return the JSON delta.`;
 
-      const delta = await withRetry(async () => {
-        const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "log");
-        return deltaSchema.parse(parsed);
-      }, retries, backoffMs);
+        const delta = await withRetry(async () => {
+          const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "log");
+          return deltaSchema.parse(parsed);
+        }, retries, backoffMs);
 
-      const renumbered = {
-        ...delta,
-        forensicEvents: applySeverityFloor(delta.forensicEvents ?? [], opts.minSeverity).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "Log import"] })),
-      };
+        const renumbered = {
+          ...delta,
+          forensicEvents: applySeverityFloor(delta.forensicEvents ?? [], opts.minSeverity).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "Log import"] })),
+        };
 
-      state = mergeDelta(state, renumbered, {
-        windowSequence: -(b + 1),
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(b + 1, batches.length);
-    }
-    return state;
+        state = mergeDelta(state, renumbered, {
+          windowSequence: -(b + 1),
+          timestamp: opts.importedAt,
+          sourceScreenshots: [opts.label],
+        });
+        await this.opts.stateStore.save(state);
+        this.opts.onState?.(state);
+        opts.onProgress?.(b + 1, batches.length);
+      }
+      return state;
+    });
   }
 
   // Import a THOR (Nextron) scanner report in JSON-Lines format. Unlike the CSV/log
@@ -1646,16 +1662,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a SIEM / EDR JSON export (Elastic/Kibana, Splunk, an EDR console, a raw
@@ -1696,16 +1714,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a Windows Event Log exported as XML (Event Viewer "Save As XML" / `wevtutil … /f:xml` /
@@ -1745,16 +1765,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a Linux/Unix shell history file (.bash_history / .zsh_history / …). Deterministic
@@ -1792,16 +1814,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Run a USER-authored declarative importer (the external plugin path). Mirrors the built-in
@@ -1839,12 +1863,14 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [opts.label] });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [opts.label] });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
+    });
   }
 
   // "Promote" copies already-imported super-timeline events UP into the forensic timeline so AI
@@ -1857,17 +1883,19 @@ export class AnalysisPipeline {
     events: ForensicEvent[],
     opts: { importedAt: string },
   ): Promise<InvestigationState> {
-    let state = await this.opts.stateStore.load(caseId);
-    if (!events.length) return state;
-    const delta = deltaSchema.parse({
-      findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-      timelineNote: `Promoted ${events.length} event(s) from the super-timeline`, summary: "",
-      forensicEvents: events.map((e) => ({ ...e })),
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      if (!events.length) return state;
+      const delta = deltaSchema.parse({
+        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        timelineNote: `Promoted ${events.length} event(s) from the super-timeline`, summary: "",
+        forensicEvents: events.map((e) => ({ ...e })),
+      });
+      state = mergeDelta(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [] });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      return state;
     });
-    state = mergeDelta(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [] });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    return state;
   }
 
   // Import Chainsaw (WithSecure) hunt output or a raw EVTX-as-JSON dump. Like THOR/SIEM
@@ -1909,16 +1937,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a Hayabusa (Yamato Security) detection timeline — JSON/JSONL or CSV. Like the
@@ -1957,16 +1987,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import Velociraptor native JSON output (collection results / hunt export). Like the
@@ -2013,16 +2045,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import ECAR — EDR Common Activity Record telemetry (NDJSON of (object, action) endpoint events).
@@ -2062,16 +2096,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import an Apache/Nginx/Squid combined access log (web server or forward-proxy). Deterministic
@@ -2108,16 +2144,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a Cisco ASA firewall syslog export. Deterministic (no AI): Built/Teardown telemetry
@@ -2154,16 +2192,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a Snort / Suricata "fast" alert log — a real IDS verdict feed. Deterministic (no AI):
@@ -2200,16 +2240,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import YARA CLI scan output (`yara -s -m <rules> <target>`). Deterministic (no AI): each rule
@@ -2248,16 +2290,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a plain Linux/Unix syslog export (RFC 5424 / RFC 3164). Deterministic (no AI): host
@@ -2295,16 +2339,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import network-monitor logs — Suricata `eve.json` and Zeek JSON (Security Onion's
@@ -2346,16 +2392,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import SO-CRATES (dougburks/so-crates) verdicts — Suricata IDS alerts, YARA file matches, and
@@ -2392,16 +2440,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import Security Onion Console (SOC) events — the Alerts / Hunt views the browser extension
@@ -2441,16 +2491,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a KAPE / Eric Zimmerman Tools CSV (Prefetch, Amcache, ShimCache, LNK, JumpLists,
@@ -2488,16 +2540,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a Cyber Triage timeline export (JSONL / JSON array / CSV). Deterministic (no AI call):
@@ -2539,16 +2593,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import Microsoft 365 Unified Audit Log + Entra ID (sign-in / directory audit) data.
@@ -2587,16 +2643,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import AWS CloudTrail logs. Deterministic (no AI call): each API-call record is mapped,
@@ -2634,16 +2692,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import GCP Cloud Audit Logs + Azure Activity Log. Deterministic (no AI call): each record
@@ -2681,16 +2741,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import Kubernetes API-server audit logs (audit.k8s.io). Deterministic (no AI call): each audit
@@ -2729,16 +2791,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import osquery scheduled-query result logs (differential `columns` rows + `snapshot` sets).
@@ -2776,16 +2840,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a Plaso / log2timeline super-timeline (psort CSV — dynamic or l2tcsv). Deterministic
@@ -2864,16 +2930,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a Linux auditd log (raw audit.log / `ausearch` record format, or an `aureport` table).
@@ -2913,16 +2981,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a systemd-journald structured log (`journalctl -o json` / `-o json-pretty`). Deterministic
@@ -2962,16 +3032,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a sysdig / Falco export (Falco alert JSON and/or sysdig `-j` event JSON). Deterministic
@@ -3012,16 +3084,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import Wazuh SIEM/EDR alert exports (alerts.json / NDJSON / API export). Deterministic
@@ -3060,16 +3134,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a malware-sandbox detonation report (CAPEv2 or CrowdStrike Falcon Sandbox).
@@ -3108,16 +3184,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import memory-forensics tool output (Volatility 3 or Rekall). Deterministic (no AI call): each
@@ -3161,16 +3239,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import an email artifact (.eml RFC 2822, or best-effort .msg). Deterministic (no AI call):
@@ -3209,16 +3289,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import a TheHive 5 case, alert, or observable export. Deterministic (no AI call):
@@ -3256,16 +3338,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Import an existing DFIR-IRIS case (issue #88) — the reverse of the IRIS push. Takes the raw
@@ -3304,16 +3388,18 @@ export class AnalysisPipeline {
     };
     const delta = deltaSchema.parse(raw);
 
-    let state = await this.opts.stateStore.load(caseId);
-    state = mergeDelta(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = mergeDelta(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
     });
-    await this.opts.stateStore.save(state);
-    this.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
   }
 
   // Holistic pass: read the whole forensic timeline and produce findings, MITRE

@@ -338,10 +338,16 @@ const LOLBINS = new Set([
 // from the default High (they stay in the timeline; synthesis/legit-marking can still act).
 // Core OS processes that legitimately CreateRemoteThread as routine session/service setup, PLUS
 // Windows Defender / Defender-for-Endpoint, which inject monitoring threads into user processes as
-// part of behavioral scanning — a benign EID 8 source, not injection tradecraft.
+// part of behavioral scanning — a benign EID 8 source, not injection tradecraft. Also the desktop/
+// shell brokers that routinely inject as part of ordinary UI plumbing: Windows Search indexing its
+// own protocol host, dllhost.exe (COM Surrogate) loading shell-extension/COM objects, and the UWP
+// app-model brokers taskhostw/RuntimeBroker — all fire constantly on a stock, uncompromised desktop
+// and otherwise drown real injection signal in noise (see the fairhaven-rdp-takeover benchmark,
+// where this exact pairing on unrelated hosts got escalated into a fabricated finding).
 const BENIGN_THREAD_SOURCES = new Set([
   "csrss.exe", "wininit.exe", "services.exe", "smss.exe", "svchost.exe", "wmiprvse.exe", "lsm.exe", "winlogon.exe",
   "msmpeng.exe", "mpdefendercoreservice.exe", "mssense.exe", "sensendr.exe", "mpcmdrun.exe", // Defender / MDE
+  "searchindexer.exe", "searchprotocolhost.exe", "dllhost.exe", "taskhostw.exe", "runtimebroker.exe", // shell/UI brokers
 ]);
 // Windows-native processes that access LSASS constantly as part of normal operation (#198). A
 // Sysmon EID 10 ProcessAccess to lsass.exe from one of these is NOT credential dumping — Defender /

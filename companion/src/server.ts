@@ -2883,18 +2883,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // wants (it goes through pipeline.promoteSuperTimeline, NOT this gate). Threshold: per-case
   // forensic-gate ?? DFIR_FORENSIC_MIN_SEVERITY ?? "Low". Returns the (possibly unchanged) state.
   async function demoteForensicForCase(caseId: string): Promise<InvestigationState> {
-    const state = await options.stateStore!.load(caseId);
-    if (!options.forensicGateControlStore) return state;
-    const min = resolveForensicMinSeverity(
-      (await options.forensicGateControlStore.load(caseId)).minSeverity,
-      process.env.DFIR_FORENSIC_MIN_SEVERITY,
-    );
-    const { kept, demoted } = demoteBelowSeverity(state.forensicTimeline, min);
-    if (!demoted.length) return state;
-    const next = { ...state, forensicTimeline: kept };
-    await options.stateStore!.save(next);
-    options.onState?.(next);
-    return next;
+    return runStateExclusive(caseId, async () => {
+      const state = await options.stateStore!.load(caseId);
+      if (!options.forensicGateControlStore) return state;
+      const min = resolveForensicMinSeverity(
+        (await options.forensicGateControlStore.load(caseId)).minSeverity,
+        process.env.DFIR_FORENSIC_MIN_SEVERITY,
+      );
+      const { kept, demoted } = demoteBelowSeverity(state.forensicTimeline, min);
+      if (!demoted.length) return state;
+      const next = { ...state, forensicTimeline: kept };
+      await options.stateStore!.save(next);
+      options.onState?.(next);
+      return next;
+    });
   }
 
   // Shared streamed-ingest path for the generic push endpoint (#84) and the Velociraptor client-event
@@ -5358,12 +5360,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Returns how many events were decoded and how many new IOCs were extracted.
   async function applyDeobfuscationToCase(caseId: string): Promise<{ deobfuscated: number; newIocs: number }> {
     if (!options.stateStore) return { deobfuscated: 0, newIocs: 0 };
-    const state = await options.stateStore.load(caseId);
-    const result = applyDeobfuscation(state);
-    if (result.deobfuscated === 0 && result.newIocs === 0) return { deobfuscated: 0, newIocs: 0 };
-    await options.stateStore.save(result.state);
-    options.onState?.(result.state);
-    return { deobfuscated: result.deobfuscated, newIocs: result.newIocs };
+    return runStateExclusive(caseId, async () => {
+      const state = await options.stateStore!.load(caseId);
+      const result = applyDeobfuscation(state);
+      if (result.deobfuscated === 0 && result.newIocs === 0) return { deobfuscated: 0, newIocs: 0 };
+      await options.stateStore!.save(result.state);
+      options.onState?.(result.state);
+      return { deobfuscated: result.deobfuscated, newIocs: result.newIocs };
+    });
   }
 
   app.get("/ioc-whitelist", async (_req: Request, res: Response) => {
