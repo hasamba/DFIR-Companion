@@ -63,5 +63,8 @@ dist-choco/
 .planning/
 docs/superpowers/
 
+# Local exports/backups (e.g. GitHub issues/PR snapshots) — not part of the shipped project.
+docs/backups/
+
 # Claude Code local tooling / config (per-machine, not part of the shipped project)
 .claude/

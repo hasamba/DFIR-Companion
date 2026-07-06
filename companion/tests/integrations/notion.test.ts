@@ -37,8 +37,8 @@ describe("parseNotionPageId", () => {
   });
 
   it("takes the PAGE id from the path, not the ?v= view id, on an app.notion.com copy link", () => {
-    const url = "https://app.notion.com/p/acme/Monthly-Threat-Hunting-Report-3659b1133cf48031b4d7d116e012c940?v=998c9d77c5d342c58889e932f408b944&source=copy_link";
-    expect(parseNotionPageId(url)).toBe("3659b113-3cf4-8031-b4d7-d116e012c940"); // NOT the 998c9d77… view id
+    const url = "https://app.notion.com/p/acme/Monthly-Threat-Hunting-Report-0f1e2d3c4b5a69788796a5b4c3d2e1f0?v=9a8b7c6d5e4f30211f2e3d4c5b6a7089&source=copy_link";
+    expect(parseNotionPageId(url)).toBe("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"); // NOT the 9a8b7c6d… view id
   });
 
   it("drops a #block fragment and trailing query params", () => {
