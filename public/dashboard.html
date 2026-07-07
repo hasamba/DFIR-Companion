@@ -1843,6 +1843,10 @@
           <div class="sfield"><label>Max events<span class="sfield-hint">DFIR_MOBILE_MAX_EVENTS — timeline events shown in the mobile PWA (default 50)</span></label><input id="env-DFIR_MOBILE_MAX_EVENTS" placeholder="50" /></div>
           <div class="sfield"><label>Max IOCs<span class="sfield-hint">DFIR_MOBILE_MAX_IOCS — IOCs shown in the mobile PWA (default 100)</span></label><input id="env-DFIR_MOBILE_MAX_IOCS" placeholder="100" /></div>
         </div>
+        <div class="settings-group-head">Pinned findings (#220)</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Max pinned findings<span class="sfield-hint">DFIR_MAX_PINNED_FINDINGS — how many findings an analyst can pin to the sticky top strip at once; deliberately small to avoid clutter (default 5)</span></label><input id="env-DFIR_MAX_PINNED_FINDINGS" placeholder="5" /></div>
+        </div>
       </div>
 
       <!-- AI -->
@@ -2916,6 +2920,7 @@
 
         <div class="sfield-row" style="margin-bottom:10px">
           <div class="sfield"><label>Size scan file limit<span class="sfield-hint">DFIR_DIAG_MAX_FILES — max files visited by "Compute case sizes" before stopping (default 100000)</span></label><input id="env-DFIR_DIAG_MAX_FILES" placeholder="100000" /></div>
+          <div class="sfield"><label>Job registry retention<span class="sfield-hint">DFIR_JOBS_MAX — max finished jobs kept in the jobs badge/popover before the oldest are evicted (default 100); running jobs are never evicted</span></label><input id="env-DFIR_JOBS_MAX" placeholder="100" /></div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
           <button id="diagRefreshBtn" type="button">↻ Refresh</button>
