@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > as you go; on release, rename it to the version + date, bump `companion/package.json`,
 > `extension/package.json`, `extension/manifest.json` (+ both `package-lock.json`), and tag `vX.Y.Z`.
 
-## [Unreleased]
+## [0.30.0] - 2026-07-07
 
 ### Added
 - **IOC provenance chain panel** — per-IOC 🔗 button showing the full timestamped chain (extraction event(s), enrichment lookups, citing findings) with a JSON export; extraction is approximate (value-matched, not a stored link — no importer records which event produced an IOC). Playbook linkage is not tracked yet (part of #247).
@@ -21,11 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Confidence reasoning + persistent min-confidence floor** — findings now carry a `confidenceReason` one-liner alongside the existing 0–100 confidence score (synthesis weighs evidence strength, source corroboration, and model certainty; shown on the confidence badge and in each finding's evidence details); the dashboard's min-confidence filter is now a per-case setting that survives a page reload instead of resetting to 0 (closes #226).
 - **Inline IOC quick-actions** — click any detected value (IP/hash/domain/SID/URL/path) in an event row or an IOC value to open a tray: copy, mark benign, mark confirmed-malicious, suggest hunt; outcomes recorded to the investigation log (closes #221).
 - **Windows account SIDs are now a detected IOC type** — domain/account SIDs (`S-1-5-21-…`) extracted from event text; well-known service/builtin SIDs skipped to avoid noise.
+- **Multi-select bulk actions on Findings** — per-row checkboxes, select-all, and a bulk bar with Modify Tags + Mark False Positive, matching the pattern already used by IOCs and timeline events.
+- **Select-all on the false-positive AI candidate list** — bulk-clear a large batch of AI-suggested duplicates instead of clicking each one individually.
+- **Synthesis model config in the first-run setup wizard** — the AI step previously only exposed the extraction provider/model/key; a dedicated synthesis model (`DFIR_AI_SYNTH_*`) can now be set during initial setup instead of only from the full Settings panel afterward.
+
+### Changed
+- **Merged the two case-export options into one** — "Full case state (JSON)" and "Investigation snapshot (shareable JSON)" opened near-identical raw JSON (the snapshot was a strict superset); dropped the redundant option and kept the combined export as a labeled, downloadable "shareable JSON" file.
+- **2nd-opinion panel gets its own collapse toggle** — a long disagreement list no longer has to stay pinned open with the rest of the Findings section; the mark-FP modal's "Ask AI for more" button is renamed "Ask AI for similar" to describe what it looks for.
 
 ### Fixed
 - **robocopy/xcopy always grade High (T1074.001)** — previously ungraded (Low), so a bulk-copy data-staging/exfil chain (share → local staging → archive → removable drive) could get buried under noise and never reach synthesis; unconditional by design since no argument pattern reliably separates theft from routine backup use — mark false-positive + "mark similar" (by process name) to bulk-suppress an org's routine usage.
 - **Sysmon EID 8 (CreateRemoteThread) false positives from routine shell/UI brokers** — `SearchIndexer.exe`→`SearchProtocolHost.exe`, `dllhost.exe`, `taskhostw.exe`→`RuntimeBroker.exe` are now exempted alongside the existing core-OS/Defender list, so ordinary desktop activity no longer grades High/T1055 and crowds out real injection signal during synthesis.
 - **Concurrent imports for the same case could silently drop events** — every `AnalysisPipeline` import/analyze method's load→merge→save (plus the forensic-gate demote and deobfuscation pass in `server.ts`) now serializes per case via the existing `StateLock`, so two imports landing close together no longer race (the later save clobbering the earlier one's merged events with no error). Affects any rapid-fire import sequence: scripted bulk import, the push/Velociraptor-monitor streaming paths, or quickly pasting several files in the dashboard.
+- **Swimlane click didn't jump to the event** — clicking a swimlane dot only scrolled/flashed a row already rendered in the DOM, so it silently did nothing when the event was on another Forensic Timeline page, hidden by a filter, or the section was collapsed. Now expands the section, clears blocking filters, and pages to the row like every other "jump to event" link.
+- **Compromised-assets graph truncated long asset/IOC names with no way to see the full value** — added a hover tooltip on every node, and stopped truncating altogether in the horizontal layout (vertical/radial keep the tighter cap since their angled labels sit close enough to overlap).
+- **IOC/chain re-enrichment ran needlessly on every false-positive mark** — resynthesis triggered only by marking an event/finding false-positive never adds or changes IOCs, but enrichment still re-ran its full job/status/reload dance; now skipped when nothing is actually un-enriched.
+- **IOC provenance chain panel polish** — widened the panel, show the specific artifact name instead of the generic tool name, fixed jump-to-event/finding links (the panel lives outside `<main>`, missed by the global click delegation), and gave its rows dedicated styling instead of inheriting the Phases panel's font sizes.
 
 ## [0.29.0] - 2026-07-04
 
