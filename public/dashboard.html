@@ -841,6 +841,9 @@
     .so-panel { font-size: 12px; color: var(--c-c7ced9); margin: 0 0 10px; padding: 9px 11px;
       border: 1px solid var(--c-2a2f3a); border-radius: 6px; background: var(--c-0f1115); }
     .so-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 6px; }
+    .so-toggle { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-9aa4b2);
+      border-radius: 4px; width: 20px; height: 20px; line-height: 1; padding: 0; font-size: 11px; cursor: pointer; }
+    .so-toggle:hover { color: var(--c-e6eaf0); border-color: var(--c-4a5466); }
     .so-head .so-models { font-weight: 600; color: var(--c-e6eaf0); }
     .so-head .so-agree { color: var(--c-6bcb77); }
     .so-summary { color: var(--c-9aa4b2); margin: 0 0 8px; font-style: italic; }
@@ -1450,7 +1453,7 @@
         <input type="checkbox" id="fpAddToWhitelist" /> Also add this IOC value to the global whitelist
       </label>
       <div id="fpCandidates" style="margin-top:10px"></div>
-      <button id="fpAskAiBtn" type="button" style="display:none;margin-top:6px">🔎 Ask AI for more</button>
+      <button id="fpAskAiBtn" type="button" style="display:none;margin-top:6px">🔎 Ask AI for similar</button>
       <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
         <button id="fpConfirmBtn" type="button">Confirm</button>
         <button id="fpCancelBtn" type="button" style="background:var(--c-2a2f3a);">Cancel</button>
@@ -7721,21 +7724,30 @@
     // each. Accept is durable (re-applied across re-synthesis); decisions are forward-only in v1.
     let secondOpinionEnabled = false;   // set from /health — whether DFIR_AI_SECOND_OPINION_MODEL is configured
     // Whether ANY AI provider is configured server-wide (h.aiEnabled from /health) — gates the mark-FP
-    // modal's "Ask AI for more" button. Distinct from the per-case `aiEnabled` toggle above (whether
+    // modal's "Ask AI for similar" button. Distinct from the per-case `aiEnabled` toggle above (whether
     // AI analysis is turned ON for the currently-loaded case) — do not conflate the two.
     let fpAiConfigured = false;
     function loadSecondOpinion(caseId) {
       fetch(`/cases/${caseId}/second-opinion`).then(r => r.json()).then(renderSecondOpinion).catch(() => {});
     }
     const SO_KIND_LABEL = { b_only: "only in B", a_only: "only in A", severity: "severity", mitre_added: "ATT&CK · only in B", mitre_removed: "ATT&CK · only in A" };
+    // Collapse state for the 2nd-opinion panel — persisted so a long delta list doesn't have to be
+    // re-collapsed every reload. Cache the last record so the toggle can re-render without a re-fetch.
+    const SO_COLLAPSE_KEY = "dfir.soCollapsed";
+    let soCollapsed = false;
+    try { soCollapsed = localStorage.getItem(SO_COLLAPSE_KEY) === "1"; } catch {}
+    let lastSecondOpinionRec = null;
     function renderSecondOpinion(rec) {
       const el = document.getElementById("secondOpinionPanel");
       if (!el) return;
+      lastSecondOpinionRec = rec;
       if (!rec || !rec.generatedAt) { el.innerHTML = ""; el.style.display = "none"; return; }
       el.style.display = "block";
-      const head = `<div class="so-head"><span class="so-models">🔁 2nd opinion · ${esc(rec.modelB || "model B")} vs ${esc(rec.modelA || "model A")}</span>`
+      const toggle = `<button type="button" class="so-toggle" data-so-toggle title="${soCollapsed ? "Expand" : "Collapse"} the 2nd opinion panel">${soCollapsed ? "▸" : "▾"}</button>`;
+      const head = `<div class="so-head">${toggle}<span class="so-models">🔁 2nd opinion · ${esc(rec.modelB || "model B")} vs ${esc(rec.modelA || "model A")}</span>`
         + `<span class="so-agree">✓ ${rec.agreementCount | 0} agreed</span>`
         + `<span style="color:var(--c-7e8aa0)">${esc(relTime(rec.generatedAt))}</span></div>`;
+      if (soCollapsed) { el.innerHTML = head; return; }
       const summary = rec.summary ? `<p class="so-summary">${esc(rec.summary)}</p>` : "";
       const deltas = Array.isArray(rec.deltas) ? rec.deltas : [];
       if (deltas.length === 0) {
@@ -12225,7 +12237,7 @@
         secondOpinionEnabled = !!h.secondOpinionEnabled;   // gates the "2nd opinion" button (#116)
         const soBtn = document.getElementById("secondOpinion");
         if (soBtn) soBtn.style.display = secondOpinionEnabled ? "" : "none";
-        fpAiConfigured = !!h.aiEnabled;   // gates the mark-FP modal's "Ask AI for more" button (#227)
+        fpAiConfigured = !!h.aiEnabled;   // gates the mark-FP modal's "Ask AI for similar" button (#227)
       }).catch(() => setAi("unknown", "unknown"));
       loadUpdateCheck();
 
@@ -12849,7 +12861,7 @@
           body: JSON.stringify({ kind: fpTarget.kind, ref: fpTarget.ref, ai: true }),
         });
         renderFpCandidates(await r.json());
-      } finally { btn.disabled = false; btn.textContent = "🔎 Ask AI for more"; }
+      } finally { btn.disabled = false; btn.textContent = "🔎 Ask AI for similar"; }
     });
     // Select-all for the AI/deterministic candidate list (re-rendered on open + "Ask AI for
     // more", so this listener is delegated on the static container rather than re-bound per render).
@@ -13236,6 +13248,12 @@
     // Delegated accept/reject clicks on the second-opinion panel.
     document.getElementById("secondOpinionPanel").addEventListener("click", (e) => {
       const t = e.target.closest("button"); if (!t) return;
+      if (t.dataset.soToggle !== undefined) {
+        soCollapsed = !soCollapsed;
+        try { localStorage.setItem(SO_COLLAPSE_KEY, soCollapsed ? "1" : "0"); } catch {}
+        renderSecondOpinion(lastSecondOpinionRec);
+        return;
+      }
       const caseId = document.getElementById("caseId").value.trim(); if (!caseId) return;
       if (t.dataset.soAccept) applySecondOpinionDelta(caseId, t.dataset.soAccept, true);
       else if (t.dataset.soReject) applySecondOpinionDelta(caseId, t.dataset.soReject, false);
