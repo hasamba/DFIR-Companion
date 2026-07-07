@@ -2026,9 +2026,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     try {
       const snapshot = await exportCaseSnapshot(store, req.params.id);
       res.type("application/json; charset=utf-8");
-      // inline (not attachment) — the dashboard opens this in a new tab (like /state) so the
-      // analyst can eyeball it before deciding to save it. The filename still applies to "Save Page As…".
-      res.setHeader("Content-Disposition", `inline; filename="snapshot-${req.params.id}.json"`);
+      res.setHeader("Content-Disposition", `attachment; filename="snapshot-${req.params.id}.json"`);
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(JSON.stringify(snapshot, null, 2));
     } catch (err) {
