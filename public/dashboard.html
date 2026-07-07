@@ -13519,8 +13519,9 @@
         window.open(`/cases/${c}/state`, "_blank", "noopener");
       } else if (action === "snapshot") {
         // Portable investigation snapshot (issue #56) — a single shareable JSON (no AI keys, no
-        // machine config) a teammate imports on another machine via "Import snapshot…".
-        window.location.href = `/cases/${c}/export/snapshot`;
+        // machine config) a teammate imports on another machine via "Import snapshot…". Opens in
+        // a new tab (like state-json above) instead of downloading, so the dashboard stays put.
+        window.open(`/cases/${c}/export/snapshot`, "_blank", "noopener");
       } else if (action === "stix") {
         // On-demand STIX 2.1 bundle (JSON) — import into any TIP (OpenCTI, MISP, Anomali…).
         window.location.href = `/cases/${c}/export/stix`;

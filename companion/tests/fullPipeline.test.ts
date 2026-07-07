@@ -195,7 +195,7 @@ describe("full-pipeline integration (capture → import → synthesis → report
     // 7. Export snapshot
     const snapshotRes = await request(app).get("/cases/pipeline-1/export/snapshot");
     expect(snapshotRes.status).toBe(200);
-    expect(snapshotRes.headers["content-disposition"]).toContain('attachment; filename="snapshot-pipeline-1.json"');
+    expect(snapshotRes.headers["content-disposition"]).toContain('inline; filename="snapshot-pipeline-1.json"');
     const snapshot = JSON.parse(snapshotRes.text);
     expect(snapshot.format).toBe("dfir-companion-snapshot");
     expect(snapshot.case.caseId).toBe("pipeline-1");
