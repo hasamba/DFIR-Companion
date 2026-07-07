@@ -209,6 +209,34 @@ export async function seedDemoCase(
       sourceScreenshots: [], mitreTechniques: ["T1070.001", "T1562.001"],
       firstSeen: ts(16, 10, 12), lastUpdated: ts(22, 8, 0), status: "confirmed",
     },
+    // f004b/f007b: intentionally near-duplicates of f004/f007 (same technique + overlapping IOCs,
+    // a second tool flagging the same host-level activity) so the mark-false-positive "similar
+    // items" feature has real candidates to demo out of the box — most of the other findings are
+    // each the only instance of their technique in this case and legitimately have no match.
+    {
+      id: "f004b", severity: "High", confidence: 85,
+      title: "PsExec Service Installation Detected on FS01 (Duplicate Detection)",
+      description:
+        "Velociraptor's service-creation artifact independently flagged the same PSEXESVC " +
+        "install on FS01 already captured by f004 (Lateral Movement via PsExec). EventID 7045 " +
+        "confirms the service ran under the same domain-admin session. Likely a duplicate of " +
+        "f004 — keep whichever finding you report on and mark the other as a false positive.",
+      relatedIocs: ["ioc012", "ioc013"],
+      sourceScreenshots: [], mitreTechniques: ["T1021.002"],
+      firstSeen: ts(16, 10, 0), lastUpdated: ts(22, 8, 0), status: "confirmed",
+    },
+    {
+      id: "f007b", severity: "Medium", confidence: 82,
+      title: "BlackCat/ALPHV Ransomware Blocked — Duplicate CrowdStrike Detection on WEB01",
+      description:
+        "CrowdStrike Falcon's own console also logged the encrypt.exe quarantine on WEB01 as a " +
+        "separate alert, in addition to the aggregate f007 finding covering all three hosts. " +
+        "Same SHA-256 (" + SHA_RANSOM + ") and same BlackCat/ALPHV detection — likely a duplicate " +
+        "of f007 to be marked false positive once f007 is confirmed as the primary record.",
+      relatedIocs: ["ioc004"],
+      sourceScreenshots: [], mitreTechniques: ["T1486"],
+      firstSeen: ts(19, 22, 17), lastUpdated: ts(22, 8, 0), status: "confirmed",
+    },
   ];
 
   const iocs = [
