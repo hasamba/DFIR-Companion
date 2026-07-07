@@ -5145,6 +5145,7 @@
       const el = document.getElementById("fpCandidates");
       if (!list.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No similar items found.</div>"; return; }
       el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px;margin-bottom:4px'>Also mark as false positive:</div>" +
+        `<label style="display:block;font-weight:600"><input type="checkbox" id="fpCandidatesSelectAll"> Select all (${list.length})</label>` +
         list.map(c => `<label style="display:block"><input type="checkbox" class="fp-candidate" value="${escAttr(c.id)}" data-kind="${escAttr(c.kind)}" data-label="${escAttr(c.label)}"> ${esc(c.label)} <span style="color:var(--c-9aa4b2);font-size:11px">(${esc((c.reasons || []).join(", "))})</span></label>`).join("");
     }
 
@@ -12849,6 +12850,19 @@
         });
         renderFpCandidates(await r.json());
       } finally { btn.disabled = false; btn.textContent = "🔎 Ask AI for more"; }
+    });
+    // Select-all for the AI/deterministic candidate list (re-rendered on open + "Ask AI for
+    // more", so this listener is delegated on the static container rather than re-bound per render).
+    document.getElementById("fpCandidates").addEventListener("change", (e) => {
+      const candidates = [...document.querySelectorAll(".fp-candidate")];
+      if (e.target.id === "fpCandidatesSelectAll") {
+        candidates.forEach(cb => { cb.checked = e.target.checked; });
+        return;
+      }
+      if (e.target.classList.contains("fp-candidate")) {
+        const sa = document.getElementById("fpCandidatesSelectAll");
+        if (sa) { sa.checked = candidates.every(cb => cb.checked); sa.indeterminate = candidates.some(cb => cb.checked) && !sa.checked; }
+      }
     });
     document.getElementById("fpCancelBtn").addEventListener("click", closeFalsePositiveModal);
     document.getElementById("fpOverlay").addEventListener("click", (e) => { if (e.target.id === "fpOverlay") closeFalsePositiveModal(); });
