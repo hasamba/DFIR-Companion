@@ -34,6 +34,7 @@
     "data:update-attack-mitigations": "tsx scripts/update-attack-mitigations.ts",
     "data:update-geo": "tsx scripts/update-country-centroids.ts",
     "icons": "tsx scripts/make-icons.ts",
+    "chrome:refresh-token": "tsx scripts/chrome-refresh-token.ts",
     "package:sea": "node scripts/build-sea.mjs",
     "package:appimage": "node scripts/build-appimage.mjs",
     "package:choco": "node scripts/build-choco.mjs"
