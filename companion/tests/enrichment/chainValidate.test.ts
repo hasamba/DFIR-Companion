@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateProcessChains } from "../../src/enrichment/chainValidate.js";
+import { validateProcessChains, hasChainWork } from "../../src/enrichment/chainValidate.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { ParentChildResult } from "../../src/enrichment/rockyraccoon.js";
 
@@ -55,5 +55,28 @@ describe("validateProcessChains", () => {
     const many = [ev({ id: "1", parentName: "a", processName: "x" }), ev({ id: "2", parentName: "b", processName: "y" })];
     const capped = await validateProcessChains(many, { check, sleep: noSleep, now, maxChecks: 1 });
     expect(capped.summary.checked).toBe(1);
+  });
+});
+
+describe("hasChainWork", () => {
+  it("is false when every parent→child event already carries a chainCheck", () => {
+    const events = [ev({ id: "a", parentName: "p.exe", processName: "c.exe", chainCheck: { observed: true, note: "ok", checkedAt: "t" } })];
+    expect(hasChainWork(events)).toBe(false);
+  });
+
+  it("is true when at least one parent→child event has never been checked", () => {
+    const events = [
+      ev({ id: "a", parentName: "p.exe", processName: "c.exe", chainCheck: { observed: true, note: "ok", checkedAt: "t" } }),
+      ev({ id: "b", parentName: "excel.exe", processName: "powershell.exe" }),
+    ];
+    expect(hasChainWork(events)).toBe(true);
+  });
+
+  it("is false for events with no parent/process pair", () => {
+    expect(hasChainWork([ev({ id: "a", description: "no process here" })])).toBe(false);
+  });
+
+  it("is false for an empty timeline", () => {
+    expect(hasChainWork([])).toBe(false);
   });
 });

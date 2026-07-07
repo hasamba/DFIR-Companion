@@ -75,7 +75,7 @@ import { getImporterPrompt } from "./analysis/pipeline.js";
 import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix, resolveEnvFilePath } from "./settings/envManager.js";
 import { parseMinSeverity, applySeverityFloor } from "./analysis/severityFloor.js";
 import { parseVeloRef } from "./analysis/veloRef.js";
-import { enrichIocs, type EnrichLookupEvent } from "./enrichment/enrichService.js";
+import { enrichIocs, hasEnrichableWork, type EnrichLookupEvent } from "./enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
 import { ProviderHealthCache } from "./enrichment/providerHealth.js";
 import type { EnrichmentProvider } from "./enrichment/provider.js";
@@ -93,7 +93,7 @@ import { GeoIpProvider } from "./enrichment/geoip.js";
 import { ShodanProvider } from "./enrichment/shodan.js";
 import { HashlookupProvider } from "./enrichment/hashlookup.js";
 import { buildTlsFetch } from "./enrichment/tlsFetch.js";
-import { validateProcessChains, type ChainSummary } from "./enrichment/chainValidate.js";
+import { validateProcessChains, hasChainWork, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity, ForensicEvent, IOC, Finding } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
@@ -4885,10 +4885,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     void (async () => {
       const providers = await enabledProvidersFor(caseId);
       if (providers.length === 0) { enrichPending.delete(caseId); return; }     // nothing enabled — drop any stale pending mark so the poller can idle
+      const state = await options.stateStore!.load(caseId);
+      // Pure no-op guard: every enrichable IOC already has a result from every enabled provider,
+      // and (when a RockyRaccoon-style provider is present) every process chain is already
+      // checked. Callers like resynthesizeInBackground fire this after EVERY re-synthesis —
+      // including one triggered only by marking an event/finding false-positive, which touches
+      // neither IOCs nor process chains — so without this guard the analyst sees a spurious
+      // "enriching…" status and a no-op state save/broadcast on every FP mark. Skip entirely
+      // (no job, no status flip, no save) unless there's real work or the caller forced a re-check.
+      if (!force) {
+        const chainCapable = providers.some((p) => typeof (p as { checkParentChild?: unknown }).checkParentChild === "function");
+        const work = hasEnrichableWork(state.iocs, providers) || (chainCapable && hasChainWork(state.forensicTimeline));
+        if (!work) { enrichPending.delete(caseId); return; }
+      }
       // #225: track enrichment as a cancellable job — a throttled run (up to maxIocs × delayMs) can be long.
       job = options.jobManager?.register({ caseId, kind: "enrichment", label: `enrich (${providers.map((p) => p.name).join(", ")})`, cancellable: true });
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `enriching IOCs (${providers.map((p) => p.name).join(", ")})` });
-      const state = await options.stateStore!.load(caseId);
       logLine(`[enrich] ${caseId} START providers=[${providers.map((p) => p.name).join(", ")}] force=${force} iocs=${state.iocs.length}`);
       const { iocs, summary } = await enrichIocs(state.iocs, {
         providers,

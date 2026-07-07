@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { enrichIocs, type EnrichLookupEvent } from "../../src/enrichment/enrichService.js";
+import { enrichIocs, hasEnrichableWork, type EnrichLookupEvent } from "../../src/enrichment/enrichService.js";
 import { ProviderHealthCache } from "../../src/enrichment/providerHealth.js";
 import type { EnrichmentProvider, EnrichmentResult, IocKind } from "../../src/enrichment/provider.js";
 import type { IOC } from "../../src/analysis/stateTypes.js";
@@ -335,5 +335,34 @@ describe("enrichIocs", () => {
       );
       expect(slept).toHaveLength(0);   // 600ms elapsed > 500ms delay → no sleep needed
     });
+  });
+});
+
+describe("hasEnrichableWork", () => {
+  const vt = fakeProvider("VirusTotal", ["hash", "ip"], null, []);
+  const misp = fakeProvider("MISP", ["hash"], null, []);
+
+  it("is false when every enrichable IOC has already been checked by every enabled provider", async () => {
+    const iocs = [ioc({ value: "h1", type: "hash", enrichedBy: ["VirusTotal", "MISP"] })];
+    expect(hasEnrichableWork(iocs, [vt, misp])).toBe(false);
+  });
+
+  it("is true when a newly-enabled provider hasn't checked an existing IOC yet", () => {
+    const iocs = [ioc({ value: "h1", type: "hash", enrichedBy: ["VirusTotal"] })];
+    expect(hasEnrichableWork(iocs, [vt, misp])).toBe(true);   // MISP never ran
+  });
+
+  it("is true for an IOC that's never been enriched at all", () => {
+    const iocs = [ioc({ value: "1.2.3.4", type: "ip" })];
+    expect(hasEnrichableWork(iocs, [vt])).toBe(true);
+  });
+
+  it("is false for a non-enrichable IOC kind (file/other) regardless of providers", () => {
+    const iocs = [ioc({ value: "C:\\evil.exe", type: "file" })];
+    expect(hasEnrichableWork(iocs, [vt, misp])).toBe(false);
+  });
+
+  it("is false when there are no IOCs at all", () => {
+    expect(hasEnrichableWork([], [vt, misp])).toBe(false);
   });
 });
