@@ -101,7 +101,7 @@ describe("parseVelociraptorJson — artifactName provenance", () => {
 // arrive reshaped (dotted keys, `.keyword` multi-fields, the artifact in the `artifact_<name>` index,
 // ES doc metadata). normalizeElasticRow should reverse that so the native mappers fire.
 describe("parseVelociraptorJson — Elastic-indexed Velociraptor (Kibana push)", () => {
-  it("MFT keyword hit → keyword-escalated High detection, dated, [artifact]-tagged, Velociraptor source", () => {
+  it("MFT keyword hit → keyword-escalated High detection, dated, DetectRaptor-labeled, Velociraptor source", () => {
     const row = {
       _id: "x1", _index: "artifact_detectraptor_windows_detection_mft", _version: 1,
       "@timestamp": "2026-05-07T16:03:56.000Z",
@@ -116,7 +116,7 @@ describe("parseVelociraptorJson — Elastic-indexed Velociraptor (Kibana push)",
     const e = r.events[0];
     expect(e.severity).toBe("High"); // "psexec" keyword
     expect(e.description).toContain("PsExec.exe");
-    expect(e.description).toContain("[DetectRaptor.Windows.Detection.MFT]");
+    expect(e.description).toContain("DetectRaptor MFT detection:");
     expect(e.description).not.toContain("_index");
     expect(e.timestamp).toContain("2026-01-28"); // the artifact's own MFT time, not @timestamp
     expect(e.sources).toEqual(["Velociraptor"]);
@@ -149,7 +149,7 @@ describe("parseVelociraptorJson — Elastic-indexed Velociraptor (Kibana push)",
     const e = r.events[0];
     expect(e.severity).toBe("Medium"); // honors Detection.Criticality over the psexec keyword
     expect(e.description).toContain("Execution - PsExec");
-    expect(e.description).toContain("[DetectRaptor.Windows.Detection.Amcache]");
+    expect(e.description).toContain("DetectRaptor Amcache detection:");
     expect(e.description).not.toContain("-1"); // "-" cells dropped, not rendered
     expect(e.timestamp).toContain("2026-05-07T16:31:04"); // Kibana "@" date → ISO
     expect(e.sources).toEqual(["Velociraptor"]);
@@ -449,8 +449,9 @@ describe("parseVelociraptorJson — IOC hygiene & extra time keys (#102)", () =>
     const generic = { _Source: "Windows.Analysis.EvidenceOfDownload", DownloadedFilePath: "C:\\Users\\v\\a.exe", Mtime: "2026-06-03T08:00:00Z" };
     const det = parseVelociraptorJson(JSON.stringify([detection])).events[0];
     const gen = parseVelociraptorJson(JSON.stringify([generic])).events[0];
-    // Consistent placement: artifact right after "Velociraptor" for BOTH detection and generic.
-    expect(det.description).toContain("Velociraptor [DetectRaptor.Windows.Detection.LolDrivers] detection:");
+    // DetectRaptor detections lead with the specific rule-pack name (not the generic "Velociraptor"
+    // bucket); other Velociraptor-hosted artifacts still get the bracketed full artifact name.
+    expect(det.description).toContain("DetectRaptor LolDrivers detection:");
     expect(gen.description).toContain("Velociraptor [Windows.Analysis.EvidenceOfDownload]:");
     // The filename fallback (no _Source) is NOT shown as a bracketed artifact tag.
     const noSource = parseVelociraptorJson(JSON.stringify([{ Detection: { Name: "X" }, EntryPath: "c:\\y.sys" }]), { artifact: "0036_velociraptor-2026.json" }).events[0];
