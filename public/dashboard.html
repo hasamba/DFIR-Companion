@@ -809,6 +809,14 @@
     .ioc-bulk-btn { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-cbd3df); border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
     .ioc-bulk-btn:hover { background: var(--c-2a3050); color: #fff; border-color: var(--c-6aa9ff); }
     .ioc-cb { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; margin: 0; }
+    /* Finding multi-select + bulk action bar (mirrors the IOC bulk bar above) */
+    .finding-bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 0 4px; font-size: 12px; color: var(--c-9aa4b2); border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 4px; }
+    .finding-bulk-bar.active { display: flex; }
+    .finding-bulk-btn { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-cbd3df); border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+    .finding-bulk-btn:hover { background: var(--c-2a3050); color: #fff; border-color: var(--c-6aa9ff); }
+    .finding-cb { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; margin: 0 6px 0 0; vertical-align: middle; }
+    .finding-header-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--c-9aa4b2); margin-bottom: 6px; }
+    .finding.finding-selected { background: var(--c-142038); }
     .ioc-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; border-bottom: 1px solid var(--c-1a1f28); position: relative; }
     /* Only the checkbox is a flex item; everything else flows inline inside .ioc-body so tag
        pills / enrich badges wrap naturally instead of overflowing the row (display:flex would
@@ -3116,7 +3124,9 @@
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2>Narrative Timeline<button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
     <section id="sec-pinned" style="grid-column: 1 / -1" class="pinned-strip"><h2>📌 Pinned Findings<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></h2><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></section>
-    <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div><div id="findings">—</div></section>
+    <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div>
+      <div class="finding-bulk-bar" id="findingBulkBar"><span id="findingBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="finding-bulk-btn" id="findingBulkTagBtn" title="Add a tag to all selected findings">🏷 Modify Tags</button> <button class="finding-bulk-btn" id="findingBulkFpBtn" title="Mark all selected findings as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="finding-bulk-btn" id="findingBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
+      <div id="findings">—</div></section>
     <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" style="display:none" title="Show or hide events by origin (the artifact that produced them)" onclick="event.stopPropagation()"><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" onclick="event.stopPropagation()"><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkFpBtn" title="Mark all selected events as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div style="font-size:11px; color:var(--c-9aa4b2); margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
@@ -6322,6 +6332,7 @@
     // --- Multi-select (session-only, cleared on re-render) ----------------------
     let selectedEvents = new Set();
     let selectedIocs = new Set();
+    let selectedFindings = new Set();
     function updateBulkBar() {
       const bar = document.getElementById("evBulkBar");
       if (!bar) return;
@@ -6413,6 +6424,48 @@
       openFalsePositiveModal("ioc", firstVal, firstVal, extraRefs, () => {
         selectedIocs.clear();
         if (lastState) renderIocs(lastState.iocs || []);
+      });
+    }
+
+    // --- Bulk finding operations ----------------------------------------------------
+    function updateFindingBulkBar() {
+      const bar = document.getElementById("findingBulkBar");
+      if (!bar) return;
+      if (selectedFindings.size > 0) {
+        bar.classList.add("active");
+        document.getElementById("findingBulkCount").textContent = `${selectedFindings.size} finding${selectedFindings.size !== 1 ? "s" : ""} selected`;
+      } else {
+        bar.classList.remove("active");
+      }
+    }
+    function clearFindingSelection() {
+      selectedFindings.clear();
+      document.querySelectorAll(".finding-row-cb").forEach(cb => {
+        cb.checked = false;
+        const row = cb.closest(".finding");
+        if (row) row.classList.remove("finding-selected");
+      });
+      const sa = document.getElementById("findingSelectAll");
+      if (sa) { sa.checked = false; sa.indeterminate = false; }
+      updateFindingBulkBar();
+    }
+    function bulkTagFindings() {
+      if (selectedFindings.size) openBulkTagModal([...selectedFindings], "finding");
+    }
+    // Opens the mark-FP modal on the first selected finding as the anchor; the rest ride along as
+    // extraRefs. Findings are marked by TITLE (not id) — see fpBtn("finding", f.title) above and
+    // buildFalsePositiveMarker on the server, which uses `ref` as the marker key for this kind.
+    function bulkMarkFindingsFalsePositive() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !selectedFindings.size) return;
+      const ids = [...selectedFindings];
+      const titleById = new Map((lastState?.findings || []).map(f => [f.id, f.title]));
+      const [firstId, ...restIds] = ids;
+      const firstTitle = titleById.get(firstId) ?? firstId;
+      const extraRefs = restIds.map(id => ({ kind: "finding", ref: titleById.get(id) ?? id, label: titleById.get(id) ?? id }));
+      openFalsePositiveModal("finding", firstTitle, firstTitle, extraRefs, () => {
+        selectedFindings.clear();
+        if (lastState) render(lastState);
       });
     }
     function bulkCopyIocs() {
@@ -12062,8 +12115,14 @@
           ? `(${shownFindings} of ${totalFindings} findings)`
           : `(${totalFindings} finding${totalFindings !== 1 ? "s" : ""})`;
       }
+      const findingAllIds = capped.map(f => f.id);
+      const findingAllSel = findingAllIds.length > 0 && findingAllIds.every(id => selectedFindings.has(id));
+      const findingSomeSel = findingAllIds.some(id => selectedFindings.has(id));
+      const findingHeaderRow = capped.length
+        ? `<div class="finding-header-row"><input type="checkbox" class="finding-cb" id="findingSelectAll" ${findingAllSel ? "checked" : ""} title="Select / deselect all visible findings" /> <span>Select all</span></div>`
+        : "";
       document.getElementById("findings").innerHTML =
-        capped.map(f => {
+        (findingHeaderRow + capped.map(f => {
           const evidence = [...(f.sourceScreenshots || []), ...(evByFinding[f.id] || [])];
           // Citations (#222): prefer the finding's own relatedEventIds (set by synthesis); fall back
           // to the events that back-link to it via relatedFindingIds for findings persisted before
@@ -12081,12 +12140,16 @@
             const confTitle = `AI confidence: ${f.confidence}%` + (f.confidenceReason ? ` — ${f.confidenceReason}` : "");
             confBadge = ` <span class="conf-badge ${cls}" title="${escAttr(confTitle)}">${f.confidence}%</span>`;
           }
-          // Comment chip, tag icon button, severity badge, confidence score, tag pills, then finding id/title.
-          return `<div class="finding" data-fid="${escAttr(f.id)}">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ${tagPills("finding", f.id)} ` +
+          const isSelFinding = selectedFindings.has(f.id);
+          // Selection checkbox, comment chip, tag icon button, severity badge, confidence score, tag pills, then finding id/title.
+          return `<div class="finding${isSelFinding ? " finding-selected" : ""}" data-fid="${escAttr(f.id)}"><input type="checkbox" class="finding-cb finding-row-cb" data-fid="${escAttr(f.id)}" ${isSelFinding ? "checked" : ""} title="Select finding" /> ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ${tagPills("finding", f.id)} ` +
             `<span style="color:var(--c-6aa9ff)">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${fpBtn("finding", f.title)}` +
             `<br><small>${esc(f.description)}</small>` +
             `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs, cites)}</div>`;
-        }).join("") || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
+        }).join("")) || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
+      const findingSelAllEl = document.getElementById("findingSelectAll");
+      if (findingSelAllEl && findingSomeSel && !findingAllSel) findingSelAllEl.indeterminate = true;
+      updateFindingBulkBar();
       // Investigation Log = state.timeline (import / AI notes) + analyst quick-action audit lines
       // (durable comments tagged with QA_AUDIT_MARK), merged chronologically.
       const _logRows = state.timeline.map(t => ({ ts: t.timestamp, html: esc(t.description) }));
@@ -12187,6 +12250,7 @@
       loadStarred(caseId);
       selectedEvents.clear();
       selectedIocs.clear();
+      selectedFindings.clear();
       hiddenSources.clear(); _srcMenuSig = "";
       hiddenOrigins.clear(); _originMenuSig = "";
       hiddenHosts.clear(); _hostMenuSig = "";
@@ -12710,6 +12774,10 @@
       if (e.target.id === "iocBulkFpBtn") { bulkMarkIocsFalsePositive(); return; }
       if (e.target.id === "iocBulkCopyBtn") { bulkCopyIocs(); return; }
       if (e.target.id === "iocBulkClearBtn") { clearIocSelection(); return; }
+      // Bulk action bar buttons (Findings)
+      if (e.target.id === "findingBulkTagBtn") { bulkTagFindings(); return; }
+      if (e.target.id === "findingBulkFpBtn") { bulkMarkFindingsFalsePositive(); return; }
+      if (e.target.id === "findingBulkClearBtn") { clearFindingSelection(); return; }
       // Star filter toggle
       if (e.target.id === "evStarFilterBtn") {
         showStarredOnly = !showStarredOnly;
@@ -12837,6 +12905,32 @@
           if (row) row.classList.toggle("ioc-selected", e.target.checked);
         });
         updateIocBulkBar();
+      }
+      // Finding checkbox: per-row checkbox
+      const findingRowCb = e.target.closest && e.target.closest(".finding-row-cb");
+      if (findingRowCb) {
+        const id = findingRowCb.getAttribute("data-fid");
+        if (e.target.checked) selectedFindings.add(id); else selectedFindings.delete(id);
+        const row = findingRowCb.closest(".finding");
+        if (row) row.classList.toggle("finding-selected", e.target.checked);
+        updateFindingBulkBar();
+        const allIds = [...document.querySelectorAll(".finding-row-cb")].map(cb => cb.getAttribute("data-fid"));
+        const allSel = allIds.every(id => selectedFindings.has(id));
+        const someSel = allIds.some(id => selectedFindings.has(id));
+        const sa = document.getElementById("findingSelectAll");
+        if (sa) { sa.checked = allSel; sa.indeterminate = someSel && !allSel; }
+        return;
+      }
+      // Finding select-all checkbox
+      if (e.target.id === "findingSelectAll") {
+        document.querySelectorAll(".finding-row-cb").forEach(cb => {
+          const id = cb.getAttribute("data-fid");
+          if (e.target.checked) selectedFindings.add(id); else selectedFindings.delete(id);
+          cb.checked = e.target.checked;
+          const row = cb.closest(".finding");
+          if (row) row.classList.toggle("finding-selected", e.target.checked);
+        });
+        updateFindingBulkBar();
       }
     });
     document.getElementById("commentText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) postComment(); });
