@@ -10975,7 +10975,7 @@
         swSelEvId = hit ? hit.id : null;
         swShowDetail(hit || null);
         swRenderCanvas();
-        if (hit) swLocateInTable(hit.id);   // jump to + flash the matching table row
+        if (hit) jumpToEvent(hit.id);   // expand/page/unfilter the timeline as needed, then flash the row
       });
 
       document.getElementById("swimlaneGroupBy").addEventListener("change", function() {
