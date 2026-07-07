@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Cited-event badges (`[1]`, `[2]`…) couldn't be right-clicked to open in a new tab/window** — they now carry a real deep link (`?caseId=...#event=...`), so right-click/middle-click/Ctrl-click all work; opening the link reloads the case and jumps straight to the cited event.
+
 ## [0.30.0] - 2026-07-07
 
 ### Added

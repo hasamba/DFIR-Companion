@@ -9257,7 +9257,7 @@
         ? chain.extraction.map(e =>
             `<div class="iocchain-row">` +
             `<span class="iocchain-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
-            `<a class="ev-jump iocchain-desc" data-evid="${escAttr(e.eventId)}" title="Jump to this event in the timeline">${esc(e.description || e.eventId)}</a>` +
+            `<a class="ev-jump iocchain-desc" href="${escAttr(eventDeepLink(caseId, e.eventId))}" data-evid="${escAttr(e.eventId)}" title="Jump to this event in the timeline">${esc(e.description || e.eventId)}</a>` +
             (e.artifactName ? `<span class="iocchain-tag">${esc(e.artifactName)}</span>`
               : (e.sources && e.sources.length ? `<span class="iocchain-tag">${esc(e.sources.join(", "))}</span>` : "")) +
             `</div>`).join("")
@@ -9296,8 +9296,9 @@
     function citeEvents(ids) {
       const list = Array.from(new Set((ids || []).map(String).filter(Boolean)));
       if (!list.length) return "";
+      const caseId = document.getElementById("caseId").value.trim();
       return list.map((id, i) =>
-        `<a class="ev-jump cite-badge" data-evid="${escAttr(id)}" title="Jump to event ${escAttr(id)} in the timeline">[${i + 1}]</a>`
+        `<a class="ev-jump cite-badge" href="${escAttr(eventDeepLink(caseId, id))}" data-evid="${escAttr(id)}" title="Jump to event ${escAttr(id)} in the timeline">[${i + 1}]</a>`
       ).join(" ");
     }
     // Numbered, clickable citation footnotes for the findings an AI-suggested hunt names as its
@@ -10869,6 +10870,18 @@
       swLocateInTable(id);
     }
 
+    // Real navigable URL for a "cited event" badge (issue #222 follow-up) — without a genuine href,
+    // browsers won't offer "Open link in new tab/window" on right-click, only a plain non-link
+    // context menu. Left-click is still intercepted (see the delegated .ev-jump handlers) and jumps
+    // in place; opening this URL fresh reloads the case then jumpToEventFromHash() finishes the jump.
+    function eventDeepLink(caseId, id) {
+      return `?caseId=${encodeURIComponent(caseId)}#event=${encodeURIComponent(id)}`;
+    }
+    function jumpToEventFromHash() {
+      const m = /^#event=(.+)$/.exec(location.hash);
+      if (m) jumpToEvent(decodeURIComponent(m[1]));
+    }
+
     // Jump from a timeline event's finding link to that finding in the Findings section,
     // expanding the section if collapsed, then scroll + flash it (reuses the ev-flash animation).
     function jumpToFinding(fid) {
@@ -12223,8 +12236,8 @@
       if (ws) { try { ws.close(); } catch {} ws = null; }
       // Remember the case so a page refresh reconnects automatically.
       localStorage.setItem("dfir.caseId", caseId);
-      history.replaceState(null, "", "?caseId=" + encodeURIComponent(caseId));
-      fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
+      history.replaceState(null, "", "?caseId=" + encodeURIComponent(caseId) + location.hash);   // keep #event=... (deep link) intact
+      fetch(`/cases/${caseId}/state`).then(r => r.json()).then(state => { render(state); jumpToEventFromHash(); }).catch(() => {});
       pollCount(caseId);
       loadAiToggle(caseId);
       loadEnrichToggle(caseId);
