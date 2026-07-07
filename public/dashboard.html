@@ -2992,6 +2992,40 @@
               <button id="wizTestSaveBtn" class="wiz-btn">Save &amp; test connection</button>
             </div>
             <div id="wizResult" class="wiz-result"></div>
+            <div class="settings-group-head" style="margin-top:16px">Synthesis model <span style="font-weight:400;color:var(--c-9aa4b2)">(optional — a separate, often stronger, model for one-shot synthesis)</span></div>
+            <p class="wiz-sub" style="margin:0 0 10px">Leave blank to keep using the extraction provider/model/key above for synthesis too.</p>
+            <div class="wiz-row">
+              <div class="wiz-field">
+                <label>Synth provider<span class="wiz-hint">DFIR_AI_SYNTH_PROVIDER</span></label>
+                <select id="wizSynthProvider">
+                  <option value="">— same as extraction —</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="ollama">Ollama (local)</option>
+                  <option value="litellm">LiteLLM (local proxy)</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="anthropic">Anthropic</option>
+                </select>
+              </div>
+              <div class="wiz-field">
+                <label>Synth model<span class="wiz-hint">DFIR_AI_SYNTH_MODEL — e.g. gpt-4o</span></label>
+                <input id="wizSynthModel" placeholder="e.g. gpt-4o" autocomplete="off" />
+              </div>
+            </div>
+            <div class="wiz-row">
+              <div class="wiz-field">
+                <label>Synth API key<span class="wiz-hint">DFIR_AI_SYNTH_KEY — stored only in your local .env.</span></label>
+                <input id="wizSynthKey" type="password" placeholder="(not set)" autocomplete="new-password" />
+              </div>
+              <div class="wiz-field">
+                <label>Synth base URL<span class="wiz-hint">DFIR_AI_SYNTH_BASE_URL — for a local proxy / self-hosted endpoint.</span></label>
+                <input id="wizSynthBaseUrl" placeholder="e.g. http://localhost:11434/v1" autocomplete="off" />
+              </div>
+            </div>
+            <div class="wiz-actions">
+              <button id="wizSynthSaveBtn" class="wiz-btn secondary">Save synthesis model</button>
+            </div>
+            <div id="wizSynthResult" class="wiz-result"></div>
           </div>
           <!-- Dynamic step bodies (every non-AI step) render here. -->
           <div id="wizPaneDynamic" style="display:none"></div>
@@ -14501,6 +14535,8 @@
       wizEl("wizProvider").value = ""; wizEl("wizModel").value = ""; wizEl("wizKey").value = "";
       wizEl("wizBaseUrl").value = ""; wizEl("wizResult").textContent = ""; wizEl("wizModelHint").innerHTML = "";
       wizEl("wizBaseUrlField").style.display = "none"; wizEl("wizTestSaveBtn").disabled = false;
+      wizEl("wizSynthProvider").value = ""; wizEl("wizSynthModel").value = ""; wizEl("wizSynthKey").value = "";
+      wizEl("wizSynthBaseUrl").value = ""; wizEl("wizSynthResult").textContent = ""; wizEl("wizSynthSaveBtn").disabled = false;
     }
     wizEl("wizProvider").addEventListener("change", e => {
       const p = e.target.value, hint = wizEl("wizModelHint");
@@ -14536,6 +14572,37 @@
       finally { btn.disabled = false; await wizRefreshStatus(); }
     }
     wizEl("wizTestSaveBtn").onclick = wizSaveAndTestAi;
+
+    // ── Synthesis model (optional, sub-section of the AI step) ──
+    // No live connectivity test here: /diagnostics/ai-test only probes the main extraction
+    // provider, so this mirrors Settings → AI (save + apply, no per-field test).
+    async function wizSaveSynth() {
+      const result = wizEl("wizSynthResult");
+      const updates = {};
+      const provider = wizEl("wizSynthProvider").value;
+      const model = wizEl("wizSynthModel").value.trim();
+      const key = wizEl("wizSynthKey").value.trim();
+      const baseUrl = wizEl("wizSynthBaseUrl").value.trim();
+      if (provider) updates.DFIR_AI_SYNTH_PROVIDER = provider;
+      if (model) updates.DFIR_AI_SYNTH_MODEL = model;
+      if (key) updates.DFIR_AI_SYNTH_KEY = key;
+      if (baseUrl) updates.DFIR_AI_SYNTH_BASE_URL = baseUrl;
+      if (Object.keys(updates).length === 0) {
+        result.style.color = "#ffb05a";
+        result.textContent = "Enter at least one value first — or leave everything blank to keep reusing the extraction model for synthesis.";
+        return;
+      }
+      const btn = wizEl("wizSynthSaveBtn"); btn.disabled = true;
+      result.style.color = "#9aa4b2"; result.textContent = "Saving…";
+      try {
+        const save = await fetch("/settings/env", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ updates }) });
+        if (!save.ok) { const j = await save.json().catch(() => ({})); result.style.color = "#ff9f9f"; result.textContent = "Could not save: " + esc(j.error || ("HTTP " + save.status)); btn.disabled = false; return; }
+      } catch (e) { result.style.color = "#ff9f9f"; result.textContent = "Could not reach the server: " + esc(e.message); btn.disabled = false; return; }
+      await fetch("/settings/reload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prefix: "DFIR_AI_SYNTH_" }) }).catch(() => {});
+      result.style.color = "#5ad17a"; result.textContent = "✓ Saved. Used on the next synthesis run.";
+      btn.disabled = false;
+    }
+    wizEl("wizSynthSaveBtn").onclick = wizSaveSynth;
 
     // ── Generic step rendering (every non-AI step) ──
     function wizFieldId(envKey) { return "wizf-" + envKey; }
