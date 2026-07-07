@@ -23,7 +23,7 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 ## AI
 
 - Provider, model, API key, base URL (extraction)
-- Synthesis model (optional separate model for findings/attacker path)
+- Synthesis model (optional separate model for findings/attacker path) — also configurable directly in the first-run **setup wizard**'s AI step, not just here
 - VQL-generation model (optional dedicated model — many general models struggle with VQL syntax)
 - Timeout, max tokens, context window size
 - Chain-of-Thought (synthesis thinking tokens)

@@ -36,6 +36,23 @@ The finding list is sorted worst-first. Click a finding to expand it. The **Min 
 the list hides findings below the chosen floor (findings with no confidence score always show); the
 floor is a per-case setting, so it's remembered the next time you open the case.
 
+**Cited AI answers** — supporting events/findings referenced by a finding, Ask-the-case, Explain Event,
+or an AI-suggested hunt appear as numbered, clickable citations — click a citation number to jump
+straight to the event or finding it's grounded in. Citations carry through to the exported report.
+
+**Bulk actions** — select multiple findings via their checkboxes (or **Select all**) to Modify Tags or
+Mark False Positive on the whole batch at once, the same pattern used by IOCs and timeline events.
+
+---
+
+## Pinned Findings
+
+Pin key findings (📌 on the finding card) to a sticky strip that stays visible at the top while you
+scroll the rest of the dashboard. Drag to reorder, click a pinned title to jump to that finding, or
+✕ to unpin. The pinned list is per-case, persisted server-side, and travels with the investigation
+snapshot export. Capped at a small curated shortlist (`DFIR_MAX_PINNED_FINDINGS`, default 5) to keep
+it from becoming a second findings list.
+
 ---
 
 ## Attack Path
@@ -74,6 +91,13 @@ Each row shows a compact title line (timestamp, severity badge, description, sou
 
 !!! tip
     Drag a time range on the **Timeline Swimlane** (below) to instantly scope the timeline to that window.
+
+### Event-Density Heatmap
+
+A bar strip above the event rows buckets the **full filtered dataset** (not just the current page) by
+time, each bar colored by that bucket's worst severity. Click a bar to zoom the timeline to that
+window — a faster way to spot and jump to a burst of activity than paging through hundreds of rows.
+Collapses to a thin sparkline on mobile.
 
 ### Row Display
 
@@ -181,8 +205,15 @@ Each IOC shows:
 
 - **Verdict badge** — reputation from enrichment providers (malicious / suspicious / clean / unknown)
 - **Source badge** — how many tools corroborated this indicator (e.g. ⊕ 3 sources)
+- **🔗 Provenance chain** — opens a panel showing the full timestamped chain for this indicator:
+  extraction event(s), enrichment lookups, and the findings that cite it, with a JSON export
 - **🚫 Mark False Positive** — known-good, excludes from analysis
 - Click to run enrichment on demand
+
+**Inline quick-actions** — any detected value (IP/hash/domain/SID/URL/path) inside an event row or an
+IOC value is itself clickable, opening a tray to copy it, mark it benign, mark it confirmed-malicious,
+or suggest a hunt — without leaving the timeline to find the IOC's own row. Outcomes are recorded to
+the investigation log.
 
 ---
 
@@ -322,6 +353,16 @@ Free-text notes. Supports Markdown. Notes are per-case and survive re-synthesis.
 ## Investigation Log
 
 A durable log of every synthesis run — what the AI concluded each time and what changed. Useful for tracking how the investigation evolved.
+
+---
+
+## Activity Log
+
+A chronological, filterable record of every security-relevant action taken on the case — broader than
+the Investigation Log above, which only tracks synthesis runs. Covers imports, mark/unmark
+false-positive, AI runs (synthesis / 2nd opinion / Ask-the-case / …), enrichment and anonymization
+toggles, settings changes, playbook edits, comments/tags, hunt runs, and exports, each with a
+timestamp and the analyst who did it (where applicable).
 
 ---
 

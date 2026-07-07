@@ -175,7 +175,7 @@ Standard DFIR questions auto-answered from the synthesized case
 ## Features
 
 ### Onboarding
-- **Setup wizard** — guided multi-step dashboard overlay (auto-shown first-run; also in Settings → General / AI) to configure AI, the integrations (Velociraptor, DFIR-IRIS, Timesketch, Notion, ClickUp), threat-intel enrichment + customer-exposure providers, push ingest, NSRL, and a notification webhook (Slack/Teams/Mattermost/Discord) — each with Save → apply-live → connection/status test, and a ✓/○ progress rail. Everything is optional and dismissible
+- **Setup wizard** — guided multi-step dashboard overlay (auto-shown first-run; also in Settings → General / AI) to configure AI (extraction **and** synthesis model, separately), the integrations (Velociraptor, DFIR-IRIS, Timesketch, Notion, ClickUp), threat-intel enrichment + customer-exposure providers, push ingest, NSRL, and a notification webhook (Slack/Teams/Mattermost/Discord) — each with Save → apply-live → connection/status test, and a ✓/○ progress rail. Everything is optional and dismissible
 
 ### Capture & ingest
 - **MV3 browser extension** — timer + event-driven capture (navigation/tab/click), `Ctrl+Shift+S` hotkey, offline queue + auto-sync, per-case Start/Stop
@@ -248,6 +248,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Corroboration filter (lens)** — a per-section control in each title bar (Timeline / IOCs / Findings) to show only items observed by **2+ or 3+ distinct tools**, so single-source background noise (internet scanners, benign telemetry) drops away and the multi-source attack path stands out. Each section's lens is independent. A *lens, not a gate* — nothing is removed from state; set back to *any* to see single-source evidence again. Per-browser.
 
 ### Investigation workflow
+- **Cited AI answers** — findings, Ask-the-case, Explain Event, and AI-suggested hunts (playbook + fleet) show numbered, clickable citations to the supporting forensic events/findings, in both the dashboard and the exported report
 - **Explain This Event** — 💡 per-row AI button explains any forensic event in context: what happened, why it matters, normal-vs-suspicious, ATT&CK mapping, 1–3 runnable pivot queries (VQL/KQL/SPL), evidence for/against; ephemeral overlay
 - **Ask the case (GraphRAG)** — free-form Q&A grounded in timeline + deterministic evidence-chain graph; multi-hop questions answered via real relationships
 - **Hypothesis-driven mode** — status-tracked hypotheses (open/supported/refuted/unknown), auto-generated + analyst-authored, with evidence/technique links + a report section; open ones steer synthesis, notebook notes promote in, survive synthesis + snapshots
@@ -255,7 +256,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Response Playbook** — trackable checklist (status/priority/assignee/due/custom tasks); opt-in IR-templates expand findings into Contain→Investigate→Eradicate→Recover
 - **Triage tags & comments** — label entities + attach notes; live WebSocket sync; survive synthesis
 - **Activity log** — a chronological, filterable record of every security-relevant action taken on a case (imports, mark/unmark false-positive, AI runs, enrichment/anonymization toggles, settings changes, playbook edits, comments/tags, hunt runs, exports)
-- **Bulk actions** — multi-select events/IOCs: star/tag/mark-false-positive/enrich/copy
+- **Bulk actions** — multi-select events/IOCs/findings: star/tag/mark-false-positive/enrich/copy
 - **IOC whitelist** (Settings) — CIDR/exact/regex patterns auto-mark matching IOCs false-positive; global; opt-in
 - **NSRL known-good hashes** (Settings) — flat hash set or direct SQLite DB query (~160 GB); auto-marks matching events/IOCs false-positive
 - **Payload deobfuscation** — auto-decodes base64 PowerShell (`-enc`, `[Convert]::FromBase64String`); extracts hidden IOCs; shows [Decoded] blocks
