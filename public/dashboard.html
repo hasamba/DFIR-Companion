@@ -4425,9 +4425,15 @@
       // This only pads the canvas (node spacing and radius are untouched), so it cannot
       // introduce overlap — it fixes labels clipping on the far-left arc of the radial
       // layout (and the top corners of the vertical layout) without a geometry change.
+      // The horizontal layout puts each label on its own row with nothing above/below it, so a
+      // long label can't overlap a neighbor — only the canvas width grows to fit it (handled
+      // below). Vertical/radial labels sit close together at an angle, so they keep a tighter
+      // cap to avoid overlapping the next node's label.
+      const nameLimit = assetLayout === "horizontal" ? 60 : 20;
+      const iocLimit = assetLayout === "horizontal" ? 70 : 26;
       const labelText = (it, isIoc) => isIoc
-        ? `${truncate(it.value, 26)} (${it.type})`
-        : truncate(it.name, 20);
+        ? `${truncate(it.value, iocLimit)} (${it.type})`
+        : truncate(it.name, nameLimit);
       const labelWidth = (s) => s.length * 6.5 + 6;   // ~6.5px/char at the 11px label font
       let minX = 0, maxX = W;
       const fitLabel = (it, isIoc) => {
@@ -4488,13 +4494,17 @@
       }
       // Wrap a node's body (icon/circle) with its label + drag/focus group. The label sits at the
       // node position plus its recorded offset, so it tracks the node when dragged.
+      const nameLimit = assetLayout === "horizontal" ? 60 : 20;
+      const iocLimit = assetLayout === "horizontal" ? 70 : 26;
       const wrapNode = (it, isIoc, body) => {
         const p = assetPos.get(it.id), o = assetLabOffset.get(it.id) || { dx: 0, dy: 0, anchor: "middle", rotate: 0 };
         const lx = p.x + o.dx, ly = p.y + o.dy;
-        const label = isIoc ? `${esc(truncate(it.value, 26))} <tspan fill="#6b7585">(${esc(it.type)})</tspan>` : esc(truncate(it.name, 20));
+        const label = isIoc ? `${esc(truncate(it.value, iocLimit))} <tspan fill="#6b7585">(${esc(it.type)})</tspan>` : esc(truncate(it.name, nameLimit));
+        const full = isIoc ? `${it.value} (${it.type})` : it.name;
         const rot = o.rotate ? ` transform="rotate(${o.rotate} ${lx.toFixed(1)} ${ly.toFixed(1)})"` : "";
         const pinned = assetPosOverride.has(it.id) ? " moved" : "";
         return `<g class="asset-node${pinned}" data-id="${escAttr(it.id)}" opacity="${related(it.id) ? 1 : 0.1}">`
+          + `<title>${esc(full)}</title>`
           + `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="${o.anchor}"${rot}>${label}</text>`
           + body + `</g>`;
       };
