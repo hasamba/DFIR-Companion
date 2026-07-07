@@ -1159,6 +1159,48 @@ describe("state and report routes", () => {
     expect(pinged).toBe(3);
   });
 
+  it("marking an event false-positive re-synthesizes but does NOT re-run IOC enrichment when every IOC is already enriched", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-fp-no-reenrich-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const enrichCalls: string[] = [];
+    const provider = {
+      name: "VirusTotal", scope: "local" as const,
+      supports: () => true,
+      lookup: async (_k: string, v: string) => { enrichCalls.push(v); return null; },
+    };
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+        timelineNote: "n", summary: "s",
+      })),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const statuses: Array<{ status: string; detail?: string }> = [];
+    const app2 = createApp(store, {
+      stateStore, pipeline, enrichmentProviders: [provider],
+      onAiStatus: (_c, s) => statuses.push(s),
+    });
+    await request(app2).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+
+    // Seed one IOC already checked by the only configured (and enabled-by-default local) provider.
+    const before = await stateStore.load("c1");
+    await stateStore.save({ ...before, iocs: [{ id: "i1", type: "ip", value: "1.2.3.4", firstSeen: "t0", enrichedBy: ["VirusTotal"] }] });
+
+    const res = await request(app2).post("/cases/c1/false-positive")
+      .send({ kind: "event", ref: "nonexistent-event", reason: "known-good-tool", note: "internal tool" });
+    expect(res.status).toBe(200);
+
+    // Wait for the background re-synthesis (and, if it ran, enrichment) to settle.
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(enrichCalls).toEqual([]);                                        // no provider lookups
+    expect(statuses.some((s) => s.detail?.includes("enriching"))).toBe(false); // no enrich job surfaced
+    const final = await stateStore.load("c1");
+    expect(final.iocs[0].enrichedBy).toEqual(["VirusTotal"]);               // untouched
+  });
+
   it("promotes an IOC false-positive to the global whitelist when addToWhitelist is set", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-legit-whitelist-"));
     const store = new CaseStore(root);

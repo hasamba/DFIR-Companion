@@ -55,6 +55,20 @@ export interface EnrichSummary {
 // Most-valuable kinds first so the per-run cap spends lookups where they matter.
 const KIND_PRIORITY: Record<IocKind, number> = { hash: 0, ip: 1, process: 2, domain: 3, url: 4 };
 
+// Cheap pre-check mirroring enrichIocs' candidate filter, WITHOUT doing any lookups: is there at
+// least one IOC that some enabled provider hasn't checked yet? Lets a caller skip the whole
+// enrich dance (job, "analyzing" status, state save/broadcast) when a run would be a pure no-op —
+// e.g. re-synthesis after marking an event/finding false-positive doesn't touch IOCs, so every
+// enabled provider has already seen them.
+export function hasEnrichableWork(iocs: readonly IOC[], providers: readonly EnrichmentProvider[]): boolean {
+  return iocs.some((ioc) => {
+    const kind = iocKind(ioc.type);
+    if (!kind) return false;
+    const checked = new Set(ioc.enrichedBy ?? []);
+    return providers.some((p) => p.supports(kind) && !checked.has(p.name));
+  });
+}
+
 export async function enrichIocs(
   iocs: readonly IOC[],
   opts: EnrichOptions,
