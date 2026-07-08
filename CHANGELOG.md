@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **DFIR-IRIS push case-name override** — the "Push to DFIR-IRIS" dialog now shows the case name a push will target (defaulting to `<case id> — <friendly name>`) and lets you type a different one; your choice is remembered so later pushes keep hitting the same IRIS case instead of reverting to the default.
 - **Per-case IOC exclude list** — permanently remove domain/hostname (or any IOC type) matches from a case via exact/suffix/regex rules in the IOCs panel title bar; excluded values are purged immediately and never re-imported or enriched.
 - **Import upload-only Velociraptor artifacts (e.g. THOR)** — paste the Velociraptor GUI's "Uploaded Files" tab URL into the existing hunt/flow import box to import just the uploaded report, skipping rows entirely; the upload reader also now picks up `.csv`/`.txt`/`.log`/`.jsonl` uploads, not just `.json`.
 - **Timesketch export (Super Timeline)** — push or download the full super-timeline (forensic timeline + raw host-triage artifacts) to/from Timesketch, alongside the existing Timesketch export (Forensic Timeline); both existing options were relabeled for clarity and both push into the same sketch under separate timelines so neither clobbers the other.
@@ -20,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pinned Findings folded into the Findings panel** — the sticky pinned strip is no longer its own standalone dashboard section; it now sits at the top of the Findings panel itself (removed from the section-visibility list and every built-in dashboard view's section list, since it's part of Findings now).
 
 ### Fixed
+- **DFIR-IRIS push could silently land in an unrelated case** (often IRIS's own seeded default case) when the case-name lookup found no exact match — it now only reuses a case whose name matches exactly, creating a new one otherwise.
 - **Timeline coverage-gap findings survived a case scope change** — they were never back-linked to the two events bounding the silence, so the dashboard's client-side scope filter (which drops a finding only when it's provably backed by out-of-scope events) could never tell a gap finding was out of scope and kept showing it, however far outside the analyst's chosen window, until the next full AI re-synthesis. Gap findings are now linked to their bounding events like every other backfilled finding.
 - **Structured hostname/fqdn/domain columns** (e.g. a JSON/CSV field literally named `Hostname`) now skip internal zones (`.lan`/`.local`/`.corp`/etc.) the same way free-text scraping already did, instead of creating a domain IOC for every client hostname.
 - **Cited-event badges (`[1]`, `[2]`…) couldn't be right-clicked to open in a new tab/window** — they now carry a real deep link (`?caseId=...#event=...`), so right-click/middle-click/Ctrl-click all work; opening the link reloads the case and jumps straight to the cited event.
