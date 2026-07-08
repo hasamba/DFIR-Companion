@@ -12,7 +12,7 @@ Click **Export** in the toolbar to see all options:
 | **CSV** | IOC export (all indicators with enrichment verdicts and sources) |
 | **IOC block-list** | Plain TXT, CSV, or STIX indicators — ready to load into a firewall or SIEM |
 | **Presentation deck** | Slide-by-slide offline HTML file (see below) |
-| **Investigation snapshot** | Portable JSON of the entire investigation state |
+| **Encrypted case archive** | Password-protected archive of the ENTIRE case, evidence included |
 | **Redacted case package** | The full case with anonymized AI input — shareable for model debugging without exposing evidence |
 
 ---
