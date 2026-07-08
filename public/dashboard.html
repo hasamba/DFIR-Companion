@@ -12093,6 +12093,7 @@
         const msg = document.getElementById("iocExcludeMsg");
         const pattern = document.getElementById("iocExcludePattern").value.trim();
         if (!caseId || !pattern) { msg.textContent = "pattern is required"; return; }
+        if (!confirm(`Add this exclude rule?\n\nAny IOC in this case currently matching "${pattern}" (${document.getElementById("iocExcludeMode").value}) will be permanently removed and never re-imported or enriched. This cannot be undone.`)) return;
         const body = {
           match: document.getElementById("iocExcludeMode").value,
           pattern,
