@@ -63,6 +63,19 @@ describe("dashboard.html", () => {
     expect(html).toContain("/incident-timeline.csv");
   });
 
+  it("offers Timesketch export (Forensic Timeline / Super Timeline) via the Export and Push menus", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // Export… dropdown: JSONL download links, one per timeline.
+    expect(html).toContain('value="timesketch-jsonl"');
+    expect(html).toContain('value="timesketch-jsonl-super"');
+    expect(html).toContain("/super-timeline.jsonl");
+    // Push to… dropdown: both options appear once /timesketch/status reports configured.
+    expect(html).toContain('addPushOption("timesketch",');
+    expect(html).toContain('addPushOption("timesketch-super",');
+    expect(html).toContain("Timesketch export (Forensic Timeline)");
+    expect(html).toContain("Timesketch export (Super Timeline)");
+  });
+
   it("wires the compromised-assets section + asset↔IoC graph with type toggles", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="assetGraph"');
