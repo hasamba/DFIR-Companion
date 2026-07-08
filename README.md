@@ -672,7 +672,7 @@ URL + user + password all required to enable push. Export to JSONL works without
 | `DFIR_TIMESKETCH_URL` | — | Timesketch instance URL |
 | `DFIR_TIMESKETCH_USER` | — | Local-auth username |
 | `DFIR_TIMESKETCH_PASSWORD` | — | Local-auth password |
-| `DFIR_TIMESKETCH_TIMELINE` | `DFIR Companion timeline` | Managed timeline name |
+| `DFIR_TIMESKETCH_TIMELINE` | `DFIR-Companion Forensic Timeline` | Managed timeline name |
 | `DFIR_TIMESKETCH_CA` | — | PEM CA bundle for internal-CA Timesketch |
 | `DFIR_TIMESKETCH_INSECURE` | — | `=1` to skip TLS verification (lab only) |
 

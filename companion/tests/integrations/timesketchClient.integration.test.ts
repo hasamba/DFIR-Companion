@@ -152,7 +152,7 @@ describe("TimesketchClient (real HTTP against a stub Timesketch)", () => {
     expect(res.events).toBe(2);
     expect(uploads).toHaveLength(1);                                 // upload reached the server…
     expect(uploads[0].sketchId).toBe(String(res.sketchId));         // …WITH sketch_id (the bug: multipart loses it)
-    expect(uploads[0].name).toBe("DFIR Companion timeline");
+    expect(uploads[0].name).toBe("DFIR-Companion Forensic Timeline");
     const lines = (uploads[0].events ?? "").trim().split("\n");
     expect(lines).toHaveLength(2);
     expect(lines.map((l) => JSON.parse(l).message)).toEqual(["logon to DC01", "mimikatz run"]);
@@ -160,7 +160,7 @@ describe("TimesketchClient (real HTTP against a stub Timesketch)", () => {
   });
 
   it("reuses an existing sketch and clean-replaces the managed timeline before uploading", async () => {
-    sketches.push({ id: 42, name: "Case Alpha", timelines: [{ id: 7, name: "DFIR Companion timeline" }] });
+    sketches.push({ id: 42, name: "Case Alpha", timelines: [{ id: 7, name: "DFIR-Companion Forensic Timeline" }] });
     const client = new TimesketchClient({ baseUrl: base, username: USER, password: PASS });
     const res = await pushCaseToTimesketch(client, { sketchName: "Case Alpha", state: sampleState() }, { baseUrl: base });
 
