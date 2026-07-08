@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Per-case AI cost tracking** — Settings → Diagnostics now shows an "AI cost — this case" card: calls, dollar cost, and token counts broken down by Vision / Synthesis / Other and by model, read from OpenRouter's real per-call cost (and Anthropic's/OpenRouter's real token counts) with no guessed pricing — providers that don't report cost/tokens show "n/a", never a fabricated `$0.00`.
 - **Per-case IOC exclude list** — permanently remove domain/hostname (or any IOC type) matches from a case via exact/suffix/regex rules in the IOCs panel title bar; excluded values are purged immediately and never re-imported or enriched.
 - **Import upload-only Velociraptor artifacts (e.g. THOR)** — paste the Velociraptor GUI's "Uploaded Files" tab URL into the existing hunt/flow import box to import just the uploaded report, skipping rows entirely; the upload reader also now picks up `.csv`/`.txt`/`.log`/`.jsonl` uploads, not just `.json`.
 - **Timesketch export (Super Timeline)** — push or download the full super-timeline (forensic timeline + raw host-triage artifacts) to/from Timesketch, alongside the existing Timesketch export (Forensic Timeline); both existing options were relabeled for clarity and both push into the same sketch under separate timelines so neither clobbers the other.
