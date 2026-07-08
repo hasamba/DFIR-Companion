@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Per-case IOC exclude list** — permanently remove domain/hostname (or any IOC type) matches from a case via exact/suffix/regex rules in the IOCs panel title bar; excluded values are purged immediately and never re-imported or enriched.
+- **Timesketch export (Super Timeline)** — push or download the full super-timeline (forensic timeline + raw host-triage artifacts) to/from Timesketch, alongside the existing Timesketch export (Forensic Timeline); both existing options were relabeled for clarity and both push into the same sketch under separate timelines so neither clobbers the other.
 
 ### Fixed
 - **Structured hostname/fqdn/domain columns** (e.g. a JSON/CSV field literally named `Hostname`) now skip internal zones (`.lan`/`.local`/`.corp`/etc.) the same way free-text scraping already did, instead of creating a domain IOC for every client hostname.
