@@ -445,6 +445,22 @@ describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
     expect(vals).toContain("domain:evil-c2.example.com");
   });
 
+  it("does not treat dotted config/artifact identifiers as domains (no real TLD)", () => {
+    // Velociraptor/DetectRaptor artifact ids and JSON-schema field paths are dot-separated but end
+    // in a made-up "TLD" (amcache, precondition, …) — they used to slip past the free-text domain
+    // scraper and pollute the IOC list with junk like "domain: artifacts.precondition".
+    const sink = new Map<string, SiemIoc>();
+    textIocs(
+      "Detection.Query field referenced artifacts.precondition and " +
+        "detectraptor.windows.detection.amcache while validating the artifact.export block",
+      sink,
+    );
+    const vals = [...sink.values()].map((i) => i.value);
+    expect(vals).not.toContain("artifacts.precondition");
+    expect(vals).not.toContain("detectraptor.windows.detection.amcache");
+    expect(vals.some((v) => v.startsWith("artifacts."))).toBe(false);
+  });
+
   it("parses Kibana display-format timestamps (\"May 7, 2026 @ 16:31:04.000\") to UTC ISO", () => {
     const rec = { "@timestamp": "May 7, 2026 @ 16:31:04.000", host: "h", message: "x" };
     const e = parseSiemExport(JSON.stringify([rec])).events[0];
