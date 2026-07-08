@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   timesketchDate, mapForensicEvent, toTimesketchEvents, toTimesketchJsonl,
+  toTimesketchEventsFromList, toTimesketchJsonlFromList,
 } from "../../src/integrations/timesketch/timesketchMap.js";
 import { scrapeCsrfToken } from "../../src/integrations/timesketch/timesketchClient.js";
 import {
@@ -67,6 +68,22 @@ describe("timesketchMap", () => {
     expect(parsed.map((p) => p.message)).toEqual(["earlier", "later"]); // chronological
     expect(parsed[0]).toHaveProperty("datetime");
     expect(toTimesketchJsonl(emptyState("c1"))).toBe("");          // no events → empty string
+  });
+
+  it("maps and renders a plain event list the same way as toTimesketchEvents/toTimesketchJsonl", () => {
+    const events: ForensicEvent[] = [
+      event({ timestamp: "2026-06-04T15:00:00Z", description: "later" }),
+      event({ timestamp: "bad-date", description: "dropped" }),
+      event({ timestamp: "2026-06-04T09:00:00Z", description: "earlier" }),
+    ];
+    const mapped = toTimesketchEventsFromList(events);
+    expect(mapped).toHaveLength(2);
+    expect(mapped.map((e) => e.message)).toEqual(["earlier", "later"]); // chronological, bad-date dropped
+
+    const jsonl = toTimesketchJsonlFromList(events).trimEnd().split("\n");
+    expect(jsonl).toHaveLength(2);
+    expect(jsonl.map((l) => JSON.parse(l).message)).toEqual(["earlier", "later"]);
+    expect(toTimesketchJsonlFromList([])).toBe(""); // no events → empty string
   });
 });
 

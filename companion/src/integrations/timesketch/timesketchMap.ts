@@ -71,17 +71,30 @@ export function mapForensicEvent(event: ForensicEvent): TimesketchEvent | null {
 }
 
 // The forensic timeline as Timesketch import events, sorted by their true event time and with
-// unparseable-timestamp events dropped — the chronological attack story, ready for upload.
-export function toTimesketchEvents(state: InvestigationState): TimesketchEvent[] {
-  return [...state.forensicTimeline]
+// unparseable-timestamp events dropped — the chronological attack story, ready for upload. Shared
+// by the forensic-timeline path (below) and the super-timeline export/push, which map a plain
+// ForensicEvent[] the same way.
+export function toTimesketchEventsFromList(events: ForensicEvent[]): TimesketchEvent[] {
+  return [...events]
     .sort(byEventTime)
     .map(mapForensicEvent)
     .filter((e): e is TimesketchEvent => e !== null);
 }
 
+export function toTimesketchEvents(state: InvestigationState): TimesketchEvent[] {
+  return toTimesketchEventsFromList(state.forensicTimeline);
+}
+
+// Render a plain event list as newline-delimited JSON (one event per line) — the Timesketch
+// "JSONL" import format. Empty string when there are no usable events. Shared by the
+// forensic-timeline JSONL export and the super-timeline JSONL export.
+export function toTimesketchJsonlFromList(events: ForensicEvent[]): string {
+  const mapped = toTimesketchEventsFromList(events);
+  return mapped.length ? mapped.map((e) => JSON.stringify(e)).join("\n") + "\n" : "";
+}
+
 // Render the forensic timeline as newline-delimited JSON (one event per line) — the Timesketch
 // "JSONL" import format. Empty string when there are no usable events.
 export function toTimesketchJsonl(state: InvestigationState): string {
-  const events = toTimesketchEvents(state);
-  return events.length ? events.map((e) => JSON.stringify(e)).join("\n") + "\n" : "";
+  return toTimesketchJsonlFromList(state.forensicTimeline);
 }
