@@ -39,8 +39,8 @@ If `DFIR_AI_SECOND_OPINION_MODEL` is set to a model from a different provider, t
 
 ---
 
-**Export the investigation snapshot before closing.**
-The snapshot is a portable record of all your investigative work — findings, timeline, IOCs, playbook, notes, hypotheses. Store it with your case documentation.
+**Export an encrypted case archive before closing.**
+It's a complete, portable record of the case — evidence included — findings, timeline, IOCs, playbook, notes, hypotheses, screenshots, raw imports. Store it with your case documentation.
 
 ---
 

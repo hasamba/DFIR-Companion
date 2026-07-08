@@ -106,7 +106,7 @@ via an injected undici dispatcher; VirusTotal/AbuseIPDB and the AI calls keep th
 | --- | --- |
 | `npm run dev` | Start the server (reads `.env`). |
 | `npm run build` | Type-check / compile with `tsc`. |
-| `npm test` | Run the full vitest suite. `tests/fullPipeline.test.ts` exercises the complete capture → import → synthesis → enrichment → report → snapshot-restore lifecycle with mocked AI and enrichment. |
+| `npm test` | Run the full vitest suite. `tests/fullPipeline.test.ts` exercises the complete capture → import → synthesis → enrichment → report → encrypted-archive-restore lifecycle with mocked AI and enrichment. |
 | `npm run verify:ai -- [caseId]` | One-call smoke test: confirms the configured model returns schema-valid JSON and prints findings / forensic events / attacker path. Samples screenshots from the middle of the case (default `test1`). |
 | `npm run coverage -- [caseId]` | Reports how many of a case's screenshots were actually analyzed vs. skipped (duplicates) vs. never analyzed. |
 | `npm run reanalyze -- <caseId> [flags]` | Re-run AI analysis over already-captured screenshots, rebuilding the investigation state, then synthesize conclusions. See flags below. |
@@ -550,9 +550,10 @@ the forensic timeline so the AI synthesizes it too. A built-in **Super-Timeline 
 Velociraptor bundle (flag `superTimelineOnly`) collects raw Windows host artifacts (MFT, USN
 journal, EVTX, registry, Prefetch, Amcache, LNK, browser history, RecycleBin, scheduled tasks,
 ActivitiesCache) into the super-timeline **only**, keeping the forensic timeline clean. The
-super-timeline store persists on disk per case, but is deliberately **excluded** from the
-portable case snapshot (it's large/raw) — only the saved **timeframes** (`dwell-windows.json`)
-travel in an investigation-snapshot export/import.
+super-timeline store persists on disk per case; the encrypted case archive export (`.dfircase`)
+includes it like every other file under the case directory (unlike the old JSON-only snapshot,
+which excluded it as too large/raw) — the saved **timeframes** (`dwell-windows.json`) travel
+either way.
 
 **Severity-gated forensic timeline (Info → super-timeline only).** By default an imported event
 enters the **forensic timeline** only when its severity is **Low or above** (a source verdict or one

@@ -153,7 +153,7 @@ Standard DFIR questions auto-answered from the synthesized case
 
 - **Forensic timeline** — real events with timestamps from artifacts, sortable/filterable by date/severity/source
 - **Findings** — per-technique analytic conclusions with severity + MITRE ATT&CK mapping
-- **Pinned findings** — pin the key findings (📌) to a sticky top strip that stays visible while you scroll the timeline/graph; drag-to-reorder, one-click jump, capped shortlist, persisted per case (travels in the snapshot)
+- **Pinned findings** — pin the key findings (📌) to a sticky top strip that stays visible while you scroll the timeline/graph; drag-to-reorder, one-click jump, capped shortlist, persisted per case (travels in the case archive export)
 - **IOCs, MITRE coverage, attacker-path narrative** — cross-source corroboration badges + kill chain
 - **Inline IOC quick-actions** — click any detected value (IP/hash/domain/**SID**/URL/path) in an event row or an IOC value for a one-click tray: copy, mark benign, mark confirmed-malicious, suggest hunt — each outcome recorded to the investigation log
 - **Attack phases** — timeline grouped into activity bursts by time gap, labeled by dominant tactic (deterministic, no AI)
@@ -251,7 +251,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Cited AI answers** — findings, Ask-the-case, Explain Event, and AI-suggested hunts (playbook + fleet) show numbered, clickable citations to the supporting forensic events/findings, in both the dashboard and the exported report
 - **Explain This Event** — 💡 per-row AI button explains any forensic event in context: what happened, why it matters, normal-vs-suspicious, ATT&CK mapping, 1–3 runnable pivot queries (VQL/KQL/SPL), evidence for/against; ephemeral overlay
 - **Ask the case (GraphRAG)** — free-form Q&A grounded in timeline + deterministic evidence-chain graph; multi-hop questions answered via real relationships
-- **Hypothesis-driven mode** — status-tracked hypotheses (open/supported/refuted/unknown), auto-generated + analyst-authored, with evidence/technique links + a report section; open ones steer synthesis, notebook notes promote in, survive synthesis + snapshots
+- **Hypothesis-driven mode** — status-tracked hypotheses (open/supported/refuted/unknown), auto-generated + analyst-authored, with evidence/technique links + a report section; open ones steer synthesis, notebook notes promote in, survive synthesis + case archive exports
 - **Case memory** — synthesis logs each run to a durable, never-wiped Investigation Log; a *known unknowns* block (timeline gaps, uncovered ATT&CK phases, lookalike actors' next techniques) grounds synthesis + hunt suggestions; opt-in candidate-actor hypotheses (`DFIR_SYNTH_ADVERSARY_HINTS`)
 - **Response Playbook** — trackable checklist (status/priority/assignee/due/custom tasks); opt-in IR-templates expand findings into Contain→Investigate→Eradicate→Recover
 - **Triage tags & comments** — label entities + attach notes; live WebSocket sync; survive synthesis
@@ -315,7 +315,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **STIX 2.1 bundle** — for OpenCTI, MISP, Anomali, etc.
 - **IOC block-list** — TXT/CSV/STIX-only; filters by severity/type/verdict
 - **Automatic state backup / rotation** — pre-synthesis + hourly snapshots of all per-case state files; configurable retention; Settings → Diagnostics → restore with one click
-- **Investigation snapshot** — portable JSON bundle (no AI keys or machine config); cross-machine sharing + restore as new case
+- **Encrypted case archive** — password-protected .dfircase export of the ENTIRE case (evidence and screenshots included, AES-256-GCM encrypted); cross-machine sharing + restore as new case
 - **Redacted case package** — ZIP with tokenized IPs/hosts/users, blurred PII in screenshots, adversary indicators preserved
 - **AI executive summary** — management-facing (no ATT&CK ids/hashes/tool names)
 - **Narrative Timeline** — prose story for non-technical stakeholders
