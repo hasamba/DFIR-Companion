@@ -43,3 +43,12 @@ describe("ProviderRegistry", () => {
     expect(result.rawText).toBe("RAW-JSON");
   });
 });
+
+describe("MockProvider", () => {
+  it("defaults model to a placeholder when not given, but accepts an explicit one", async () => {
+    const p1 = new MockProvider("mock", "{}");
+    expect(p1.model).toBe("mock-model");
+    const p2 = new MockProvider("mock", "{}", "gpt-4o-mini");
+    expect(p2.model).toBe("gpt-4o-mini");
+  });
+});
