@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Per-case IOC exclude list** — permanently remove domain/hostname (or any IOC type) matches from a case via exact/suffix/regex rules in the IOCs panel title bar; excluded values are purged immediately and never re-imported or enriched.
+- **Import upload-only Velociraptor artifacts (e.g. THOR)** — paste the Velociraptor GUI's "Uploaded Files" tab URL into the existing hunt/flow import box to import just the uploaded report, skipping rows entirely; the upload reader also now picks up `.csv`/`.txt`/`.log`/`.jsonl` uploads, not just `.json`.
 
 ### Fixed
 - **Structured hostname/fqdn/domain columns** (e.g. a JSON/CSV field literally named `Hostname`) now skip internal zones (`.lan`/`.local`/`.corp`/etc.) the same way free-text scraping already did, instead of creating a domain IOC for every client hostname.
