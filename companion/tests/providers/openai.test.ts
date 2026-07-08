@@ -102,4 +102,9 @@ describe("OpenAIProvider", () => {
       expect(e.message).toContain("Insufficient credit balance"); // provider body echoed
     });
   });
+
+  it("exposes the configured model", () => {
+    const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o-mini", fetchFn: vi.fn() });
+    expect(p.model).toBe("gpt-4o-mini");
+  });
 });

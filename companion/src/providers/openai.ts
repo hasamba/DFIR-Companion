@@ -31,9 +31,11 @@ function estTokens(text: string): number {
 
 export class OpenAIProvider implements AIProvider {
   readonly name: string = "openai";
+  readonly model: string;
   private readonly fetchFn: FetchFn;
   private readonly baseUrl: string;
   constructor(private readonly opts: OpenAIOptions) {
+    this.model = opts.model;
     this.fetchFn = opts.fetchFn ?? fetch;
     this.baseUrl = opts.baseUrl ?? "https://api.openai.com/v1";
   }
