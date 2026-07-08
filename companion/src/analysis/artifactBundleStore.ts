@@ -183,6 +183,48 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
     defaultWaitMinutes: 10,
     timeoutSeconds: 6000,   // a broad forensic sweep (MFT/SRUM/SQLiteHunter) runs well past the 600s default
   },
+  {
+    id: "linux-triage",
+    name: "Linux Triage",
+    description: "Linux host triage: users, persistence, network, packages, and detection artifacts",
+    builtIn: true,
+    artifacts: [
+      "Generic.System.HostsFile",
+      "Linux.Applications.Chrome.Extensions",
+      "Linux.Applications.Docker.Info",
+      "Linux.Debian.AptSources",
+      "Linux.Debian.Packages",
+      "Linux.Detection.AnomalousFiles",
+      "Linux.Detection.Yara.Glob",
+      "Linux.Detection.Yara.Process",
+      "Linux.Forensics.ImmutableFiles",
+      "Linux.Forensics.Journal",
+      "Linux.Mounts",
+      "Linux.Network.NetstatEnriched",
+      "Linux.Proc.Arp",
+      "Linux.RHEL.Packages",
+      "Linux.Ssh.AuthorizedKeys",
+      "Linux.Ssh.KnownHosts",
+      "Linux.Ssh.PrivateKeys",
+      "Linux.SuSE.Packages",
+      "Linux.Sys.BashHistory",
+      "Linux.Sys.BashShell",
+      "Linux.Sys.Crontab",
+      "Linux.Sys.Groups",
+      "Linux.Sys.LastUserLogin",
+      "Linux.Sys.Pslist",
+      "Linux.Sys.SUID",
+      "Linux.Sys.Services",
+      "Linux.Sys.Users",
+      "Linux.Syslog.SSHLogin",
+      "Linux.Users.InteractiveUsers",
+      "Linux.Users.RootUsers",
+    ],
+    defaultWaitMinutes: 10,
+    // Filesystem-walking artifacts (Yara.Glob/Process, ImmutableFiles, AnomalousFiles) can run long on
+    // busy hosts — well past the 600s Velociraptor default.
+    timeoutSeconds: 1800,
+  },
 ];
 
 export class ArtifactBundleStore {
