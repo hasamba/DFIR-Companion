@@ -794,7 +794,7 @@ export function genericIocs(pairs: [string, string][], iocSink: Map<string, Siem
     }
     if (/sha256|sha1|\bmd5\b|imphash|(?:^|[._])hash$/.test(k) && HEX_HASH.test(v)) { addIoc(iocSink, "hash", v.toLowerCase()); continue; }
     if (/(?:url|uri)$/.test(k) && /^https?:\/\//i.test(v)) { addIoc(iocSink, "url", v.slice(0, 300)); continue; }
-    if (/(?:domain|fqdn|dns|query|host_name|hostname)$/.test(k) && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(v) && !IPV4.test(v) && !TEXT_DOMAIN_SKIP_RE.test(v) && !TEXT_FILE_EXT_RE.test(v)) { addIoc(iocSink, "domain", v.toLowerCase()); continue; }
+    if (/(?:domain|fqdn|dns|query|host_name|hostname)$/.test(k) && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(v) && !IPV4.test(v) && !TEXT_DOMAIN_SKIP_RE.test(v) && !TEXT_FILE_EXT_RE.test(v) && hasPlausibleTld(v)) { addIoc(iocSink, "domain", v.toLowerCase()); continue; }
     if (/(?:image|process|exe|process_name|processname|command_line|commandline|cmdline)$/.test(k)) {
       const bn = baseName(v); if (/\.\w{2,4}$/.test(bn)) addIoc(iocSink, "process", bn); continue;
     }
@@ -824,6 +824,27 @@ const TEXT_DOMAIN_SKIP_RE = /\.(?:local|localdomain|internal|lan|home|corp|arpa)
 // — keep it out of the domain IOCs (the URL/path importers already capture files where relevant).
 const TEXT_FILE_EXT_RE = /\.(?:exe|dll|sys|ps1|bat|cmd|vbs|js|jar|sh|bin|conf|log|txt|json|xml|yml|yaml|cfg|ini|py|pl|so|gz|tar|zip|7z|rar|tmp|bak|dat|pid|sock|key|pem|crt|doc|docx|xls|xlsx|pdf|png|jpg|gif)$/i;
 
+// Real, commonly-registered TLDs — 3+ letter last labels must be on this list to count as a domain.
+// Without this, ANY dot-separated identifier (a Velociraptor artifact id like
+// "DetectRaptor.Windows.Detection.Amcache", a JSON/schema field path like "artifacts.precondition", a
+// module/class reference) reads as a "domain.tld" shape and gets misclassified — false positives an
+// analyst then has to manually mark benign. Real attacker infra overwhelmingly sits on a genuine
+// gTLD/ccTLD, so this loses almost nothing while cutting out code/config noise. 2-letter last labels
+// are accepted unconditionally (nearly the entire ccTLD space is exactly 2 letters — enumerating all
+// ISO-3166 codes buys nothing over just accepting the shape).
+const KNOWN_TLDS = new Set([
+  "com", "net", "org", "edu", "gov", "mil", "int", "info", "biz", "pro",
+  "io", "co", "ai", "app", "dev", "cloud", "tech", "xyz", "top", "site", "online", "store", "shop",
+  "live", "win", "fun", "space", "click", "link", "download", "icu", "vip", "work", "run",
+  "me", "tv", "cc", "ws", "la", "fm", "im", "gg", "sh", "to", "pw", "gq", "ml", "cf", "ga", "tk",
+  "asia", "mobi", "tel", "cat", "onion",
+]);
+export function hasPlausibleTld(domain: string): boolean {
+  const labels = domain.split(".");
+  const tld = (labels[labels.length - 1] ?? "").toLowerCase();
+  return tld.length === 2 || KNOWN_TLDS.has(tld);
+}
+
 export function textIocs(text: string, sink: Map<string, SiemIoc>): void {
   if (!text) return;
   for (const m of text.match(TEXT_URL_RE) ?? []) addIoc(sink, "url", m.replace(/[).,;]+$/, "").slice(0, 300));
@@ -835,6 +856,7 @@ export function textIocs(text: string, sink: Map<string, SiemIoc>): void {
     const after = text[(m.index ?? 0) + m[0].length] ?? "";
     if (after === "@") continue;                          // local-part of user@host, not a domain
     if (IPV4.test(d) || TEXT_DOMAIN_SKIP_RE.test(d) || TEXT_FILE_EXT_RE.test(d)) continue;
+    if (!hasPlausibleTld(d)) continue;                    // e.g. "artifacts.precondition", "detectraptor.windows.detection.amcache"
     addIoc(sink, "domain", d);
   }
 }
