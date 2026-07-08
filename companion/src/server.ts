@@ -2,6 +2,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import { config as loadDotenv } from "dotenv";
 import { join, basename, isAbsolute, resolve, dirname, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { writeFile, readFile, rm, readdir, stat, open, copyFile, mkdir, mkdtemp, rename } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
@@ -151,6 +152,7 @@ import { ImportUndoStore, pushCheckpoint, applyUndo, applyRedo, summarizeUndoSta
 import { mergeEnrichedSubset } from "./analysis/iocBulkOps.js";
 import { IocWhitelistStore } from "./analysis/iocWhitelistStore.js";
 import { whitelistMatches, parseWhitelistText, toWhitelistCsv, sanitizeRuleInput } from "./analysis/iocWhitelist.js";
+import { sanitizeExcludeRuleInput, matchIocToExclude, type IocExcludeRule } from "./analysis/iocExclude.js";
 import { NsrlStore, ingestNsrlFiles, splitNsrlPaths } from "./analysis/nsrlStore.js";
 import { parseNsrlText, nsrlMatchIocs, nsrlMatchEvents } from "./analysis/nsrl.js";
 import { KevStore } from "./analysis/kevStore.js";
@@ -5467,6 +5469,73 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       res.setHeader("Content-Type", "application/json");
       res.setHeader("Content-Disposition", 'attachment; filename="ioc-whitelist.json"');
       return res.status(200).send(JSON.stringify(rules, null, 2));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── IOC exclude list (per-case, PERMANENT) ─────────────────────────────────────────────────
+  // Distinct from the IOC whitelist above: a match here is deleted from the case outright (not
+  // just marked false-positive) and is filtered at the source for every future import/AI-synthesis
+  // delta (see mergeDelta in stateMerge.ts), so it can never reach enrichment either. Scoped to
+  // this case only (not global) — the rules live on InvestigationState.iocExcludeRules.
+
+  app.get("/cases/:id/ioc-exclude", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(200).json([]);
+    try {
+      const state = await options.stateStore.load(req.params.id);
+      return res.status(200).json(state.iocExcludeRules);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Add one rule and immediately purge any matching IOCs already in this case. Body:
+  // { match: "exact"|"suffix"|"regex", pattern, iocType?, note? }. Returns { rule, purged }.
+  app.post("/cases/:id/ioc-exclude", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const input = sanitizeExcludeRuleInput(req.body ?? {});
+    if (!input) return res.status(400).json({ error: "invalid rule — need match (exact|suffix|regex) and a non-empty pattern (valid regex for regex)" });
+    const caseId = req.params.id;
+    const stateStore = options.stateStore;
+    let rule: IocExcludeRule | undefined;
+    let purged = 0;
+    try {
+      await runStateExclusive(caseId, async () => {
+        const state = await stateStore.load(caseId);
+        rule = { id: randomUUID(), addedAt: new Date().toISOString(), ...input };
+        const nextRules = [...state.iocExcludeRules, rule];
+        const keptIocs = state.iocs.filter((ioc) => !matchIocToExclude(ioc, nextRules));
+        purged = state.iocs.length - keptIocs.length;
+        const next = { ...state, iocs: keptIocs, iocExcludeRules: nextRules, updatedAt: new Date().toISOString() };
+        await stateStore.save(next);
+        options.onState?.(next);
+      });
+      logLine(`[ioc-exclude] ${caseId} added rule ${rule!.match}:${rule!.pattern} — purged ${purged} IOC(s)`);
+      return res.status(201).json({ rule, purged });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Remove a rule. Does NOT restore any IOCs it already purged — exclusion is a one-way operation.
+  app.delete("/cases/:id/ioc-exclude/:ruleId", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    const stateStore = options.stateStore;
+    let removed = false;
+    try {
+      await runStateExclusive(caseId, async () => {
+        const state = await stateStore.load(caseId);
+        const nextRules = state.iocExcludeRules.filter((r) => r.id !== req.params.ruleId);
+        removed = nextRules.length !== state.iocExcludeRules.length;
+        if (!removed) return;
+        const next = { ...state, iocExcludeRules: nextRules, updatedAt: new Date().toISOString() };
+        await stateStore.save(next);
+        options.onState?.(next);
+      });
+      if (!removed) return res.status(404).json({ error: "rule not found" });
+      return res.status(200).json({ removed: true });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
