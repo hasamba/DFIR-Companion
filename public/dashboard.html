@@ -16018,7 +16018,7 @@
         <span style="color:#9aa4b2">${esc(label)}</span>
         <span style="text-align:right${color ? `;color:${color}` : ""}">${value}</span></div>`;
     }
-    function renderDiagnostics(report) {
+    function renderDiagnostics(report, cost) {
       const d = report.disk;
       const lvlColor = DIAG_LEVEL_COLOR[d.level] || "#cbd3df";
       const disk = diagCard("Disk", [
@@ -16087,7 +16087,7 @@
         ].join(""));
       }
       const footer = `<div style="font-size:11px;color:#7e8aa0;margin-top:4px">generated ${esc((report.generatedAt || "").replace("T", " ").slice(0, 19))} · uptime ${diagFmtAge(report.uptimeMs)}</div>`;
-      return disk + cases + queue + aiCard + importers + backupsCard + `<div id="diagSizes"></div>` + footer;
+      return disk + cases + queue + aiCard + renderAiCostCard(cost) + importers + backupsCard + `<div id="diagSizes"></div>` + footer;
     }
     // Pre-flight status panel inside Settings → Diagnostics (#179).
     function renderPreflightStatus(report) {
@@ -16133,7 +16133,7 @@
       Promise.all([diagFetch, costFetch]).then(([j, cost]) => {
         if (!j.report) throw new Error(j.error || "no report");
         diagCopyText = j.text || "";
-        body.innerHTML = renderDiagnostics(j.report) + renderAiCostCard(cost);
+        body.innerHTML = renderDiagnostics(j.report, cost);
       }).catch(e => { body.textContent = "Could not load diagnostics: " + e.message + " — restart the companion server if this 404s."; });
     }
     function diagAiTest() {
