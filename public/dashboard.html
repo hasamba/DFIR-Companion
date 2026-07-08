@@ -1538,6 +1538,23 @@
       </div>
     </div>
   </div>
+  <div id="irisPushOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Push to DFIR-IRIS</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        Finds an IRIS case with this exact name, or creates one. Re-pushing with the same name
+        <strong>updates</strong> that case instead of creating a duplicate — the name you use here
+        is remembered for next time.</p>
+      <label style="display:block; font-size:13px; margin:6px 0">IRIS case name
+        <input id="irisPushCaseName" style="width:100%; box-sizing:border-box; padding:5px; margin-top:4px;" />
+      </label>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="irisPushBtn">Push</button>
+        <button id="irisPushCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="irisPushMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
   <div id="importCaseOverlay" class="comment-overlay">
     <div class="comment-modal">
       <h3>Import case</h3>
