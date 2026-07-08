@@ -3378,7 +3378,7 @@
       </div>
     </section>
 
-    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><span class="ioc-prov-filter" title="Provenance lens — how each IOC entered the case: detection-linked (appears in a graded Low+ event) vs telemetry-only (only in Info telemetry). Distinct from the threat-intel verdict."><button type="button" class="ioc-prov-btn active" data-prov="all">All IOCs</button><button type="button" class="ioc-prov-btn" data-prov="detection">Detection-linked</button><button type="button" class="ioc-prov-btn" data-prov="telemetry">Telemetry-only</button></span><label class="ioc-noise-chk" title="Hide IOCs marked as a false positive or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide FP/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><span class="ioc-prov-filter" title="Provenance lens — how each IOC entered the case: detection-linked (appears in a graded Low+ event) vs telemetry-only (only in Info telemetry). Distinct from the threat-intel verdict."><button type="button" class="ioc-prov-btn active" data-prov="all">All IOCs</button><button type="button" class="ioc-prov-btn" data-prov="detection">Detection-linked</button><button type="button" class="ioc-prov-btn" data-prov="telemetry">Telemetry-only</button></span><label class="ioc-noise-chk" title="Hide IOCs marked as a false positive or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide FP/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><span class="src-legend" id="iocExcludeWrap" title="Domains/hostnames matching a rule are removed entirely from this case and never enriched (per-case, permanent — separate from the global IOC Whitelist)" onclick="event.stopPropagation()"><button type="button" id="iocExcludeBtn" class="src-filter-btn">🚫 Exclude</button><div id="iocExcludeMenu" class="src-filter-menu" hidden><div id="iocExcludeList" style="max-height:220px;overflow:auto;margin-bottom:6px"></div><form id="iocExcludeForm" onsubmit="return false" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"><select id="iocExcludeMode" title="Match mode"><option value="suffix">suffix</option><option value="exact">exact</option><option value="regex">regex</option></select><input id="iocExcludePattern" placeholder="e.g. lan" style="flex:1;min-width:110px" /><input id="iocExcludeNote" placeholder="note (optional)" style="flex:1;min-width:110px" /><button id="iocExcludeAddBtn" type="button">Add</button></form><span id="iocExcludeMsg" class="manual-msg"></span></div></span><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
@@ -3388,7 +3388,7 @@
         </form>
       </div>
       <div id="iocImportMeta" class="synth-meta" style="display:none"></div>
-      <div class="ioc-bulk-bar" id="iocBulkBar"><span id="iocBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ioc-bulk-btn" id="iocBulkEnrichBtn" title="Enrich selected IOCs against enabled threat-intel providers">🔬 Enrich</button> <button class="ioc-bulk-btn" id="iocBulkTagBtn" title="Add a tag to all selected IOCs">🏷 Tag</button> <button class="ioc-bulk-btn" id="iocBulkFpBtn" title="Mark selected IOCs as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ioc-bulk-btn" id="iocBulkCopyBtn" title="Copy selected IOC values to clipboard (one per line)">📋 Copy</button> <button class="ioc-bulk-btn" id="iocBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
+      <div class="ioc-bulk-bar" id="iocBulkBar"><span id="iocBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ioc-bulk-btn" id="iocBulkEnrichBtn" title="Enrich selected IOCs against enabled threat-intel providers">🔬 Enrich</button> <button class="ioc-bulk-btn" id="iocBulkTagBtn" title="Add a tag to all selected IOCs">🏷 Tag</button> <button class="ioc-bulk-btn" id="iocBulkFpBtn" title="Mark selected IOCs as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ioc-bulk-btn" id="iocBulkExcludeBtn" title="Permanently exclude the selected IOC value(s) from this case — removed now, never re-imported or re-enriched (per-case, not reversible)">🗑 Exclude</button> <button class="ioc-bulk-btn" id="iocBulkCopyBtn" title="Copy selected IOC values to clipboard (one per line)">📋 Copy</button> <button class="ioc-bulk-btn" id="iocBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div id="iocs">—</div></section>
     <section id="sec-exposure" style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
       <div class="ce-body">
@@ -6482,6 +6482,35 @@
         selectedFindings.clear();
         if (lastState) render(lastState);
       });
+    }
+    // One-click exclude for the offending IOC rows the analyst already has selected: adds an
+    // exact-match exclude rule per selected value (one POST per value — mirrors how bulk mark-FP
+    // has no dedicated batch route either). The server purges + pushes updated state per call.
+    async function bulkExcludeIocs() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !selectedIocs.size) return;
+      const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
+      const values = [...selectedIocs].map(id => iocById.get(id)).filter(Boolean);
+      if (!values.length) return;
+      if (!confirm(`Permanently exclude ${values.length} IOC value(s) from this case?\n\nThey are removed now and will never be re-imported or enriched. This cannot be undone (deleting the exclude rule later will not bring them back).`)) return;
+      const statusEl = document.getElementById("status");
+      statusEl.textContent = `excluding ${values.length} IOC(s)…`;
+      let purged = 0;
+      let succeeded = 0;
+      for (const value of values) {
+        try {
+          const r = await fetch(`/cases/${encodeURIComponent(caseId)}/ioc-exclude`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ match: "exact", pattern: value }),
+          });
+          if (r.ok) { const j = await r.json(); purged += j.purged || 0; succeeded++; }
+        } catch {}
+      }
+      statusEl.textContent = succeeded === values.length
+        ? `excluded ${succeeded} value(s), purged ${purged} IOC(s) total`
+        : `excluded ${succeeded} of ${values.length} value(s) (${values.length - succeeded} failed), purged ${purged} IOC(s) total`;
+      selectedIocs.clear();
+      if (lastState) renderIocs(lastState.iocs || []);
     }
     function bulkCopyIocs() {
       const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
@@ -11406,6 +11435,7 @@
       if (!el) return;
       const iocs = sortIocsForDisplay(dedupeIocsById(iocsRaw));
       renderIocTypeFilter(iocs);
+      renderIocExcludeRules((lastState && lastState.iocExcludeRules) || []);
       const flaggedTotal = iocs.filter(iocFlagged).length;
       let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
       if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
@@ -11499,6 +11529,31 @@
       const out = [...known, ...extra];
       if (present.has("other")) out.push("other");
       return out;
+    }
+
+    // Per-case IOC exclude rules — list/add/remove UI, IOCs section title bar (🚫 Exclude). Rules
+    // ride along on every pushed state (InvestigationState.iocExcludeRules), so this just re-renders
+    // off `lastState` — no separate fetch needed.
+    function renderIocExcludeRules(rules) {
+      const btn = document.getElementById("iocExcludeBtn");
+      const list = document.getElementById("iocExcludeList");
+      if (!btn || !list) return;
+      btn.classList.toggle("active", rules.length > 0);
+      btn.textContent = rules.length ? `🚫 Exclude (${rules.length})` : "🚫 Exclude";
+      if (!rules.length) {
+        list.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px;padding:4px'>No exclude rules yet for this case.</div>";
+        return;
+      }
+      list.innerHTML = rules.map(r => {
+        const type = r.iocType ? `<span style="color:var(--c-9aa4b2)">${esc(r.iocType)}</span> ` : "";
+        const note = r.note ? ` <span style="color:var(--c-7e8aa0)">— ${esc(r.note)}</span>` : "";
+        return `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;border-bottom:1px solid var(--c-1a1f28);font-size:12px">`
+          + `<span style="color:var(--c-6aa9ff);flex:0 0 46px">${esc(r.match)}</span>`
+          + `<span style="flex:1;font-family:monospace;word-break:break-all">${esc(r.pattern)}</span>`
+          + `<span style="flex:0 0 auto">${type}${note}</span>`
+          + `<button class="iex-del" data-id="${escAttr(r.id)}" title="Delete rule (does not restore already-purged IOCs)" style="background:transparent;border:1px solid var(--c-5a2a2a);color:var(--c-ff9f9f);border-radius:5px;padding:0 7px;cursor:pointer">✕</button>`
+          + `</div>`;
+      }).join("");
     }
 
     // Build/refresh the IOC-type-filter dropdown from the current (full, pre-filter) IOC list. Hidden
@@ -12031,6 +12086,49 @@
       menu.addEventListener("click", (e) => {
         if (e.target.dataset.ioctypeAll) { hiddenIocTypes.clear(); rerender(); }
         else if (e.target.dataset.ioctypeNone) { iocTypeFacets(scopedIocs()).forEach(t => hiddenIocTypes.add(t)); rerender(); }
+      });
+      document.addEventListener("click", (e) => {
+        if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
+      });
+    })();
+
+    // IOC exclude-rule popover — list/add/remove. Add/delete just POST/DELETE; the server pushes
+    // the updated state over the websocket (options.onState), which re-renders via render()/renderIocs()
+    // → renderIocExcludeRules(), same reactive pattern as every other case mutation in this dashboard.
+    (function () {
+      const wrap = document.getElementById("iocExcludeWrap");
+      const btn = document.getElementById("iocExcludeBtn");
+      const menu = document.getElementById("iocExcludeMenu");
+      if (!wrap || !btn || !menu) return;
+      btn.addEventListener("click", () => { menu.hidden = !menu.hidden; });
+      document.getElementById("iocExcludeAddBtn").addEventListener("click", () => {
+        const caseId = document.getElementById("caseId").value.trim();
+        const msg = document.getElementById("iocExcludeMsg");
+        const pattern = document.getElementById("iocExcludePattern").value.trim();
+        if (!caseId || !pattern) { msg.textContent = "pattern is required"; return; }
+        if (!confirm(`Add this exclude rule?\n\nAny IOC in this case currently matching "${pattern}" (${document.getElementById("iocExcludeMode").value}) will be permanently removed and never re-imported or enriched. This cannot be undone.`)) return;
+        const body = {
+          match: document.getElementById("iocExcludeMode").value,
+          pattern,
+          note: document.getElementById("iocExcludeNote").value.trim(),
+        };
+        msg.textContent = "adding…";
+        fetch(`/cases/${encodeURIComponent(caseId)}/ioc-exclude`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+          .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "HTTP " + r.status); return j; })
+          .then(j => {
+            msg.textContent = `added — purged ${j.purged} IOC${j.purged === 1 ? "" : "s"}`;
+            document.getElementById("iocExcludePattern").value = "";
+            document.getElementById("iocExcludeNote").value = "";
+            setTimeout(() => { msg.textContent = ""; }, 3000);
+          })
+          .catch(e => { msg.textContent = "failed: " + e.message; });
+      });
+      menu.addEventListener("click", (e) => {
+        const del = e.target.closest(".iex-del");
+        if (!del) return;
+        const caseId = document.getElementById("caseId").value.trim();
+        if (!caseId) return;
+        fetch(`/cases/${encodeURIComponent(caseId)}/ioc-exclude/${del.dataset.id}`, { method: "DELETE" }).catch(() => {});
       });
       document.addEventListener("click", (e) => {
         if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
@@ -12800,6 +12898,7 @@
       if (e.target.id === "iocBulkEnrichBtn") { bulkEnrichIocs(); return; }
       if (e.target.id === "iocBulkTagBtn") { bulkTagIocs(); return; }
       if (e.target.id === "iocBulkFpBtn") { bulkMarkIocsFalsePositive(); return; }
+      if (e.target.id === "iocBulkExcludeBtn") { bulkExcludeIocs(); return; }
       if (e.target.id === "iocBulkCopyBtn") { bulkCopyIocs(); return; }
       if (e.target.id === "iocBulkClearBtn") { clearIocSelection(); return; }
       // Bulk action bar buttons (Findings)

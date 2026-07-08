@@ -131,6 +131,38 @@ describe("mergeDelta", () => {
     expect(state.iocs[0].value).toBe("DESKTOP-MNNUHHU.localdomain"); // first-seen casing wins
   });
 
+  it("drops an incoming IOC that matches a per-case exclude rule — never created, so it can't be enriched", () => {
+    const state = {
+      ...emptyState("c1"),
+      iocExcludeRules: [{ id: "r1", match: "suffix" as const, pattern: ".lan", addedAt: "2026-01-01T00:00:00Z" }],
+    };
+    const next = mergeDelta(state, {
+      ...baseDelta,
+      iocs: [
+        { id: "i1", type: "domain", value: "CLIENT01.lan" },
+        { id: "i2", type: "ip", value: "10.0.0.5" },
+      ],
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+
+    expect(next.iocs).toHaveLength(1);
+    expect(next.iocs[0].value).toBe("10.0.0.5");
+  });
+
+  it("a finding referencing an excluded IOC's id doesn't throw — the reference just dangles harmlessly", () => {
+    const state = {
+      ...emptyState("c1"),
+      iocExcludeRules: [{ id: "r1", match: "exact" as const, pattern: "client01.lan", addedAt: "2026-01-01T00:00:00Z" }],
+    };
+    const next = mergeDelta(state, {
+      ...baseDelta,
+      iocs: [{ id: "i1", type: "domain", value: "client01.lan" }],
+      findings: [{ id: "f1", severity: "Low", title: "t", description: "d", relatedIocs: ["i1"], mitreTechniques: [], status: "open" }],
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+
+    expect(next.iocs).toHaveLength(0);
+    expect(next.findings[0].relatedIocs).toEqual(["i1"]); // dangling id, but no crash
+  });
+
   it("assigns canonical 3-digit ids and remaps finding.relatedIocs even when the model reuses ids", () => {
     // The vision model often groups its output per-finding and emits i1/i2/i3
     // multiple times with different values. We must give each unique-value IOC

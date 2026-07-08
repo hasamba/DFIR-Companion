@@ -427,6 +427,24 @@ describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
     expect(vals.some((v) => v.includes(".local"))).toBe(false);   // AD hostname not flooded into IOCs
   });
 
+  it("does not create a domain IOC from a STRUCTURED hostname/fqdn column when it's an internal zone (.lan/.local/etc.) — same skip the free-text scraper already applies", () => {
+    const rec = {
+      "@timestamp": "2024-05-14T14:20:09.941Z", message: "host telemetry",
+      hostname: "CLIENT01.lan", fqdn: "WIN10.corp.local",
+    };
+    const vals = parseSiemExport(JSON.stringify([rec])).iocs.map((i) => `${i.type}:${i.value}`);
+    expect(vals.some((v) => v.startsWith("domain:"))).toBe(false);
+  });
+
+  it("still creates a domain IOC from a structured hostname column for a real external domain", () => {
+    const rec = {
+      "@timestamp": "2024-05-14T14:20:09.941Z", message: "host telemetry",
+      hostname: "evil-c2.example.com",
+    };
+    const vals = parseSiemExport(JSON.stringify([rec])).iocs.map((i) => `${i.type}:${i.value}`);
+    expect(vals).toContain("domain:evil-c2.example.com");
+  });
+
   it("parses Kibana display-format timestamps (\"May 7, 2026 @ 16:31:04.000\") to UTC ISO", () => {
     const rec = { "@timestamp": "May 7, 2026 @ 16:31:04.000", host: "h", message: "x" };
     const e = parseSiemExport(JSON.stringify([rec])).events[0];

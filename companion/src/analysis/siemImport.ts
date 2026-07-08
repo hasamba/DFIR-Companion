@@ -794,7 +794,7 @@ export function genericIocs(pairs: [string, string][], iocSink: Map<string, Siem
     }
     if (/sha256|sha1|\bmd5\b|imphash|(?:^|[._])hash$/.test(k) && HEX_HASH.test(v)) { addIoc(iocSink, "hash", v.toLowerCase()); continue; }
     if (/(?:url|uri)$/.test(k) && /^https?:\/\//i.test(v)) { addIoc(iocSink, "url", v.slice(0, 300)); continue; }
-    if (/(?:domain|fqdn|dns|query|host_name|hostname)$/.test(k) && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(v) && !IPV4.test(v)) { addIoc(iocSink, "domain", v.toLowerCase()); continue; }
+    if (/(?:domain|fqdn|dns|query|host_name|hostname)$/.test(k) && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(v) && !IPV4.test(v) && !TEXT_DOMAIN_SKIP_RE.test(v) && !TEXT_FILE_EXT_RE.test(v)) { addIoc(iocSink, "domain", v.toLowerCase()); continue; }
     if (/(?:image|process|exe|process_name|processname|command_line|commandline|cmdline)$/.test(k)) {
       const bn = baseName(v); if (/\.\w{2,4}$/.test(bn)) addIoc(iocSink, "process", bn); continue;
     }
