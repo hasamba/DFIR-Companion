@@ -3388,7 +3388,7 @@
         </form>
       </div>
       <div id="iocImportMeta" class="synth-meta" style="display:none"></div>
-      <div class="ioc-bulk-bar" id="iocBulkBar"><span id="iocBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ioc-bulk-btn" id="iocBulkEnrichBtn" title="Enrich selected IOCs against enabled threat-intel providers">🔬 Enrich</button> <button class="ioc-bulk-btn" id="iocBulkTagBtn" title="Add a tag to all selected IOCs">🏷 Tag</button> <button class="ioc-bulk-btn" id="iocBulkFpBtn" title="Mark selected IOCs as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ioc-bulk-btn" id="iocBulkCopyBtn" title="Copy selected IOC values to clipboard (one per line)">📋 Copy</button> <button class="ioc-bulk-btn" id="iocBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
+      <div class="ioc-bulk-bar" id="iocBulkBar"><span id="iocBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ioc-bulk-btn" id="iocBulkEnrichBtn" title="Enrich selected IOCs against enabled threat-intel providers">🔬 Enrich</button> <button class="ioc-bulk-btn" id="iocBulkTagBtn" title="Add a tag to all selected IOCs">🏷 Tag</button> <button class="ioc-bulk-btn" id="iocBulkFpBtn" title="Mark selected IOCs as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ioc-bulk-btn" id="iocBulkExcludeBtn" title="Permanently exclude the selected IOC value(s) from this case — removed now, never re-imported or re-enriched (per-case, not reversible)">🗑 Exclude</button> <button class="ioc-bulk-btn" id="iocBulkCopyBtn" title="Copy selected IOC values to clipboard (one per line)">📋 Copy</button> <button class="ioc-bulk-btn" id="iocBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div id="iocs">—</div></section>
     <section id="sec-exposure" style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
       <div class="ce-body">
@@ -6482,6 +6482,31 @@
         selectedFindings.clear();
         if (lastState) render(lastState);
       });
+    }
+    // One-click exclude for the offending IOC rows the analyst already has selected: adds an
+    // exact-match exclude rule per selected value (one POST per value — mirrors how bulk mark-FP
+    // has no dedicated batch route either). The server purges + pushes updated state per call.
+    async function bulkExcludeIocs() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !selectedIocs.size) return;
+      const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
+      const values = [...selectedIocs].map(id => iocById.get(id)).filter(Boolean);
+      if (!values.length) return;
+      if (!confirm(`Permanently exclude ${values.length} IOC value(s) from this case?\n\nThey are removed now and will never be re-imported or enriched. This cannot be undone (deleting the exclude rule later will not bring them back).`)) return;
+      const statusEl = document.getElementById("status");
+      statusEl.textContent = `excluding ${values.length} IOC(s)…`;
+      let purged = 0;
+      for (const value of values) {
+        try {
+          const r = await fetch(`/cases/${encodeURIComponent(caseId)}/ioc-exclude`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ match: "exact", pattern: value }),
+          });
+          if (r.ok) { const j = await r.json(); purged += j.purged || 0; }
+        } catch {}
+      }
+      statusEl.textContent = `excluded ${values.length} value(s), purged ${purged} IOC(s) total`;
+      selectedIocs.clear();
     }
     function bulkCopyIocs() {
       const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
@@ -12855,6 +12880,7 @@
       if (e.target.id === "iocBulkEnrichBtn") { bulkEnrichIocs(); return; }
       if (e.target.id === "iocBulkTagBtn") { bulkTagIocs(); return; }
       if (e.target.id === "iocBulkFpBtn") { bulkMarkIocsFalsePositive(); return; }
+      if (e.target.id === "iocBulkExcludeBtn") { bulkExcludeIocs(); return; }
       if (e.target.id === "iocBulkCopyBtn") { bulkCopyIocs(); return; }
       if (e.target.id === "iocBulkClearBtn") { clearIocSelection(); return; }
       // Bulk action bar buttons (Findings)
