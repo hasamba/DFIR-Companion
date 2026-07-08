@@ -13372,18 +13372,27 @@
       const msg = document.getElementById("ipMsg");
       if (!file) { msg.textContent = "no file selected"; return; }
       if (!password) { msg.textContent = "password is required"; return; }
+      const LARGE_MB = 180; // base64 body must fit DFIR_MAX_BODY_MB (default 256 MB → ~190 MB raw)
+      if (file.size > LARGE_MB * 1024 * 1024) {
+        msg.textContent = "this .dfircase file is too large to import via the dashboard (over 180 MB) — contact support or split the case";
+        return;
+      }
       const status = document.getElementById("status");
+      const btn = document.getElementById("ipImport");
+      const cancelBtn = document.getElementById("ipCancel");
+      btn.disabled = true;
+      cancelBtn.disabled = true;
       msg.textContent = "reading file…";
-      const arrayBuffer = await file.arrayBuffer();
-      const base64 = arrayBufferToBase64(arrayBuffer);
-      const importInto = async (targetCaseId) => {
-        const body = { data: base64, password, ...(targetCaseId ? { targetCaseId } : {}) };
-        return fetch("/cases/import/encrypted", {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-        });
-      };
-      msg.textContent = "importing…";
       try {
+        const arrayBuffer = await file.arrayBuffer();
+        const base64 = arrayBufferToBase64(arrayBuffer);
+        const importInto = async (targetCaseId) => {
+          const body = { data: base64, password, ...(targetCaseId ? { targetCaseId } : {}) };
+          return fetch("/cases/import/encrypted", {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+          });
+        };
+        msg.textContent = "importing…";
         let res = await importInto(undefined);
         // Resolve id collisions by asking for a new id (up to a few tries), defaulting to "<id>-copy".
         let guard = 0;
@@ -13410,6 +13419,9 @@
         }
       } catch (err) {
         msg.textContent = "import failed: " + err.message + " — is the companion running?";
+      } finally {
+        btn.disabled = false;
+        cancelBtn.disabled = false;
       }
     };
     // --- Search bar + time-range filter listeners --------------------------------
