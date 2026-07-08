@@ -54,6 +54,7 @@ async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
  * password-derived key. Throws if the case doesn't exist (no files under its directory).
  */
 export async function exportEncryptedCase(store: CaseStore, caseId: string, password: string): Promise<Buffer> {
+  if (!isValidCaseId(caseId)) throw new Error(`invalid case id "${caseId}"`);
   const caseDir = store.caseDir(caseId);
   const relPaths = (await walkDir(caseDir)).map((p) => p.replace(/\\/g, "/"));
   if (relPaths.length === 0) throw new Error(`case ${caseId} does not exist`);

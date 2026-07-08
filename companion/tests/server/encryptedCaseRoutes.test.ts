@@ -71,6 +71,14 @@ describe("POST /cases/:id/export/encrypted", () => {
     const res = await request(app).post("/cases/ghost/export/encrypted").send({ password: PASSWORD });
     expect(res.status).toBe(404);
   });
+
+  it("400s on a path-traversal case id instead of reading outside the cases root", async () => {
+    const { app } = await harness();
+    const res = await request(app)
+      .post("/cases/..%2F..%2Fetc/export/encrypted")
+      .send({ password: PASSWORD });
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("POST /cases/import/encrypted", () => {

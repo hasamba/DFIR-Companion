@@ -50,6 +50,11 @@ describe("exportEncryptedCase", () => {
     const archive = await exportEncryptedCase(store, "INC-1", PASSWORD);
     expect(archive.length).toBeGreaterThan(0);
   });
+
+  it("rejects an invalid case id instead of reading outside the cases root", async () => {
+    const store = await harness();
+    await expect(exportEncryptedCase(store, "../../etc", PASSWORD)).rejects.toThrow(/invalid case id/);
+  });
 });
 
 describe("importEncryptedCase", () => {

@@ -2033,6 +2033,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   app.post("/cases/:id/export/encrypted", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
       const password = (req.body as { password?: unknown })?.password;
       if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
         return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
