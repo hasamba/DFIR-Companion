@@ -132,6 +132,7 @@ import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } 
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
 import type { AssetType } from "./analysis/assetGraph.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
+import { AiCostStore } from "./analysis/aiCost.js";
 import { SecondOpinionStore } from "./analysis/secondOpinionStore.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
 import { DropStatusStore, type DropFailure, type PendingRawInput } from "./analysis/dropStatus.js";
@@ -360,6 +361,9 @@ export interface AppOptions {
   // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
   // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
   synthMetaStore?: SynthMetaStore;
+  // Per-case AI cost/token accounting (vision/synthesis/other buckets), read-only here —
+  // the pipeline (via AiCostStore.record) writes it after every AI call.
+  aiCostStore?: AiCostStore;
   correlationProfileStore?: CorrelationProfileStore;
   // Second LLM opinion (issue #116): the last QA cross-check record (deltas + analyst decisions),
   // read by the GET route. `secondOpinionEnabled` gates the dashboard button (a different model is
@@ -7899,6 +7903,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Per-case AI cost/token totals (Settings → Diagnostics "AI cost — this case" card).
+  app.get("/cases/:id/ai-cost", async (req: Request, res: Response) => {
+    if (!options.aiCostStore) return res.status(501).json({ error: "AI cost tracking not configured" });
+    try {
+      return res.status(200).json(await options.aiCostStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Correlation profile (per-case time window for cross-source event correlation).
   app.get("/cases/:id/correlation-profile", async (req, res) => {
     if (!options.correlationProfileStore) return res.status(501).json({ error: "correlation profile not configured" });
@@ -9412,6 +9426,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     customEntitiesStore: new CustomEntitiesStore(params.store),
     discoveredStore: new DiscoveredEntitiesStore(params.store),
     synthMetaStore: new SynthMetaStore(params.store),
+    aiCostStore: new AiCostStore(params.store),
     correlationProfileStore: new CorrelationProfileStore(params.store),
     notebookStore: new NotebookStore(params.store),
     hypothesisStore: new HypothesisStore(params.store),     // #140 auto-generate hypotheses on synthesis
@@ -9559,6 +9574,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const playbookControlStore = new PlaybookControlStore(store);
   const assetOverridesStore = new AssetOverridesStore(store);
   const synthMetaStore = new SynthMetaStore(store);
+  const aiCostStore = new AiCostStore(store);
   const correlationProfileStore = new CorrelationProfileStore(store);
   const secondOpinionStore = new SecondOpinionStore(store);
   const importMetaStore = new ImportMetaStore(store);
@@ -9690,6 +9706,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onFalsePositive: (caseId) => hub.broadcastTo(caseId, { type: "false_positive_changed" }),
     onScope: (caseId, scope) => hub.broadcastTo(caseId, { type: "scope_changed", ...scope }),
     synthMetaStore,
+    aiCostStore,
     correlationProfileStore,
     secondOpinionStore,
     secondOpinionEnabled: Boolean(secondOpinionProvider),
