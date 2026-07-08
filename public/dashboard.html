@@ -1538,6 +1538,23 @@
       </div>
     </div>
   </div>
+  <div id="irisPushOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Push to DFIR-IRIS</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        Finds an IRIS case with this exact name, or creates one. Re-pushing with the same name
+        <strong>updates</strong> that case instead of creating a duplicate — the name you use here
+        is remembered for next time.</p>
+      <label style="display:block; font-size:13px; margin:6px 0">IRIS case name
+        <input id="irisPushCaseName" style="width:100%; box-sizing:border-box; padding:5px; margin-top:4px;" />
+      </label>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="irisPushBtn">Push</button>
+        <button id="irisPushCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="irisPushMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
   <div id="importCaseOverlay" class="comment-overlay">
     <div class="comment-modal">
       <h3>Import case</h3>
@@ -13968,13 +13985,13 @@
       sel.value = ""; // reset to the "Push to…" placeholder
       const caseId = document.getElementById("caseId").value.trim();
       if (!target || !caseId) return;
-      // Notion/ClickUp need a target question first, so they open a modal instead of an immediate POST.
+      // Notion/ClickUp/IRIS need a target question first, so they open a modal instead of an immediate POST.
       if (target === "notion") { openNotionModal(); return; }
       if (target === "clickup") { openClickupModal(caseId); return; }
+      if (target === "iris") { openIrisPushModal(caseId); return; }
       const c = encodeURIComponent(caseId);
       sel.disabled = true;
-      const targetLabel = target === "iris" ? "IRIS"
-        : target === "timesketch" ? "Timesketch (Forensic Timeline)"
+      const targetLabel = target === "timesketch" ? "Timesketch (Forensic Timeline)"
         : target === "timesketch-super" ? "Timesketch (Super Timeline)"
         : "MISP";
       document.getElementById("status").textContent = `pushing to ${targetLabel}…`;
@@ -13982,15 +13999,7 @@
       fetch(`/cases/${c}/push/${target}`, { method: "POST" })
         .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
         .then((res) => {
-          if (target === "iris") {
-            const verb = res.created ? "created" : "updated";
-            document.getElementById("status").textContent =
-              `IRIS case #${res.caseId} ${verb}: assets +${res.assets.added} (${res.assets.existing} existing), ` +
-              `IOCs +${res.iocs.added} (${res.iocs.existing} existing), timeline +${res.timeline.added}, ` +
-              `tasks +${res.tasks.added}, notes ${res.notes}` +
-              (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
-            if (res.caseUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.caseUrl)}" target="_blank" rel="noopener">Open in IRIS</a>`;
-          } else if (target === "timesketch" || target === "timesketch-super") {
+          if (target === "timesketch" || target === "timesketch-super") {
             const verb = res.created ? "created" : "updated";
             document.getElementById("status").textContent =
               `Timesketch sketch #${res.sketchId} ${verb}: ${res.events} event(s) → "${res.timelineName}"` +
@@ -14182,6 +14191,44 @@
           closeClickupModal();
         })
         .catch((err) => document.getElementById("clickupMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
+        .finally(() => { btn.disabled = false; });
+    };
+
+    // ── Push to DFIR-IRIS modal (stable per-case name + override) ─────────────
+    const irisPushOverlay = document.getElementById("irisPushOverlay");
+    function openIrisPushModal(caseId) {
+      document.getElementById("irisPushMsg").textContent = "";
+      const input = document.getElementById("irisPushCaseName");
+      input.value = caseId; // placeholder until the saved/default name loads below
+      fetch(`/cases/${encodeURIComponent(caseId)}/iris-export`).then((r) => r.ok ? r.json() : null)
+        .then((s) => { if (s) input.value = s.caseName || s.defaultCaseName || caseId; }).catch(() => {});
+      irisPushOverlay.classList.add("open");
+    }
+    function closeIrisPushModal() { irisPushOverlay.classList.remove("open"); }
+    document.getElementById("irisPushCancel").onclick = closeIrisPushModal;
+    irisPushOverlay.addEventListener("click", (e) => { if (e.target === irisPushOverlay) closeIrisPushModal(); });
+    document.getElementById("irisPushBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { document.getElementById("irisPushMsg").textContent = "connect to a case first"; return; }
+      const caseName = document.getElementById("irisPushCaseName").value.trim();
+      if (!caseName) { document.getElementById("irisPushMsg").textContent = "enter an IRIS case name"; return; }
+      const btn = document.getElementById("irisPushBtn");
+      btn.disabled = true;
+      document.getElementById("irisPushMsg").textContent = "pushing…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/push/iris`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ caseName }) })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((res) => {
+          const verb = res.created ? "created" : "updated";
+          document.getElementById("status").textContent =
+            `IRIS case #${res.caseId} ${verb}: assets +${res.assets.added} (${res.assets.existing} existing), ` +
+            `IOCs +${res.iocs.added} (${res.iocs.existing} existing), timeline +${res.timeline.added}, ` +
+            `tasks +${res.tasks.added}, notes ${res.notes}` +
+            (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
+          if (res.caseUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.caseUrl)}" target="_blank" rel="noopener">Open in IRIS</a>`;
+          if (res.warnings && res.warnings.length) console.warn("iris push warnings:", res.warnings);
+          closeIrisPushModal();
+        })
+        .catch((err) => document.getElementById("irisPushMsg").textContent = "failed: " + err.message)
         .finally(() => { btn.disabled = false; });
     };
 
