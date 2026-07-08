@@ -7,6 +7,7 @@ import { clampOutlierYears } from "./timeYearClamp.js";
 import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { toUtcIso } from "./timeUtc.js";
+import { matchIocToExclude } from "./iocExclude.js";
 
 export interface WindowContext {
   windowSequence: number;
@@ -45,6 +46,11 @@ export function mergeDelta(
   const iocIdRemap = new Map<string, string>();
   let nextSeq = nextIocSeq(iocs);
   for (const incoming of delta.iocs) {
+    // Permanently excluded (per-case IOC Exclude List — e.g. ".lan"-style client hostname noise):
+    // never create it, so it can never be enriched either (enrichIocs only ever sees state.iocs).
+    // The id is deliberately never added to iocIdRemap; a finding's relatedIocs reference falls
+    // back to the raw id via remapIocRefs's `?? id`, a harmless dangling reference.
+    if (matchIocToExclude({ type: incoming.type, value: incoming.value }, state.iocExcludeRules)) continue;
     // Case-insensitive: the same indicator (a hostname/domain especially) routinely arrives with
     // different casing across importers/rows (e.g. "DESKTOP-X" vs "desktop-x"), and an exact-match
     // comparison let those through as separate rows instead of collapsing into one (matches
@@ -249,6 +255,7 @@ export function mergeDelta(
     lastSummary: delta.summary.trim().length > 0 ? delta.summary : state.lastSummary,
     attackerPath: (delta.attackerPath ?? "").trim().length > 0 ? (delta.attackerPath as string) : state.attackerPath,
     narrativeTimeline: (delta.narrativeTimeline ?? "").trim().length > 0 ? (delta.narrativeTimeline as string) : state.narrativeTimeline,
+    iocExcludeRules: state.iocExcludeRules,
     updatedAt: ctx.timestamp,
   };
 }

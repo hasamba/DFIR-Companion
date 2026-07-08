@@ -1,3 +1,5 @@
+import type { IocExcludeRule } from "./iocExclude.js";
+
 export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
 export type FindingStatus = "open" | "confirmed" | "dismissed";
 export type ThreadStatus = "open" | "closed";
@@ -178,6 +180,10 @@ export interface InvestigationState {
   lastSummary: string;
   attackerPath: string;                // narrative reconstruction of the attacker's path
   narrativeTimeline: string;           // prose story of the incident for stakeholders (re-generated on synthesis)
+  // Per-case domain/hostname (or any IOC type) exclude rules — a match is deleted from `iocs`
+  // outright and never re-created by a future import/AI-synthesis delta (see mergeDelta). Distinct
+  // from the global IOC Whitelist, which is reversible and merely marks a match false-positive.
+  iocExcludeRules: IocExcludeRule[];
   updatedAt: string;
 }
 
@@ -195,6 +201,7 @@ export function emptyState(caseId: string): InvestigationState {
     lastSummary: "",
     attackerPath: "",
     narrativeTimeline: "",
+    iocExcludeRules: [],
     updatedAt: new Date(0).toISOString(),
   };
 }
