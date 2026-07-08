@@ -1309,7 +1309,7 @@
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux shell history, auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
     <button id="importUndoBtn" type="button" style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
-    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch JSONL, or a full case export)">
+    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch export (forensic or super timeline), or a full case export)">
 
       <option value="">Export…</option>
       <option value="report">Generate report (Markdown + HTML)</option>
@@ -1318,7 +1318,8 @@
       <option value="present-html">Presentation deck (standalone HTML)</option>
       <option value="timeline-csv">Forensic timeline (CSV)</option>
       <option value="attack-layer">ATT&amp;CK Navigator layer (JSON)</option>
-      <option value="timesketch-jsonl">Timesketch JSONL</option>
+      <option value="timesketch-jsonl">Timesketch export (Forensic Timeline)</option>
+      <option value="timesketch-jsonl-super">Timesketch export (Super Timeline)</option>
       <option value="snapshot">Full case export (shareable JSON)</option>
       <option value="stix">STIX 2.1 bundle (JSON)</option>
       <option value="ioc-blocklist">IOC block-list…</option>
@@ -2174,7 +2175,7 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Password<span class="sfield-hint">DFIR_TIMESKETCH_PASSWORD</span></label><input id="env-DFIR_TIMESKETCH_PASSWORD" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-          <div class="sfield"><label>Timeline name<span class="sfield-hint">DFIR_TIMESKETCH_TIMELINE</span></label><input id="env-DFIR_TIMESKETCH_TIMELINE" placeholder="DFIR Companion timeline" /></div>
+          <div class="sfield"><label>Timeline name<span class="sfield-hint">DFIR_TIMESKETCH_TIMELINE</span></label><input id="env-DFIR_TIMESKETCH_TIMELINE" placeholder="DFIR-Companion Forensic Timeline" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_TIMESKETCH_CA</span></label><input id="env-DFIR_TIMESKETCH_CA" placeholder="path/to/ca.pem" /></div>
@@ -13744,6 +13745,8 @@
         window.location.href = `/cases/${c}/attack-layer.json`;
       } else if (action === "timesketch-jsonl") {
         window.location.href = `/cases/${c}/timeline.jsonl`;
+      } else if (action === "timesketch-jsonl-super") {
+        window.location.href = `/cases/${c}/super-timeline.jsonl`;
       } else if (action === "snapshot") {
         // Full case export (issue #56) — a single downloadable JSON (no AI keys, no machine
         // config) that doubles as a teammate-shareable snapshot via "Import snapshot…". Replaced
@@ -13926,7 +13929,12 @@
     fetch("/iris/status").then((r) => r.json()).then((s) => {
       if (s && s.configured) { addPushOption("iris", "Push to DFIR-IRIS"); addIrisImportOption(); }
     }).catch(() => {});
-    fetch("/timesketch/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("timesketch", "Push to Timesketch"); }).catch(() => {});
+    fetch("/timesketch/status").then((r) => r.json()).then((s) => {
+      if (s && s.configured) {
+        addPushOption("timesketch", "Timesketch export (Forensic Timeline)");
+        addPushOption("timesketch-super", "Timesketch export (Super Timeline)");
+      }
+    }).catch(() => {});
     fetch("/misp/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("misp", "Push to MISP"); }).catch(() => {});
     // Notion export: a configured token shows the option; a default DB/parent hides the modal's
     // target input (it's only needed for a "new page" when no default is set).
@@ -13950,7 +13958,10 @@
       if (target === "clickup") { openClickupModal(caseId); return; }
       const c = encodeURIComponent(caseId);
       sel.disabled = true;
-      const targetLabel = target === "iris" ? "IRIS" : target === "timesketch" ? "Timesketch" : "MISP";
+      const targetLabel = target === "iris" ? "IRIS"
+        : target === "timesketch" ? "Timesketch (Forensic Timeline)"
+        : target === "timesketch-super" ? "Timesketch (Super Timeline)"
+        : "MISP";
       document.getElementById("status").textContent = `pushing to ${targetLabel}…`;
       document.getElementById("reportLinks").innerHTML = "";
       fetch(`/cases/${c}/push/${target}`, { method: "POST" })
@@ -13964,7 +13975,7 @@
               `tasks +${res.tasks.added}, notes ${res.notes}` +
               (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
             if (res.caseUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.caseUrl)}" target="_blank" rel="noopener">Open in IRIS</a>`;
-          } else if (target === "timesketch") {
+          } else if (target === "timesketch" || target === "timesketch-super") {
             const verb = res.created ? "created" : "updated";
             document.getElementById("status").textContent =
               `Timesketch sketch #${res.sketchId} ${verb}: ${res.events} event(s) → "${res.timelineName}"` +

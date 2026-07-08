@@ -189,7 +189,8 @@ import { resolvePushAuth } from "./analysis/pushAuth.js";
 import { extractPushPayload } from "./analysis/pushPayload.js";
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
 import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
-import { pushCaseToTimesketch, type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
+import { pushCaseToTimesketch, pushSuperTimelineToTimesketch, type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
+import { toTimesketchJsonlFromList } from "./integrations/timesketch/timesketchMap.js";
 import { MispPushClient } from "./integrations/misp/mispPushClient.js";
 import { pushCaseToMisp, type MispPushOptions } from "./integrations/misp/mispPush.js";
 import { NotionClient, parseNotionPageId } from "./integrations/notion/notionClient.js";
@@ -4474,6 +4475,30 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[timesketch] ${caseId} push ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Push the super-timeline (forensic timeline + raw host-triage artifacts) to Timesketch: same
+  // sketch as the forensic push (named after the case id), but a SEPARATE timeline inside it
+  // ("DFIR Companion super timeline") so the two pushes never clean-replace each other. NOT
+  // scope/false-positive filtered — the super-timeline is the raw complete record.
+  app.post("/cases/:id/push/timesketch-super", async (req: Request, res: Response) => {
+    if (!options.timesketchClient) return res.status(501).json({ error: "Timesketch not configured (set DFIR_TIMESKETCH_URL, DFIR_TIMESKETCH_USER and DFIR_TIMESKETCH_PASSWORD)" });
+    if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
+    const caseId = req.params.id;
+    try {
+      const { events } = await options.superTimelineStore.query(caseId, { limit: Number.MAX_SAFE_INTEGER });
+      logLine(`[timesketch] ${caseId} super-timeline push START`);
+      const result = await pushSuperTimelineToTimesketch(options.timesketchClient, { sketchName: caseId, events }, options.timesketchOptions);
+      logLine(`[timesketch] ${caseId} super-timeline push DONE -> sketch ${result.sketchId} (${result.created ? "created" : "updated"}); ` +
+        `timeline "${result.timelineName}" events ${result.events}${result.replacedTimeline ? " (replaced)" : ""}, warnings ${result.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-timesketch-super", detail: `pushed super-timeline to Timesketch sketch ${result.sketchId} (${result.created ? "created" : "updated"})`,
+      });
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[timesketch] ${caseId} super-timeline push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
     }
   });
@@ -8777,6 +8802,23 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         limit: num(req.query.limit),
       }, tagLabelMap);
       return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Export the super-timeline (forensic timeline + raw host-triage artifacts) as Timesketch-
+  // compatible JSONL, generated on demand from the full unfiltered store. NOT scope/false-positive
+  // filtered — the super-timeline is the raw complete record (mirrors GET .../super-timeline).
+  app.get("/cases/:id/super-timeline.jsonl", async (req: Request, res: Response) => {
+    if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
+    try {
+      const { events } = await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER });
+      const jsonl = toTimesketchJsonlFromList(events);
+      res.type("application/x-ndjson; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="timesketch-super-timeline.jsonl"');
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(jsonl);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
