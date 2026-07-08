@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Structured hostname/fqdn/domain columns** (e.g. a JSON/CSV field literally named `Hostname`) now skip internal zones (`.lan`/`.local`/`.corp`/etc.) the same way free-text scraping already did, instead of creating a domain IOC for every client hostname.
+- **Cited-event badges (`[1]`, `[2]`…) couldn't be right-clicked to open in a new tab/window** — they now carry a real deep link (`?caseId=...#event=...`), so right-click/middle-click/Ctrl-click all work; opening the link reloads the case and jumps straight to the cited event.
 
 ## [0.30.0] - 2026-07-07
 

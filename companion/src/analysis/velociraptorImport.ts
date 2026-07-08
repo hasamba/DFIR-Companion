@@ -592,6 +592,21 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
 }
 
 
+// DetectRaptor ships many distinct "*.Detection.*" rule packs (MFT, Amcache, LolDrivers,
+// PSReadline, ...) that all flow through rowVerdict()/mapDetection() — folding them all under the
+// generic "Velociraptor detection" bucket hides WHICH rule pack actually fired. When the artifact
+// names a DetectRaptor pack, lead with its specific technique name instead (e.g. "DetectRaptor MFT
+// detection"); any other Velociraptor-hosted rule pack (Custom.*, Chainsaw, etc.) keeps the
+// generic "Velociraptor detection" label.
+function detectionLabel(artifact: string): string {
+  const a = artifact.trim();
+  if (/^DetectRaptor\./i.test(a)) {
+    const last = a.split(".").pop();
+    if (last) return `DetectRaptor ${last} detection`;
+  }
+  return "Velociraptor detection";
+}
+
 // A DetectRaptor-style detection: the `Detection`/`RuleName` verdict leads. If a parsed Windows
 // event sits underneath (Evtx), overlay the verdict onto the per-EID mapping (like Sigma);
 // otherwise build the event from the row's file/process/pipe/path + hashes.
@@ -599,13 +614,14 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   const v = rowVerdict(row)!; // guaranteed by classify()
   let severity = detectionSeverity(v);
   scrapeEvidence(row, sink); // pull URLs/IPs/hashes out of the matched command line / file content
+  const label = detectionLabel(artifact);
 
   const flat = winRowToFlat(row);
   const win = flat ? mapWindows(flat.rec, flat.host || host, sink) : null;
   if (win) {
     win.severity = worst(win.severity, severity);
     for (const m of v.mitre) if (!win.mitre.includes(m)) win.mitre.push(m);
-    win.description = `Velociraptor detection: ${v.title} - ${win.description}`.slice(0, 600);
+    win.description = `${label}: ${v.title} - ${win.description}`.slice(0, 600);
     win.aggKey = `vr-det|${v.title.toLowerCase()}|${win.aggKey}`.slice(0, 400);
     win.sources = ["Velociraptor"];
     if (!win.timestamp) win.timestamp = pickTime(row);
@@ -682,7 +698,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     subject = parts.join(" - ");
   }
 
-  let description = `Velociraptor detection: ${v.title}`;
+  let description = `${label}: ${v.title}`;
   if (subject) description += ` - ${subject}`;
   if (fileDeleted) description += ` [deleted]`;
   if (host) description += ` @ ${host}`;
@@ -1087,8 +1103,10 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
       // Place it consistently right after "Velociraptor" (the same spot mapGeneric already uses), so
       // detection/sigma/yara read "Velociraptor [artifact] detection: …" not "… [artifact]" at the
       // end. Only a REAL artifact name (from _Source) is shown — never the filename fallback.
+      // Skip when mapDetection already led with a DetectRaptor-specific label (detectionLabel()) —
+      // that already names the rule pack, so bracketing the full dotted artifact too is redundant.
       const realArtifact = artifactName(row);
-      if (realArtifact && !m.description.includes(realArtifact)) {
+      if (realArtifact && !m.description.includes(realArtifact) && !m.description.startsWith("DetectRaptor ")) {
         m.description = (m.description.startsWith("Velociraptor")
           ? m.description.replace(/^Velociraptor/, `Velociraptor [${realArtifact}]`)
           : `[${realArtifact}] ${m.description}`).slice(0, 1200);
