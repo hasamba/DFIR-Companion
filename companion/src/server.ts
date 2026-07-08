@@ -188,6 +188,7 @@ import { PushTokenStore, generatePushToken } from "./analysis/pushTokenStore.js"
 import { resolvePushAuth } from "./analysis/pushAuth.js";
 import { extractPushPayload } from "./analysis/pushPayload.js";
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
+import { IrisExportStore, defaultIrisCaseName } from "./integrations/iris/irisExportStore.js";
 import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
 import { pushCaseToTimesketch, pushSuperTimelineToTimesketch, type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
 import { toTimesketchJsonlFromList } from "./integrations/timesketch/timesketchMap.js";
@@ -424,6 +425,9 @@ export interface AppOptions {
   // via Settings, or IRIS coming back online, applies without a server restart). Defaults to the
   // env-based buildIrisClient; tests inject a stub (no network).
   rebuildIrisClient?: () => IrisClient | undefined;
+  // Remembers the IRIS case name used on the last push per Companion case, so a re-push with
+  // no explicit override still targets the same IRIS case (find-or-create is name-based).
+  irisExportStore?: IrisExportStore;
   // Velociraptor API: a configured client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) lets the
   // dashboard run the generated hunt VQL against the server and show the rows inline.
   velociraptorClient?: VelociraptorClient;
@@ -4334,6 +4338,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   // Push a case to DFIR-IRIS: find-or-create the case by name, then push assets→assets,
   // IOCs→IOCs, forensic timeline→timeline, executive summary→case summary, everything else→notes.
+  // Body: { caseName? } — an explicit override; otherwise the name from the last push is reused
+  // (irisExportStore), falling back to "<case id> — <friendly name>" on the very first push.
   app.post("/cases/:id/push/iris", async (req: Request, res: Response) => {
     if (!irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
@@ -4343,12 +4349,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const meta = options.reportMetaStore ? await options.reportMetaStore.load(caseId) : undefined;
       // Push the analyst-curated playbook (status-aware) when available, else the raw next steps.
       const playbookTasks = options.playbookStore ? await syncPlaybook(caseId) : undefined;
-      logLine(`[iris] ${caseId} push START`);
+      const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
+      const saved = options.irisExportStore ? await options.irisExportStore.load(caseId) : { caseName: "" };
+      const requested = typeof req.body?.caseName === "string" ? req.body.caseName.trim() : "";
+      const targetCaseName = requested || saved.caseName || defaultIrisCaseName(caseId, caseMeta?.name);
+      logLine(`[iris] ${caseId} push START -> "${targetCaseName}"`);
       const result = await pushCaseToIris(
         irisClient,
-        { caseName: caseId, state, meta, playbookTasks: playbookTasks?.length ? playbookTasks : undefined },
+        { caseName: targetCaseName, state, meta, playbookTasks: playbookTasks?.length ? playbookTasks : undefined },
         options.irisOptions,
       );
+      if (options.irisExportStore) await options.irisExportStore.record(caseId, targetCaseName);
       logLine(`[iris] ${caseId} push DONE -> case ${result.caseId} (${result.created ? "created" : "updated"}); ` +
         `assets +${result.assets.added}/${result.assets.existing}, iocs +${result.iocs.added}/${result.iocs.existing}, ` +
         `timeline +${result.timeline.added}/${result.timeline.existing}, tasks +${result.tasks.added}/${result.tasks.existing}, ` +
@@ -4360,6 +4371,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     } catch (err) {
       logLine(`[iris] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // The IRIS case name a push would use right now (saved override, or the computed default) —
+  // lets the dashboard prefill the "Push to DFIR-IRIS" case-name field.
+  app.get("/cases/:id/iris-export", async (req: Request, res: Response) => {
+    if (!options.irisExportStore) return res.status(501).json({ error: "DFIR-IRIS not configured" });
+    try {
+      const caseId = req.params.id;
+      const saved = await options.irisExportStore.load(caseId);
+      const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
+      return res.status(200).json({ caseName: saved.caseName, defaultCaseName: defaultIrisCaseName(caseId, caseMeta?.name) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -9567,6 +9592,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const importUndoStore = new ImportUndoStore(store, Number(process.env.DFIR_IMPORT_UNDO_DEPTH) || undefined);
   const notionExportStore = new NotionExportStore(store);
   const clickupExportStore = new ClickUpExportStore(store);
+  const irisExportStore = new IrisExportStore(store);
   const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore);
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
@@ -9748,6 +9774,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // Trim the dashboard's hunt-query modal to the tools this team runs (default: all).
     huntPlatforms: resolveHuntPlatforms(process.env.DFIR_HUNT_PLATFORMS),
     irisOptions: irisPushOptions(),
+    irisExportStore,
     timesketchClient: buildTimesketchClient(),
     timesketchOptions: timesketchPushOptions(),
     rebuildTimesketchClient: buildTimesketchClient,
