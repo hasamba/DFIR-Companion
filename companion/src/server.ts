@@ -3652,6 +3652,66 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return { addedEvents, addedIocs, storedName };
   }
 
+  // Import ONLY a hunt/flow's uploaded report files (e.g. THOR), skipping rows entirely — used when
+  // the analyst pastes the Velociraptor GUI's "Uploaded Files" tab URL specifically (ref.isUploadsUrl).
+  // Mirrors importVeloHuntResults' uploads step (same resolveImportKind + dispatchImport chain) but
+  // standalone, with ONE before/after diff across every uploaded file instead of hunt-job bookkeeping.
+  async function ingestVeloUploads(
+    caseId: string,
+    uploads: HuntUpload[],
+    opts: { minSeverity?: Severity; label: string },
+  ): Promise<{ addedEvents: number; addedIocs: number; imported: string[]; skipped: string[] }> {
+    const pipeline = options.pipeline;
+    if (!pipeline) throw new Error("AI pipeline not configured");
+    let stateBefore: InvestigationState | null = null;
+    if (options.stateStore) { try { stateBefore = await options.stateStore.load(caseId); } catch { /* null */ } }
+
+    const imported: string[] = [];
+    const skipped: string[] = [];
+    let lastStoredName: string | undefined;
+    for (const up of uploads) {
+      const kind = resolveImportKind(up.name, up.content);
+      if (kind === "unknown") { skipped.push(up.name); continue; }
+      // CSV/log are themselves an LLM call — respect the per-case AI toggle exactly like every other
+      // import path (dispatchImport's own CSV/log routes, and the bundle-collect uploads step).
+      // With AI off, skip entirely rather than persisting evidence that never analyzes.
+      if ((kind === "csv" || kind === "log") && !(await getControl(caseId)).enabled) { skipped.push(up.name); continue; }
+      try {
+        const { storedName, importedAt, seq } = await persistEvidence(caseId, up.name, up.content);
+        lastStoredName = storedName;
+        await dispatchImport(kind, caseId, up.content, { label: storedName, idPrefix: `${seq}`, importedAt, minSeverity: opts.minSeverity });
+        imported.push(up.name);
+      } catch (e) {
+        logLine(`[velociraptor] uploads-only import failed (${up.name}): ${(e as Error).message}`);
+        skipped.push(up.name);
+      }
+    }
+
+    let addedEvents = 0, addedIocs = 0;
+    if (imported.length && options.stateStore && stateBefore) {
+      try {
+        const afterImport = await options.stateStore.load(caseId);
+        if (options.superTimelineStore) {
+          const superDiff = diffTimeline(stateBefore.forensicTimeline, afterImport.forensicTimeline);
+          const added = addedForensicEvents(afterImport.forensicTimeline, superDiff);
+          if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } }
+        }
+        const s = await demoteForensicForCase(caseId);
+        const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
+        const iDiff = diffIocs(stateBefore.iocs, s.iocs);
+        addedEvents = tDiff.added.length; addedIocs = iDiff.added.length;
+        if ((addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) && options.importMetaStore && lastStoredName) {
+          await options.importMetaStore.record(caseId, { kind: "velociraptor", file: lastStoredName, diff: tDiff, iocsDiff: iDiff });
+          options.onImportMeta?.(caseId);
+        }
+      } catch { /* non-fatal */ }
+      try { await applyWhitelistToCase(caseId); } catch { /* non-fatal */ }
+      try { await applyNsrlToCase(caseId); } catch { /* non-fatal */ }
+      resynthesizeInBackground(caseId);
+    }
+    return { addedEvents, addedIocs, imported, skipped };
+  }
+
   // ── Velociraptor hunt STATUS polling ─────────────────────────────────────────────────────────
   // Independent from the fixed-delay auto-collect timer above (veloHuntTimers): every
   // DFIR_VELO_HUNT_POLL_S (default 30s, clamped 5-300) asks Velociraptor for the hunt's real state,
@@ -3857,9 +3917,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
     const superOnly = req.body?.superTimelineOnly === true;
+    // Uploaded reports (THOR/Hayabusa) only have a forensic-merge importer (dispatchImport) — routing
+    // them to the super-timeline-only path would leak into the forensic timeline and break its
+    // invariant (mirrors the same guard on the bundle-collect uploads step).
+    if (ref.isUploadsUrl && superOnly) {
+      return res.status(400).json({ error: "uploaded-file import doesn't support super-timeline-only mode — collect upload-based artifacts via a normal (forensic-timeline) import instead" });
+    }
     const client = options.velociraptorClient;
     try {
       if (ref.kind === "hunt") {
+        if (ref.isUploadsUrl) {
+          const uploads = await client.huntUploads(ref.huntId);
+          if (!uploads.length) {
+            return res.status(200).json({ kind: "hunt", huntId: ref.huntId, addedEvents: 0, addedIocs: 0, uploadsOnly: true, note: "no uploaded report files found for this hunt yet (or none matched a supported format)" });
+          }
+          const out = await ingestVeloUploads(caseId, uploads, { minSeverity, label: `velo-hunt-uploads_${ref.huntId}` });
+          options.onVeloHunt?.(caseId);
+          return res.status(200).json({ kind: "hunt", huntId: ref.huntId, uploadsOnly: true, imported: out.imported, skipped: out.skipped, addedEvents: out.addedEvents, addedIocs: out.addedIocs });
+        }
         const arts = await client.getHuntArtifacts(ref.huntId);
         if (!arts.length) return res.status(404).json({ error: `hunt ${ref.huntId} not found on the server, or it collected no artifacts` });
         const { results } = await client.huntResultsByArtifact(ref.huntId, arts);
@@ -3867,6 +3942,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         const out = await ingestVeloArtifactMap(caseId, JSON.stringify(results), { label: `velo-hunt_${ref.huntId}.json`, idBase: ref.huntId, superOnly, minSeverity, veloUrl: client.huntGuiUrlFor(ref.huntId) });
         options.onVeloHunt?.(caseId);
         return res.status(200).json({ kind: "hunt", huntId: ref.huntId, artifacts: Object.keys(results), addedEvents: out.addedEvents, addedIocs: out.addedIocs, superTimelineOnly: superOnly });
+      }
+      if (ref.isUploadsUrl) {
+        const uploads = await client.flowUploads(ref.clientId, ref.flowId);
+        if (!uploads.length) {
+          return res.status(200).json({ kind: "flow", clientId: ref.clientId, flowId: ref.flowId, addedEvents: 0, addedIocs: 0, uploadsOnly: true, note: "no uploaded report files found for this flow yet (or none matched a supported format)" });
+        }
+        const out = await ingestVeloUploads(caseId, uploads, { minSeverity, label: `velo-flow-uploads_${ref.flowId}` });
+        options.onVeloHunt?.(caseId);
+        return res.status(200).json({ kind: "flow", clientId: ref.clientId, flowId: ref.flowId, uploadsOnly: true, imported: out.imported, skipped: out.skipped, addedEvents: out.addedEvents, addedIocs: out.addedIocs });
       }
       const info = await client.getFlowInfo(ref.clientId, ref.flowId);
       if (!info.artifacts.length) return res.status(404).json({ error: `flow ${ref.flowId} on ${ref.clientId} not found, or it collected no artifacts` });

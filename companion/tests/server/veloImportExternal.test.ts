@@ -21,6 +21,14 @@ const MFT_ROW = { OSPath: "C:\\evil.exe", Created0x10: "2026-06-01T00:00:00Z", F
 // can discriminate on. `_Source` names the source artifact, which drives classification.
 const YARA_ROW = { _Source: "Windows.Detection.Yara", Rule: "EvilRule", Namespace: "n", OSPath: "C:\\bad.dll", Created0x10: "2026-06-01T01:00:00Z" };
 
+// A THOR scanner report line — the shape of an UPLOADED report file (not a row), used to exercise the
+// uploads-only import path (ref.isUploadsUrl).
+const THOR_LINE = JSON.stringify({
+  time: "2025-03-14T21:18:18Z", hostname: "WIN11", level: "Alert", module: "Filescan",
+  message: "Malware file found", file: "C:\\Tools\\mimikatz.exe",
+  sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef",
+});
+
 interface MockVeloClient {
   getHuntArtifacts(huntId: string): Promise<string[]>;
   huntResultsByArtifact(huntId: string, artifacts: string[]): Promise<{ results: Record<string, unknown[]>; skipped: string[] }>;
@@ -28,9 +36,14 @@ interface MockVeloClient {
   collectionResults(clientId: string, flowId: string, artifact: string): Promise<VelociraptorRunResult>;
   huntGuiUrlFor(huntId: string): string | undefined;
   flowGuiUrlFor(clientId: string, flowId: string): string | undefined;
+  huntUploads(huntId: string): Promise<{ name: string; clientId: string; content: string }[]>;
+  flowUploads(clientId: string, flowId: string): Promise<{ name: string; clientId: string; content: string }[]>;
 }
 
-async function makeApp(huntResults: Record<string, unknown[]> = { "Windows.NTFS.MFT": [MFT_ROW] }) {
+async function makeApp(
+  huntResults: Record<string, unknown[]> = { "Windows.NTFS.MFT": [MFT_ROW] },
+  uploads: { name: string; clientId: string; content: string }[] = [],
+) {
   const root = await mkdtemp(join(tmpdir(), "dfir-velo-ext-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -40,17 +53,20 @@ async function makeApp(huntResults: Record<string, unknown[]> = { "Windows.NTFS.
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
 
+  let rowsFetchCalls = 0;
   const client: MockVeloClient = {
     async getHuntArtifacts() {
       return Object.keys(huntResults);
     },
     async huntResultsByArtifact() {
+      rowsFetchCalls++;
       return { results: huntResults, skipped: [] };
     },
     async getFlowInfo() {
       return { artifacts: ["Windows.NTFS.MFT"], hostname: "DESKTOP-01" };
     },
     async collectionResults() {
+      rowsFetchCalls++;
       // A row with NO host column — the route must attribute it to the flow's resolved hostname.
       return { rows: [MFT_ROW], total: 1, truncated: false };
     },
@@ -60,6 +76,12 @@ async function makeApp(huntResults: Record<string, unknown[]> = { "Windows.NTFS.
     flowGuiUrlFor(clientId: string, flowId: string) {
       return `https://velo.example/app/index.html?org_id=root#/collected/${clientId}/${flowId}`;
     },
+    async huntUploads() {
+      return uploads;
+    },
+    async flowUploads() {
+      return uploads;
+    },
   };
 
   const app = createApp(store, {
@@ -67,7 +89,7 @@ async function makeApp(huntResults: Record<string, unknown[]> = { "Windows.NTFS.
     velociraptorClient: client as unknown as Parameters<typeof createApp>[1]["velociraptorClient"],
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app, stateStore };
+  return { app, stateStore, getRowsFetchCalls: () => rowsFetchCalls };
 }
 
 describe("POST /cases/:id/velociraptor/import-external", () => {
@@ -188,5 +210,76 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
     const st = (await request(app).get("/cases/c1/super-timeline")).body;
     expect(st.events.length).toBeGreaterThan(0);
     expect(st.events.every((e: { veloUrl?: string }) => e.veloUrl === "https://velo.example/app/index.html?org_id=root#/collected/C.dead/F.001")).toBe(true);
+  });
+
+  it("uploads-tab hunt URL imports ONLY the uploaded THOR report, skipping rows entirely", async () => {
+    const { app, stateStore, getRowsFetchCalls } = await makeApp(
+      { "Windows.NTFS.MFT": [MFT_ROW] },
+      [{ name: "thor.json", clientId: "C.1", content: THOR_LINE }],
+    );
+    const res = await request(app).post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC/uploads" });
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("hunt");
+    expect(res.body.uploadsOnly).toBe(true);
+    expect(res.body.imported).toEqual(["thor.json"]);
+    expect(res.body.addedEvents).toBeGreaterThan(0);
+    expect(getRowsFetchCalls()).toBe(0);   // rows were never fetched on the uploads-only path
+    const forensic = (await stateStore.load("c1")).forensicTimeline;
+    expect(forensic.some((e) => e.description?.toLowerCase().includes("mimikatz"))).toBe(true);
+  });
+
+  it("uploads-tab flow URL imports via flowUploads, skipping rows", async () => {
+    const { app, getRowsFetchCalls } = await makeApp(
+      {},
+      [{ name: "thor.json", clientId: "C.dead", content: THOR_LINE }],
+    );
+    const res = await request(app).post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "https://velo.example/app/index.html?org_id=root#/collected/C.dead/F.001/uploads" });
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("flow");
+    expect(res.body.uploadsOnly).toBe(true);
+    expect(res.body.addedEvents).toBeGreaterThan(0);
+    expect(getRowsFetchCalls()).toBe(0);
+  });
+
+  it("uploads-tab URL with no matching uploads returns a note instead of an error", async () => {
+    const { app } = await makeApp({ "Windows.NTFS.MFT": [MFT_ROW] }, []);
+    const res = await request(app).post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC/uploads" });
+    expect(res.status).toBe(200);
+    expect(res.body.addedEvents).toBe(0);
+    expect(res.body.note).toMatch(/no uploaded report files/i);
+  });
+
+  it("rejects combining an uploads-tab URL with superTimelineOnly", async () => {
+    const { app } = await makeApp({}, [{ name: "thor.json", clientId: "C.1", content: THOR_LINE }]);
+    const res = await request(app).post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC/uploads", superTimelineOnly: true });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/super-timeline-only/i);
+  });
+
+  it("a normal (non-uploads-tab) hunt URL is unaffected — still rows-only", async () => {
+    const { app, getRowsFetchCalls } = await makeApp({ "Windows.NTFS.MFT": [MFT_ROW] }, [{ name: "thor.json", clientId: "C.1", content: THOR_LINE }]);
+    const res = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.ABC" });
+    expect(res.status).toBe(200);
+    expect(res.body.uploadsOnly).toBeUndefined();
+    expect(getRowsFetchCalls()).toBe(1);
+  });
+
+  it("skips a generic CSV upload (AI-dependent kind) while AI is off for the case, but still imports the THOR upload alongside it", async () => {
+    // makeApp's /cases POST sends aiProvider: null, so AiControlStore's default (enabled: false)
+    // applies — the case has no AI configured, exactly the state ingestVeloUploads must respect.
+    const csvUpload = { name: "scan.csv", clientId: "C.1", content: "PID,ProcessName\n1,evil.exe\n2,cmd.exe" };
+    const thorUpload = { name: "thor.json", clientId: "C.1", content: THOR_LINE };
+    const { app, stateStore } = await makeApp({}, [csvUpload, thorUpload]);
+    const res = await request(app).post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC/uploads" });
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toEqual(["thor.json"]);   // the CSV was skipped, not persisted/dispatched
+    expect(res.body.skipped).toEqual(["scan.csv"]);
+    const forensic = (await stateStore.load("c1")).forensicTimeline;
+    expect(forensic.some((e) => e.description?.toLowerCase().includes("mimikatz"))).toBe(true);
   });
 });
