@@ -6496,17 +6496,21 @@
       const statusEl = document.getElementById("status");
       statusEl.textContent = `excluding ${values.length} IOC(s)…`;
       let purged = 0;
+      let succeeded = 0;
       for (const value of values) {
         try {
           const r = await fetch(`/cases/${encodeURIComponent(caseId)}/ioc-exclude`, {
             method: "POST", headers: { "content-type": "application/json" },
             body: JSON.stringify({ match: "exact", pattern: value }),
           });
-          if (r.ok) { const j = await r.json(); purged += j.purged || 0; }
+          if (r.ok) { const j = await r.json(); purged += j.purged || 0; succeeded++; }
         } catch {}
       }
-      statusEl.textContent = `excluded ${values.length} value(s), purged ${purged} IOC(s) total`;
+      statusEl.textContent = succeeded === values.length
+        ? `excluded ${succeeded} value(s), purged ${purged} IOC(s) total`
+        : `excluded ${succeeded} of ${values.length} value(s) (${values.length - succeeded} failed), purged ${purged} IOC(s) total`;
       selectedIocs.clear();
+      if (lastState) renderIocs(lastState.iocs || []);
     }
     function bulkCopyIocs() {
       const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
