@@ -101,6 +101,11 @@ async function freshFullPipelineApp() {
 describe("full-pipeline integration (capture → import → synthesis → report → encrypted-archive restore)", () => {
   it("runs the complete lifecycle end-to-end with mocked AI and enrichment", async () => {
     const { app, store, stateStore } = await freshFullPipelineApp();
+    // Note: this test derives the encrypted-archive password key via scryptSync twice
+    // (once on export, once on import) — a CPU-bound blocking call. Under full-suite
+    // parallel load (other test files also hammer scryptSync concurrently), that can push
+    // this already test-heavy end-to-end run past Vitest's default 5000ms timeout, so it
+    // gets a longer one below.
 
     // 1. Create case
     const create = await request(app).post("/cases").send({
@@ -245,7 +250,7 @@ describe("full-pipeline integration (capture → import → synthesis → report
       .split("\n")
       .map((line) => JSON.parse(line));
     expect(restoredImportFiles.length).toBeGreaterThanOrEqual(1);
-  });
+  }, 20_000);
 
   it("does not leave AI or enrichment provider artifacts behind when AI is off", async () => {
     const { app, stateStore } = await freshFullPipelineApp();
