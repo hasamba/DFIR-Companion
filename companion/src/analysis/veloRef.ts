@@ -5,8 +5,8 @@
 // AND a flow token) returns null so the caller can ask the analyst to clarify.
 
 export type VeloRef =
-  | { kind: "hunt"; huntId: string; isNotebookUrl?: true }
-  | { kind: "flow"; clientId: string; flowId: string; isNotebookUrl?: true };
+  | { kind: "hunt"; huntId: string; isNotebookUrl?: true; isUploadsUrl?: true }
+  | { kind: "flow"; clientId: string; flowId: string; isNotebookUrl?: true; isUploadsUrl?: true };
 
 // Capture-group form (not \b) so ids embedded in a URL path like /hunts/H.ABC/ or /collected/C.x/F.y
 // are still isolated — the leading boundary is start-of-string or any non-[A-Za-z0-9.] char.
@@ -27,6 +27,12 @@ const FLOW = /(?:^|[^A-Za-z0-9.])(F\.[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)/g;
 // notebook URL is flagged rather than silently resolved to the (much larger, unfiltered) flow/hunt.
 const NOTEBOOK_PATH = /\/notebooks?(?:[/?#]|$)/i;
 
+// A Velociraptor GUI URL pointing at a hunt/flow's "Uploaded Files" tab, e.g.
+// "…#/collected/C.x/F.y/uploads" or "…#/hunts/H.x/uploads". Distinct from the raw-rows tabs
+// (overview/results) — flagged so import-external can import ONLY the uploaded files and skip rows
+// entirely when the analyst pastes this specific tab's URL.
+const UPLOADS_PATH = /\/uploads(?:[/?#]|$)/i;
+
 function tokens(s: string, re: RegExp): string[] {
   return [...s.matchAll(re)].map((m) => m[1]);
 }
@@ -39,14 +45,15 @@ export function parseVeloRef(input: string): VeloRef | null {
   const clients = tokens(s, CLIENT);
   const flows = tokens(s, FLOW);
   const isNotebookUrl = NOTEBOOK_PATH.test(raw) || undefined;
+  const isUploadsUrl = UPLOADS_PATH.test(raw) || undefined;
 
   // A flow needs exactly one client + one flow token and NO hunt token.
   if (clients.length === 1 && flows.length === 1 && hunts.length === 0) {
-    return { kind: "flow", clientId: clients[0], flowId: flows[0], ...(isNotebookUrl ? { isNotebookUrl } : {}) };
+    return { kind: "flow", clientId: clients[0], flowId: flows[0], ...(isNotebookUrl ? { isNotebookUrl } : {}), ...(isUploadsUrl ? { isUploadsUrl } : {}) };
   }
   // A hunt needs exactly one hunt token and no flow token.
   if (hunts.length === 1 && flows.length === 0) {
-    return { kind: "hunt", huntId: hunts[0], ...(isNotebookUrl ? { isNotebookUrl } : {}) };
+    return { kind: "hunt", huntId: hunts[0], ...(isNotebookUrl ? { isNotebookUrl } : {}), ...(isUploadsUrl ? { isUploadsUrl } : {}) };
   }
   return null;
 }
