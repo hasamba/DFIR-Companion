@@ -3933,7 +3933,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           }
           const out = await ingestVeloUploads(caseId, uploads, { minSeverity, label: `velo-hunt-uploads_${ref.huntId}` });
           options.onVeloHunt?.(caseId);
-          return res.status(200).json({ kind: "hunt", huntId: ref.huntId, uploadsOnly: true, imported: out.imported, skipped: out.skipped, addedEvents: out.addedEvents, addedIocs: out.addedIocs });
+          return res.status(200).json({
+            kind: "hunt", huntId: ref.huntId, uploadsOnly: true, imported: out.imported, skipped: out.skipped,
+            addedEvents: out.addedEvents, addedIocs: out.addedIocs,
+            ...(out.imported.length === 0 ? { note: "found uploaded file(s) but none could be imported — unsupported format, or an AI-dependent format (CSV/log) while AI is off for this case" } : {}),
+          });
         }
         const arts = await client.getHuntArtifacts(ref.huntId);
         if (!arts.length) return res.status(404).json({ error: `hunt ${ref.huntId} not found on the server, or it collected no artifacts` });
@@ -3950,7 +3954,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         }
         const out = await ingestVeloUploads(caseId, uploads, { minSeverity, label: `velo-flow-uploads_${ref.flowId}` });
         options.onVeloHunt?.(caseId);
-        return res.status(200).json({ kind: "flow", clientId: ref.clientId, flowId: ref.flowId, uploadsOnly: true, imported: out.imported, skipped: out.skipped, addedEvents: out.addedEvents, addedIocs: out.addedIocs });
+        return res.status(200).json({
+          kind: "flow", clientId: ref.clientId, flowId: ref.flowId, uploadsOnly: true, imported: out.imported, skipped: out.skipped,
+          addedEvents: out.addedEvents, addedIocs: out.addedIocs,
+          ...(out.imported.length === 0 ? { note: "found uploaded file(s) but none could be imported — unsupported format, or an AI-dependent format (CSV/log) while AI is off for this case" } : {}),
+        });
       }
       const info = await client.getFlowInfo(ref.clientId, ref.flowId);
       if (!info.artifacts.length) return res.status(404).json({ error: `flow ${ref.flowId} on ${ref.clientId} not found, or it collected no artifacts` });

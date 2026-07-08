@@ -282,4 +282,16 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
     const forensic = (await stateStore.load("c1")).forensicTimeline;
     expect(forensic.some((e) => e.description?.toLowerCase().includes("mimikatz"))).toBe(true);
   });
+
+  it("uploads-tab URL with uploads present but none importable still reports a note (not silent)", async () => {
+    // AI is off by default in this test's case setup (aiProvider: null), and this content matches no
+    // recognizable import format — so it lands in `skipped` one way or another (unknown kind, or an
+    // AI-dependent fallback kind while AI is off), leaving `imported` empty either way.
+    const { app } = await makeApp({}, [{ name: "mystery.bin", clientId: "C.1", content: "\x00\x01\x02 not a recognizable report format" }]);
+    const res = await request(app).post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC/uploads" });
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toEqual([]);
+    expect(res.body.note).toBeTruthy();
+  });
 });
