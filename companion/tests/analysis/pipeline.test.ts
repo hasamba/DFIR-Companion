@@ -8,6 +8,7 @@ import { MockProvider } from "../../src/providers/provider.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { CaptureMetadata } from "../../src/types.js";
+import { AiCostStore } from "../../src/analysis/aiCost.js";
 
 let caseStore: CaseStore;
 let stateStore: StateStore;
@@ -127,6 +128,35 @@ describe("AnalysisPipeline", () => {
     expect(state.attackerPath).toContain("Phishing");
     // synthesis must not wipe the forensic timeline it read from
     expect(state.forensicTimeline).toHaveLength(2);
+  });
+
+  it("records the synthesis call in the vision/synthesis/other cost buckets correctly", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish opened", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] },
+    );
+    await stateStore.save(seeded);
+
+    const synthDelta = JSON.stringify({
+      findings: [], iocs: [], mitreTechniques: [], attackerPath: "",
+      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "",
+    });
+    const aiCostStore = new AiCostStore(caseStore);
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", synthDelta, "mock-model-x"),
+      stateStore,
+      aiCostStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    await pipeline.synthesize("c1");
+
+    const cost = await aiCostStore.load("c1");
+    expect(cost.synthesis.totalCalls).toBe(1);
+    expect(cost.synthesis.byModel["mock/mock-model-x"].calls).toBe(1);
+    expect(cost.vision.totalCalls).toBe(0);
+    expect(cost.other.totalCalls).toBe(0);
   });
 
   it("skips the AI call when nothing changed since the last synthesis (and re-runs on change or force)", async () => {

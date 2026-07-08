@@ -48,6 +48,7 @@ import { buildKnownUnknowns } from "./knownUnknowns.js";
 import { buildAdversaryHintsResult } from "./adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "./adversaryGroupsData.js";
 import type { SynthMetaStore } from "./synthMeta.js";
+import { AiCostStore, bucketForLabel } from "./aiCost.js";
 import { CorrelationProfileStore } from "./correlationProfile.js";
 import type { SecondOpinionStore } from "./secondOpinionStore.js";
 import {
@@ -1214,6 +1215,9 @@ export interface PipelineOptions {
   // Optional: record when synthesis actually ran + what changed in the findings, so the
   // dashboard can show "last synthesized N ago" and a what-changed diff. Absent → not recorded.
   synthMetaStore?: SynthMetaStore;
+  // Per-case AI cost/token accounting (vision / synthesis / other buckets), read by the
+  // Diagnostics "AI cost — this case" card. Absent → cost tracking is skipped (CLI scripts).
+  aiCostStore?: AiCostStore;
   correlationProfileStore?: CorrelationProfileStore;
   // When both notebookStore and aiControlStore are set, synthesis checks aiControl.includeNotebook
   // and — when true — appends the analyst's notebook entries to the synthesis prompt.
@@ -1336,6 +1340,7 @@ export class AnalysisPipeline {
     if (!policy.enabled) {
       const result = await provider.analyze(req);
       this.logAiUsage(caseId, label, provider, result);
+      await this.recordAiCost(caseId, label, provider, result);
       return parseJsonLoose(result.rawText);
     }
     const known = deriveKnownEntities(state);
@@ -1407,7 +1412,19 @@ export class AnalysisPipeline {
 
     const result = await provider.analyze({ ...req, userPrompt: anon.apply(req.userPrompt), images });
     this.logAiUsage(caseId, label, provider, result);
+    await this.recordAiCost(caseId, label, provider, result);
     return anon.restoreDeep(parseJsonLoose(result.rawText));
+  }
+
+  // Accumulate this call's tokens/cost into the case's running AI-cost totals (Settings →
+  // Diagnostics). Best-effort: a write failure here must never fail the underlying AI call.
+  private async recordAiCost(caseId: string, label: string, provider: AIProvider, result: AnalyzeResult): Promise<void> {
+    if (!this.opts.aiCostStore) return;
+    try {
+      await this.opts.aiCostStore.record(caseId, bucketForLabel(label), provider.name, provider.model, result.usage);
+    } catch (err) {
+      this.log.warn(`[ai-cost] could not record: ${(err as Error).message}`, { caseId });
+    }
   }
 
   // Log token usage at DEBUG after a provider call (surfaced with DFIR_LOG_LEVEL=debug).
