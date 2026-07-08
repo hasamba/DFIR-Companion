@@ -1289,8 +1289,8 @@
     <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
     <button id="seedDemoBtn" style="display:none" data-tip="Load a pre-populated demo case (GlobalTech BEC &amp; Ransomware Precursor) to explore all dashboard features without importing real evidence">Demo case</button>
-    <input id="snapshotImportFile" type="file" accept=".json,application/json" style="display:none" />
-    <button id="importCaseBtn" type="button" data-tip="Import a whole case — an investigation snapshot (.json) shared by a teammate, or pull an existing DFIR-IRIS case. Opens a chooser; the DFIR-IRIS option appears only when configured.">Import case</button>
+    <input id="encryptedImportFile" type="file" accept=".dfircase" style="display:none" />
+    <button id="importCaseBtn" type="button" data-tip="Import a whole case — an encrypted case archive (.dfircase) shared by a teammate, or pull an existing DFIR-IRIS case. Opens a chooser; the DFIR-IRIS option appears only when configured.">Import case</button>
     <button id="lifecycleBtn" style="display:none" data-tip="Case lifecycle — close, reopen, or archive this case">
       <!-- unlocked padlock = active (green) -->
       <svg class="lc-icon-active" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
@@ -1540,12 +1540,26 @@
       <h3>Import case</h3>
       <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 12px">Bring in a whole case from another source.</p>
       <div style="display:flex; flex-direction:column; gap:8px;">
-        <button id="importCaseSnapshot" type="button" style="text-align:left;">📦 Investigation snapshot (.json) — a teammate's shared case file</button>
+        <button id="importCaseEncrypted" type="button" style="text-align:left;">🔒 Encrypted case archive (.dfircase) — a teammate's exported case</button>
         <button id="importCaseIris" type="button" style="display:none; text-align:left;">🛰️ From DFIR-IRIS — pull an existing IRIS case</button>
       </div>
       <div style="margin-top:12px;">
         <button id="importCaseCancel" style="background:var(--c-2a2f3a);">Cancel</button>
         <span id="importCaseHint" style="margin-left:8px; color:var(--c-52617a); font-size:11px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="importPasswordOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Import encrypted case archive</h3>
+      <p id="ipFilename" style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px"></p>
+      <label style="display:block; font-size:12px; margin-bottom:4px;">Password</label>
+      <input id="ipPassword" type="password" autocomplete="new-password" style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="ipImport">Import</button>
+        <button id="ipCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="ipMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -13315,54 +13329,87 @@
     };
     document.getElementById("importCaseCancel").onclick = closeImportCaseModal;
     importCaseOverlay.addEventListener("click", (e) => { if (e.target === importCaseOverlay) closeImportCaseModal(); });
-    document.getElementById("importCaseSnapshot").onclick = () => { closeImportCaseModal(); document.getElementById("snapshotImportFile").click(); };
+    document.getElementById("importCaseEncrypted").onclick = () => { closeImportCaseModal(); document.getElementById("encryptedImportFile").click(); };
     document.getElementById("importCaseIris").onclick = () => { closeImportCaseModal(); openIrisImportModal(); };
-    document.getElementById("snapshotImportFile").onchange = async (e) => {
-      const file = e.target.files && e.target.files[0];
-      e.target.value = "";   // allow re-selecting the same file
-      if (!file) return;
-      const status = document.getElementById("status");
-      status.textContent = "reading snapshot…";
-      let snapshot;
-      try {
-        snapshot = JSON.parse(await file.text());
-      } catch (err) {
-        status.textContent = "import failed: not valid JSON";
-        return;
+
+    // Chunked ArrayBuffer → base64 (avoids the call-stack limit of String.fromCharCode(...bytes)
+    // and O(n^2) string concatenation for large screenshots/evidence).
+    function arrayBufferToBase64(buffer) {
+      const bytes = new Uint8Array(buffer);
+      const chunkSize = 0x8000;
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
       }
+      return btoa(binary);
+    }
+
+    let _pendingImportFile = null;
+    document.getElementById("encryptedImportFile").onchange = (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = ""; // allow re-selecting the same file
+      if (!file) return;
+      _pendingImportFile = file;
+      document.getElementById("ipFilename").textContent = file.name;
+      document.getElementById("ipPassword").value = "";
+      document.getElementById("ipMsg").textContent = "";
+      document.getElementById("importPasswordOverlay").classList.add("open");
+      document.getElementById("ipPassword").focus();
+    };
+    document.getElementById("ipCancel").onclick = () => {
+      document.getElementById("importPasswordOverlay").classList.remove("open");
+      _pendingImportFile = null;
+    };
+    document.getElementById("importPasswordOverlay").addEventListener("click", (e) => {
+      if (e.target.id === "importPasswordOverlay") {
+        e.target.classList.remove("open");
+        _pendingImportFile = null;
+      }
+    });
+    document.getElementById("ipImport").onclick = async () => {
+      const file = _pendingImportFile;
+      const password = document.getElementById("ipPassword").value;
+      const msg = document.getElementById("ipMsg");
+      if (!file) { msg.textContent = "no file selected"; return; }
+      if (!password) { msg.textContent = "password is required"; return; }
+      const status = document.getElementById("status");
+      msg.textContent = "reading file…";
+      const arrayBuffer = await file.arrayBuffer();
+      const base64 = arrayBufferToBase64(arrayBuffer);
       const importInto = async (targetCaseId) => {
-        const body = targetCaseId ? { snapshot, targetCaseId } : { snapshot };
-        return fetch("/snapshots/import", {
+        const body = { data: base64, password, ...(targetCaseId ? { targetCaseId } : {}) };
+        return fetch("/cases/import/encrypted", {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
         });
       };
+      msg.textContent = "importing…";
       try {
         let res = await importInto(undefined);
         // Resolve id collisions by asking for a new id (up to a few tries), defaulting to "<id>-copy".
         let guard = 0;
         while (res.status === 409 && guard++ < 5) {
           const j = await res.json().catch(() => ({}));
-          const suggested = (j.caseId || (snapshot.case && snapshot.case.caseId) || "imported") + "-copy";
+          const suggested = (j.caseId || "imported") + "-copy";
           const newId = window.prompt(`A case "${j.caseId || ""}" already exists. Import under a different case id:`, suggested);
-          if (!newId) { status.textContent = "import cancelled"; return; }
+          if (!newId) { msg.textContent = "import cancelled"; return; }
           res = await importInto(newId.trim());
         }
         const body = await res.json().catch(() => ({}));
         if (res.status === 201) {
           const c = body.counts || {};
+          document.getElementById("importPasswordOverlay").classList.remove("open");
+          _pendingImportFile = null;
           status.textContent = `imported case ${body.caseId} (${c.forensicEvents || 0} events, ${c.findings || 0} findings, ${c.iocs || 0} IOCs)`;
           document.getElementById("caseId").value = body.caseId;
           loadCaseList();
           connect();   // attach to the freshly imported case
-        } else if (res.status === 404) {
-          // Route missing → the running companion predates this feature. Loud restart hint (the
-          // server loads its code once at startup), matching the dashboard's stale-server convention.
-          status.textContent = "import failed: this companion is missing the snapshot endpoint — restart the companion server (it loads server code once at startup), then re-import";
+        } else if (res.status === 400) {
+          msg.textContent = "import failed: " + (body.error || "wrong password or corrupt file");
         } else {
-          status.textContent = "import failed: " + (body.error || ("HTTP " + res.status));
+          msg.textContent = "import failed: " + (body.error || ("HTTP " + res.status));
         }
       } catch (err) {
-        status.textContent = "import failed: " + err.message + " — is the companion running?";
+        msg.textContent = "import failed: " + err.message + " — is the companion running?";
       }
     };
     // --- Search bar + time-range filter listeners --------------------------------
