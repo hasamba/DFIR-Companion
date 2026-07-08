@@ -3781,6 +3781,9 @@
       </div>
     </section>
   </main>
+  <footer style="padding:14px 16px 28px; text-align:center; color:var(--c-9aa4b2); font-size:12px; border-top:1px solid var(--c-2a2f3a); margin-top:8px;">
+    That's every panel for this layout — refresh to pick up new data. More panels can be shown, hidden, or reordered from Settings → General → Dashboard sections.
+  </footer>
   <!-- Lifecycle dropdown — lives outside toolbarMain so it never triggers the fitToolbar
        MutationObserver. Positioned via JS (position:fixed). Must be before the script. -->
   <div id="lifecycleMenu" style="display:none;position:fixed;background:var(--c-161b22);border:1px solid var(--c-30363d);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:9999;min-width:180px;">
@@ -3832,6 +3835,8 @@
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views
     let activeView = null;                     // the currently-applied view (null = Custom / no preset)
+    const DEFAULT_DASHBOARD_VIEW_ID = "analyst"; // new installs / cases with no saved preference start here
+    const CUSTOM_VIEW_MARKER = "__custom__";     // persisted when Custom is explicitly chosen (vs. never chosen)
     let ws = null;
     let countTimer = null;
     let countUpdate = null;   // current capture-count poll fn (set by pollCount)
@@ -14559,7 +14564,9 @@
       renderDashViewMenu();
       if (opts.persist !== false) {
         const k = viewStorageKey();
-        if (k) { if (view) localStorage.setItem(k, view.id); else localStorage.removeItem(k); }
+        // An explicit "Custom" pick is stored as a marker (not removed) so it stays distinct from a
+        // case that has never had a view chosen — the latter falls back to the default view below.
+        if (k) localStorage.setItem(k, view ? view.id : CUSTOM_VIEW_MARKER);
       }
       if (opts.rerender !== false && lastState) render(lastState);
     }
@@ -14570,7 +14577,11 @@
       const k = viewStorageKey();
       if (!k || !DASHBOARD_VIEWS.length) return;
       const id = localStorage.getItem(k);
-      const view = id ? DASHBOARD_VIEWS.find(v => v.id === id) : null;
+      // No key at all = a new case / new install with no preference yet -> default to Analyst.
+      // The CUSTOM_VIEW_MARKER = an explicit "Custom" pick, which stays Custom.
+      const view = id === null
+        ? (DASHBOARD_VIEWS.find(v => v.id === DEFAULT_DASHBOARD_VIEW_ID) || null)
+        : (id === CUSTOM_VIEW_MARKER ? null : DASHBOARD_VIEWS.find(v => v.id === id) || null);
       applyDashboardView(view, { persist: false, rerender: false });
     }
 

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Pinned Findings folded into the Findings panel** — the sticky pinned strip is no longer its own standalone dashboard section; it now sits at the top of the Findings panel itself (removed from the section-visibility list and every built-in dashboard view's section list, since it's part of Findings now).
+- **Analyst is now the default dashboard view** — a new case (or any case with no saved per-case dashboard-view choice) now opens with the curated Analyst layout instead of the raw "Custom" section order; the Analyst view's section list was also reordered to match the app's intended reading order. Explicitly picking "Custom" from the dashboard-view menu still sticks across reloads. A permanent note now sits below all panels pointing to Settings → General → Dashboard sections for further customization.
 
 ### Fixed
 - **Dotted config/artifact identifiers misclassified as domain IOCs** — the free-text and structured-column domain scrapers treated any dot-separated token ending in 2+ letters as a domain, so Velociraptor/DetectRaptor artifact names (`DetectRaptor.Windows.Detection.Amcache`) and JSON/schema field paths (`artifacts.precondition`) polluted the IOC list. Both now require the last label to be a real, commonly-registered TLD.
