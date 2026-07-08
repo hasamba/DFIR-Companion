@@ -5,7 +5,7 @@ import {
 } from "../../src/integrations/timesketch/timesketchMap.js";
 import { scrapeCsrfToken } from "../../src/integrations/timesketch/timesketchClient.js";
 import {
-  pushCaseToTimesketch, type TimesketchClientLike,
+  pushCaseToTimesketch, pushSuperTimelineToTimesketch, type TimesketchClientLike,
 } from "../../src/integrations/timesketch/timesketchPush.js";
 import { emptyState, type InvestigationState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { TimesketchSketchRef, TimesketchTimelineRef } from "../../src/integrations/timesketch/timesketchClient.js";
@@ -161,6 +161,57 @@ describe("pushCaseToTimesketch", () => {
     const res = await pushCaseToTimesketch(m, { sketchName: "Case Beta", state });
     expect(res.events).toBe(0);
     expect(m.uploads).toHaveLength(0);
-    expect(res.warnings.some((w) => w.includes("no forensic events"))).toBe(true);
+    expect(res.warnings.some((w) => w.includes("no events with a parseable timestamp"))).toBe(true);
+  });
+});
+
+describe("pushSuperTimelineToTimesketch", () => {
+  function superEvents(): ForensicEvent[] {
+    return [
+      event({ timestamp: "2026-06-04T08:00:00Z", description: "raw MFT entry", asset: "DC01" }),
+      event({ timestamp: "2026-06-04T08:05:00Z", description: "raw USN entry", asset: "DC01" }),
+    ];
+  }
+
+  it("pushes to a DIFFERENT default timeline name than the forensic push, in the same sketch", async () => {
+    const m = new MockTimesketch();
+    const res = await pushSuperTimelineToTimesketch(m, { sketchName: "Case Alpha", events: superEvents() });
+    expect(res.created).toBe(true);
+    expect(res.sketchId).toBe(1);
+    expect(res.events).toBe(2);
+    expect(res.timelineName).toBe("DFIR Companion super timeline");
+    expect(res.timelineName).not.toBe("DFIR Companion timeline");
+  });
+
+  it("reuses the same sketch as a prior forensic-timeline push without touching that timeline", async () => {
+    const m = new MockTimesketch();
+    // Simulate a prior forensic push: same sketch, forensic timeline already present.
+    m.sketches.push({ id: 42, name: "Case Alpha" });
+    m.timelines.push({ id: 7, name: "DFIR Companion timeline" });
+    const res = await pushSuperTimelineToTimesketch(m, { sketchName: "Case Alpha", events: superEvents() });
+    expect(res.sketchId).toBe(42);       // same sketch
+    expect(res.created).toBe(false);
+    expect(res.replacedTimeline).toBe(false);      // no super timeline existed yet, nothing replaced
+    expect(m.deletedTimelines).not.toContain(7);    // the forensic timeline was left alone
+    expect(m.timelines.some((t) => t.name === "DFIR Companion timeline")).toBe(true); // still there
+  });
+
+  it("clean-replaces its OWN super timeline on re-push, leaving a same-sketch forensic timeline alone", async () => {
+    const m = new MockTimesketch();
+    m.sketches.push({ id: 42, name: "Case Alpha" });
+    m.timelines.push({ id: 7, name: "DFIR Companion timeline" });
+    m.timelines.push({ id: 8, name: "DFIR Companion super timeline" });
+    const res = await pushSuperTimelineToTimesketch(m, { sketchName: "Case Alpha", events: superEvents() });
+    expect(res.replacedTimeline).toBe(true);
+    expect(m.deletedTimelines).toEqual([8]);
+    expect(m.deletedTimelines).not.toContain(7);
+  });
+
+  it("warns and skips the upload when there are no events with a parseable timestamp", async () => {
+    const m = new MockTimesketch();
+    const res = await pushSuperTimelineToTimesketch(m, { sketchName: "Case Beta", events: [event({ timestamp: "bad", description: "x" })] });
+    expect(res.events).toBe(0);
+    expect(m.uploads).toHaveLength(0);
+    expect(res.warnings.some((w) => w.includes("no events with a parseable timestamp"))).toBe(true);
   });
 });
