@@ -15993,9 +15993,12 @@
       };
       // A bucket that never reported cost/tokens makes the total "partial", not wrong —
       // say so rather than silently under-reporting real spend as a clean $ total.
-      const allHaveCost = cost.vision.hasCost && cost.synthesis.hasCost && cost.other.hasCost;
-      const someHaveCost = cost.vision.hasCost || cost.synthesis.hasCost || cost.other.hasCost;
-      const totalNote = someHaveCost && !allHaveCost
+      // Only buckets that actually made calls count toward this check — an unused bucket
+      // (e.g. "Other" on a typical case) isn't a data-reporting gap.
+      const usedBuckets = [cost.vision, cost.synthesis, cost.other].filter(b => b.totalCalls > 0);
+      const someHaveCost = usedBuckets.some(b => b.hasCost);
+      const allHaveCost = usedBuckets.every(b => b.hasCost);
+      const totalNote = usedBuckets.length > 0 && someHaveCost && !allHaveCost
         ? `<div style="font-size:11px;color:#7e8aa0;margin-top:2px">partial — not every bucket's provider reports cost</div>` : "";
       const rows = diagAiCostBucketRow("Vision", cost.vision)
         + diagAiCostBucketRow("Synthesis", cost.synthesis)
