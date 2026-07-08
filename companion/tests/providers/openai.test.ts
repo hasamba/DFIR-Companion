@@ -107,4 +107,31 @@ describe("OpenAIProvider", () => {
     const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o-mini", fetchFn: vi.fn() });
     expect(p.model).toBe("gpt-4o-mini");
   });
+
+  it("populates token usage from the response for every OpenAI-compatible provider", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({
+      choices: [{ message: { content: "{}" } }],
+      usage: { prompt_tokens: 120, completion_tokens: 45 },
+    }));
+    const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
+    const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(result.usage).toEqual({ inputTokens: 120, outputTokens: 45 });
+  });
+
+  it("does not populate costUSD for the plain openai provider name, even if the response has it", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({
+      choices: [{ message: { content: "{}" } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 },
+    }));
+    const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
+    const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(result.usage?.costUSD).toBeUndefined();
+  });
+
+  it("omits usage entirely when the response has none", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
+    const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(result.usage).toBeUndefined();
+  });
 });

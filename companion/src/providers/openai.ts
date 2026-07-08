@@ -1,4 +1,4 @@
-import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, ProviderError, httpErrorKind, httpErrorMessage, requestSignal } from "./provider.js";
+import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, type ProviderUsage, ProviderError, httpErrorKind, httpErrorMessage, requestSignal } from "./provider.js";
 
 type FetchFn = typeof fetch;
 
@@ -103,6 +103,7 @@ export class OpenAIProvider implements AIProvider {
           response_format: { type: "json_object" },
           ...(maxTokens ? { max_tokens: maxTokens } : {}),
           ...this.reasoningBody(req), // Chain-of-Thought hook (#121) — no-op unless a subclass adds it
+          ...(this.name === "openrouter" ? { usage: { include: true } } : {}), // ask OpenRouter for exact per-call cost
           messages: [
             { role: "system", content: req.systemPrompt },
             { role: "user", content },
@@ -120,9 +121,22 @@ export class OpenAIProvider implements AIProvider {
       const body = await res.text().catch(() => "");
       throw new ProviderError(httpErrorMessage(this.label, res.status, body), httpErrorKind(res.status));
     }
-    const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const json = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
+    };
     const text = json.choices?.[0]?.message?.content;
     if (!text) throw new ProviderError(`${this.label} returned no content`, "other");
-    return { rawText: text };
+    const u = json.usage;
+    const usage: ProviderUsage | undefined = u && {
+      ...(u.prompt_tokens !== undefined ? { inputTokens: u.prompt_tokens } : {}),
+      ...(u.completion_tokens !== undefined ? { outputTokens: u.completion_tokens } : {}),
+      // Only OpenRouter (this.name === "openrouter") ever sends `usage.cost` — it's populated by
+      // the `usage: { include: true }` request flag above, which only that branch sends. A plain
+      // OpenAI/Ollama/LiteLLM endpoint that happened to echo a `cost` field is intentionally ignored
+      // here so a $ figure is never shown for a provider that didn't actually price the call.
+      ...(this.name === "openrouter" && u.cost !== undefined ? { costUSD: u.cost } : {}),
+    };
+    return { rawText: text, ...(usage ? { usage } : {}) };
   }
 }
