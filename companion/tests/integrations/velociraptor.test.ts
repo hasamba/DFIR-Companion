@@ -812,6 +812,50 @@ describe("VelociraptorClient.huntUploads", () => {
     const runner: VqlRunner = async () => ({ rows: [], raw: "" });
     await expect(new VelociraptorClient(cfg, runner).huntUploads("bad id")).rejects.toThrow(/invalid hunt id/);
   });
+
+  it("broadens the upload filter beyond .json to common text-report extensions", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).huntUploads("H.UP3");
+    expect(program).toContain("(json|jsonl|ndjson|csv|txt|log)");
+    expect(program).not.toContain("\\.json$'");   // the old json-only filter is gone
+  });
+});
+
+describe("VelociraptorClient.flowUploads", () => {
+  it("reads one flow's upload content and substitutes both client id and flow id into the VQL", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];
+      return { rows: [
+        { ClientId: "C.dead", Path: "C:/t/report.json", Name: "report.json", Content: '{"a":1}' },
+        { ClientId: "C.dead", Path: "C:/t/empty.json", Name: "empty.json", Content: "" },
+      ], raw: "" };
+    };
+    const ups = await new VelociraptorClient(cfg, runner).flowUploads("C.dead", "F.CFF001");
+    expect(program).toContain("client_id='C.dead'");
+    expect(program).toContain("flow_id='F.CFF001'");
+    expect(program).not.toContain("__CLIENT_ID__");
+    expect(program).not.toContain("__FLOW_ID__");
+    expect(ups).toHaveLength(1);   // the empty-content row is dropped
+    expect(ups[0]).toEqual({ name: "report.json", clientId: "C.dead", content: '{"a":1}' });
+  });
+
+  it("uses the configured override VQL (DFIR_VELOCIRAPTOR_FLOW_UPLOAD_VQL) when set", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [], raw: "" }; };
+    await new VelociraptorClient(
+      { ...cfg, flowUploadVql: "SELECT * FROM custom(client='__CLIENT_ID__', flow='__FLOW_ID__')" },
+      runner,
+    ).flowUploads("C.dead", "F.CFF001");
+    expect(program).toBe("SELECT * FROM custom(client='C.dead', flow='F.CFF001')");
+  });
+
+  it("rejects a malformed client id or flow id (no VQL-string injection)", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    await expect(new VelociraptorClient(cfg, runner).flowUploads("bad id", "F.CFF001")).rejects.toThrow(/invalid client id/);
+    await expect(new VelociraptorClient(cfg, runner).flowUploads("C.dead", "bad id")).rejects.toThrow(/invalid flow id/);
+  });
 });
 
 describe("loadVelociraptorConfig / buildVelociraptorClient", () => {

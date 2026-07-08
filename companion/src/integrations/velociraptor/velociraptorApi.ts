@@ -23,6 +23,7 @@ export interface VelociraptorApiConfig {
   guiUrl?: string;         // optional Velociraptor GUI base URL, for deep-linking to a launched hunt
   guiOrg?: string;         // Velociraptor org for the deep link (?org_id=…); default "root" (the GUI requires it)
   uploadVql?: string;      // optional override for the hunt-uploads VQL (DFIR_VELOCIRAPTOR_UPLOAD_VQL); __HUNT_ID__ placeholder
+  flowUploadVql?: string;  // optional override for the flow-uploads VQL (DFIR_VELOCIRAPTOR_FLOW_UPLOAD_VQL); __CLIENT_ID__/__FLOW_ID__ placeholders
   monitorVql?: string;     // optional override for the per-client client-event read VQL (DFIR_VELOCIRAPTOR_MONITOR_VQL); see DEFAULT_MONITOR_VQL
   monitorAllVql?: string;  // optional override for the ALL-clients client-event read VQL (DFIR_VELOCIRAPTOR_MONITOR_ALL_VQL); see DEFAULT_MONITOR_ALL_VQL
   monitoredVql?: string;   // optional override for the "configured client-event artifacts" VQL (DFIR_VELOCIRAPTOR_MONITORED_VQL); see DEFAULT_MONITORED_VQL
@@ -313,15 +314,29 @@ export interface SkippedArtifact {
   error: string;
 }
 
-// Default VQL to enumerate a hunt's uploaded JSON files and read their content server-side. Walks the
-// hunt's flows → each flow's uploads → reads `.json` ones from the filestore (`fs` accessor + the
-// upload's filestore components). __HUNT_ID__ is replaced with the validated hunt id. Override per
-// Velociraptor version with DFIR_VELOCIRAPTOR_UPLOAD_VQL (keep the __HUNT_ID__ placeholder + a
-// Name/ClientId/Content column shape).
+// Extensions treated as a readable text report upload (e.g. THOR's --jsonfile, a CSV/log export).
+// Anything else (a raw .zip, a binary) is invisible to the upload-reading VQLs below — reading those
+// needs server-side unzip, which is out of scope for now. Shared by DEFAULT_UPLOAD_VQL (hunt-scoped)
+// and DEFAULT_FLOW_UPLOAD_VQL (flow-scoped) so the two never drift apart.
+const UPLOAD_EXT_PATTERN = "(?i)\\.(json|jsonl|ndjson|csv|txt|log)$";
+
+// Default VQL to enumerate a hunt's uploaded text-report files and read their content server-side.
+// Walks the hunt's flows → each flow's uploads → reads matching-extension ones from the filestore
+// (`fs` accessor + the upload's filestore components). __HUNT_ID__ is replaced with the validated hunt
+// id. Override per Velociraptor version with DFIR_VELOCIRAPTOR_UPLOAD_VQL (keep the __HUNT_ID__
+// placeholder + a Name/ClientId/Content column shape).
 const DEFAULT_UPLOAD_VQL =
   "LET flows = SELECT Flow.client_id AS ClientId, Flow.session_id AS FlowId FROM hunt_flows(hunt_id='__HUNT_ID__')\n" +
   "LET ups = SELECT * FROM foreach(row=flows, query={ SELECT ClientId, vfs_path AS Path, file_size AS Size, _Components AS Components FROM uploads(client_id=ClientId, flow_id=FlowId) })\n" +
-  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '(?i)\\.json$' AND Size < __MAX_BYTES__ AND Content";
+  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '" + UPLOAD_EXT_PATTERN + "' AND Size < __MAX_BYTES__ AND Content";
+
+// Default VQL to read ONE external flow's uploaded text-report files (content included) — the
+// flow-scoped analogue of DEFAULT_UPLOAD_VQL, needed because hunt_flows(hunt_id=) has no flow-scoped
+// equivalent. __CLIENT_ID__/__FLOW_ID__ are replaced with the validated ids. Override per Velociraptor
+// version with DFIR_VELOCIRAPTOR_FLOW_UPLOAD_VQL (keep both placeholders + the same column shape).
+const DEFAULT_FLOW_UPLOAD_VQL =
+  "LET ups = SELECT '__CLIENT_ID__' AS ClientId, vfs_path AS Path, file_size AS Size, _Components AS Components FROM uploads(client_id='__CLIENT_ID__', flow_id='__FLOW_ID__')\n" +
+  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '" + UPLOAD_EXT_PATTERN + "' AND Size < __MAX_BYTES__ AND Content";
 
 // Default VQL to read a CLIENT_EVENT (monitoring) artifact's rows for one client over a time window
 // (#84). Velociraptor's `source()` plugin reads a client's monitoring result set when given an event
@@ -934,6 +949,35 @@ export class VelociraptorClient {
     }
     return out;
   }
+
+  // Read ONE external flow's uploaded text-report files (content included) — the flow-scoped
+  // analogue of huntUploads(), for a flow that isn't part of a hunt (no hunt_flows() to walk). Same
+  // best-effort contract: the caller tolerates a throw and treats it as "no uploads found this way".
+  // Override the VQL with DFIR_VELOCIRAPTOR_FLOW_UPLOAD_VQL. clientId/flowId are CLIENT_RE/FLOW_RE-
+  // validated before substitution, so interpolating them into the program is injection-safe.
+  async flowUploads(clientId: string, flowId: string): Promise<HuntUpload[]> {
+    if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
+    if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
+    const cap = this.collectCap();
+    const template = this.config.flowUploadVql && this.config.flowUploadVql.trim() ? this.config.flowUploadVql : DEFAULT_FLOW_UPLOAD_VQL;
+    const program = template
+      .split("__CLIENT_ID__").join(clientId)
+      .split("__FLOW_ID__").join(flowId)
+      .split("__MAX_BYTES__").join(String(cap));
+    const rows = await this.runRaw(program, cap);
+    const out: HuntUpload[] = [];
+    for (const row of rows) {
+      const r = row as { Name?: unknown; ClientId?: unknown; Content?: unknown; Path?: unknown };
+      const content = typeof r.Content === "string" ? r.Content : "";
+      if (!content.trim()) continue;
+      out.push({
+        name: String(r.Name ?? r.Path ?? "upload.json"),
+        clientId: String(r.ClientId ?? clientId),
+        content,
+      });
+    }
+    return out;
+  }
 }
 
 // Build a config from env, or null when not configured (DFIR_VELOCIRAPTOR_API_CONFIG unset).
@@ -950,6 +994,7 @@ export function loadVelociraptorConfig(env: NodeJS.ProcessEnv = process.env): Ve
     guiUrl: env.DFIR_VELOCIRAPTOR_GUI_URL?.trim() || undefined,
     guiOrg: env.DFIR_VELOCIRAPTOR_ORG?.trim() || "root",
     uploadVql: env.DFIR_VELOCIRAPTOR_UPLOAD_VQL?.trim() || undefined,
+    flowUploadVql: env.DFIR_VELOCIRAPTOR_FLOW_UPLOAD_VQL?.trim() || undefined,
     monitorVql: env.DFIR_VELOCIRAPTOR_MONITOR_VQL?.trim() || undefined,
     monitorAllVql: env.DFIR_VELOCIRAPTOR_MONITOR_ALL_VQL?.trim() || undefined,
     monitoredVql: env.DFIR_VELOCIRAPTOR_MONITORED_VQL?.trim() || undefined,

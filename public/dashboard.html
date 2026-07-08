@@ -2294,7 +2294,7 @@
             <button id="veloExtGo">Import</button>
           </div>
           <div id="veloExtMsg" style="font-size:12px;color:var(--c-9aa4b2);margin-top:4px"></div>
-          <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:2px">Reads the flow/hunt's complete collected rows. Upload-only artifacts (THOR/Hayabusa JSON reports) aren't read by this path yet. A <strong>notebook</strong> URL (analyst-filtered VQL results) is rejected — use the DFIR Companion browser extension's "Push rows" button from that notebook page instead, which imports exactly what it shows.</div>
+          <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:2px">Reads the flow/hunt's complete collected rows. For upload-only artifacts (THOR/Hayabusa reports), paste the GUI's <strong>Uploaded Files</strong> tab URL instead to import just the uploaded report (rows are skipped). A <strong>notebook</strong> URL (analyst-filtered VQL results) is rejected — use the DFIR Companion browser extension's "Push rows" button from that notebook page instead, which imports exactly what it shows.</div>
         </div>
 
         <details id="veloBuilder" style="border:1px solid var(--c-2a3146);border-radius:6px;padding:10px;background:var(--c-161b28)">
@@ -7137,6 +7137,15 @@
         .then(({ ok, j }) => {
           if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }
           const where = j.kind === "flow" ? `Flow ${esc(j.flowId)} on host ${esc(j.hostname || j.clientId)}` : `Hunt ${esc(j.huntId)}`;
+          if (j.uploadsOnly) {
+            // Uploads-only path (analyst pasted the GUI's Uploaded Files tab URL) — reports imported/
+            // skipped FILE counts, not artifact counts, since rows were never fetched on this path.
+            const counts = `+${j.addedEvents||0} events, +${j.addedIocs||0} IOCs`;
+            const files = `imported ${(j.imported||[]).length} file(s)` + ((j.skipped||[]).length ? `, skipped ${j.skipped.length}` : "");
+            msg.innerHTML = `${where} (uploaded files) — ${files}, ${counts}` + (j.note ? ` (${esc(j.note)})` : "");
+            loadVeloHuntJobs(caseId);
+            return;
+          }
           const dest = j.superTimelineOnly ? " → super-timeline" : "";
           // Super-only imports report their super-timeline event count and never add main-list IOCs, so
           // the "+IOCs" suffix (always 0 there) is dropped to avoid the misleading "+0 IOCs".

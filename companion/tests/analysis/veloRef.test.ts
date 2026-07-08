@@ -33,6 +33,15 @@ describe("parseVeloRef", () => {
     expect(parseVeloRef("https://velo:8889/app/index.html?org_id=root#/collected/C.deadbeef/F.CFF001/overview"))
       .toEqual({ kind: "flow", clientId: "C.deadbeef", flowId: "F.CFF001" });
   });
+  it("flags an uploads-tab URL (hunt and flow), leaving other tabs unflagged", () => {
+    expect(parseVeloRef("https://velo:8889/app/index.html?org_id=root#/collected/C.deadbeef/F.CFF001/uploads"))
+      .toEqual({ kind: "flow", clientId: "C.deadbeef", flowId: "F.CFF001", isUploadsUrl: true });
+    expect(parseVeloRef("https://velo:8889/app/index.html?org_id=root#/hunts/H.CABC123/uploads"))
+      .toEqual({ kind: "hunt", huntId: "H.CABC123", isUploadsUrl: true });
+    // A plain overview/results URL (no /uploads segment) is NOT flagged.
+    expect(parseVeloRef("https://velo:8889/app/index.html?org_id=root#/collected/C.deadbeef/F.CFF001/overview"))
+      .toEqual({ kind: "flow", clientId: "C.deadbeef", flowId: "F.CFF001" });
+  });
 
   it("returns null for junk / an id missing its partner", () => {
     expect(parseVeloRef("")).toBeNull();
