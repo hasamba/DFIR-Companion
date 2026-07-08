@@ -75,6 +75,25 @@ describe("getDiskStats", () => {
     const stats = await getDiskStats("/fake-path", { statfs: mockStatfs });
     expect(stats.usedPct).toBe(0);
   });
+
+  it("returns zeros instead of throwing when the path doesn't exist yet (fresh install)", async () => {
+    const mockStatfs = async (p: string) => {
+      const err = new Error(`ENOENT: no such file or directory, statfs '${p}'`) as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    };
+    const stats = await getDiskStats("/missing-cases-dir", { statfs: mockStatfs });
+    expect(stats).toEqual({ totalBytes: 0, freeBytes: 0, usedPct: 0 });
+  });
+
+  it("rethrows non-ENOENT errors", async () => {
+    const mockStatfs = async (_p: string) => {
+      const err = new Error("EACCES: permission denied") as NodeJS.ErrnoException;
+      err.code = "EACCES";
+      throw err;
+    };
+    await expect(getDiskStats("/no-access", { statfs: mockStatfs })).rejects.toThrow("EACCES");
+  });
 });
 
 describe("diskWarnEnvThresholds", () => {
