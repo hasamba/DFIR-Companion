@@ -13,9 +13,11 @@ export interface GeminiOptions {
 
 export class GeminiProvider implements AIProvider {
   readonly name = "gemini";
+  readonly model: string;
   private readonly fetchFn: FetchFn;
   private readonly baseUrl: string;
   constructor(private readonly opts: GeminiOptions) {
+    this.model = opts.model;
     this.fetchFn = opts.fetchFn ?? fetch;
     this.baseUrl = opts.baseUrl ?? "https://generativelanguage.googleapis.com/v1beta";
   }

@@ -324,4 +324,22 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/function renderVeloHuntSuggest[\s\S]{0,2000}citeFindings\(s\.relatedFindingIds\)/);
     expect(html).toMatch(/citeFindings\(s\.relatedFindingIds\)[\s\S]{0,1200}class="vhs-card"/);
   });
+
+  it("shows a per-case AI cost breakdown card in Settings → Diagnostics, fetched alongside /diagnostics", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // Helper functions for formatting cost/tokens and rendering the card.
+    expect(html).toContain("function diagFmtCost(");
+    expect(html).toContain("function diagAiCostBucketRow(");
+    expect(html).toContain("function renderAiCostCard(");
+    expect(html).toContain('diagCard("AI cost — this case", rows)');
+    // loadDiagnostics fetches /cases/:id/ai-cost in parallel with /diagnostics, scoped to the
+    // currently-connected case, and passes it into renderDiagnostics for placement.
+    expect(html).toMatch(/function loadDiagnostics\(\)[\s\S]{0,600}\/cases\/\$\{encodeURIComponent\(caseId\)\}\/ai-cost/);
+    expect(html).toMatch(/function loadDiagnostics\(\)[\s\S]{0,900}Promise\.all\(\[diagFetch, costFetch\]\)/);
+    expect(html).toMatch(/renderDiagnostics\(j\.report, cost\)/);
+    // Empty caseId must not attempt a fetch to a malformed URL — costFetch resolves to null instead.
+    expect(html).toMatch(/const costFetch = caseId\s*\n\s*\? fetch/);
+    // The card renders directly after "AI connectivity & config", not at the end of the panel.
+    expect(html).toMatch(/function renderDiagnostics\(report, cost\)[\s\S]*aiCard \+ renderAiCostCard\(cost\) \+ importers/);
+  });
 });

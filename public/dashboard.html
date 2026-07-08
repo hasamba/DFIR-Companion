@@ -16176,6 +16176,52 @@
       const h = Math.floor(m / 60); if (h < 24) return h + "h";
       return Math.floor(h / 24) + "d";
     }
+    function diagFmtCost(usd) {
+      if (usd == null || !isFinite(usd)) return "n/a";
+      return "$" + usd.toFixed(usd < 1 ? 4 : 2);
+    }
+    function diagAiCostBucketRow(label, bucket) {
+      const costText = bucket.hasCost ? diagFmtCost(bucket.totalCostUSD) : "n/a";
+      const tokText = bucket.hasTokens
+        ? `${bucket.totalInputTokens.toLocaleString()} in / ${bucket.totalOutputTokens.toLocaleString()} out`
+        : "n/a";
+      const models = Object.entries(bucket.byModel);
+      const modelRows = models.length
+        ? `<details style="margin:2px 0 4px 12px"><summary style="cursor:pointer;color:#6aa9ff;font-size:11.5px">${models.length} model(s)</summary>` +
+          models.map(([key, m]) => `<div style="font-size:11.5px;color:#9aa4b2;margin:2px 0 2px 8px;font-family:monospace">
+            ${esc(key)} — ${m.calls} call(s), ${m.hasCost ? diagFmtCost(m.costUSD) : "n/a"}, ${m.hasTokens ? `${m.inputTokens.toLocaleString()}/${m.outputTokens.toLocaleString()} tok` : "n/a tok"}
+          </div>`).join("") + `</details>`
+        : "";
+      return diagRow(esc(label), `${bucket.totalCalls} call(s) · ${costText} · ${tokText}`) + modelRows;
+    }
+    function renderAiCostCard(cost) {
+      if (!cost) return "";
+      const total = {
+        totalCalls: cost.vision.totalCalls + cost.synthesis.totalCalls + cost.other.totalCalls,
+        totalCostUSD: cost.vision.totalCostUSD + cost.synthesis.totalCostUSD + cost.other.totalCostUSD,
+        hasCost: cost.vision.hasCost || cost.synthesis.hasCost || cost.other.hasCost,
+        totalInputTokens: cost.vision.totalInputTokens + cost.synthesis.totalInputTokens + cost.other.totalInputTokens,
+        totalOutputTokens: cost.vision.totalOutputTokens + cost.synthesis.totalOutputTokens + cost.other.totalOutputTokens,
+        hasTokens: cost.vision.hasTokens || cost.synthesis.hasTokens || cost.other.hasTokens,
+        byModel: {},
+      };
+      // A bucket that never reported cost/tokens makes the total "partial", not wrong —
+      // say so rather than silently under-reporting real spend as a clean $ total.
+      // Only buckets that actually made calls count toward this check — an unused bucket
+      // (e.g. "Other" on a typical case) isn't a data-reporting gap.
+      const usedBuckets = [cost.vision, cost.synthesis, cost.other].filter(b => b.totalCalls > 0);
+      const someHaveCost = usedBuckets.some(b => b.hasCost);
+      const allHaveCost = usedBuckets.every(b => b.hasCost);
+      const totalNote = usedBuckets.length > 0 && someHaveCost && !allHaveCost
+        ? `<div style="font-size:11px;color:#7e8aa0;margin-top:2px">partial — not every bucket's provider reports cost</div>` : "";
+      const rows = diagAiCostBucketRow("Vision", cost.vision)
+        + diagAiCostBucketRow("Synthesis", cost.synthesis)
+        + diagAiCostBucketRow("Other", cost.other)
+        + `<div style="border-top:1px solid var(--c-2a2f3a);margin-top:6px;padding-top:6px">`
+        + diagRow("Total", `${total.totalCalls} call(s) · ${total.hasCost ? diagFmtCost(total.totalCostUSD) : "n/a"} · ${total.hasTokens ? `${total.totalInputTokens.toLocaleString()} in / ${total.totalOutputTokens.toLocaleString()} out` : "n/a"}`)
+        + totalNote + `</div>`;
+      return diagCard("AI cost — this case", rows);
+    }
     const DIAG_LEVEL_COLOR = { none: "#5ad17a", warning: "#ffce8a", danger: "#ffb05a", critical: "#ff5a5a" };
     function diagCard(title, rows) {
       return `<div style="background:var(--c-1a1f29,#1a1f29);border:1px solid var(--c-2a2f3a);border-radius:8px;padding:10px 12px;margin-bottom:10px">
@@ -16186,7 +16232,7 @@
         <span style="color:#9aa4b2">${esc(label)}</span>
         <span style="text-align:right${color ? `;color:${color}` : ""}">${value}</span></div>`;
     }
-    function renderDiagnostics(report) {
+    function renderDiagnostics(report, cost) {
       const d = report.disk;
       const lvlColor = DIAG_LEVEL_COLOR[d.level] || "#cbd3df";
       const disk = diagCard("Disk", [
@@ -16255,7 +16301,7 @@
         ].join(""));
       }
       const footer = `<div style="font-size:11px;color:#7e8aa0;margin-top:4px">generated ${esc((report.generatedAt || "").replace("T", " ").slice(0, 19))} · uptime ${diagFmtAge(report.uptimeMs)}</div>`;
-      return disk + cases + queue + aiCard + importers + backupsCard + `<div id="diagSizes"></div>` + footer;
+      return disk + cases + queue + aiCard + renderAiCostCard(cost) + importers + backupsCard + `<div id="diagSizes"></div>` + footer;
     }
     // Pre-flight status panel inside Settings → Diagnostics (#179).
     function renderPreflightStatus(report) {
@@ -16292,10 +16338,16 @@
       const msg = document.getElementById("diagMsg");
       if (msg) msg.textContent = "";
       body.textContent = "Loading…";
-      fetch("/diagnostics").then(r => r.json()).then(j => {
+      const caseIdEl = document.getElementById("caseId");
+      const caseId = caseIdEl ? caseIdEl.value.trim() : "";
+      const diagFetch = fetch("/diagnostics").then(r => r.json());
+      const costFetch = caseId
+        ? fetch(`/cases/${encodeURIComponent(caseId)}/ai-cost`).then(r => r.ok ? r.json() : null).catch(() => null)
+        : Promise.resolve(null);
+      Promise.all([diagFetch, costFetch]).then(([j, cost]) => {
         if (!j.report) throw new Error(j.error || "no report");
         diagCopyText = j.text || "";
-        body.innerHTML = renderDiagnostics(j.report);
+        body.innerHTML = renderDiagnostics(j.report, cost);
       }).catch(e => { body.textContent = "Could not load diagnostics: " + e.message + " — restart the companion server if this 404s."; });
     }
     function diagAiTest() {

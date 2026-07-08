@@ -18,10 +18,12 @@ export interface AnthropicOptions {
 
 export class AnthropicProvider implements AIProvider {
   readonly name = "anthropic";
+  readonly model: string;
   private readonly fetchFn: FetchFn;
   private readonly baseUrl: string;
 
   constructor(private readonly opts: AnthropicOptions) {
+    this.model = opts.model;
     this.fetchFn = opts.fetchFn ?? fetch;
     this.baseUrl = opts.baseUrl ?? "https://api.anthropic.com/v1";
   }

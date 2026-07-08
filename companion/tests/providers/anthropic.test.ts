@@ -121,4 +121,9 @@ describe("AnthropicProvider", () => {
     await expect(p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }))
       .rejects.toMatchObject({ kind: "rate_limit" } as Partial<ProviderError>);
   });
+
+  it("exposes the configured model", () => {
+    const p = new AnthropicProvider({ apiKey: "k", model: "claude-sonnet-4-6", fetchFn: vi.fn() });
+    expect(p.model).toBe("claude-sonnet-4-6");
+  });
 });

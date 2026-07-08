@@ -24,6 +24,7 @@ export interface ProviderUsage {
   outputTokens?: number;
   cacheCreationTokens?: number; // input tokens written to the cache on this call
   cacheReadTokens?: number;     // input tokens served from the cache on this call
+  costUSD?: number;             // real dollar cost, when the provider reports one (OpenRouter only today)
 }
 
 export interface AnalyzeResult {
@@ -84,6 +85,7 @@ export function requestSignal(timeoutMs: number, external?: AbortSignal): AbortS
 
 export interface AIProvider {
   readonly name: string;
+  readonly model: string;
   analyze(req: AnalyzeRequest): Promise<AnalyzeResult>;
 }
 
@@ -100,7 +102,7 @@ export class ProviderRegistry {
 }
 
 export class MockProvider implements AIProvider {
-  constructor(readonly name: string, private readonly canned: string) {}
+  constructor(readonly name: string, private readonly canned: string, readonly model: string = "mock-model") {}
   async analyze(_req: AnalyzeRequest): Promise<AnalyzeResult> {
     return { rawText: this.canned };
   }
