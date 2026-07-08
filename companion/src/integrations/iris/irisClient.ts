@@ -107,7 +107,7 @@ export class IrisClient {
       "GET", `/manage/cases/filter?case_name=${encodeURIComponent(name)}`,
     );
     const cases = data.cases ?? [];
-    const exact = cases.find((c) => String(c.case_name ?? "").toLowerCase() === name.toLowerCase()) ?? cases[0];
+    const exact = cases.find((c) => String(c.case_name ?? "").toLowerCase() === name.toLowerCase());
     if (!exact) return null;
     return { caseId: Number(exact.case_id), caseName: String(exact.case_name ?? name) };
   }

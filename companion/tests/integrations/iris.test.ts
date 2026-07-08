@@ -389,3 +389,25 @@ describe("IrisClient read endpoints", () => {
     expect(urls[2]).toBe("https://iris.test/case/ioc/list?cid=7");
   });
 });
+
+describe("IrisClient.findCaseByName", () => {
+  it("returns null when no case matches exactly — does NOT fall back to the first result", async () => {
+    const urls: string[] = [];
+    const client = new IrisClient({
+      baseUrl: "https://iris.test", apiKey: "k",
+      fetchFn: fakeFetch({ cases: [{ case_id: 1, case_name: "Case #1" }, { case_id: 2, case_name: "Other Case" }] }, urls),
+    });
+    const found = await client.findCaseByName("acme-breach-2026");
+    expect(found).toBeNull();
+  });
+
+  it("returns the exact case-insensitive match when one exists", async () => {
+    const urls: string[] = [];
+    const client = new IrisClient({
+      baseUrl: "https://iris.test", apiKey: "k",
+      fetchFn: fakeFetch({ cases: [{ case_id: 1, case_name: "Case #1" }, { case_id: 2, case_name: "Acme-Breach-2026" }] }, urls),
+    });
+    const found = await client.findCaseByName("acme-breach-2026");
+    expect(found).toEqual({ caseId: 2, caseName: "Acme-Breach-2026" });
+  });
+});
