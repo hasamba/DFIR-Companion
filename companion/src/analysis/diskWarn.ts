@@ -51,7 +51,17 @@ export interface DiskStatsDeps {
 }
 
 export async function getDiskStats(path: string, deps: DiskStatsDeps = {}): Promise<DiskStats> {
-  const s = deps.statfs ? await deps.statfs(path) : await statfs(path);
+  let s: { blocks: number; bfree: number; bsize: number };
+  try {
+    s = deps.statfs ? await deps.statfs(path) : await statfs(path);
+  } catch (err) {
+    // Cases dir may not exist yet (fresh install / fresh worktree) — report 0 usage
+    // rather than failing the whole endpoint.
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { totalBytes: 0, freeBytes: 0, usedPct: 0 };
+    }
+    throw err;
+  }
   const totalBytes = s.blocks * s.bsize;
   const freeBytes = s.bfree * s.bsize;
   const usedPct = totalBytes > 0 ? ((totalBytes - freeBytes) / totalBytes) * 100 : 0;
