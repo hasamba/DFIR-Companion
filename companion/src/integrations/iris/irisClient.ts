@@ -101,7 +101,8 @@ export class IrisClient {
   // ---- cases ---------------------------------------------------------------
 
   // Find a case by EXACT name (the filter does a substring match server-side, so we
-  // narrow to an exact, case-insensitive match here). Returns the first match or null.
+  // narrow to an exact, case-insensitive match here). Returns null if no case's name
+  // matches exactly — never falls back to an unrelated case from the filter results.
   async findCaseByName(name: string): Promise<IrisCaseRef | null> {
     const data = await this.request<{ cases?: Array<Record<string, unknown>> }>(
       "GET", `/manage/cases/filter?case_name=${encodeURIComponent(name)}`,
