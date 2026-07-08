@@ -235,6 +235,24 @@ describe("backfillSilenceGapFindings", () => {
     expect(f.id).toBe("f-gap-a9-b0");
   });
 
+  it("back-links the finding onto its bounding events, so scope filtering can identify it as out of scope", () => {
+    // Same as the previous test, but this time the state carries the actual timeline (the way the
+    // pipeline calls it), so relatedFindingIds on the bounding events can be asserted.
+    const before = series("a", "EventLog", "2026-05-20T08:00:00Z", 60, 10);
+    const after = series("b", "EventLog", "2026-05-20T10:09:00Z", 60, 5);
+    const timeline = [...before, ...after];
+    const gaps = detectTimelineGaps(timeline);
+    const state: InvestigationState = { ...emptyState("c1"), forensicTimeline: timeline };
+    const next = backfillSilenceGapFindings(state, gaps, "2026-05-20T12:00:00Z");
+    const findingId = next.findings[0].id;
+    const beforeEvent = next.forensicTimeline.find((e) => e.id === "a9")!;
+    const afterEvent = next.forensicTimeline.find((e) => e.id === "b0")!;
+    expect(beforeEvent.relatedFindingIds).toContain(findingId);
+    expect(afterEvent.relatedFindingIds).toContain(findingId);
+    // Unrelated events elsewhere on the timeline are untouched.
+    expect(next.forensicTimeline.find((e) => e.id === "a0")!.relatedFindingIds).toEqual([]);
+  });
+
   it("is idempotent — re-running over the same gaps does not duplicate findings", () => {
     const before = series("a", "EventLog", "2026-05-20T08:00:00Z", 60, 10);
     const after = series("b", "EventLog", "2026-05-20T10:09:00Z", 60, 5);

@@ -376,6 +376,12 @@ export function backfillSilenceGapFindings(
   const cap = Math.max(0, Math.floor(maxFindings));
   const existingIds = new Set(state.findings.map((f) => f.id));
   const newFindings: Finding[] = [];
+  // Back-link each gap finding to the two events that bound it, mirroring backfillHighSeverityFindings.
+  // Without this, the dashboard's client-side scope projection (which drops a finding only when it's
+  // backed EXCLUSIVELY by out-of-scope events, keeping anything unlinked under "can't prove out of
+  // scope") can never identify a gap finding as out of scope — it would survive every scope change
+  // until the next AI re-synthesis, however far outside the analyst's chosen window it falls.
+  const linkByEvent = new Map<string, string[]>();
   // `gaps` is sorted worst-first, so the complete gaps stream out longest-first — keep the worst `cap`.
   for (const gap of gaps) {
     if (!gap.complete) continue;
@@ -406,7 +412,20 @@ export function backfillSilenceGapFindings(
       lastUpdated: timestamp,
       status: "open",
     });
+    for (const eid of [gap.beforeEventId, gap.afterEventId]) {
+      const arr = linkByEvent.get(eid) ?? [];
+      arr.push(id);
+      linkByEvent.set(eid, arr);
+    }
   }
   if (newFindings.length === 0) return state;
-  return { ...state, findings: [...state.findings, ...newFindings] };
+  return {
+    ...state,
+    findings: [...state.findings, ...newFindings],
+    forensicTimeline: state.forensicTimeline.map((e) =>
+      linkByEvent.has(e.id)
+        ? { ...e, relatedFindingIds: [...e.relatedFindingIds, ...linkByEvent.get(e.id)!] }
+        : e,
+    ),
+  };
 }

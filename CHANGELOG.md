@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Timesketch export (Super Timeline)** — push or download the full super-timeline (forensic timeline + raw host-triage artifacts) to/from Timesketch, alongside the existing Timesketch export (Forensic Timeline); both existing options were relabeled for clarity and both push into the same sketch under separate timelines so neither clobbers the other.
 
 ### Fixed
+- **Timeline coverage-gap findings survived a case scope change** — they were never back-linked to the two events bounding the silence, so the dashboard's client-side scope filter (which drops a finding only when it's provably backed by out-of-scope events) could never tell a gap finding was out of scope and kept showing it, however far outside the analyst's chosen window, until the next full AI re-synthesis. Gap findings are now linked to their bounding events like every other backfilled finding.
 - **Structured hostname/fqdn/domain columns** (e.g. a JSON/CSV field literally named `Hostname`) now skip internal zones (`.lan`/`.local`/`.corp`/etc.) the same way free-text scraping already did, instead of creating a domain IOC for every client hostname.
 - **Cited-event badges (`[1]`, `[2]`…) couldn't be right-clicked to open in a new tab/window** — they now carry a real deep link (`?caseId=...#event=...`), so right-click/middle-click/Ctrl-click all work; opening the link reloads the case and jumps straight to the cited event.
 
