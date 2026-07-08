@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Timeline coverage-gap findings survived a case scope change** — they were never back-linked to the two events bounding the silence, so the dashboard's client-side scope filter (which drops a finding only when it's provably backed by out-of-scope events) could never tell a gap finding was out of scope and kept showing it, however far outside the analyst's chosen window, until the next full AI re-synthesis. Gap findings are now linked to their bounding events like every other backfilled finding.
 - **Structured hostname/fqdn/domain columns** (e.g. a JSON/CSV field literally named `Hostname`) now skip internal zones (`.lan`/`.local`/`.corp`/etc.) the same way free-text scraping already did, instead of creating a domain IOC for every client hostname.
 - **Cited-event badges (`[1]`, `[2]`…) couldn't be right-clicked to open in a new tab/window** — they now carry a real deep link (`?caseId=...#event=...`), so right-click/middle-click/Ctrl-click all work; opening the link reloads the case and jumps straight to the cited event.
+- **Timesketch push failures logged an unhelpful bare `fetch failed`** — Node's `fetch()` hides the real network reason (e.g. `ECONNREFUSED`, `ENOTFOUND`, a TLS error) behind a generic message; the Timesketch client now walks the error's `.cause` chain so the actual reason is surfaced in the log and API response.
 
 ## [0.30.0] - 2026-07-07
 
