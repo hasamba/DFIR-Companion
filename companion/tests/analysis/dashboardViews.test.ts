@@ -44,10 +44,46 @@ describe("dashboardViews — seed integrity", () => {
     }
   });
 
-  it("Analyst shows every section (the densest view)", () => {
+  it("Analyst is the densest view and the default for new cases, in the app's curated order", () => {
     const analyst = getDashboardView("analyst");
     expect(analyst).toBeDefined();
-    expect(new Set(analyst!.sections)).toEqual(sectionIds);
+    // Curated to match the default onboarding layout — excludes the handful of sections that are
+    // opt-in/secondary (Query Translator, Recommended Next Steps, Investigation Log, Activity
+    // Log). Everything else is shown, in the app's canonical reading order.
+    const excluded = ["sec-nlquery", "sec-next-steps", "sec-inv-log", "sec-activity"];
+    for (const id of excluded) {
+      expect(analyst!.sections.includes(id), `analyst excludes ${id}`).toBe(false);
+    }
+    expect(analyst!.sections).toEqual([
+      "sec-ask",
+      "sec-exec",
+      "sec-narrative",
+      "sec-findings",
+      "sec-timeline",
+      "sec-super-timeline",
+      "sec-iocs",
+      "sec-playbook",
+      "sec-attack-path",
+      "sec-kill-chain",
+      "sec-phases",
+      "sec-hostranking",
+      "sec-gaps",
+      "sec-swimlane",
+      "sec-assets",
+      "sec-evidence",
+      "sec-beacons",
+      "sec-anomalies",
+      "sec-exposure",
+      "sec-questions",
+      "sec-threads",
+      "sec-mitre",
+      "sec-adversary",
+      "sec-d3fend",
+      "sec-false-positive",
+      "sec-hypotheses",
+      "sec-notebook",
+      "sec-case-details",
+    ]);
   });
 
   it("Lead and Executive filter to High+ severity; Executive caps to a top-N", () => {

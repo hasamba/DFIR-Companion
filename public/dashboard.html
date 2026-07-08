@@ -621,13 +621,16 @@
     .tag-add { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-9aa4b2); border-radius: 10px;
       padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .tag-add:hover { color: var(--c-ffd93b); border-color: var(--c-ffd93b); }
-    /* Pinned findings (#220): pin toggle on each finding card + the sticky top strip. */
+    /* Pinned findings (#220): pin toggle on each finding card + the sticky strip at the top of
+       the Findings panel (folded into that panel, not a standalone section). */
     .pin-btn { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-9aa4b2); border-radius: 10px;
       padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .pin-btn:hover { color: var(--c-ffd93b); border-color: var(--c-ffd93b); }
     .pin-btn.pinned { color: var(--c-ffd93b); border-color: var(--c-4a3f1a); background: var(--c-241f10); }
-    /* The strip stays visible while scrolling the timeline/graph — a sticky, capped, curated list. */
-    #sec-pinned.pinned-strip { position: sticky; top: 0; z-index: 6; }
+    /* The strip stays visible while scrolling a long findings list — a sticky, capped, curated list. */
+    .pinned-strip { position: sticky; top: 0; z-index: 6; background: var(--c-161b22); margin: 0 0 10px; }
+    .pinned-strip-head { display: flex; align-items: baseline; gap: 6px; font-size: 12px; font-weight: 600;
+      color: var(--c-9aa4b2); margin: 0 0 6px; }
     .pinned-list { display: flex; flex-direction: column; gap: 4px; }
     /* touch-action:none so a touchpad/touchscreen drag reorders instead of scrolling the page
        (otherwise the browser fires pointercancel and the drag never runs). */
@@ -1535,6 +1538,23 @@
       </div>
     </div>
   </div>
+  <div id="irisPushOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Push to DFIR-IRIS</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        Finds an IRIS case with this exact name, or creates one. Re-pushing with the same name
+        <strong>updates</strong> that case instead of creating a duplicate — the name you use here
+        is remembered for next time.</p>
+      <label style="display:block; font-size:13px; margin:6px 0">IRIS case name
+        <input id="irisPushCaseName" style="width:100%; box-sizing:border-box; padding:5px; margin-top:4px;" />
+      </label>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="irisPushBtn">Push</button>
+        <button id="irisPushCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="irisPushMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
   <div id="importCaseOverlay" class="comment-overlay">
     <div class="comment-modal">
       <h3>Import case</h3>
@@ -2199,7 +2219,7 @@
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_IRIS_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_IRIS_INSECURE" placeholder="false" /></div>
         </div>
         <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
-          <button id="irisReconnectBtn" type="button" data-tip="Re-read the IRIS settings from .env, rebuild the client, and test the connection — applies a saved URL/key (or IRIS coming back online) WITHOUT restarting the server. Save settings first.">Test / reconnect</button>
+          <button id="irisReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the IRIS settings, rebuilds the client, and tests the connection — applies WITHOUT restarting the server.">Test / reconnect</button>
           <span id="irisReconnectMsg" style="font-size:12px; color:var(--c-9aa4b2);"></span>
         </div>
         <div class="settings-group-head">Timesketch</div>
@@ -3163,8 +3183,7 @@
     <section id="sec-next-steps" style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2>Narrative Timeline<button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
-    <section id="sec-pinned" style="grid-column: 1 / -1" class="pinned-strip"><h2>📌 Pinned Findings<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></h2><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></section>
-    <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div>
+    <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="pinnedStrip" class="pinned-strip"><div class="pinned-strip-head">📌 Pinned<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></div><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></div><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div>
       <div class="finding-bulk-bar" id="findingBulkBar"><span id="findingBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="finding-bulk-btn" id="findingBulkTagBtn" title="Add a tag to all selected findings">🏷 Modify Tags</button> <button class="finding-bulk-btn" id="findingBulkFpBtn" title="Mark all selected findings as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="finding-bulk-btn" id="findingBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div id="findings">—</div></section>
     <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" style="display:none" title="Show or hide events by origin (the artifact that produced them)" onclick="event.stopPropagation()"><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" onclick="event.stopPropagation()"><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
@@ -3813,6 +3832,9 @@
       </div>
     </section>
   </main>
+  <footer style="padding:14px 16px 28px; text-align:center; color:var(--c-9aa4b2); font-size:12px; border-top:1px solid var(--c-2a2f3a); margin-top:8px;">
+    That's every panel for this layout — refresh to pick up new data. More panels can be shown, hidden, or reordered from Settings → General → Dashboard sections.
+  </footer>
   <!-- Lifecycle dropdown — lives outside toolbarMain so it never triggers the fitToolbar
        MutationObserver. Positioned via JS (position:fixed). Must be before the script. -->
   <div id="lifecycleMenu" style="display:none;position:fixed;background:var(--c-161b22);border:1px solid var(--c-30363d);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:9999;min-width:180px;">
@@ -3864,6 +3886,8 @@
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views
     let activeView = null;                     // the currently-applied view (null = Custom / no preset)
+    const DEFAULT_DASHBOARD_VIEW_ID = "analyst"; // new installs / cases with no saved preference start here
+    const CUSTOM_VIEW_MARKER = "__custom__";     // persisted when Custom is explicitly chosen (vs. never chosen)
     let ws = null;
     let countTimer = null;
     let countUpdate = null;   // current capture-count poll fn (set by pollCount)
@@ -5075,7 +5099,7 @@
     // Briefly show a message in the strip header (e.g. the cap-reached notice), then restore the count.
     let pinMsgTimer = null;
     function flashPinMsg(text) {
-      const sec = document.getElementById("sec-pinned");
+      const sec = document.getElementById("sec-findings");
       if (sec) sec.classList.remove("collapsed");   // make sure the strip is visible to read it
       const countEl = document.getElementById("pinnedCount");
       if (!countEl) return;
@@ -7023,12 +7047,20 @@
         .catch(e => { if (msg) msg.textContent = "error: " + e.message; })
         .finally(() => { if (btn) btn.disabled = false; });
     }
-    // Re-read .env, rebuild the Velociraptor client, and refresh the inventory (the reachability probe).
-    // Works even when the API wasn't configured at boot or the server was down — no companion restart.
-    function doVeloReconnect() {
+    // Save any unsaved field edits, then re-read .env, rebuild the Velociraptor client, and refresh
+    // the inventory (the reachability probe). Works even when the API wasn't configured at boot or
+    // the server was down — no companion restart.
+    async function doVeloReconnect() {
       const btn = document.getElementById("veloReconnectBtn");
       const msg = document.getElementById("veloClientsMsg");
       if (btn) btn.disabled = true;
+      if (msg) msg.textContent = "saving…";
+      const saved = await saveSettings();
+      if (!saved) {
+        if (msg) msg.textContent = "save failed — fix the error above and retry";
+        if (btn) btn.disabled = false;
+        return;
+      }
       if (msg) msg.textContent = "reconnecting to the Velociraptor server…";
       fetch("/velociraptor/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
         .then(r => r.json().then(j => ({ ok: r.ok, j })))
@@ -7037,7 +7069,7 @@
           // Reflect the (possibly newly) configured client across the velo UI without a page reload.
           veloEnabled = !!j.configured;
           applyVeloEnabled();
-          if (!j.configured) { if (msg) msg.textContent = "Velociraptor API not configured — set the API config path on the Integrations tab, Save, then Reconnect"; return; }
+          if (!j.configured) { if (msg) msg.textContent = "Velociraptor API not configured — set the API config path on the Integrations tab and reconnect"; return; }
           if (!j.ok) { if (msg) msg.textContent = "⚠ configured but unreachable: " + (j.error || "the Velociraptor server is not responding"); return; }
           if (msg) msg.textContent = `✓ connected — ${j.clients || 0} enrolled client(s)`;
           loadVeloClients();
@@ -14081,13 +14113,13 @@
       sel.value = ""; // reset to the "Push to…" placeholder
       const caseId = document.getElementById("caseId").value.trim();
       if (!target || !caseId) return;
-      // Notion/ClickUp need a target question first, so they open a modal instead of an immediate POST.
+      // Notion/ClickUp/IRIS need a target question first, so they open a modal instead of an immediate POST.
       if (target === "notion") { openNotionModal(); return; }
       if (target === "clickup") { openClickupModal(caseId); return; }
+      if (target === "iris") { openIrisPushModal(caseId); return; }
       const c = encodeURIComponent(caseId);
       sel.disabled = true;
-      const targetLabel = target === "iris" ? "IRIS"
-        : target === "timesketch" ? "Timesketch (Forensic Timeline)"
+      const targetLabel = target === "timesketch" ? "Timesketch (Forensic Timeline)"
         : target === "timesketch-super" ? "Timesketch (Super Timeline)"
         : "MISP";
       document.getElementById("status").textContent = `pushing to ${targetLabel}…`;
@@ -14095,15 +14127,7 @@
       fetch(`/cases/${c}/push/${target}`, { method: "POST" })
         .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
         .then((res) => {
-          if (target === "iris") {
-            const verb = res.created ? "created" : "updated";
-            document.getElementById("status").textContent =
-              `IRIS case #${res.caseId} ${verb}: assets +${res.assets.added} (${res.assets.existing} existing), ` +
-              `IOCs +${res.iocs.added} (${res.iocs.existing} existing), timeline +${res.timeline.added}, ` +
-              `tasks +${res.tasks.added}, notes ${res.notes}` +
-              (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
-            if (res.caseUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.caseUrl)}" target="_blank" rel="noopener">Open in IRIS</a>`;
-          } else if (target === "timesketch" || target === "timesketch-super") {
+          if (target === "timesketch" || target === "timesketch-super") {
             const verb = res.created ? "created" : "updated";
             document.getElementById("status").textContent =
               `Timesketch sketch #${res.sketchId} ${verb}: ${res.events} event(s) → "${res.timelineName}"` +
@@ -14226,13 +14250,22 @@
         .finally(() => { btn.disabled = false; });
     };
 
-    // Settings → DFIR-IRIS "Test / reconnect": re-read .env, rebuild the client, ping. Applies a
-    // saved URL/key (or IRIS coming back online) without the #1-gotcha restart.
+    // Settings → DFIR-IRIS "Test / reconnect": save any unsaved field edits first, then re-read
+    // .env, rebuild the client, and ping. Applies a saved URL/key (or IRIS coming back online)
+    // without the #1-gotcha restart.
     const irisReconnectBtn = document.getElementById("irisReconnectBtn");
-    if (irisReconnectBtn) irisReconnectBtn.onclick = () => {
+    if (irisReconnectBtn) irisReconnectBtn.onclick = async () => {
       const msg = document.getElementById("irisReconnectMsg");
       irisReconnectBtn.disabled = true;
       msg.style.color = "var(--c-9aa4b2)";
+      msg.textContent = "saving…";
+      const saved = await saveSettings();
+      if (!saved) {
+        msg.style.color = "var(--c-f87171, #f87171)";
+        msg.textContent = "save failed — fix the error above and retry";
+        irisReconnectBtn.disabled = false;
+        return;
+      }
       msg.textContent = "reconnecting…";
       fetch("/iris/reconnect", { method: "POST" })
         .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
@@ -14246,7 +14279,7 @@
             msg.textContent = "✗ configured but unreachable: " + (res.error || "ping failed");
           } else {
             msg.style.color = "var(--c-9aa4b2)";
-            msg.textContent = "not configured — set IRIS URL + key above, Save, then reconnect";
+            msg.textContent = "not configured — set IRIS URL + key above and reconnect";
           }
         })
         .catch((err) => { msg.style.color = "var(--c-f87171, #f87171)"; msg.textContent = "reconnect failed: " + err.message; })
@@ -14286,6 +14319,44 @@
           closeClickupModal();
         })
         .catch((err) => document.getElementById("clickupMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
+        .finally(() => { btn.disabled = false; });
+    };
+
+    // ── Push to DFIR-IRIS modal (stable per-case name + override) ─────────────
+    const irisPushOverlay = document.getElementById("irisPushOverlay");
+    function openIrisPushModal(caseId) {
+      document.getElementById("irisPushMsg").textContent = "";
+      const input = document.getElementById("irisPushCaseName");
+      input.value = caseId; // placeholder until the saved/default name loads below
+      fetch(`/cases/${encodeURIComponent(caseId)}/iris-export`).then((r) => r.ok ? r.json() : null)
+        .then((s) => { if (s) input.value = s.caseName || s.defaultCaseName || caseId; }).catch(() => {});
+      irisPushOverlay.classList.add("open");
+    }
+    function closeIrisPushModal() { irisPushOverlay.classList.remove("open"); }
+    document.getElementById("irisPushCancel").onclick = closeIrisPushModal;
+    irisPushOverlay.addEventListener("click", (e) => { if (e.target === irisPushOverlay) closeIrisPushModal(); });
+    document.getElementById("irisPushBtn").onclick = () => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { document.getElementById("irisPushMsg").textContent = "connect to a case first"; return; }
+      const caseName = document.getElementById("irisPushCaseName").value.trim();
+      if (!caseName) { document.getElementById("irisPushMsg").textContent = "enter an IRIS case name"; return; }
+      const btn = document.getElementById("irisPushBtn");
+      btn.disabled = true;
+      document.getElementById("irisPushMsg").textContent = "pushing…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/push/iris`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ caseName }) })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((res) => {
+          const verb = res.created ? "created" : "updated";
+          document.getElementById("status").textContent =
+            `IRIS case #${res.caseId} ${verb}: assets +${res.assets.added} (${res.assets.existing} existing), ` +
+            `IOCs +${res.iocs.added} (${res.iocs.existing} existing), timeline +${res.timeline.added}, ` +
+            `tasks +${res.tasks.added}, notes ${res.notes}` +
+            (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
+          if (res.caseUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.caseUrl)}" target="_blank" rel="noopener">Open in IRIS</a>`;
+          if (res.warnings && res.warnings.length) console.warn("iris push warnings:", res.warnings);
+          closeIrisPushModal();
+        })
+        .catch((err) => document.getElementById("irisPushMsg").textContent = "failed: " + err.message)
         .finally(() => { btn.disabled = false; });
     };
 
@@ -14395,7 +14466,6 @@
       { id: "sec-playbook",     label: "Playbook" },
       { id: "sec-attack-path",  label: "Attack Path" },
       { id: "sec-narrative",    label: "Narrative Timeline" },
-      { id: "sec-pinned",       label: "Pinned Findings" },
       { id: "sec-findings",     label: "Findings" },
       // Recommended Next Steps is hidden by default — the Playbook (above) supersedes it for
       // action-tracking. Its data still feeds the Playbook, report, and exports; re-enable it
@@ -14669,7 +14739,9 @@
       renderDashViewMenu();
       if (opts.persist !== false) {
         const k = viewStorageKey();
-        if (k) { if (view) localStorage.setItem(k, view.id); else localStorage.removeItem(k); }
+        // An explicit "Custom" pick is stored as a marker (not removed) so it stays distinct from a
+        // case that has never had a view chosen — the latter falls back to the default view below.
+        if (k) localStorage.setItem(k, view ? view.id : CUSTOM_VIEW_MARKER);
       }
       if (opts.rerender !== false && lastState) render(lastState);
     }
@@ -14680,7 +14752,11 @@
       const k = viewStorageKey();
       if (!k || !DASHBOARD_VIEWS.length) return;
       const id = localStorage.getItem(k);
-      const view = id ? DASHBOARD_VIEWS.find(v => v.id === id) : null;
+      // No key at all = a new case / new install with no preference yet -> default to Analyst.
+      // The CUSTOM_VIEW_MARKER = an explicit "Custom" pick, which stays Custom.
+      const view = id === null
+        ? (DASHBOARD_VIEWS.find(v => v.id === DEFAULT_DASHBOARD_VIEW_ID) || null)
+        : (id === CUSTOM_VIEW_MARKER ? null : DASHBOARD_VIEWS.find(v => v.id === id) || null);
       applyDashboardView(view, { persist: false, rerender: false });
     }
 
@@ -14759,6 +14835,7 @@
       });
       const msg = document.getElementById("settingsSaveMsg");
       msg.textContent = "";
+      let ok = true;
       if (Object.keys(updates).length > 0) {
         try {
           const r = await fetch("/settings/env", {
@@ -14773,16 +14850,19 @@
             const j = await r.json().catch(() => ({}));
             msg.textContent = "Error: " + (j.error || r.status);
             msg.style.color = "#ff7a7a";
+            ok = false;
           }
         } catch {
           msg.textContent = "Could not reach server";
           msg.style.color = "#ff7a7a";
+          ok = false;
         }
       } else {
         msg.textContent = "✓ Saved";
         msg.style.color = "#5fd470";
       }
       setTimeout(() => { if (msg) msg.textContent = ""; }, 5000);
+      return ok;
     }
 
     function openSettingsModal() {
@@ -16031,8 +16111,14 @@
         if (msg) msg.textContent = ok ? `${toolId}: ${(j.output || "updated").slice(0, 200)}` : (j.error || "update failed") + " — restart the companion server if this 404s";
       }).catch(e => { if (btn) { btn.disabled = false; btn.textContent = "↻ Update rules"; } if (msg) msg.textContent = "update failed: " + e.message; });
     }
-    document.getElementById("toolsReconnectBtn").onclick = () => {
+    document.getElementById("toolsReconnectBtn").onclick = async () => {
       const msg = document.getElementById("toolsMsg");
+      if (msg) msg.textContent = "saving…";
+      const saved = await saveSettings();
+      if (!saved) {
+        if (msg) msg.textContent = "save failed — fix the error above and retry";
+        return;
+      }
       if (msg) msg.textContent = "applying…";
       fetch("/tools/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
         .then(r => r.json()).then(j => { if (msg) msg.textContent = j.ok ? `applied — ${(j.configured || []).length} tool(s) configured` : (j.error || "reconnect failed"); loadTools(); })

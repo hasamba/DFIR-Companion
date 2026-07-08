@@ -1,8 +1,9 @@
 // Push a case to DFIR-IRIS from the command line. Find-or-create the IRIS case by name
-// (= the Companion case id), then push assets→assets, IOCs→IOCs, forensic timeline→timeline,
-// executive summary→case summary, and every other section→notes. Reads DFIR_IRIS_* from .env.
+// (the last-used name for this Companion case, or "<case id> — <friendly name>" on the
+// first push), then push assets→assets, IOCs→IOCs, forensic timeline→timeline, executive
+// summary→case summary, and every other section→notes. Reads DFIR_IRIS_* from .env.
 //
-//   npm run iris:push -- <caseId>
+//   npm run iris:push -- <caseId> [--name "custom IRIS case name"]
 import { config as loadDotenv } from "dotenv";
 loadDotenv({ quiet: true });
 
@@ -14,12 +15,20 @@ import { ReportMetaStore } from "../src/reports/reportMeta.js";
 import { PlaybookStore } from "../src/analysis/playbookStore.js";
 import { PlaybookControlStore } from "../src/analysis/playbookControl.js";
 import { pushCaseToIris } from "../src/integrations/iris/irisPush.js";
+import { IrisExportStore, defaultIrisCaseName } from "../src/integrations/iris/irisExportStore.js";
 import { buildIrisClient, irisPushOptions } from "../src/server.js";
 
+function parseArgs(argv: string[]): { caseId?: string; name?: string } {
+  const caseId = argv[0] && !argv[0].startsWith("--") ? argv[0] : undefined;
+  const nameFlag = argv.indexOf("--name");
+  const name = nameFlag !== -1 ? argv[nameFlag + 1] : undefined;
+  return { caseId, name };
+}
+
 async function main(): Promise<void> {
-  const caseId = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : undefined;
+  const { caseId, name: nameOverride } = parseArgs(process.argv.slice(2));
   if (!caseId) {
-    console.error("usage: npm run iris:push -- <caseId>");
+    console.error('usage: npm run iris:push -- <caseId> [--name "custom IRIS case name"]');
     process.exit(2);
   }
 
@@ -35,6 +44,7 @@ async function main(): Promise<void> {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
   const reportMetaStore = new ReportMetaStore(store);
+  const irisExportStore = new IrisExportStore(store);
 
   const state = await stateStore.load(caseId);
   const meta = await reportMetaStore.load(caseId);
@@ -42,12 +52,29 @@ async function main(): Promise<void> {
   const { useTemplates } = await new PlaybookControlStore(store).load(caseId);
   const playbookTasks = await new PlaybookStore(store).sync(caseId, state, { useTemplates });
 
-  console.log(`Pushing "${caseId}" to ${process.env.DFIR_IRIS_URL} …`);
+  const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
+  const saved = await irisExportStore.load(caseId);
+  const requested = nameOverride?.trim() || "";
+  let caseName: string;
+  if (requested) {
+    caseName = requested;
+  } else if (saved.caseName) {
+    caseName = saved.caseName;
+  } else {
+    // First push under the new naming scheme — check whether this case was already pushed
+    // under the OLD bare-case-id scheme (pre-dates the case-name override feature) so we
+    // don't fork a duplicate IRIS case; only fall back to the computed default if not.
+    const legacy = await client.findCaseByName(caseId).catch(() => null);
+    caseName = legacy ? caseId : defaultIrisCaseName(caseId, caseMeta?.name);
+  }
+
+  console.log(`Pushing "${caseId}" to ${process.env.DFIR_IRIS_URL} as IRIS case "${caseName}" …`);
   const res = await pushCaseToIris(
     client,
-    { caseName: caseId, state, meta, playbookTasks: playbookTasks.length ? playbookTasks : undefined },
+    { caseName, state, meta, playbookTasks: playbookTasks.length ? playbookTasks : undefined },
     irisPushOptions(),
   );
+  await irisExportStore.record(caseId, caseName);
 
   console.log(`\nIRIS case #${res.caseId} ${res.created ? "CREATED" : "UPDATED"} ("${res.caseName}")`);
   console.log(`  assets:   +${res.assets.added}  (${res.assets.existing} existing, ${res.assets.skipped} skipped)`);
