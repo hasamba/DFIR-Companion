@@ -313,15 +313,21 @@ export interface SkippedArtifact {
   error: string;
 }
 
-// Default VQL to enumerate a hunt's uploaded JSON files and read their content server-side. Walks the
-// hunt's flows → each flow's uploads → reads `.json` ones from the filestore (`fs` accessor + the
-// upload's filestore components). __HUNT_ID__ is replaced with the validated hunt id. Override per
-// Velociraptor version with DFIR_VELOCIRAPTOR_UPLOAD_VQL (keep the __HUNT_ID__ placeholder + a
-// Name/ClientId/Content column shape).
+// Extensions treated as a readable text report upload (e.g. THOR's --jsonfile, a CSV/log export).
+// Anything else (a raw .zip, a binary) is invisible to the upload-reading VQLs below — reading those
+// needs server-side unzip, which is out of scope for now. Shared by DEFAULT_UPLOAD_VQL (hunt-scoped)
+// and DEFAULT_FLOW_UPLOAD_VQL (flow-scoped) so the two never drift apart.
+const UPLOAD_EXT_PATTERN = "(?i)\\.(json|jsonl|ndjson|csv|txt|log)$";
+
+// Default VQL to enumerate a hunt's uploaded text-report files and read their content server-side.
+// Walks the hunt's flows → each flow's uploads → reads matching-extension ones from the filestore
+// (`fs` accessor + the upload's filestore components). __HUNT_ID__ is replaced with the validated hunt
+// id. Override per Velociraptor version with DFIR_VELOCIRAPTOR_UPLOAD_VQL (keep the __HUNT_ID__
+// placeholder + a Name/ClientId/Content column shape).
 const DEFAULT_UPLOAD_VQL =
   "LET flows = SELECT Flow.client_id AS ClientId, Flow.session_id AS FlowId FROM hunt_flows(hunt_id='__HUNT_ID__')\n" +
   "LET ups = SELECT * FROM foreach(row=flows, query={ SELECT ClientId, vfs_path AS Path, file_size AS Size, _Components AS Components FROM uploads(client_id=ClientId, flow_id=FlowId) })\n" +
-  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '(?i)\\.json$' AND Size < __MAX_BYTES__ AND Content";
+  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '" + UPLOAD_EXT_PATTERN + "' AND Size < __MAX_BYTES__ AND Content";
 
 // Default VQL to read a CLIENT_EVENT (monitoring) artifact's rows for one client over a time window
 // (#84). Velociraptor's `source()` plugin reads a client's monitoring result set when given an event

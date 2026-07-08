@@ -812,6 +812,14 @@ describe("VelociraptorClient.huntUploads", () => {
     const runner: VqlRunner = async () => ({ rows: [], raw: "" });
     await expect(new VelociraptorClient(cfg, runner).huntUploads("bad id")).rejects.toThrow(/invalid hunt id/);
   });
+
+  it("broadens the upload filter beyond .json to common text-report extensions", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => { program = statements[0]; return { rows: [], raw: "" }; };
+    await new VelociraptorClient(cfg, runner).huntUploads("H.UP3");
+    expect(program).toContain("(json|jsonl|ndjson|csv|txt|log)");
+    expect(program).not.toContain("\\.json$'");   // the old json-only filter is gone
+  });
 });
 
 describe("loadVelociraptorConfig / buildVelociraptorClient", () => {
