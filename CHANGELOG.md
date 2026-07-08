@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Import upload-only Velociraptor artifacts (e.g. THOR)** — paste the Velociraptor GUI's "Uploaded Files" tab URL into the existing hunt/flow import box to import just the uploaded report, skipping rows entirely; the upload reader also now picks up `.csv`/`.txt`/`.log`/`.jsonl` uploads, not just `.json`.
 - **Timesketch export (Super Timeline)** — push or download the full super-timeline (forensic timeline + raw host-triage artifacts) to/from Timesketch, alongside the existing Timesketch export (Forensic Timeline); both existing options were relabeled for clarity and both push into the same sketch under separate timelines so neither clobbers the other.
 
+### Changed
+- **Pinned Findings folded into the Findings panel** — the sticky pinned strip is no longer its own standalone dashboard section; it now sits at the top of the Findings panel itself (removed from the section-visibility list and every built-in dashboard view's section list, since it's part of Findings now).
+
 ### Fixed
 - **Timeline coverage-gap findings survived a case scope change** — they were never back-linked to the two events bounding the silence, so the dashboard's client-side scope filter (which drops a finding only when it's provably backed by out-of-scope events) could never tell a gap finding was out of scope and kept showing it, however far outside the analyst's chosen window, until the next full AI re-synthesis. Gap findings are now linked to their bounding events like every other backfilled finding.
 - **Structured hostname/fqdn/domain columns** (e.g. a JSON/CSV field literally named `Hostname`) now skip internal zones (`.lan`/`.local`/`.corp`/etc.) the same way free-text scraping already did, instead of creating a domain IOC for every client hostname.

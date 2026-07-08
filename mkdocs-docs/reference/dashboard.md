@@ -43,15 +43,11 @@ straight to the event or finding it's grounded in. Citations carry through to th
 **Bulk actions** — select multiple findings via their checkboxes (or **Select all**) to Modify Tags or
 Mark False Positive on the whole batch at once, the same pattern used by IOCs and timeline events.
 
----
-
-## Pinned Findings
-
-Pin key findings (📌 on the finding card) to a sticky strip that stays visible at the top while you
-scroll the rest of the dashboard. Drag to reorder, click a pinned title to jump to that finding, or
-✕ to unpin. The pinned list is per-case, persisted server-side, and travels with the investigation
-snapshot export. Capped at a small curated shortlist (`DFIR_MAX_PINNED_FINDINGS`, default 5) to keep
-it from becoming a second findings list.
+**Pinned Findings** — pin key findings (📌 on the finding card) to a sticky strip at the top of this
+panel that stays visible while you scroll the rest of the findings list. Drag to reorder, click a
+pinned title to jump to that finding, or ✕ to unpin. The pinned list is per-case, persisted
+server-side, and travels with the investigation snapshot export. Capped at a small curated shortlist
+(`DFIR_MAX_PINNED_FINDINGS`, default 5) to keep it from becoming a second findings list.
 
 ---
 
