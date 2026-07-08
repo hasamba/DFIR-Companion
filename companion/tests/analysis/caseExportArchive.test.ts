@@ -127,4 +127,67 @@ describe("importEncryptedCase", () => {
     const archive = encryptBuffer(createZip([{ path: "state/investigation.json", data: Buffer.from("{}") }]), PASSWORD);
     await expect(importEncryptedCase(store, archive, PASSWORD)).rejects.toThrow(/missing case\.json/);
   });
+
+  it("rejects an archive with an entry path containing a colon (NTFS ADS) and writes nothing", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-1");
+    const caseJson = await readFile(store.caseMetaPath("INC-1"));
+    const malicious = createZip([
+      { path: "case.json", data: caseJson },
+      { path: "screenshots/shot.jpg:hidden.exe", data: Buffer.from("pwned") },
+    ]);
+    const archive = encryptBuffer(malicious, PASSWORD);
+
+    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-ADS" }))
+      .rejects.toThrow(/unsafe entry path/);
+    expect(await store.caseExists("INC-ADS")).toBe(false);
+  });
+
+  it("cleanly rejects a corrupted state/investigation.json and leaves no orphaned case directory", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-1");
+    const caseJson = await readFile(store.caseMetaPath("INC-1"));
+    const malicious = createZip([
+      { path: "case.json", data: caseJson },
+      { path: "state/investigation.json", data: Buffer.from("{ not valid json") },
+    ]);
+    const archive = encryptBuffer(malicious, PASSWORD);
+
+    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-CORRUPT" }))
+      .rejects.toThrow(/corrupt state\/investigation\.json/);
+    expect(await store.caseExists("INC-CORRUPT")).toBe(false);
+
+    // a corrected re-import (retry) must succeed — no orphaned partial directory blocking it
+    const fixed = createZip([
+      { path: "case.json", data: caseJson },
+      { path: "state/investigation.json", data: Buffer.from("{}") },
+    ]);
+    const fixedArchive = encryptBuffer(fixed, PASSWORD);
+    const { meta } = await importEncryptedCase(store, fixedArchive, PASSWORD, { targetCaseId: "INC-CORRUPT" });
+    expect(meta.caseId).toBe("INC-CORRUPT");
+  });
+
+  it("throws a clean Error when case.json parses but has no caseId field", async () => {
+    const store = await harness();
+    const archive = encryptBuffer(createZip([{ path: "case.json", data: Buffer.from(JSON.stringify({ name: "no id" })) }]), PASSWORD);
+    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-NOID" }))
+      .rejects.toThrow(/case\.json missing caseId/);
+    expect(await store.caseExists("INC-NOID")).toBe(false);
+  });
+
+  it("rejects an archive with duplicate entry paths", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-1");
+    const caseJson = await readFile(store.caseMetaPath("INC-1"));
+    const malicious = createZip([
+      { path: "case.json", data: caseJson },
+      { path: "state/investigation.json", data: Buffer.from("{}") },
+      { path: "state/investigation.json", data: Buffer.from('{"other":true}') },
+    ]);
+    const archive = encryptBuffer(malicious, PASSWORD);
+
+    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-DUP" }))
+      .rejects.toThrow(/duplicate entry path/);
+    expect(await store.caseExists("INC-DUP")).toBe(false);
+  });
 });

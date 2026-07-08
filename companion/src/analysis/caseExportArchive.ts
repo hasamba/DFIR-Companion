@@ -83,8 +83,10 @@ export async function exportEncryptedCase(store: CaseStore, caseId: string, pass
 // Defense-in-depth against a crafted/corrupted archive writing outside the target case
 // directory (zip-slip). The primary defense is that the archive is password-authenticated, but
 // this guard means a malicious or corrupted entry path is rejected before ANY file is written.
+// The colon check also closes an NTFS alternate-data-stream gap: "shot.jpg:hidden.exe" doesn't
+// escape the case directory, but would silently write a hidden stream on Windows without it.
 function isSafeZipEntryPath(path: string): boolean {
-  if (!path || isAbsolute(path) || /^[a-zA-Z]:/.test(path)) return false;
+  if (!path || isAbsolute(path) || /^[a-zA-Z]:/.test(path) || path.includes(":")) return false;
   const segments = path.split(/[\\/]+/);
   return segments.every((seg) => seg !== "" && seg !== "." && seg !== "..");
 }
@@ -163,15 +165,53 @@ export async function importEncryptedCase(
 
   const caseJsonEntry = entries.find((e) => e.path === "case.json");
   if (!caseJsonEntry) throw new Error("not a valid case archive: missing case.json");
-  const originalMeta = JSON.parse(caseJsonEntry.data.toString("utf8")) as CaseMeta;
+
+  let originalMeta: CaseMeta;
+  try {
+    originalMeta = JSON.parse(caseJsonEntry.data.toString("utf8")) as CaseMeta;
+  } catch {
+    throw new Error("not a valid case archive: corrupt case.json");
+  }
+  if (typeof originalMeta.caseId !== "string" || !originalMeta.caseId) {
+    throw new Error("not a valid case archive: case.json missing caseId");
+  }
 
   const targetCaseId = (options.targetCaseId ?? originalMeta.caseId).trim();
   if (!isValidCaseId(targetCaseId)) throw new Error(`invalid target case id "${targetCaseId}"`);
   if (await store.caseExists(targetCaseId)) throw new CaseImportConflictError(targetCaseId);
 
+  // Everything below this point is validation — nothing touches disk until every entry path
+  // has been checked (zip-slip / NTFS ADS / duplicates) AND every caseId-bearing file that
+  // needs rewriting has been proven to parse. A corrupt archive must fail cleanly here, not
+  // partway through the write loop — a partial write would leave an orphaned case directory
+  // that makes store.caseExists() return true for a case that never actually imported.
+  const seenPaths = new Set<string>();
   for (const entry of entries) {
     if (!isSafeZipEntryPath(entry.path)) {
       throw new Error(`not a valid case archive: unsafe entry path "${entry.path}"`);
+    }
+    if (seenPaths.has(entry.path)) {
+      throw new Error(`not a valid case archive: duplicate entry path "${entry.path}"`);
+    }
+    seenPaths.add(entry.path);
+  }
+
+  const rename = targetCaseId !== originalMeta.caseId;
+  const rewrittenByPath = new Map<string, Buffer>();
+  if (rename) {
+    for (const entry of entries) {
+      // Match on a forward-slash-normalized path so a backslash-separated entry (however
+      // unlikely) still gets its caseId rewritten instead of silently keeping the old id.
+      const normalizedPath = entry.path.replace(/\\/g, "/");
+      try {
+        if (CASE_ID_JSON_PATHS.has(normalizedPath)) {
+          rewrittenByPath.set(entry.path, rewriteCaseIdInJson(entry.data, targetCaseId));
+        } else if (CASE_ID_JSONL_PATHS.has(normalizedPath)) {
+          rewrittenByPath.set(entry.path, rewriteCaseIdInJsonl(entry.data, targetCaseId));
+        }
+      } catch {
+        throw new Error(`not a valid case archive: corrupt ${entry.path}`);
+      }
     }
   }
 
@@ -187,13 +227,8 @@ export async function importEncryptedCase(
     await mkdir(dir, { recursive: true });
   }
 
-  const rename = targetCaseId !== originalMeta.caseId;
   for (const entry of entries) {
-    let data = entry.data;
-    if (rename) {
-      if (CASE_ID_JSON_PATHS.has(entry.path)) data = rewriteCaseIdInJson(data, targetCaseId);
-      else if (CASE_ID_JSONL_PATHS.has(entry.path)) data = rewriteCaseIdInJsonl(data, targetCaseId);
-    }
+    const data = rewrittenByPath.get(entry.path) ?? entry.data;
     const target = join(caseDir, entry.path);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, data);
