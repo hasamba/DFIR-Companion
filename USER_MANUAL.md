@@ -246,7 +246,7 @@ Customize the report's cover page, accent color, and section order in **Settings
 ### Step 10 — Hand off
 
 - **Present mode** (`▶ Present` toolbar button) — a slide deck for executive briefings. Navigate with arrow keys or use fullscreen.
-- **Export snapshot** — a portable JSON package of the case you can share with another analyst (no raw evidence bytes, just the investigation state).
+- **Export encrypted case archive** — a password-protected .dfircase file containing the ENTIRE case (evidence and screenshots included) you can share with another analyst.
 - **Push to DFIR-IRIS / Timesketch / Notion / ClickUp** — export to integrated platforms.
 
 ---
@@ -274,11 +274,11 @@ Toolbar **☰ Case lifecycle** menu lets you:
 
 The toolbar also shows a disk-space warning if the cases folder is running low.
 
-### Investigation Snapshot (export/import)
+### Encrypted Case Archive (export/import)
 
-**Export snapshot:** toolbar → **Export → Investigation snapshot**. Produces a single JSON file containing all investigation data (findings, timeline, IOCs, MITRE, playbook, analyst notes, tags, etc.) but no raw evidence bytes. Share with a colleague or restore on another machine.
+**Export archive:** toolbar → **Export → Export encrypted case archive (.dfircase)**. Enter a password (min 8 characters, confirmed twice). Produces a single `.dfircase` file containing the ENTIRE case — screenshots, raw evidence, timeline, findings, IOCs, MITRE, playbook, analyst notes, tags, everything — encrypted with AES-256-GCM under that password. Only openable via another DFIR Companion's Import (not a generic zip tool). Share the password out of band from the file itself.
 
-**Import snapshot:** toolbar → **Import case → Investigation snapshot**. Restores as a new case. If the Case ID already exists you get a conflict warning.
+**Import archive:** toolbar → **Import case → Encrypted case archive (.dfircase)**. Pick the file, enter the password, restores as a new case. If the Case ID already exists you get a conflict warning and can pick a new id.
 
 ---
 
@@ -808,7 +808,7 @@ Click **Export** in the toolbar to see all options:
 | **CSV** | IOC export (all indicators with enrichment verdicts and sources) |
 | **IOC block-list** | Plain TXT, CSV, or STIX indicators — ready to load into a firewall or SIEM |
 | **Presentation deck** | Slide-by-slide offline HTML file (see Section 13) |
-| **Investigation snapshot** | Portable JSON of the entire investigation state |
+| **Encrypted case archive** | Password-protected archive of the ENTIRE case, evidence included |
 | **Redacted case package** | The full case with anonymized AI input — shareable for model debugging without exposing evidence |
 
 ### Report customization
@@ -1211,7 +1211,7 @@ Auto-generated hypotheses come from: synthesis conclusions, timeline-gap analysi
 
 Analyst-added hypotheses: click **+ Add hypothesis** in the panel.
 
-Hypotheses survive synthesis (unlike findings, which are replaced each time) and are included in investigation snapshots.
+Hypotheses survive synthesis (unlike findings, which are replaced each time) and are included in the encrypted case archive export.
 
 ### CISA KEV Cross-Reference
 
@@ -1239,7 +1239,7 @@ Set `DFIR_DEMO_MODE=true` in `.env`. All mutating routes are blocked. A demo cas
 
 **The second opinion is most useful for high-stakes cases.** If `DFIR_AI_SECOND_OPINION_MODEL` is set to a model from a different provider, the second opinion catches blind spots the primary model misses. Accept individual deltas selectively — don't bulk-accept everything.
 
-**Export the investigation snapshot before closing.** The snapshot is a portable record of all your investigative work — findings, timeline, IOCs, playbook, notes, hypotheses. Store it with your case documentation.
+**Export an encrypted case archive before closing.** It's a complete, portable record of the case — evidence included — findings, timeline, IOCs, playbook, notes, hypotheses, screenshots, raw imports. Store it with your case documentation.
 
 **Use the Query Translator early.** When you're not sure what VQL to write for a hunt, describe what you're looking for in plain English. It's faster than looking up VQL syntax.
 

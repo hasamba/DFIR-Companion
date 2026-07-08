@@ -96,11 +96,16 @@ async function freshFullPipelineApp() {
 }
 
 // Integration test for issue #182: exercise the complete DFIR-Companion analysis pipeline
-// end-to-end (capture → artifact import → synthesis → enrichment → report → snapshot restore).
+// end-to-end (capture → artifact import → synthesis → enrichment → report → encrypted-archive restore).
 // AI and enrichment are fully mocked so the test runs offline and deterministically.
-describe("full-pipeline integration (capture → import → synthesis → report → snapshot restore)", () => {
+describe("full-pipeline integration (capture → import → synthesis → report → encrypted-archive restore)", () => {
   it("runs the complete lifecycle end-to-end with mocked AI and enrichment", async () => {
     const { app, store, stateStore } = await freshFullPipelineApp();
+    // Note: this test derives the encrypted-archive password key via scryptSync twice
+    // (once on export, once on import) — a CPU-bound blocking call. Under full-suite
+    // parallel load (other test files also hammer scryptSync concurrently), that can push
+    // this already test-heavy end-to-end run past Vitest's default 5000ms timeout, so it
+    // gets a longer one below.
 
     // 1. Create case
     const create = await request(app).post("/cases").send({
@@ -192,49 +197,60 @@ describe("full-pipeline integration (capture → import → synthesis → report
     expect(md).toContain("Suspicious execution");
     expect(md).toContain("WIN-01");
 
-    // 7. Export snapshot
-    const snapshotRes = await request(app).get("/cases/pipeline-1/export/snapshot");
-    expect(snapshotRes.status).toBe(200);
-    expect(snapshotRes.headers["content-disposition"]).toContain('attachment; filename="snapshot-pipeline-1.json"');
-    const snapshot = JSON.parse(snapshotRes.text);
-    expect(snapshot.format).toBe("dfir-companion-snapshot");
-    expect(snapshot.case.caseId).toBe("pipeline-1");
-    const investigation = snapshot.state["investigation.json"] as {
-      forensicTimeline?: unknown[];
-      findings?: unknown[];
-      iocs?: unknown[];
-    };
-    expect(investigation).toBeDefined();
-    expect(investigation.forensicTimeline!.length).toBeGreaterThanOrEqual(2);
-    expect(investigation.findings!.length).toBeGreaterThanOrEqual(1);
-    expect(investigation.iocs!.length).toBeGreaterThanOrEqual(1);
+    // 7. Export the whole case as a password-encrypted archive
+    const exportRes = await request(app)
+      .post("/cases/pipeline-1/export/encrypted")
+      .send({ password: "correct horse battery staple" })
+      .buffer()
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on("data", (c: Buffer) => chunks.push(c));
+        r.on("end", () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(exportRes.status).toBe(200);
+    expect(exportRes.headers["content-disposition"]).toContain('attachment; filename="pipeline-1.dfircase"');
+    const archiveBase64 = (exportRes.body as Buffer).toString("base64");
 
-    // 8. Restore snapshot into a new case
-    const restore = await request(app).post("/snapshots/import").send({ snapshot, targetCaseId: "pipeline-1-restored" });
+    // 8. Restore the archive into a new case
+    const restore = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data: archiveBase64, password: "correct horse battery staple", targetCaseId: "pipeline-1-restored" });
     expect(restore.status).toBe(201);
     expect(restore.body.caseId).toBe("pipeline-1-restored");
+    expect(restore.body.counts.forensicEvents).toBeGreaterThanOrEqual(2);
+    expect(restore.body.counts.findings).toBeGreaterThanOrEqual(1);
+    expect(restore.body.counts.iocs).toBeGreaterThanOrEqual(1);
 
     // 9. Verify restored case matches key elements
     const restored = await request(app).get("/cases/pipeline-1-restored/state");
     expect(restored.status).toBe(200);
-    expect(restored.body.forensicTimeline.length).toBe(investigation.forensicTimeline!.length);
-    expect(restored.body.findings.length).toBe(investigation.findings!.length);
-    expect(restored.body.iocs.length).toBe(investigation.iocs!.length);
     expect(restored.body.findings.some((f: { title: string }) => f.title === "Suspicious execution")).toBe(true);
     expect(restored.body.iocs.some((i: { value: string }) => i.value.includes("mimikatz.exe"))).toBe(true);
 
-    // 10. Evidence files are preserved (screenshot + THOR import)
+    // 10. Evidence files are preserved — in BOTH the original AND the restored case. This is the
+    // whole point of the encrypted archive replacing the old JSON-only snapshot: screenshots and
+    // raw imports now travel with the export, not just references to them.
     expect(screenshotFile).toMatch(/\.webp$/);
     const evidence = await request(app).get(`/cases/pipeline-1/evidence/${screenshotFile}`);
     expect(evidence.status).toBe(200);
     expect(evidence.headers["content-type"]).toContain("image/");
+
+    const restoredEvidence = await request(app).get(`/cases/pipeline-1-restored/evidence/${screenshotFile}`);
+    expect(restoredEvidence.status).toBe(200);
+    expect(restoredEvidence.headers["content-type"]).toContain("image/");
 
     const importFiles = (await readFile(store.importsLogPath("pipeline-1"), "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
     expect(importFiles.length).toBeGreaterThanOrEqual(1);
-  });
+
+    const restoredImportFiles = (await readFile(store.importsLogPath("pipeline-1-restored"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(restoredImportFiles.length).toBeGreaterThanOrEqual(1);
+  }, 20_000);
 
   it("does not leave AI or enrichment provider artifacts behind when AI is off", async () => {
     const { app, stateStore } = await freshFullPipelineApp();

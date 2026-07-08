@@ -88,7 +88,7 @@ Auto-generated hypotheses come from: synthesis conclusions, timeline-gap analysi
 
 Analyst-added hypotheses: click **+ Add hypothesis** in the panel.
 
-Hypotheses survive synthesis (unlike findings, which are replaced each time) and are included in investigation snapshots.
+Hypotheses survive synthesis (unlike findings, which are replaced each time) and are included in the encrypted case archive export.
 
 ---
 

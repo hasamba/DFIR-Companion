@@ -22,11 +22,11 @@ Toolbar **☰ Case lifecycle** menu lets you:
 
 The toolbar also shows a disk-space warning if the cases folder is running low.
 
-## Investigation Snapshot (Export / Import)
+## Encrypted Case Archive (Export / Import)
 
-**Export snapshot:** toolbar → **Export → Investigation snapshot**. Produces a single JSON file containing all investigation data (findings, timeline, IOCs, MITRE, playbook, analyst notes, tags, etc.) but no raw evidence bytes. Share with a colleague or restore on another machine.
+**Export archive:** toolbar → **Export → Export encrypted case archive (.dfircase)**. Enter a password (min 8 characters). Produces a single `.dfircase` file containing the ENTIRE case — findings, timeline, IOCs, MITRE, playbook, analyst notes, tags, AND screenshots/raw evidence — encrypted with AES-256-GCM. Only openable via another DFIR Companion's Import.
 
-**Import snapshot:** toolbar → **Import case → Investigation snapshot**. Restores as a new case. If the Case ID already exists you get a conflict warning.
+**Import archive:** toolbar → **Import case → Encrypted case archive (.dfircase)**. Restores as a new case. If the Case ID already exists you get a conflict warning.
 
-!!! info "What is NOT in the snapshot"
-    Raw screenshots and imported artifact files are not included — only the derived investigation state. This keeps the snapshot small and shareable. The AI configuration (keys, provider) is also excluded so the recipient opts in to enrichment themselves.
+!!! info "What's in the archive"
+    Everything under the case directory travels with the export — screenshots, raw imported artifact files, and all analyst decisions. The AI configuration (keys) is never included — keys live in `.env` and never enter the case directory. The recipient's copy inherits settings like external-enrichment opt-in as they were on the exporting machine, since the archive is a verbatim copy.

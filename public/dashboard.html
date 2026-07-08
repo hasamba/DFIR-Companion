@@ -1292,8 +1292,8 @@
     <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
     <button id="seedDemoBtn" style="display:none" data-tip="Load a pre-populated demo case (GlobalTech BEC &amp; Ransomware Precursor) to explore all dashboard features without importing real evidence">Demo case</button>
-    <input id="snapshotImportFile" type="file" accept=".json,application/json" style="display:none" />
-    <button id="importCaseBtn" type="button" data-tip="Import a whole case — an investigation snapshot (.json) shared by a teammate, or pull an existing DFIR-IRIS case. Opens a chooser; the DFIR-IRIS option appears only when configured.">Import case</button>
+    <input id="encryptedImportFile" type="file" accept=".dfircase" style="display:none" />
+    <button id="importCaseBtn" type="button" data-tip="Import a whole case — an encrypted case archive (.dfircase) shared by a teammate, or pull an existing DFIR-IRIS case. Opens a chooser; the DFIR-IRIS option appears only when configured.">Import case</button>
     <button id="lifecycleBtn" style="display:none" data-tip="Case lifecycle — close, reopen, or archive this case">
       <!-- unlocked padlock = active (green) -->
       <svg class="lc-icon-active" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
@@ -1312,7 +1312,7 @@
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux shell history, auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
     <button id="importUndoBtn" type="button" style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
-    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch export (forensic or super timeline), or a full case export)">
+    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch export (forensic or super timeline), or an encrypted case archive)">
 
       <option value="">Export…</option>
       <option value="report">Generate report (Markdown + HTML)</option>
@@ -1323,7 +1323,7 @@
       <option value="attack-layer">ATT&amp;CK Navigator layer (JSON)</option>
       <option value="timesketch-jsonl">Timesketch export (Forensic Timeline)</option>
       <option value="timesketch-jsonl-super">Timesketch export (Super Timeline)</option>
-      <option value="snapshot">Full case export (shareable JSON)</option>
+      <option value="encrypted">Export encrypted case archive (.dfircase)</option>
       <option value="stix">STIX 2.1 bundle (JSON)</option>
       <option value="ioc-blocklist">IOC block-list…</option>
       <option value="redacted">Redacted case package (ZIP)…</option>
@@ -1560,12 +1560,26 @@
       <h3>Import case</h3>
       <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 12px">Bring in a whole case from another source.</p>
       <div style="display:flex; flex-direction:column; gap:8px;">
-        <button id="importCaseSnapshot" type="button" style="text-align:left;">📦 Investigation snapshot (.json) — a teammate's shared case file</button>
+        <button id="importCaseEncrypted" type="button" style="text-align:left;">🔒 Encrypted case archive (.dfircase) — a teammate's exported case</button>
         <button id="importCaseIris" type="button" style="display:none; text-align:left;">🛰️ From DFIR-IRIS — pull an existing IRIS case</button>
       </div>
       <div style="margin-top:12px;">
         <button id="importCaseCancel" style="background:var(--c-2a2f3a);">Cancel</button>
         <span id="importCaseHint" style="margin-left:8px; color:var(--c-52617a); font-size:11px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="importPasswordOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Import encrypted case archive</h3>
+      <p id="ipFilename" style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px"></p>
+      <label style="display:block; font-size:12px; margin-bottom:4px;">Password</label>
+      <input id="ipPassword" type="password" autocomplete="new-password" style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="ipImport">Import</button>
+        <button id="ipCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="ipMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -1715,6 +1729,26 @@
         <button id="reDownload">Build &amp; download</button>
         <button id="reCancel" style="background:var(--c-2a2f3a);">Cancel</button>
         <span id="reMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="encryptedExportOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Export encrypted case archive</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        Bundles the ENTIRE case — screenshots, raw evidence, timeline, findings, IOCs, all analyst
+        decisions — into a single <code>.dfircase</code> file encrypted with the password below.
+        Only openable via another DFIR Companion's "Import case". Share the password out of band
+        (not in the same email/chat as the file).</p>
+      <label style="display:block; font-size:12px; margin-bottom:4px;">Password (min 8 characters)</label>
+      <input id="eePassword" type="password" autocomplete="new-password" style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
+      <label style="display:block; font-size:12px; margin-bottom:4px;">Confirm password</label>
+      <input id="eePasswordConfirm" type="password" autocomplete="new-password" style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="eeDownload">Export &amp; download</button>
+        <button id="eeCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="eeMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -12677,6 +12711,52 @@
       }
     }
 
+    // ── Encrypted case archive export (replaces #56's JSON snapshot) ─────────
+    function openEncryptedExport() {
+      document.getElementById("eePassword").value = "";
+      document.getElementById("eePasswordConfirm").value = "";
+      document.getElementById("eeMsg").textContent = "";
+      document.getElementById("encryptedExportOverlay").classList.add("open");
+      document.getElementById("eePassword").focus();
+    }
+    function closeEncryptedExport() { document.getElementById("encryptedExportOverlay").classList.remove("open"); }
+    async function doEncryptedExport() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("eeMsg");
+      if (!caseId) { msg.textContent = "no case loaded"; return; }
+      const password = document.getElementById("eePassword").value;
+      const confirmPassword = document.getElementById("eePasswordConfirm").value;
+      if (password.length < 8) { msg.textContent = "password must be at least 8 characters"; return; }
+      if (password !== confirmPassword) { msg.textContent = "passwords do not match"; return; }
+      const btn = document.getElementById("eeDownload");
+      btn.disabled = true;
+      msg.textContent = "building… (may take a while for large cases)";
+      try {
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/export/encrypted`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || ("HTTP " + res.status));
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${caseId}.dfircase`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        closeEncryptedExport();
+        document.getElementById("status").textContent = "encrypted case archive downloaded";
+      } catch (err) {
+        msg.textContent = "export failed: " + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     // ── New case ── creation lives here (the extension only attaches to existing cases) ──
     async function openNewCase() {
       const idInput = document.getElementById("ncCaseId");
@@ -13263,6 +13343,9 @@
     document.getElementById("reDownload").onclick = doRedactedExport;
     document.getElementById("reCancel").onclick = closeRedactedExport;
     document.getElementById("redactedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "redactedExportOverlay") closeRedactedExport(); });
+    document.getElementById("eeDownload").onclick = doEncryptedExport;
+    document.getElementById("eeCancel").onclick = closeEncryptedExport;
+    document.getElementById("encryptedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "encryptedExportOverlay") closeEncryptedExport(); });
     document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
 
     // ── Import case (snapshot — issue #56 — or from DFIR-IRIS — issue #88) ──────────
@@ -13278,54 +13361,99 @@
     };
     document.getElementById("importCaseCancel").onclick = closeImportCaseModal;
     importCaseOverlay.addEventListener("click", (e) => { if (e.target === importCaseOverlay) closeImportCaseModal(); });
-    document.getElementById("importCaseSnapshot").onclick = () => { closeImportCaseModal(); document.getElementById("snapshotImportFile").click(); };
+    document.getElementById("importCaseEncrypted").onclick = () => { closeImportCaseModal(); document.getElementById("encryptedImportFile").click(); };
     document.getElementById("importCaseIris").onclick = () => { closeImportCaseModal(); openIrisImportModal(); };
-    document.getElementById("snapshotImportFile").onchange = async (e) => {
+
+    // Chunked ArrayBuffer → base64 (avoids the call-stack limit of String.fromCharCode(...bytes)
+    // and O(n^2) string concatenation for large screenshots/evidence).
+    function arrayBufferToBase64(buffer) {
+      const bytes = new Uint8Array(buffer);
+      const chunkSize = 0x8000;
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+      }
+      return btoa(binary);
+    }
+
+    let _pendingImportFile = null;
+    document.getElementById("encryptedImportFile").onchange = (e) => {
       const file = e.target.files && e.target.files[0];
-      e.target.value = "";   // allow re-selecting the same file
+      e.target.value = ""; // allow re-selecting the same file
       if (!file) return;
-      const status = document.getElementById("status");
-      status.textContent = "reading snapshot…";
-      let snapshot;
-      try {
-        snapshot = JSON.parse(await file.text());
-      } catch (err) {
-        status.textContent = "import failed: not valid JSON";
+      _pendingImportFile = file;
+      document.getElementById("ipFilename").textContent = file.name;
+      document.getElementById("ipPassword").value = "";
+      document.getElementById("ipMsg").textContent = "";
+      document.getElementById("importPasswordOverlay").classList.add("open");
+      document.getElementById("ipPassword").focus();
+    };
+    document.getElementById("ipCancel").onclick = () => {
+      document.getElementById("importPasswordOverlay").classList.remove("open");
+      _pendingImportFile = null;
+    };
+    document.getElementById("importPasswordOverlay").addEventListener("click", (e) => {
+      if (e.target.id === "importPasswordOverlay") {
+        e.target.classList.remove("open");
+        _pendingImportFile = null;
+      }
+    });
+    document.getElementById("ipImport").onclick = async () => {
+      const file = _pendingImportFile;
+      const password = document.getElementById("ipPassword").value;
+      const msg = document.getElementById("ipMsg");
+      if (!file) { msg.textContent = "no file selected"; return; }
+      if (!password) { msg.textContent = "password is required"; return; }
+      const LARGE_MB = 180; // base64 body must fit DFIR_MAX_BODY_MB (default 256 MB → ~190 MB raw)
+      if (file.size > LARGE_MB * 1024 * 1024) {
+        msg.textContent = "this .dfircase file is too large to import via the dashboard (over 180 MB) — contact support or split the case";
         return;
       }
-      const importInto = async (targetCaseId) => {
-        const body = targetCaseId ? { snapshot, targetCaseId } : { snapshot };
-        return fetch("/snapshots/import", {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-        });
-      };
+      const status = document.getElementById("status");
+      const btn = document.getElementById("ipImport");
+      const cancelBtn = document.getElementById("ipCancel");
+      btn.disabled = true;
+      cancelBtn.disabled = true;
+      msg.textContent = "reading file…";
       try {
+        const arrayBuffer = await file.arrayBuffer();
+        const base64 = arrayBufferToBase64(arrayBuffer);
+        const importInto = async (targetCaseId) => {
+          const body = { data: base64, password, ...(targetCaseId ? { targetCaseId } : {}) };
+          return fetch("/cases/import/encrypted", {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+          });
+        };
+        msg.textContent = "importing…";
         let res = await importInto(undefined);
         // Resolve id collisions by asking for a new id (up to a few tries), defaulting to "<id>-copy".
         let guard = 0;
         while (res.status === 409 && guard++ < 5) {
           const j = await res.json().catch(() => ({}));
-          const suggested = (j.caseId || (snapshot.case && snapshot.case.caseId) || "imported") + "-copy";
+          const suggested = (j.caseId || "imported") + "-copy";
           const newId = window.prompt(`A case "${j.caseId || ""}" already exists. Import under a different case id:`, suggested);
-          if (!newId) { status.textContent = "import cancelled"; return; }
+          if (!newId) { msg.textContent = "import cancelled"; return; }
           res = await importInto(newId.trim());
         }
         const body = await res.json().catch(() => ({}));
         if (res.status === 201) {
           const c = body.counts || {};
+          document.getElementById("importPasswordOverlay").classList.remove("open");
+          _pendingImportFile = null;
           status.textContent = `imported case ${body.caseId} (${c.forensicEvents || 0} events, ${c.findings || 0} findings, ${c.iocs || 0} IOCs)`;
           document.getElementById("caseId").value = body.caseId;
           loadCaseList();
           connect();   // attach to the freshly imported case
-        } else if (res.status === 404) {
-          // Route missing → the running companion predates this feature. Loud restart hint (the
-          // server loads its code once at startup), matching the dashboard's stale-server convention.
-          status.textContent = "import failed: this companion is missing the snapshot endpoint — restart the companion server (it loads server code once at startup), then re-import";
+        } else if (res.status === 400) {
+          msg.textContent = "import failed: " + (body.error || "wrong password or corrupt file");
         } else {
-          status.textContent = "import failed: " + (body.error || ("HTTP " + res.status));
+          msg.textContent = "import failed: " + (body.error || ("HTTP " + res.status));
         }
       } catch (err) {
-        status.textContent = "import failed: " + err.message + " — is the companion running?";
+        msg.textContent = "import failed: " + err.message + " — is the companion running?";
+      } finally {
+        btn.disabled = false;
+        cancelBtn.disabled = false;
       }
     };
     // --- Search bar + time-range filter listeners --------------------------------
@@ -13779,12 +13907,12 @@
         window.location.href = `/cases/${c}/timeline.jsonl`;
       } else if (action === "timesketch-jsonl-super") {
         window.location.href = `/cases/${c}/super-timeline.jsonl`;
-      } else if (action === "snapshot") {
-        // Full case export (issue #56) — a single downloadable JSON (no AI keys, no machine
-        // config) that doubles as a teammate-shareable snapshot via "Import snapshot…". Replaced
-        // the separate "Full case state (JSON)" export — this is a superset (findings/timeline/
-        // IOCs plus comments/tags/notebook/hypotheses/playbook/…), so there's no need for both.
-        window.location.href = `/cases/${c}/export/snapshot`;
+      } else if (action === "encrypted") {
+        // Encrypted case archive: the WHOLE case directory (screenshots, raw evidence, all
+        // state, reports) zipped then AES-256-GCM encrypted under a password the analyst
+        // chooses. Only openable via another DFIR Companion's Import. Opens a password modal
+        // rather than a direct download link, since the password must travel in the request body.
+        openEncryptedExport();
       } else if (action === "stix") {
         // On-demand STIX 2.1 bundle (JSON) — import into any TIP (OpenCTI, MISP, Anomali…).
         window.location.href = `/cases/${c}/export/stix`;

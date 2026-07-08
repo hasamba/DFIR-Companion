@@ -1,7 +1,7 @@
 import { mkdir, readdir, stat, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite } from "./atomicWrite.js";
-import { SNAPSHOT_STATE_FILES } from "../analysis/snapshot.js";
+import { SNAPSHOT_STATE_FILES } from "../analysis/investigationStateFiles.js";
 import type { CaseStore } from "./caseStore.js";
 
 export type BackupTrigger = "pre-synthesis" | "pre-import" | "scheduled" | "shutdown";

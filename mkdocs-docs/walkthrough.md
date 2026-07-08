@@ -120,7 +120,7 @@ Customise the report's cover page, accent color, and section order in **Settings
 ## Step 10 — Hand off
 
 - **Present mode** (`▶ Present` toolbar button) — a slide deck for executive briefings. Navigate with arrow keys or use fullscreen.
-- **Export snapshot** — a portable JSON package of the case you can share with another analyst (no raw evidence bytes, just the investigation state).
+- **Export encrypted case archive** — a password-protected .dfircase file containing the ENTIRE case (evidence and screenshots included) you can share with another analyst.
 - **Push to DFIR-IRIS / Timesketch / Notion / ClickUp** — export to integrated platforms.
 
 ---
