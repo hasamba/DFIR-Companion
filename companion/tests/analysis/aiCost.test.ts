@@ -9,9 +9,12 @@ describe("bucketForLabel", () => {
   it("maps 'extract' to vision", () => {
     expect(bucketForLabel("extract")).toBe("vision");
   });
-  it("maps the default synthesis label 'ai' and second-opinion reconcile to synthesis", () => {
-    expect(bucketForLabel("ai")).toBe("synthesis");
+  it("maps the real synthesis label 'synthesis' and second-opinion reconcile to synthesis", () => {
+    expect(bucketForLabel("synthesis")).toBe("synthesis");
     expect(bucketForLabel("second-opinion-reconcile")).toBe("synthesis");
+  });
+  it("also maps analyzeRestored's unused default label 'ai' to synthesis (defensive; no real call site currently omits the label)", () => {
+    expect(bucketForLabel("ai")).toBe("synthesis");
   });
   it("maps everything else to other", () => {
     expect(bucketForLabel("ask")).toBe("other");

@@ -14,12 +14,15 @@ import type { ProviderUsage } from "../providers/provider.js";
 export type AiCostBucketName = "vision" | "synthesis" | "other";
 
 // analyzeRestored's `label` param (pipeline.ts) sorts into one of three buckets:
-// "extract" (per-screenshot vision) is its own bucket; the main synthesis call (whose
-// label defaults to "ai") and the second-opinion reconcile pass are "synthesis"; every
-// other labeled call (ask, csv, log, narrative, exec-summary, ...) is "other".
+// "extract" (per-screenshot vision) is its own bucket; the main synthesis call (labeled
+// "synthesis") and the second-opinion reconcile pass ("second-opinion-reconcile") are
+// "synthesis"; every other labeled call (ask, csv, log, narrative, exec-summary, ...) is
+// "other". analyzeRestored's own `label` parameter defaults to "ai", but every current
+// call site in pipeline.ts passes an explicit label — that default is never actually
+// reached. "ai" is still matched here defensively in case a future call site omits it.
 export function bucketForLabel(label: string): AiCostBucketName {
   if (label === "extract") return "vision";
-  if (label === "ai" || label === "second-opinion-reconcile") return "synthesis";
+  if (label === "synthesis" || label === "ai" || label === "second-opinion-reconcile") return "synthesis";
   return "other";
 }
 
@@ -40,14 +43,14 @@ const bucketSchema = z.object({
   totalInputTokens: z.number().catch(0),
   totalOutputTokens: z.number().catch(0),
   hasTokens: z.boolean().catch(false),
-  byModel: z.record(z.string(), modelSchema).catch({}),
+  byModel: z.record(z.string(), modelSchema).catch(() => ({})),
 });
 export type AiCostBucket = z.infer<typeof bucketSchema>;
 
 export const aiCostStateSchema = z.object({
-  vision: bucketSchema.catch(emptyBucket()),
-  synthesis: bucketSchema.catch(emptyBucket()),
-  other: bucketSchema.catch(emptyBucket()),
+  vision: bucketSchema.catch(() => emptyBucket()),
+  synthesis: bucketSchema.catch(() => emptyBucket()),
+  other: bucketSchema.catch(() => emptyBucket()),
 });
 export type AiCostState = z.infer<typeof aiCostStateSchema>;
 
@@ -85,6 +88,10 @@ export class AiCostStore {
 
   // Record one AI call. `usage` is whatever the provider reported (possibly undefined —
   // the call count still increments; cost/tokens simply don't move for that call).
+  // NOTE: load-mutate-write here is NOT wrapped in StateLock (unlike the higher-stakes
+  // forensic-evidence writes elsewhere). Two AI calls finishing for the same case at
+  // nearly the same moment could race and lose an increment. Accepted tradeoff for a
+  // diagnostics-only feature — worst case is undercounted cost/tokens, not data loss.
   async record(
     caseId: string,
     bucket: AiCostBucketName,
