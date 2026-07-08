@@ -24,8 +24,13 @@ import { FalsePositiveStore, markerId, type FalsePositiveMarker, FALSE_POSITIVE_
 import { findSimilarEvents, findSimilarFindings } from "./analysis/falsePositiveSimilarity.js";
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { CorrelationProfileStore } from "./analysis/correlationProfile.js";
-import { parseSnapshot } from "./analysis/snapshot.js";
-import { exportCaseSnapshot, importCaseSnapshot, SnapshotImportConflictError } from "./analysis/snapshotIo.js";
+import { DecryptionError } from "./analysis/caseEncryption.js";
+import {
+  exportEncryptedCase,
+  importEncryptedCase,
+  CaseImportConflictError,
+  MIN_PASSWORD_LENGTH,
+} from "./analysis/caseExportArchive.js";
 import { parseCsv } from "./analysis/csvImport.js";
 import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
 import { resolveHuntPlatforms, normalizeHuntPlatform, HUNT_PLATFORMS, type HuntPlatform } from "./analysis/huntPlatforms.js";
@@ -2020,18 +2025,23 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // Export a portable INVESTIGATION SNAPSHOT (issue #56): a single JSON bundle of the case's
-  // timeline, findings, IOCs, asset-graph state, analyst decisions and evidence REFERENCES, with
-  // NO AI keys and no machine-specific config (see analysis/snapshot.ts allowlist). Reads the case
-  // directory directly — works regardless of which optional stores are wired — so a teammate can
-  // import it on another machine and pick up the investigation without re-running analysis.
-  app.get("/cases/:id/export/snapshot", async (req: Request, res: Response) => {
+  // Export the ENTIRE case as a password-encrypted archive (replaces issue #56's JSON-only
+  // snapshot, which never included screenshots or raw evidence bytes — only references to them).
+  // The whole case directory is zipped, then AES-256-GCM encrypted under a password the analyst
+  // chooses. Only openable via another DFIR Companion's Import (see analysis/caseEncryption.ts +
+  // caseExportArchive.ts). Password travels in the POST body, not the URL/query string.
+  app.post("/cases/:id/export/encrypted", async (req: Request, res: Response) => {
     try {
-      const snapshot = await exportCaseSnapshot(store, req.params.id);
-      res.type("application/json; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="snapshot-${req.params.id}.json"`);
+      const { id } = req.params;
+      const password = (req.body as { password?: unknown })?.password;
+      if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
+        return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+      }
+      const archive = await exportEncryptedCase(store, id, password);
+      res.type("application/octet-stream");
+      res.setHeader("Content-Disposition", `attachment; filename="${id}.dfircase"`);
       res.setHeader("Cache-Control", "private, no-cache");
-      return res.send(JSON.stringify(snapshot, null, 2));
+      return res.send(archive);
     } catch (err) {
       if ((err as Error).message.includes("does not exist")) {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
@@ -2040,29 +2050,37 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // Import an investigation snapshot into a NEW case (issue #56). Body is the snapshot JSON, with an
-  // optional `targetCaseId` to import under a different id (resolves a conflict). The snapshot is
-  // validated (format/version/allowlist) before any write; a snapshot can ONLY restore allowlisted
-  // state files, never machine/account config. 409 if the target id already exists (the dashboard
-  // re-prompts), 400 if the payload isn't a valid snapshot.
-  app.post("/snapshots/import", async (req: Request, res: Response) => {
+  // Import a `.dfircase` encrypted archive into a NEW case (replaces issue #56's snapshot
+  // import). Body: { data: base64, password, targetCaseId? } — base64-in-JSON, matching this
+  // codebase's existing convention for binary uploads elsewhere (no multipart/multer). 409 if the
+  // target id already exists (the dashboard re-prompts with a new id), 400 on a wrong password,
+  // corrupt archive, or malformed payload.
+  app.post("/cases/import/encrypted", async (req: Request, res: Response) => {
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const targetCaseId = typeof body.targetCaseId === "string" && body.targetCaseId.trim()
-        ? body.targetCaseId.trim()
-        : undefined;
-      // The snapshot may be posted bare, or wrapped as { snapshot: {...}, targetCaseId }.
-      const rawSnapshot = body.snapshot !== undefined ? body.snapshot : body;
-      const snapshot = parseSnapshot(rawSnapshot);
-      const meta = await importCaseSnapshot(store, snapshot, { targetCaseId });
-      return res.status(201).json({ ...meta, counts: snapshot.counts });
+      const { data, password, targetCaseId } = body;
+      if (typeof data !== "string" || !data.trim()) {
+        return res.status(400).json({ error: "data (base64) is required" });
+      }
+      if (typeof password !== "string" || !password) {
+        return res.status(400).json({ error: "password is required" });
+      }
+      const fileBuffer = Buffer.from(data, "base64");
+      const { meta, counts } = await importEncryptedCase(store, fileBuffer, password, {
+        targetCaseId: typeof targetCaseId === "string" && targetCaseId.trim() ? targetCaseId.trim() : undefined,
+      });
+      return res.status(201).json({ ...meta, counts });
     } catch (err) {
-      if (err instanceof SnapshotImportConflictError) {
+      if (err instanceof CaseImportConflictError) {
         return res.status(409).json({ error: err.message, caseId: err.caseId });
       }
-      // parseSnapshot throws plain Errors with a human-readable reason → 400 (bad upload).
+      if (err instanceof DecryptionError) {
+        return res.status(400).json({ error: err.message });
+      }
       const msg = (err as Error).message;
-      if (/snapshot|case id/i.test(msg)) return res.status(400).json({ error: msg });
+      if (/not a valid case archive|invalid target case id/i.test(msg)) {
+        return res.status(400).json({ error: msg });
+      }
       return res.status(500).json({ error: msg });
     }
   });
