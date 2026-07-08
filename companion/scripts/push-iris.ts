@@ -54,7 +54,19 @@ async function main(): Promise<void> {
 
   const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
   const saved = await irisExportStore.load(caseId);
-  const caseName = nameOverride?.trim() || saved.caseName || defaultIrisCaseName(caseId, caseMeta?.name);
+  const requested = nameOverride?.trim() || "";
+  let caseName: string;
+  if (requested) {
+    caseName = requested;
+  } else if (saved.caseName) {
+    caseName = saved.caseName;
+  } else {
+    // First push under the new naming scheme — check whether this case was already pushed
+    // under the OLD bare-case-id scheme (pre-dates the case-name override feature) so we
+    // don't fork a duplicate IRIS case; only fall back to the computed default if not.
+    const legacy = await client.findCaseByName(caseId).catch(() => null);
+    caseName = legacy ? caseId : defaultIrisCaseName(caseId, caseMeta?.name);
+  }
 
   console.log(`Pushing "${caseId}" to ${process.env.DFIR_IRIS_URL} as IRIS case "${caseName}" …`);
   const res = await pushCaseToIris(

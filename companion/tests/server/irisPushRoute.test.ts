@@ -99,6 +99,17 @@ describe("POST /cases/:id/push/iris (stable case naming + override)", () => {
     expect(res.body.caseId).not.toBe(1);
     expect(cases).toHaveLength(2);
   });
+
+  it("reuses a case already pushed under the pre-override bare-case-id naming scheme", async () => {
+    const { client, cases } = mockIrisPush();
+    cases.push({ caseId: 1, caseName: "c1" });   // simulates a pre-existing push from before this feature
+    const app = await makeApp(client);
+    const res = await request(app).post("/cases/c1/push/iris").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(false);        // updated the SAME legacy case
+    expect(res.body.caseId).toBe(1);
+    expect(cases).toHaveLength(1);                // no duplicate created
+  });
 });
 
 describe("GET /cases/:id/iris-export", () => {

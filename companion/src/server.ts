@@ -4352,7 +4352,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
       const saved = options.irisExportStore ? await options.irisExportStore.load(caseId) : { caseName: "" };
       const requested = typeof req.body?.caseName === "string" ? req.body.caseName.trim() : "";
-      const targetCaseName = requested || saved.caseName || defaultIrisCaseName(caseId, caseMeta?.name);
+      let targetCaseName: string;
+      if (requested) {
+        targetCaseName = requested;
+      } else if (saved.caseName) {
+        targetCaseName = saved.caseName;
+      } else {
+        // First push under the new naming scheme — check whether this case was already pushed
+        // under the OLD bare-case-id scheme (pre-dates the case-name override feature) so we
+        // don't fork a duplicate IRIS case; only fall back to the computed default if not.
+        const legacy = await irisClient.findCaseByName(caseId).catch(() => null);
+        targetCaseName = legacy ? caseId : defaultIrisCaseName(caseId, caseMeta?.name);
+      }
       logLine(`[iris] ${caseId} push START -> "${targetCaseName}"`);
       const result = await pushCaseToIris(
         irisClient,

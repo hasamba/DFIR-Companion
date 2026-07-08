@@ -46,7 +46,9 @@ export interface IrisClientLike {
 }
 
 export interface IrisPushInput {
-  caseName: string;                    // = the Companion case id (used as the IRIS case name)
+  caseName: string;                    // the resolved IRIS case name to find-or-create (an explicit
+                                        // override, a remembered name from a prior push, or a computed
+                                        // default — see irisExportStore.ts's defaultIrisCaseName)
   state: InvestigationState;
   meta?: ReportMeta;
   assetGraph?: AssetGraph;             // defaults to buildAssetGraph(state)
