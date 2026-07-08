@@ -136,7 +136,7 @@ describe("pushCaseToTimesketch", () => {
     expect(res.created).toBe(true);
     expect(res.sketchId).toBe(1);
     expect(res.events).toBe(2);
-    expect(res.timelineName).toBe("DFIR Companion timeline");
+    expect(res.timelineName).toBe("DFIR-Companion Forensic Timeline");
     expect(res.replacedTimeline).toBe(false);
     expect(m.uploads).toHaveLength(1);
     expect(m.uploads[0].jsonl.trimEnd().split("\n")).toHaveLength(2);
@@ -146,7 +146,7 @@ describe("pushCaseToTimesketch", () => {
   it("uses an existing sketch (matched by name) and clean-replaces the managed timeline", async () => {
     const m = new MockTimesketch();
     m.sketches.push({ id: 42, name: "Case Alpha" });
-    m.timelines.push({ id: 7, name: "DFIR Companion timeline" });  // from a prior push
+    m.timelines.push({ id: 7, name: "DFIR-Companion Forensic Timeline" });  // from a prior push
     const res = await pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() });
     expect(res.created).toBe(false);
     expect(res.sketchId).toBe(42);
@@ -179,28 +179,28 @@ describe("pushSuperTimelineToTimesketch", () => {
     expect(res.created).toBe(true);
     expect(res.sketchId).toBe(1);
     expect(res.events).toBe(2);
-    expect(res.timelineName).toBe("DFIR Companion super timeline");
-    expect(res.timelineName).not.toBe("DFIR Companion timeline");
+    expect(res.timelineName).toBe("DFIR-Companion Super Timeline");
+    expect(res.timelineName).not.toBe("DFIR-Companion Forensic Timeline");
   });
 
   it("reuses the same sketch as a prior forensic-timeline push without touching that timeline", async () => {
     const m = new MockTimesketch();
     // Simulate a prior forensic push: same sketch, forensic timeline already present.
     m.sketches.push({ id: 42, name: "Case Alpha" });
-    m.timelines.push({ id: 7, name: "DFIR Companion timeline" });
+    m.timelines.push({ id: 7, name: "DFIR-Companion Forensic Timeline" });
     const res = await pushSuperTimelineToTimesketch(m, { sketchName: "Case Alpha", events: superEvents() });
     expect(res.sketchId).toBe(42);       // same sketch
     expect(res.created).toBe(false);
     expect(res.replacedTimeline).toBe(false);      // no super timeline existed yet, nothing replaced
     expect(m.deletedTimelines).not.toContain(7);    // the forensic timeline was left alone
-    expect(m.timelines.some((t) => t.name === "DFIR Companion timeline")).toBe(true); // still there
+    expect(m.timelines.some((t) => t.name === "DFIR-Companion Forensic Timeline")).toBe(true); // still there
   });
 
   it("clean-replaces its OWN super timeline on re-push, leaving a same-sketch forensic timeline alone", async () => {
     const m = new MockTimesketch();
     m.sketches.push({ id: 42, name: "Case Alpha" });
-    m.timelines.push({ id: 7, name: "DFIR Companion timeline" });
-    m.timelines.push({ id: 8, name: "DFIR Companion super timeline" });
+    m.timelines.push({ id: 7, name: "DFIR-Companion Forensic Timeline" });
+    m.timelines.push({ id: 8, name: "DFIR-Companion Super Timeline" });
     const res = await pushSuperTimelineToTimesketch(m, { sketchName: "Case Alpha", events: superEvents() });
     expect(res.replacedTimeline).toBe(true);
     expect(m.deletedTimelines).toEqual([8]);

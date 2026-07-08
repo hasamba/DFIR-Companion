@@ -40,7 +40,7 @@ export interface TimesketchSuperPushInput {
 
 export interface TimesketchPushOptions {
   baseUrl?: string;            // to build a clickable sketch URL in the result
-  timelineName?: string;       // managed FORENSIC timeline name (default "DFIR Companion timeline")
+  timelineName?: string;       // managed FORENSIC timeline name (default "DFIR-Companion Forensic Timeline")
 }
 
 export interface TimesketchPushResult {
@@ -54,8 +54,8 @@ export interface TimesketchPushResult {
   warnings: string[];
 }
 
-const DEFAULT_TIMELINE = "DFIR Companion timeline";
-const DEFAULT_SUPER_TIMELINE = "DFIR Companion super timeline";
+const DEFAULT_TIMELINE = "DFIR-Companion Forensic Timeline";
+const DEFAULT_SUPER_TIMELINE = "DFIR-Companion Super Timeline";
 
 async function pushEventsToTimesketch(
   client: TimesketchClientLike,
