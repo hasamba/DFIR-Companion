@@ -3,7 +3,7 @@ import {
   timesketchDate, mapForensicEvent, toTimesketchEvents, toTimesketchJsonl,
   toTimesketchEventsFromList, toTimesketchJsonlFromList,
 } from "../../src/integrations/timesketch/timesketchMap.js";
-import { scrapeCsrfToken } from "../../src/integrations/timesketch/timesketchClient.js";
+import { scrapeCsrfToken, describeFetchError, TimesketchClient } from "../../src/integrations/timesketch/timesketchClient.js";
 import {
   pushCaseToTimesketch, pushSuperTimelineToTimesketch, type TimesketchClientLike,
 } from "../../src/integrations/timesketch/timesketchPush.js";
@@ -92,6 +92,37 @@ describe("scrapeCsrfToken", () => {
     expect(scrapeCsrfToken('<input id="csrf_token" name="csrf_token" type="hidden" value="abc123">')).toBe("abc123");
     expect(scrapeCsrfToken('<meta name="csrf-token" content="meta-tok">')).toBe("meta-tok");
     expect(scrapeCsrfToken("<html>no token here</html>")).toBeUndefined();
+  });
+});
+
+describe("describeFetchError", () => {
+  it("walks the cause chain so an errno code isn't lost behind Node's generic 'fetch failed'", () => {
+    const errno = Object.assign(new Error("connect ECONNREFUSED 10.0.0.2:5000"), { code: "ECONNREFUSED" });
+    const fetchFailed = new TypeError("fetch failed", { cause: errno });
+    expect(describeFetchError(fetchFailed)).toBe("fetch failed -> connect ECONNREFUSED 10.0.0.2:5000 (ECONNREFUSED)");
+  });
+
+  it("passes through a plain error message when there is no cause", () => {
+    expect(describeFetchError(new Error("boom"))).toBe("boom");
+  });
+
+  it("stringifies non-Error throws", () => {
+    expect(describeFetchError("not an error")).toBe("not an error");
+  });
+});
+
+describe("TimesketchClient network failure", () => {
+  it("surfaces the underlying cause instead of a bare 'fetch failed'", async () => {
+    const errno = Object.assign(new Error("connect ECONNREFUSED 10.0.0.2:5000"), { code: "ECONNREFUSED" });
+    const client = new TimesketchClient({
+      baseUrl: "https://10.0.0.2:5000",
+      username: "u",
+      password: "p",
+      fetchFn: async () => { throw new TypeError("fetch failed", { cause: errno }); },
+    });
+    await expect(client.login()).rejects.toThrow(
+      "Timesketch request failed: fetch failed -> connect ECONNREFUSED 10.0.0.2:5000 (ECONNREFUSED)",
+    );
   });
 });
 

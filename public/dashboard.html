@@ -2185,7 +2185,7 @@
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_IRIS_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_IRIS_INSECURE" placeholder="false" /></div>
         </div>
         <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
-          <button id="irisReconnectBtn" type="button" data-tip="Re-read the IRIS settings from .env, rebuild the client, and test the connection — applies a saved URL/key (or IRIS coming back online) WITHOUT restarting the server. Save settings first.">Test / reconnect</button>
+          <button id="irisReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the IRIS settings, rebuilds the client, and tests the connection — applies WITHOUT restarting the server.">Test / reconnect</button>
           <span id="irisReconnectMsg" style="font-size:12px; color:var(--c-9aa4b2);"></span>
         </div>
         <div class="settings-group-head">Timesketch</div>
@@ -3798,6 +3798,9 @@
       </div>
     </section>
   </main>
+  <footer style="padding:14px 16px 28px; text-align:center; color:var(--c-9aa4b2); font-size:12px; border-top:1px solid var(--c-2a2f3a); margin-top:8px;">
+    That's every panel for this layout — refresh to pick up new data. More panels can be shown, hidden, or reordered from Settings → General → Dashboard sections.
+  </footer>
   <!-- Lifecycle dropdown — lives outside toolbarMain so it never triggers the fitToolbar
        MutationObserver. Positioned via JS (position:fixed). Must be before the script. -->
   <div id="lifecycleMenu" style="display:none;position:fixed;background:var(--c-161b22);border:1px solid var(--c-30363d);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:9999;min-width:180px;">
@@ -3849,6 +3852,8 @@
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views
     let activeView = null;                     // the currently-applied view (null = Custom / no preset)
+    const DEFAULT_DASHBOARD_VIEW_ID = "analyst"; // new installs / cases with no saved preference start here
+    const CUSTOM_VIEW_MARKER = "__custom__";     // persisted when Custom is explicitly chosen (vs. never chosen)
     let ws = null;
     let countTimer = null;
     let countUpdate = null;   // current capture-count poll fn (set by pollCount)
@@ -7008,12 +7013,20 @@
         .catch(e => { if (msg) msg.textContent = "error: " + e.message; })
         .finally(() => { if (btn) btn.disabled = false; });
     }
-    // Re-read .env, rebuild the Velociraptor client, and refresh the inventory (the reachability probe).
-    // Works even when the API wasn't configured at boot or the server was down — no companion restart.
-    function doVeloReconnect() {
+    // Save any unsaved field edits, then re-read .env, rebuild the Velociraptor client, and refresh
+    // the inventory (the reachability probe). Works even when the API wasn't configured at boot or
+    // the server was down — no companion restart.
+    async function doVeloReconnect() {
       const btn = document.getElementById("veloReconnectBtn");
       const msg = document.getElementById("veloClientsMsg");
       if (btn) btn.disabled = true;
+      if (msg) msg.textContent = "saving…";
+      const saved = await saveSettings();
+      if (!saved) {
+        if (msg) msg.textContent = "save failed — fix the error above and retry";
+        if (btn) btn.disabled = false;
+        return;
+      }
       if (msg) msg.textContent = "reconnecting to the Velociraptor server…";
       fetch("/velociraptor/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
         .then(r => r.json().then(j => ({ ok: r.ok, j })))
@@ -7022,7 +7035,7 @@
           // Reflect the (possibly newly) configured client across the velo UI without a page reload.
           veloEnabled = !!j.configured;
           applyVeloEnabled();
-          if (!j.configured) { if (msg) msg.textContent = "Velociraptor API not configured — set the API config path on the Integrations tab, Save, then Reconnect"; return; }
+          if (!j.configured) { if (msg) msg.textContent = "Velociraptor API not configured — set the API config path on the Integrations tab and reconnect"; return; }
           if (!j.ok) { if (msg) msg.textContent = "⚠ configured but unreachable: " + (j.error || "the Velociraptor server is not responding"); return; }
           if (msg) msg.textContent = `✓ connected — ${j.clients || 0} enrolled client(s)`;
           loadVeloClients();
@@ -14109,13 +14122,22 @@
         .finally(() => { btn.disabled = false; });
     };
 
-    // Settings → DFIR-IRIS "Test / reconnect": re-read .env, rebuild the client, ping. Applies a
-    // saved URL/key (or IRIS coming back online) without the #1-gotcha restart.
+    // Settings → DFIR-IRIS "Test / reconnect": save any unsaved field edits first, then re-read
+    // .env, rebuild the client, and ping. Applies a saved URL/key (or IRIS coming back online)
+    // without the #1-gotcha restart.
     const irisReconnectBtn = document.getElementById("irisReconnectBtn");
-    if (irisReconnectBtn) irisReconnectBtn.onclick = () => {
+    if (irisReconnectBtn) irisReconnectBtn.onclick = async () => {
       const msg = document.getElementById("irisReconnectMsg");
       irisReconnectBtn.disabled = true;
       msg.style.color = "var(--c-9aa4b2)";
+      msg.textContent = "saving…";
+      const saved = await saveSettings();
+      if (!saved) {
+        msg.style.color = "var(--c-f87171, #f87171)";
+        msg.textContent = "save failed — fix the error above and retry";
+        irisReconnectBtn.disabled = false;
+        return;
+      }
       msg.textContent = "reconnecting…";
       fetch("/iris/reconnect", { method: "POST" })
         .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
@@ -14129,7 +14151,7 @@
             msg.textContent = "✗ configured but unreachable: " + (res.error || "ping failed");
           } else {
             msg.style.color = "var(--c-9aa4b2)";
-            msg.textContent = "not configured — set IRIS URL + key above, Save, then reconnect";
+            msg.textContent = "not configured — set IRIS URL + key above and reconnect";
           }
         })
         .catch((err) => { msg.style.color = "var(--c-f87171, #f87171)"; msg.textContent = "reconnect failed: " + err.message; })
@@ -14589,7 +14611,9 @@
       renderDashViewMenu();
       if (opts.persist !== false) {
         const k = viewStorageKey();
-        if (k) { if (view) localStorage.setItem(k, view.id); else localStorage.removeItem(k); }
+        // An explicit "Custom" pick is stored as a marker (not removed) so it stays distinct from a
+        // case that has never had a view chosen — the latter falls back to the default view below.
+        if (k) localStorage.setItem(k, view ? view.id : CUSTOM_VIEW_MARKER);
       }
       if (opts.rerender !== false && lastState) render(lastState);
     }
@@ -14600,7 +14624,11 @@
       const k = viewStorageKey();
       if (!k || !DASHBOARD_VIEWS.length) return;
       const id = localStorage.getItem(k);
-      const view = id ? DASHBOARD_VIEWS.find(v => v.id === id) : null;
+      // No key at all = a new case / new install with no preference yet -> default to Analyst.
+      // The CUSTOM_VIEW_MARKER = an explicit "Custom" pick, which stays Custom.
+      const view = id === null
+        ? (DASHBOARD_VIEWS.find(v => v.id === DEFAULT_DASHBOARD_VIEW_ID) || null)
+        : (id === CUSTOM_VIEW_MARKER ? null : DASHBOARD_VIEWS.find(v => v.id === id) || null);
       applyDashboardView(view, { persist: false, rerender: false });
     }
 
@@ -14679,6 +14707,7 @@
       });
       const msg = document.getElementById("settingsSaveMsg");
       msg.textContent = "";
+      let ok = true;
       if (Object.keys(updates).length > 0) {
         try {
           const r = await fetch("/settings/env", {
@@ -14693,16 +14722,19 @@
             const j = await r.json().catch(() => ({}));
             msg.textContent = "Error: " + (j.error || r.status);
             msg.style.color = "#ff7a7a";
+            ok = false;
           }
         } catch {
           msg.textContent = "Could not reach server";
           msg.style.color = "#ff7a7a";
+          ok = false;
         }
       } else {
         msg.textContent = "✓ Saved";
         msg.style.color = "#5fd470";
       }
       setTimeout(() => { if (msg) msg.textContent = ""; }, 5000);
+      return ok;
     }
 
     function openSettingsModal() {
@@ -15951,8 +15983,14 @@
         if (msg) msg.textContent = ok ? `${toolId}: ${(j.output || "updated").slice(0, 200)}` : (j.error || "update failed") + " — restart the companion server if this 404s";
       }).catch(e => { if (btn) { btn.disabled = false; btn.textContent = "↻ Update rules"; } if (msg) msg.textContent = "update failed: " + e.message; });
     }
-    document.getElementById("toolsReconnectBtn").onclick = () => {
+    document.getElementById("toolsReconnectBtn").onclick = async () => {
       const msg = document.getElementById("toolsMsg");
+      if (msg) msg.textContent = "saving…";
+      const saved = await saveSettings();
+      if (!saved) {
+        if (msg) msg.textContent = "save failed — fix the error above and retry";
+        return;
+      }
       if (msg) msg.textContent = "applying…";
       fetch("/tools/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
         .then(r => r.json()).then(j => { if (msg) msg.textContent = j.ok ? `applied — ${(j.configured || []).length} tool(s) configured` : (j.error || "reconnect failed"); loadTools(); })

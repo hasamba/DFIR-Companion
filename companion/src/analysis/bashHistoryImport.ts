@@ -10,7 +10,7 @@
 // domains in the command line become IOCs. Reuses siemImport's aggregation + IOC sink.
 
 import {
-  addIoc, aggregateEvents, cleanIp,
+  addIoc, aggregateEvents, cleanIp, hasPlausibleTld,
   type MappedEvent, type SiemImportOptions, type SiemIoc, type SiemParseResult,
 } from "./siemImport.js";
 import type { Severity } from "./stateTypes.js";
@@ -150,6 +150,7 @@ function extractIocs(command: string, sink: Map<string, SiemIoc>): void {
     if (after === "@") continue;
     if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(d) || FILE_EXT_RE.test(d)) continue;
     if (/\/[a-z0-9._-]*$/i.test(d)) continue;
+    if (!hasPlausibleTld(d)) continue;   // e.g. "config.yaml" args, package/module paths — not a real TLD
     addIoc(sink, "domain", d);
   }
 }
