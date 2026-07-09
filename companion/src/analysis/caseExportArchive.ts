@@ -29,6 +29,21 @@ export interface CaseImportCounts {
   imports: number;
 }
 
+// Windows-illegal filename characters (also unsafe cross-platform): < > : " / \ | ? * and control
+// chars. caseId itself never needs this — isValidCaseId's allowlist already guarantees it's
+// filesystem-safe — but the case name is free text an analyst typed in.
+const UNSAFE_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
+
+/**
+ * The download filename for a case's `.dfircase` export: `"<caseId> - <name>.dfircase"`, or just
+ * `"<caseId>.dfircase"` when the case has no distinct name set.
+ */
+export function dfircaseFilename(caseId: string, name: string | null | undefined): string {
+  const trimmed = (name ?? "").trim();
+  if (!trimmed || trimmed === caseId) return `${caseId}.dfircase`;
+  return `${caseId} - ${trimmed.replace(UNSAFE_FILENAME_CHARS, "_")}.dfircase`;
+}
+
 async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
   const out: string[] = [];
   let entries;

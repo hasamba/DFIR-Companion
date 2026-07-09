@@ -55,7 +55,7 @@ describe("POST /cases/:id/export/encrypted", () => {
       request(app).post("/cases/INC-1/export/encrypted").send({ password: PASSWORD }),
     );
     expect(res.status).toBe(200);
-    expect(res.headers["content-disposition"]).toContain('attachment; filename="INC-1.dfircase"');
+    expect(res.headers["content-disposition"]).toContain('attachment; filename="INC-1 - Case One.dfircase"');
     expect((res.body as Buffer).length).toBeGreaterThan(0);
   });
 

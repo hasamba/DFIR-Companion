@@ -7,6 +7,7 @@ import {
   exportEncryptedCase,
   importEncryptedCase,
   CaseImportConflictError,
+  dfircaseFilename,
 } from "../../src/analysis/caseExportArchive.js";
 import { createZip } from "../../src/analysis/zipArchive.js";
 import { encryptBuffer, DecryptionError } from "../../src/analysis/caseEncryption.js";
@@ -194,5 +195,32 @@ describe("importEncryptedCase", () => {
     await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-DUP" }))
       .rejects.toThrow(/duplicate entry path/);
     expect(await store.caseExists("INC-DUP")).toBe(false);
+  });
+});
+
+describe("dfircaseFilename", () => {
+  it("includes the case name when it differs from the id", () => {
+    expect(dfircaseFilename("INC-1", "Acme Ransomware")).toBe("INC-1 - Acme Ransomware.dfircase");
+  });
+
+  it("falls back to just the caseId when there is no name", () => {
+    expect(dfircaseFilename("INC-1", undefined)).toBe("INC-1.dfircase");
+    expect(dfircaseFilename("INC-1", null)).toBe("INC-1.dfircase");
+    expect(dfircaseFilename("INC-1", "")).toBe("INC-1.dfircase");
+    expect(dfircaseFilename("INC-1", "   ")).toBe("INC-1.dfircase");
+  });
+
+  it("falls back to just the caseId when the name is identical to it", () => {
+    expect(dfircaseFilename("INC-1", "INC-1")).toBe("INC-1.dfircase");
+  });
+
+  it("trims surrounding whitespace from the name", () => {
+    expect(dfircaseFilename("INC-1", "  Acme Ransomware  ")).toBe("INC-1 - Acme Ransomware.dfircase");
+  });
+
+  it("sanitizes filesystem-unsafe characters in the name", () => {
+    expect(dfircaseFilename("INC-1", 'Acme: "Ransomware" / Attack <2026>')).toBe(
+      "INC-1 - Acme_ _Ransomware_ _ Attack _2026_.dfircase",
+    );
   });
 });

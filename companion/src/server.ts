@@ -30,6 +30,7 @@ import {
   importEncryptedCase,
   CaseImportConflictError,
   MIN_PASSWORD_LENGTH,
+  dfircaseFilename,
 } from "./analysis/caseExportArchive.js";
 import { parseCsv } from "./analysis/csvImport.js";
 import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
@@ -2047,8 +2048,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
       }
       const archive = await exportEncryptedCase(store, id, password);
+      const meta = await store.getCaseMeta(id);
+      const filename = dfircaseFilename(id, meta?.name);
       res.type("application/octet-stream");
-      res.setHeader("Content-Disposition", `attachment; filename="${id}.dfircase"`);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(archive);
     } catch (err) {

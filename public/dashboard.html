@@ -12743,7 +12743,11 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `${caseId}.dfircase`;
+        // Server names the file "<caseId> - <case name>.dfircase" (falls back to just the caseId
+        // when the case has no distinct name); read it from the response instead of hardcoding it.
+        const cd = res.headers.get("content-disposition") || "";
+        const cdMatch = cd.match(/filename="([^"]*)"/);
+        a.download = cdMatch ? cdMatch[1] : `${caseId}.dfircase`;
         document.body.appendChild(a);
         a.click();
         a.remove();

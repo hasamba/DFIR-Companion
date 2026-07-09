@@ -208,7 +208,7 @@ describe("full-pipeline integration (capture → import → synthesis → report
         r.on("end", () => cb(null, Buffer.concat(chunks)));
       });
     expect(exportRes.status).toBe(200);
-    expect(exportRes.headers["content-disposition"]).toContain('attachment; filename="pipeline-1.dfircase"');
+    expect(exportRes.headers["content-disposition"]).toContain('attachment; filename="pipeline-1 - Full Pipeline Test.dfircase"');
     const archiveBase64 = (exportRes.body as Buffer).toString("base64");
 
     // 8. Restore the archive into a new case
