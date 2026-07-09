@@ -1175,8 +1175,10 @@
     .sec-selall button:hover { background: var(--c-353b47); color: var(--c-cbd3df); }
     .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--c-2a2f3a); padding-top: 12px; flex-shrink: 0; }
     .settings-msg { font-size: 11px; margin-left: 4px; }
-    /* Global search + time-range filter row — revealed by the toolbar search icon, hidden by default. */
-    #searchFilterBar { padding: 5px 16px; background: var(--c-0e1116); border-bottom: 1px solid var(--c-1a1f28);
+    /* Global search + time-range filter row — revealed by the toolbar search icon, hidden by default.
+       Sticky while open so it stays visible (e.g. over the Super-Timeline it also scopes) as the
+       dashboard is scrolled; [hidden] still fully removes it when the toolbar icon closes it. */
+    #searchFilterBar { position: sticky; top: 0; z-index: 20; padding: 5px 16px; background: var(--c-0e1116); border-bottom: 1px solid var(--c-1a1f28);
       display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: var(--c-9aa4b2); }
     #searchFilterBar[hidden] { display: none; }
     /* Import progress bar — strip at the bottom edge of the header. */
