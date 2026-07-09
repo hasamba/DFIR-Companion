@@ -2191,7 +2191,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const { meta, counts } = await importEncryptedCase(store, fileBuffer, password, {
         targetCaseId: typeof targetCaseId === "string" && targetCaseId.trim() ? targetCaseId.trim() : undefined,
       });
-      return res.status(201).json({ ...meta, counts });
+      // An archived case.json is written back byte-for-byte on import (see
+      // caseExportArchive.ts), so an exported case that had a case-lock password carries
+      // its salt+hash into the archive. Sanitize before responding — never let it reach
+      // the client, same as every other route that serializes a CaseMeta.
+      return res.status(201).json({ ...sanitizeCaseMeta(meta), counts });
     } catch (err) {
       if (err instanceof CaseImportConflictError) {
         return res.status(409).json({ error: err.message, caseId: err.caseId });
