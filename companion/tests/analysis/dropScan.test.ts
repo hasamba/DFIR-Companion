@@ -47,6 +47,7 @@ describe("dropScan — ignore rules", () => {
     expect(shouldIgnoreDropFile("sub/.DS_Store")).toBe(true);
     expect(shouldIgnoreDropFile("Thumbs.db")).toBe(true);
     expect(shouldIgnoreDropFile("desktop.ini")).toBe(true);
+    expect(shouldIgnoreDropFile("drop-log.txt")).toBe(true);
   });
   it("does not ignore a real evidence file", () => {
     expect(shouldIgnoreDropFile("triage/prefetch.csv")).toBe(false);
