@@ -4,9 +4,13 @@
 // distinct TOOL names) — this assembles the actual timestamped steps. Pure, derived on read, like
 // those siblings — never mutates state.
 //
-// IMPORTANT CAVEAT: no importer records which specific event produced an IOC (addIoc() takes only a
-// type+value, across ~20 importers), so the "extraction" leg is APPROXIMATE — the same indexed
-// exact-token match iocCorroboration/iocProvenance already use, not an authoritative link. Enrichment
+// IMPORTANT CAVEAT: not every importer records which specific event produced an IOC (addIoc() takes
+// only a type+value in most of the ~20 importers), so the "extraction" leg falls back to APPROXIMATE
+// — the same indexed exact-token match iocCorroboration/iocProvenance already use — whenever an IOC
+// has no (or no resolvable) IOC.extractedFrom link. 5 priority importers (SIEM/EVTX, Security Onion,
+// Network, Combined-log, Velociraptor) DO populate extractedFrom, so buildIocProvenanceChains prefers
+// that authoritative link when present. Check `extractionAuthoritative` on the returned chain to see
+// which path applied for a given IOC. Enrichment
 // lookups ARE authoritative (IOC.enrichments already carries a real fetchedAt per hit). Findings ARE
 // authoritative (Finding.relatedIocs is a real reference). There is no data model for "which playbook
 // task referenced this IOC" (playbook tasks don't carry IOC ids) — that leg is intentionally omitted
