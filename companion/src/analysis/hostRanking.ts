@@ -7,7 +7,7 @@
 // a compact "signal concentration" hint for the synthesis prompt. No AI, no network.
 
 import type { InvestigationState, ForensicEvent } from "./stateTypes.js";
-import { extractAccounts } from "./assetGraph.js";
+import { extractAccounts, buildAssetGraph } from "./assetGraph.js";
 import { rankConnectiveIocs } from "./iocAnchors.js";
 
 export interface EntityRank {
@@ -20,6 +20,8 @@ export interface EntityRank {
   total: number;
   techniques: number;       // distinct ATT&CK techniques seen on it
   connectiveIocs: number;   // cross-host / multi-tool IOCs touching it (hosts only)
+  eventIds: string[];       // forensic-event ids that contributed to this entity's score (#237)
+  iocIds: string[];         // IOC ids connected to this entity, via the asset graph (#237)
   firstSeen: string;
   lastSeen: string;
 }
@@ -34,6 +36,7 @@ interface Acc {
   name: string; type: "host" | "account";
   crit: number; high: number; med: number; total: number;
   tech: Set<string>; first: string; last: string;
+  ids: string[];
 }
 
 export interface RankHostsOptions { max?: number; coverage?: number }
@@ -52,11 +55,12 @@ export function rankHosts(state: InvestigationState, opts: RankHostsOptions = {}
   const ensure = (type: "host" | "account", name: string): Acc => {
     const key = `${type}:${name.toLowerCase()}`;
     let a = map.get(key);
-    if (!a) { a = { name, type, crit: 0, high: 0, med: 0, total: 0, tech: new Set(), first: "", last: "" }; map.set(key, a); }
+    if (!a) { a = { name, type, crit: 0, high: 0, med: 0, total: 0, tech: new Set(), first: "", last: "", ids: [] }; map.set(key, a); }
     return a;
   };
   const bump = (a: Acc, e: ForensicEvent): void => {
     a.total++;
+    a.ids.push(e.id);
     if (e.severity === "Critical") a.crit++;
     else if (e.severity === "High") a.high++;
     else if (e.severity === "Medium") a.med++;
@@ -70,7 +74,12 @@ export function rankHosts(state: InvestigationState, opts: RankHostsOptions = {}
     for (const acct of extractAccounts(e.description ?? "")) bump(ensure("account", acct), e);
   }
 
+  // Per-entity connected IOC ids (#237) — reuse the asset graph's already-computed linkage
+  // (structured fields + related-finding IOCs + description matches) instead of re-deriving it.
+  const iocIdsByKey = new Map(buildAssetGraph(state).assets.map((a) => [a.id, a.iocIds] as const));
+
   const ranks: EntityRank[] = [...map.values()].map((a) => {
+    const key = `${a.type}:${a.name.toLowerCase()}`;
     const connectiveIocs = a.type === "host" ? (connByHost.get(a.name.toLowerCase()) ?? 0) : 0;
     // Real Critical/High events dominate; the connective-IOC contribution is capped so a host that
     // merely shares many (possibly noisy) cross-host indicators can't flatten the ranking past the
@@ -79,7 +88,9 @@ export function rankHosts(state: InvestigationState, opts: RankHostsOptions = {}
     return {
       name: a.name, type: a.type, score,
       critical: a.crit, high: a.high, medium: a.med, total: a.total,
-      techniques: a.tech.size, connectiveIocs, firstSeen: a.first, lastSeen: a.last,
+      techniques: a.tech.size, connectiveIocs,
+      eventIds: a.ids, iocIds: iocIdsByKey.get(key) ?? [],
+      firstSeen: a.first, lastSeen: a.last,
     };
   })
     .filter((r) => r.score > 0)                 // only entities that carry signal

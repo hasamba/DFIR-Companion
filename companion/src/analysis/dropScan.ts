@@ -10,6 +10,7 @@
 // unit-tested in isolation. Pairs with `dropStatus.ts` (the persisted last-sweep summary).
 
 import { extname, basename } from "node:path";
+import { DROP_LOG_FILE } from "./dropLog.js";
 
 /** A drop-folder file as seen by one poll: its path relative to `drop/`, plus size + mtime. */
 export interface DropFileStat {
@@ -46,6 +47,7 @@ export const DROP_README = "README.txt";
 // OS / sync junk files that must never be treated as evidence.
 const IGNORED_BASENAMES = new Set([
   DROP_README.toLowerCase(),
+  DROP_LOG_FILE.toLowerCase(),
   ".ds_store",
   "thumbs.db",
   "desktop.ini",

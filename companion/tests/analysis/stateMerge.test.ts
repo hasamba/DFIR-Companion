@@ -377,3 +377,40 @@ describe("mergeDelta", () => {
     expect(state.narrativeTimeline).toBe("Updated narrative after more evidence.");
   });
 });
+
+describe("mergeDelta — ioc extractedFrom", () => {
+  it("carries extractedFrom onto a newly created IOC", () => {
+    const state = emptyState("c1");
+    const next = mergeDelta(state, {
+      ...baseDelta,
+      iocs: [{ id: "si1", type: "domain", value: "evil.example.com", extractedFrom: ["e001"] }],
+    }, { windowSequence: -1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+    expect(next.iocs).toHaveLength(1);
+    expect(next.iocs[0].extractedFrom).toEqual(["e001"]);
+  });
+
+  it("unions extractedFrom when the same IOC value recurs across separate imports", () => {
+    let state = emptyState("c1");
+    state = mergeDelta(state, {
+      ...baseDelta,
+      iocs: [{ id: "si1", type: "domain", value: "evil.example.com", extractedFrom: ["e001"] }],
+    }, { windowSequence: -1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+
+    state = mergeDelta(state, {
+      ...baseDelta,
+      iocs: [{ id: "si1", type: "domain", value: "EVIL.example.com", extractedFrom: ["e050"] }],
+    }, { windowSequence: -1, timestamp: "2026-05-28T11:00:00.000Z", sourceScreenshots: [] });
+
+    expect(state.iocs).toHaveLength(1);
+    expect(state.iocs[0].extractedFrom).toEqual(["e001", "e050"]);
+  });
+
+  it("leaves extractedFrom undefined for an IOC whose delta never sets it", () => {
+    const state = emptyState("c1");
+    const next = mergeDelta(state, {
+      ...baseDelta,
+      iocs: [{ id: "si1", type: "ip", value: "9.9.9.9" }],
+    }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
+    expect(next.iocs[0].extractedFrom).toBeUndefined();
+  });
+});

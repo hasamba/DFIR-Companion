@@ -24,6 +24,9 @@ export const deltaSchema = z.object({
     id: z.string().min(1),
     type: iocType.catch("other"),
     value: z.string().min(1),
+    // Authoritative source-event links (set by the deterministic importers via pipeline.ts, never
+    // by AI synthesis). Optional — absent for every existing caller.
+    extractedFrom: z.array(z.string()).optional(),
   })),
   mitreTechniques: z.array(z.object({
     id: z.string().min(1),
@@ -101,6 +104,17 @@ export const deltaSchema = z.object({
 });
 
 export type AnalysisDelta = z.infer<typeof deltaSchema>;
+
+// AI synthesis/extraction responses must never carry extractedFrom — that field asserts an
+// authoritative, stored source-event link, which only the deterministic importers (pipeline.ts)
+// are allowed to set. Without this, a model response (or prompt-injected content it read from
+// evidence) could fabricate the field and have it rendered as "linked" in the IOC provenance
+// panel — a false trust claim. Strip it defensively after schema validation, at every AI
+// extraction/synthesis call site (never at the deterministic-importer call sites, which build
+// their delta objects field-by-field and set extractedFrom themselves via resolveExtractedFrom).
+export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
+  return { ...delta, iocs: delta.iocs.map(({ extractedFrom, ...rest }) => rest) };
+}
 
 // Answer to an analyst's free-form question about the case ("was data exfiltrated?").
 // Lenient (.catch) like the delta so a slightly-off model response still parses.

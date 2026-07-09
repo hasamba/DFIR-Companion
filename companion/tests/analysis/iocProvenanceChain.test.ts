@@ -92,7 +92,34 @@ describe("buildIocProvenanceChains", () => {
   it("returns empty arrays for an IOC with no matches", () => {
     const chains = buildIocProvenanceChains([ioc({ id: "i1", type: "ip", value: "1.2.3.4" })], [], []);
     expect(chains.i1).toEqual({
-      iocId: "i1", value: "1.2.3.4", type: "ip", extraction: [], extractionTruncated: 0, enrichment: [], findings: [],
+      iocId: "i1", value: "1.2.3.4", type: "ip", extraction: [], extractionTruncated: 0,
+      extractionAuthoritative: false, enrichment: [], findings: [],
     });
+  });
+
+  it("uses extractedFrom directly when present, ignoring the value-match index", () => {
+    const events = [
+      ev({ id: "e1", severity: "High", timestamp: "2026-01-01T00:00:00Z", description: "unrelated text" }),
+      ev({ id: "e2", severity: "Low", timestamp: "2026-01-02T00:00:00Z", description: "also unrelated" }),
+    ];
+    const i = ioc({ id: "i1", type: "domain", value: "evil.example.com", extractedFrom: ["e2", "e1"] });
+    const chains = buildIocProvenanceChains([i], events, []);
+    expect(chains.i1.extraction.map((x) => x.eventId)).toEqual(["e1", "e2"]); // sorted chronologically
+    expect(chains.i1.extractionAuthoritative).toBe(true);
+  });
+
+  it("falls back to approximate matching when extractedFrom points at no existing event", () => {
+    const events = [ev({ id: "e1", severity: "High", description: "connection to evil.example.com observed" })];
+    const i = ioc({ id: "i1", type: "domain", value: "evil.example.com", extractedFrom: ["e999"] });
+    const chains = buildIocProvenanceChains([i], events, []);
+    expect(chains.i1.extraction.map((x) => x.eventId)).toEqual(["e1"]);
+    expect(chains.i1.extractionAuthoritative).toBe(false);
+  });
+
+  it("falls back to approximate matching when extractedFrom is empty", () => {
+    const events = [ev({ id: "e1", severity: "High", dstIp: "8.8.8.8" })];
+    const i = ioc({ id: "i1", type: "ip", value: "8.8.8.8" });
+    const chains = buildIocProvenanceChains([i], events, []);
+    expect(chains.i1.extractionAuthoritative).toBe(false);
   });
 });

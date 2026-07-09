@@ -467,19 +467,78 @@
     .tl-arrow.active { color: var(--c-6aa9ff); }
     .tl-sevsort-label { font-size: 10px; color: var(--c-6b7280); text-transform: uppercase; letter-spacing: 0.3px; margin-left: 8px; }
     #timelineCount, #findingsCount { font-size: 12px; font-weight: normal; color: var(--c-9aa4b2); margin: 0 6px; letter-spacing: 0; text-transform: none; }
-    .finding { border-left: 3px solid var(--c-2a2f3a); padding: 6px 10px; margin-bottom: 8px; }
     .conf-badge { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-left: 4px; vertical-align: middle; }
     .conf-high { background: var(--c-1a3a1a); color: var(--c-6bcb77); border: 1px solid var(--c-2a5a2a); }
     .conf-mid  { background: var(--c-3a2e00); color: var(--c-e0b84a); border: 1px solid var(--c-5a4800); }
     .conf-low  { background: var(--c-3a1a1a); color: var(--c-e06060); border: 1px solid var(--c-5a2a2a); }
-    /* Collapsible "Evidence" disclosure under a finding: evidence / Supporting events / Supporting IOCs. */
-    .ev-details { margin-top: 4px; }
-    .ev-details > summary { cursor: pointer; color: var(--c-6aa9ff); font-size: 12px; user-select: none; }
-    .ev-body { margin: 4px 0 2px 12px; padding: 4px 0 4px 8px; border-left: 2px solid var(--c-2a3146); }
-    .ev-body > div { margin: 2px 0; }
-    /* Supporting-event jump links under a finding (jump to the timeline row). */
-    .ev-jump { color: var(--c-6aa9ff); text-decoration: none; border-bottom: 1px dotted var(--c-6aa9ff); cursor: pointer; }
-    .ev-jump:hover { color: var(--c-9cc5ff); border-bottom-style: solid; }
+    /* Supporting-event jump links (jump to the timeline row). */
+    .ev-jump { color: var(--c-6aa9ff); text-decoration: none; cursor: pointer; }
+    .ev-jump > svg { width: 10px; height: 10px; vertical-align: -1px; }
+    .ev-jump:hover { color: var(--c-9cc5ff); border-bottom: 1px solid var(--c-9cc5ff); }
+    /* Findings — dense-table layout: grid columns instead of one crowded line. The chevron
+       (a <summary> styled as an icon) opens a full-width row revealing the confidence
+       explanation, supporting IOCs, and the cited-event timeline — native <details> toggle,
+       no extra JS wiring needed. */
+    .finding-header-row, .finding { grid-template-columns: 26px 22px 92px 92px minmax(0,1fr) 108px 148px; }
+    .finding-header-row {
+      display: grid; align-items: center; column-gap: 10px; padding: 0 10px 6px; font-size: 10px;
+      font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--c-9aa4b2);
+    }
+    .finding {
+      display: grid; grid-template-rows: auto auto; align-items: start; column-gap: 10px;
+      border: 1px solid var(--c-2a2f3a); border-radius: 6px; background: var(--c-11151c);
+      padding: 9px 10px; margin-bottom: 6px; position: relative;
+    }
+    .finding.finding-selected { background: var(--c-142038); }
+    .finding > .finding-cb { grid-column: 1; grid-row: 1; margin-top: 2px; }
+    .finding-chevron {
+      grid-column: 2; grid-row: 1; display: flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; padding: 0; margin: 0; background: none; border: none;
+      color: var(--c-5b6472); cursor: pointer;
+    }
+    .finding-chevron:disabled { visibility: hidden; cursor: default; }
+    .finding-chevron:hover { color: var(--c-6aa9ff); }
+    .finding-chevron svg { width: 11px; height: 11px; transition: transform .12s; }
+    .finding-chevron.open { color: var(--c-6aa9ff); }
+    .finding-chevron.open svg { transform: rotate(90deg); }
+    .finding-sev-cell { grid-column: 3; grid-row: 1; display: flex; align-items: center; gap: 6px; font-weight: 650; font-size: 12px; }
+    .finding-sev-cell .fsq { width: 8px; height: 8px; border-radius: 2px; background: currentColor; flex-shrink: 0; }
+    .finding-id-cell {
+      grid-column: 4; grid-row: 1; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px;
+      color: var(--c-9aa4b2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .finding-main-cell { grid-column: 5; grid-row: 1; min-width: 0; }
+    .finding-main-cell .finding-title { font-size: 13px; }
+    .finding-main-cell .finding-desc {
+      display: block; font-size: 12px; color: var(--c-9aa4b2); margin-top: 2px; line-height: 1.4;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .finding-main-cell .finding-tagline { margin-top: 4px; }
+    .finding-conf-cell { grid-column: 6; grid-row: 1; display: flex; align-items: center; gap: 6px; }
+    .finding-conf-cell .fcbar { width: 42px; height: 4px; border-radius: 2px; background: var(--c-2a2f3a); overflow: hidden; }
+    .finding-conf-cell .fcbar > span { display: block; height: 100%; }
+    .finding-conf-cell .fcpct { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; color: var(--c-9aa4b2); }
+    .finding-actions-cell { grid-column: 7; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px; }
+    .finding-evidence-body {
+      display: none; grid-column: 1 / -1; grid-row: 2; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--c-1c2230);
+    }
+    .finding-evidence-body.open { display: block; }
+    .finding-evidence-body .fev-row { display: flex; gap: 10px; padding: 3px 0; font-size: 12px; line-height: 1.5; }
+    .finding-evidence-body .fev-k {
+      flex-shrink: 0; width: 104px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em;
+      color: var(--c-5b6472); padding-top: 2px;
+    }
+    .finding-evidence-body .fev-v { flex: 1; min-width: 0; color: var(--c-9aa4b2); }
+    .finding-evidence-body .fev-iocs { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; word-break: break-all; }
+    .finding-evidence-body .fev-timeline { display: flex; flex-direction: column; }
+    .finding-evidence-body .fev-tl-item { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-top: 1px solid var(--c-1c2230); }
+    .finding-evidence-body .fev-tl-item:first-child { border-top: none; padding-top: 0; }
+    .finding-evidence-body .fev-tl-time {
+      font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--c-5b6472);
+      flex-shrink: 0; white-space: nowrap;
+    }
+    .finding-evidence-body .fev-tl-desc { flex: 1; min-width: 0; }
+    .finding-evidence-body .fev-tl-cite { flex-shrink: 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
     button { background: var(--c-2d6cdf); color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
     input { background: var(--c-0f1115); color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); padding: 6px; border-radius: 6px; }
     #status { font-size: 12px; color: var(--c-9aa4b2); }
@@ -535,6 +594,8 @@
       padding: 0 7px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .comment-chip:hover { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); }
     .comment-chip.has { color: var(--c-6aa9ff); border-color: var(--c-2d4a6a); background: var(--c-11202e); }
+    .comment-chip svg, .tag-add svg, .pin-btn svg, .fp-btn svg,
+    .hunt-add svg, .explain-btn svg, .ioc-chain-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
     .anon-chip { display:inline-block; background:var(--c-22272e); border:1px solid var(--c-30363d); border-radius:10px; padding:1px 7px; margin:1px 0; font-size:11px; }
     .anon-chip.anon-chip-sup { opacity:.6; }
     .anon-chip .anon-auto-rm, .anon-chip .anon-auto-restore { background:transparent; border:none; color:var(--c-8a93a3); cursor:pointer; font-size:10px; padding:0 0 0 1px; line-height:1; }
@@ -714,6 +775,7 @@
     .st-ctx { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
       padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .st-ctx:hover { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); }
+    .st-ctx svg { width: 11px; height: 11px; vertical-align: -1px; }
     .st-ctx-win { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-cbd3df); border-radius: 5px;
       padding: 1px 7px; font-size: 11px; cursor: pointer; line-height: 16px; white-space: nowrap; }
     .st-ctx-win:hover { background: var(--c-2a3050); color: #fff; border-color: var(--c-6aa9ff); }
@@ -757,10 +819,16 @@
     /* Action icons hidden (Settings → Timeline row display) → reclaim the control column's width, keep just the checkbox. */
     #forensicTimeline.tl-no-icons .ev-col-ctrl, #forensicTimeline.tl-no-icons .ev-header-ctrl { width: 22px; }
     .ev-checkbox { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; margin: 0; }
-    .ev-star { background: transparent; border: 0; color: var(--c-3a4050); font-size: 13px; cursor: pointer; padding: 0 1px; line-height: 1; flex-shrink: 0; }
+    .ev-star { background: transparent; border: 0; color: var(--c-3a4050); cursor: pointer; padding: 0 1px; line-height: 1; flex-shrink: 0; display: inline-flex; align-items: center; }
     .ev-star.starred, .ev-star:hover { color: var(--c-ffd93b); }
+    .ev-star svg { width: 12px; height: 12px; }
+    .ev-star.starred svg { fill: currentColor; }
+    .ev-geo { background: none; border: none; cursor: pointer; padding: 0 4px; color: var(--c-6b7280); display: inline-flex; align-items: center; }
+    .ev-geo:hover { color: var(--c-6aa9ff); }
+    .ev-geo svg { width: 12px; height: 12px; }
     .ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; padding-top: 2px; font-family: ui-monospace, Menlo, Consolas, monospace; }
     .ev-col-content { flex: 1; min-width: 0; padding-top: 1px; }
+    .ev-origin { color: var(--c-7e8aa0); white-space: nowrap; font-size: 11px; }
     .ev-more-btn { background: none; border: none; color: var(--c-6aa9ff); cursor: pointer; font-size: 0.78em; padding: 0 3px; margin-left: 2px; vertical-align: middle; }
     /* Unified per-row [details] disclosure — shared by the forensic timeline and super-timeline so both
        consolidate their "extra" content (full text, MITRE, findings, chain-check, decoded payloads,
@@ -817,17 +885,30 @@
     .finding-bulk-bar.active { display: flex; }
     .finding-bulk-btn { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-cbd3df); border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
     .finding-bulk-btn:hover { background: var(--c-2a3050); color: #fff; border-color: var(--c-6aa9ff); }
-    .finding-cb { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; margin: 0 6px 0 0; vertical-align: middle; }
-    .finding-header-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--c-9aa4b2); margin-bottom: 6px; }
-    .finding.finding-selected { background: var(--c-142038); }
-    .ioc-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; border-bottom: 1px solid var(--c-1a1f28); position: relative; }
-    /* Only the checkbox is a flex item; everything else flows inline inside .ioc-body so tag
-       pills / enrich badges wrap naturally instead of overflowing the row (display:flex would
-       otherwise make every chip a non-wrapping flex item and break the layout). */
-    .ioc-body { flex: 1 1 auto; min-width: 0; line-height: 1.7; }
-    .ioc-row:hover { background: var(--c-0d1117); }
+    .finding-cb { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); }
+    /* IOCs — dense-table layout, matching Findings: a grid row instead of one flowing line of
+       chips. Type in its own column, value + corroboration/provenance badges + enrichment +
+       tags stacked inside the main cell, actions right-aligned. */
+    .ioc-header-row, .ioc-row { grid-template-columns: 26px 70px minmax(0,1fr) 176px; }
+    .ioc-header-row {
+      display: grid; align-items: center; column-gap: 10px; padding: 0 10px 6px; font-size: 10px;
+      font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--c-9aa4b2);
+    }
+    .ioc-row {
+      display: grid; align-items: start; column-gap: 10px; border: 1px solid var(--c-2a2f3a);
+      border-radius: 6px; background: var(--c-11151c); padding: 7px 10px; margin-bottom: 5px; position: relative;
+    }
     .ioc-row.ioc-selected { background: var(--c-142038); }
-    .ioc-header-row { display: flex; align-items: center; gap: 4px; padding: 2px 0 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 1px; font-size: 11px; color: var(--c-6b7280); }
+    .ioc-row.ioc-new { border-color: var(--c-2d6cdf); }
+    .ioc-row > .ioc-cb { margin-top: 3px; }
+    .ioc-type-cell {
+      font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; text-transform: uppercase;
+      letter-spacing: .03em; color: var(--c-9aa4b2); padding-top: 2px;
+    }
+    .ioc-main-cell { min-width: 0; line-height: 1.5; }
+    .ioc-value-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .ioc-value-line .qa-val { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+    .ioc-actions-cell { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px; }
     .vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid var(--c-2a2f3a); border-radius: 5px; }
     .vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
     .vql-result th, .vql-result td { border: 1px solid var(--c-2a2f3a); padding: 3px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
@@ -882,9 +963,17 @@
     /* "New since last import" highlight on forensic-timeline / IOC rows + its badge (see #importMeta) */
     .ev-row.ev-new { box-shadow: inset 3px 0 0 var(--c-6bcb77); }
     .ioc-new { box-shadow: inset 3px 0 0 var(--c-6bcb77); padding-left: 6px; border-radius: 3px; }
-    .ev-new-badge { background:var(--c-13331f); color:var(--c-6bcb77); border:1px solid var(--c-1f5a35); border-radius:4px; padding:0 5px; font-size:10px; font-weight:bold; }
+    .ev-new-badge, .ev-badge-count, .ev-badge-corro { border-radius:4px; padding:0 5px; font-size:10px; font-weight:bold; }
+    .ev-new-badge { background:var(--c-13331f); color:var(--c-6bcb77); border:1px solid var(--c-1f5a35); }
+    .ev-badge-count { background: var(--c-3a2f1a); color: var(--c-ffd93b); border: 1px solid var(--c-5a4a1a); }
+    .ev-badge-corro { background: var(--c-13331f); color: var(--c-6bcb77); border: 1px solid var(--c-1f5a35); }
+    .ev-chain-badge { display: inline-flex; align-items: center; gap: 3px; border-radius: 4px; padding: 0 5px; font-size: 10px; text-decoration: none; }
+    .ev-chain-badge svg { width: 10px; height: 10px; }
+    .ev-chain-ok { color: var(--c-6bcb77); border: 1px solid var(--c-6bcb77); }
+    .ev-chain-warn { color: var(--c-ff6b6b); border: 1px solid var(--c-ff6b6b); }
     /* Affected host/asset chip on each forensic-timeline event */
     .ev-host { background:var(--c-1a2433); color:var(--c-8fb3e0); border:1px solid var(--c-2a3a52); border-radius:4px; padding:0 5px; font-size:10px; font-weight:600; white-space:nowrap; }
+    .ev-host svg { width: 10px; height: 10px; vertical-align: -1px; }
     /* Clickable finding references inside a timeline event → jump to the finding */
     .finding-jump { color:var(--c-6aa9ff); text-decoration:none; border-bottom:1px dotted var(--c-6aa9ff); cursor:pointer; }
     .finding-jump:hover { color:var(--c-9cc5ff); border-bottom-style:solid; }
@@ -926,9 +1015,9 @@
        "click to mark", not as a status tag. Hidden until you hover the row. */
     .finding, #iocs > div { position: relative; }
     .fp-btn {
-      float: right; font-size: 10px; padding: 1px 7px; margin-left: 8px;
-      background: transparent; color: var(--c-5b6472); border: 1px solid var(--c-2a2f3a);
-      border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity .12s, color .12s, border-color .12s;
+      background: transparent; color: var(--c-5b6472); border: 1px solid var(--c-2a2f3a); border-radius: 10px;
+      padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px;
+      opacity: 0; transition: opacity .12s, color .12s, border-color .12s;
     }
     .finding:hover .fp-btn, #iocs > div:hover .fp-btn, .ev-row:hover .fp-btn, .fp-btn:focus { opacity: 1; }
     .fp-btn:hover { color: var(--c-ffd93b); border-color: var(--c-ffd93b); }
@@ -937,6 +1026,53 @@
       color: var(--c-9aa4b2); border: 1px solid var(--c-2a2f3a); border-radius: 4px; cursor: pointer;
     }
     .unfp-btn:hover { color: var(--c-6bcb77); border-color: var(--c-6bcb77); }
+    /* False Positives panel — one row per marker, consistent with the Findings/IOCs card style
+       instead of a bare styled div. */
+    .fp-marker-row {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border: 1px solid var(--c-2a2f3a);
+      border-radius: 6px; background: var(--c-11151c); padding: 6px 10px; margin-bottom: 5px;
+    }
+    .fp-marker-kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--c-9aa4b2); flex-shrink: 0; width: 52px; }
+    .fp-marker-ref { text-decoration: line-through; color: var(--c-cbd3df); flex: 1; min-width: 120px; }
+    .fp-marker-reason { font-size: 10.5px; border: 1px solid var(--c-2a2f3a); border-radius: 4px; padding: 1px 6px; color: var(--c-9aa4b2); }
+    .fp-marker-note { color: var(--c-6b7686); font-size: 12px; }
+    /* Next Steps / Key Questions — bordered card rows, same visual language as Findings/IOCs but
+       their own class (not .finding, which is now a dense-table grid with fixed columns). */
+    .step-row {
+      border: 1px solid var(--c-2a2f3a); border-left: 3px solid var(--step-color, var(--c-2a2f3a));
+      border-radius: 6px; background: var(--c-11151c); padding: 7px 10px; margin-bottom: 6px; font-size: 13px;
+    }
+    .step-row .step-priority { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; color: var(--step-color, var(--c-9aa4b2)); }
+    .step-row .step-rationale, .step-row .step-pointer { display: block; margin-top: 3px; font-size: 12px; color: var(--c-9aa4b2); }
+    .step-row .step-pointer { color: var(--c-6aa9ff); }
+    .qrow { border: 1px solid var(--c-2a2f3a); border-radius: 6px; background: var(--c-11151c); padding: 7px 10px; margin-bottom: 6px; }
+    .qrow .q-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+    .qrow .q-answer, .qrow .q-pointer { display: block; margin-top: 3px; font-size: 12px; color: var(--c-9aa4b2); }
+    .qrow .q-pointer { color: var(--c-6aa9ff); }
+    .q-status { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+    .q-status-answered { color: var(--c-6bcb77); }
+    .q-status-partial { color: var(--c-e0b84a); }
+    .q-status-unknown { color: var(--c-9aa4b2); }
+    .icon-pinned { color: var(--c-ffd93b); display: inline-flex; }
+    .icon-pinned svg { width: 11px; height: 11px; vertical-align: -1px; }
+    /* Investigation Threads — small status dot instead of a bare "•"/"✓" text prefix. */
+    .thread-row { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; font-size: 13px; }
+    .thread-row-closed { color: var(--c-9aa4b2); text-decoration: line-through; }
+    .thread-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .thread-dot-open { background: var(--c-6aa9ff); }
+    .thread-dot-closed { background: var(--c-6bcb77); }
+    .thread-id { color: var(--c-6aa9ff); }
+    .thread-row-closed .thread-id { color: var(--c-9aa4b2); }
+    /* Investigation Log + MITRE list — hairline-separated rows instead of a bare "•" bullet list. */
+    .log-row, .mitre-row {
+      display: flex; align-items: baseline; gap: 10px; padding: 4px 0; border-top: 1px solid var(--c-1c2230); font-size: 12.5px;
+    }
+    .log-row:first-child, .mitre-row:first-child { border-top: none; }
+    .log-time { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--c-5b6472); flex-shrink: 0; white-space: nowrap; }
+    .mitre-findings { color: var(--c-9aa4b2); }
+    /* Generic bordered box for one-off free-flowing AI output (Ask-the-Case answer, Executive
+       Summary draft) — same card look as Findings/IOCs without the grid-column constraints. */
+    .info-card { border: 1px solid var(--c-2a2f3a); border-radius: 6px; background: var(--c-11151c); padding: 8px 10px; margin-bottom: 6px; }
 
     /* Inline IOC quick-actions (#221). A detected value inside an event description / an IOC value
        becomes a clickable target; clicking it opens the floating action tray anchored below it. */
@@ -3224,7 +3360,7 @@
     <section id="sec-exec" style="grid-column: 1 / -1"><h2>Executive Summary<button id="genExecBtn" type="button" title="Generate a management-facing executive summary with AI (review before saving it to the report)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genExecMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="summary">—</div><div id="execGenResult"></div></section>
     <section id="sec-next-steps" style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
-    <section id="sec-narrative" style="grid-column: 1 / -1"><h2>Narrative Timeline<button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
+    <section id="sec-narrative" style="grid-column: 1 / -1"><h2><span title="Takes the Attack Path and rewrites it into client-readable prose, on-demand, and lets a human polish the wording by hand before it goes in a report">Narrative Timeline</span><button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
     <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="pinnedStrip" class="pinned-strip"><div class="pinned-strip-head">📌 Pinned<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></div><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></div><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div>
       <div class="finding-bulk-bar" id="findingBulkBar"><span id="findingBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="finding-bulk-btn" id="findingBulkTagBtn" title="Add a tag to all selected findings">🏷 Modify Tags</button> <button class="finding-bulk-btn" id="findingBulkFpBtn" title="Mark all selected findings as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="finding-bulk-btn" id="findingBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div id="findings">—</div></section>
@@ -3288,6 +3424,23 @@
       #sec-hostranking .hr-med{background:#9aa4b222;color:#9aa4b2;border:1px solid #9aa4b255}
       #sec-hostranking .hr-tech{color:#6aa9ff}
       #sec-hostranking .hr-conn{color:#c79bff}
+      #sec-hostranking .hr-row{cursor:pointer}
+      #sec-hostranking .hr-caret{color:var(--c-9aa4b2);font-size:10px;flex-shrink:0;transition:transform .12s}
+      #sec-hostranking .hr-row.hr-open .hr-caret{transform:rotate(90deg)}
+      #sec-hostranking .hr-row-wrap{display:flex;flex-direction:column}
+      #sec-hostranking .hr-detail{display:flex;gap:14px;flex-wrap:wrap;background:var(--c-11151c);border:1px solid var(--c-232a33);border-top:0;border-radius:0 0 5px 5px;padding:8px 9px 9px;margin:-6px 0 0;font-size:11px}
+      #sec-hostranking .hr-det-col{flex:1;min-width:220px}
+      #sec-hostranking .hr-det-head{color:var(--c-9aa4b2);font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+      #sec-hostranking .hr-det-list{max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:3px}
+      #sec-hostranking .hr-det-event{display:flex;gap:8px;align-items:baseline;color:var(--c-d6deea);text-decoration:none;padding:2px 0}
+      #sec-hostranking .hr-det-event:hover{color:var(--c-9cc5ff)}
+      #sec-hostranking .hr-det-time{flex-shrink:0;font-size:10px}
+      #sec-hostranking .hr-det-desc{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      #sec-hostranking .hr-det-ioc{display:flex;gap:6px;align-items:center;padding:2px 0}
+      #sec-hostranking .hr-det-dot{width:7px;height:7px;border-radius:50%;background:var(--c-2a2f3a);flex-shrink:0}
+      #sec-hostranking .hr-det-ioc-type{color:#9aa4b2;font-size:10px;text-transform:uppercase}
+      #sec-hostranking .hr-det-ioc-val{color:var(--c-d6deea);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      #sec-hostranking .hr-det-more,#sec-hostranking .hr-det-empty{color:var(--c-9aa4b2);font-size:10px;padding:2px 0}
     </style>
     <section id="sec-gaps" style="grid-column: 1 / -1"><h2>Timeline Gaps<span class="ev-sub">suspicious silent periods — a complete gap (all sources dark) is the classic log-tampering signature (derived, no AI); a lead, not proof</span><button id="hypothesizeGapsBtn" type="button" title="Ask the AI to hypothesise what the attacker did during each silent period (from the surrounding events) and pair each gap with shadow-artifact collections that reconstruct the missing window" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Hypothesize gaps</button><span id="hypothesizeGapsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="timelineGaps">—</div><div id="gapHypotheses"></div></section>
     <style>
@@ -3948,6 +4101,7 @@
     let lastState = null;                    // last raw state from server, for re-render on scope change
     let fpMarkers = [];                       // false-positive markers; events here are hidden from the timeline
     let lastFt = [];                          // last scoped+FP-filtered forensic timeline, for severity re-filter without re-fetching
+    let lastIocs = [];                        // last scoped IOC list, for the Host & Account Ranking expand view (#237)
     // Forensic-timeline sort order (#104): { key: "date" | "severity", dir: "asc" | "desc" }.
     // date asc = oldest first (default/chronological), date desc = newest first;
     // severity desc = most-severe first, severity asc = least-severe first. Persisted "key:dir".
@@ -4897,10 +5051,27 @@
     let commentTarget = null;           // currently-open { type, id } in the modal
 
     const targetKey = (type, id) => type + ":" + String(id);
+    // Inline SVG icon set — replaces emoji glyphs in shared chip/action buttons so they render
+    // consistently across platforms (Windows renders 🏷 as a faint mono glyph without the FE0F
+    // variation selector) and read as deliberate UI rather than decoration.
+    const ICON_COMMENT = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2.5 3h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5V11H2.5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke-linejoin="round"/></svg>';
+    const ICON_TAG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 2h5.3L14 8.7 8.7 14 2 7.3V2z" stroke-linejoin="round"/><circle cx="4.6" cy="4.6" r=".9" fill="currentColor" stroke="none"/></svg>';
+    const ICON_PIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.6c-2.15 0-3.9 1.75-3.9 3.9 0 2.85 3.9 7.4 3.9 7.4s3.9-4.55 3.9-7.4c0-2.15-1.75-3.9-3.9-3.9z" stroke-linejoin="round"/><circle cx="8" cy="5.5" r="1.3"/></svg>';
+    const ICON_FLAG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3.5 1.5v13"/><path d="M3.5 2.2h8L9.3 4.7l2.2 2.5h-8"/></svg>';
+    const ICON_HUNT = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="6.8" cy="6.8" r="4.3"/><path d="M13 13l-3.5-3.5" stroke-linecap="round"/></svg>';
+    const ICON_EXPLAIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.8a4 4 0 0 0-2.3 7.3c.5.4.8 1 .8 1.6v.3h3v-.3c0-.6.3-1.2.8-1.6A4 4 0 0 0 8 1.8z" stroke-linejoin="round"/><path d="M6.3 13.2h3.4M6.7 14.5h2.6" stroke-linecap="round"/></svg>';
+    const ICON_CHAIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M6 6.2 7.6 4.6a2.3 2.3 0 0 1 3.3 3.3L9.3 9.5"/><path d="M10 9.8 8.4 11.4a2.3 2.3 0 0 1-3.3-3.3l1.6-1.6"/><path d="M6.5 9.5l3-3"/></svg>';
+    const ICON_STAR = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M8 1.6l1.9 4.1 4.4.5-3.3 3 .9 4.4L8 11.4l-3.9 2.2.9-4.4-3.3-3 4.4-.5z"/></svg>';
+    const ICON_HOST = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="8" rx="1"/><path d="M5.5 13.5h5M8 10.5v3" stroke-linecap="round"/></svg>';
+    const ICON_GEO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 14.5S13 9.8 13 6a5 5 0 0 0-10 0c0 3.8 5 8.5 5 8.5z"/><circle cx="8" cy="6" r="1.6"/></svg>';
+    const ICON_WARN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2 14.3 13H1.7z"/><path d="M8 6.3v2.8"/><circle cx="8" cy="11" r=".9" fill="currentColor" stroke="none"/></svg>';
+    const ICON_EXTERNAL = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5h6v6"/><path d="M12.3 3.7 3.7 12.3"/></svg>';
+    const ICON_TARGET = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="1.3" fill="currentColor" stroke="none"/><path d="M8 1v2.2M8 12.8V15M1 8h2.2M12.8 8H15" stroke-linecap="round"/></svg>';
+
     function commentChip(type, id) {
       const list = commentsByTarget.get(targetKey(type, id)) || [];
       return `<button class="comment-chip${list.length ? " has" : ""}" data-ct="${escAttr(type)}" data-ci="${escAttr(String(id))}" `
-        + `title="Comments — collaborate with other investigators">💬${list.length ? " " + list.length : ""}</button>`;
+        + `title="Comments — collaborate with other investigators">${ICON_COMMENT}${list.length ? " " + list.length : ""}</button>`;
     }
     const investigatorName = () => (localStorage.getItem("dfir.investigator") || "").trim();
 
@@ -4985,9 +5156,7 @@
       }).join("");
     }
     function tagAddBtn(type, id) {
-      // 🏷 needs the emoji variation selector (U+FE0F) or Windows renders it as a faint
-      // monochrome glyph (picks up the dim .tag-add color) instead of the colored tag emoji.
-      return `<button class="tag-add" data-tt="${escAttr(type)}" data-ti="${escAttr(String(id))}" title="Add / edit triage tags">🏷️</button>`;
+      return `<button class="tag-add" data-tt="${escAttr(type)}" data-ti="${escAttr(String(id))}" title="Add / edit triage tags">${ICON_TAG}</button>`;
     }
     function tagChip(type, id) {
       return tagPills(type, id) + tagAddBtn(type, id);
@@ -5098,7 +5267,7 @@
     function pinBtn(fid) {
       const pinned = pinnedSet.has(String(fid));
       return `<button class="pin-btn${pinned ? " pinned" : ""}" data-pin="${escAttr(String(fid))}" `
-        + `title="${pinned ? "Unpin — remove from the pinned strip" : "Pin — keep this finding in the top strip"}">📌</button>`;
+        + `title="${pinned ? "Unpin — remove from the pinned strip" : "Pin — keep this finding in the top strip"}">${ICON_PIN}</button>`;
     }
 
     function loadPins(caseId) {
@@ -5733,33 +5902,38 @@
           desc = desc.replace(new RegExp("^\\s*" + escOrigin + "(?:/[^:]+)?\\s*[:\\-]?\\s+", "i"), "");
           desc = desc.replace(new RegExp("^\\s*(?:\\S+\\s+)?\\[" + escOrigin + "\\]\\s*[:\\-]?\\s*", "i"), "");
         }
-        const host = e.asset ? `<span class="ev-host" title="Affected host / asset">🖥 ${esc(e.asset)}</span> ` : "";
-        // Per-row controls unified with the forensic timeline: ⭐ star, 💬 comment, 🏷 tag (all keyed by
+        const host = e.asset ? `<span class="ev-host" title="Affected host / asset">${ICON_HOST} ${esc(e.asset)}</span> ` : "";
+        // Per-row controls unified with the forensic timeline: star, comment, tag (all keyed by
         // ("event", e.id)). The delegated click handler on <main> already routes these for super rows.
-        // ⌖ context: scope From/To to this event's timestamp ± a window. Data-attr carries the ISO ts.
+        // Context button: scope From/To to this event's timestamp ± a window. Data-attr carries the ISO ts.
         const ctx = e.timestamp
-          ? `<button class="st-ctx" data-ts="${escAttr(e.timestamp)}" title="Scope the timeline to a window around this event">⌖</button>`
+          ? `<button class="st-ctx" data-ts="${escAttr(e.timestamp)}" title="Scope the timeline to a window around this event">${ICON_TARGET}</button>`
           : "";
-        // #8 Velociraptor deep-link: a small "↗ Velociraptor" link back to the originating hunt/flow.
+        // #8 Velociraptor deep-link: a small "→ Velociraptor" link back to the originating hunt/flow.
         const veloLink = e.veloUrl
-          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--c-6aa9ff);white-space:nowrap" title="Open this hunt/flow in the Velociraptor GUI">↗ Velociraptor</a>`
+          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" class="ev-jump" title="Open this hunt/flow in the Velociraptor GUI">${ICON_EXTERNAL} Velociraptor</a>`
           : "";
         // Everything beyond the compact title collapses into one shared [details] panel (#1/#2/#3) —
         // same helper the forensic timeline uses, so ST no longer only shows details for the rare event
         // whose raw `message` differs from its description; MITRE/findings/evidence/decoded payloads
         // (fields ST didn't previously surface at all) now show up here too.
         const details = eventDetailsBlock(e, e.id, desc, caseId);
-        return `<div style="display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:1px solid var(--c-2a2f3a);font-size:13px">
-          <input type="checkbox" class="st-row-cb" data-evid="${escAttr(e.id)}" ${superPromote.has(e.id) ? "checked" : ""} title="Select (for promotion / bulk star / bulk tag)" onchange="toggleSuperPromote('${escAttr(e.id)}', this.checked)" />
-          <span class="ev-col-ctrl" style="display:inline-flex;align-items:center;gap:2px">
-            <button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(e.id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>
-            ${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)} ${ctx}
-          </span>
-          <span style="color:var(--c-9aa4b2);white-space:nowrap">${esc(e.timestamp || "")}</span>
-          <span class="sev-${escAttr(sev)}" style="white-space:nowrap">${esc(sev)}</span>
-          <span style="color:var(--c-7e8aa0);white-space:nowrap" title="origin">${esc(origin)}</span>
-          <span style="flex:1">${superTagPills("event", e.id)}${host}${details.toggle} ${descHtml(details.title)}${veloLink}${details.panel}</span>
-        </div>`;
+        // Same .ev-row/.ev-col-ctrl/.ev-col-time/.ev-col-content structure as the forensic timeline
+        // (renderTimelineEvents) instead of a bespoke inline-styled flex row — ST and FT now look and
+        // behave like the same component, just fed from different sources.
+        return `<div class="ev-row" data-evid="${escAttr(e.id)}">` +
+          `<div class="ev-col-ctrl">` +
+          `<input type="checkbox" class="st-row-cb" data-evid="${escAttr(e.id)}" ${superPromote.has(e.id) ? "checked" : ""} title="Select (for promotion / bulk star / bulk tag)" onchange="toggleSuperPromote('${escAttr(e.id)}', this.checked)" />` +
+          `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(e.id)}" title="${starred ? "Unstar event" : "Star event"}">${ICON_STAR}</button>` +
+          `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)} ${ctx}` +
+          `</div>` +
+          `<div class="ev-col-time"><span class="sev-${escAttr(sev)}">${esc(e.timestamp || "")}</span></div>` +
+          `<div class="ev-col-content">` +
+          `<span class="ev-origin" title="origin">${esc(origin)}</span> ` +
+          `${superTagPills("event", e.id)}${host}${details.toggle} ${descHtml(details.title)}${veloLink}` +
+          `${details.panel}` +
+          `</div>` +
+          `</div>`;
       }).join("");
       updateSuperSelBar(rows);
     }
@@ -6654,11 +6828,11 @@
     let huntLabel = "";        // label of the entity whose hunt modal is open (used as the hunt description)
     function huntChip(kind, id) {
       return `<button class="hunt-add" data-hk="${escAttr(kind)}" data-hi="${escAttr(String(id))}" `
-        + `title="Generate hunt / pivot queries (Velociraptor, Defender KQL, Elastic ES|QL, Splunk, Sigma, YARA, Suricata)">🔍</button>`;
+        + `title="Generate hunt / pivot queries (Velociraptor, Defender KQL, Elastic ES|QL, Splunk, Sigma, YARA, Suricata)">${ICON_HUNT}</button>`;
     }
     // Explain button for forensic events (#141): one AI call per click, no state change.
     function explainChip(id) {
-      return `<button class="explain-btn" data-exid="${escAttr(String(id))}" title="Explain this event in context (AI) — what happened, why it matters, ATT&amp;CK mapping, pivot queries">💡</button>`;
+      return `<button class="explain-btn" data-exid="${escAttr(String(id))}" title="Explain this event in context (AI) — what happened, why it matters, ATT&amp;CK mapping, pivot queries">${ICON_EXPLAIN}</button>`;
     }
     // Indicator harvesting for EVENT hunts. Events often carry indicators only in free text — a
     // Suricata/Zeek alert puts the domain + IPs in its description, not in structured fields — so a
@@ -7772,7 +7946,7 @@
         .then(d => {
           msg.textContent = "";
           const text = d.summary || "(no summary returned)";
-          out.innerHTML = `<div class="finding" style="border-left-color:var(--c-6aa9ff);margin-top:8px">`
+          out.innerHTML = `<div class="info-card" style="border-left:3px solid var(--c-6aa9ff);margin-top:8px">`
             + `<div style="white-space:pre-wrap">${esc(text)}</div>`
             + `<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">`
             + `<button id="execSaveBtn">Save to report's Executive Summary</button>`
@@ -8339,7 +8513,7 @@
         .then(a => {
           const events = citeEvents(a.relatedEventIds);
           box.innerHTML =
-            `<div class="finding">` +
+            `<div class="info-card">` +
             `<div>${askStatusBadge(a.status)} <strong>${esc(q)}</strong></div>` +
             `<div style="margin:6px 0">${esc(a.answer || "(no answer)")}</div>` +
             (a.pointer ? `<div style="color:var(--c-6aa9ff)"><small>→ where to look: ${esc(a.pointer)}</small></div>` : "") +
@@ -9193,8 +9367,7 @@
     function fpBtn(kind, ref, label) {
       const labelAttr = label != null ? ` data-label="${escAttr(label)}"` : "";
       return `<button class="fp-btn" data-kind="${escAttr(kind)}" data-ref="${escAttr(ref)}"${labelAttr} ` +
-        `title="Mark as a false positive — client confirmed this is benign; exclude it from analysis">` +
-        `🚫 mark false positive</button>`;
+        `title="Mark as a false positive — client confirmed this is benign; exclude it from analysis">${ICON_FLAG}</button>`;
     }
 
     // Threat-intel enrichment badges for an IOC (VirusTotal / MalwareBazaar / AbuseIPDB).
@@ -9424,7 +9597,7 @@
     }
     // Chip that opens the chain panel for one IOC (mirrors explainChip's button shape).
     function iocChainChip(iocId) {
-      return `<button class="ioc-chain-btn" data-iocchain="${escAttr(String(iocId))}" title="Show provenance chain — extraction event(s), enrichment lookups, and citing findings">🔗</button>`;
+      return `<button class="ioc-chain-btn" data-iocchain="${escAttr(String(iocId))}" title="Show provenance chain — extraction event(s), enrichment lookups, and citing findings">${ICON_CHAIN}</button>`;
     }
     // Renders the pre-fetched chain for one IOC into the panel. Read-only, no AI, no extra request.
     function openIocChainPanel(caseId, iocId) {
@@ -9460,8 +9633,11 @@
             `<a class="finding-jump iocchain-desc" data-fid="${escAttr(f.findingId)}" title="Jump to this finding">${esc(f.title)}</a>` +
             `<span class="iocchain-tag">${esc(f.severity)}, ${esc(f.status)}</span></div>`).join("")
         : "<div style='color:var(--c-9aa4b2);font-size:12px'>no findings cite this IOC yet</div>";
+      const extractionCaveat = chain.extractionAuthoritative
+        ? `<small style="color:var(--c-6aa9ff)">(linked — a real source-event reference, not a guess)</small>`
+        : `<small style="color:var(--c-9aa4b2)">(approximate — matched by value, not a stored link)</small>`;
       bodyEl.innerHTML =
-        `<div class="explain-section"><strong>Extraction — event(s) this IOC was seen in <small style="color:var(--c-9aa4b2)">(approximate — matched by value, not a stored link)</small></strong>${extractionRows}${truncNote}</div>` +
+        `<div class="explain-section"><strong>Extraction — event(s) this IOC was seen in ${extractionCaveat}</strong>${extractionRows}${truncNote}</div>` +
         `<div class="explain-section"><strong>Enrichment — threat-intel lookups</strong>${enrichRows}</div>` +
         `<div class="explain-section"><strong>Findings citing this IOC</strong>${findingRows}</div>` +
         `<div style="color:var(--c-9aa4b2);font-size:11px;margin-top:6px">Playbook references aren't tracked yet — playbook tasks don't carry IOC links.</div>`;
@@ -9495,23 +9671,16 @@
       ).join(" ");
     }
 
-    function findingEvidenceDetails(f, caseId, screenshots, events, iocs, cites) {
+    // Builds the inner rows for a finding's evidence panel: confidence reasoning, supporting
+    // IOCs, evidence files, and the cited-event timeline (each cited event's own timestamp +
+    // description, not just a bare "[1][2][3]" footnote list — the footnote still appears, but
+    // as a jump link at the end of that event's own line). citeIds is the finding's own list of
+    // cited event ids (may reference events outside suppEventsByFinding's back-link set, so this
+    // looks each one up in lastFt directly rather than only the passed-in `events`).
+    function findingEvidenceDetails(f, caseId, screenshots, events, iocs, citeIds) {
       const rows = [];
-      // Cited events + MITRE live inside this collapsible panel (issue #222) rather than always
-      // visible under the description, so the finding card itself stays compact.
-      if (cites) rows.push(`<div><small>Cited events: ${cites}</small></div>`);
-      if (f.mitreTechniques && f.mitreTechniques.length) {
-        rows.push(`<div><small>MITRE: ${mitreLinks(f.mitreTechniques)}</small></div>`);
-      }
       if (f.confidenceReason) {
-        rows.push(`<div><small>Confidence: ${f.confidence !== undefined ? esc(String(f.confidence)) + "% — " : ""}${esc(f.confidenceReason)}</small></div>`);
-      }
-      const evFiles = Array.from(new Set((screenshots || []).filter(Boolean)));
-      if (caseId && evFiles.length) {
-        const links = evFiles.map(fn =>
-          `<a href="/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(fn)}" target="_blank" rel="noopener" style="color:var(--c-6aa9ff)" title="Open evidence: ${escAttr(fn)}">📎 ${esc(fn)}</a>`
-        ).join(" · ");
-        rows.push(`<div><small style="color:var(--c-9aa4b2)">evidence: ${links}</small></div>`);
+        rows.push(`<div class="fev-row"><span class="fev-k">Confidence</span><span class="fev-v">${f.confidence !== undefined ? esc(String(f.confidence)) + "% — " : ""}${esc(f.confidenceReason)}</span></div>`);
       }
       const byVal = new Map((iocs || []).map(i => [String(i.value).trim().toLowerCase(), i.value]));
       const vals = new Set();
@@ -9519,10 +9688,29 @@
       for (const e of events) for (const v of [e.sha256, e.md5, e.srcIp, e.dstIp, e.path]) {
         if (!v) continue; const hit = byVal.get(String(v).trim().toLowerCase()); if (hit) vals.add(hit);
       }
-      if (vals.size) rows.push(`<div><small>Supporting IOCs: ${[...vals].map(v => esc(v)).join(", ")}</small></div>`);
-      if (!rows.length) return "";
-      return `<details class="ev-details"><summary title="Show supporting evidence">🔬 Evidence</summary>` +
-        `<div class="ev-body">${rows.join("")}</div></details>`;
+      if (vals.size) rows.push(`<div class="fev-row"><span class="fev-k">Supporting IOCs</span><span class="fev-v fev-iocs">${[...vals].map(v => esc(v)).join(", ")}</span></div>`);
+      const evFiles = Array.from(new Set((screenshots || []).filter(Boolean)));
+      if (caseId && evFiles.length) {
+        const links = evFiles.map(fn =>
+          `<a href="/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(fn)}" target="_blank" rel="noopener" class="ev-jump" title="Open evidence: ${escAttr(fn)}">${esc(fn)}</a>`
+        ).join(" · ");
+        rows.push(`<div class="fev-row"><span class="fev-k">Evidence files</span><span class="fev-v">${links}</span></div>`);
+      }
+      const ids = Array.from(new Set((citeIds || []).map(String).filter(Boolean)));
+      if (ids.length) {
+        const byId = new Map((lastFt || []).map(e => [String(e.id), e]));
+        const items = ids.map((id, i) => {
+          const e = byId.get(id);
+          const ts = e ? esc(e.timestamp || "(undated)") : "(not in current scope)";
+          const desc = e
+            ? esc(String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "").replace(/\s*\[more\]$/, ""))
+            : esc(id);
+          return `<div class="fev-tl-item"><span class="fev-tl-time">${ts}</span><span class="fev-tl-desc">${desc}</span>` +
+            `<a class="ev-jump fev-tl-cite" href="${escAttr(eventDeepLink(caseId, id))}" data-evid="${escAttr(id)}" title="Jump to this event in the timeline">[${i + 1}]</a></div>`;
+        }).join("");
+        rows.push(`<div class="fev-row"><span class="fev-k">Cited events</span><span class="fev-v"><div class="fev-timeline">${items}</div></span></div>`);
+      }
+      return rows.join("");
     }
     // "⊕ N" corroboration badge for an IOC seen by 2+ tools (mirrors the forensic-timeline badge).
     function iocCorroBadge(iocId) {
@@ -9947,6 +10135,7 @@
     // server-side (GET /cases/:id/host-ranking); re-derived (debounced) on each state change.
     let hostRankingData = null;
     let hostRankingTimer = null;
+    let hostRankingExpanded = null;           // "<type>:<name-lowercased>" of the one open row, or null (#237)
     function loadHostRanking(caseId) {
       fetch(`/cases/${caseId}/host-ranking`).then(r => r.json()).then(d => {
         hostRankingData = (d && typeof d === "object") ? d : null;
@@ -9982,6 +10171,8 @@
         scope = `<div class="hr-scope">⌖ Signal concentrated on <b>${esc(d.topHosts.join(", "))}</b> · suggested scope ${fmt(w.start)} → ${fmt(w.end)} <button class="hr-apply" onclick="applyHostRankingScope()">Apply scope window</button></div>`;
       }
       const rows = d.ranks.map(r => {
+        const key = `${r.type}:${r.name.toLowerCase()}`;
+        const isOpen = hostRankingExpanded === key;
         const badges = [
           r.critical ? `<span class="hr-badge hr-crit">${esc(r.critical)} Crit</span>` : "",
           r.high ? `<span class="hr-badge hr-high">${esc(r.high)} High</span>` : "",
@@ -9989,10 +10180,77 @@
           r.techniques ? `<span class="hr-tech">${esc(r.techniques)} tech</span>` : "",
           r.connectiveIocs ? `<span class="hr-conn">⊕${esc(r.connectiveIocs)} IOC</span>` : "",
         ].filter(Boolean).join(" ");
-        return `<div class="hr-row ${r.type === "account" ? "acct" : ""}"><span class="hr-name">${esc(r.name)}</span><span class="hr-kind">${esc(r.type)}</span>${badges}<span class="hr-score" title="signal score">${esc(r.score)}</span></div>`;
+        const rowHtml = `<div class="hr-row ${r.type === "account" ? "acct" : ""}${isOpen ? " hr-open" : ""}" data-hr-key="${escAttr(key)}">` +
+          `<span class="hr-caret">▶</span>` +
+          `<span class="hr-name">${esc(r.name)}</span><span class="hr-kind">${esc(r.type)}</span>${badges}<span class="hr-score" title="signal score">${esc(r.score)}</span></div>`;
+        const detailHtml = isOpen ? renderHostRankingDetail(r) : "";
+        return `<div class="hr-row-wrap">${rowHtml}${detailHtml}</div>`;
       }).join("");
       el.innerHTML = scope + `<div class="hr-list">${rows}</div>`;
     }
+
+    // Worst threat-intel verdict across an IOC's enrichments (mirrors the server-side helper in
+    // assetGraph.ts — no client-side equivalent existed to reuse).
+    function worstIocVerdict(ioc) {
+      const order = ["malicious", "suspicious", "harmless", "unknown"];
+      let best;
+      for (const e of (ioc.enrichments || [])) {
+        if (best === undefined || order.indexOf(e.verdict) < order.indexOf(best)) best = e.verdict;
+      }
+      return best;
+    }
+
+    // Expanded detail for one ranked host/account (#237): the events that contributed to its
+    // score (resolved from the scoped+FP-filtered timeline already on the page — same source the
+    // Attack Phases panel uses) and the IOCs connected to it (resolved from the scoped IOC list).
+    // Capped at 50 each — a "+N more" note covers the rest, never silently truncated.
+    function renderHostRankingDetail(r) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const evById = new Map((lastFt || []).map(e => [String(e.id), e]));
+      const events = (r.eventIds || []).map(id => evById.get(String(id))).filter(Boolean)
+        .sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
+      const iocById = new Map((lastIocs || []).map(i => [String(i.id), i]));
+      const iocs = (r.iocIds || []).map(id => iocById.get(String(id))).filter(Boolean);
+
+      const EV_CAP = 50, IOC_CAP = 50;
+      const evShown = events.slice(0, EV_CAP);
+      const iocShown = iocs.slice(0, IOC_CAP);
+
+      const evHtml = evShown.length ? evShown.map(e => {
+        const desc = String(e.description || "");
+        const trunc = desc.length > 140 ? desc.slice(0, 140) + "…" : desc;
+        return `<a class="ev-jump hr-det-event" href="${escAttr(eventDeepLink(caseId, e.id))}" data-evid="${escAttr(e.id)}" title="Jump to this event in the timeline">` +
+          `<span class="hr-det-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
+          `<span class="hr-det-desc">${esc(trunc)}</span></a>`;
+      }).join("") : `<div class="hr-det-empty">No events</div>`;
+      const evMore = events.length > EV_CAP
+        ? `<div class="hr-det-more">+${events.length - EV_CAP} more event${events.length - EV_CAP === 1 ? "" : "s"}</div>` : "";
+
+      const iocHtml = iocShown.length ? iocShown.map(i => {
+        const verdict = worstIocVerdict(i);
+        const dot = `<span class="hr-det-dot"${verdict ? ` style="background:${verdictColor(verdict)}" title="${esc(verdict)}"` : ""}></span>`;
+        return `<div class="hr-det-ioc">${dot}<span class="hr-det-ioc-type">${esc(i.type)}</span><span class="hr-det-ioc-val">${esc(i.value)}</span></div>`;
+      }).join("") : `<div class="hr-det-empty">No IOCs</div>`;
+      const iocMore = iocs.length > IOC_CAP
+        ? `<div class="hr-det-more">+${iocs.length - IOC_CAP} more IOC${iocs.length - IOC_CAP === 1 ? "" : "s"}</div>` : "";
+
+      return `<div class="hr-detail">` +
+        `<div class="hr-det-col"><div class="hr-det-head">Events (${events.length})</div><div class="hr-det-list">${evHtml}${evMore}</div></div>` +
+        `<div class="hr-det-col"><div class="hr-det-head">IOCs (${iocs.length})</div><div class="hr-det-list">${iocHtml}${iocMore}</div></div>` +
+        `</div>`;
+    }
+
+    // Expand/collapse a host/account row to reveal its events + IOCs (single-open accordion —
+    // opening one closes any other open row). Event-delegated on the persistent #hostRanking
+    // container so it survives renderHostRanking() re-renders (mirrors the Attack Phases pattern
+    // at the #phases click listener).
+    document.getElementById("hostRanking").addEventListener("click", function(e) {
+      const row = e.target.closest(".hr-row");
+      if (!row) return;
+      const key = row.getAttribute("data-hr-key");
+      hostRankingExpanded = (hostRankingExpanded === key) ? null : key;
+      renderHostRanking();
+    });
 
     // ── Adversary Hints (#46) ─────────────────────────────────────────────────────────────
     // Known ATT&CK groups ranked by technique overlap with the case — offline hypothesis fuel,
@@ -11514,10 +11772,11 @@
       el.innerHTML = (visible.length)
         ? visible.map(m => {
             const shown = (m.kind === "event" && m.label) ? m.label : m.ref;
-            return `<div style="margin-bottom:4px"><span style="color:var(--c-9aa4b2)">${esc(m.kind)}:</span> ` +
-              `<span style="text-decoration:line-through">${esc(shown)}</span>` +
-              `${m.reason ? ` <span style="border:1px solid var(--c-2a2f3a);border-radius:3px;padding:0 4px;font-size:11px;color:var(--c-9aa4b2)">${esc(m.reason)}</span>` : ""}` +
-              `${m.note ? ` — <small>${esc(m.note)}</small>` : ""} ` +
+            return `<div class="fp-marker-row">` +
+              `<span class="fp-marker-kind">${esc(m.kind)}</span>` +
+              `<span class="fp-marker-ref">${esc(shown)}</span>` +
+              (m.reason ? `<span class="fp-marker-reason">${esc(m.reason)}</span>` : "") +
+              (m.note ? `<span class="fp-marker-note">${esc(m.note)}</span>` : "") +
               `<button class="unfp-btn" data-id="${escAttr(m.id)}">un-mark</button></div>`;
           }).join("")
         : (fpMarkers.length
@@ -11679,7 +11938,7 @@
         : `${visible.length} of ${iocs.length} IOC${iocs.length !== 1 ? "s" : ""} shown`;
       const headerRow = `<div class="ioc-header-row">`
         + `<input type="checkbox" class="ioc-cb" id="iocSelectAll" ${allSel ? "checked" : ""} title="Select / deselect all visible IOCs" />`
-        + ` <span>${countLabel}</span>`
+        + `<span>Type</span><span>${countLabel}</span><span></span>`
         + `</div>`;
       const rows = visible.map(i => {
         const isNew = newIocKeys.has(i.value);
@@ -11693,14 +11952,15 @@
         const fpAction = isFp
           ? `<button class="unfp-btn" data-id="ioc:${escAttr(String(i.value).trim().toLowerCase())}" title="Un-mark false positive">un-mark</button>`
           : fpBtn("ioc", i.value);
+        const enrichHtml = enrichBadges(i);
+        const tagsHtml = tagPills("ioc", i.id);
         return `<div class="ioc-row${isSel ? " ioc-selected" : ""}${isNew ? " ioc-new" : ""}" data-iocid="${escAttr(i.id)}">`
           + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
-          + `<span class="ioc-body">`
-          // Mirror the forensic timeline: control cluster (comment + tag-add + hunt icons),
-          // then the id, then the tag PILLS, then the indicator itself.
-          +   `${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
-          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> <span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)} ${fpAction}${enrichBadges(i)} ${iocChainChip(i.id)}`
+          + `<span class="ioc-type-cell" title="${escAttr(i.id)}">${esc(i.type)}</span>`
+          + `<span class="ioc-main-cell">`
+          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${newBadge}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
           + `</span>`
+          + `<span class="ioc-actions-cell">${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)} ${iocChainChip(i.id)} ${fpAction}</span>`
           + `</div>`;
       }).join("");
       el.innerHTML = headerRow + rows;
@@ -12125,17 +12385,17 @@
         const span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
           ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
         const badge = (e.count && e.count > 1)
-          ? ` <span title="${escAttr(e.count)} occurrences collapsed into one event" style="background:var(--c-3a2f1a);color:var(--c-ffd93b);border:1px solid var(--c-5a4a1a);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">×${esc(e.count)}</span>` : "";
+          ? ` <span class="ev-badge-count" title="${escAttr(e.count)} occurrences collapsed into one event">×${esc(e.count)}</span>` : "";
         const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
         const corro = (realSrc.length > 1)
-          ? ` <span title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}" style="background:var(--c-13331f);color:var(--c-6bcb77);border:1px solid var(--c-1f5a35);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">⊕ ${esc(realSrc.length)}</span>` : "";
+          ? ` <span class="ev-badge-corro" title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}">⊕ ${esc(realSrc.length)}</span>` : "";
         let chain = "";
         if (e.chainCheck) {
           const cc = e.chainCheck;
-          const col = cc.observed ? "#6bcB77" : "#ff6b6b";
-          const label = cc.observed ? "⛓ chain seen" : "⚠ unusual parent";
-          const inner = `<span title="${escAttr(cc.note || "")}" style="color:${col};border:1px solid ${col};border-radius:4px;padding:0 5px;font-size:10px">${label}</span>`;
-          chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner);
+          const cls = cc.observed ? "ev-chain-ok" : "ev-chain-warn";
+          const label = cc.observed ? `${ICON_CHAIN} chain seen` : `${ICON_WARN} unusual parent`;
+          const inner = `<span class="ev-chain-badge ${cls}" title="${escAttr(cc.note || "")}">${label}</span>`;
+          chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" class="ev-jump">${inner}</a>` : inner);
         }
         let desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "").replace(/\s*\[more\]$/, "");
         // Affected host/asset, shown as a compact chip before the description for fast scanning.
@@ -12145,10 +12405,10 @@
         if (showHost && e.asset) {
           desc = desc.replace(new RegExp("\\s*@\\s*" + e.asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "i"), "");
         }
-        const host = e.asset ? ` <span class="ev-host" title="Affected host / asset">🖥 ${esc(e.asset)}</span>` : "";
+        const host = e.asset ? ` <span class="ev-host" title="Affected host / asset">${ICON_HOST} ${esc(e.asset)}</span>` : "";
         // Velociraptor deep-link back to the originating hunt/flow — mirrors the super-timeline (#7).
         const veloLink = e.veloUrl
-          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--c-6aa9ff);white-space:nowrap" title="Open this hunt/flow in the Velociraptor GUI">↗ Velociraptor</a>`
+          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" class="ev-jump" title="Open this hunt/flow in the Velociraptor GUI">${ICON_EXTERNAL} Velociraptor</a>`
           : "";
         // Everything beyond the compact title — untruncated text, MITRE, findings, decoded payloads,
         // evidence, a benign chain-check note — collapses into one shared [details] panel (#1/#3).
@@ -12160,9 +12420,9 @@
           + `<div class="ev-col-ctrl">`
           + `<input type="checkbox" class="ev-checkbox ev-row-cb" data-evid="${escAttr(id)}" ${isSelected ? "checked" : ""} title="Select event" />`
           + (tlShow("icons", tld)
-              ? `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>`
+              ? `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(id)}" title="${starred ? "Unstar event" : "Star event"}">${ICON_STAR}</button>`
                 + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)}`
-                + ((e.srcIp || e.dstIp) ? `<button type="button" class="ev-geo" title="Show this event's IP on the map" onclick="geoFocusIp('${escAttr(e.dstIp || e.srcIp)}')" style="background:none;border:none;cursor:pointer;font-size:12px;padding:0 4px">📍</button>` : "")
+                + ((e.srcIp || e.dstIp) ? `<button type="button" class="ev-geo" title="Show this event's IP on the map" onclick="geoFocusIp('${escAttr(e.dstIp || e.srcIp)}')">${ICON_GEO}</button>` : "")
               : "")
           + `</div>`
           + `<div class="ev-col-time"><span class="sev-${esc(e.severity)}">${span}</span></div>`
@@ -12359,24 +12619,31 @@
       document.getElementById("nextSteps").innerHTML = ns.length
         ? ns.map(s => {
             const color = PRIO[s.priority] || "#9aa4b2";
-            return `<div class="finding" style="border-left-color:${color}">` +
-              `<strong style="color:${color}">[${esc(String(s.priority || "").toUpperCase())}]</strong> ${esc(s.action)}` +
-              `${s.rationale ? `<br><small>${esc(s.rationale)}</small>` : ""}` +
-              `${s.pointer ? `<br><small style="color:var(--c-6aa9ff)">→ ${esc(s.pointer)}</small>` : ""}</div>`;
+            return `<div class="step-row" style="--step-color:${color}">` +
+              `<span class="step-priority">${esc(String(s.priority || "").toUpperCase())}</span> ${esc(s.action)}` +
+              (s.rationale ? `<span class="step-rationale">${esc(s.rationale)}</span>` : "") +
+              (s.pointer ? `<span class="step-pointer">→ ${esc(s.pointer)}</span>` : "") +
+              `</div>`;
           }).join("")
         : "<div style='color:var(--c-9aa4b2)'>Not assessed yet — run Synthesize.</div>";
 
-      const QMARK = { answered: "✅", partial: "🟡", unknown: "❓" };
+      const QSTATUS = { answered: "Answered", partial: "Partial", unknown: "Unknown" };
       const kq = state.keyQuestions || [];
       document.getElementById("keyQuestions").innerHTML = kq.length
-        ? kq.map(q =>
-            `<div class="finding">${commentChip("question", q.id)} ${tagChip("question", q.id)} <strong>${q.pinned ? "📌 " : ""}${QMARK[q.status] || "❓"} ${esc(q.question)}</strong>` +
-            `<br><small>${esc(q.answer || "unknown")}</small>` +
-            `${q.pointer ? `<br><small style="color:var(--c-6aa9ff)">→ ${esc(q.pointer)}</small>` : ""}</div>`
-          ).join("")
+        ? kq.map(q => {
+            const st = QSTATUS[q.status] ? q.status : "unknown";
+            return `<div class="qrow">` +
+              `<div class="q-head">${commentChip("question", q.id)} ${tagChip("question", q.id)}` +
+              (q.pinned ? ` <span class="icon-pinned" title="Pinned">${ICON_PIN}</span>` : "") +
+              ` <span class="q-status q-status-${st}">${QSTATUS[st]}</span> <strong>${esc(q.question)}</strong></div>` +
+              `<span class="q-answer">${esc(q.answer || "unknown")}</span>` +
+              (q.pointer ? `<span class="q-pointer">→ ${esc(q.pointer)}</span>` : "") +
+              `</div>`;
+          }).join("")
         : "<div style='color:var(--c-9aa4b2)'>Not assessed yet — run Synthesize.</div>";
 
       renderIocs(state.iocs || []);
+      lastIocs = state.iocs || [];
 
       // Already scope-projected above (events + findings/IOCs/MITRE consistently).
       // Then hide events the client confirmed as a false positive (preserved in state; just
@@ -12402,10 +12669,10 @@
       const openThreads = state.openThreads.filter(t => t.status === "open");
       const closedThreads = state.openThreads.filter(t => t.status === "closed");
       document.getElementById("openThreads").innerHTML =
-        openThreads.map(t => `<div>• ${commentChip("thread", t.id)} ${tagChip("thread", t.id)} <span style="color:var(--c-6aa9ff)">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("") || "<div style='color:var(--c-9aa4b2)'>No open threads</div>";
+        openThreads.map(t => `<div class="thread-row"><span class="thread-dot thread-dot-open"></span>${commentChip("thread", t.id)} ${tagChip("thread", t.id)} <span class="thread-id">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("") || "<div style='color:var(--c-9aa4b2)'>No open threads</div>";
       document.getElementById("closedThreads").innerHTML = closedThreads.length
         ? `<div style='margin-top:8px;color:var(--c-6bcb77)'>Closed (${closedThreads.length}):</div>` +
-          closedThreads.map(t => `<div style='color:var(--c-9aa4b2);text-decoration:line-through'>✓ <span style="color:var(--c-6aa9ff)">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("")
+          closedThreads.map(t => `<div class="thread-row thread-row-closed"><span class="thread-dot thread-dot-closed"></span><span class="thread-id">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("")
         : "";
       // Drop findings just confirmed false-positive immediately, client-side — don't wait for the
       // background AI re-synthesis (which can take many seconds) to actually remove them from state.
@@ -12444,7 +12711,12 @@
       const findingAllSel = findingAllIds.length > 0 && findingAllIds.every(id => selectedFindings.has(id));
       const findingSomeSel = findingAllIds.some(id => selectedFindings.has(id));
       const findingHeaderRow = capped.length
-        ? `<div class="finding-header-row"><input type="checkbox" class="finding-cb" id="findingSelectAll" ${findingAllSel ? "checked" : ""} title="Select / deselect all visible findings" /> <span>Select all</span></div>`
+        ? `<div class="finding-header-row">` +
+            `<span style="grid-column:1/3;display:flex;align-items:center;gap:6px">` +
+              `<input type="checkbox" class="finding-cb" id="findingSelectAll" ${findingAllSel ? "checked" : ""} title="Select / deselect all visible findings" /> Select all` +
+            `</span>` +
+            `<span>Severity</span><span>ID</span><span>Finding</span><span>Confidence</span><span></span>` +
+          `</div>`
         : "";
       document.getElementById("findings").innerHTML =
         (findingHeaderRow + capped.map(f => {
@@ -12453,24 +12725,42 @@
           // to the events that back-link to it via relatedFindingIds for findings persisted before
           // this field existed, so nothing regresses.
           const citeIds = (f.relatedEventIds && f.relatedEventIds.length) ? f.relatedEventIds : (suppEventsByFinding[f.id] || []).map(e => e.id);
-          const cites = citeEvents(citeIds);
           // Auto-flagged findings (from a Critical/High artifact row synthesis didn't cover)
           // carry the f-auto- id prefix — badge them so the analyst knows to review/refine.
           const auto = String(f.id).startsWith("f-auto-")
             ? ` <span title="Auto-flagged from a ${esc(f.severity)}-severity artifact row — review and refine" style="background:var(--c-2a2233);color:var(--c-c79bff);border:1px solid var(--c-4a3a5a);border-radius:4px;padding:0 6px;font-size:10px">AUTO</span>` : "";
-          // Confidence badge: color-coded by tier.
-          let confBadge = "";
+          // Confidence meter: same high/mid/low tiering as the old badge, now a small bar + %.
+          let confMeter = "";
           if (f.confidence !== undefined) {
             const cls = f.confidence >= 80 ? "conf-high" : f.confidence >= 50 ? "conf-mid" : "conf-low";
+            const barColor = cls === "conf-high" ? "var(--c-6bcb77)" : cls === "conf-mid" ? "var(--c-e0b84a)" : "var(--c-e06060)";
             const confTitle = `AI confidence: ${f.confidence}%` + (f.confidenceReason ? ` — ${f.confidenceReason}` : "");
-            confBadge = ` <span class="conf-badge ${cls}" title="${escAttr(confTitle)}">${f.confidence}%</span>`;
+            confMeter = `<span class="fcbar" title="${escAttr(confTitle)}"><span style="width:${f.confidence}%;background:${barColor}"></span></span><span class="fcpct">${f.confidence}%</span>`;
           }
           const isSelFinding = selectedFindings.has(f.id);
-          // Selection checkbox, comment chip, tag icon button, severity badge, confidence score, tag pills, then finding id/title.
-          return `<div class="finding${isSelFinding ? " finding-selected" : ""}" data-fid="${escAttr(f.id)}"><input type="checkbox" class="finding-cb finding-row-cb" data-fid="${escAttr(f.id)}" ${isSelFinding ? "checked" : ""} title="Select finding" /> ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} <span class="sev-${esc(f.severity)}">[${esc(f.severity)}]</span>${confBadge} ${tagPills("finding", f.id)} ` +
-            `<span style="color:var(--c-6aa9ff)">${esc(f.id)}</span> <strong>${esc(f.title)}</strong>${auto} ${fpBtn("finding", f.title)}` +
-            `<br><small>${esc(f.description)}</small>` +
-            `${findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs, cites)}</div>`;
+          const evidenceBody = findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs, citeIds);
+          const hasEvidence = !!evidenceBody;
+          // A plain <button>, not a native <summary> — <details> hides ALL non-summary children
+          // (via content-visibility, not a simple display:none you can override) whenever it's
+          // closed, which would blank out the checkbox/severity/id/title too, not just the
+          // evidence panel. Toggling is handled by the delegated .finding-chevron click handler.
+          const chevron = `<button type="button" class="finding-chevron" data-fev-toggle="${escAttr(f.id)}" title="Expand evidence"${hasEvidence ? "" : " disabled"}>` +
+            `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l5 5-5 5"/></svg></button>`;
+          const tagPillsHtml = tagPills("finding", f.id);
+          return `<div class="finding${isSelFinding ? " finding-selected" : ""}" data-fid="${escAttr(f.id)}">` +
+            chevron +
+            `<input type="checkbox" class="finding-cb finding-row-cb" data-fid="${escAttr(f.id)}" ${isSelFinding ? "checked" : ""} title="Select finding" />` +
+            `<span class="finding-sev-cell sev-${esc(f.severity)}"><span class="fsq"></span>${esc(f.severity)}</span>` +
+            `<span class="finding-id-cell" title="${escAttr(f.id)}">${esc(f.id)}</span>` +
+            `<span class="finding-main-cell">` +
+              `<span class="finding-title"><strong>${esc(f.title)}</strong>${auto}</span>` +
+              `<span class="finding-desc" title="${escAttr(f.description)}">${esc(f.description)}</span>` +
+              (tagPillsHtml ? `<span class="finding-tagline">${tagPillsHtml}</span>` : "") +
+            `</span>` +
+            `<span class="finding-conf-cell">${confMeter}</span>` +
+            `<span class="finding-actions-cell">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${fpBtn("finding", f.title)}</span>` +
+            (hasEvidence ? `<div class="finding-evidence-body" id="fev-${escAttr(f.id)}">${evidenceBody}</div>` : "") +
+            `</div>`;
         }).join("")) || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
       const findingSelAllEl = document.getElementById("findingSelectAll");
       if (findingSelAllEl && findingSomeSel && !findingAllSel) findingSelAllEl.indeterminate = true;
@@ -12486,9 +12776,9 @@
       }));
       _logRows.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
       document.getElementById("timeline").innerHTML =
-        _logRows.map(r => `<div>• <small>${esc(r.ts)}</small> ${r.html}</div>`).join("") || "—";
+        _logRows.map(r => `<div class="log-row"><span class="log-time">${esc(r.ts)}</span><span>${r.html}</span></div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
-        state.mitreTechniques.map(m => `<div>${mitreLinks([m.id])} — ${esc(m.name)} (${esc(m.findingIds.join(", "))})</div>`).join("") || "—";
+        state.mitreTechniques.map(m => `<div class="mitre-row">${mitreLinks([m.id])} <span>${esc(m.name)}</span><span class="mitre-findings">${esc(m.findingIds.join(", "))}</span></div>`).join("") || "—";
       renderPinned();   // pinned-strip titles resolve against the just-rendered findings (#220)
     }
 
@@ -13194,6 +13484,15 @@
         const wrap = provBtn.closest(".ioc-prov-filter");
         if (wrap) wrap.querySelectorAll(".ioc-prov-btn").forEach(b => b.classList.toggle("active", b === provBtn));
         if (lastState) renderIocs(lastState.iocs || []);
+        return;
+      }
+      // Finding evidence-panel chevron → toggle the sibling .finding-evidence-body open/closed.
+      const fevToggle = e.target.closest && e.target.closest(".finding-chevron");
+      if (fevToggle) {
+        if (fevToggle.disabled) return;
+        const open = fevToggle.classList.toggle("open");
+        const body = document.getElementById("fev-" + fevToggle.getAttribute("data-fev-toggle"));
+        if (body) body.classList.toggle("open", open);
         return;
       }
       // Finding reference link inside a timeline event → jump to the finding.
