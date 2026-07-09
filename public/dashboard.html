@@ -7242,7 +7242,9 @@
         let detail = "";
         if (job.status === "imported") {
           const ev = job.addedEvents || 0, io = job.addedIocs || 0;
-          detail = (ev || io) ? `+${ev} event(s), +${io} IOC(s) imported` : "no new results collected yet — clients may not have checked in; collect again later";
+          detail = (ev || io) ? `+${ev} event(s), +${io} IOC(s) imported`
+            : (job.stoppedEarly ? "this hunt was stopped before its scheduled expiry in Velociraptor — likely stopped or deleted; no results were collected"
+              : "no new results collected yet — clients may not have checked in; collect again later");
         } else if (job.status === "error") {
           detail = "error: " + (job.error || "");
         } else if (job.status === "deleted") {

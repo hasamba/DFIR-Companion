@@ -190,7 +190,7 @@ import { VelociraptorClientStore } from "./analysis/velociraptorClientStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
 import { VeloMonitorStore, monitorId, type VeloMonitor } from "./analysis/veloMonitorStore.js";
 import { pollMonitorOnce, monitorArtifactMap, type PollDeps } from "./integrations/velociraptor/monitorPoller.js";
-import { pollHuntStatusOnce, type HuntPollDeps } from "./integrations/velociraptor/huntStatusPoller.js";
+import { pollHuntStatusOnce, isHuntStoppedEarly, type HuntPollDeps } from "./integrations/velociraptor/huntStatusPoller.js";
 import { PushTokenStore, generatePushToken } from "./analysis/pushTokenStore.js";
 import { resolvePushAuth } from "./analysis/pushAuth.js";
 import { extractPushPayload } from "./analysis/pushPayload.js";
@@ -3425,7 +3425,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!job) return;
     if (job.status === "collecting") return;   // a collection of this hunt is already in flight
     try {
-      job = { ...job, status: "collecting" };
+      // A last live check right before collecting: was this hunt stopped/deleted in Velociraptor well
+      // before its own scheduled expiry? Checked HERE (not just in the status poller) so every entry
+      // point — the poller, the fixed-delay auto-collect timer, and a manual "Collect now" — gets the
+      // same signal. Best-effort: a failed check must not block the collect itself.
+      let stoppedEarly = job.stoppedEarly === true;
+      if (!stoppedEarly) {
+        try { stoppedEarly = isHuntStoppedEarly(await client.huntStatus(job.huntId), Date.now()); } catch { /* best-effort */ }
+      }
+      job = { ...job, status: "collecting", ...(stoppedEarly ? { stoppedEarly: true } : {}) };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
       const minSeverity = job.minSeverity;

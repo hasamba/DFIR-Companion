@@ -348,6 +348,7 @@ describe("VelociraptorClient.huntStatus", () => {
     const st = await new VelociraptorClient(cfg, runner).huntStatus("H.ABC123");
     expect(st).toEqual({ state: "RUNNING" });
     expect(program).toContain("FROM hunts() WHERE hunt_id='H.ABC123'");
+    expect(program).toContain("SELECT state, expires");
   });
 
   it("returns null when the hunt is not found (deleted)", async () => {
@@ -363,6 +364,20 @@ describe("VelociraptorClient.huntStatus", () => {
   it("throws on an invalid hunt id", async () => {
     const runner: VqlRunner = async () => ({ rows: [], raw: "" });
     await expect(new VelociraptorClient(cfg, runner).huntStatus("not-a-hunt-id")).rejects.toThrow(/invalid hunt id/);
+  });
+
+  // Velociraptor's `hunts()` plugin reports `expires` as MICROSECONDS since the epoch (matching
+  // create_time/start_time) — confirmed against a live server. Converted to an ISO string so callers
+  // never have to know the unit.
+  it("converts the hunt's microsecond expires field to an ISO string", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ state: "STOPPED", expires: 1_783_586_781_000_000 }], raw: "" });
+    const st = await new VelociraptorClient(cfg, runner).huntStatus("H.ABC123");
+    expect(st).toEqual({ state: "STOPPED", expires: new Date(1_783_586_781_000).toISOString() });
+  });
+
+  it("omits expires when the field is missing or zero", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ state: "RUNNING", expires: 0 }], raw: "" });
+    expect(await new VelociraptorClient(cfg, runner).huntStatus("H.ABC123")).toEqual({ state: "RUNNING" });
   });
 });
 

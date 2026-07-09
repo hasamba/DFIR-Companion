@@ -35,6 +35,12 @@ export interface VeloHuntJob {
   expirySeconds?: number;     // relative hunt expiry used at launch (seconds); default one hour
   filters?: Record<string, string>;   // per-artifact VQL WHERE filters snapshotted from the bundle (applied at collect)
   error?: string;
+  // Set at collect time when Velociraptor reported this hunt terminal (STOPPED/ARCHIVED) well before
+  // its own scheduled expiry — a strong signal an analyst stopped or deleted it in Velociraptor rather
+  // than it running to natural completion (see isHuntStoppedEarly). Lets the UI say so instead of the
+  // generic "no new results collected yet — collect again later", which is misleading for a hunt that
+  // will never produce anything again.
+  stoppedEarly?: boolean;
   importedAt?: string;    // ISO — when results were collected + imported
   importFile?: string;    // stored evidence filename
   addedEvents?: number;

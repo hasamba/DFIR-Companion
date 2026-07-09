@@ -10,8 +10,8 @@ import type { VeloHuntJob, VeloHuntStatus } from "../../analysis/veloHuntStore.j
 // hunt at all (deleted) rather than an empty-state object. A present-but-unrecognized state string
 // (state-vocabulary drift — a future Velociraptor version, a typo) is NOT rejected: it's treated as
 // "still running" (logged, not silently absorbed) so an operator can spot it without the poller itself
-// getting stuck.
-export type HuntStateReader = (huntId: string) => Promise<{ state: string } | null>;
+// getting stuck. `expires` (ISO) is the hunt's own scheduled end — see isHuntStoppedEarly().
+export type HuntStateReader = (huntId: string) => Promise<{ state: string; expires?: string } | null>;
 
 export interface HuntPollDeps {
   getState: HuntStateReader;
@@ -29,6 +29,25 @@ const TERMINAL_STATUSES: readonly VeloHuntStatus[] = ["collecting", "imported", 
 
 // Velociraptor hunt states that mean "done collecting, ready to import" (case-insensitive).
 const DONE_STATES = new Set(["STOPPED", "ARCHIVED"]);
+
+// Absorbs Velociraptor's own housekeeping lag around a hunt's expiry boundary (its background sweep
+// that flips RUNNING → STOPPED at expiry isn't instant) so a hunt that finished naturally a few
+// seconds ago isn't misread as "stopped early".
+const EARLY_STOP_GRACE_MS = 60_000;
+
+// Deleting a hunt from the Velociraptor GUI does NOT remove it from hunts() (confirmed against a live
+// server) — it just leaves it STOPPED, identical to a hunt that ran to natural completion. The one
+// signal Velociraptor still exposes is the hunt's own `expires`: natural completion lands AT (or just
+// after) that time; a hunt an analyst stopped or deleted partway through reports terminal well BEFORE
+// it. Used at collect time (not inside pollHuntStatusOnce) so every entry point — the status poller,
+// the fixed-delay auto-collect timer, and a manual "Collect now" — gets the same signal.
+export function isHuntStoppedEarly(result: { state: string; expires?: string } | null, nowMs: number, graceMs: number = EARLY_STOP_GRACE_MS): boolean {
+  if (!result || !result.expires) return false;
+  if (!DONE_STATES.has(result.state.toUpperCase())) return false;
+  const expiresMs = new Date(result.expires).getTime();
+  if (!Number.isFinite(expiresMs)) return false;
+  return nowMs < expiresMs - graceMs;
+}
 
 // One poll cycle. NEVER throws: a getState failure is captured into the returned job's status
 // ("unreachable") + logged, and polling continues (transient — a network blip or a Velociraptor
