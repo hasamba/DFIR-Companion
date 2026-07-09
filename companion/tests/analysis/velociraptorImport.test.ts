@@ -937,12 +937,16 @@ describe("parseVelociraptorJson — timestamp coverage for raw artifacts", () =>
 describe("parseVelociraptorJson — IOC provenance", () => {
   // Modeled on the "download rows (Zone.Identifier / BrowserDownloads)" fixture above (mapDownload
   // reads DownloadedFilePath/Mtime/HostUrl/ReferrerUrl, not URL/Referrer/Path).
+  // `Message` is populated so rowMessage()/msgFingerprint() actually produce a non-empty fingerprint
+  // (see rowMessage() in velociraptorImport.ts, which reads Message/Details/message) — otherwise the
+  // `if (fp) m.aggKey = ...` fold line never runs and these tests can't detect it being skipped/reordered.
   function downloadRow(overrides: object = {}): object {
     return {
       DownloadedFilePath: "C:\\Users\\a\\Downloads\\payload.exe",
       Mtime: "2026-01-01T00:00:00Z",
       HostUrl: "http://evil.example.com/payload.exe",
       ReferrerUrl: "",
+      Message: "User downloaded payload.exe from evil.example.com via browser",
       ...overrides,
     };
   }
@@ -950,8 +954,12 @@ describe("parseVelociraptorJson — IOC provenance", () => {
   it("tags a download URL IOC's sourceAggKeys with its event's (post-fingerprint) aggKey", () => {
     const parsed = parseVelociraptorJson(JSON.stringify([downloadRow()]));
     expect(parsed.events).toHaveLength(1);
+    // Prove the fold actually ran (not just that both sides read the same already-computed field,
+    // which would also pass if mergeRowIocs ran BEFORE the fingerprint fold).
+    expect(parsed.events[0].aggKey).toMatch(/\|m:/);
     const urlIoc = parsed.iocs.find((i) => i.type === "url" && i.value.includes("evil.example.com"));
     expect(urlIoc?.sourceAggKeys).toEqual([parsed.events[0].aggKey]);
+    expect(urlIoc?.sourceAggKeys?.[0]).toMatch(/\|m:/);
   });
 
   it("tags two different rows' IOCs with their own distinct (post-fingerprint) aggKeys", () => {
