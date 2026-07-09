@@ -185,3 +185,53 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     expect(inferZeekStream(conn)).toBe("conn");
   });
 });
+
+describe("parseNetworkLogs — IOC provenance", () => {
+  it("tags a Suricata alert's domain IOC with the alert event's aggKey", () => {
+    const row = {
+      event_type: "alert", timestamp: "2017-12-01T08:00:00.123456+0000",
+      src_ip: "10.0.0.5", src_port: 51000, dest_ip: "203.0.113.9", dest_port: 443, proto: "TCP",
+      alert: { signature: "ET MALWARE C2 beacon", category: "A Network Trojan was detected", signature_id: 2027000, severity: 1 },
+      dns: { type: "query", rrname: "evil.example.com", rrtype: "A" },
+    };
+    const parsed = parseNetworkLogs(JSON.stringify(row));
+    expect(parsed.events).toHaveLength(1);
+    const domainIoc = parsed.iocs.find((i) => i.type === "domain" && i.value === "evil.example.com");
+    expect(domainIoc?.sourceAggKeys).toEqual([parsed.events[0].aggKey]);
+  });
+
+  it("leaves sourceAggKeys unset for an IOC from a non-alert row (no event produced)", () => {
+    const row = {
+      event_type: "dns", timestamp: "2017-12-01T08:00:01+0000",
+      src_ip: "10.0.0.5", dest_ip: "10.0.0.1",
+      dns: { type: "query", rrname: "benign.example.com", rrtype: "A" },
+    };
+    const parsed = parseNetworkLogs(JSON.stringify(row));
+    expect(parsed.events).toHaveLength(0);
+    const domainIoc = parsed.iocs.find((i) => i.type === "domain" && i.value === "benign.example.com");
+    expect(domainIoc).toBeDefined();
+    expect(domainIoc?.sourceAggKeys).toBeUndefined();
+  });
+
+  it("tags two alert rows' domain IOCs with their own distinct aggKeys", () => {
+    const rowA = {
+      event_type: "alert", timestamp: "2017-12-01T08:00:00.123456+0000",
+      src_ip: "10.0.0.5", src_port: 51000, dest_ip: "203.0.113.9", dest_port: 443, proto: "TCP",
+      alert: { signature: "ET MALWARE C2 beacon A", category: "A Network Trojan was detected", signature_id: 1001, severity: 1 },
+      dns: { rrname: "evil-a.example.com" },
+    };
+    const rowB = {
+      event_type: "alert", timestamp: "2017-12-01T08:05:00.123456+0000",
+      src_ip: "10.0.0.6", src_port: 51001, dest_ip: "203.0.113.10", dest_port: 443, proto: "TCP",
+      alert: { signature: "ET MALWARE C2 beacon B", category: "A Network Trojan was detected", signature_id: 1002, severity: 1 },
+      dns: { rrname: "evil-b.example.com" },
+    };
+    const parsed = parseNetworkLogs(`${JSON.stringify(rowA)}\n${JSON.stringify(rowB)}`);
+    expect(parsed.events).toHaveLength(2);
+    const iocA = parsed.iocs.find((i) => i.type === "domain" && i.value === "evil-a.example.com");
+    const iocB = parsed.iocs.find((i) => i.type === "domain" && i.value === "evil-b.example.com");
+    expect(iocA?.sourceAggKeys?.[0]).not.toEqual(iocB?.sourceAggKeys?.[0]);
+    expect(iocA?.sourceAggKeys?.length).toBe(1);
+    expect(iocB?.sourceAggKeys?.length).toBe(1);
+  });
+});

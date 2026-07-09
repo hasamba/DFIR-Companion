@@ -21,6 +21,7 @@ import {
   aggregateEvents,
   cleanIp,
   addIoc,
+  mergeRowIocs,
   str,
   isObject,
   getCI,
@@ -213,7 +214,10 @@ export function parseSecurityOnion(text: string, opts: SecurityOnionImportOption
     if (!isObject(row)) continue;
     const host = pickHost(row);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
-    mapped.push(mapSecurityOnionRow(row, iocSink));
+    const rowSink = new Map<string, SiemIoc>();
+    const m = mapSecurityOnionRow(row, rowSink);
+    mergeRowIocs(iocSink, rowSink, m.aggKey);
+    mapped.push(m);
   }
 
   const { events, groups } = aggregateEvents(mapped, {

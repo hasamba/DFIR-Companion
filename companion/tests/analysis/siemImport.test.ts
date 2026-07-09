@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSiemExport, extractRecords, isSuspiciousCmd, cleanIp, textIocs, type SiemIoc } from "../../src/analysis/siemImport.js";
+import { parseSiemExport, extractRecords, isSuspiciousCmd, cleanIp, textIocs, mergeRowIocs, resolveExtractedFrom, type SiemIoc } from "../../src/analysis/siemImport.js";
 
 // ── Representative Windows Event Log records (Elastic _source shape) ─────────────
 const LOGON_4624 = {
@@ -532,5 +532,47 @@ describe("textIocs — Windows account SID extraction (#221)", () => {
   it("does NOT flood on well-known service/builtin SIDs (S-1-5-18, S-1-5-32-544)", () => {
     const iocs = scrape("SYSTEM S-1-5-18 and Administrators S-1-5-32-544 ran the task");
     expect(iocs.filter((i) => i.type === "sid")).toHaveLength(0);
+  });
+});
+
+describe("row-scoped IOC provenance (aggKey plumbing)", () => {
+  it("stamps the surviving event's aggKey and tags its IOCs with sourceAggKeys", () => {
+    const parsed = parseSiemExport(elastic(SYSMON_PROC));
+    expect(parsed.events).toHaveLength(1);
+    const hashIoc = parsed.iocs.find((i) => i.type === "hash" && i.value.includes("425a1a21"));
+    expect(hashIoc?.sourceAggKeys).toHaveLength(1);
+  });
+
+  it("mergeRowIocs unions sourceAggKeys when the same value recurs across rows", () => {
+    const fileSink = new Map<string, SiemIoc>();
+    const rowSink1 = new Map<string, SiemIoc>([["domain:evil.example.com", { type: "domain", value: "evil.example.com" }]]);
+    mergeRowIocs(fileSink, rowSink1, "agg-1");
+    const rowSink2 = new Map<string, SiemIoc>([["domain:evil.example.com", { type: "domain", value: "evil.example.com" }]]);
+    mergeRowIocs(fileSink, rowSink2, "agg-2");
+    expect(fileSink.get("domain:evil.example.com")?.sourceAggKeys).toEqual(["agg-1", "agg-2"]);
+  });
+
+  it("mergeRowIocs with no aggKey merges the value without tagging it", () => {
+    const fileSink = new Map<string, SiemIoc>();
+    const rowSink = new Map<string, SiemIoc>([["ip:1.2.3.4", { type: "ip", value: "1.2.3.4" }]]);
+    mergeRowIocs(fileSink, rowSink);
+    expect(fileSink.get("ip:1.2.3.4")?.sourceAggKeys).toBeUndefined();
+  });
+
+  it("resolveExtractedFrom maps sourceAggKeys through an aggKey->id lookup", () => {
+    const iocs: SiemIoc[] = [
+      { type: "domain", value: "evil.example.com", sourceAggKeys: ["agg-1", "agg-2"] },
+      { type: "ip", value: "9.9.9.9" },
+    ];
+    const eventIdByAggKey = new Map([["agg-1", "e001"], ["agg-2", "e002"]]);
+    const resolved = resolveExtractedFrom(iocs, eventIdByAggKey);
+    expect(resolved[0].extractedFrom).toEqual(["e001", "e002"]);
+    expect(resolved[1].extractedFrom).toBeUndefined();
+  });
+
+  it("resolveExtractedFrom drops an aggKey that never resolved (event capped away)", () => {
+    const iocs: SiemIoc[] = [{ type: "domain", value: "x.com", sourceAggKeys: ["agg-1", "agg-missing"] }];
+    const eventIdByAggKey = new Map([["agg-1", "e001"]]);
+    expect(resolveExtractedFrom(iocs, eventIdByAggKey)[0].extractedFrom).toEqual(["e001"]);
   });
 });
