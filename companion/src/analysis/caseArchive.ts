@@ -132,6 +132,23 @@ export interface ArchiveDeps {
   writeFile?: (absPath: string, data: Buffer) => Promise<void>;
 }
 
+// Windows-illegal filename characters (also unsafe cross-platform): < > : " / \ | ? * and control
+// chars — the caseId itself is always filesystem-safe (see isValidCaseId), but the case name is
+// free text an analyst typed in.
+const UNSAFE_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
+
+/**
+ * The on-disk filename for a case's plain (unencrypted) ZIP archive:
+ * `"<caseId> - <name> (no password).zip"`, or just `"<caseId> (no password).zip"` when the case
+ * has no distinct name. The "(no password)" marker keeps it visually unambiguous next to an
+ * encrypted `.dfircase` archive of the same case.
+ */
+export function zipArchiveFilename(caseId: string, name: string | null | undefined): string {
+  const trimmed = (name ?? "").trim();
+  if (!trimmed || trimmed === caseId) return `${caseId} (no password).zip`;
+  return `${caseId} - ${trimmed.replace(UNSAFE_FILENAME_CHARS, "_")} (no password).zip`;
+}
+
 // Default recursive file scanner for the real filesystem.
 async function defaultScanFiles(dir: string): Promise<string[]> {
   const paths: string[] = [];
@@ -153,10 +170,11 @@ async function defaultScanFiles(dir: string): Promise<string[]> {
 /**
  * Create a ZIP archive of the case directory.
  *
- * Writes `<casesRoot>/<caseId>.zip` atomically (write to temp path then caller
- * renames, or write directly when deps.writeFile is provided). The archive
- * includes a `<caseId>/archive-manifest.json` that lists every file with its
- * SHA-256 and byte size so integrity can be verified offline.
+ * Writes `<casesRoot>/<zipArchiveFilename(caseId, caseName)>` atomically (write
+ * to temp path then caller renames, or write directly when deps.writeFile is
+ * provided). The archive includes a `<caseId>/archive-manifest.json` that
+ * lists every file with its SHA-256 and byte size so integrity can be
+ * verified offline.
  *
  * Safe to call on an active case but intended for closed cases. Never removes
  * the original folder — the caller decides what to do afterward.
@@ -165,9 +183,10 @@ export async function archiveCase(
   casesRoot: string,
   caseId: string,
   deps: ArchiveDeps = {},
+  caseName?: string,
 ): Promise<ArchiveResult> {
   const caseDir = join(casesRoot, caseId);
-  const archivePath = join(casesRoot, `${caseId}.zip`);
+  const archivePath = join(casesRoot, zipArchiveFilename(caseId, caseName));
 
   const scan = deps.scanFiles ?? defaultScanFiles;
   const read = deps.readFile ?? (async (p: string) => readFile(p));
