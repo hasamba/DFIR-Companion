@@ -1416,6 +1416,25 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Best-effort: moves a case out of the active list (into _archived/) and flips its status,
+  // AFTER the caller has already fully built the archive/export bytes. Failure here must NOT
+  // undo or discard the archive/export itself — the caller already has (or is about to send)
+  // their file; it just means the case stays visible in the active list until retried.
+  async function removeCaseFromActiveListBestEffort(
+    id: string,
+    logPrefix: string,
+  ): Promise<{ removed: boolean; error?: string }> {
+    try {
+      await store.archiveCaseFolder(id);
+      await store.updateCaseMeta(id, { status: "archived" });
+      logLine(`${logPrefix} case=${id} removed from active list (moved to _archived/)`);
+      return { removed: true };
+    } catch (err) {
+      errLine(`${logPrefix} case=${id} failed to remove from active list: ${(err as Error).message}`);
+      return { removed: false, error: (err as Error).message };
+    }
+  }
+
   // Archive a case to a ZIP file (<casesRoot>/<caseId or name> (no password).zip). Intended for
   // closed cases. Returns the archive path and a manifest of archived files + checksums. With
   // { removeFromList: true }, additionally moves the case folder to _archived/ and sets
@@ -1431,12 +1450,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       logLine(`[archive] starting archive for case=${id}`);
       const result = await archiveCase(store.casesRoot, id, {}, meta.name);
       logLine(`[archive] done case=${id} files=${result.manifest.totalFiles} bytes=${result.manifest.totalBytes} path=${result.archivePath}`);
+      let removedFromList = false;
+      let removeFromListError: string | undefined;
       if (removeFromList) {
-        await store.archiveCaseFolder(id);
-        await store.updateCaseMeta(id, { status: "archived" });
-        logLine(`[archive] case=${id} removed from active list (moved to _archived/)`);
+        const outcome = await removeCaseFromActiveListBestEffort(id, "[archive]");
+        removedFromList = outcome.removed;
+        removeFromListError = outcome.error;
       }
-      return res.status(200).json({ ...result, removedFromList: removeFromList });
+      return res.status(200).json({
+        ...result,
+        removedFromList,
+        ...(removeFromListError ? { removeFromListError } : {}),
+      });
     } catch (err) {
       errLine(`[archive] error case=${req.params.id}: ${(err as Error).message}`);
       return res.status(500).json({ error: (err as Error).message });
@@ -1451,14 +1476,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const { id } = req.params;
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
       const meta = await store.getCaseMeta(id);
-      if (!meta || meta.status !== "archived") {
-        return res.status(404).json({ error: `no archived case "${id}" found` });
-      }
+      if (!meta) return res.status(404).json({ error: `case ${id} not found` });
+      if (meta.status !== "archived") return res.status(400).json({ error: `case ${id} is not archived` });
       await store.restoreCaseFolder(id);
       const updated = await store.updateCaseMeta(id, { status: "closed" });
       logLine(`[restore] case=${id} restored from _archived/`);
       return res.status(200).json(updated);
     } catch (err) {
+      errLine(`[restore] error case=${req.params.id}: ${(err as Error).message}`);
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -2092,15 +2117,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
       const archive = await exportEncryptedCase(store, id, password);
       const filename = dfircaseFilename(id, meta?.name);
+      let removedFromList = false;
       if (removeFromList) {
-        await store.archiveCaseFolder(id);
-        await store.updateCaseMeta(id, { status: "archived" });
-        logLine(`[export] case=${id} removed from active list (moved to _archived/) after encrypted export`);
+        const outcome = await removeCaseFromActiveListBestEffort(id, "[export]");
+        removedFromList = outcome.removed;
       }
       res.type("application/octet-stream");
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.setHeader("Cache-Control", "private, no-cache");
-      res.setHeader("X-Case-Removed-From-List", String(removeFromList));
+      res.setHeader("X-Case-Removed-From-List", String(removedFromList));
       return res.send(archive);
     } catch (err) {
       if ((err as Error).message.includes("does not exist")) {

@@ -88,6 +88,23 @@ describe("POST /cases/:id/export/encrypted (removeFromList)", () => {
     const meta = await store.getCaseMeta("INC-4b");
     expect(meta?.status).not.toBe("archived");
   });
+
+  it("still returns the encrypted file even if the post-export folder move fails", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, "INC-4c", "Case Four C");
+    const originalArchiveCaseFolder = store.archiveCaseFolder.bind(store);
+    (store as any).archiveCaseFolder = async () => { throw new Error("simulated rename failure"); };
+    try {
+      const res = await request(app)
+        .post("/cases/INC-4c/export/encrypted")
+        .send({ password: PASSWORD, removeFromList: true });
+      expect(res.status).toBe(200);
+      expect(res.headers["x-case-removed-from-list"]).toBe("false");
+      expect(res.body.length).toBeGreaterThan(0);
+    } finally {
+      (store as any).archiveCaseFolder = originalArchiveCaseFolder;
+    }
+  });
 });
 
 describe("POST /cases/:id/restore", () => {
@@ -103,10 +120,16 @@ describe("POST /cases/:id/restore", () => {
     expect(s.isFile()).toBe(true);
   });
 
-  it("404s when the case isn't archived", async () => {
+  it("400s when the case exists but isn't archived", async () => {
     const { app } = await harness();
     await seedCase(app, "INC-6", "Case Six");
     const res = await request(app).post("/cases/INC-6/restore").send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("404s when the case doesn't exist at all", async () => {
+    const { app } = await harness();
+    const res = await request(app).post("/cases/ghost-case/restore").send({});
     expect(res.status).toBe(404);
   });
 });
