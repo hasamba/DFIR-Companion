@@ -3252,6 +3252,23 @@
       #sec-hostranking .hr-med{background:#9aa4b222;color:#9aa4b2;border:1px solid #9aa4b255}
       #sec-hostranking .hr-tech{color:#6aa9ff}
       #sec-hostranking .hr-conn{color:#c79bff}
+      #sec-hostranking .hr-row{cursor:pointer}
+      #sec-hostranking .hr-caret{color:var(--c-9aa4b2);font-size:10px;flex-shrink:0;transition:transform .12s}
+      #sec-hostranking .hr-row.hr-open .hr-caret{transform:rotate(90deg)}
+      #sec-hostranking .hr-row-wrap{display:flex;flex-direction:column}
+      #sec-hostranking .hr-detail{display:flex;gap:14px;flex-wrap:wrap;background:var(--c-11151c);border:1px solid var(--c-232a33);border-top:0;border-radius:0 0 5px 5px;padding:8px 9px 9px;margin:-6px 0 0;font-size:11px}
+      #sec-hostranking .hr-det-col{flex:1;min-width:220px}
+      #sec-hostranking .hr-det-head{color:var(--c-9aa4b2);font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+      #sec-hostranking .hr-det-list{max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:3px}
+      #sec-hostranking .hr-det-event{display:flex;gap:8px;align-items:baseline;color:var(--c-d6deea);text-decoration:none;padding:2px 0}
+      #sec-hostranking .hr-det-event:hover{color:var(--c-9cc5ff)}
+      #sec-hostranking .hr-det-time{flex-shrink:0;font-size:10px}
+      #sec-hostranking .hr-det-desc{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      #sec-hostranking .hr-det-ioc{display:flex;gap:6px;align-items:center;padding:2px 0}
+      #sec-hostranking .hr-det-dot{width:7px;height:7px;border-radius:50%;background:var(--c-2a2f3a);flex-shrink:0}
+      #sec-hostranking .hr-det-ioc-type{color:#9aa4b2;font-size:10px;text-transform:uppercase}
+      #sec-hostranking .hr-det-ioc-val{color:var(--c-d6deea);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      #sec-hostranking .hr-det-more,#sec-hostranking .hr-det-empty{color:var(--c-9aa4b2);font-size:10px;padding:2px 0}
     </style>
     <section id="sec-gaps" style="grid-column: 1 / -1"><h2>Timeline Gaps<span class="ev-sub">suspicious silent periods — a complete gap (all sources dark) is the classic log-tampering signature (derived, no AI); a lead, not proof</span><button id="hypothesizeGapsBtn" type="button" title="Ask the AI to hypothesise what the attacker did during each silent period (from the surrounding events) and pair each gap with shadow-artifact collections that reconstruct the missing window" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Hypothesize gaps</button><span id="hypothesizeGapsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="timelineGaps">—</div><div id="gapHypotheses"></div></section>
     <style>
@@ -3902,6 +3919,7 @@
     let lastState = null;                    // last raw state from server, for re-render on scope change
     let fpMarkers = [];                       // false-positive markers; events here are hidden from the timeline
     let lastFt = [];                          // last scoped+FP-filtered forensic timeline, for severity re-filter without re-fetching
+    let lastIocs = [];                        // last scoped IOC list, for the Host & Account Ranking expand view (#237)
     // Forensic-timeline sort order (#104): { key: "date" | "severity", dir: "asc" | "desc" }.
     // date asc = oldest first (default/chronological), date desc = newest first;
     // severity desc = most-severe first, severity asc = least-severe first. Persisted "key:dir".
@@ -9891,6 +9909,7 @@
     // server-side (GET /cases/:id/host-ranking); re-derived (debounced) on each state change.
     let hostRankingData = null;
     let hostRankingTimer = null;
+    let hostRankingExpanded = null;           // "<type>:<name-lowercased>" of the one open row, or null (#237)
     function loadHostRanking(caseId) {
       fetch(`/cases/${caseId}/host-ranking`).then(r => r.json()).then(d => {
         hostRankingData = (d && typeof d === "object") ? d : null;
@@ -9926,6 +9945,8 @@
         scope = `<div class="hr-scope">⌖ Signal concentrated on <b>${esc(d.topHosts.join(", "))}</b> · suggested scope ${fmt(w.start)} → ${fmt(w.end)} <button class="hr-apply" onclick="applyHostRankingScope()">Apply scope window</button></div>`;
       }
       const rows = d.ranks.map(r => {
+        const key = `${r.type}:${r.name.toLowerCase()}`;
+        const isOpen = hostRankingExpanded === key;
         const badges = [
           r.critical ? `<span class="hr-badge hr-crit">${esc(r.critical)} Crit</span>` : "",
           r.high ? `<span class="hr-badge hr-high">${esc(r.high)} High</span>` : "",
@@ -9933,10 +9954,77 @@
           r.techniques ? `<span class="hr-tech">${esc(r.techniques)} tech</span>` : "",
           r.connectiveIocs ? `<span class="hr-conn">⊕${esc(r.connectiveIocs)} IOC</span>` : "",
         ].filter(Boolean).join(" ");
-        return `<div class="hr-row ${r.type === "account" ? "acct" : ""}"><span class="hr-name">${esc(r.name)}</span><span class="hr-kind">${esc(r.type)}</span>${badges}<span class="hr-score" title="signal score">${esc(r.score)}</span></div>`;
+        const rowHtml = `<div class="hr-row ${r.type === "account" ? "acct" : ""}${isOpen ? " hr-open" : ""}" data-hr-key="${escAttr(key)}">` +
+          `<span class="hr-caret">▶</span>` +
+          `<span class="hr-name">${esc(r.name)}</span><span class="hr-kind">${esc(r.type)}</span>${badges}<span class="hr-score" title="signal score">${esc(r.score)}</span></div>`;
+        const detailHtml = isOpen ? renderHostRankingDetail(r) : "";
+        return `<div class="hr-row-wrap">${rowHtml}${detailHtml}</div>`;
       }).join("");
       el.innerHTML = scope + `<div class="hr-list">${rows}</div>`;
     }
+
+    // Worst threat-intel verdict across an IOC's enrichments (mirrors the server-side helper in
+    // assetGraph.ts — no client-side equivalent existed to reuse).
+    function worstIocVerdict(ioc) {
+      const order = ["malicious", "suspicious", "harmless", "unknown"];
+      let best;
+      for (const e of (ioc.enrichments || [])) {
+        if (best === undefined || order.indexOf(e.verdict) < order.indexOf(best)) best = e.verdict;
+      }
+      return best;
+    }
+
+    // Expanded detail for one ranked host/account (#237): the events that contributed to its
+    // score (resolved from the scoped+FP-filtered timeline already on the page — same source the
+    // Attack Phases panel uses) and the IOCs connected to it (resolved from the scoped IOC list).
+    // Capped at 50 each — a "+N more" note covers the rest, never silently truncated.
+    function renderHostRankingDetail(r) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const evById = new Map((lastFt || []).map(e => [String(e.id), e]));
+      const events = (r.eventIds || []).map(id => evById.get(String(id))).filter(Boolean)
+        .sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
+      const iocById = new Map((lastIocs || []).map(i => [String(i.id), i]));
+      const iocs = (r.iocIds || []).map(id => iocById.get(String(id))).filter(Boolean);
+
+      const EV_CAP = 50, IOC_CAP = 50;
+      const evShown = events.slice(0, EV_CAP);
+      const iocShown = iocs.slice(0, IOC_CAP);
+
+      const evHtml = evShown.length ? evShown.map(e => {
+        const desc = String(e.description || "");
+        const trunc = desc.length > 140 ? desc.slice(0, 140) + "…" : desc;
+        return `<a class="ev-jump hr-det-event" href="${escAttr(eventDeepLink(caseId, e.id))}" data-evid="${escAttr(e.id)}" title="Jump to this event in the timeline">` +
+          `<span class="hr-det-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
+          `<span class="hr-det-desc">${esc(trunc)}</span></a>`;
+      }).join("") : `<div class="hr-det-empty">No events</div>`;
+      const evMore = events.length > EV_CAP
+        ? `<div class="hr-det-more">+${events.length - EV_CAP} more event${events.length - EV_CAP === 1 ? "" : "s"}</div>` : "";
+
+      const iocHtml = iocShown.length ? iocShown.map(i => {
+        const verdict = worstIocVerdict(i);
+        const dot = `<span class="hr-det-dot"${verdict ? ` style="background:${verdictColor(verdict)}" title="${esc(verdict)}"` : ""}></span>`;
+        return `<div class="hr-det-ioc">${dot}<span class="hr-det-ioc-type">${esc(i.type)}</span><span class="hr-det-ioc-val">${esc(i.value)}</span></div>`;
+      }).join("") : `<div class="hr-det-empty">No IOCs</div>`;
+      const iocMore = iocs.length > IOC_CAP
+        ? `<div class="hr-det-more">+${iocs.length - IOC_CAP} more IOC${iocs.length - IOC_CAP === 1 ? "" : "s"}</div>` : "";
+
+      return `<div class="hr-detail">` +
+        `<div class="hr-det-col"><div class="hr-det-head">Events (${events.length})</div><div class="hr-det-list">${evHtml}${evMore}</div></div>` +
+        `<div class="hr-det-col"><div class="hr-det-head">IOCs (${iocs.length})</div><div class="hr-det-list">${iocHtml}${iocMore}</div></div>` +
+        `</div>`;
+    }
+
+    // Expand/collapse a host/account row to reveal its events + IOCs (single-open accordion —
+    // opening one closes any other open row). Event-delegated on the persistent #hostRanking
+    // container so it survives renderHostRanking() re-renders (mirrors the Attack Phases pattern
+    // at the #phases click listener).
+    document.getElementById("hostRanking").addEventListener("click", function(e) {
+      const row = e.target.closest(".hr-row");
+      if (!row) return;
+      const key = row.getAttribute("data-hr-key");
+      hostRankingExpanded = (hostRankingExpanded === key) ? null : key;
+      renderHostRanking();
+    });
 
     // ── Adversary Hints (#46) ─────────────────────────────────────────────────────────────
     // Known ATT&CK groups ranked by technique overlap with the case — offline hypothesis fuel,
@@ -12301,6 +12389,7 @@
         : "<div style='color:var(--c-9aa4b2)'>Not assessed yet — run Synthesize.</div>";
 
       renderIocs(state.iocs || []);
+      lastIocs = state.iocs || [];
 
       // Already scope-projected above (events + findings/IOCs/MITRE consistently).
       // Then hide events the client confirmed as a false positive (preserved in state; just
