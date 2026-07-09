@@ -20,6 +20,7 @@ import {
   aggregateEvents,
   cleanIp,
   addIoc,
+  mergeRowIocs,
   firstStr,
   str,
   isObject,
@@ -272,17 +273,32 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
 
     const etype = str(getCI(row, "event_type")).toLowerCase();
     const zpath = str(getCI(row, "_path")).toLowerCase();
+    const rowSink = new Map<string, SiemIoc>();
 
     if (etype) {
       sawSuricata = true;
-      suricataIocs(row, etype, iocSink);
-      if (etype === "alert") { mapped.push(mapSuricataAlert(row, host, iocSink)); alerts++; }
+      suricataIocs(row, etype, rowSink);
+      if (etype === "alert") {
+        const m = mapSuricataAlert(row, host, rowSink);
+        mergeRowIocs(iocSink, rowSink, m.aggKey);
+        mapped.push(m);
+        alerts++;
+      } else {
+        mergeRowIocs(iocSink, rowSink);
+      }
     } else {
       // Zeek: either `_path`-tagged (combined JSON) or per-stream (filename / field-inferred).
       const zstream = zpath || fileStream || inferZeekStream(row);
       sawZeek = true;
-      zeekIocs(row, zstream, iocSink);
-      if (zstream === "notice") { mapped.push(mapZeekNotice(row, host, iocSink)); alerts++; }
+      zeekIocs(row, zstream, rowSink);
+      if (zstream === "notice") {
+        const m = mapZeekNotice(row, host, rowSink);
+        mergeRowIocs(iocSink, rowSink, m.aggKey);
+        mapped.push(m);
+        alerts++;
+      } else {
+        mergeRowIocs(iocSink, rowSink);
+      }
     }
   }
 
