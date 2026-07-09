@@ -49,6 +49,25 @@ describe("buildCustomerExposureTargets", () => {
     expect(built.emails).toEqual(["vip@example.org"]);
   });
 
+  it("auto-discovers a customer domain from a case FQDN host, and checks emails under it", () => {
+    const state = stateWith(["alice@example.com logged into DC01"]);
+    state.forensicTimeline[0].asset = "web01.example.com";
+
+    const built = buildCustomerExposureTargets(state, { domains: [], emails: [] });
+
+    expect(built.domains).toEqual(["example.com"]);
+    expect(built.emails).toEqual(["alice@example.com"]);
+  });
+
+  it("never auto-discovers a domain that is itself a case IOC", () => {
+    const state = stateWith(["beacon seen"], ["evil-c2.test"]);
+    state.forensicTimeline[0].asset = "srv1.evil-c2.test";
+
+    const built = buildCustomerExposureTargets(state, { domains: [], emails: [] });
+
+    expect(built.domains).toEqual([]);
+  });
+
   it("does not auto-check case emails outside customer domains or emails recorded as IOCs", () => {
     const state = stateWith([
       "alice@example.com received mail from attacker@phish.test and bob@other.test",
