@@ -208,7 +208,6 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Linux.Detection.BruteForce",
       "Linux.Detection.IncorrectPermissions",
       "Linux.Detection.SSHKeyFileCmd",
-      "Linux.Detection.Yara.Glob",
       "Linux.Detection.Yara.Process",
       "Linux.Forensics.EnvironmentVariables",
       "Linux.Forensics.ImmutableFiles",
