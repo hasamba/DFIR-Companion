@@ -18,7 +18,7 @@ export interface CaseMeta {
   createdAt: string;        // ISO-8601
   investigator: string;
   aiProvider: string | null;
-  status?: "open" | "closed"; // lifecycle state; absent means open
+  status?: "open" | "closed" | "archived"; // lifecycle state; absent means open
 }
 
 // Audit record for an uploaded CSV result set (e.g. a Velociraptor export),

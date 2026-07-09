@@ -1,5 +1,6 @@
 import { mkdir, writeFile, appendFile, readFile, stat, readdir } from "node:fs/promises";
 import type { Dirent } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
@@ -21,8 +22,15 @@ export class CaseStore {
 
   get casesRoot(): string { return this.root; }
 
+  // A case normally lives at <root>/<caseId>. Once archived (see archiveCaseFolder), it moves to
+  // <root>/_archived/<caseId> instead — every other path helper derives from this one, so nothing
+  // else in the codebase needs to know which location a given case is in.
   caseDir(caseId: string): string {
-    return join(this.root, caseId);
+    const active = join(this.root, caseId);
+    if (existsSync(active)) return active;
+    const archived = join(this.root, "_archived", caseId);
+    if (existsSync(archived)) return archived;
+    return active; // doesn't exist yet (e.g. about to be created) — active root is the default
   }
   screenshotsDir(caseId: string): string {
     return join(this.caseDir(caseId), "screenshots");

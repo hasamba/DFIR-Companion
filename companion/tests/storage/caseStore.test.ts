@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat, mkdir, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -131,5 +131,26 @@ describe("CaseStore OCR index (#176)", () => {
     const idx = await store.loadOcrIndex("o3");
     expect(Object.keys(idx)).toHaveLength(1);
     expect(idx["000001_t.webp"].text).toBe("new text");
+  });
+});
+
+describe("CaseStore.caseDir archive fallback (case archive lifecycle)", () => {
+  it("resolves to the active root when the case lives there", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "arch-1", name: "n", investigator: "i", aiProvider: null });
+    expect(store.caseDir("arch-1")).toBe(join(root, "arch-1"));
+  });
+
+  it("resolves to _archived/<caseId> once the folder has been moved there", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "arch-2", name: "n", investigator: "i", aiProvider: null });
+    await mkdir(join(root, "_archived"), { recursive: true });
+    await rename(join(root, "arch-2"), join(root, "_archived", "arch-2"));
+    expect(store.caseDir("arch-2")).toBe(join(root, "_archived", "arch-2"));
+  });
+
+  it("falls back to the active root for a case that doesn't exist yet", () => {
+    const store = new CaseStore(root);
+    expect(store.caseDir("brand-new")).toBe(join(root, "brand-new"));
   });
 });
