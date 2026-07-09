@@ -1136,7 +1136,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
 
       const cases = await store.listCases();
-      const open = cases.filter((c) => c.status !== "closed").length;
+      const archived = cases.filter((c) => c.status === "archived").length;
+      const open = cases.filter((c) => c.status !== "closed" && c.status !== "archived").length;
 
       // Queue: in-memory capture buffers + synthesis in-flight + on-disk failure markers.
       let bufferedCaptures = 0;
@@ -1181,7 +1182,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         uptimeMs: now - appStartedAt,
         casesRoot: store.casesRoot,
         disk,
-        cases: { count: cases.length, open, closed: cases.length - open },
+        cases: { count: cases.length, open, closed: cases.length - open - archived, archived },
         queue: {
           bufferedCaptures,
           casesBuffering,
@@ -3311,7 +3312,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     dropScanning.add(caseId);
     try {
       const meta = await store.getCaseMeta(caseId).catch(() => null);
-      if (meta?.status === "closed") return; // don't auto-import into a closed case (parity with /import)
+      if (meta?.status === "closed" || meta?.status === "archived") return; // don't auto-import into a closed or archived case (parity with /import)
       const dropDir = dropDirOf(caseId);
       await ensureDropFolders(caseId);
       const listing = await listDropFiles(dropDir);
@@ -6184,8 +6185,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
-    if (caseMeta?.status === "closed") {
-      return res.status(423).json({ error: `Case "${caseId}" is closed — reopen it before importing evidence` });
+    if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
+      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — reopen (or restore) it before importing evidence` });
     }
     // Evidence-first parity with POST /captures + GET /state: never silently accept evidence for a
     // case that doesn't exist. "Connect" attaches without creating, so a typo'd / never-created case
@@ -6340,8 +6341,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
-    if (caseMeta?.status === "closed") {
-      return res.status(423).json({ error: `Case "${caseId}" is closed — reopen it before importing evidence` });
+    if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
+      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — reopen (or restore) it before importing evidence` });
     }
     // Same evidence-first guard as POST /import + /captures + /state: never ingest into a case that
     // doesn't exist (it would write an orphaned, case-meta-less import on disk).
@@ -7767,8 +7768,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for synthesis" });
     const caseId = req.params.id;
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
-    if (caseMeta?.status === "closed") {
-      return res.status(423).json({ error: `Case "${caseId}" is closed — reopen it before running synthesis` });
+    if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
+      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — reopen (or restore) it before running synthesis` });
     }
     // Per-run Chain-of-Thought toggle (#121): "deepReasoning" enables extended thinking for THIS run
     // only (no .env edit + restart) — an optional thinkingTokens overrides the budget. Off otherwise.

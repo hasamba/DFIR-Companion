@@ -204,7 +204,7 @@ export interface DiagnosticsReport {
   uptimeMs: number;
   casesRoot: string;
   disk: DiskDiagnostics;
-  cases: { count: number; open: number; closed: number };
+  cases: { count: number; open: number; closed: number; archived: number };
   queue: QueueDiagnostics;
   ai: AiDiagnostics & { recentErrors: AiError[]; errorCounts: Record<string, number> };
   importers: {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { createApp } from "../../src/server.js";
+import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { CommentsStore } from "../../src/analysis/comments.js";
 
@@ -16,6 +16,27 @@ async function harness() {
   const stateStore = new StateStore(store);
   const commentsStore = new CommentsStore(store);
   const app = createApp(store, { stateStore, commentsStore });
+  return { app, store };
+}
+
+// /import, /import-file and /synthesize each 501 with "not configured" before they ever look at
+// caseMeta.status when options.pipeline is absent — harness() deliberately has no pipeline, so
+// those routes' own precondition gate is unreachable-proof against the archived-status guard.
+// This variant wires a real (no-AI) pipeline via buildRuntimePipeline, same as
+// tests/server/importMissingCase.test.ts, so requests clear that gate and actually reach the
+// closed/archived check under test. aiConfigured forces /synthesize's hasAiProvider() gate true
+// too, without needing a working AI provider — the archived check short-circuits before any
+// AI call would happen.
+async function harnessWithPipeline() {
+  const root = await mkdtemp(join(tmpdir(), "dfir-lifecycle-pipeline-"));
+  const store = new CaseStore(root);
+  const stateStore = new StateStore(store);
+  const commentsStore = new CommentsStore(store);
+  const pipeline = buildRuntimePipeline({
+    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+  });
+  const app = createApp(store, { stateStore, commentsStore, pipeline, aiConfigured: true });
   return { app, store };
 }
 
@@ -131,5 +152,31 @@ describe("POST /cases/:id/restore", () => {
     const { app } = await harness();
     const res = await request(app).post("/cases/ghost-case/restore").send({});
     expect(res.status).toBe(404);
+  });
+});
+
+describe("Archived-case write guards on other evidence routes", () => {
+  it("POST /cases/:id/import returns 423 for an archived case", async () => {
+    const { app } = await harnessWithPipeline();
+    await seedCase(app, "INC-8", "Case Eight");
+    await request(app).post("/cases/INC-8/archive").send({ removeFromList: true });
+    const res = await request(app).post("/cases/INC-8/import").send({ csv: "a,b\n1,2" });
+    expect(res.status).toBe(423);
+  });
+
+  it("POST /cases/:id/import-file returns 423 for an archived case", async () => {
+    const { app } = await harnessWithPipeline();
+    await seedCase(app, "INC-9", "Case Nine");
+    await request(app).post("/cases/INC-9/archive").send({ removeFromList: true });
+    const res = await request(app).post("/cases/INC-9/import-file").send({ filename: "x.csv", content: "a,b\n1,2" });
+    expect(res.status).toBe(423);
+  });
+
+  it("POST /cases/:id/synthesize returns 423 for an archived case", async () => {
+    const { app } = await harnessWithPipeline();
+    await seedCase(app, "INC-10", "Case Ten");
+    await request(app).post("/cases/INC-10/archive").send({ removeFromList: true });
+    const res = await request(app).post("/cases/INC-10/synthesize").send({});
+    expect(res.status).toBe(423);
   });
 });
