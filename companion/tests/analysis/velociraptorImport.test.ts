@@ -933,3 +933,43 @@ describe("parseVelociraptorJson — timestamp coverage for raw artifacts", () =>
     expect(r.events[0].message).toBeUndefined();
   });
 });
+
+describe("parseVelociraptorJson — IOC provenance", () => {
+  // Modeled on the "download rows (Zone.Identifier / BrowserDownloads)" fixture above (mapDownload
+  // reads DownloadedFilePath/Mtime/HostUrl/ReferrerUrl, not URL/Referrer/Path).
+  function downloadRow(overrides: object = {}): object {
+    return {
+      DownloadedFilePath: "C:\\Users\\a\\Downloads\\payload.exe",
+      Mtime: "2026-01-01T00:00:00Z",
+      HostUrl: "http://evil.example.com/payload.exe",
+      ReferrerUrl: "",
+      ...overrides,
+    };
+  }
+
+  it("tags a download URL IOC's sourceAggKeys with its event's (post-fingerprint) aggKey", () => {
+    const parsed = parseVelociraptorJson(JSON.stringify([downloadRow()]));
+    expect(parsed.events).toHaveLength(1);
+    const urlIoc = parsed.iocs.find((i) => i.type === "url" && i.value.includes("evil.example.com"));
+    expect(urlIoc?.sourceAggKeys).toEqual([parsed.events[0].aggKey]);
+  });
+
+  it("tags two different rows' IOCs with their own distinct (post-fingerprint) aggKeys", () => {
+    const rowA = downloadRow({
+      HostUrl: "http://evil-a.example.com/payload.exe",
+      DownloadedFilePath: "C:\\Users\\a\\Downloads\\payload-a.exe",
+      Mtime: "2026-01-01T00:00:00Z",
+    });
+    const rowB = downloadRow({
+      HostUrl: "http://evil-b.example.com/payload.exe",
+      DownloadedFilePath: "C:\\Users\\a\\Downloads\\payload-b.exe",
+      Mtime: "2026-01-01T00:05:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([rowA, rowB]));
+    const iocA = parsed.iocs.find((i) => i.type === "url" && i.value.includes("evil-a.example.com"));
+    const iocB = parsed.iocs.find((i) => i.type === "url" && i.value.includes("evil-b.example.com"));
+    expect(iocA?.sourceAggKeys?.length).toBe(1);
+    expect(iocB?.sourceAggKeys?.length).toBe(1);
+    expect(iocA?.sourceAggKeys?.[0]).not.toEqual(iocB?.sourceAggKeys?.[0]);
+  });
+});
