@@ -141,11 +141,12 @@ describe("POST /cases/import/encrypted", () => {
     await seedCase(app, stateStore, store);
     // The source case has its own dashboard case-lock password (unrelated to the archive's
     // export password) — case.json is written back byte-for-byte on import, so the hash
-    // travels in the archive too. It must never reach the import response. Setting the
-    // password gates /export/encrypted too, so the export must reuse the same agent (its
-    // unlock cookie) rather than a fresh cookie-less request.
+    // travels in the archive too. It must never reach the import response. Setting a password
+    // no longer auto-unlocks the setter, and /export/encrypted is itself gated once a password
+    // is set, so the agent must actually unlock before it can export.
     const agent = request.agent(app);
     await agent.post("/cases/INC-1/password").send({ newPassword: "correct horse" });
+    await agent.post("/cases/INC-1/unlock").send({ password: "correct horse" });
     const exportRes = await bufferRequest(agent.post("/cases/INC-1/export/encrypted").send({ password: PASSWORD }));
     const data = (exportRes.body as Buffer).toString("base64");
 

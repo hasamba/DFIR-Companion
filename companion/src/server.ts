@@ -820,9 +820,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
       const password = hashCasePassword(newPassword);
       const updated = await store.updateCaseMeta(id, { password });
-      // Re-unlock the browser that just set it, so it isn't immediately re-prompted.
-      const token = signUnlockToken(id, password.salt, instanceSecret, UNLOCK_TTL_SESSION_MS);
-      res.cookie(unlockCookieName(id), token, { httpOnly: true, sameSite: "strict", path: "/" });
+      // Deliberately does NOT auto-unlock the browser that just set/changed it: setting a
+      // password (or changing one, which rotates the salt and invalidates the caller's own
+      // existing cookie) should require going through the real unlock prompt afterward, same
+      // as anyone else — matching the analyst's expectation that setting a password protects
+      // the case immediately, not just for other people.
       return res.status(200).json(sanitizeCaseMeta(updated));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

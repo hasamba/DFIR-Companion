@@ -17255,13 +17255,32 @@
     })();
 
     // ── Case password protection ─────────────────────────────────────────────
-    function openCasePassword() {
+    async function openCasePassword() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) { alert("open a case first"); return; }
       document.getElementById("cpNewPassword").value = "";
-      document.getElementById("cpMsg").textContent = "";
+      const msg = document.getElementById("cpMsg");
+      msg.textContent = "";
+      const saveBtn = document.getElementById("cpSave");
+      const removeBtn = document.getElementById("cpRemove");
+      saveBtn.disabled = false;
+      removeBtn.disabled = true; // disabled until we confirm a password actually exists
       document.getElementById("casePasswordOverlay").classList.add("open");
       document.getElementById("cpNewPassword").focus();
+      try {
+        const status = await fetch(`/cases/${caseId}/lock-status`).then(r => r.ok ? r.json() : null);
+        if (!status) return;
+        removeBtn.disabled = !status.hasPassword;
+        if (status.hasPassword && !status.unlocked) {
+          // Setting/changing/removing a password requires already being unlocked (same rule
+          // that protects the case itself) — this browser isn't, so neither action would work.
+          saveBtn.disabled = true;
+          removeBtn.disabled = true;
+          msg.textContent = "This case is locked — reload the page and enter the password first to change or remove it.";
+        }
+      } catch (e) {
+        // offline / older server — leave the safe defaults (Remove disabled, Save enabled)
+      }
     }
     function closeCasePassword() { document.getElementById("casePasswordOverlay").classList.remove("open"); }
     async function saveCasePassword() {
