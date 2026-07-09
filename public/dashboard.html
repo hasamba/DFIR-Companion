@@ -818,6 +818,7 @@
     .ev-star.starred, .ev-star:hover { color: var(--c-ffd93b); }
     .ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; padding-top: 2px; font-family: ui-monospace, Menlo, Consolas, monospace; }
     .ev-col-content { flex: 1; min-width: 0; padding-top: 1px; }
+    .ev-origin { color: var(--c-7e8aa0); white-space: nowrap; font-size: 11px; }
     .ev-more-btn { background: none; border: none; color: var(--c-6aa9ff); cursor: pointer; font-size: 0.78em; padding: 0 3px; margin-left: 2px; vertical-align: middle; }
     /* Unified per-row [details] disclosure — shared by the forensic timeline and super-timeline so both
        consolidate their "extra" content (full text, MITRE, findings, chain-check, decoded payloads,
@@ -5832,24 +5833,29 @@
           : "";
         // #8 Velociraptor deep-link: a small "↗ Velociraptor" link back to the originating hunt/flow.
         const veloLink = e.veloUrl
-          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--c-6aa9ff);white-space:nowrap" title="Open this hunt/flow in the Velociraptor GUI">↗ Velociraptor</a>`
+          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" class="ev-jump" title="Open this hunt/flow in the Velociraptor GUI">↗ Velociraptor</a>`
           : "";
         // Everything beyond the compact title collapses into one shared [details] panel (#1/#2/#3) —
         // same helper the forensic timeline uses, so ST no longer only shows details for the rare event
         // whose raw `message` differs from its description; MITRE/findings/evidence/decoded payloads
         // (fields ST didn't previously surface at all) now show up here too.
         const details = eventDetailsBlock(e, e.id, desc, caseId);
-        return `<div style="display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:1px solid var(--c-2a2f3a);font-size:13px">
-          <input type="checkbox" class="st-row-cb" data-evid="${escAttr(e.id)}" ${superPromote.has(e.id) ? "checked" : ""} title="Select (for promotion / bulk star / bulk tag)" onchange="toggleSuperPromote('${escAttr(e.id)}', this.checked)" />
-          <span class="ev-col-ctrl" style="display:inline-flex;align-items:center;gap:2px">
-            <button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(e.id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>
-            ${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)} ${ctx}
-          </span>
-          <span style="color:var(--c-9aa4b2);white-space:nowrap">${esc(e.timestamp || "")}</span>
-          <span class="sev-${escAttr(sev)}" style="white-space:nowrap">${esc(sev)}</span>
-          <span style="color:var(--c-7e8aa0);white-space:nowrap" title="origin">${esc(origin)}</span>
-          <span style="flex:1">${superTagPills("event", e.id)}${host}${details.toggle} ${descHtml(details.title)}${veloLink}${details.panel}</span>
-        </div>`;
+        // Same .ev-row/.ev-col-ctrl/.ev-col-time/.ev-col-content structure as the forensic timeline
+        // (renderTimelineEvents) instead of a bespoke inline-styled flex row — ST and FT now look and
+        // behave like the same component, just fed from different sources.
+        return `<div class="ev-row" data-evid="${escAttr(e.id)}">` +
+          `<div class="ev-col-ctrl">` +
+          `<input type="checkbox" class="st-row-cb" data-evid="${escAttr(e.id)}" ${superPromote.has(e.id) ? "checked" : ""} title="Select (for promotion / bulk star / bulk tag)" onchange="toggleSuperPromote('${escAttr(e.id)}', this.checked)" />` +
+          `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(e.id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>` +
+          `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)} ${ctx}` +
+          `</div>` +
+          `<div class="ev-col-time"><span class="sev-${escAttr(sev)}">${esc(e.timestamp || "")}</span></div>` +
+          `<div class="ev-col-content">` +
+          `<span class="ev-origin" title="origin">${esc(origin)}</span> ` +
+          `${superTagPills("event", e.id)}${host}${details.toggle} ${descHtml(details.title)}${veloLink}` +
+          `${details.panel}` +
+          `</div>` +
+          `</div>`;
       }).join("");
       updateSuperSelBar(rows);
     }
