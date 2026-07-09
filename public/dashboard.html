@@ -1231,8 +1231,12 @@
     #lifecycleBtn:hover { background: var(--hover-wash); }
     #lifecycleBtn .lc-icon-active { color: var(--c-4ade80); display: inline-block; }
     #lifecycleBtn .lc-icon-closed { color: #ff9933; display: none; }
+    #lifecycleBtn .lc-icon-archived { color: #8b8fa3; display: none; }
     #lifecycleBtn.lc-closed .lc-icon-active { display: none; }
     #lifecycleBtn.lc-closed .lc-icon-closed { display: inline-block; }
+    #lifecycleBtn.lc-archived .lc-icon-active { display: none; }
+    #lifecycleBtn.lc-archived .lc-icon-closed { display: none; }
+    #lifecycleBtn.lc-archived .lc-icon-archived { display: inline-block; }
     #lifecycleMenu button:hover { background: var(--hover-wash); }
     /* Cross-case warning banner (captures arriving for a case other than the one being viewed). */
     #caseMismatchBanner { display: flex; align-items: center; gap: 10px; padding: 7px 16px;
@@ -1294,16 +1298,21 @@
     <strong>DFIR Companion</strong>
     <input id="caseId" placeholder="caseId" list="caseList" autocomplete="off" />
     <datalist id="caseList"></datalist>
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--c-9aa4b2);cursor:pointer;white-space:nowrap" data-tip="Include archived cases in the case picker above (prefixed '[Archived]')">
+      <input type="checkbox" id="showArchivedToggle" style="margin:0;cursor:pointer" />Show archived
+    </label>
     <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
     <button id="seedDemoBtn" style="display:none" data-tip="Load a pre-populated demo case (GlobalTech BEC &amp; Ransomware Precursor) to explore all dashboard features without importing real evidence">Demo case</button>
     <input id="encryptedImportFile" type="file" accept=".dfircase" style="display:none" />
     <button id="importCaseBtn" type="button" data-tip="Import a whole case — an encrypted case archive (.dfircase) shared by a teammate, or pull an existing DFIR-IRIS case. Opens a chooser; the DFIR-IRIS option appears only when configured.">Import case</button>
-    <button id="lifecycleBtn" style="display:none" data-tip="Case lifecycle — close, reopen, or archive this case">
+    <button id="lifecycleBtn" style="display:none" data-tip="Case lifecycle — close, reopen, archive (ZIP or encrypted), or restore this case">
       <!-- unlocked padlock = active (green) -->
       <svg class="lc-icon-active" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
       <!-- locked padlock = closed (orange) -->
       <svg class="lc-icon-closed" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      <!-- box = archived (gray) -->
+      <svg class="lc-icon-archived" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/></svg>
     </button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI/OpenCTI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
@@ -1317,7 +1326,7 @@
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux shell history, auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
     <button id="importUndoBtn" type="button" style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
-    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, Timesketch export (forensic or super timeline), or an encrypted case archive)">
+    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, or a Timesketch export)">
 
       <option value="">Export…</option>
       <option value="report">Generate report (Markdown + HTML)</option>
@@ -1328,7 +1337,6 @@
       <option value="attack-layer">ATT&amp;CK Navigator layer (JSON)</option>
       <option value="timesketch-jsonl">Timesketch export (Forensic Timeline)</option>
       <option value="timesketch-jsonl-super">Timesketch export (Super Timeline)</option>
-      <option value="encrypted">Export encrypted case archive (.dfircase)</option>
       <option value="stix">STIX 2.1 bundle (JSON)</option>
       <option value="ioc-blocklist">IOC block-list…</option>
       <option value="redacted">Redacted case package (ZIP)…</option>
@@ -1738,6 +1746,25 @@
     </div>
   </div>
 
+  <div id="zipArchiveOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Archive to ZIP</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        Bundles the whole case into a single unencrypted <code>.zip</code> file
+        (filename marked "(no password)" so it's never mistaken for the encrypted archive).
+        This may take a moment for large cases.</p>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; cursor:pointer;">
+        <input id="zaRemoveFromList" type="checkbox" style="margin:0" />
+        Remove this case from the active list (moves it to <code>_archived/</code>, fully recoverable)
+      </label>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="zaArchive">Archive</button>
+        <button id="zaCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="zaMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
   <div id="encryptedExportOverlay" class="comment-overlay">
     <div class="comment-modal">
       <h3>Export encrypted case archive</h3>
@@ -1750,6 +1777,10 @@
       <input id="eePassword" type="password" autocomplete="new-password" style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
       <label style="display:block; font-size:12px; margin-bottom:4px;">Confirm password</label>
       <input id="eePasswordConfirm" type="password" autocomplete="new-password" style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; cursor:pointer;">
+        <input id="eeRemoveFromList" type="checkbox" style="margin:0" />
+        Remove this case from the active list (moves it to <code>_archived/</code>, fully recoverable)
+      </label>
       <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="eeDownload">Export &amp; download</button>
         <button id="eeCancel" style="background:var(--c-2a2f3a);">Cancel</button>
@@ -3852,10 +3883,12 @@
   </footer>
   <!-- Lifecycle dropdown — lives outside toolbarMain so it never triggers the fitToolbar
        MutationObserver. Positioned via JS (position:fixed). Must be before the script. -->
-  <div id="lifecycleMenu" style="display:none;position:fixed;background:var(--c-161b22);border:1px solid var(--c-30363d);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:9999;min-width:180px;">
+  <div id="lifecycleMenu" style="display:none;position:fixed;background:var(--c-161b22);border:1px solid var(--c-30363d);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:9999;min-width:220px;">
     <button id="closeBtn" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Close case</button>
     <button id="reopenBtn" style="display:none;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Reopen case</button>
-    <button id="archiveBtn" style="width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;">Archive to ZIP…</button>
+    <button id="archiveZipBtn" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Archive to ZIP…</button>
+    <button id="archiveEncryptedBtn" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Archive (encrypted)…</button>
+    <button id="restoreCaseBtn" style="display:none;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;">Restore from archive</button>
   </div>
   <script>
     // ---- Theme (issue #53: dark/light with persistence + OS preference) ---------------------
