@@ -186,4 +186,23 @@ describe("CaseStore archive/restore folder moves", () => {
     const cases = await store.listCases();
     expect(cases.map((c) => c.caseId).sort()).toEqual(["af-3", "af-4"]);
   });
+
+  it("caseExists returns true for an archived case, so callers can 409 before overwriting it", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "af-5", name: "n", investigator: "i", aiProvider: null });
+    await store.archiveCaseFolder("af-5");
+
+    expect(await store.caseExists("af-5")).toBe(true);
+  });
+
+  it("archiveCaseFolder rejects when the case doesn't exist in the active root", async () => {
+    const store = new CaseStore(root);
+    await expect(store.archiveCaseFolder("never-created")).rejects.toThrow();
+  });
+
+  it("restoreCaseFolder rejects when the case isn't currently archived", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "af-6", name: "n", investigator: "i", aiProvider: null });
+    await expect(store.restoreCaseFolder("af-6")).rejects.toThrow();
+  });
 });

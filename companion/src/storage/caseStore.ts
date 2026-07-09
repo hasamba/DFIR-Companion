@@ -66,6 +66,9 @@ export class CaseStore {
 
   // Non-destructive "remove from active list": moves the whole case folder under _archived/.
   // Nothing is deleted — caseDir()'s fallback means every other method keeps working unchanged.
+  // Rejects (via rename's ENOENT) if caseId doesn't currently exist in the active root.
+  // Known limitation: no locking against a concurrent request reading/writing the same case
+  // mid-move — acceptable for now since this is a single-user localhost tool.
   async archiveCaseFolder(caseId: string): Promise<void> {
     const archivedRoot = join(this.root, ARCHIVED_DIRNAME);
     await mkdir(archivedRoot, { recursive: true });
@@ -73,10 +76,15 @@ export class CaseStore {
   }
 
   // Inverse of archiveCaseFolder: moves the case back into the active root.
+  // Rejects (via rename's ENOENT) if caseId isn't currently archived under _archived/.
   async restoreCaseFolder(caseId: string): Promise<void> {
     await rename(join(this.root, ARCHIVED_DIRNAME, caseId), join(this.root, caseId));
   }
 
+  // NOTE: does not itself guard against an id collision with an archived case (caseDir()
+  // resolves to the archived location and this would silently overwrite its case.json).
+  // Callers are responsible for that check — see POST /cases in server.ts, which calls
+  // caseExists() (archive-aware) and 409s before ever reaching here.
   async createCase(input: CreateCaseInput): Promise<CaseMeta> {
     const meta: CaseMeta = {
       caseId: input.caseId,
@@ -139,6 +147,7 @@ export class CaseStore {
       }
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
+        if (dir === this.root && entry.name === ARCHIVED_DIRNAME) continue; // not a case — the archived-cases folder itself
         try {
           metas.push(JSON.parse(await readFile(this.caseMetaPath(entry.name), "utf8")) as CaseMeta);
         } catch {
