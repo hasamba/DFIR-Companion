@@ -10,8 +10,8 @@
 // has no (or no resolvable) IOC.extractedFrom link. 5 priority importers (SIEM/EVTX, Security Onion,
 // Network, Combined-log, Velociraptor) DO populate extractedFrom, so buildIocProvenanceChains prefers
 // that authoritative link when present. Check `extractionAuthoritative` on the returned chain to see
-// which path applied for a given IOC. Enrichment
-// lookups ARE authoritative (IOC.enrichments already carries a real fetchedAt per hit). Findings ARE
+// which path applied for a given IOC. Enrichment lookups ARE authoritative (IOC.enrichments already
+// carries a real fetchedAt per hit). Findings ARE
 // authoritative (Finding.relatedIocs is a real reference). There is no data model for "which playbook
 // task referenced this IOC" (playbook tasks don't carry IOC ids) — that leg is intentionally omitted
 // rather than faked as an always-empty field; playbook linkage would need new state, tracked in #247.
