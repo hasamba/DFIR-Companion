@@ -3619,7 +3619,16 @@
       #sec-nlquery .nlq-deploy:disabled{opacity:.6;cursor:default}
       #sec-nlquery .nlq-res{margin-top:6px}
     </style>
-    <section id="sec-false-positive" style="grid-column: 1 / -1"><h2>False Positives (excluded from analysis)<span id="fpCount" title="Total false-positive markers in scope; updates in real time"></span></h2><div id="false-positive">—</div></section>
+    <section id="sec-false-positive" style="grid-column: 1 / -1"><h2>False Positives (excluded from analysis)<span id="fpCount" title="Total false-positive markers in scope; updates in real time"></span>
+      <select id="fpReasonFilterSel" title="Show only false-positive markers with this reason" style="font-size:12px;margin-left:10px;vertical-align:middle;background:var(--c-1e2330);color:var(--c-e6e6e6);border:1px solid var(--c-2a2f3a);border-radius:4px;padding:2px 4px">
+        <option value="">All reasons</option>
+        <option value="known-good-tool">Known admin tool / known-good software</option>
+        <option value="authorized-test">Authorized test / red-team activity</option>
+        <option value="detection-misfire">Detection rule/sensor misfire</option>
+        <option value="duplicate">Duplicate of another finding</option>
+        <option value="other">Other</option>
+      </select>
+    </h2><div id="false-positive">—</div></section>
     <style>
       #sec-playbook .pb-badge{font-size:12px;color:var(--c-9aa4b2);font-weight:normal;margin-left:8px}
       .pb-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px}
@@ -3912,6 +3921,7 @@
       } catch { return { key: "date", dir: "asc" }; }
     })();
     let searchTerm = "";                      // active text search (lower-cased; empty = no filter)
+    let fpReasonFilter = "";                  // False Positives panel: reason code to filter to ("" = all)
     // Exclude filter (#216): hide events/IOCs/findings matching ANY of these terms — a view-only lens,
     // never touches InvestigationState. Persisted per-browser so it survives reloads.
     let excludeTerms = (() => {
@@ -11451,7 +11461,8 @@
       const sorted = [...fpMarkers].sort((a, b) => (Date.parse(b.markedAt) || 0) - (Date.parse(a.markedAt) || 0));
       const visible = sorted.filter(m =>
         (!q || _fpMatchesSearch(m, q)) &&
-        !(excludeTerms.length && _fpMatchesExclude(m, excludeTerms)));
+        !(excludeTerms.length && _fpMatchesExclude(m, excludeTerms)) &&
+        (!fpReasonFilter || m.reason === fpReasonFilter));
       // For event markers, prefer the human-readable label (the event description)
       // over the opaque event id stored as ref.
       el.innerHTML = (visible.length)
@@ -11468,7 +11479,7 @@
             : "<div style='color:var(--c-9aa4b2)'>Nothing marked false positive.</div>");
       const fpCountEl = document.getElementById("fpCount");
       if (fpCountEl) {
-        fpCountEl.textContent = (q || excludeTerms.length)
+        fpCountEl.textContent = (q || excludeTerms.length || fpReasonFilter)
           ? `(${visible.length} of ${fpMarkers.length})`
           : (fpMarkers.length ? `(${fpMarkers.length})` : "");
       }
@@ -11484,6 +11495,10 @@
     function fpIocValueSet() {
       return new Set(fpMarkers.filter(m => m.kind === "ioc").map(m => String(m.ref).trim().toLowerCase()));
     }
+    document.getElementById("fpReasonFilterSel").addEventListener("change", function() {
+      fpReasonFilter = this.value;
+      renderFalsePositives(fpMarkers);
+    });
 
     function loadFalsePositives(caseId) {
       fetch(`/cases/${caseId}/false-positive`).then(r => r.json()).then(renderFalsePositives).catch(() => {});
