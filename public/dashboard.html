@@ -11446,7 +11446,10 @@
       // The global filter toolbar (search + exclude terms) scopes this panel too, same as the
       // Timeline/Findings/IOCs — matched against kind/ref/label/reason/note (see _fpMatchesSearch).
       const q = searchTerm;
-      const visible = fpMarkers.filter(m =>
+      // Most-recently-marked first, so a fresh mark-as-FP surfaces at the top instead of getting
+      // buried at the bottom of a long list (markedAt is an ISO timestamp; unparsable sorts last).
+      const sorted = [...fpMarkers].sort((a, b) => (Date.parse(b.markedAt) || 0) - (Date.parse(a.markedAt) || 0));
+      const visible = sorted.filter(m =>
         (!q || _fpMatchesSearch(m, q)) &&
         !(excludeTerms.length && _fpMatchesExclude(m, excludeTerms)));
       // For event markers, prefer the human-readable label (the event description)
