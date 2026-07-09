@@ -111,6 +111,16 @@ describe("HTTP server", () => {
     expect(res.status).toBe(404);
   });
 
+  it("POST /captures returns 423 for an archived case", async () => {
+    await request(app).post("/cases").send({ caseId: "c-arch", name: "n", investigator: "i", aiProvider: null });
+    await request(app).post("/cases/c-arch/archive").send({ removeFromList: true });
+    const res = await request(app).post("/captures").send({
+      caseId: "c-arch", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
+      triggerType: "timer", imageBase64: await pngBase64(),
+    });
+    expect(res.status).toBe(423);
+  });
+
   it("stores customer exposure targets and checks only customer-domain emails", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-exposure-"));
     const store = new CaseStore(root);

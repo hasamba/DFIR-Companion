@@ -1416,20 +1416,49 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // Archive a case to a ZIP file (<casesRoot>/<caseId>.zip). Intended for closed cases.
-  // Returns the archive path and a manifest of archived files + checksums.
-  // Never deletes the original folder.
+  // Archive a case to a ZIP file (<casesRoot>/<caseId or name> (no password).zip). Intended for
+  // closed cases. Returns the archive path and a manifest of archived files + checksums. With
+  // { removeFromList: true }, additionally moves the case folder to _archived/ and sets
+  // status: "archived" — non-destructive and reversible via POST /cases/:id/restore.
   app.post("/cases/:id/archive", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
-      if (!await store.caseExists(id)) return res.status(404).json({ error: `case ${id} not found` });
+      const meta = await store.getCaseMeta(id);
+      if (!meta) return res.status(404).json({ error: `case ${id} not found` });
+      if (meta.status === "archived") return res.status(400).json({ error: `case ${id} is already archived` });
+      const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
       logLine(`[archive] starting archive for case=${id}`);
-      const result = await archiveCase(store.casesRoot, id);
+      const result = await archiveCase(store.casesRoot, id, {}, meta.name);
       logLine(`[archive] done case=${id} files=${result.manifest.totalFiles} bytes=${result.manifest.totalBytes} path=${result.archivePath}`);
-      return res.status(200).json(result);
+      if (removeFromList) {
+        await store.archiveCaseFolder(id);
+        await store.updateCaseMeta(id, { status: "archived" });
+        logLine(`[archive] case=${id} removed from active list (moved to _archived/)`);
+      }
+      return res.status(200).json({ ...result, removedFromList: removeFromList });
     } catch (err) {
       errLine(`[archive] error case=${req.params.id}: ${(err as Error).message}`);
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Restore a case previously archived via the removeFromList option: moves it back from
+  // _archived/ into the active cases root and sets status to "closed" (the state it must have
+  // been in to be archived) — use PATCH /cases/:id/status afterward to reopen it if needed.
+  app.post("/cases/:id/restore", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
+      const meta = await store.getCaseMeta(id);
+      if (!meta || meta.status !== "archived") {
+        return res.status(404).json({ error: `no archived case "${id}" found` });
+      }
+      await store.restoreCaseFolder(id);
+      const updated = await store.updateCaseMeta(id, { status: "closed" });
+      logLine(`[restore] case=${id} restored from _archived/`);
+      return res.status(200).json(updated);
+    } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -1486,8 +1515,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const rawCaseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
       if (rawCaseId) {
         const caseMeta = await store.getCaseMeta(rawCaseId).catch(() => null);
-        if (caseMeta?.status === "closed") {
-          return res.status(423).json({ error: `Case "${rawCaseId}" is closed — reopen it before adding screenshots` });
+        if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
+          return res.status(423).json({ error: `Case "${rawCaseId}" is ${caseMeta.status} — reopen (or restore) it before adding screenshots` });
         }
       }
       const metadata = await ingestCapture(store, req.body);
@@ -2058,12 +2087,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
         return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
       }
-      const archive = await exportEncryptedCase(store, id, password);
       const meta = await store.getCaseMeta(id);
+      if (meta?.status === "archived") return res.status(400).json({ error: `case ${id} is already archived` });
+      const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
+      const archive = await exportEncryptedCase(store, id, password);
       const filename = dfircaseFilename(id, meta?.name);
+      if (removeFromList) {
+        await store.archiveCaseFolder(id);
+        await store.updateCaseMeta(id, { status: "archived" });
+        logLine(`[export] case=${id} removed from active list (moved to _archived/) after encrypted export`);
+      }
       res.type("application/octet-stream");
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.setHeader("Cache-Control", "private, no-cache");
+      res.setHeader("X-Case-Removed-From-List", String(removeFromList));
       return res.send(archive);
     } catch (err) {
       if ((err as Error).message.includes("does not exist")) {
