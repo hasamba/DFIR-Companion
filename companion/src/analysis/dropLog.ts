@@ -44,3 +44,33 @@ export async function appendDropLog(dropDir: string, lines: readonly string[]): 
   if (lines.length === 0) return;
   await appendFile(join(dropDir, DROP_LOG_FILE), lines.join("\n") + "\n", "utf8");
 }
+
+/** Given one sweep's outcomes and the relpaths already logged as PENDING for this case, returns the
+ *  DropLogEntry[] to append this sweep and the updated "already logged pending" set (a pending file
+ *  logs once; it drops out once resolved by the caller, so if it becomes pending again later it will
+ *  log again). Pure — the caller replaces its stored set with `nextLoggedPending`, no mutation here. */
+export function buildSweepLogEntries(
+  sweep: {
+    imported: readonly string[];
+    failed: readonly { relpath: string; reason: string }[];
+    pendingRawInputs: readonly { relpath: string; ext: string; configured: boolean }[];
+  },
+  loggedPending: ReadonlySet<string>,
+): { entries: DropLogEntry[]; nextLoggedPending: Set<string> } {
+  const entries: DropLogEntry[] = [
+    ...sweep.imported.map((relpath): DropLogEntry => ({ status: "IMPORTED", relpath })),
+    ...sweep.failed.map((f): DropLogEntry => ({ status: "FAILED", relpath: f.relpath, reason: f.reason })),
+    ...sweep.pendingRawInputs
+      .filter((p) => !loggedPending.has(p.relpath))
+      .map((p): DropLogEntry => ({
+        status: "PENDING",
+        relpath: p.relpath,
+        reason: p.configured
+          ? `awaiting tool run for ${p.ext} (drop banner: Run)`
+          : `no tool configured for ${p.ext} (drop banner: Configure)`,
+      })),
+  ];
+  const nextLoggedPending = new Set(loggedPending);
+  for (const p of sweep.pendingRawInputs) nextLoggedPending.add(p.relpath);
+  return { entries, nextLoggedPending };
+}

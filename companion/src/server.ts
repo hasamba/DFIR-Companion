@@ -146,7 +146,7 @@ import {
   selectReadyFiles, classifyDropFile, rawToolInputExt, RAW_TOOL_EXTS, shouldIgnoreDropFile, isOversize,
   DROP_PROCESSED, DROP_FAILED, DROP_README, type DropFileStat,
 } from "./analysis/dropScan.js";
-import { formatDropLogLines, appendDropLog, type DropLogEntry } from "./analysis/dropLog.js";
+import { formatDropLogLines, appendDropLog, buildSweepLogEntries } from "./analysis/dropLog.js";
 import {
   loadAllToolConfigs, toolForExtension, suggestedToolForExtension, TOOL_DEFS, type ToolId, type ToolConfig,
 } from "./integrations/tools/toolConfig.js";
@@ -3293,22 +3293,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // Folder-visible history (drop/drop-log.txt): every imported/failed file gets a line; a pending
       // raw-tool file gets ONE PENDING line the first time it's seen (dropPendingLogged dedups it across
       // the ~10s poll interval until it resolves).
-      const loggedPending = dropPendingLogged.get(caseId) ?? new Set<string>();
-      const logEntries: DropLogEntry[] = [
-        ...imported.map((relpath): DropLogEntry => ({ status: "IMPORTED", relpath })),
-        ...failed.map((f): DropLogEntry => ({ status: "FAILED", relpath: f.relpath, reason: f.reason })),
-        ...pendingRawInputs
-          .filter((p) => !loggedPending.has(p.relpath))
-          .map((p): DropLogEntry => ({
-            status: "PENDING",
-            relpath: p.relpath,
-            reason: p.configured
-              ? `awaiting tool run for ${p.ext} (drop banner: Run)`
-              : `no tool configured for ${p.ext} (drop banner: Configure)`,
-          })),
-      ];
-      for (const p of pendingRawInputs) loggedPending.add(p.relpath);
-      dropPendingLogged.set(caseId, loggedPending);
+      const { entries: logEntries, nextLoggedPending } = buildSweepLogEntries(
+        { imported, failed, pendingRawInputs },
+        dropPendingLogged.get(caseId) ?? new Set<string>(),
+      );
+      dropPendingLogged.set(caseId, nextLoggedPending);
       if (logEntries.length > 0) {
         await appendDropLog(dropDir, formatDropLogLines(logEntries, new Date().toISOString()))
           .catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
