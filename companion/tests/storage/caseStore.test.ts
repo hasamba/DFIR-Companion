@@ -154,3 +154,36 @@ describe("CaseStore.caseDir archive fallback (case archive lifecycle)", () => {
     expect(store.caseDir("brand-new")).toBe(join(root, "brand-new"));
   });
 });
+
+describe("CaseStore archive/restore folder moves", () => {
+  it("archiveCaseFolder moves the case directory under _archived/", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "af-1", name: "n", investigator: "i", aiProvider: null });
+    await store.archiveCaseFolder("af-1");
+
+    const moved = await stat(join(root, "_archived", "af-1", "case.json"));
+    expect(moved.isFile()).toBe(true);
+    await expect(stat(join(root, "af-1"))).rejects.toThrow();
+  });
+
+  it("restoreCaseFolder moves it back to the active root", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "af-2", name: "n", investigator: "i", aiProvider: null });
+    await store.archiveCaseFolder("af-2");
+    await store.restoreCaseFolder("af-2");
+
+    const back = await stat(join(root, "af-2", "case.json"));
+    expect(back.isFile()).toBe(true);
+    await expect(stat(join(root, "_archived", "af-2"))).rejects.toThrow();
+  });
+
+  it("listCases includes archived cases alongside active ones", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "af-3", name: "Active", investigator: "i", aiProvider: null });
+    await store.createCase({ caseId: "af-4", name: "Archived", investigator: "i", aiProvider: null });
+    await store.archiveCaseFolder("af-4");
+
+    const cases = await store.listCases();
+    expect(cases.map((c) => c.caseId).sort()).toEqual(["af-3", "af-4"]);
+  });
+});
