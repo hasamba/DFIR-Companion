@@ -1542,7 +1542,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (rawCaseId) {
         const caseMeta = await store.getCaseMeta(rawCaseId).catch(() => null);
         if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
-          return res.status(423).json({ error: `Case "${rawCaseId}" is ${caseMeta.status} — reopen (or restore) it before adding screenshots` });
+          const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
+          return res.status(423).json({ error: `Case "${rawCaseId}" is ${caseMeta.status} — ${action} before adding screenshots` });
         }
       }
       const metadata = await ingestCapture(store, req.body);
@@ -6186,7 +6187,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const caseId = req.params.id;
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
-      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — reopen (or restore) it before importing evidence` });
+      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
+      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing evidence` });
     }
     // Evidence-first parity with POST /captures + GET /state: never silently accept evidence for a
     // case that doesn't exist. "Connect" attaches without creating, so a typo'd / never-created case
@@ -6342,7 +6344,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const caseId = req.params.id;
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
-      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — reopen (or restore) it before importing evidence` });
+      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
+      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing evidence` });
     }
     // Same evidence-first guard as POST /import + /captures + /state: never ingest into a case that
     // doesn't exist (it would write an orphaned, case-meta-less import on disk).
@@ -7769,7 +7772,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const caseId = req.params.id;
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
-      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — reopen (or restore) it before running synthesis` });
+      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
+      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running synthesis` });
     }
     // Per-run Chain-of-Thought toggle (#121): "deepReasoning" enables extended thinking for THIS run
     // only (no .env edit + restart) — an optional thinkingTokens overrides the budget. Off otherwise.
