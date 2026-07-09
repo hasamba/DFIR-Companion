@@ -9384,8 +9384,11 @@
             `<a class="finding-jump iocchain-desc" data-fid="${escAttr(f.findingId)}" title="Jump to this finding">${esc(f.title)}</a>` +
             `<span class="iocchain-tag">${esc(f.severity)}, ${esc(f.status)}</span></div>`).join("")
         : "<div style='color:var(--c-9aa4b2);font-size:12px'>no findings cite this IOC yet</div>";
+      const extractionCaveat = chain.extractionAuthoritative
+        ? `<small style="color:var(--c-6aa9ff)">(linked — a real source-event reference, not a guess)</small>`
+        : `<small style="color:var(--c-9aa4b2)">(approximate — matched by value, not a stored link)</small>`;
       bodyEl.innerHTML =
-        `<div class="explain-section"><strong>Extraction — event(s) this IOC was seen in <small style="color:var(--c-9aa4b2)">(approximate — matched by value, not a stored link)</small></strong>${extractionRows}${truncNote}</div>` +
+        `<div class="explain-section"><strong>Extraction — event(s) this IOC was seen in ${extractionCaveat}</strong>${extractionRows}${truncNote}</div>` +
         `<div class="explain-section"><strong>Enrichment — threat-intel lookups</strong>${enrichRows}</div>` +
         `<div class="explain-section"><strong>Findings citing this IOC</strong>${findingRows}</div>` +
         `<div style="color:var(--c-9aa4b2);font-size:11px;margin-top:6px">Playbook references aren't tracked yet — playbook tasks don't carry IOC links.</div>`;
