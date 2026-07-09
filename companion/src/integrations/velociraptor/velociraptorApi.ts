@@ -691,14 +691,19 @@ export class VelociraptorClient {
   // The hunt's own state (issue: 30s status polling) — is it still RUNNING, PAUSED, STOPPED, or
   // ARCHIVED, or has it been deleted entirely in Velociraptor? Mirrors flowStatus() but queries the
   // hunts() plugin by hunt_id instead of flows() by session_id. Returns null when Velociraptor has no
-  // record of the hunt at all (deleted) rather than an empty-state object, so callers can tell
-  // "gone" apart from "state field came back blank".
-  async huntStatus(huntId: string): Promise<{ state: string } | null> {
+  // record of the hunt at all rather than an empty-state object, so callers can tell "gone" apart from
+  // "state field came back blank" — though in practice a hunt DELETED from the Velociraptor GUI still
+  // shows up here as ordinary STOPPED (confirmed against a live server); it does not disappear from
+  // hunts(). `expires` (the hunt's own scheduled end, converted from Velociraptor's microsecond epoch
+  // to ISO) lets a caller tell that apart from natural completion — see isHuntStoppedEarly().
+  async huntStatus(huntId: string): Promise<{ state: string; expires?: string } | null> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
-    const rows = await this.runRaw(`SELECT state FROM hunts() WHERE hunt_id='${huntId}' LIMIT 1`);
+    const rows = await this.runRaw(`SELECT state, expires FROM hunts() WHERE hunt_id='${huntId}' LIMIT 1`);
     if (!rows.length) return null;
-    const r = (rows[0] ?? {}) as { state?: unknown };
-    return { state: String(r.state ?? "").trim() };
+    const r = (rows[0] ?? {}) as { state?: unknown; expires?: unknown };
+    const expiresMicros = Number(r.expires);
+    const expires = Number.isFinite(expiresMicros) && expiresMicros > 0 ? new Date(expiresMicros / 1000).toISOString() : undefined;
+    return { state: String(r.state ?? "").trim(), ...(expires ? { expires } : {}) };
   }
 
   // The artifacts an EXTERNAL hunt collected — so the Companion can read the results of a hunt it did

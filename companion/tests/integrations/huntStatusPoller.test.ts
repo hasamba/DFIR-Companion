@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pollHuntStatusOnce, type HuntPollDeps } from "../../src/integrations/velociraptor/huntStatusPoller.js";
+import { pollHuntStatusOnce, isHuntStoppedEarly, type HuntPollDeps } from "../../src/integrations/velociraptor/huntStatusPoller.js";
 import type { VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
 
 function job(over: Partial<VeloHuntJob> = {}): VeloHuntJob {
@@ -89,5 +89,43 @@ describe("pollHuntStatusOnce", () => {
       expect(out.action).toBe("stop");
       expect(out.job).toBe(j);   // untouched, same reference
     }
+  });
+});
+
+// A hunt DELETED from the Velociraptor GUI does not disappear from hunts() (confirmed against a live
+// server) — it just reports STOPPED, identical to natural completion. The only signal Velociraptor
+// still exposes is the hunt's own `expires`: natural completion happens AT (or just after) expires;
+// a hunt an analyst stopped/deleted partway through reports terminal well BEFORE it. isHuntStoppedEarly
+// is the collect-time check that tells these apart so the UI can stop saying "collect again later"
+// for a hunt that will never produce anything again.
+describe("isHuntStoppedEarly", () => {
+  const NOW = new Date("2026-07-09T08:00:00.000Z").getTime();
+
+  it("is false when the hunt is still running, regardless of expires", () => {
+    expect(isHuntStoppedEarly({ state: "RUNNING", expires: "2026-07-09T09:00:00.000Z" }, NOW)).toBe(false);
+  });
+
+  it("is false when there's no result (hunt truly not found)", () => {
+    expect(isHuntStoppedEarly(null, NOW)).toBe(false);
+  });
+
+  it("is false when a terminal state is reported at/after its own expiry (natural completion)", () => {
+    expect(isHuntStoppedEarly({ state: "STOPPED", expires: "2026-07-09T07:59:00.000Z" }, NOW)).toBe(false);
+  });
+
+  it("is true when a terminal state is reported well before its own expiry (stopped/deleted early)", () => {
+    expect(isHuntStoppedEarly({ state: "STOPPED", expires: "2026-07-09T09:00:00.000Z" }, NOW)).toBe(true);
+  });
+
+  it("is case-insensitive on state and also recognizes ARCHIVED", () => {
+    expect(isHuntStoppedEarly({ state: "archived", expires: "2026-07-09T09:00:00.000Z" }, NOW)).toBe(true);
+  });
+
+  it("is false when expires is missing (nothing to compare against)", () => {
+    expect(isHuntStoppedEarly({ state: "STOPPED" }, NOW)).toBe(false);
+  });
+
+  it("stays false within the grace window just before expiry (housekeeping lag, not an early stop)", () => {
+    expect(isHuntStoppedEarly({ state: "STOPPED", expires: "2026-07-09T08:00:30.000Z" }, NOW)).toBe(false);
   });
 });

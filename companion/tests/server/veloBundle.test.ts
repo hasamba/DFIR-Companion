@@ -283,6 +283,35 @@ describe("Velociraptor hunt status polling — routes", () => {
     expect(job?.status).toBe("imported");
   });
 
+  // Deleting a hunt from the Velociraptor GUI does not make it disappear from hunts() (confirmed
+  // against a live server) — it just reports STOPPED, same as a hunt that finished naturally. The only
+  // usable signal is the hunt's own `expires`: STOPPED well before it means an analyst intervened.
+  // Exercised via the plain /collect route (not poll-status) since that's also the path a manual
+  // "Collect now" click and the fixed-delay auto-collect timer take — the check must fire there too.
+  it("collect flags a hunt reported STOPPED well before its own expiry as stoppedEarly", async () => {
+    const farFutureExpiresMicros = (Date.now() + 60 * 60 * 1000) * 1000;   // 1h from now, in microseconds
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("hunt(") && p.includes("artifacts=[")) return { rows: [{ Hunt: { HuntId: "H.EARLY1", state: "RUNNING" } }], raw: "" };
+      if (p.includes("FROM hunts()")) return { rows: [{ state: "STOPPED", expires: farFutureExpiresMicros }], raw: "" };
+      if (p.includes("hunt_results(")) return { rows: [], raw: "" };
+      return { rows: [], raw: "" };
+    };
+    const made = await makeApp(runner);
+    await request(made.app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
+    expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
+
+    let job: { status: string; stoppedEarly?: boolean; addedEvents?: number } | null = null;
+    for (let i = 0; i < 100; i++) {
+      job = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
+      if (job && (job.status === "imported" || job.status === "error")) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(job?.status).toBe("imported");
+    expect(job?.stoppedEarly).toBe(true);
+    expect(job?.addedEvents ?? 0).toBe(0);
+  });
+
   it("poll-status marks the job deleted when Velociraptor has no record of the hunt", async () => {
     const runner: VqlRunner = async (statements) => {
       const p = statements[0];
