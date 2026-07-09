@@ -494,13 +494,13 @@
     .finding-chevron {
       grid-column: 2; grid-row: 1; display: flex; align-items: center; justify-content: center;
       width: 20px; height: 20px; padding: 0; margin: 0; background: none; border: none;
-      color: var(--c-5b6472); cursor: pointer; list-style: none;
+      color: var(--c-5b6472); cursor: pointer;
     }
-    .finding-chevron::-webkit-details-marker { display: none; }
+    .finding-chevron:disabled { visibility: hidden; cursor: default; }
     .finding-chevron:hover { color: var(--c-6aa9ff); }
     .finding-chevron svg { width: 11px; height: 11px; transition: transform .12s; }
-    .finding[open] > .finding-chevron { color: var(--c-6aa9ff); }
-    .finding[open] > .finding-chevron svg { transform: rotate(90deg); }
+    .finding-chevron.open { color: var(--c-6aa9ff); }
+    .finding-chevron.open svg { transform: rotate(90deg); }
     .finding-sev-cell { grid-column: 3; grid-row: 1; display: flex; align-items: center; gap: 6px; font-weight: 650; font-size: 12px; }
     .finding-sev-cell .fsq { width: 8px; height: 8px; border-radius: 2px; background: currentColor; flex-shrink: 0; }
     .finding-id-cell {
@@ -519,7 +519,10 @@
     .finding-conf-cell .fcbar > span { display: block; height: 100%; }
     .finding-conf-cell .fcpct { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; color: var(--c-9aa4b2); }
     .finding-actions-cell { grid-column: 7; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px; }
-    .finding-evidence-body { grid-column: 1 / -1; grid-row: 2; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--c-1c2230); }
+    .finding-evidence-body {
+      display: none; grid-column: 1 / -1; grid-row: 2; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--c-1c2230);
+    }
+    .finding-evidence-body.open { display: block; }
     .finding-evidence-body .fev-row { display: flex; gap: 10px; padding: 3px 0; font-size: 12px; line-height: 1.5; }
     .finding-evidence-body .fev-k {
       flex-shrink: 0; width: 104px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em;
@@ -12611,14 +12614,14 @@
           const isSelFinding = selectedFindings.has(f.id);
           const evidenceBody = findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs, citeIds);
           const hasEvidence = !!evidenceBody;
-          // The chevron is a native <summary> — clicking it opens/closes the evidence panel with
-          // no extra JS wiring. Findings with nothing to show get a plain, non-interactive row.
-          const chevron = hasEvidence
-            ? `<summary class="finding-chevron" title="Expand evidence"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l5 5-5 5"/></svg></summary>`
-            : `<span class="finding-chevron" style="visibility:hidden"></span>`;
-          const tag = hasEvidence ? "details" : "div";
+          // A plain <button>, not a native <summary> — <details> hides ALL non-summary children
+          // (via content-visibility, not a simple display:none you can override) whenever it's
+          // closed, which would blank out the checkbox/severity/id/title too, not just the
+          // evidence panel. Toggling is handled by the delegated .finding-chevron click handler.
+          const chevron = `<button type="button" class="finding-chevron" data-fev-toggle="${escAttr(f.id)}" title="Expand evidence"${hasEvidence ? "" : " disabled"}>` +
+            `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l5 5-5 5"/></svg></button>`;
           const tagPillsHtml = tagPills("finding", f.id);
-          return `<${tag} class="finding${isSelFinding ? " finding-selected" : ""}" data-fid="${escAttr(f.id)}">` +
+          return `<div class="finding${isSelFinding ? " finding-selected" : ""}" data-fid="${escAttr(f.id)}">` +
             chevron +
             `<input type="checkbox" class="finding-cb finding-row-cb" data-fid="${escAttr(f.id)}" ${isSelFinding ? "checked" : ""} title="Select finding" />` +
             `<span class="finding-sev-cell sev-${esc(f.severity)}"><span class="fsq"></span>${esc(f.severity)}</span>` +
@@ -12630,8 +12633,8 @@
             `</span>` +
             `<span class="finding-conf-cell">${confMeter}</span>` +
             `<span class="finding-actions-cell">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${fpBtn("finding", f.title)}</span>` +
-            (hasEvidence ? `<div class="finding-evidence-body">${evidenceBody}</div>` : "") +
-            `</${tag}>`;
+            (hasEvidence ? `<div class="finding-evidence-body" id="fev-${escAttr(f.id)}">${evidenceBody}</div>` : "") +
+            `</div>`;
         }).join("")) || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
       const findingSelAllEl = document.getElementById("findingSelectAll");
       if (findingSelAllEl && findingSomeSel && !findingAllSel) findingSelAllEl.indeterminate = true;
@@ -13345,6 +13348,15 @@
         const wrap = provBtn.closest(".ioc-prov-filter");
         if (wrap) wrap.querySelectorAll(".ioc-prov-btn").forEach(b => b.classList.toggle("active", b === provBtn));
         if (lastState) renderIocs(lastState.iocs || []);
+        return;
+      }
+      // Finding evidence-panel chevron → toggle the sibling .finding-evidence-body open/closed.
+      const fevToggle = e.target.closest && e.target.closest(".finding-chevron");
+      if (fevToggle) {
+        if (fevToggle.disabled) return;
+        const open = fevToggle.classList.toggle("open");
+        const body = document.getElementById("fev-" + fevToggle.getAttribute("data-fev-toggle"));
+        if (body) body.classList.toggle("open", open);
         return;
       }
       // Finding reference link inside a timeline event → jump to the finding.
