@@ -2,6 +2,15 @@ import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 
 describe("dashboard.html", () => {
+  it("expands Host & Account Ranking rows to show contributing events + IOCs (#237)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("data-hr-key=");
+    expect(html).toContain("hostRankingExpanded");
+    expect(html).toContain("renderHostRankingDetail");
+    expect(html).toContain("hr-detail");
+    expect(html).toContain("let lastIocs");
+  });
+
   it("contains websocket wiring and the consolidated import/export controls", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain("/ws?caseId=");

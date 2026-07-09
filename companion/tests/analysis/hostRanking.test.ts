@@ -21,6 +21,8 @@ function caseState(): ReturnType<typeof emptyState> {
   );
   // WS-HR-01 — pure benign noise: many Info events, no techniques.
   for (let i = 0; i < 40; i++) s.forensicTimeline.push(ev(`n${i}`, "WS-HR-01", "Info", "2024-03-18T12:00:00Z", [], "benign telemetry"));
+  // An IOC referenced only by a1's description — should link to WS-DEV-01 via the asset graph, not DB-01.
+  s.iocs.push({ id: "i1", type: "process", value: "wdi-svc.exe", firstSeen: "2024-03-18T15:24:38Z" });
   return s;
 }
 
@@ -65,5 +67,21 @@ describe("rankHosts (#202)", () => {
     const { ranks, topHosts } = rankHosts(s);
     expect(ranks).toHaveLength(0);
     expect(topHosts).toHaveLength(0);
+  });
+
+  it("collects each entity's contributing event ids (#237)", () => {
+    const { ranks } = rankHosts(caseState());
+    const dev = ranks.find((r) => r.name === "WS-DEV-01")!;
+    expect(dev.eventIds.slice().sort()).toEqual(["a1", "a2", "a3"]);
+    const db = ranks.find((r) => r.name === "DB-01")!;
+    expect(db.eventIds.slice().sort()).toEqual(["b1", "b2"]);
+  });
+
+  it("links each entity's connected IOC ids via the asset graph (#237)", () => {
+    const { ranks } = rankHosts(caseState());
+    const dev = ranks.find((r) => r.name === "WS-DEV-01")!;
+    expect(dev.iocIds).toContain("i1");
+    const db = ranks.find((r) => r.name === "DB-01")!;
+    expect(db.iocIds).not.toContain("i1");
   });
 });

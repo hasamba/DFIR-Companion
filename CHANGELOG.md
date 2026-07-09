@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Expandable Host & Account Ranking rows** — click a ranked host/account to see the events and IOCs behind its score inline (capped at 50 each, with a "+N more" note beyond that); clicking an event jumps to it in the main Forensic Timeline. Only one row expands at a time.
 - **DFIR-IRIS push case-name override** — the "Push to DFIR-IRIS" dialog now shows the case name a push will target (defaulting to `<case id> — <friendly name>`) and lets you type a different one; your choice is remembered so later pushes keep hitting the same IRIS case instead of reverting to the default.
 - **Per-case AI cost tracking** — Settings → Diagnostics now shows an "AI cost — this case" card: calls, dollar cost, and token counts broken down by Vision / Synthesis / Other and by model, read from OpenRouter's real per-call cost (and Anthropic's/OpenRouter's real token counts) with no guessed pricing — providers that don't report cost/tokens show "n/a", never a fabricated `$0.00`.
 - **Per-case IOC exclude list** — permanently remove domain/hostname (or any IOC type) matches from a case via exact/suffix/regex rules in the IOCs panel title bar; excluded values are purged immediately and never re-imported or enriched.
