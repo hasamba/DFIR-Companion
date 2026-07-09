@@ -13,7 +13,7 @@ import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity, TimelineEntry } from "./stateTypes.js";
-import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, fpSimilaritySchema, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
+import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, fpSimilaritySchema, stripAiExtractedFrom, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
 import { buildMitigationsResult } from "./attackMitigations.js";
 import { loadMitigationsDataset } from "./attackMitigationsData.js";
 import { buildD3fendResult } from "./d3fendMap.js";
@@ -1474,7 +1474,7 @@ export class AnalysisPipeline {
 
       const delta = await withRetry(async () => {
         const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getSystemPrompt(), userPrompt, images }, "extract");
-        return deltaSchema.parse(parsed);
+        return stripAiExtractedFrom(deltaSchema.parse(parsed));
       }, retries, backoffMs);
 
       const windowSequence = analyzable[analyzable.length - 1].sequenceNumber;
@@ -1539,7 +1539,7 @@ export class AnalysisPipeline {
 
         const delta = await withRetry(async () => {
           const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "csv");
-          return deltaSchema.parse(parsed);
+          return stripAiExtractedFrom(deltaSchema.parse(parsed));
         }, retries, backoffMs);
 
         // Renumber event ids so chunked imports don't overwrite each other (merge
@@ -1622,7 +1622,7 @@ export class AnalysisPipeline {
 
         const delta = await withRetry(async () => {
           const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "log");
-          return deltaSchema.parse(parsed);
+          return stripAiExtractedFrom(deltaSchema.parse(parsed));
         }, retries, backoffMs);
 
         const renumbered = {
@@ -4248,7 +4248,7 @@ export class AnalysisPipeline {
         { systemPrompt: getSynthesisPrompt(), userPrompt, images: [], ...(synthThinkingTokens > 0 ? { thinkingTokens: synthThinkingTokens } : {}), ...(opts.signal ? { signal: opts.signal } : {}) },
         "synthesis",
       );
-      return deltaSchema.parse(parsed);
+      return stripAiExtractedFrom(deltaSchema.parse(parsed));
     }, retries, backoffMs);
 
     // Anchor finding timestamps to the last real event time (fallback: existing state time).

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deltaSchema } from "../../src/analysis/responseSchema.js";
+import { deltaSchema, stripAiExtractedFrom } from "../../src/analysis/responseSchema.js";
 
 describe("deltaSchema", () => {
   it("parses a valid delta", () => {
@@ -79,5 +79,46 @@ describe("deltaSchema — iocs.extractedFrom", () => {
   it("accepts an ioc without extractedFrom (existing AI-synthesis shape)", () => {
     const parsed = deltaSchema.parse({ ...base, iocs: [{ id: "i1", type: "ip", value: "1.2.3.4" }] });
     expect(parsed.iocs[0].extractedFrom).toBeUndefined();
+  });
+});
+
+describe("stripAiExtractedFrom", () => {
+  const base = {
+    findings: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+    timelineNote: "", summary: "", forensicEvents: [],
+  };
+
+  it("removes a forged extractedFrom from every ioc", () => {
+    // Simulates a model (possibly influenced by prompt-injected evidence content) fabricating
+    // extractedFrom pointing at a real event id it read from the prompt context, to be rendered
+    // as an authoritative "linked" provenance claim it never actually earned.
+    const parsed = deltaSchema.parse({
+      ...base,
+      iocs: [
+        { id: "i1", type: "domain", value: "evil.example.com", extractedFrom: ["e042"] },
+        { id: "i2", type: "ip", value: "1.2.3.4" },
+      ],
+    });
+    const result = stripAiExtractedFrom(parsed);
+    expect(result.iocs[0].extractedFrom).toBeUndefined();
+    expect("extractedFrom" in result.iocs[0]).toBe(false); // key actually removed, not just set to undefined
+    expect(result.iocs[1].extractedFrom).toBeUndefined();
+    // Everything else on the ioc is preserved untouched.
+    expect(result.iocs[0]).toEqual({ id: "i1", type: "domain", value: "evil.example.com" });
+  });
+
+  it("is a no-op when no ioc carries extractedFrom", () => {
+    const parsed = deltaSchema.parse({ ...base, iocs: [{ id: "i1", type: "ip", value: "1.2.3.4" }] });
+    const result = stripAiExtractedFrom(parsed);
+    expect(result.iocs).toEqual(parsed.iocs);
+  });
+
+  it("does not mutate the input delta (immutable)", () => {
+    const parsed = deltaSchema.parse({
+      ...base,
+      iocs: [{ id: "i1", type: "domain", value: "evil.example.com", extractedFrom: ["e042"] }],
+    });
+    stripAiExtractedFrom(parsed);
+    expect(parsed.iocs[0].extractedFrom).toEqual(["e042"]); // original untouched
   });
 });
