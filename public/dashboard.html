@@ -1894,6 +1894,42 @@
     </div>
   </div>
 
+  <!-- ── Case password protection ─────────────────────────────────────────── -->
+  <div id="casePasswordOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Case password</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        Requires this password to open the case in the dashboard. The password is never
+        stored in plain text. If it's forgotten, recovery means manually editing the case's
+        <code>case.json</code> on disk — there's no reset flow.</p>
+      <label style="display:block; font-size:12px; margin-bottom:4px;">New password (min 6 characters)</label>
+      <input id="cpNewPassword" type="password" autocomplete="new-password" style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button id="cpSave">Save password</button>
+        <button id="cpRemove" style="background:var(--c-2a2f3a);">Remove password</button>
+        <button id="cpCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="cpMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Case unlock prompt (shown instead of case content when a case is locked) ─────── -->
+  <div id="caseUnlockOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>&#128274; Enter case password</h3>
+      <p id="cuCaseLabel" style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px"></p>
+      <input id="cuPassword" type="password" autocomplete="current-password" style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:8px;">
+        <input type="checkbox" id="cuRemember" /> Remember on this computer
+      </label>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button id="cuUnlock">Unlock</button>
+        <button id="cuCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="cuMsg" style="color:var(--c-e5534b); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Settings modal ───────────────────────────────────────────────────── -->
   <div id="settingsOverlay" class="comment-overlay">
     <div class="comment-modal settings-modal">
@@ -4008,7 +4044,8 @@
   <div id="lifecycleMenu" style="display:none;position:fixed;background:var(--c-161b22);border:1px solid var(--c-30363d);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:9999;min-width:180px;">
     <button id="closeBtn" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Close case</button>
     <button id="reopenBtn" style="display:none;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Reopen case</button>
-    <button id="archiveBtn" style="width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;">Archive to ZIP…</button>
+    <button id="archiveBtn" style="width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Archive to ZIP…</button>
+    <button id="casePasswordBtn" style="width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;">&#128274; Password…</button>
   </div>
   <script>
     // ---- Theme (issue #53: dark/light with persistence + OS preference) ---------------------
@@ -12782,6 +12819,16 @@
     function connect() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
+      fetch(`/cases/${caseId}/lock-status`)
+        .then(r => r.ok ? r.json() : { hasPassword: false, unlocked: true })
+        .then(status => {
+          if (status.hasPassword && !status.unlocked) promptCaseUnlock(caseId);
+          else proceedConnect(caseId);
+        })
+        .catch(() => proceedConnect(caseId)); // offline / older server — fall back to the old behavior
+    }
+
+    function proceedConnect(caseId) {
       hideCaseMismatch(); mismatchDismissed = "";   // fresh start for the newly-connected case
       if (ws) { try { ws.close(); } catch {} ws = null; }
       // Remember the case so a page refresh reconnects automatically.
@@ -16992,7 +17039,9 @@
           for (const c of cases) {
             const o = document.createElement("option");
             o.value = c.caseId;
-            if (c.name && c.name !== c.caseId) o.label = c.name; // shown as a hint beside the id
+            // shown as a hint beside the id; a lock prefix marks password-protected cases
+            if (c.name && c.name !== c.caseId) o.label = (c.hasPassword ? "\u{1F512} " : "") + c.name;
+            else if (c.hasPassword) o.label = "\u{1F512} " + c.caseId;
             dl.appendChild(o);
           }
           // The "Demo case" button is an onboarding affordance — show it only on an empty instance.
@@ -17204,6 +17253,97 @@
         }
       });
     })();
+
+    // ── Case password protection ─────────────────────────────────────────────
+    function openCasePassword() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { alert("open a case first"); return; }
+      document.getElementById("cpNewPassword").value = "";
+      document.getElementById("cpMsg").textContent = "";
+      document.getElementById("casePasswordOverlay").classList.add("open");
+      document.getElementById("cpNewPassword").focus();
+    }
+    function closeCasePassword() { document.getElementById("casePasswordOverlay").classList.remove("open"); }
+    async function saveCasePassword() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("cpMsg");
+      const newPassword = document.getElementById("cpNewPassword").value;
+      if (newPassword.length < 6) { msg.textContent = "password must be at least 6 characters"; return; }
+      try {
+        const r = await fetch(`/cases/${caseId}/password`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ newPassword }),
+        });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) { msg.textContent = body.error || ("HTTP " + r.status); return; }
+        closeCasePassword();
+        loadCaseList();
+        alert("Case password set.");
+      } catch (e) {
+        msg.textContent = "error: " + e.message;
+      }
+    }
+    async function removeCasePassword() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!confirm(`Remove the password from case "${esc(caseId)}"? Anyone with dashboard access will be able to open it without a password.`)) return;
+      const msg = document.getElementById("cpMsg");
+      try {
+        const r = await fetch(`/cases/${caseId}/password`, { method: "DELETE" });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) { msg.textContent = body.error || ("HTTP " + r.status); return; }
+        closeCasePassword();
+        loadCaseList();
+        alert("Case password removed.");
+      } catch (e) {
+        msg.textContent = "error: " + e.message;
+      }
+    }
+    document.getElementById("casePasswordBtn").addEventListener("click", () => {
+      document.getElementById("lifecycleMenu").style.display = "none";
+      openCasePassword();
+    });
+    document.getElementById("cpSave").addEventListener("click", saveCasePassword);
+    document.getElementById("cpRemove").addEventListener("click", removeCasePassword);
+    document.getElementById("cpCancel").addEventListener("click", closeCasePassword);
+    document.getElementById("casePasswordOverlay").addEventListener("click", (e) => { if (e.target.id === "casePasswordOverlay") closeCasePassword(); });
+
+    // ── Case unlock prompt ──────────────────────────────────────────────────
+    function promptCaseUnlock(caseId) {
+      document.getElementById("cuPassword").value = "";
+      document.getElementById("cuRemember").checked = false;
+      document.getElementById("cuMsg").textContent = "";
+      document.getElementById("cuCaseLabel").textContent = `Case "${caseId}" is password-protected.`;
+      const overlay = document.getElementById("caseUnlockOverlay");
+      overlay.dataset.caseId = caseId;
+      overlay.classList.add("open");
+      document.getElementById("cuPassword").focus();
+    }
+    function closeCaseUnlock() { document.getElementById("caseUnlockOverlay").classList.remove("open"); }
+    async function doCaseUnlock() {
+      const overlay = document.getElementById("caseUnlockOverlay");
+      const caseId = overlay.dataset.caseId;
+      const msg = document.getElementById("cuMsg");
+      const password = document.getElementById("cuPassword").value;
+      const remember = document.getElementById("cuRemember").checked;
+      if (!password) { msg.textContent = "enter the password"; return; }
+      try {
+        const r = await fetch(`/cases/${caseId}/unlock`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password, remember }),
+        });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          msg.textContent = body.error || "incorrect password";
+          return;
+        }
+        closeCaseUnlock();
+        proceedConnect(caseId);
+      } catch (e) {
+        msg.textContent = "error: " + e.message;
+      }
+    }
+    document.getElementById("cuUnlock").addEventListener("click", doCaseUnlock);
+    document.getElementById("cuCancel").addEventListener("click", closeCaseUnlock);
+    document.getElementById("cuPassword").addEventListener("keydown", (e) => { if (e.key === "Enter") doCaseUnlock(); });
+    document.getElementById("caseUnlockOverlay").addEventListener("click", (e) => { if (e.target.id === "caseUnlockOverlay") closeCaseUnlock(); });
 
     // On load, populate the case picker, then restore the case from the URL (?caseId=) or last
     // session and reconnect.

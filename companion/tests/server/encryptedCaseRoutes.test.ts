@@ -135,4 +135,24 @@ describe("POST /cases/import/encrypted", () => {
     expect((await request(app).post("/cases/import/encrypted").send({ hello: "world" })).status).toBe(400);
     expect((await request(app).post("/cases/import/encrypted").send({ data: "@@@not-base64@@@", password: PASSWORD })).status).toBe(400);
   });
+
+  it("never leaks a case-lock password hash — an archived case that had one keeps it out of the import response", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    // The source case has its own dashboard case-lock password (unrelated to the archive's
+    // export password) — case.json is written back byte-for-byte on import, so the hash
+    // travels in the archive too. It must never reach the import response. Setting the
+    // password gates /export/encrypted too, so the export must reuse the same agent (its
+    // unlock cookie) rather than a fresh cookie-less request.
+    const agent = request.agent(app);
+    await agent.post("/cases/INC-1/password").send({ newPassword: "correct horse" });
+    const exportRes = await bufferRequest(agent.post("/cases/INC-1/export/encrypted").send({ password: PASSWORD }));
+    const data = (exportRes.body as Buffer).toString("base64");
+
+    const imp = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD, targetCaseId: "INC-4" });
+    expect(imp.status).toBe(201);
+    expect(imp.body.hasPassword).toBe(true);
+    expect(imp.body.password).toBeUndefined();
+    expect(JSON.stringify(imp.body)).not.toContain("hash");
+  });
 });

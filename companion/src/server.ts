@@ -1,4 +1,4 @@
-import express, { type Express, type Request, type Response, type NextFunction } from "express";
+import express, { type Express, type Request, type Response, type NextFunction, type CookieOptions } from "express";
 import { config as loadDotenv } from "dotenv";
 import { join, basename, isAbsolute, resolve, dirname, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,18 @@ import {
   MIN_PASSWORD_LENGTH,
   dfircaseFilename,
 } from "./analysis/caseExportArchive.js";
+import {
+  hashCasePassword,
+  verifyCasePassword,
+  sanitizeCaseMeta,
+  signUnlockToken,
+  verifyUnlockToken,
+  unlockCookieName,
+  parseCookieHeader,
+  MIN_CASE_PASSWORD_LENGTH,
+} from "./analysis/casePassword.js";
+import { loadOrCreateInstanceSecret } from "./analysis/instanceSecret.js";
+import { createCaseLockGate } from "./analysis/caseLockGate.js";
 import { parseCsv } from "./analysis/csvImport.js";
 import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
 import { resolveHuntPlatforms, normalizeHuntPlatform, HUNT_PLATFORMS, type HuntPlatform } from "./analysis/huntPlatforms.js";
@@ -631,6 +643,9 @@ function toStringArray(v: unknown): string[] {
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const app = express();
+  // Signs/verifies case-unlock cookies (issue: case password protection). Persisted next to
+  // the cases root so "remember on this computer" survives a server restart.
+  const instanceSecret = loadOrCreateInstanceSecret(store.casesRoot);
   const hasAiProvider = (): boolean => options.aiConfigured ?? Boolean(options.pipeline?.hasAiProvider());
   // Resolve the report template selected for a case (mirrors ReportWriter.loadTemplate) and report
   // whether a given canonical section is enabled — used to gate the per-section AI generators so a
@@ -741,6 +756,90 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(400).json({ error: "request body is not valid JSON" });
     }
     return next(err);
+  });
+
+  // ── Case password protection ─────────────────────────────────────────────────────────
+  // Gates every /cases/:id/* route behind that case's password, when one is set. Mounted
+  // here, before ANY /cases/:id/* route is registered, so it covers all of them via prefix
+  // matching. See docs/superpowers/specs/2026-07-09-case-password-protection-design.md.
+  app.use("/cases/:id", createCaseLockGate(store, instanceSecret));
+
+  const UNLOCK_TTL_REMEMBER_MS = 365 * 24 * 60 * 60 * 1000; // ~1 year — "remember on this computer"
+  const UNLOCK_TTL_SESSION_MS = 12 * 60 * 60 * 1000;        // 12h backstop for a browser-session cookie
+
+  // Whether this request already carries a valid unlock for `id` (used by /lock-status).
+  function hasValidUnlockCookie(req: Request, id: string, salt: string): boolean {
+    const cookies = parseCookieHeader(req.headers.cookie);
+    const token = cookies[unlockCookieName(id)];
+    return Boolean(token && verifyUnlockToken(token, id, salt, instanceSecret));
+  }
+
+  app.get("/cases/:id/lock-status", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const meta = await store.getCaseMeta(id);
+      if (!meta) return res.status(404).json({ error: `case ${id} not found` });
+      const hasPassword = Boolean(meta.password);
+      const unlocked = !hasPassword || hasValidUnlockCookie(req, id, meta.password!.salt);
+      return res.status(200).json({ hasPassword, unlocked });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/unlock", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const meta = await store.getCaseMeta(id);
+      if (!meta) return res.status(404).json({ error: `case ${id} not found` });
+      if (!meta.password) return res.status(200).json({ ok: true }); // nothing to unlock
+      const password = (req.body as { password?: unknown })?.password;
+      const remember = (req.body as { remember?: unknown })?.remember === true;
+      if (typeof password !== "string" || !verifyCasePassword(password, meta.password)) {
+        return res.status(401).json({ error: "incorrect password" });
+      }
+      const ttl = remember ? UNLOCK_TTL_REMEMBER_MS : UNLOCK_TTL_SESSION_MS;
+      const token = signUnlockToken(id, meta.password.salt, instanceSecret, ttl);
+      const cookieOpts: CookieOptions = { httpOnly: true, sameSite: "strict", path: "/" };
+      if (remember) cookieOpts.maxAge = ttl;
+      res.cookie(unlockCookieName(id), token, cookieOpts);
+      return res.status(200).json({ ok: true });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/password", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
+      if (!(await store.caseExists(id))) return res.status(404).json({ error: `case ${id} not found` });
+      const newPassword = (req.body as { newPassword?: unknown })?.newPassword;
+      if (typeof newPassword !== "string" || newPassword.length < MIN_CASE_PASSWORD_LENGTH) {
+        return res.status(400).json({ error: `password must be at least ${MIN_CASE_PASSWORD_LENGTH} characters` });
+      }
+      const password = hashCasePassword(newPassword);
+      const updated = await store.updateCaseMeta(id, { password });
+      // Re-unlock the browser that just set it, so it isn't immediately re-prompted.
+      const token = signUnlockToken(id, password.salt, instanceSecret, UNLOCK_TTL_SESSION_MS);
+      res.cookie(unlockCookieName(id), token, { httpOnly: true, sameSite: "strict", path: "/" });
+      return res.status(200).json(sanitizeCaseMeta(updated));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/cases/:id/password", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
+      if (!(await store.caseExists(id))) return res.status(404).json({ error: `case ${id} not found` });
+      const updated = await store.updateCaseMeta(id, { password: undefined });
+      res.clearCookie(unlockCookieName(id), { path: "/" });
+      return res.status(200).json(sanitizeCaseMeta(updated));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // Lightweight reachability check used by the extension's connection status.
@@ -1050,7 +1149,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // to attach to — case CREATION lives in the dashboard, the extension only connects.
   app.get("/cases", async (_req: Request, res: Response) => {
     try {
-      return res.status(200).json(await store.listCases());
+      return res.status(200).json((await store.listCases()).map(sanitizeCaseMeta));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -1082,7 +1181,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       dispatchNotify(milestoneEvent(caseId, `Investigation opened: ${name}`, [`Investigator: ${investigator ?? "unknown"}`], new Date().toISOString()));
       // Create the evidence drop folder for every new case (best-effort — never block case creation).
       await ensureDropFolders(caseId).catch(() => { /* the watcher re-ensures on its next poll */ });
-      return res.status(201).json(meta);
+      return res.status(201).json(sanitizeCaseMeta(meta));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -1411,7 +1510,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (status !== "open" && status !== "closed") return res.status(400).json({ error: "status must be 'open' or 'closed'" });
       const updated = await store.updateCaseMeta(id, { status });
       logLine(`[lifecycle] case=${id} status=${status}`);
-      return res.status(200).json(updated);
+      return res.status(200).json(sanitizeCaseMeta(updated));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -2093,7 +2192,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const { meta, counts } = await importEncryptedCase(store, fileBuffer, password, {
         targetCaseId: typeof targetCaseId === "string" && targetCaseId.trim() ? targetCaseId.trim() : undefined,
       });
-      return res.status(201).json({ ...meta, counts });
+      // An archived case.json is written back byte-for-byte on import (see
+      // caseExportArchive.ts), so an exported case that had a case-lock password carries
+      // its salt+hash into the archive. Sanitize before responding — never let it reach
+      // the client, same as every other route that serializes a CaseMeta.
+      return res.status(201).json({ ...sanitizeCaseMeta(meta), counts });
     } catch (err) {
       if (err instanceof CaseImportConflictError) {
         return res.status(409).json({ error: err.message, caseId: err.caseId });
