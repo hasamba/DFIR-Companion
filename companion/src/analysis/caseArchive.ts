@@ -178,14 +178,21 @@ async function defaultScanFiles(dir: string): Promise<string[]> {
  *
  * Safe to call on an active case but intended for closed cases. Never removes
  * the original folder — the caller decides what to do afterward.
+ *
+ * `caseDirOverride` lets a caller pass an archive-aware resolved path (e.g.
+ * `CaseStore.caseDir(caseId)`) instead of the default `<casesRoot>/<caseId>` —
+ * needed so this still finds the case's files correctly if it's ever called
+ * on a case that already lives under `_archived/`. The output archive itself
+ * always lands directly in `casesRoot`, never inside `_archived/`.
  */
 export async function archiveCase(
   casesRoot: string,
   caseId: string,
   deps: ArchiveDeps = {},
   caseName?: string,
+  caseDirOverride?: string,
 ): Promise<ArchiveResult> {
-  const caseDir = join(casesRoot, caseId);
+  const caseDir = caseDirOverride ?? join(casesRoot, caseId);
   const archivePath = join(casesRoot, zipArchiveFilename(caseId, caseName));
 
   const scan = deps.scanFiles ?? defaultScanFiles;

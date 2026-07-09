@@ -1449,7 +1449,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (meta.status === "archived") return res.status(400).json({ error: `case ${id} is already archived` });
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
       logLine(`[archive] starting archive for case=${id}`);
-      const result = await archiveCase(store.casesRoot, id, {}, meta.name);
+      const result = await archiveCase(store.casesRoot, id, {}, meta.name, store.caseDir(id));
       logLine(`[archive] done case=${id} files=${result.manifest.totalFiles} bytes=${result.manifest.totalBytes} path=${result.archivePath}`);
       let removedFromList = false;
       let removeFromListError: string | undefined;
