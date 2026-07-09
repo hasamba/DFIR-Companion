@@ -921,9 +921,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (synthInFlight.has(caseId)) { scheduleSynthesis(caseId); return; } // busy — retry after debounce
       synthInFlight.add(caseId);
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "synthesizing conclusions" });
-      options.pipeline!.synthesize(caseId)
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); autoEnrichIfEnabled(caseId); })
-        .catch((err) => { recordAiError(caseId, "synthesizing", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); })
+      // #225: this debounced/auto path (live re-synth after captures, and the AI off→on backfill
+      // catch-up) previously ran outside the job registry, so it never showed up in the Jobs panel
+      // or offered a Cancel button — only the manual "re-synthesize" button did. Track it the same way.
+      const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "live synthesis", cancellable: true });
+      options.pipeline!.synthesize(caseId, job?.signal ? { signal: job.signal } : {})
+        .then(() => { if (job) options.jobManager?.finish(job.jobId); options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); autoEnrichIfEnabled(caseId); })
+        .catch((err) => {
+          const aborted = job?.signal?.aborted === true;
+          if (job) options.jobManager?.fail(job.jobId, err); // no-op if already cancelled
+          recordAiError(caseId, "synthesizing", err);
+          options.onAiStatus?.(caseId, aborted
+            ? { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" }
+            : { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+        })
         .finally(() => synthInFlight.delete(caseId));
     }, synthDebounceMs));
   }
