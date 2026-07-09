@@ -473,6 +473,7 @@
     .conf-low  { background: var(--c-3a1a1a); color: var(--c-e06060); border: 1px solid var(--c-5a2a2a); }
     /* Supporting-event jump links (jump to the timeline row). */
     .ev-jump { color: var(--c-6aa9ff); text-decoration: none; border-bottom: 1px dotted var(--c-6aa9ff); cursor: pointer; }
+    .ev-jump > svg { width: 10px; height: 10px; vertical-align: -1px; }
     .ev-jump:hover { color: var(--c-9cc5ff); border-bottom-style: solid; }
     /* Findings — dense-table layout: grid columns instead of one crowded line. The chevron
        (a <summary> styled as an icon) opens a full-width row revealing the confidence
@@ -771,6 +772,7 @@
     .st-ctx { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
       padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .st-ctx:hover { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); }
+    .st-ctx svg { width: 11px; height: 11px; vertical-align: -1px; }
     .st-ctx-win { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-cbd3df); border-radius: 5px;
       padding: 1px 7px; font-size: 11px; cursor: pointer; line-height: 16px; white-space: nowrap; }
     .st-ctx-win:hover { background: var(--c-2a3050); color: #fff; border-color: var(--c-6aa9ff); }
@@ -814,8 +816,13 @@
     /* Action icons hidden (Settings → Timeline row display) → reclaim the control column's width, keep just the checkbox. */
     #forensicTimeline.tl-no-icons .ev-col-ctrl, #forensicTimeline.tl-no-icons .ev-header-ctrl { width: 22px; }
     .ev-checkbox { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; margin: 0; }
-    .ev-star { background: transparent; border: 0; color: var(--c-3a4050); font-size: 13px; cursor: pointer; padding: 0 1px; line-height: 1; flex-shrink: 0; }
+    .ev-star { background: transparent; border: 0; color: var(--c-3a4050); cursor: pointer; padding: 0 1px; line-height: 1; flex-shrink: 0; display: inline-flex; align-items: center; }
     .ev-star.starred, .ev-star:hover { color: var(--c-ffd93b); }
+    .ev-star svg { width: 12px; height: 12px; }
+    .ev-star.starred svg { fill: currentColor; }
+    .ev-geo { background: none; border: none; cursor: pointer; padding: 0 4px; color: var(--c-6b7280); display: inline-flex; align-items: center; }
+    .ev-geo:hover { color: var(--c-6aa9ff); }
+    .ev-geo svg { width: 12px; height: 12px; }
     .ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; padding-top: 2px; font-family: ui-monospace, Menlo, Consolas, monospace; }
     .ev-col-content { flex: 1; min-width: 0; padding-top: 1px; }
     .ev-origin { color: var(--c-7e8aa0); white-space: nowrap; font-size: 11px; }
@@ -954,9 +961,17 @@
     /* "New since last import" highlight on forensic-timeline / IOC rows + its badge (see #importMeta) */
     .ev-row.ev-new { box-shadow: inset 3px 0 0 var(--c-6bcb77); }
     .ioc-new { box-shadow: inset 3px 0 0 var(--c-6bcb77); padding-left: 6px; border-radius: 3px; }
-    .ev-new-badge { background:var(--c-13331f); color:var(--c-6bcb77); border:1px solid var(--c-1f5a35); border-radius:4px; padding:0 5px; font-size:10px; font-weight:bold; }
+    .ev-new-badge, .ev-badge-count, .ev-badge-corro { border-radius:4px; padding:0 5px; font-size:10px; font-weight:bold; }
+    .ev-new-badge { background:var(--c-13331f); color:var(--c-6bcb77); border:1px solid var(--c-1f5a35); }
+    .ev-badge-count { background: var(--c-3a2f1a); color: var(--c-ffd93b); border: 1px solid var(--c-5a4a1a); }
+    .ev-badge-corro { background: var(--c-13331f); color: var(--c-6bcb77); border: 1px solid var(--c-1f5a35); }
+    .ev-chain-badge { display: inline-flex; align-items: center; gap: 3px; border-radius: 4px; padding: 0 5px; font-size: 10px; text-decoration: none; }
+    .ev-chain-badge svg { width: 10px; height: 10px; }
+    .ev-chain-ok { color: var(--c-6bcb77); border: 1px solid var(--c-6bcb77); }
+    .ev-chain-warn { color: var(--c-ff6b6b); border: 1px solid var(--c-ff6b6b); }
     /* Affected host/asset chip on each forensic-timeline event */
     .ev-host { background:var(--c-1a2433); color:var(--c-8fb3e0); border:1px solid var(--c-2a3a52); border-radius:4px; padding:0 5px; font-size:10px; font-weight:600; white-space:nowrap; }
+    .ev-host svg { width: 10px; height: 10px; vertical-align: -1px; }
     /* Clickable finding references inside a timeline event → jump to the finding */
     .finding-jump { color:var(--c-6aa9ff); text-decoration:none; border-bottom:1px dotted var(--c-6aa9ff); cursor:pointer; }
     .finding-jump:hover { color:var(--c-9cc5ff); border-bottom-style:solid; }
@@ -4989,6 +5004,12 @@
     const ICON_HUNT = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="6.8" cy="6.8" r="4.3"/><path d="M13 13l-3.5-3.5" stroke-linecap="round"/></svg>';
     const ICON_EXPLAIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.8a4 4 0 0 0-2.3 7.3c.5.4.8 1 .8 1.6v.3h3v-.3c0-.6.3-1.2.8-1.6A4 4 0 0 0 8 1.8z" stroke-linejoin="round"/><path d="M6.3 13.2h3.4M6.7 14.5h2.6" stroke-linecap="round"/></svg>';
     const ICON_CHAIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M6 6.2 7.6 4.6a2.3 2.3 0 0 1 3.3 3.3L9.3 9.5"/><path d="M10 9.8 8.4 11.4a2.3 2.3 0 0 1-3.3-3.3l1.6-1.6"/><path d="M6.5 9.5l3-3"/></svg>';
+    const ICON_STAR = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M8 1.6l1.9 4.1 4.4.5-3.3 3 .9 4.4L8 11.4l-3.9 2.2.9-4.4-3.3-3 4.4-.5z"/></svg>';
+    const ICON_HOST = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="8" rx="1"/><path d="M5.5 13.5h5M8 10.5v3" stroke-linecap="round"/></svg>';
+    const ICON_GEO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 14.5S13 9.8 13 6a5 5 0 0 0-10 0c0 3.8 5 8.5 5 8.5z"/><circle cx="8" cy="6" r="1.6"/></svg>';
+    const ICON_WARN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2 14.3 13H1.7z"/><path d="M8 6.3v2.8"/><circle cx="8" cy="11" r=".9" fill="currentColor" stroke="none"/></svg>';
+    const ICON_EXTERNAL = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5h6v6"/><path d="M12.3 3.7 3.7 12.3"/></svg>';
+    const ICON_TARGET = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="1.3" fill="currentColor" stroke="none"/><path d="M8 1v2.2M8 12.8V15M1 8h2.2M12.8 8H15" stroke-linecap="round"/></svg>';
 
     function commentChip(type, id) {
       const list = commentsByTarget.get(targetKey(type, id)) || [];
@@ -5824,16 +5845,16 @@
           desc = desc.replace(new RegExp("^\\s*" + escOrigin + "(?:/[^:]+)?\\s*[:\\-]?\\s+", "i"), "");
           desc = desc.replace(new RegExp("^\\s*(?:\\S+\\s+)?\\[" + escOrigin + "\\]\\s*[:\\-]?\\s*", "i"), "");
         }
-        const host = e.asset ? `<span class="ev-host" title="Affected host / asset">🖥 ${esc(e.asset)}</span> ` : "";
-        // Per-row controls unified with the forensic timeline: ⭐ star, 💬 comment, 🏷 tag (all keyed by
+        const host = e.asset ? `<span class="ev-host" title="Affected host / asset">${ICON_HOST} ${esc(e.asset)}</span> ` : "";
+        // Per-row controls unified with the forensic timeline: star, comment, tag (all keyed by
         // ("event", e.id)). The delegated click handler on <main> already routes these for super rows.
-        // ⌖ context: scope From/To to this event's timestamp ± a window. Data-attr carries the ISO ts.
+        // Context button: scope From/To to this event's timestamp ± a window. Data-attr carries the ISO ts.
         const ctx = e.timestamp
-          ? `<button class="st-ctx" data-ts="${escAttr(e.timestamp)}" title="Scope the timeline to a window around this event">⌖</button>`
+          ? `<button class="st-ctx" data-ts="${escAttr(e.timestamp)}" title="Scope the timeline to a window around this event">${ICON_TARGET}</button>`
           : "";
-        // #8 Velociraptor deep-link: a small "↗ Velociraptor" link back to the originating hunt/flow.
+        // #8 Velociraptor deep-link: a small "→ Velociraptor" link back to the originating hunt/flow.
         const veloLink = e.veloUrl
-          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" class="ev-jump" title="Open this hunt/flow in the Velociraptor GUI">↗ Velociraptor</a>`
+          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" class="ev-jump" title="Open this hunt/flow in the Velociraptor GUI">${ICON_EXTERNAL} Velociraptor</a>`
           : "";
         // Everything beyond the compact title collapses into one shared [details] panel (#1/#2/#3) —
         // same helper the forensic timeline uses, so ST no longer only shows details for the rare event
@@ -5846,7 +5867,7 @@
         return `<div class="ev-row" data-evid="${escAttr(e.id)}">` +
           `<div class="ev-col-ctrl">` +
           `<input type="checkbox" class="st-row-cb" data-evid="${escAttr(e.id)}" ${superPromote.has(e.id) ? "checked" : ""} title="Select (for promotion / bulk star / bulk tag)" onchange="toggleSuperPromote('${escAttr(e.id)}', this.checked)" />` +
-          `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(e.id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>` +
+          `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(e.id)}" title="${starred ? "Unstar event" : "Star event"}">${ICON_STAR}</button>` +
           `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)} ${ctx}` +
           `</div>` +
           `<div class="ev-col-time"><span class="sev-${escAttr(sev)}">${esc(e.timestamp || "")}</span></div>` +
@@ -12236,17 +12257,17 @@
         const span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
           ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
         const badge = (e.count && e.count > 1)
-          ? ` <span title="${escAttr(e.count)} occurrences collapsed into one event" style="background:var(--c-3a2f1a);color:var(--c-ffd93b);border:1px solid var(--c-5a4a1a);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">×${esc(e.count)}</span>` : "";
+          ? ` <span class="ev-badge-count" title="${escAttr(e.count)} occurrences collapsed into one event">×${esc(e.count)}</span>` : "";
         const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
         const corro = (realSrc.length > 1)
-          ? ` <span title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}" style="background:var(--c-13331f);color:var(--c-6bcb77);border:1px solid var(--c-1f5a35);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">⊕ ${esc(realSrc.length)}</span>` : "";
+          ? ` <span class="ev-badge-corro" title="Corroborated by ${realSrc.length} sources: ${escAttr(realSrc.join(", "))}">⊕ ${esc(realSrc.length)}</span>` : "";
         let chain = "";
         if (e.chainCheck) {
           const cc = e.chainCheck;
-          const col = cc.observed ? "#6bcB77" : "#ff6b6b";
-          const label = cc.observed ? "⛓ chain seen" : "⚠ unusual parent";
-          const inner = `<span title="${escAttr(cc.note || "")}" style="color:${col};border:1px solid ${col};border-radius:4px;padding:0 5px;font-size:10px">${label}</span>`;
-          chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" style="text-decoration:none">${inner}</a>` : inner);
+          const cls = cc.observed ? "ev-chain-ok" : "ev-chain-warn";
+          const label = cc.observed ? `${ICON_CHAIN} chain seen` : `${ICON_WARN} unusual parent`;
+          const inner = `<span class="ev-chain-badge ${cls}" title="${escAttr(cc.note || "")}">${label}</span>`;
+          chain = " " + (cc.link ? `<a href="${escAttr(cc.link)}" target="_blank" rel="noopener" class="ev-jump">${inner}</a>` : inner);
         }
         let desc = String(e.description || "").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "").replace(/\s*\[more\]$/, "");
         // Affected host/asset, shown as a compact chip before the description for fast scanning.
@@ -12256,10 +12277,10 @@
         if (showHost && e.asset) {
           desc = desc.replace(new RegExp("\\s*@\\s*" + e.asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "i"), "");
         }
-        const host = e.asset ? ` <span class="ev-host" title="Affected host / asset">🖥 ${esc(e.asset)}</span>` : "";
+        const host = e.asset ? ` <span class="ev-host" title="Affected host / asset">${ICON_HOST} ${esc(e.asset)}</span>` : "";
         // Velociraptor deep-link back to the originating hunt/flow — mirrors the super-timeline (#7).
         const veloLink = e.veloUrl
-          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--c-6aa9ff);white-space:nowrap" title="Open this hunt/flow in the Velociraptor GUI">↗ Velociraptor</a>`
+          ? ` <a href="${escAttr(e.veloUrl)}" target="_blank" rel="noopener" class="ev-jump" title="Open this hunt/flow in the Velociraptor GUI">${ICON_EXTERNAL} Velociraptor</a>`
           : "";
         // Everything beyond the compact title — untruncated text, MITRE, findings, decoded payloads,
         // evidence, a benign chain-check note — collapses into one shared [details] panel (#1/#3).
@@ -12271,9 +12292,9 @@
           + `<div class="ev-col-ctrl">`
           + `<input type="checkbox" class="ev-checkbox ev-row-cb" data-evid="${escAttr(id)}" ${isSelected ? "checked" : ""} title="Select event" />`
           + (tlShow("icons", tld)
-              ? `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(id)}" title="${starred ? "Unstar event" : "Star event"}">★</button>`
+              ? `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(id)}" title="${starred ? "Unstar event" : "Star event"}">${ICON_STAR}</button>`
                 + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)}`
-                + ((e.srcIp || e.dstIp) ? `<button type="button" class="ev-geo" title="Show this event's IP on the map" onclick="geoFocusIp('${escAttr(e.dstIp || e.srcIp)}')" style="background:none;border:none;cursor:pointer;font-size:12px;padding:0 4px">📍</button>` : "")
+                + ((e.srcIp || e.dstIp) ? `<button type="button" class="ev-geo" title="Show this event's IP on the map" onclick="geoFocusIp('${escAttr(e.dstIp || e.srcIp)}')">${ICON_GEO}</button>` : "")
               : "")
           + `</div>`
           + `<div class="ev-col-time"><span class="sev-${esc(e.severity)}">${span}</span></div>`
