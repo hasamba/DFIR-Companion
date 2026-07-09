@@ -179,3 +179,27 @@ describe("parseCombinedLog", () => {
     expect(r.iocs.some((i) => i.type === "other" && i.value.includes("EFORGE_TEST-CANARY-B4fnIM1Ay4mk"))).toBe(true);
   });
 });
+
+describe("parseCombinedLog — IOC provenance", () => {
+  it("tags the request-host domain IOC's sourceAggKeys with its line's aggKey", () => {
+    const line = '10.0.0.5 - - [10/Jan/2026:00:00:00 +0000] "GET http://evil.example.com/x HTTP/1.1" 200 512 "-" "curl/8.0"';
+    const parsed = parseCombinedLog(line);
+    expect(parsed.events).toHaveLength(1);
+    const domainIoc = parsed.iocs.find((i) => i.type === "domain" && i.value === "evil.example.com");
+    expect(domainIoc?.sourceAggKeys).toEqual([parsed.events[0].aggKey]);
+  });
+
+  it("tags two different lines' domain IOCs with their own distinct aggKeys", () => {
+    const lineA = '10.0.0.5 - - [10/Jan/2026:00:00:00 +0000] "GET http://evil-a.example.com/x HTTP/1.1" 200 512 "-" "curl/8.0"';
+    const lineB = '10.0.0.6 - - [10/Jan/2026:00:05:00 +0000] "GET http://evil-b.example.com/y HTTP/1.1" 200 512 "-" "curl/8.0"';
+    const parsed = parseCombinedLog(`${lineA}\n${lineB}`);
+    expect(parsed.events).toHaveLength(2);
+    const iocA = parsed.iocs.find((i) => i.type === "domain" && i.value === "evil-a.example.com");
+    const iocB = parsed.iocs.find((i) => i.type === "domain" && i.value === "evil-b.example.com");
+    const eventA = parsed.events.find((e) => e.description.includes("evil-a.example.com"));
+    const eventB = parsed.events.find((e) => e.description.includes("evil-b.example.com"));
+    expect(iocA?.sourceAggKeys).toEqual([eventA?.aggKey]);
+    expect(iocB?.sourceAggKeys).toEqual([eventB?.aggKey]);
+    expect(iocA?.sourceAggKeys).not.toEqual(iocB?.sourceAggKeys);
+  });
+});

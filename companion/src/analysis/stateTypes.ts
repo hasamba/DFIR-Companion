@@ -30,6 +30,10 @@ export interface IOC {
   firstSeen: string;
   enrichments?: IocEnrichment[];                               // threat-intel HITS (added by the enrich pass)
   enrichedBy?: string[];                                       // provider names that have CHECKED this IOC (hit or not) — so a newly-enabled provider re-checks every IOC, and checked ones aren't re-queried
+  // Case-scoped forensic-event id(s) this IOC was authoritatively extracted from (set by the 5
+  // priority importers via pipeline.ts). Absent/empty ⇒ iocProvenanceChain.ts falls back to
+  // matching by value, same as before this field existed.
+  extractedFrom?: string[];
 }
 
 export interface Finding {
@@ -153,6 +157,10 @@ export interface InvestigationQuestion {
   answer: string;              // current best answer, or "" if unknown
   pointer: string;             // where to look: finding ids / event times / screenshots, or what to collect next
   pinned?: boolean;            // analyst-added (via Ask) — preserved across synthesis, which may answer it later
+  // Finding ids this answer relies on (set by synthesis). Lets a later re-synthesis detect when a
+  // supporting finding was marked false-positive and force the question back to "unknown" instead
+  // of silently keeping a stale answer — see applyFalsePositive/reconsiderKeyQuestions in pipeline.ts.
+  relatedFindingIds?: string[];
 }
 
 export type StepPriority = "critical" | "high" | "medium" | "low";

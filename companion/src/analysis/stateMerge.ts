@@ -58,8 +58,18 @@ export function mergeDelta(
     const incomingLower = incoming.value.toLowerCase();
     const dup = iocs.find((i) => i.value.toLowerCase() === incomingLower);
     const canonical = dup ? dup.id : padIocId(nextSeq++);
-    if (!dup) {
-      iocs.push({ id: canonical, type: incoming.type, value: incoming.value, firstSeen: ctx.timestamp });
+    if (dup) {
+      // Union (not overwrite): the same value can legitimately be extracted from
+      // different source events across separate import runs — preserve every link.
+      if (incoming.extractedFrom?.length) {
+        const existingRefs = dup.extractedFrom ?? [];
+        dup.extractedFrom = uniq([...existingRefs, ...incoming.extractedFrom]);
+      }
+    } else {
+      iocs.push({
+        id: canonical, type: incoming.type, value: incoming.value, firstSeen: ctx.timestamp,
+        ...(incoming.extractedFrom?.length ? { extractedFrom: [...incoming.extractedFrom] } : {}),
+      });
     }
     // First occurrence wins: when the model reuses an id (e.g. "i2") across
     // multiple distinct IOCs, a finding's `relatedIocs: ["i2"]` should refer to
@@ -233,7 +243,10 @@ export function mergeDelta(
   // Key questions are a holistic reassessment — replace wholesale when synthesis
   // provides them; otherwise keep the existing set (per-window deltas omit them).
   const keyQuestions = delta.keyQuestions !== undefined
-    ? delta.keyQuestions.map((q) => ({ id: q.id, question: q.question, status: q.status, answer: q.answer, pointer: q.pointer }))
+    ? delta.keyQuestions.map((q) => ({
+        id: q.id, question: q.question, status: q.status, answer: q.answer, pointer: q.pointer,
+        ...(q.relatedFindingIds?.length ? { relatedFindingIds: q.relatedFindingIds } : {}),
+      }))
     : state.keyQuestions;
 
   // Next steps are likewise a holistic recommendation — replaced wholesale by

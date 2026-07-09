@@ -13,7 +13,7 @@ import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity, TimelineEntry } from "./stateTypes.js";
-import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, fpSimilaritySchema, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
+import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, fpSimilaritySchema, stripAiExtractedFrom, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
 import { buildMitigationsResult } from "./attackMitigations.js";
 import { loadMitigationsDataset } from "./attackMitigationsData.js";
 import { buildD3fendResult } from "./d3fendMap.js";
@@ -69,7 +69,7 @@ import { parseCsv, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
-import { parseSiemExport, type SiemImportOptions } from "./siemImport.js";
+import { parseSiemExport, resolveExtractedFrom, type SiemImportOptions } from "./siemImport.js";
 import { parseEvtxXml } from "./evtxXmlImport.js";
 import { parseShellHistoryFile, userFromHistoryFilename } from "./bashHistoryImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
@@ -550,9 +550,13 @@ export const SYNTHESIS_PROMPT = [
   "  Administrator credential', 'identify the C2 domain'). Do not re-open a thread already listed below.",
   "- threadsClosed: the ids of any currently-open threads (listed below) that the evidence now RESOLVES.",
   "- keyQuestions: answer the standard DFIR questions below. For EACH, give status ('answered' |",
-  "  'partial' | 'unknown'), the current best answer (or \"\" if unknown), and a 'pointer' telling the",
+  "  'partial' | 'unknown'), the current best answer (or \"\" if unknown), a 'pointer' telling the",
   "  investigator WHERE to find or confirm it — cite finding ids, event timestamps, hosts/users, or, when",
-  "  unknown, the artifact to collect next (e.g. 'collect web proxy logs', 'pull $MFT on ALClient07').",
+  "  unknown, the artifact to collect next (e.g. 'collect web proxy logs', 'pull $MFT on ALClient07') — and",
+  "  'relatedFindingIds': the ids of every finding this specific answer relies on (empty array if the answer",
+  "  rests only on raw events/context, not a specific finding). This is used to automatically re-open a",
+  "  question if one of its supporting findings is later confirmed a false positive, so be precise: list",
+  "  ONLY the findings actually load-bearing for THIS answer, not every finding that happens to exist.",
   "  Always include these questions: initial access vector; execution / tooling used; persistence",
   "  mechanisms; privilege escalation; credential access; lateral movement (from→to); command & control;",
   "  data exfiltration; impact; which USER accounts are compromised; which HOSTS are compromised;",
@@ -590,10 +594,10 @@ export const SYNTHESIS_PROMPT = [
       threadsOpened: [{ id: "t1", description: "unresolved question to chase next" }],
       threadsClosed: ["t0"],
       keyQuestions: [
-        { id: "q_initial_access", question: "What was the initial access vector?", status: "answered|partial|unknown", answer: "best answer or empty", pointer: "finding f3 / event 2025-04-27T10:00Z, or 'collect email gateway logs'" },
-        { id: "q_lateral_movement", question: "Was there lateral movement, and from/to which hosts?", status: "partial", answer: "…", pointer: "events on ALClient07; confirm with logon 4624 on the target" },
-        { id: "q_compromised_users", question: "Which user accounts are compromised?", status: "answered", answer: "…", pointer: "finding f5; Mimikatz output" },
-        { id: "q_compromised_hosts", question: "Which hosts are compromised?", status: "answered", answer: "…", pointer: "…" },
+        { id: "q_initial_access", question: "What was the initial access vector?", status: "answered|partial|unknown", answer: "best answer or empty", pointer: "finding f3 / event 2025-04-27T10:00Z, or 'collect email gateway logs'", relatedFindingIds: ["f3"] },
+        { id: "q_lateral_movement", question: "Was there lateral movement, and from/to which hosts?", status: "partial", answer: "…", pointer: "events on ALClient07; confirm with logon 4624 on the target", relatedFindingIds: [] },
+        { id: "q_compromised_users", question: "Which user accounts are compromised?", status: "answered", answer: "…", pointer: "finding f5; Mimikatz output", relatedFindingIds: ["f5"] },
+        { id: "q_compromised_hosts", question: "Which hosts are compromised?", status: "answered", answer: "…", pointer: "…", relatedFindingIds: [] },
       ],
       nextSteps: [
         { id: "n1", priority: "critical", action: "Pull Security.evtx (4624/4672/4688) on ALClient07 and timeline ±15m around the first execution", rationale: "Confirms the initial access vector and whether lateral movement preceded execution", pointer: "event e3 / finding f1; collect from ALClient07" },
@@ -1254,6 +1258,17 @@ export interface PipelineOptions {
   hypothesisStore?: HypothesisStore;
 }
 
+// Whole-word (id-boundary) match of a finding id inside free text — used to catch a key question's
+// dependency on a finding via its 'pointer'/'answer' prose (e.g. "Findings f1 and f2") when there's
+// no structured relatedFindingIds link, either because the question predates that field or the
+// model only named the finding in prose. Escapes regex metacharacters since ids can contain them
+// (e.g. "f-auto-e1").
+function textMentionsFindingId(text: string | undefined, findingId: string): boolean {
+  if (!text) return false;
+  const escaped = findingId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`, "i").test(text);
+}
+
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
 // answer one (same id) — keep that, flagged pinned; if it dropped one, re-add the original.
 function mergePinnedQuestions(pinned: InvestigationQuestion[], current: InvestigationQuestion[]): InvestigationQuestion[] {
@@ -1474,7 +1489,7 @@ export class AnalysisPipeline {
 
       const delta = await withRetry(async () => {
         const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getSystemPrompt(), userPrompt, images }, "extract");
-        return deltaSchema.parse(parsed);
+        return stripAiExtractedFrom(deltaSchema.parse(parsed));
       }, retries, backoffMs);
 
       const windowSequence = analyzable[analyzable.length - 1].sequenceNumber;
@@ -1539,7 +1554,7 @@ export class AnalysisPipeline {
 
         const delta = await withRetry(async () => {
           const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "csv");
-          return deltaSchema.parse(parsed);
+          return stripAiExtractedFrom(deltaSchema.parse(parsed));
         }, retries, backoffMs);
 
         // Renumber event ids so chunked imports don't overwrite each other (merge
@@ -1622,7 +1637,7 @@ export class AnalysisPipeline {
 
         const delta = await withRetry(async () => {
           const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "log");
-          return deltaSchema.parse(parsed);
+          return stripAiExtractedFrom(deltaSchema.parse(parsed));
         }, retries, backoffMs);
 
         const renumbered = {
@@ -1715,13 +1730,21 @@ export class AnalysisPipeline {
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const source = detectTool(opts.label) ?? detectTool(parsed.format) ?? "SIEM import";
+    const eventIdByAggKey = new Map<string, string>();
+    const forensicEvents = parsed.events.map((e, i) => {
+      const { aggKey, ...rest } = e;
+      const id = `${opts.idPrefix}e${i + 1}`;
+      if (aggKey) eventIdByAggKey.set(aggKey, id);
+      return { ...rest, id, sources: rest.sources?.length ? rest.sources : [source] };
+    });
     const raw = {
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [source],
+      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
+        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
       })),
+      mitreTechniques: [],
+      forensicEvents,
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `SIEM import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
@@ -2044,14 +2067,24 @@ export class AnalysisPipeline {
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
+    const eventIdByAggKey = new Map<string, string>();
+    const forensicEvents = parsed.events.map((e, i) => {
+      const { aggKey, ...rest } = e;
+      const id = `${opts.idPrefix}e${i + 1}`;
+      if (aggKey) eventIdByAggKey.set(aggKey, id);
+      return {
+        ...rest, id, sources: rest.sources?.length ? rest.sources : ["Velociraptor"],
+        ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
+      };
+    });
     const raw = {
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Velociraptor"],
-        ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
+      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
+        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
       })),
+      mitreTechniques: [],
+      forensicEvents,
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Velociraptor import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
@@ -2146,13 +2179,21 @@ export class AnalysisPipeline {
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
+    const eventIdByAggKey = new Map<string, string>();
+    const forensicEvents = parsed.events.map((e, i) => {
+      const { aggKey, ...rest } = e;
+      const id = `${opts.idPrefix}e${i + 1}`;
+      if (aggKey) eventIdByAggKey.set(aggKey, id);
+      return { ...rest, id, sources: rest.sources?.length ? rest.sources : [COMBINED_LOG_SOURCE] };
+    });
     const raw = {
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [COMBINED_LOG_SOURCE],
+      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
+        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
       })),
+      mitreTechniques: [],
+      forensicEvents,
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Web/proxy access-log import (${parsed.format}): ${parsed.kept} request(s) from ${parsed.total} line(s)` +
@@ -2392,13 +2433,21 @@ export class AnalysisPipeline {
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
 
+    const eventIdByAggKey = new Map<string, string>();
+    const forensicEvents = parsed.events.map((e, i) => {
+      const { aggKey, ...rest } = e;
+      const id = `${opts.idPrefix}e${i + 1}`;
+      if (aggKey) eventIdByAggKey.set(aggKey, id);
+      return { ...rest, id, sources: rest.sources?.length ? rest.sources : ["Suricata"] };
+    });
     const raw = {
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Suricata"],
+      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
+        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
       })),
+      mitreTechniques: [],
+      forensicEvents,
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Network import (${parsed.format}): ${parsed.kept} detection event(s) from ${parsed.total} record(s)` +
@@ -2492,13 +2541,21 @@ export class AnalysisPipeline {
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
 
+    const eventIdByAggKey = new Map<string, string>();
+    const forensicEvents = parsed.events.map((e, i) => {
+      const { aggKey, ...rest } = e;
+      const id = `${opts.idPrefix}e${i + 1}`;
+      if (aggKey) eventIdByAggKey.set(aggKey, id);
+      return { ...rest, id, sources: rest.sources?.length ? rest.sources : ["Security Onion"] };
+    });
     const raw = {
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Security Onion"],
+      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
+        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
       })),
+      mitreTechniques: [],
+      forensicEvents,
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Security Onion import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
@@ -4159,6 +4216,32 @@ export class AnalysisPipeline {
         `"unknown" with a 'pointer' to the artifact to collect):\n` +
         pinnedQuestions.map((q) => `[${q.id}] ${q.question}`).join("\n") + "\n\n"
       : "";
+    // A finding just confirmed false-positive forces a re-answer of any key question that cited it
+    // as support — otherwise a question "answered" from a finding the analyst just rejected would
+    // keep looking answered until the model happens to reconsider it unprompted. The sanitize pass
+    // after the AI call (below, near applyFalsePositive) is the deterministic backstop for when the
+    // model ignores this and echoes the stale answer back.
+    const droppedFindingIds = new Set(
+      state.findings
+        .filter((f) => !applyFalsePositive(state, markers).findings.some((k) => k.id === f.id))
+        .map((f) => f.id),
+    );
+    const questionsToReanswer = state.keyQuestions.filter((q) => {
+      if (q.pinned) return false;
+      if ((q.relatedFindingIds ?? []).some((id) => droppedFindingIds.has(id))) return true;
+      // Fallback for a question that predates relatedFindingIds (or whose answer only ever named
+      // the finding in prose): its free-text pointer/answer still cites the now-rejected finding.
+      return [...droppedFindingIds].some(
+        (id) => textMentionsFindingId(q.pointer, id) || textMentionsFindingId(q.answer, id),
+      );
+    });
+    const reanswerBlock = questionsToReanswer.length
+      ? `QUESTIONS TO RE-ANSWER (a finding backing this answer was just confirmed a FALSE POSITIVE — ` +
+        `re-evaluate using ONLY the CURRENT findings/evidence, ignoring the rejected finding entirely; ` +
+        `if nothing else supports it, set status "unknown", clear the answer, and set relatedFindingIds ` +
+        `to []):\n` +
+        questionsToReanswer.map((q) => `[${q.id}] ${q.question} (previously: "${q.answer}")`).join("\n") + "\n\n"
+      : "";
 
     // Token budget: trim the timeline so the WHOLE prompt fits the model context — the rest
     // (context block, findings echo, system prompt) is the fixed overhead. Re-select for the
@@ -4167,7 +4250,7 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -4183,6 +4266,7 @@ export class AnalysisPipeline {
       notebookBlock +
       analystHypothesesBlock +
       pinnedBlock +
+      reanswerBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
@@ -4206,7 +4290,7 @@ export class AnalysisPipeline {
         { systemPrompt: getSynthesisPrompt(), userPrompt, images: [], ...(synthThinkingTokens > 0 ? { thinkingTokens: synthThinkingTokens } : {}), ...(opts.signal ? { signal: opts.signal } : {}) },
         "synthesis",
       );
-      return deltaSchema.parse(parsed);
+      return stripAiExtractedFrom(deltaSchema.parse(parsed));
     }, retries, backoffMs);
 
     // Anchor finding timestamps to the last real event time (fallback: existing state time).
@@ -4260,6 +4344,32 @@ export class AnalysisPipeline {
     let next = pinnedNow.length
       ? { ...gapFilled, keyQuestions: mergePinnedQuestions(pinnedNow, gapFilled.keyQuestions) }
       : gapFilled;
+
+    // Deterministic backstop for the reanswerBlock instruction above: if the model still cited a
+    // now-dead finding (ignored the instruction) — whether via a structured relatedFindingIds link
+    // or only in the free-text pointer/answer prose (the only signal available for a question that
+    // predates relatedFindingIds) — force the question back to "unknown" (clearing the stale
+    // answer). ANY dependency on a rejected finding forces the reset, not just total loss of
+    // support: a partial answer that still names a finding the analyst just confirmed is NOT a
+    // threat is misleading even when another finding also backs it, and we can't safely guess what
+    // the finding-minus-the-FP'd-one answer should say without asking the model again. Guarantees a
+    // key question can never keep citing a finding that's already gone.
+    const survivingFindingIds = new Set(next.findings.map((f) => f.id));
+    const priorFindingIds = state.findings.map((f) => f.id); // ids that existed going into this run
+    next = {
+      ...next,
+      keyQuestions: next.keyQuestions.map((q) => {
+        const related = (q.relatedFindingIds ?? []).filter((id) => survivingFindingIds.has(id));
+        const structuralLoss = (q.relatedFindingIds ?? []).some((id) => !survivingFindingIds.has(id));
+        const textualLoss = priorFindingIds.some(
+          (id) => !survivingFindingIds.has(id) && (textMentionsFindingId(q.pointer, id) || textMentionsFindingId(q.answer, id)),
+        );
+        return (structuralLoss || textualLoss) && q.status !== "unknown"
+          ? { ...q, relatedFindingIds: related, status: "unknown" as const, answer: "",
+              pointer: "re-evaluate — the finding(s) that supported this answer were marked false positive" }
+          : { ...q, relatedFindingIds: related };
+      }),
+    };
 
     // Union the deterministically-identified ATT&CK techniques carried by the (in-scope) timeline
     // into the synthesized MITRE table, so techniques the model didn't echo — especially the Info/Low
