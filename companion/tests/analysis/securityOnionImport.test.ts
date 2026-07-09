@@ -122,7 +122,38 @@ describe("parseSecurityOnion — IOC provenance", () => {
     const parsed = parseSecurityOnion(JSON.stringify([row]));
     expect(parsed.events).toHaveLength(1);
     const domainIoc = parsed.iocs.find((i) => i.type === "domain" && i.value === "evil.example.com");
-    expect(domainIoc?.sourceAggKeys).toEqual([parsed.events[0].aggKey ? parsed.events[0].aggKey : undefined].filter(Boolean));
+    expect(domainIoc?.sourceAggKeys).toEqual([parsed.events[0].aggKey]);
     expect(domainIoc?.sourceAggKeys?.length).toBe(1);
+  });
+
+  it("tags two different rows' domain IOCs with their own distinct aggKeys", () => {
+    const rows = [
+      {
+        "@timestamp": "2026-01-01T00:00:00Z",
+        "rule.name": "DNS query to known-bad domain A",
+        "dns.query": "evil-a.example.com",
+        "source.ip": "10.0.0.5", "destination.ip": "10.0.0.1",
+        "host.name": "WKSTN-1",
+      },
+      {
+        "@timestamp": "2026-01-01T00:05:00Z",
+        "rule.name": "DNS query to known-bad domain B",
+        "dns.query": "evil-b.example.com",
+        "source.ip": "10.0.0.6", "destination.ip": "10.0.0.2",
+        "host.name": "WKSTN-2",
+      },
+    ];
+    const parsed = parseSecurityOnion(JSON.stringify(rows));
+    expect(parsed.events).toHaveLength(2);
+    const iocA = parsed.iocs.find((i) => i.type === "domain" && i.value === "evil-a.example.com");
+    const iocB = parsed.iocs.find((i) => i.type === "domain" && i.value === "evil-b.example.com");
+    const eventA = parsed.events.find((e) => e.description.includes("domain A"));
+    const eventB = parsed.events.find((e) => e.description.includes("domain B"));
+    expect(eventA).toBeDefined();
+    expect(eventB).toBeDefined();
+    expect(eventA?.aggKey).not.toBe(eventB?.aggKey);
+    expect(iocA?.sourceAggKeys).toEqual([eventA?.aggKey]);
+    expect(iocB?.sourceAggKeys).toEqual([eventB?.aggKey]);
+    expect(iocA?.sourceAggKeys).not.toEqual(iocB?.sourceAggKeys);
   });
 });
