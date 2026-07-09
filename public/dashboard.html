@@ -8477,6 +8477,15 @@
             ? "scope applied — AI re-synthesizing in background (see AI status)"
             : "scope cleared — AI re-synthesizing in background (see AI status)";
           fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
+          // These panels are derived server-side straight from the (now re-scoped) forensic
+          // timeline — no AI call needed, so refresh them right away instead of waiting on the
+          // background re-synthesis's WS "state" broadcast (which never fires when AI is off).
+          scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload();
+          scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload();
+          scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload();
+          scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload();
+          scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocProvenanceChainReload();
+          loadSuperTimeline(caseId);
         })
         .catch(() => document.getElementById("status").textContent = "scope failed — restart the companion server to load the latest endpoints.");
     }
