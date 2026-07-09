@@ -3081,8 +3081,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "",
     "After processing, files move to _processed/ (success) or _failed/ (error).",
     "Failures are reported in the dashboard (📥 Drop banner) and any configured notification channel.",
+    "A running history of every file processed (imported/failed/pending, with reasons) is kept in",
+    "drop-log.txt in this same folder.",
     "",
-    "This README and the _processed/ and _failed/ subfolders are ignored by the scanner.",
+    "This README, drop-log.txt, and the _processed/ and _failed/ subfolders are ignored by the scanner.",
     "",
   ].join("\n");
 
