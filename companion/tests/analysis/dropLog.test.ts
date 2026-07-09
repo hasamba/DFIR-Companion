@@ -48,6 +48,15 @@ describe("formatDropLogLines", () => {
     );
     expect(lines[0]).toContain("bad row — col1|col2 mismatch");
   });
+
+  it("collapses embedded newlines in a multi-line reason to a single line", () => {
+    const lines = formatDropLogLines(
+      [{ status: "FAILED", relpath: "y.csv", reason: "SyntaxError: Unexpected token\n    at parse (parser.js:12)\n    at import (importer.js:5)" }],
+      at,
+    );
+    expect(lines[0]).not.toContain("\n");
+    expect(lines[0]).toContain("SyntaxError: Unexpected token at parse (parser.js:12) at import (importer.js:5)");
+  });
 });
 
 describe("appendDropLog", () => {

@@ -22,12 +22,20 @@ export interface DropLogEntry {
 // "IMPORTED" is the longest status (8 chars); pad the others to match for column alignment.
 const STATUS_WIDTH = 8;
 
+// Collapse embedded newlines (and surrounding whitespace) to a single space so one logical event
+// never splits across multiple physical lines in drop-log.txt. Real Error messages (Node/Zod/parser)
+// are frequently multi-line, so this is applied at the one chokepoint all callers funnel through.
+function sanitize(s: string): string {
+  return s.replace(/\s*[\r\n]+\s*/g, " ").trim();
+}
+
 /** One formatted line per entry: "<iso-timestamp>  <STATUS>  <relpath>[  — <reason>]". Pure, no I/O. */
 export function formatDropLogLines(entries: readonly DropLogEntry[], at: string): string[] {
   return entries.map((e) => {
     const status = e.status.padEnd(STATUS_WIDTH);
-    const reason = e.reason ? `  — ${e.reason}` : "";
-    return `${at}  ${status}  ${e.relpath}${reason}`;
+    const relpath = sanitize(e.relpath);
+    const reason = e.reason ? `  — ${sanitize(e.reason)}` : "";
+    return `${at}  ${status}  ${relpath}${reason}`;
   });
 }
 
