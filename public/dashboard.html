@@ -908,7 +908,6 @@
     .ioc-main-cell { min-width: 0; line-height: 1.5; }
     .ioc-value-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
     .ioc-value-line .qa-val { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
-    .ioc-enrich-line, .ioc-tagline { display: block; margin-top: 4px; }
     .ioc-actions-cell { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px; }
     .vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid var(--c-2a2f3a); border-radius: 5px; }
     .vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
@@ -11831,9 +11830,7 @@
           + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
           + `<span class="ioc-type-cell" title="${escAttr(i.id)}">${esc(i.type)}</span>`
           + `<span class="ioc-main-cell">`
-          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${newBadge}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}</span>`
-          +   (enrichHtml ? `<span class="ioc-enrich-line">${enrichHtml}</span>` : "")
-          +   (tagsHtml ? `<span class="ioc-tagline">${tagsHtml}</span>` : "")
+          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${newBadge}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
           + `</span>`
           + `<span class="ioc-actions-cell">${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)} ${iocChainChip(i.id)} ${fpAction}</span>`
           + `</div>`;
