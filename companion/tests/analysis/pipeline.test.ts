@@ -524,6 +524,139 @@ describe("AnalysisPipeline", () => {
     expect(state.iocs.map((i) => i.value)).toEqual(["10.0.0.5"]);
   });
 
+  it("synthesize asks the model to re-answer a key question whose supporting finding was just marked false-positive", async () => {
+    const { FalsePositiveStore } = await import("../../src/analysis/falsePositive.js");
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "SharpHound ran",
+      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+    seeded.findings.push({ id: "f1", severity: "High", title: "SharpHound AD recon", description: "", relatedIocs: [],
+      mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
+    seeded.keyQuestions.push({ id: "q_initial_access", question: "What was the initial access vector?",
+      status: "answered", answer: "AD recon via SharpHound", pointer: "finding f1", relatedFindingIds: ["f1"] });
+    await stateStore.save(seeded);
+
+    const falsePositiveStore = new FalsePositiveStore(caseStore);
+    await falsePositiveStore.save("c1", [
+      { id: "finding:sharphound ad recon", kind: "finding", ref: "SharpHound AD recon", reason: "authorized-test", note: "authorized", markedAt: "", markedBy: "anonymous" },
+    ]);
+
+    let sentPrompt = "";
+    const provider = {
+      name: "spy",
+      // The model complies and re-answers, but omits relatedFindingIds/keyQuestions details we don't assert on here.
+      analyze: async (req: { userPrompt: string }) => {
+        sentPrompt = req.userPrompt;
+        return { rawText: JSON.stringify({
+          findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "s",
+          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+          keyQuestions: [{ id: "q_initial_access", question: "What was the initial access vector?",
+            status: "unknown", answer: "", pointer: "collect email gateway logs", relatedFindingIds: [] }],
+        }) };
+      },
+    };
+    const pipeline = new AnalysisPipeline({
+      provider, falsePositiveStore, stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    await pipeline.synthesize("c1");
+    expect(sentPrompt).toContain("QUESTIONS TO RE-ANSWER");
+    expect(sentPrompt).toContain("What was the initial access vector?");
+    expect(sentPrompt).toContain("AD recon via SharpHound"); // the stale answer, shown so the model knows what to reconsider
+  });
+
+  it("synthesize resets a key question to unknown when its only supporting finding is dropped, even if the model still echoes the stale answer", async () => {
+    const { FalsePositiveStore } = await import("../../src/analysis/falsePositive.js");
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "SharpHound ran",
+      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+    seeded.findings.push({ id: "f1", severity: "High", title: "SharpHound AD recon", description: "", relatedIocs: [],
+      mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
+    seeded.keyQuestions.push({ id: "q_initial_access", question: "What was the initial access vector?",
+      status: "answered", answer: "AD recon via SharpHound", pointer: "finding f1", relatedFindingIds: ["f1"] });
+    await stateStore.save(seeded);
+
+    const falsePositiveStore = new FalsePositiveStore(caseStore);
+    await falsePositiveStore.save("c1", [
+      { id: "finding:sharphound ad recon", kind: "finding", ref: "SharpHound AD recon", reason: "authorized-test", note: "authorized", markedAt: "", markedBy: "anonymous" },
+    ]);
+
+    // A non-compliant model that ignores the instruction and returns no keyQuestions at all —
+    // stateMerge falls back to the OLD (stale) keyQuestions array, still citing the dropped finding.
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", JSON.stringify({
+        findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "s",
+        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      })),
+      falsePositiveStore, stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    const q = state.keyQuestions.find((k) => k.id === "q_initial_access");
+    expect(q!.status).toBe("unknown");           // forced back, not left "answered" on a dead finding
+    expect(q!.answer).toBe("");
+    expect(q!.relatedFindingIds).toEqual([]);
+  });
+
+  it("synthesize resets a LEGACY key question (no relatedFindingIds) that only names the dropped finding in its pointer/answer prose, even when another finding still survives", async () => {
+    const { FalsePositiveStore } = await import("../../src/analysis/falsePositive.js");
+    const seeded = emptyState("c1");
+    // Both Medium severity: this test is about the keyQuestions text-mention fallback, not the
+    // Critical/High-severity auto-finding backfill (see backfillHighSeverityFindings).
+    seeded.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phishing email opened",
+        severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      { id: "e2", timestamp: "2026-05-20T09:05:00Z", description: "SharpHound ran",
+        severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    );
+    seeded.findings.push(
+      { id: "f1", severity: "Critical", title: "Initial Access via Phishing", description: "", relatedIocs: [],
+        mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
+      { id: "f2", severity: "High", title: "SharpHound AD recon", description: "", relatedIocs: [],
+        mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
+    );
+    // No relatedFindingIds — this question predates that field, only its prose names the findings.
+    seeded.keyQuestions.push({ id: "q_initial_access", question: "What was the initial access vector?",
+      status: "answered", answer: "Two vectors: phishing (f1) and AD recon (f2).", pointer: "Findings f1 and f2" });
+    await stateStore.save(seeded);
+
+    const falsePositiveStore = new FalsePositiveStore(caseStore);
+    await falsePositiveStore.save("c1", [
+      { id: "finding:sharphound ad recon", kind: "finding", ref: "SharpHound AD recon", reason: "authorized-test", note: "authorized", markedAt: "", markedBy: "anonymous" },
+    ]);
+
+    let sentPrompt = "";
+    const provider = {
+      name: "spy",
+      // Non-compliant model: echoes findings/keyQuestions back unchanged, ignoring the reanswer instruction.
+      analyze: async (req: { userPrompt: string }) => {
+        sentPrompt = req.userPrompt;
+        return { rawText: JSON.stringify({
+          findings: [{ id: "f1", severity: "Critical", title: "Initial Access via Phishing", description: "",
+            relatedIocs: [], mitreTechniques: [], status: "open" }],
+          iocs: [], mitreTechniques: [], attackerPath: "", summary: "s",
+          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+          keyQuestions: [{ id: "q_initial_access", question: "What was the initial access vector?",
+            status: "answered", answer: "Two vectors: phishing (f1) and AD recon (f2).", pointer: "Findings f1 and f2" }],
+        }) };
+      },
+    };
+    const pipeline = new AnalysisPipeline({
+      provider, falsePositiveStore, stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    await pipeline.synthesize("c1");
+    expect(sentPrompt).toContain("QUESTIONS TO RE-ANSWER"); // caught via the pointer-text fallback, not relatedFindingIds
+
+    const state = await stateStore.load("c1");
+    expect(state.findings.map((f) => f.title)).toEqual(["Initial Access via Phishing"]); // f2 dropped, f1 survives
+    const q = state.keyQuestions.find((k) => k.id === "q_initial_access");
+    expect(q!.status).toBe("unknown");   // forced back even though f1 (mentioned in the same answer) still exists
+    expect(q!.answer).toBe("");
+  });
+
   it("synthesize only sends in-scope events to the model and replaces stale findings", async () => {
     const { ScopeStore } = await import("../../src/analysis/scope.js");
     const seeded = emptyState("c1");

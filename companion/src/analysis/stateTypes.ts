@@ -153,6 +153,10 @@ export interface InvestigationQuestion {
   answer: string;              // current best answer, or "" if unknown
   pointer: string;             // where to look: finding ids / event times / screenshots, or what to collect next
   pinned?: boolean;            // analyst-added (via Ask) — preserved across synthesis, which may answer it later
+  // Finding ids this answer relies on (set by synthesis). Lets a later re-synthesis detect when a
+  // supporting finding was marked false-positive and force the question back to "unknown" instead
+  // of silently keeping a stale answer — see applyFalsePositive/reconsiderKeyQuestions in pipeline.ts.
+  relatedFindingIds?: string[];
 }
 
 export type StepPriority = "critical" | "high" | "medium" | "low";
