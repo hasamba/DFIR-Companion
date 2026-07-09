@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
+import { isNoiseDomain } from "./anonymize.js";
 import type { InvestigationState } from "./stateTypes.js";
 import {
   extractCaseEmails,
@@ -94,12 +95,33 @@ export function hasExposureFinding(
   return Boolean((r.breach && r.breach.trim()) || (r.exposedData && r.exposedData.length) || r.secretPresent);
 }
 
+// Distinct victim domains implied by the case's known FQDN hosts (event.asset only — NOT
+// accounts/UPNs mentioned in free text, which would also catch an attacker's own email domain).
+// Excludes noise (registry hive / ATT&CK folder / generic word, via the same isNoiseDomain the
+// anonymizer uses) and any domain that is itself a case IOC (an adversary domain, never a
+// customer asset). Pure + deterministic.
+export function extractCaseDomains(state: InvestigationState): string[] {
+  const iocVals = new Set(state.iocs.map((i) => i.value.toLowerCase()));
+  const domains = new Set<string>();
+  for (const e of state.forensicTimeline) {
+    const host = e.asset?.trim().toLowerCase();
+    if (!host) continue;
+    const dot = host.indexOf(".");
+    if (dot <= 0) continue; // no dot (or leading dot) — not a FQDN, nothing to derive
+    const domain = host.slice(dot + 1);
+    if (isNoiseDomain(domain) || iocVals.has(domain)) continue;
+    domains.add(domain);
+  }
+  return [...domains];
+}
+
 export function buildCustomerExposureTargets(
   state: InvestigationState,
   rawTargets: CustomerTargets,
 ): CustomerTargets {
   const targets = sanitizeTargets(rawTargets);
   const customerDomains = new Set(targets.domains);
+  for (const domain of extractCaseDomains(state)) customerDomains.add(domain);
   const emails = new Set(targets.emails);
 
   for (const email of extractCaseEmails(state)) {
@@ -108,7 +130,7 @@ export function buildCustomerExposureTargets(
   }
 
   return {
-    domains: uniqueSorted(targets.domains),
+    domains: uniqueSorted(customerDomains),
     emails: uniqueSorted(emails),
   };
 }

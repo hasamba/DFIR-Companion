@@ -3452,7 +3452,7 @@
       <div id="iocs">—</div></section>
     <section id="sec-exposure" style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
       <div class="ce-body">
-        <div style="color:var(--c-9aa4b2);font-size:12px;margin:0 0 8px">Breach/leak check of the <strong>customer's own</strong> domains &amp; emails (not IOCs). Domain searches use only the customer domains below; case emails are checked only under those domains. ⚠ sends the customer's domains/emails to third-party services.</div>
+        <div style="color:var(--c-9aa4b2);font-size:12px;margin:0 0 8px">Breach/leak check of the <strong>customer's own</strong> domains &amp; emails (not IOCs). Domains found in the case's own FQDN hosts are added automatically (dashed "auto" chips below), same as case emails under a customer domain. ⚠ sends the customer's domains/emails to third-party services.</div>
         <div class="manual-form" style="gap:12px; align-items:flex-start; margin-bottom:8px">
           <div style="flex:1; min-width:240px">
             <input id="ceDomainInput" placeholder="add customer domain + Enter (e.g. example.com)" style="width:100%; box-sizing:border-box" />
@@ -11307,6 +11307,7 @@
       // included by default — remove an unwanted one with its ×.
       ceDomains = (targets.domains || []).slice();
       ceEmails = (targets.emails || []).slice();
+      ceAutoDomains = (effective.domains || []).filter(d => !ceDomains.includes(d));
       ceAutoEmails = (effective.emails || []).filter(e => !ceEmails.includes(e));
       renderCeChips();
       const exposure = j.exposure || {};
@@ -11361,7 +11362,7 @@
         .then(renderCustomerExposure)
         .catch(() => { document.getElementById("customerExposure").innerHTML = "<span style='color:var(--c-ff9f43)'>Customer exposure endpoints unavailable — restart the companion server.</span>"; });
     }
-    let ceDomains = [], ceEmails = [], ceAutoEmails = [];
+    let ceDomains = [], ceEmails = [], ceAutoDomains = [], ceAutoEmails = [];
     function selectedExposureProviders() {
       return Array.from(document.querySelectorAll(".ce-prov:checked")).map(c => c.value);
     }
@@ -11372,7 +11373,8 @@
     function renderCeChips() {
       const dom = document.getElementById("ceDomainChips");
       const em = document.getElementById("ceEmailChips");
-      if (dom) dom.innerHTML = ceDomains.length ? ceDomains.map(d => ceChip(d, "domain", false)).join("") : "<span style='color:var(--c-5b6472);font-size:11px'>no customer domains yet</span>";
+      if (dom) dom.innerHTML = (ceDomains.map(d => ceChip(d, "domain", false)).join("") + ceAutoDomains.map(d => ceChip(d, "domain", true)).join(""))
+        || "<span style='color:var(--c-5b6472);font-size:11px'>no customer domains yet</span>";
       if (em) em.innerHTML = (ceEmails.map(e => ceChip(e, "email", false)).join("") + ceAutoEmails.map(e => ceChip(e, "email", true)).join(""))
         || "<span style='color:var(--c-5b6472);font-size:11px'>no customer emails yet</span>";
     }
