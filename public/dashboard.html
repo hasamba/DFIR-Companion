@@ -590,7 +590,8 @@
       padding: 0 7px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .comment-chip:hover { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); }
     .comment-chip.has { color: var(--c-6aa9ff); border-color: var(--c-2d4a6a); background: var(--c-11202e); }
-    .comment-chip svg, .tag-add svg, .pin-btn svg, .fp-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
+    .comment-chip svg, .tag-add svg, .pin-btn svg, .fp-btn svg,
+    .hunt-add svg, .explain-btn svg, .ioc-chain-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
     .anon-chip { display:inline-block; background:var(--c-22272e); border:1px solid var(--c-30363d); border-radius:10px; padding:1px 7px; margin:1px 0; font-size:11px; }
     .anon-chip.anon-chip-sup { opacity:.6; }
     .anon-chip .anon-auto-rm, .anon-chip .anon-auto-restore { background:transparent; border:none; color:var(--c-8a93a3); cursor:pointer; font-size:10px; padding:0 0 0 1px; line-height:1; }
@@ -874,14 +875,30 @@
     .finding-bulk-btn { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-cbd3df); border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
     .finding-bulk-btn:hover { background: var(--c-2a3050); color: #fff; border-color: var(--c-6aa9ff); }
     .finding-cb { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); }
-    .ioc-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; border-bottom: 1px solid var(--c-1a1f28); position: relative; }
-    /* Only the checkbox is a flex item; everything else flows inline inside .ioc-body so tag
-       pills / enrich badges wrap naturally instead of overflowing the row (display:flex would
-       otherwise make every chip a non-wrapping flex item and break the layout). */
-    .ioc-body { flex: 1 1 auto; min-width: 0; line-height: 1.7; }
-    .ioc-row:hover { background: var(--c-0d1117); }
+    /* IOCs — dense-table layout, matching Findings: a grid row instead of one flowing line of
+       chips. Type in its own column, value + corroboration/provenance badges + enrichment +
+       tags stacked inside the main cell, actions right-aligned. */
+    .ioc-header-row, .ioc-row { grid-template-columns: 26px 70px minmax(0,1fr) 176px; }
+    .ioc-header-row {
+      display: grid; align-items: center; column-gap: 10px; padding: 0 10px 6px; font-size: 10px;
+      font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--c-9aa4b2);
+    }
+    .ioc-row {
+      display: grid; align-items: start; column-gap: 10px; border: 1px solid var(--c-2a2f3a);
+      border-radius: 6px; background: var(--c-11151c); padding: 7px 10px; margin-bottom: 5px; position: relative;
+    }
     .ioc-row.ioc-selected { background: var(--c-142038); }
-    .ioc-header-row { display: flex; align-items: center; gap: 4px; padding: 2px 0 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 1px; font-size: 11px; color: var(--c-6b7280); }
+    .ioc-row.ioc-new { border-color: var(--c-2d6cdf); }
+    .ioc-row > .ioc-cb { margin-top: 3px; }
+    .ioc-type-cell {
+      font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; text-transform: uppercase;
+      letter-spacing: .03em; color: var(--c-9aa4b2); padding-top: 2px;
+    }
+    .ioc-main-cell { min-width: 0; line-height: 1.5; }
+    .ioc-value-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .ioc-value-line .qa-val { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+    .ioc-enrich-line, .ioc-tagline { display: block; margin-top: 4px; }
+    .ioc-actions-cell { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px; }
     .vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid var(--c-2a2f3a); border-radius: 5px; }
     .vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
     .vql-result th, .vql-result td { border: 1px solid var(--c-2a2f3a); padding: 3px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
@@ -4921,6 +4938,9 @@
     const ICON_TAG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 2h5.3L14 8.7 8.7 14 2 7.3V2z" stroke-linejoin="round"/><circle cx="4.6" cy="4.6" r=".9" fill="currentColor" stroke="none"/></svg>';
     const ICON_PIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.6c-2.15 0-3.9 1.75-3.9 3.9 0 2.85 3.9 7.4 3.9 7.4s3.9-4.55 3.9-7.4c0-2.15-1.75-3.9-3.9-3.9z" stroke-linejoin="round"/><circle cx="8" cy="5.5" r="1.3"/></svg>';
     const ICON_FLAG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3.5 1.5v13"/><path d="M3.5 2.2h8L9.3 4.7l2.2 2.5h-8"/></svg>';
+    const ICON_HUNT = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="6.8" cy="6.8" r="4.3"/><path d="M13 13l-3.5-3.5" stroke-linecap="round"/></svg>';
+    const ICON_EXPLAIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.8a4 4 0 0 0-2.3 7.3c.5.4.8 1 .8 1.6v.3h3v-.3c0-.6.3-1.2.8-1.6A4 4 0 0 0 8 1.8z" stroke-linejoin="round"/><path d="M6.3 13.2h3.4M6.7 14.5h2.6" stroke-linecap="round"/></svg>';
+    const ICON_CHAIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M6 6.2 7.6 4.6a2.3 2.3 0 0 1 3.3 3.3L9.3 9.5"/><path d="M10 9.8 8.4 11.4a2.3 2.3 0 0 1-3.3-3.3l1.6-1.6"/><path d="M6.5 9.5l3-3"/></svg>';
 
     function commentChip(type, id) {
       const list = commentsByTarget.get(targetKey(type, id)) || [];
@@ -6677,11 +6697,11 @@
     let huntLabel = "";        // label of the entity whose hunt modal is open (used as the hunt description)
     function huntChip(kind, id) {
       return `<button class="hunt-add" data-hk="${escAttr(kind)}" data-hi="${escAttr(String(id))}" `
-        + `title="Generate hunt / pivot queries (Velociraptor, Defender KQL, Elastic ES|QL, Splunk, Sigma, YARA, Suricata)">🔍</button>`;
+        + `title="Generate hunt / pivot queries (Velociraptor, Defender KQL, Elastic ES|QL, Splunk, Sigma, YARA, Suricata)">${ICON_HUNT}</button>`;
     }
     // Explain button for forensic events (#141): one AI call per click, no state change.
     function explainChip(id) {
-      return `<button class="explain-btn" data-exid="${escAttr(String(id))}" title="Explain this event in context (AI) — what happened, why it matters, ATT&amp;CK mapping, pivot queries">💡</button>`;
+      return `<button class="explain-btn" data-exid="${escAttr(String(id))}" title="Explain this event in context (AI) — what happened, why it matters, ATT&amp;CK mapping, pivot queries">${ICON_EXPLAIN}</button>`;
     }
     // Indicator harvesting for EVENT hunts. Events often carry indicators only in free text — a
     // Suricata/Zeek alert puts the domain + IPs in its description, not in structured fields — so a
@@ -9446,7 +9466,7 @@
     }
     // Chip that opens the chain panel for one IOC (mirrors explainChip's button shape).
     function iocChainChip(iocId) {
-      return `<button class="ioc-chain-btn" data-iocchain="${escAttr(String(iocId))}" title="Show provenance chain — extraction event(s), enrichment lookups, and citing findings">🔗</button>`;
+      return `<button class="ioc-chain-btn" data-iocchain="${escAttr(String(iocId))}" title="Show provenance chain — extraction event(s), enrichment lookups, and citing findings">${ICON_CHAIN}</button>`;
     }
     // Renders the pre-fetched chain for one IOC into the panel. Read-only, no AI, no extra request.
     function openIocChainPanel(caseId, iocId) {
@@ -11713,7 +11733,7 @@
         : `${visible.length} of ${iocs.length} IOC${iocs.length !== 1 ? "s" : ""} shown`;
       const headerRow = `<div class="ioc-header-row">`
         + `<input type="checkbox" class="ioc-cb" id="iocSelectAll" ${allSel ? "checked" : ""} title="Select / deselect all visible IOCs" />`
-        + ` <span>${countLabel}</span>`
+        + `<span>Type</span><span>${countLabel}</span><span></span>`
         + `</div>`;
       const rows = visible.map(i => {
         const isNew = newIocKeys.has(i.value);
@@ -11727,14 +11747,17 @@
         const fpAction = isFp
           ? `<button class="unfp-btn" data-id="ioc:${escAttr(String(i.value).trim().toLowerCase())}" title="Un-mark false positive">un-mark</button>`
           : fpBtn("ioc", i.value);
+        const enrichHtml = enrichBadges(i);
+        const tagsHtml = tagPills("ioc", i.id);
         return `<div class="ioc-row${isSel ? " ioc-selected" : ""}${isNew ? " ioc-new" : ""}" data-iocid="${escAttr(i.id)}">`
           + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
-          + `<span class="ioc-body">`
-          // Mirror the forensic timeline: control cluster (comment + tag-add + hunt icons),
-          // then the id, then the tag PILLS, then the indicator itself.
-          +   `${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)}${newBadge} `
-          +   `<span style="color:var(--c-6aa9ff)">${esc(i.id)}</span> ${tagPills("ioc", i.id)} <span style="color:var(--c-9aa4b2)">${esc(i.type)}:</span> <span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)} ${fpAction}${enrichBadges(i)} ${iocChainChip(i.id)}`
+          + `<span class="ioc-type-cell" title="${escAttr(i.id)}">${esc(i.type)}</span>`
+          + `<span class="ioc-main-cell">`
+          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${newBadge}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}</span>`
+          +   (enrichHtml ? `<span class="ioc-enrich-line">${enrichHtml}</span>` : "")
+          +   (tagsHtml ? `<span class="ioc-tagline">${tagsHtml}</span>` : "")
           + `</span>`
+          + `<span class="ioc-actions-cell">${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)} ${iocChainChip(i.id)} ${fpAction}</span>`
           + `</div>`;
       }).join("");
       el.innerHTML = headerRow + rows;
