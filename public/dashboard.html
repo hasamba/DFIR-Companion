@@ -11453,6 +11453,21 @@
     function fpIocValueSet() {
       return new Set(fpMarkers.filter(m => m.kind === "ioc").map(m => String(m.ref).trim().toLowerCase()));
     }
+    // Finding TITLES the client confirmed as a false positive — findings are marked by title, not id
+    // (see fpBtn("finding", f.title) and buildFalsePositiveMarker on the server). Hidden from the
+    // Findings panel the instant the mark succeeds, rather than waiting for the background AI
+    // re-synthesis to actually drop it from state (which can take many seconds) — see
+    // isFindingFalsePositive below, used where `sorted` is built.
+    function fpFindingTitleSet() {
+      return new Set(fpMarkers.filter(m => m.kind === "finding").map(m => String(m.ref).trim().toLowerCase()));
+    }
+    // Same substring match the server's applyFalsePositive uses (companion/src/analysis/falsePositive.ts)
+    // so a finding hides here under EXACTLY the conditions it will actually be dropped server-side.
+    function isFindingFalsePositive(title, fpTitles) {
+      const t = String(title || "").trim().toLowerCase();
+      for (const ref of fpTitles) if (t === ref || t.includes(ref) || ref.includes(t)) return true;
+      return false;
+    }
 
     function loadFalsePositives(caseId) {
       fetch(`/cases/${caseId}/false-positive`).then(r => r.json()).then(renderFalsePositives).catch(() => {});
@@ -12300,7 +12315,13 @@
         ? `<div style='margin-top:8px;color:var(--c-6bcb77)'>Closed (${closedThreads.length}):</div>` +
           closedThreads.map(t => `<div style='color:var(--c-9aa4b2);text-decoration:line-through'>✓ <span style="color:var(--c-6aa9ff)">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("")
         : "";
-      const sorted = [...state.findings].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
+      // Drop findings just confirmed false-positive immediately, client-side — don't wait for the
+      // background AI re-synthesis (which can take many seconds) to actually remove them from state.
+      const fpFindingTitles = fpFindingTitleSet();
+      const notFp = fpFindingTitles.size
+        ? (state.findings || []).filter(f => !isFindingFalsePositive(f.title, fpFindingTitles))
+        : (state.findings || []);
+      const sorted = [...notFp].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
       const minConf = parseInt(document.getElementById("confFilter").value, 10) || 0;
       // Corroboration lens (#35): a finding's sources are the union of its supporting events' tools.
       const _findingCorrob = (f) => {

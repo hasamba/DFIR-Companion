@@ -233,7 +233,10 @@ export function mergeDelta(
   // Key questions are a holistic reassessment — replace wholesale when synthesis
   // provides them; otherwise keep the existing set (per-window deltas omit them).
   const keyQuestions = delta.keyQuestions !== undefined
-    ? delta.keyQuestions.map((q) => ({ id: q.id, question: q.question, status: q.status, answer: q.answer, pointer: q.pointer }))
+    ? delta.keyQuestions.map((q) => ({
+        id: q.id, question: q.question, status: q.status, answer: q.answer, pointer: q.pointer,
+        ...(q.relatedFindingIds?.length ? { relatedFindingIds: q.relatedFindingIds } : {}),
+      }))
     : state.keyQuestions;
 
   // Next steps are likewise a holistic recommendation — replaced wholesale by

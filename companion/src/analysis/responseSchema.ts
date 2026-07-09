@@ -75,6 +75,8 @@ export const deltaSchema = z.object({
     status: z.enum(["answered", "partial", "unknown"]).default("unknown").catch("unknown"),
     answer: z.string().default(""),
     pointer: z.string().default(""),
+    // Finding ids this answer is based on — lets a later false-positive mark force a re-answer.
+    relatedFindingIds: z.array(z.string()).default([]).catch([]),
   })).optional(),
   // Prioritized recommendations for the most valuable next investigative actions.
   nextSteps: z.array(z.object({
