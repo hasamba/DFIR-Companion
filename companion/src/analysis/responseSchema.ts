@@ -24,6 +24,9 @@ export const deltaSchema = z.object({
     id: z.string().min(1),
     type: iocType.catch("other"),
     value: z.string().min(1),
+    // Authoritative source-event links (set by the deterministic importers via pipeline.ts, never
+    // by AI synthesis). Optional — absent for every existing caller.
+    extractedFrom: z.array(z.string()).optional(),
   })),
   mitreTechniques: z.array(z.object({
     id: z.string().min(1),

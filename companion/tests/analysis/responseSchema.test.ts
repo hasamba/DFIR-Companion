@@ -61,3 +61,23 @@ describe("deltaSchema", () => {
     expect(delta.findings[0].confidenceReason).toBeUndefined();
   });
 });
+
+describe("deltaSchema — iocs.extractedFrom", () => {
+  const base = {
+    findings: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+    timelineNote: "", summary: "", forensicEvents: [],
+  };
+
+  it("accepts an ioc with extractedFrom", () => {
+    const parsed = deltaSchema.parse({
+      ...base,
+      iocs: [{ id: "i1", type: "domain", value: "evil.example.com", extractedFrom: ["e001", "e002"] }],
+    });
+    expect(parsed.iocs[0].extractedFrom).toEqual(["e001", "e002"]);
+  });
+
+  it("accepts an ioc without extractedFrom (existing AI-synthesis shape)", () => {
+    const parsed = deltaSchema.parse({ ...base, iocs: [{ id: "i1", type: "ip", value: "1.2.3.4" }] });
+    expect(parsed.iocs[0].extractedFrom).toBeUndefined();
+  });
+});
