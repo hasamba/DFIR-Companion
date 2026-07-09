@@ -1008,6 +1008,53 @@
       color: var(--c-9aa4b2); border: 1px solid var(--c-2a2f3a); border-radius: 4px; cursor: pointer;
     }
     .unfp-btn:hover { color: var(--c-6bcb77); border-color: var(--c-6bcb77); }
+    /* False Positives panel — one row per marker, consistent with the Findings/IOCs card style
+       instead of a bare styled div. */
+    .fp-marker-row {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border: 1px solid var(--c-2a2f3a);
+      border-radius: 6px; background: var(--c-11151c); padding: 6px 10px; margin-bottom: 5px;
+    }
+    .fp-marker-kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--c-9aa4b2); flex-shrink: 0; width: 52px; }
+    .fp-marker-ref { text-decoration: line-through; color: var(--c-cbd3df); flex: 1; min-width: 120px; }
+    .fp-marker-reason { font-size: 10.5px; border: 1px solid var(--c-2a2f3a); border-radius: 4px; padding: 1px 6px; color: var(--c-9aa4b2); }
+    .fp-marker-note { color: var(--c-6b7686); font-size: 12px; }
+    /* Next Steps / Key Questions — bordered card rows, same visual language as Findings/IOCs but
+       their own class (not .finding, which is now a dense-table grid with fixed columns). */
+    .step-row {
+      border: 1px solid var(--c-2a2f3a); border-left: 3px solid var(--step-color, var(--c-2a2f3a));
+      border-radius: 6px; background: var(--c-11151c); padding: 7px 10px; margin-bottom: 6px; font-size: 13px;
+    }
+    .step-row .step-priority { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; color: var(--step-color, var(--c-9aa4b2)); }
+    .step-row .step-rationale, .step-row .step-pointer { display: block; margin-top: 3px; font-size: 12px; color: var(--c-9aa4b2); }
+    .step-row .step-pointer { color: var(--c-6aa9ff); }
+    .qrow { border: 1px solid var(--c-2a2f3a); border-radius: 6px; background: var(--c-11151c); padding: 7px 10px; margin-bottom: 6px; }
+    .qrow .q-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+    .qrow .q-answer, .qrow .q-pointer { display: block; margin-top: 3px; font-size: 12px; color: var(--c-9aa4b2); }
+    .qrow .q-pointer { color: var(--c-6aa9ff); }
+    .q-status { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+    .q-status-answered { color: var(--c-6bcb77); }
+    .q-status-partial { color: var(--c-e0b84a); }
+    .q-status-unknown { color: var(--c-9aa4b2); }
+    .icon-pinned { color: var(--c-ffd93b); display: inline-flex; }
+    .icon-pinned svg { width: 11px; height: 11px; vertical-align: -1px; }
+    /* Investigation Threads — small status dot instead of a bare "•"/"✓" text prefix. */
+    .thread-row { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; font-size: 13px; }
+    .thread-row-closed { color: var(--c-9aa4b2); text-decoration: line-through; }
+    .thread-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .thread-dot-open { background: var(--c-6aa9ff); }
+    .thread-dot-closed { background: var(--c-6bcb77); }
+    .thread-id { color: var(--c-6aa9ff); }
+    .thread-row-closed .thread-id { color: var(--c-9aa4b2); }
+    /* Investigation Log + MITRE list — hairline-separated rows instead of a bare "•" bullet list. */
+    .log-row, .mitre-row {
+      display: flex; align-items: baseline; gap: 10px; padding: 4px 0; border-top: 1px solid var(--c-1c2230); font-size: 12.5px;
+    }
+    .log-row:first-child, .mitre-row:first-child { border-top: none; }
+    .log-time { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--c-5b6472); flex-shrink: 0; white-space: nowrap; }
+    .mitre-findings { color: var(--c-9aa4b2); }
+    /* Generic bordered box for one-off free-flowing AI output (Ask-the-Case answer, Executive
+       Summary draft) — same card look as Findings/IOCs without the grid-column constraints. */
+    .info-card { border: 1px solid var(--c-2a2f3a); border-radius: 6px; background: var(--c-11151c); padding: 8px 10px; margin-bottom: 6px; }
 
     /* Inline IOC quick-actions (#221). A detected value inside an event description / an IOC value
        becomes a clickable target; clicking it opens the floating action tray anchored below it. */
@@ -7815,7 +7862,7 @@
         .then(d => {
           msg.textContent = "";
           const text = d.summary || "(no summary returned)";
-          out.innerHTML = `<div class="finding" style="border-left-color:var(--c-6aa9ff);margin-top:8px">`
+          out.innerHTML = `<div class="info-card" style="border-left:3px solid var(--c-6aa9ff);margin-top:8px">`
             + `<div style="white-space:pre-wrap">${esc(text)}</div>`
             + `<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">`
             + `<button id="execSaveBtn">Save to report's Executive Summary</button>`
@@ -8382,7 +8429,7 @@
         .then(a => {
           const events = citeEvents(a.relatedEventIds);
           box.innerHTML =
-            `<div class="finding">` +
+            `<div class="info-card">` +
             `<div>${askStatusBadge(a.status)} <strong>${esc(q)}</strong></div>` +
             `<div style="margin:6px 0">${esc(a.answer || "(no answer)")}</div>` +
             (a.pointer ? `<div style="color:var(--c-6aa9ff)"><small>→ where to look: ${esc(a.pointer)}</small></div>` : "") +
@@ -11568,10 +11615,11 @@
       el.innerHTML = (visible.length)
         ? visible.map(m => {
             const shown = (m.kind === "event" && m.label) ? m.label : m.ref;
-            return `<div style="margin-bottom:4px"><span style="color:var(--c-9aa4b2)">${esc(m.kind)}:</span> ` +
-              `<span style="text-decoration:line-through">${esc(shown)}</span>` +
-              `${m.reason ? ` <span style="border:1px solid var(--c-2a2f3a);border-radius:3px;padding:0 4px;font-size:11px;color:var(--c-9aa4b2)">${esc(m.reason)}</span>` : ""}` +
-              `${m.note ? ` — <small>${esc(m.note)}</small>` : ""} ` +
+            return `<div class="fp-marker-row">` +
+              `<span class="fp-marker-kind">${esc(m.kind)}</span>` +
+              `<span class="fp-marker-ref">${esc(shown)}</span>` +
+              (m.reason ? `<span class="fp-marker-reason">${esc(m.reason)}</span>` : "") +
+              (m.note ? `<span class="fp-marker-note">${esc(m.note)}</span>` : "") +
               `<button class="unfp-btn" data-id="${escAttr(m.id)}">un-mark</button></div>`;
           }).join("")
         : (fpMarkers.length
@@ -12416,21 +12464,27 @@
       document.getElementById("nextSteps").innerHTML = ns.length
         ? ns.map(s => {
             const color = PRIO[s.priority] || "#9aa4b2";
-            return `<div class="finding" style="border-left-color:${color}">` +
-              `<strong style="color:${color}">[${esc(String(s.priority || "").toUpperCase())}]</strong> ${esc(s.action)}` +
-              `${s.rationale ? `<br><small>${esc(s.rationale)}</small>` : ""}` +
-              `${s.pointer ? `<br><small style="color:var(--c-6aa9ff)">→ ${esc(s.pointer)}</small>` : ""}</div>`;
+            return `<div class="step-row" style="--step-color:${color}">` +
+              `<span class="step-priority">${esc(String(s.priority || "").toUpperCase())}</span> ${esc(s.action)}` +
+              (s.rationale ? `<span class="step-rationale">${esc(s.rationale)}</span>` : "") +
+              (s.pointer ? `<span class="step-pointer">→ ${esc(s.pointer)}</span>` : "") +
+              `</div>`;
           }).join("")
         : "<div style='color:var(--c-9aa4b2)'>Not assessed yet — run Synthesize.</div>";
 
-      const QMARK = { answered: "✅", partial: "🟡", unknown: "❓" };
+      const QSTATUS = { answered: "Answered", partial: "Partial", unknown: "Unknown" };
       const kq = state.keyQuestions || [];
       document.getElementById("keyQuestions").innerHTML = kq.length
-        ? kq.map(q =>
-            `<div class="finding">${commentChip("question", q.id)} ${tagChip("question", q.id)} <strong>${q.pinned ? "📌 " : ""}${QMARK[q.status] || "❓"} ${esc(q.question)}</strong>` +
-            `<br><small>${esc(q.answer || "unknown")}</small>` +
-            `${q.pointer ? `<br><small style="color:var(--c-6aa9ff)">→ ${esc(q.pointer)}</small>` : ""}</div>`
-          ).join("")
+        ? kq.map(q => {
+            const st = QSTATUS[q.status] ? q.status : "unknown";
+            return `<div class="qrow">` +
+              `<div class="q-head">${commentChip("question", q.id)} ${tagChip("question", q.id)}` +
+              (q.pinned ? ` <span class="icon-pinned" title="Pinned">${ICON_PIN}</span>` : "") +
+              ` <span class="q-status q-status-${st}">${QSTATUS[st]}</span> <strong>${esc(q.question)}</strong></div>` +
+              `<span class="q-answer">${esc(q.answer || "unknown")}</span>` +
+              (q.pointer ? `<span class="q-pointer">→ ${esc(q.pointer)}</span>` : "") +
+              `</div>`;
+          }).join("")
         : "<div style='color:var(--c-9aa4b2)'>Not assessed yet — run Synthesize.</div>";
 
       renderIocs(state.iocs || []);
@@ -12459,10 +12513,10 @@
       const openThreads = state.openThreads.filter(t => t.status === "open");
       const closedThreads = state.openThreads.filter(t => t.status === "closed");
       document.getElementById("openThreads").innerHTML =
-        openThreads.map(t => `<div>• ${commentChip("thread", t.id)} ${tagChip("thread", t.id)} <span style="color:var(--c-6aa9ff)">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("") || "<div style='color:var(--c-9aa4b2)'>No open threads</div>";
+        openThreads.map(t => `<div class="thread-row"><span class="thread-dot thread-dot-open"></span>${commentChip("thread", t.id)} ${tagChip("thread", t.id)} <span class="thread-id">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("") || "<div style='color:var(--c-9aa4b2)'>No open threads</div>";
       document.getElementById("closedThreads").innerHTML = closedThreads.length
         ? `<div style='margin-top:8px;color:var(--c-6bcb77)'>Closed (${closedThreads.length}):</div>` +
-          closedThreads.map(t => `<div style='color:var(--c-9aa4b2);text-decoration:line-through'>✓ <span style="color:var(--c-6aa9ff)">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("")
+          closedThreads.map(t => `<div class="thread-row thread-row-closed"><span class="thread-dot thread-dot-closed"></span><span class="thread-id">${esc(t.id)}</span> ${esc(t.description)}</div>`).join("")
         : "";
       // Drop findings just confirmed false-positive immediately, client-side — don't wait for the
       // background AI re-synthesis (which can take many seconds) to actually remove them from state.
@@ -12566,9 +12620,9 @@
       }));
       _logRows.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
       document.getElementById("timeline").innerHTML =
-        _logRows.map(r => `<div>• <small>${esc(r.ts)}</small> ${r.html}</div>`).join("") || "—";
+        _logRows.map(r => `<div class="log-row"><span class="log-time">${esc(r.ts)}</span><span>${r.html}</span></div>`).join("") || "—";
       document.getElementById("mitre").innerHTML =
-        state.mitreTechniques.map(m => `<div>${mitreLinks([m.id])} — ${esc(m.name)} (${esc(m.findingIds.join(", "))})</div>`).join("") || "—";
+        state.mitreTechniques.map(m => `<div class="mitre-row">${mitreLinks([m.id])} <span>${esc(m.name)}</span><span class="mitre-findings">${esc(m.findingIds.join(", "))}</span></div>`).join("") || "—";
       renderPinned();   // pinned-strip titles resolve against the just-rendered findings (#220)
     }
 
