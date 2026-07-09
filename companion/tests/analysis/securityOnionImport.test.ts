@@ -109,3 +109,20 @@ describe("parseSecurityOnion", () => {
     expect(parseSecurityOnion("[]").events).toHaveLength(0);
   });
 });
+
+describe("parseSecurityOnion — IOC provenance", () => {
+  it("tags a domain IOC's sourceAggKeys with its row's aggKey", () => {
+    const row = {
+      "@timestamp": "2026-01-01T00:00:00Z",
+      "rule.name": "DNS query to known-bad domain",
+      "dns.query": "evil.example.com",
+      "source.ip": "10.0.0.5", "destination.ip": "10.0.0.1",
+      "host.name": "WKSTN-1",
+    };
+    const parsed = parseSecurityOnion(JSON.stringify([row]));
+    expect(parsed.events).toHaveLength(1);
+    const domainIoc = parsed.iocs.find((i) => i.type === "domain" && i.value === "evil.example.com");
+    expect(domainIoc?.sourceAggKeys).toEqual([parsed.events[0].aggKey ? parsed.events[0].aggKey : undefined].filter(Boolean));
+    expect(domainIoc?.sourceAggKeys?.length).toBe(1);
+  });
+});
