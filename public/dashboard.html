@@ -12868,6 +12868,7 @@
     function openEncryptedExport() {
       document.getElementById("eePassword").value = "";
       document.getElementById("eePasswordConfirm").value = "";
+      document.getElementById("eeRemoveFromList").checked = false;
       document.getElementById("eeMsg").textContent = "";
       document.getElementById("encryptedExportOverlay").classList.add("open");
       document.getElementById("eePassword").focus();
