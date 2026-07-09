@@ -2,6 +2,15 @@ import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 
 describe("dashboard.html", () => {
+  it("expands Host & Account Ranking rows to show contributing events + IOCs (#237)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("data-hr-key=");
+    expect(html).toContain("hostRankingExpanded");
+    expect(html).toContain("renderHostRankingDetail");
+    expect(html).toContain("hr-detail");
+    expect(html).toContain("let lastIocs");
+  });
+
   it("contains websocket wiring and the consolidated import/export controls", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain("/ws?caseId=");
@@ -108,7 +117,7 @@ describe("dashboard.html", () => {
     expect(html).toContain("function citeEvents(");
     // Citations reuse the EXISTING jump-to-event mechanism (ev-jump + data-evid), not a new one.
     expect(html).toMatch(/function citeEvents[\s\S]{0,400}class="ev-jump/);
-    expect(html).toContain("Cited events:");
+    expect(html).toContain("Cited events");
     // Findings prefer their own relatedEventIds, falling back to the events that back-link to them
     // (older findings persisted before this field existed).
     expect(html).toMatch(/f\.relatedEventIds[\s\S]{0,200}suppEventsByFinding\[f\.id\]/);

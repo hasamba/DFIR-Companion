@@ -32,6 +32,7 @@ import {
   parseHashes,
   cleanIp,
   addIoc,
+  mergeRowIocs,
   firstStr,
   baseName,
   oneLine,
@@ -1071,19 +1072,20 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     const host = pickHost(row) || fallbackHost; // a row's own host always wins; fallback only fills the gap
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
 
+    const rowSink = new Map<string, SiemIoc>();
     const kind = classify(row, artifact);
     let m: MappedEvent | null;
-    if (kind === "yara") { m = mapYara(row, artifact, host, iocSink); detections++; }
-    else if (kind === "sigma") { m = mapSigma(row, host, iocSink); detections++; }
-    else if (kind === "chainsaw") { m = mapFlatChainsawRow(row, host, iocSink); detections++; }
-    else if (kind === "detection") { m = mapDetection(row, artifact, host, iocSink); detections++; }
-    else if (kind === "eventlog") { m = mapEventlog(row, host, iocSink) ?? mapGeneric(row, artifact, host, iocSink); }
-    else if (kind === "pslist") { m = mapPslist(row, host, iocSink); }
-    else if (kind === "netstat") { m = mapNetstat(row, host, iocSink); }
-    else if (kind === "download") { m = mapDownload(row, host, iocSink); }
-    else if (kind === "startup") { m = mapStartup(row, host, iocSink); }
-    else if (kind === "taskscheduler") { m = mapTaskScheduler(row, host, iocSink); }
-    else { m = mapGeneric(row, artifact, host, iocSink); }
+    if (kind === "yara") { m = mapYara(row, artifact, host, rowSink); detections++; }
+    else if (kind === "sigma") { m = mapSigma(row, host, rowSink); detections++; }
+    else if (kind === "chainsaw") { m = mapFlatChainsawRow(row, host, rowSink); detections++; }
+    else if (kind === "detection") { m = mapDetection(row, artifact, host, rowSink); detections++; }
+    else if (kind === "eventlog") { m = mapEventlog(row, host, rowSink) ?? mapGeneric(row, artifact, host, rowSink); }
+    else if (kind === "pslist") { m = mapPslist(row, host, rowSink); }
+    else if (kind === "netstat") { m = mapNetstat(row, host, rowSink); }
+    else if (kind === "download") { m = mapDownload(row, host, rowSink); }
+    else if (kind === "startup") { m = mapStartup(row, host, rowSink); }
+    else if (kind === "taskscheduler") { m = mapTaskScheduler(row, host, rowSink); }
+    else { m = mapGeneric(row, artifact, host, rowSink); }
     if (m) {
       // Stamp the produced event with the VQL artifact that emitted it. Done once here (rather than in
       // each map* function) because `artifact` is already resolved in this dispatch loop and every
@@ -1117,6 +1119,7 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
       // repeats (differing only in volatile ids) still merge. See msgFingerprint.
       const fp = msgFingerprint(rowMessage(row));
       if (fp) m.aggKey = `${m.aggKey}|m:${fp}`.slice(0, 440);
+      mergeRowIocs(iocSink, rowSink, m.aggKey);
       mapped.push(m);
     }
   }
