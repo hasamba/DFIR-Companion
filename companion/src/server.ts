@@ -146,7 +146,7 @@ import {
   selectReadyFiles, classifyDropFile, rawToolInputExt, RAW_TOOL_EXTS, shouldIgnoreDropFile, isOversize,
   DROP_PROCESSED, DROP_FAILED, DROP_README, type DropFileStat,
 } from "./analysis/dropScan.js";
-import { formatDropLogLines, appendDropLog, buildSweepLogEntries } from "./analysis/dropLog.js";
+import { formatDropLogLines, appendDropLog, buildSweepLogEntries, type DropLogEntry } from "./analysis/dropLog.js";
 import {
   loadAllToolConfigs, toolForExtension, suggestedToolForExtension, TOOL_DEFS, type ToolId, type ToolConfig,
 } from "./integrations/tools/toolConfig.js";
@@ -2605,25 +2605,33 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (options.stateStore) { try { before = await options.stateStore.load(caseId); } catch { /* keep null */ } }
     let ran = 0, failed = 0, skipped = 0;
     const stillPending: PendingRawInput[] = [];
+    const resolvedEntries: DropLogEntry[] = [];
     for (const p of pending) {
       const toolId = resolveToolForExt(p.ext, configured);
       if (!toolId) { skipped++; stillPending.push({ ...p, configured: false, suggestedTool: suggestedToolForExtension(p.ext) }); continue; }
       try {
         await runToolAndIngest(caseId, toolId, join(dropDir, p.relpath));
         await moveDropFile(dropDir, p.relpath, true).catch(() => { /* best-effort */ });
+        resolvedEntries.push({ status: "IMPORTED", relpath: p.relpath, reason: `via ${toolId} (tool run)` });
         ran++;
       } catch (err) {
         failed++;
         recordImportFailure(caseId, "drop-tool", p.relpath, err);
+        resolvedEntries.push({ status: "FAILED", relpath: p.relpath, reason: (err as Error)?.message ?? String(err) });
         await moveDropFile(dropDir, p.relpath, false).catch(() => { /* best-effort */ });
       }
       dropSeen.get(caseId)?.delete(p.relpath);   // moved out of the watched area — forget it
+      dropPendingLogged.get(caseId)?.delete(p.relpath); // resolved — no longer pending
     }
     if (before && ran > 0) {
       const s = await options.stateStore?.load(caseId).catch(() => null);
       if (!s || s.forensicTimeline.length !== before.forensicTimeline.length || s.iocs.length !== before.iocs.length) {
         await pushImportCheckpoint(caseId, before, `Tools: drop batch (${ran} file${ran !== 1 ? "s" : ""})`);
       }
+    }
+    if (resolvedEntries.length > 0) {
+      await appendDropLog(dropDir, formatDropLogLines(resolvedEntries, new Date().toISOString()))
+        .catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
     }
     await options.dropStatusStore.record(caseId, { dropPath: dropDir, imported: [], failed: [], pendingRawInputs: stillPending });
     options.onDropStatus?.(caseId);
