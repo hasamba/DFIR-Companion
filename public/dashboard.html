@@ -12830,6 +12830,40 @@
       }
     }
 
+    // ── ZIP case archive (unencrypted, "(no password)" in the filename) ─────
+    function openZipArchive() {
+      document.getElementById("zaRemoveFromList").checked = false;
+      document.getElementById("zaMsg").textContent = "";
+      document.getElementById("zipArchiveOverlay").classList.add("open");
+    }
+    function closeZipArchive() { document.getElementById("zipArchiveOverlay").classList.remove("open"); }
+    async function doZipArchive() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("zaMsg");
+      if (!caseId) { msg.textContent = "no case loaded"; return; }
+      const removeFromList = document.getElementById("zaRemoveFromList").checked;
+      const btn = document.getElementById("zaArchive");
+      btn.disabled = true;
+      msg.textContent = "archiving… (may take a while for large cases)";
+      try {
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/archive`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ removeFromList }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || ("HTTP " + res.status));
+        closeZipArchive();
+        loadCaseLifecycle(caseId);
+        loadCaseList();
+        document.getElementById("status").textContent = removeFromList
+          ? "case archived to ZIP and removed from the active list"
+          : "case archived to ZIP";
+      } catch (err) {
+        msg.textContent = "archive failed: " + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     // ── Encrypted case archive export (replaces #56's JSON snapshot) ─────────
     function openEncryptedExport() {
       document.getElementById("eePassword").value = "";
@@ -12847,12 +12881,13 @@
       const confirmPassword = document.getElementById("eePasswordConfirm").value;
       if (password.length < 8) { msg.textContent = "password must be at least 8 characters"; return; }
       if (password !== confirmPassword) { msg.textContent = "passwords do not match"; return; }
+      const removeFromList = document.getElementById("eeRemoveFromList").checked;
       const btn = document.getElementById("eeDownload");
       btn.disabled = true;
       msg.textContent = "building… (may take a while for large cases)";
       try {
         const res = await fetch(`/cases/${encodeURIComponent(caseId)}/export/encrypted`, {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }),
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password, removeFromList }),
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -12872,7 +12907,12 @@
         a.remove();
         URL.revokeObjectURL(url);
         closeEncryptedExport();
-        document.getElementById("status").textContent = "encrypted case archive downloaded";
+        const wasRemoved = res.headers.get("x-case-removed-from-list") === "true";
+        loadCaseLifecycle(caseId);
+        loadCaseList();
+        document.getElementById("status").textContent = wasRemoved
+          ? "encrypted case archive downloaded and removed from the active list"
+          : "encrypted case archive downloaded";
       } catch (err) {
         msg.textContent = "export failed: " + err.message;
       } finally {
@@ -13469,6 +13509,9 @@
     document.getElementById("eeDownload").onclick = doEncryptedExport;
     document.getElementById("eeCancel").onclick = closeEncryptedExport;
     document.getElementById("encryptedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "encryptedExportOverlay") closeEncryptedExport(); });
+    document.getElementById("zaArchive").onclick = doZipArchive;
+    document.getElementById("zaCancel").onclick = closeZipArchive;
+    document.getElementById("zipArchiveOverlay").addEventListener("click", (e) => { if (e.target.id === "zipArchiveOverlay") closeZipArchive(); });
     document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
 
     // ── Import case (snapshot — issue #56 — or from DFIR-IRIS — issue #88) ──────────
@@ -14032,12 +14075,6 @@
         window.location.href = `/cases/${c}/timeline.jsonl`;
       } else if (action === "timesketch-jsonl-super") {
         window.location.href = `/cases/${c}/super-timeline.jsonl`;
-      } else if (action === "encrypted") {
-        // Encrypted case archive: the WHOLE case directory (screenshots, raw evidence, all
-        // state, reports) zipped then AES-256-GCM encrypted under a password the analyst
-        // chooses. Only openable via another DFIR Companion's Import. Opens a password modal
-        // rather than a direct download link, since the password must travel in the request body.
-        openEncryptedExport();
       } else if (action === "stix") {
         // On-demand STIX 2.1 bundle (JSON) — import into any TIP (OpenCTI, MISP, Anomali…).
         window.location.href = `/cases/${c}/export/stix`;
@@ -16721,12 +16758,15 @@
       fetch("/cases")
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
         .then(cases => {
+          const showArchived = document.getElementById("showArchivedToggle")?.checked;
           const dl = document.getElementById("caseList");
           dl.innerHTML = "";
           for (const c of cases) {
+            if (c.status === "archived" && !showArchived) continue;
             const o = document.createElement("option");
             o.value = c.caseId;
-            if (c.name && c.name !== c.caseId) o.label = c.name; // shown as a hint beside the id
+            const label = c.name && c.name !== c.caseId ? c.name : "";
+            o.label = c.status === "archived" ? `[Archived] ${label || c.caseId}` : label; // shown as a hint beside the id
             dl.appendChild(o);
           }
           // The "Demo case" button is an onboarding affordance — show it only on an empty instance.
@@ -16735,6 +16775,7 @@
         })
         .catch(() => {});
     }
+    document.getElementById("showArchivedToggle")?.addEventListener("change", loadCaseList);
 
     // ── Disk-space warning (#119) ───────────────────────────────────────────
     // Poll GET /disk-stats once on load. Shows a banner when the cases-root
@@ -16831,16 +16872,26 @@
         .then(cases => {
           const meta = cases.find(c => c.caseId === caseId);
           const isClosed = meta && meta.status === "closed";
+          const isArchived = meta && meta.status === "archived";
           const btn    = document.getElementById("lifecycleBtn");
           const closeBtn = document.getElementById("closeBtn");
           const reopenBtn = document.getElementById("reopenBtn");
+          const archiveZipBtn = document.getElementById("archiveZipBtn");
+          const archiveEncryptedBtn = document.getElementById("archiveEncryptedBtn");
+          const restoreCaseBtn = document.getElementById("restoreCaseBtn");
           if (btn) {
             btn.style.display = caseId ? "inline-flex" : "none";
             btn.classList.toggle("lc-closed", isClosed);
-            btn.title = isClosed ? "Case CLOSED — click to reopen or archive" : "Case ACTIVE — click to close or archive";
+            btn.classList.toggle("lc-archived", isArchived);
+            btn.title = isArchived ? "Case ARCHIVED — click to restore"
+              : isClosed ? "Case CLOSED — click to reopen or archive" : "Case ACTIVE — click to close or archive";
           }
-          if (closeBtn) closeBtn.style.display = isClosed ? "none" : "block";
-          if (reopenBtn) reopenBtn.style.display = isClosed ? "block" : "none";
+          // Archived cases can only be restored — close/reopen/archive don't apply until then.
+          if (closeBtn) closeBtn.style.display = (!isArchived && !isClosed) ? "block" : "none";
+          if (reopenBtn) reopenBtn.style.display = (!isArchived && isClosed) ? "block" : "none";
+          if (archiveZipBtn) archiveZipBtn.style.display = isArchived ? "none" : "block";
+          if (archiveEncryptedBtn) archiveEncryptedBtn.style.display = isArchived ? "none" : "block";
+          if (restoreCaseBtn) restoreCaseBtn.style.display = isArchived ? "block" : "none";
         })
         .catch(() => {});
     }
@@ -16850,7 +16901,9 @@
       const menu = document.getElementById("lifecycleMenu");
       const closeBtn = document.getElementById("closeBtn");
       const reopenBtn = document.getElementById("reopenBtn");
-      const archiveBtn = document.getElementById("archiveBtn");
+      const archiveZipBtn = document.getElementById("archiveZipBtn");
+      const archiveEncryptedBtn = document.getElementById("archiveEncryptedBtn");
+      const restoreCaseBtn = document.getElementById("restoreCaseBtn");
       if (!btn || !menu) return;
 
       // Toggle menu on button click — position fixed relative to button so it works
@@ -16867,7 +16920,7 @@
       // Close menu when clicking outside
       document.addEventListener("click", () => { menu.style.display = "none"; });
 
-      // Close case
+      // Close case, then nudge toward archiving it now as an encrypted .dfircase.
       closeBtn.addEventListener("click", async () => {
         menu.style.display = "none";
         const caseId = document.getElementById("caseId").value.trim();
@@ -16885,6 +16938,9 @@
           }
           loadCaseLifecycle(caseId);
           loadCaseList();
+          if (confirm(`Case "${esc(caseId)}" closed. Archive it now as an encrypted .dfircase?`)) {
+            openEncryptedExport();
+          }
         } catch (e) {
           alert("Error: " + e.message);
         }
@@ -16913,28 +16969,36 @@
         }
       });
 
-      // Archive case
-      archiveBtn.addEventListener("click", async () => {
+      // Archive to ZIP — opens the ZIP archive dialog (with the removal checkbox) instead
+      // of archiving immediately.
+      archiveZipBtn.addEventListener("click", () => {
+        menu.style.display = "none";
+        openZipArchive();
+      });
+
+      // Archive (encrypted) — reuses the encrypted export dialog (with the removal checkbox).
+      archiveEncryptedBtn.addEventListener("click", () => {
+        menu.style.display = "none";
+        openEncryptedExport();
+      });
+
+      // Restore an archived case back to the active list (status becomes "closed").
+      restoreCaseBtn.addEventListener("click", async () => {
         menu.style.display = "none";
         const caseId = document.getElementById("caseId").value.trim();
         if (!caseId) return;
-        const meta = await fetch("/cases").then(r => r.json()).catch(() => []);
-        const c = meta.find(m => m.caseId === caseId);
-        if (c && c.status !== "closed") {
-          if (!confirm("The case is currently open. It is recommended to close it first before archiving. Archive anyway?")) return;
-        } else {
-          if (!confirm(`Archive case "${esc(caseId)}" to a ZIP file? This may take a moment for large cases. The original folder is kept.`)) return;
-        }
         try {
-          const r = await fetch(`/cases/${caseId}/archive`, { method: "POST" });
+          const r = await fetch(`/cases/${caseId}/restore`, { method: "POST" });
           const body = await r.json().catch(() => ({}));
           if (!r.ok) {
-            alert("Archive failed: " + (body.error || "HTTP " + r.status));
+            alert("Restore failed: " + (body.error || "HTTP " + r.status));
             return;
           }
-          alert(`Case archived successfully.\nPath: ${body.archivePath}\nFiles: ${body.manifest.totalFiles}\nBytes: ${body.manifest.totalBytes.toLocaleString()}`);
+          loadCaseLifecycle(caseId);
+          loadCaseList();
+          document.getElementById("status").textContent = `case "${caseId}" restored (now closed)`;
         } catch (e) {
-          alert("Archive error: " + e.message);
+          alert("Restore error: " + e.message);
         }
       });
     })();
