@@ -749,3 +749,57 @@ describe("AnalysisPipeline", () => {
     expect(state.forensicTimeline).toHaveLength(0);
   });
 });
+
+// Authoritative IOC->event linkage (issue: IOC/artifact traceability). importSiem /
+// importSecurityOnion / importCombinedLog / importNetwork / importVelociraptor each tag every
+// IOC they extract with the aggKey(s) of the row(s) it came from; the pipeline resolves those
+// aggKeys against the final case-scoped event ids (assigned only once severity filtering has
+// happened) and stamps IOC.extractedFrom, giving each IOC an authoritative link back to its
+// source forensic event instead of relying on iocProvenanceChain's approximate matcher.
+describe("pipeline import — IOC extractedFrom", () => {
+  it("importSiem stamps extractedFrom with the final case-scoped event id", async () => {
+    const pipeline = new AnalysisPipeline({
+      stateStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    // A Sysmon Event ID 1 (process creation) record — deterministically maps to one forensic
+    // event carrying a SHA256 hash IOC.
+    const sysmonProc = {
+      "@timestamp": "2026-07-06T09:46:58.001Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WKSTN-1.corp.local",
+      event_id: 1, level: "Information",
+      event_data: {
+        UtcTime: "2026-07-06 09:46:58.000", Image: "C:\\Windows\\System32\\taskeng.exe",
+        CommandLine: "taskeng.exe {GUID}", ParentImage: "C:\\Windows\\System32\\svchost.exe",
+        ParentCommandLine: "svchost.exe -k netsvcs", User: "NT AUTHORITY\\SYSTEM",
+        Hashes: "SHA256=425A1A21A4DBC212C3C3DB5F8FECDD6235E7E7FE2FCFCE3AFFE3F9F80AA24A92",
+      },
+    };
+    const state = await pipeline.importSiem("c1", JSON.stringify([sysmonProc]), {
+      label: "evtx.json", idPrefix: "s1", importedAt: "2026-07-06T00:00:00Z",
+    });
+
+    const hashIoc = state.iocs.find((i) => i.type === "hash");
+    expect(hashIoc?.extractedFrom).toEqual(["s1e1"]);
+    expect(state.forensicTimeline.map((e) => e.id)).toContain("s1e1");
+  });
+
+  it("importSecurityOnion stamps extractedFrom for a domain IOC", async () => {
+    const pipeline = new AnalysisPipeline({
+      stateStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    const row = {
+      "@timestamp": "2026-07-06T00:00:00Z", "rule.name": "DNS to known-bad domain",
+      "event.severity_label": "high",
+      "dns.query": "evil.example.com", "source.ip": "10.0.0.5", "destination.ip": "10.0.0.1",
+      "host.name": "WKSTN-1",
+    };
+    const state = await pipeline.importSecurityOnion("c1", JSON.stringify([row]), {
+      label: "so.json", idPrefix: "so1", importedAt: "2026-07-06T00:00:00Z",
+    });
+
+    const domainIoc = state.iocs.find((i) => i.value === "evil.example.com");
+    expect(domainIoc?.extractedFrom).toEqual(["so1e1"]);
+  });
+});

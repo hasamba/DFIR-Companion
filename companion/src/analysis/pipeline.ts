@@ -69,7 +69,7 @@ import { parseCsv, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
-import { parseSiemExport, type SiemImportOptions } from "./siemImport.js";
+import { parseSiemExport, resolveExtractedFrom, type SiemImportOptions } from "./siemImport.js";
 import { parseEvtxXml } from "./evtxXmlImport.js";
 import { parseShellHistoryFile, userFromHistoryFilename } from "./bashHistoryImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
@@ -1715,13 +1715,21 @@ export class AnalysisPipeline {
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const source = detectTool(opts.label) ?? detectTool(parsed.format) ?? "SIEM import";
+    const eventIdByAggKey = new Map<string, string>();
+    const forensicEvents = parsed.events.map((e, i) => {
+      const { aggKey, ...rest } = e;
+      const id = `${opts.idPrefix}e${i + 1}`;
+      if (aggKey) eventIdByAggKey.set(aggKey, id);
+      return { ...rest, id, sources: rest.sources?.length ? rest.sources : [source] };
+    });
     const raw = {
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [source],
+      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
+        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
       })),
+      mitreTechniques: [],
+      forensicEvents,
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `SIEM import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
@@ -2044,14 +2052,24 @@ export class AnalysisPipeline {
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
+    const eventIdByAggKey = new Map<string, string>();
+    const forensicEvents = parsed.events.map((e, i) => {
+      const { aggKey, ...rest } = e;
+      const id = `${opts.idPrefix}e${i + 1}`;
+      if (aggKey) eventIdByAggKey.set(aggKey, id);
+      return {
+        ...rest, id, sources: rest.sources?.length ? rest.sources : ["Velociraptor"],
+        ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
+      };
+    });
     const raw = {
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Velociraptor"],
-        ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
+      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
+        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
       })),
+      mitreTechniques: [],
+      forensicEvents,
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Velociraptor import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
@@ -2146,13 +2164,21 @@ export class AnalysisPipeline {
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
+    const eventIdByAggKey = new Map<string, string>();
+    const forensicEvents = parsed.events.map((e, i) => {
+      const { aggKey, ...rest } = e;
+      const id = `${opts.idPrefix}e${i + 1}`;
+      if (aggKey) eventIdByAggKey.set(aggKey, id);
+      return { ...rest, id, sources: rest.sources?.length ? rest.sources : [COMBINED_LOG_SOURCE] };
+    });
     const raw = {
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [COMBINED_LOG_SOURCE],
+      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
+        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
       })),
+      mitreTechniques: [],
+      forensicEvents,
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Web/proxy access-log import (${parsed.format}): ${parsed.kept} request(s) from ${parsed.total} line(s)` +
@@ -2392,13 +2418,21 @@ export class AnalysisPipeline {
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
 
+    const eventIdByAggKey = new Map<string, string>();
+    const forensicEvents = parsed.events.map((e, i) => {
+      const { aggKey, ...rest } = e;
+      const id = `${opts.idPrefix}e${i + 1}`;
+      if (aggKey) eventIdByAggKey.set(aggKey, id);
+      return { ...rest, id, sources: rest.sources?.length ? rest.sources : ["Suricata"] };
+    });
     const raw = {
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Suricata"],
+      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
+        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
       })),
+      mitreTechniques: [],
+      forensicEvents,
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Network import (${parsed.format}): ${parsed.kept} detection event(s) from ${parsed.total} record(s)` +
@@ -2492,13 +2526,21 @@ export class AnalysisPipeline {
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
 
+    const eventIdByAggKey = new Map<string, string>();
+    const forensicEvents = parsed.events.map((e, i) => {
+      const { aggKey, ...rest } = e;
+      const id = `${opts.idPrefix}e${i + 1}`;
+      if (aggKey) eventIdByAggKey.set(aggKey, id);
+      return { ...rest, id, sources: rest.sources?.length ? rest.sources : ["Security Onion"] };
+    });
     const raw = {
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Security Onion"],
+      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
+        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
       })),
+      mitreTechniques: [],
+      forensicEvents,
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: `Security Onion import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
