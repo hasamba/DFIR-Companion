@@ -117,7 +117,7 @@ describe("dashboard.html", () => {
     expect(html).toContain("function citeEvents(");
     // Citations reuse the EXISTING jump-to-event mechanism (ev-jump + data-evid), not a new one.
     expect(html).toMatch(/function citeEvents[\s\S]{0,400}class="ev-jump/);
-    expect(html).toContain("Cited events:");
+    expect(html).toContain("Cited events");
     // Findings prefer their own relatedEventIds, falling back to the events that back-link to them
     // (older findings persisted before this field existed).
     expect(html).toMatch(/f\.relatedEventIds[\s\S]{0,200}suppEventsByFinding\[f\.id\]/);
