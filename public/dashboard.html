@@ -1175,10 +1175,15 @@
     .sec-selall button:hover { background: var(--c-353b47); color: var(--c-cbd3df); }
     .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--c-2a2f3a); padding-top: 12px; flex-shrink: 0; }
     .settings-msg { font-size: 11px; margin-left: 4px; }
-    /* Global search + time-range filter row — revealed by the toolbar search icon, hidden by default. */
-    #searchFilterBar { padding: 5px 16px; background: var(--c-0e1116); border-bottom: 1px solid var(--c-1a1f28);
+    /* Global search + time-range filter row — revealed by the toolbar search icon, hidden by default.
+       Sticky while open so it stays visible (e.g. over the Super-Timeline it also scopes) as the
+       dashboard is scrolled; [hidden] still fully removes it when the toolbar icon closes it. */
+    #searchFilterBar { position: sticky; top: 0; z-index: 20; padding: 5px 16px; background: var(--c-0e1116); border-bottom: 1px solid var(--c-1a1f28);
       display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: var(--c-9aa4b2); }
     #searchFilterBar[hidden] { display: none; }
+    #closeSearchBar { margin-left: auto; background: transparent; border: 1px solid var(--c-2a2f3a);
+      border-radius: 4px; color: var(--c-9aa4b2); cursor: pointer; padding: 2px 7px; font-size: 12px; line-height: 1.4; }
+    #closeSearchBar:hover { color: var(--c-ff7a7a); border-color: var(--c-ff7a7a); }
     /* Import progress bar — strip at the bottom edge of the header. */
     #importProgressBar {
       position: fixed; top: 0; left: 0; right: 0; height: 4px; z-index: 10000;
@@ -3138,6 +3143,7 @@
       <button id="ocrSearchClear" type="button" title="Clear" hidden>✕</button>
     </div>
     <span id="ocrSearchInfo" style="color:var(--c-9aa4b2);font-size:11px"></span>
+    <button id="closeSearchBar" type="button" title="Close filter toolbar">✕</button>
   </div>
   <!-- OCR full-text search results (#176): server-side hits across the case's screenshots. -->
   <div id="ocrSearchResults" hidden></div>
@@ -13477,6 +13483,7 @@
       toggleBtn.addEventListener("click", () => {
         setSearchBarOpen(document.getElementById("searchFilterBar").hidden);
       });
+      document.getElementById("closeSearchBar").addEventListener("click", () => setSearchBarOpen(false));
 
       // Exclude filter (#216): each Enter (or comma) adds the current input as a new term; terms are
       // OR'd — a row is hidden if it matches ANY of them. A term may contain spaces (a phrase).
