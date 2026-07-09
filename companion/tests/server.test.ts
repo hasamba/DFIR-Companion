@@ -18,6 +18,7 @@ import { PlaybookControlStore } from "../src/analysis/playbookControl.js";
 import { IocWhitelistStore } from "../src/analysis/iocWhitelistStore.js";
 import { emptyState, type InvestigationState } from "../src/analysis/stateTypes.js";
 import type { CustomerExposureProvider } from "../src/analysis/customerExposure.js";
+import { JobManager } from "../src/analysis/jobManager.js";
 
 let app: ReturnType<typeof createApp>;
 
@@ -1783,6 +1784,29 @@ describe("AI on/off control", () => {
     await request(app).post("/cases/c1/ai-control").send({ enabled: true });
     for (let i = 0; i < 80 && !phases.includes("synthesizing"); i++) await new Promise((r) => setTimeout(r, 25));
     expect(phases).toContain("synthesizing");
+  });
+
+  it("tracks AI off→on backfill synthesis as a job, not just an onAiStatus ping", async () => {
+    // Bug: turning AI on ran synthesis via the debounced auto path (scheduleSynthesis), which never
+    // registered with the jobManager — so it showed the "AI: synthesizing…" banner but never appeared
+    // in the Jobs panel, unlike the manual "re-synthesize" button. Both must be trackable/cancellable.
+    const root = await mkdtemp(join(tmpdir(), "dfir-aibackfill-job-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const jobManager = new JobManager();
+    const app = createApp(store, {
+      pipeline: findingPipeline(stateStore), stateStore, jobManager,
+      autoSynthesize: true, autoSynthesizeDebounceMs: 10,
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app).post("/cases/c1/ai-control").send({ enabled: true });
+    let jobs: { kind: string; status: string }[] = [];
+    for (let i = 0; i < 80; i++) {
+      jobs = jobManager.list("c1");
+      if (jobs.some((j) => j.kind === "synthesis")) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(jobs.some((j) => j.kind === "synthesis")).toBe(true);
   });
 
   it("POST /import fires onImport(caseId) so dashboards can warn cross-case (parity with captures)", async () => {
