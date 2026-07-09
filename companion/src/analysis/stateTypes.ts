@@ -30,6 +30,10 @@ export interface IOC {
   firstSeen: string;
   enrichments?: IocEnrichment[];                               // threat-intel HITS (added by the enrich pass)
   enrichedBy?: string[];                                       // provider names that have CHECKED this IOC (hit or not) — so a newly-enabled provider re-checks every IOC, and checked ones aren't re-queried
+  // Case-scoped forensic-event id(s) this IOC was authoritatively extracted from (set by the 5
+  // priority importers via pipeline.ts). Absent/empty ⇒ iocProvenanceChain.ts falls back to
+  // matching by value, same as before this field existed.
+  extractedFrom?: string[];
 }
 
 export interface Finding {
