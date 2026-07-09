@@ -146,6 +146,7 @@ import {
   selectReadyFiles, classifyDropFile, rawToolInputExt, RAW_TOOL_EXTS, shouldIgnoreDropFile, isOversize,
   DROP_PROCESSED, DROP_FAILED, DROP_README, type DropFileStat,
 } from "./analysis/dropScan.js";
+import { formatDropLogLines, appendDropLog, type DropLogEntry } from "./analysis/dropLog.js";
 import {
   loadAllToolConfigs, toolForExtension, suggestedToolForExtension, TOOL_DEFS, type ToolId, type ToolConfig,
 } from "./integrations/tools/toolConfig.js";
@@ -3050,6 +3051,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const DROP_CONCURRENCY = 4;
   const dropSeen = new Map<string, Map<string, { size: number; mtimeMs: number }>>();
   const dropScanning = new Set<string>();
+  // Files logged as PENDING (relpath per case) so a still-waiting raw-tool file doesn't get a new
+  // PENDING line every poll — only once when first seen pending, cleared once it resolves.
+  const dropPendingLogged = new Map<string, Set<string>>();
   const DROP_README_TEXT = [
     "DFIR Companion — evidence drop folder",
     "",
@@ -3274,6 +3278,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
           await moveDropFile(dropDir, file.relpath, res.ok).catch((e) => logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`));
           nextSeen.delete(file.relpath); // moved out of the watched area — forget it
+          dropPendingLogged.get(caseId)?.delete(file.relpath); // resolved — no longer pending
         }));
       }
       if (imported.length === 0 && failed.length === 0 && pendingRawInputs.length === 0) return;
@@ -3284,6 +3289,31 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           options.onDropStatus?.(caseId);
         } catch (e) { logLine(`[drop] status record failed: ${(e as Error).message}`); }
       }
+
+      // Folder-visible history (drop/drop-log.txt): every imported/failed file gets a line; a pending
+      // raw-tool file gets ONE PENDING line the first time it's seen (dropPendingLogged dedups it across
+      // the ~10s poll interval until it resolves).
+      const loggedPending = dropPendingLogged.get(caseId) ?? new Set<string>();
+      const logEntries: DropLogEntry[] = [
+        ...imported.map((relpath): DropLogEntry => ({ status: "IMPORTED", relpath })),
+        ...failed.map((f): DropLogEntry => ({ status: "FAILED", relpath: f.relpath, reason: f.reason })),
+        ...pendingRawInputs
+          .filter((p) => !loggedPending.has(p.relpath))
+          .map((p): DropLogEntry => ({
+            status: "PENDING",
+            relpath: p.relpath,
+            reason: p.configured
+              ? `awaiting tool run for ${p.ext} (drop banner: Run)`
+              : `no tool configured for ${p.ext} (drop banner: Configure)`,
+          })),
+      ];
+      for (const p of pendingRawInputs) loggedPending.add(p.relpath);
+      dropPendingLogged.set(caseId, loggedPending);
+      if (logEntries.length > 0) {
+        await appendDropLog(dropDir, formatDropLogLines(logEntries, new Date().toISOString()))
+          .catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
+      }
+
       logLine(`[drop] ${caseId}: ${imported.length} imported, ${failed.length} failed`);
       if (failed.length > 0) {
         const lines = failed.slice(0, 20).map((x) => `• ${x.relpath} — ${x.reason}`);
