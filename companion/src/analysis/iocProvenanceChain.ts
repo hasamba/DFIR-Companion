@@ -49,6 +49,8 @@ export interface IocProvenanceChain {
   type: IOC["type"];
   extraction: ProvenanceExtractionEvent[];
   extractionTruncated: number;   // count of matching events dropped past MAX_EXTRACTION_EVENTS, 0 if none
+  extractionAuthoritative: boolean; // true when extraction came from IOC.extractedFrom (a real link),
+                                     // false when it's the value-match guess below
   enrichment: ProvenanceEnrichmentLookup[];
   findings: ProvenanceFindingRef[];
 }
@@ -79,6 +81,9 @@ export function buildIocProvenanceChains(
     if (tokens) for (const t of tokens) addEvent(t, e);
   }
 
+  const eventById = new Map<string, ForensicEvent>();
+  for (const e of events) eventById.set(e.id, e);
+
   const findingIndex = new Map<string, Finding[]>();
   for (const f of findings) {
     for (const iocId of f.relatedIocs || []) {
@@ -89,11 +94,22 @@ export function buildIocProvenanceChains(
   }
 
   for (const ioc of iocs) {
-    const key = ioc.value.trim().toLowerCase();
-    const matched = key.length >= 3 ? (eventIndex.get(key) ?? []) : [];
-    const seenIds = new Set<string>();
-    const dedup: ForensicEvent[] = [];
-    for (const e of matched) { if (!seenIds.has(e.id)) { seenIds.add(e.id); dedup.push(e); } }
+    const authoritativeIds = (ioc.extractedFrom ?? []).filter((id) => eventById.has(id));
+    const extractionAuthoritative = authoritativeIds.length > 0;
+    let dedup: ForensicEvent[];
+    if (extractionAuthoritative) {
+      const seen = new Set<string>();
+      dedup = [];
+      for (const id of authoritativeIds) {
+        if (!seen.has(id)) { seen.add(id); dedup.push(eventById.get(id)!); }
+      }
+    } else {
+      const key = ioc.value.trim().toLowerCase();
+      const matched = key.length >= 3 ? (eventIndex.get(key) ?? []) : [];
+      const seenIds = new Set<string>();
+      dedup = [];
+      for (const e of matched) { if (!seenIds.has(e.id)) { seenIds.add(e.id); dedup.push(e); } }
+    }
     dedup.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     const extractionTruncated = Math.max(0, dedup.length - MAX_EXTRACTION_EVENTS);
     const extraction: ProvenanceExtractionEvent[] = dedup.slice(0, MAX_EXTRACTION_EVENTS).map((e) => ({
@@ -112,7 +128,10 @@ export function buildIocProvenanceChains(
       .sort((a, b) => a.firstSeen.localeCompare(b.firstSeen))
       .map((f) => ({ findingId: f.id, title: f.title, severity: f.severity, status: f.status, firstSeen: f.firstSeen }));
 
-    out[ioc.id] = { iocId: ioc.id, value: ioc.value, type: ioc.type, extraction, extractionTruncated, enrichment, findings: citing };
+    out[ioc.id] = {
+      iocId: ioc.id, value: ioc.value, type: ioc.type, extraction, extractionTruncated,
+      extractionAuthoritative, enrichment, findings: citing,
+    };
   }
   return out;
 }
