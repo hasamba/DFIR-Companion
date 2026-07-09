@@ -64,6 +64,22 @@ function normalizePriority(p: string): StepPriority {
   return (STEP_PRIORITIES as readonly string[]).includes(v) ? (v as StepPriority) : "medium";
 }
 
+// A next step's `pointer` is free text (e.g. "finding f1; collect from ALClient07") but the LLM
+// consistently cites finding ids as bare "f<n>" tokens per the synthesis prompt's shape example.
+// Pull out the first token that matches a REAL finding id in this case (case-insensitive) — this
+// is what lets a next step be recognized as pointing at the same finding an auto-generated
+// "Investigate & remediate" task already covers, instead of only exact-string dedup.
+function extractFindingId(pointer: string, findingIds: ReadonlySet<string>): string | undefined {
+  const matches = pointer.match(/\bf\d+\b/gi);
+  if (!matches) return undefined;
+  const byLower = new Map(Array.from(findingIds, (id) => [id.toLowerCase(), id] as const));
+  for (const m of matches) {
+    const hit = byLower.get(m.toLowerCase());
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 // ── Severity-based response templates (Phase 2, opt-in) ──────────────────────
 // A Critical finding expands into the full incident-response cycle; a High finding into the
 // investigation-first subset. The guidance is tailored to the finding's dominant ATT&CK tactic
@@ -150,15 +166,52 @@ export interface DeriveOptions {
   useTemplates?: boolean;
 }
 
+// Fold suppressed next-step notes into the finding-derived seed(s)' description so the concrete
+// "what to collect" detail isn't lost — targeting the "investigate" phase in template mode (since
+// that's what the note is about), or the single finding seed otherwise.
+function appendFoldedNotes(seeds: DerivedTaskSeed[], notes: readonly string[]): void {
+  if (!notes.length || !seeds.length) return;
+  const idx = Math.max(0, seeds.findIndex((s) => s.sourceKey.endsWith(":investigate")));
+  seeds[idx] = {
+    ...seeds[idx],
+    description: [seeds[idx].description, `Next step: ${notes.join("; ")}`].filter(Boolean).join("\n\n"),
+  };
+}
+
 // Derive the candidate task list from the synthesized case state:
 //  - every AI next step → one task (priority carried through), and
 //  - every NON-dismissed Critical/High finding → either a single "investigate & remediate" task
 //    (default) or, when `useTemplates` is on, the severity-based IR template phases.
 // Lower-severity findings stay out to avoid flooding. Each seed has a STABLE sourceKey so
 // re-derivation is idempotent.
+//
+// Dedup (issue: playbook items looked duplicated): a next step's `pointer` often cites the exact
+// finding that ALSO auto-expands into its own "Investigate & remediate" task below — e.g. next
+// step "Analyze the PUA binary… pointer: finding f10" alongside finding f10's own auto-task. Both
+// describe the same underlying finding. Rather than exact-match sourceKey dedup (which can't see
+// this — the two seeds have unrelated keys), resolve the next step's pointer to a real finding id
+// and, when that finding is itself covered by an auto-task, fold the next step's actionable detail
+// into that finding's task instead of emitting a second, overlapping playbook entry.
 export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptions = {}): DerivedTaskSeed[] {
+  const findingIds = new Set((state.findings ?? []).map((f) => f.id));
+  const coveredFindingIds = new Set<string>();
+  for (const f of state.findings ?? []) {
+    if (f.status === "dismissed") continue;
+    const priority = PRIORITY_FROM_SEVERITY[f.severity] ?? "medium";
+    if (priority === "critical" || priority === "high") coveredFindingIds.add(f.id);
+  }
+
+  const foldedNotesByFindingId = new Map<string, string[]>();
   const seeds: DerivedTaskSeed[] = [];
   for (const s of state.nextSteps ?? []) {
+    const relatedFindingId = extractFindingId(s.pointer, findingIds);
+    if (relatedFindingId && coveredFindingIds.has(relatedFindingId)) {
+      const note = [s.rationale, s.pointer ? `Where / what to collect: ${s.pointer}` : ""].filter(Boolean).join(" — ") || s.action;
+      const notes = foldedNotesByFindingId.get(relatedFindingId) ?? [];
+      notes.push(note);
+      foldedNotesByFindingId.set(relatedFindingId, notes);
+      continue;
+    }
     const desc = [s.rationale, s.pointer ? `Where / what to collect: ${s.pointer}` : ""]
       .filter(Boolean)
       .join("\n\n");
@@ -168,18 +221,25 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
       priority: normalizePriority(s.priority),
       source: "next_step",
       sourceKey: `next_step:${s.id}`,
+      ...(relatedFindingId ? { relatedFindingId } : {}),
     });
   }
   for (const f of state.findings ?? []) {
     if (f.status === "dismissed") continue;
     const priority = PRIORITY_FROM_SEVERITY[f.severity] ?? "medium";
     if (priority !== "critical" && priority !== "high") continue;
+    const foldedNotes = foldedNotesByFindingId.get(f.id) ?? [];
     if (opts.useTemplates) {
-      seeds.push(...buildFindingTemplateSeeds(f));
+      const templateSeeds = buildFindingTemplateSeeds(f);
+      appendFoldedNotes(templateSeeds, foldedNotes);
+      seeds.push(...templateSeeds);
     } else {
+      const description = foldedNotes.length
+        ? [f.description, `Next step: ${foldedNotes.join("; ")}`].filter(Boolean).join("\n\n")
+        : f.description;
       seeds.push({
         title: `Investigate & remediate: ${f.title}`,
-        description: f.description,
+        description,
         priority,
         source: "finding",
         sourceKey: `finding:${f.id}`,

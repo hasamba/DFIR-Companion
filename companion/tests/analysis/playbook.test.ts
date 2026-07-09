@@ -62,6 +62,54 @@ describe("derivePlaybookTasks", () => {
     };
     expect(derivePlaybookTasks(state)).toHaveLength(0);
   });
+
+  it("dedup: a next step whose pointer cites a finding already covered by its own auto-task is folded in, not duplicated", () => {
+    const state = {
+      ...emptyState("c1"),
+      findings: [finding({ id: "f10", severity: "Critical", title: "PUA installer executed" })],
+      nextSteps: [nextStep({ id: "ns1", action: "Analyze the PUA binary", rationale: "confirm malicious", pointer: "finding f10; host ALClient07" })],
+    };
+    const seeds = derivePlaybookTasks(state);
+    // No separate next_step seed — only the finding's own task remains.
+    expect(seeds.map((s) => s.sourceKey)).toEqual(["finding:f10"]);
+    expect(seeds[0].description).toContain("confirm malicious");
+    expect(seeds[0].description).toContain("finding f10; host ALClient07");
+  });
+
+  it("dedup: folds into the 'investigate' phase when templates are on", () => {
+    const state = {
+      ...emptyState("c1"),
+      findings: [finding({ id: "f10", severity: "Critical" })],
+      nextSteps: [nextStep({ id: "ns1", action: "Analyze the PUA binary", rationale: "confirm malicious", pointer: "finding f10" })],
+    };
+    const seeds = derivePlaybookTasks(state, { useTemplates: true });
+    expect(seeds.map((s) => s.sourceKey)).toEqual([
+      "finding:f10:contain", "finding:f10:investigate", "finding:f10:eradicate", "finding:f10:recover",
+    ]);
+    const investigate = seeds.find((s) => s.sourceKey === "finding:f10:investigate")!;
+    expect(investigate.description).toContain("confirm malicious");
+  });
+
+  it("does NOT dedup a next step pointing at a finding that ISN'T Critical/High (no auto-task to fold into)", () => {
+    const state = {
+      ...emptyState("c1"),
+      findings: [finding({ id: "f10", severity: "Medium" })],
+      nextSteps: [nextStep({ id: "ns1", pointer: "finding f10" })],
+    };
+    const seeds = derivePlaybookTasks(state);
+    expect(seeds.map((s) => s.sourceKey)).toEqual(["next_step:ns1"]);
+    expect(seeds[0].relatedFindingId).toBe("f10");
+  });
+
+  it("does NOT dedup when the pointer text doesn't cite a real finding id", () => {
+    const state = {
+      ...emptyState("c1"),
+      findings: [finding({ id: "f10", severity: "Critical" })],
+      nextSteps: [nextStep({ id: "ns1", pointer: "ALClient07" })],
+    };
+    const seeds = derivePlaybookTasks(state);
+    expect(seeds.map((s) => s.sourceKey)).toEqual(["next_step:ns1", "finding:f10"]);
+  });
 });
 
 describe("mergePlaybook", () => {
