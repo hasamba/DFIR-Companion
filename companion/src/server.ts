@@ -2596,46 +2596,56 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.toolRunner) return res.status(501).json({ error: "external tools not configured" });
     if (!options.dropStatusStore) return res.status(501).json({ error: "drop folder not enabled" });
     if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
-    const pending = (await options.dropStatusStore.load(caseId)).pendingRawInputs ?? [];
-    const configured = liveToolConfigs();
-    const dropDir = dropDirOf(caseId);
-    // ONE undo checkpoint for the whole "Run all" batch (the user clicked once): snapshot before, then
-    // push a single checkpoint after if anything imported — so undo reverts the batch in one step.
-    let before: InvestigationState | null = null;
-    if (options.stateStore) { try { before = await options.stateStore.load(caseId); } catch { /* keep null */ } }
-    let ran = 0, failed = 0, skipped = 0;
-    const stillPending: PendingRawInput[] = [];
-    const resolvedEntries: DropLogEntry[] = [];
-    for (const p of pending) {
-      const toolId = resolveToolForExt(p.ext, configured);
-      if (!toolId) { skipped++; stillPending.push({ ...p, configured: false, suggestedTool: suggestedToolForExtension(p.ext) }); continue; }
-      try {
-        await runToolAndIngest(caseId, toolId, join(dropDir, p.relpath));
-        await moveDropFile(dropDir, p.relpath, true).catch(() => { /* best-effort */ });
-        resolvedEntries.push({ status: "IMPORTED", relpath: p.relpath, reason: `via ${toolId} (tool run)` });
-        ran++;
-      } catch (err) {
-        failed++;
-        recordImportFailure(caseId, "drop-tool", p.relpath, err);
-        resolvedEntries.push({ status: "FAILED", relpath: p.relpath, reason: (err as Error)?.message ?? String(err) });
-        await moveDropFile(dropDir, p.relpath, false).catch(() => { /* best-effort */ });
+    // Serialize against the poller's scanCaseDrops sweep for this case: both are writers of
+    // dropPendingLogged, and this route awaits per-file tool runs, so an overlapping sweep could
+    // read a stale dropPendingLogged snapshot and clobber this route's deletes / emit a stray
+    // PENDING line for a file this route just resolved.
+    if (dropScanning.has(caseId)) return res.status(409).json({ error: "a drop sweep is in progress for this case, try again shortly" });
+    dropScanning.add(caseId);
+    try {
+      const pending = (await options.dropStatusStore.load(caseId)).pendingRawInputs ?? [];
+      const configured = liveToolConfigs();
+      const dropDir = dropDirOf(caseId);
+      // ONE undo checkpoint for the whole "Run all" batch (the user clicked once): snapshot before, then
+      // push a single checkpoint after if anything imported — so undo reverts the batch in one step.
+      let before: InvestigationState | null = null;
+      if (options.stateStore) { try { before = await options.stateStore.load(caseId); } catch { /* keep null */ } }
+      let ran = 0, failed = 0, skipped = 0;
+      const stillPending: PendingRawInput[] = [];
+      const resolvedEntries: DropLogEntry[] = [];
+      for (const p of pending) {
+        const toolId = resolveToolForExt(p.ext, configured);
+        if (!toolId) { skipped++; stillPending.push({ ...p, configured: false, suggestedTool: suggestedToolForExtension(p.ext) }); continue; }
+        try {
+          await runToolAndIngest(caseId, toolId, join(dropDir, p.relpath));
+          await moveDropFile(dropDir, p.relpath, true).catch(() => { /* best-effort */ });
+          resolvedEntries.push({ status: "IMPORTED", relpath: p.relpath, reason: `via ${toolId} (tool run)` });
+          ran++;
+        } catch (err) {
+          failed++;
+          recordImportFailure(caseId, "drop-tool", p.relpath, err);
+          resolvedEntries.push({ status: "FAILED", relpath: p.relpath, reason: (err as Error)?.message ?? String(err) });
+          await moveDropFile(dropDir, p.relpath, false).catch(() => { /* best-effort */ });
+        }
+        dropSeen.get(caseId)?.delete(p.relpath);   // moved out of the watched area — forget it
+        dropPendingLogged.get(caseId)?.delete(p.relpath); // resolved — no longer pending
       }
-      dropSeen.get(caseId)?.delete(p.relpath);   // moved out of the watched area — forget it
-      dropPendingLogged.get(caseId)?.delete(p.relpath); // resolved — no longer pending
-    }
-    if (before && ran > 0) {
-      const s = await options.stateStore?.load(caseId).catch(() => null);
-      if (!s || s.forensicTimeline.length !== before.forensicTimeline.length || s.iocs.length !== before.iocs.length) {
-        await pushImportCheckpoint(caseId, before, `Tools: drop batch (${ran} file${ran !== 1 ? "s" : ""})`);
+      if (before && ran > 0) {
+        const s = await options.stateStore?.load(caseId).catch(() => null);
+        if (!s || s.forensicTimeline.length !== before.forensicTimeline.length || s.iocs.length !== before.iocs.length) {
+          await pushImportCheckpoint(caseId, before, `Tools: drop batch (${ran} file${ran !== 1 ? "s" : ""})`);
+        }
       }
+      if (resolvedEntries.length > 0) {
+        await appendDropLog(dropDir, formatDropLogLines(resolvedEntries, new Date().toISOString()))
+          .catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
+      }
+      await options.dropStatusStore.record(caseId, { dropPath: dropDir, imported: [], failed: [], pendingRawInputs: stillPending });
+      options.onDropStatus?.(caseId);
+      return res.status(200).json({ ok: true, ran, failed, skipped });
+    } finally {
+      dropScanning.delete(caseId);
     }
-    if (resolvedEntries.length > 0) {
-      await appendDropLog(dropDir, formatDropLogLines(resolvedEntries, new Date().toISOString()))
-        .catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
-    }
-    await options.dropStatusStore.record(caseId, { dropPath: dropDir, imported: [], failed: [], pendingRawInputs: stillPending });
-    options.onDropStatus?.(caseId);
-    return res.status(200).json({ ok: true, ran, failed, skipped });
   });
 
   // Run a tool's "update rules" command (Settings → Tools). Does NOT touch case data — a rule update is
