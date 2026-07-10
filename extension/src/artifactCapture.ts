@@ -14,19 +14,22 @@
 // All browser-only glue; the pure logic it calls (adapter matching/extraction, matrixToRows) is
 // unit-tested separately.
 
-import { adapterForUrl } from "./adapters/registry.js";
+import { adapterForUrl, adapterById } from "./adapters/registry.js";
 import type { Adapter, CapturedArtifact } from "./adapters/types.js";
+import { resolveActiveAdapter } from "./adapters/override.js";
 import { matrixToRows } from "./adapters/domTable.js";
 import { decodeCapturedBodies } from "./adapters/extractUtils.js";
 import { DFIR_CAPTURE_MSG, DFIR_CONFIG_MSG, DFIR_READY_MSG } from "./adapters/bridge.js";
 import { clampButtonPosition, isDrag, parseButtonPos, type ButtonPos } from "./buttonPosition.js";
-import type { EnsureHookMessage, PushArtifactMessage, PushArtifactResult } from "./types.js";
+import type { EnsureHookMessage, PushArtifactMessage, PushArtifactResult, CaptureStatusResult } from "./types.js";
 
 const BTN_ID = "dfir-companion-push-btn";
 // chrome.storage.local key holding the analyst's dragged button position (null = default corner).
 const POS_KEY = "pushButtonPos";
 
 let activeAdapter: Adapter | null = null;
+let detectedAdapterId: string | null = null;
+let overrideAdapterId = ""; // "" | OVERRIDE_NONE | an adapter id — see adapters/override.ts
 let latest: CapturedArtifact | null = null;
 let busy = false;
 // Cached case id — kept in sync so the MutationObserver below can re-inject the button
@@ -38,27 +41,27 @@ let buttonPos: ButtonPos | null = null;
 let suppressClick = false;
 
 export async function initArtifactCapture(): Promise<void> {
-  activeAdapter = adapterForUrl(location.href);
-  if (!activeAdapter) return;
+  detectedAdapterId = adapterForUrl(location.href)?.id ?? null;
 
-  // Attach the listener BEFORE requesting injection so we never miss the hook's "ready" handshake.
+  // Attach listeners BEFORE activating so we never miss the hook's "ready" handshake or a popup
+  // override sent immediately after injection.
   window.addEventListener("message", onPageMessage);
-  requestHookInjection();
-  sendConfig();
+  chrome.runtime.onMessage.addListener(onExtensionMessage);
+  applyAdapter();
 
   // Only show the push button when a case is selected — so the button stays hidden when the
   // analyst is not actively investigating and hasn't connected the extension to a case.
   const stored = await chrome.storage.local.get(["settings", POS_KEY]);
   currentCaseId = (stored.settings as { caseId?: string } | undefined)?.caseId ?? "";
   buttonPos = parseButtonPos(stored[POS_KEY]);
-  if (currentCaseId) ensureButton();
+  if (currentCaseId && activeAdapter) ensureButton();
 
   // Kibana (and other DFIR consoles) are React SPAs — their initial render can replace the
   // document body's children, removing the injected button. Watch for direct-child removal and
   // re-inject whenever the button disappears while a case is selected.
   const bodyTarget = document.body ?? document.documentElement;
   const bodyObserver = new MutationObserver(() => {
-    if (currentCaseId && !document.getElementById(BTN_ID)) ensureButton();
+    if (currentCaseId && activeAdapter && !document.getElementById(BTN_ID)) ensureButton();
   });
   bodyObserver.observe(bodyTarget, { childList: true });
 
@@ -72,12 +75,71 @@ export async function initArtifactCapture(): Promise<void> {
     }
     if (!changes.settings) return;
     currentCaseId = (changes.settings.newValue as { caseId?: string } | undefined)?.caseId ?? "";
-    if (currentCaseId) {
+    if (currentCaseId && activeAdapter) {
       ensureButton();
     } else {
       document.getElementById(BTN_ID)?.remove();
     }
   });
+}
+
+// (Re)compute which adapter is active from detection + override, reset captured state, and — when
+// an adapter is now active — (re)request the MAIN-world hook with its API patterns. Called once at
+// init, and again whenever the popup changes the override for this tab. Unlike before manual
+// override existed, this now runs (and the listeners above are registered) even on pages
+// adapterForUrl doesn't recognize — cheaply, since applyAdapter() itself no-ops until an adapter
+// is actually active — so a later popup override can still activate capture on that page.
+function applyAdapter(): void {
+  const id = resolveActiveAdapter(detectedAdapterId, overrideAdapterId);
+  if (id !== (activeAdapter?.id ?? null)) {
+    activeAdapter = id ? adapterById(id) : null;
+    latest = null;
+  }
+  if (activeAdapter) {
+    requestHookInjection();
+    sendConfig();
+  }
+  if (currentCaseId && activeAdapter) {
+    ensureButton();
+    renderButton();
+  } else {
+    document.getElementById(BTN_ID)?.remove();
+  }
+}
+
+// ── Manual override (popup ⇄ this content script) ────────────────────────────────────────────
+// The popup can't reach adapterForUrl's result directly — it lives here, in the tab. These two
+// message kinds (sent via chrome.tabs.sendMessage, which — unlike chrome.runtime.sendMessage from
+// a content script — targets THIS listener, not the service worker's onMessage in
+// serviceWorker.ts) let the popup read and override it. See adapters/override.ts for the
+// resolution rule and popup.ts for the UI.
+function onExtensionMessage(
+  msg: unknown,
+  _sender: chrome.runtime.MessageSender,
+  sendResponse: (response: CaptureStatusResult) => void,
+): boolean | undefined {
+  const m = msg as { kind?: string; overrideAdapterId?: string } | null;
+  if (!m || typeof m.kind !== "string") return undefined;
+  if (m.kind === "get_capture_status") {
+    sendResponse(captureStatus());
+    return true;
+  }
+  if (m.kind === "set_adapter_override") {
+    overrideAdapterId = typeof m.overrideAdapterId === "string" ? m.overrideAdapterId : "";
+    applyAdapter();
+    sendResponse(captureStatus());
+    return true;
+  }
+  return undefined;
+}
+
+function captureStatus(): CaptureStatusResult {
+  return {
+    detectedAdapterId,
+    overrideAdapterId,
+    activeLabel: activeAdapter?.label ?? null,
+    rowCount: latest?.rows.length ?? 0,
+  };
 }
 
 // ── MAIN-world hook injection + handshake ──────────────────────────────────────────────────────
