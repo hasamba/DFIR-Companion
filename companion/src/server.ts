@@ -1511,6 +1511,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // is requested and succeeds but the delete step then fails, the response still reflects the
   // successful archive (never silently discarded) — same principle as
   // removeCaseFromActiveListBestEffort above.
+  // Known limitation: per-case in-memory state (capture buffers, synth timers/in-flight flags,
+  // Velociraptor hunt timers, drop-folder scan trackers — all keyed by caseId) is never explicitly
+  // cleared on delete, same pre-existing gap as archiveCaseFolder. A write already in flight when
+  // a case is closed→archived→deleted in quick succession could still try to touch the now-gone
+  // folder and error out. Accepted for now (writes are already blocked once closed/archived; this
+  // is a single-user localhost tool) — not fixed here to avoid scope creep into unrelated timers.
   app.post("/cases/:id/delete", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;

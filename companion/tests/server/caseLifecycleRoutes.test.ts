@@ -287,6 +287,26 @@ describe("POST /cases/:id/delete", () => {
     }
   });
 
+  it("still returns the encrypted archive file if deletion itself fails (highest-stakes path — the file must never be silently discarded)", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, "DEL-6b", "Case Del Six B");
+    await request(app).patch("/cases/DEL-6b/status").send({ status: "closed" });
+    const original = store.deleteCaseFolder.bind(store);
+    (store as any).deleteCaseFolder = async () => { throw new Error("simulated delete failure"); };
+    try {
+      const res = await bufferRequest(
+        request(app).post("/cases/DEL-6b/delete").send({ archiveFirst: "encrypted", password: PASSWORD }),
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers["x-case-deleted"]).toBe("false");
+      expect((res.body as Buffer).length).toBeGreaterThan(0);
+      const s = await stat(join(store.casesRoot, "DEL-6b"));
+      expect(s.isDirectory()).toBe(true);
+    } finally {
+      (store as any).deleteCaseFolder = original;
+    }
+  });
+
   it("400s on an invalid archiveFirst value", async () => {
     const { app } = await harness();
     await seedCase(app, "DEL-7", "Case Del Seven");
