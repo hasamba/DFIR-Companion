@@ -44,6 +44,14 @@ async function seedCase(app: ReturnType<typeof createApp>, caseId: string, name:
   await request(app).post("/cases").send({ caseId, name, investigator: "alice", aiProvider: "anthropic" });
 }
 
+function bufferRequest(req: request.Test): request.Test {
+  return req.buffer().parse((r, cb) => {
+    const chunks: Buffer[] = [];
+    r.on("data", (c: Buffer) => chunks.push(c));
+    r.on("end", () => cb(null, Buffer.concat(chunks)));
+  });
+}
+
 describe("PATCH /cases/:id/status", () => {
   it("rejects 'archived' as a direct status value", async () => {
     const { app } = await harness();
@@ -178,5 +186,92 @@ describe("Archived-case write guards on other evidence routes", () => {
     await request(app).post("/cases/INC-10/archive").send({ removeFromList: true });
     const res = await request(app).post("/cases/INC-10/synthesize").send({});
     expect(res.status).toBe(423);
+  });
+});
+
+describe("POST /cases/:id/delete", () => {
+  it("400s when the case is open", async () => {
+    const { app } = await harness();
+    await seedCase(app, "DEL-1", "Case Del One");
+    const res = await request(app).post("/cases/DEL-1/delete").send({ archiveFirst: "none" });
+    expect(res.status).toBe(400);
+  });
+
+  it("deletes a closed case with no archive when archiveFirst is 'none'", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, "DEL-2", "Case Del Two");
+    await request(app).patch("/cases/DEL-2/status").send({ status: "closed" });
+    const res = await request(app).post("/cases/DEL-2/delete").send({ archiveFirst: "none" });
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(true);
+    expect(res.body.archivePath).toBeUndefined();
+    await expect(stat(join(store.casesRoot, "DEL-2"))).rejects.toThrow();
+  });
+
+  it("archives to ZIP then deletes when archiveFirst is 'zip'", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, "DEL-3", "Case Del Three");
+    await request(app).patch("/cases/DEL-3/status").send({ status: "closed" });
+    const res = await request(app).post("/cases/DEL-3/delete").send({ archiveFirst: "zip" });
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(true);
+    expect(res.body.archivePath).toContain("(no password).zip");
+    const zipStat = await stat(res.body.archivePath);
+    expect(zipStat.isFile()).toBe(true);
+    await expect(stat(join(store.casesRoot, "DEL-3"))).rejects.toThrow();
+  });
+
+  it("exports encrypted then deletes when archiveFirst is 'encrypted'", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, "DEL-4", "Case Del Four");
+    await request(app).patch("/cases/DEL-4/status").send({ status: "closed" });
+    const res = await bufferRequest(
+      request(app).post("/cases/DEL-4/delete").send({ archiveFirst: "encrypted", password: PASSWORD }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers["x-case-deleted"]).toBe("true");
+    expect((res.body as Buffer).length).toBeGreaterThan(0);
+    await expect(stat(join(store.casesRoot, "DEL-4"))).rejects.toThrow();
+  });
+
+  it("deletes an already-archived case", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, "DEL-5", "Case Del Five");
+    await request(app).post("/cases/DEL-5/archive").send({ removeFromList: true });
+    const res = await request(app).post("/cases/DEL-5/delete").send({ archiveFirst: "none" });
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(true);
+    await expect(stat(join(store.casesRoot, "_archived", "DEL-5"))).rejects.toThrow();
+  });
+
+  it("still returns the archive result if deletion itself fails", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, "DEL-6", "Case Del Six");
+    await request(app).patch("/cases/DEL-6/status").send({ status: "closed" });
+    const original = store.deleteCaseFolder.bind(store);
+    (store as any).deleteCaseFolder = async () => { throw new Error("simulated delete failure"); };
+    try {
+      const res = await request(app).post("/cases/DEL-6/delete").send({ archiveFirst: "zip" });
+      expect(res.status).toBe(200);
+      expect(res.body.deleted).toBe(false);
+      expect(res.body.deleteError).toBeTruthy();
+      expect(res.body.archivePath).toContain("(no password).zip");
+    } finally {
+      (store as any).deleteCaseFolder = original;
+    }
+  });
+
+  it("400s on an invalid archiveFirst value", async () => {
+    const { app } = await harness();
+    await seedCase(app, "DEL-7", "Case Del Seven");
+    await request(app).patch("/cases/DEL-7/status").send({ status: "closed" });
+    const res = await request(app).post("/cases/DEL-7/delete").send({ archiveFirst: "bogus" });
+    expect(res.status).toBe(400);
+  });
+
+  it("404s for a case that doesn't exist", async () => {
+    const { app } = await harness();
+    const res = await request(app).post("/cases/ghost/delete").send({ archiveFirst: "none" });
+    expect(res.status).toBe(404);
   });
 });

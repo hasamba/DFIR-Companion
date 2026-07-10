@@ -1489,6 +1489,77 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Permanently delete a case: optionally archives it first (ZIP or encrypted), then removes its
+  // folder from disk entirely — irreversible. Only allowed once a case is closed or archived (an
+  // open case must be closed first, mirroring the restriction on archiving). If the archive step
+  // is requested and succeeds but the delete step then fails, the response still reflects the
+  // successful archive (never silently discarded) — same principle as
+  // removeCaseFromActiveListBestEffort above.
+  app.post("/cases/:id/delete", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
+      const meta = await store.getCaseMeta(id);
+      if (!meta) return res.status(404).json({ error: `case ${id} not found` });
+      if (meta.status !== "closed" && meta.status !== "archived") {
+        return res.status(400).json({ error: `case ${id} must be closed or archived before it can be deleted` });
+      }
+      const body = (req.body ?? {}) as { archiveFirst?: unknown; password?: unknown };
+      const archiveFirst = body.archiveFirst;
+      if (archiveFirst !== "none" && archiveFirst !== "zip" && archiveFirst !== "encrypted") {
+        return res.status(400).json({ error: `archiveFirst must be 'none', 'zip', or 'encrypted'` });
+      }
+
+      if (archiveFirst === "encrypted") {
+        const password = body.password;
+        if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
+          return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+        }
+        const archive = await exportEncryptedCase(store, id, password);
+        const filename = dfircaseFilename(id, meta.name);
+        let deleted = false;
+        try {
+          await store.deleteCaseFolder(id);
+          deleted = true;
+          logLine(`[delete] case=${id} deleted after encrypted archive`);
+        } catch (err) {
+          errLine(`[delete] case=${id} failed to delete after encrypted archive: ${(err as Error).message}`);
+        }
+        res.type("application/octet-stream");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader("Cache-Control", "private, no-cache");
+        res.setHeader("X-Case-Deleted", String(deleted));
+        return res.send(archive);
+      }
+
+      let archiveResult: Awaited<ReturnType<typeof archiveCase>> | undefined;
+      if (archiveFirst === "zip") {
+        archiveResult = await archiveCase(store.casesRoot, id, {}, meta.name, store.caseDir(id));
+        logLine(`[delete] case=${id} archived to ZIP before deletion: ${archiveResult.archivePath}`);
+      }
+
+      let deleted = false;
+      let deleteError: string | undefined;
+      try {
+        await store.deleteCaseFolder(id);
+        deleted = true;
+        logLine(`[delete] case=${id} deleted (archiveFirst=${archiveFirst})`);
+      } catch (err) {
+        deleteError = (err as Error).message;
+        errLine(`[delete] case=${id} failed to delete: ${deleteError}`);
+      }
+
+      return res.status(200).json({
+        deleted,
+        ...(deleteError ? { deleteError } : {}),
+        ...(archiveResult ? { archivePath: archiveResult.archivePath, manifest: archiveResult.manifest } : {}),
+      });
+    } catch (err) {
+      errLine(`[delete] error case=${req.params.id}: ${(err as Error).message}`);
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Case templates ──────────────────────────────────────────────────────────────────────
   // Built-in templates are always available; custom templates are saved to the templates dir.
 
