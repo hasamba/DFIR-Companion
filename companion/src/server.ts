@@ -24,6 +24,7 @@ import { registerVelociraptorRoutes } from "./routes/velociraptor.js";
 import { registerThreatIntelRoutes } from "./routes/threatIntel.js";
 import { registerAnonymizationRoutes } from "./routes/anonymization.js";
 import { registerTimelineRoutes } from "./routes/timeline.js";
+import { registerAnalysisGraphRoutes } from "./routes/analysisGraph.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { JobManager } from "./analysis/jobManager.js";
@@ -120,7 +121,6 @@ import { HuntOutcomeStore } from "./analysis/huntOutcomeStore.js";
 import { recordDeploy, fillOutcome, buildHuntingProfile, HUNT_OUTCOME_MAX_DEFAULT, type HuntDeployInput } from "./analysis/huntOutcomes.js";
 import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
-import type { AssetType } from "./analysis/assetGraph.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { AiCostStore } from "./analysis/aiCost.js";
 import { SecondOpinionStore } from "./analysis/secondOpinionStore.js";
@@ -753,6 +753,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerThreatIntelRoutes(app, ctx);
   registerAnonymizationRoutes(app, ctx);
   registerTimelineRoutes(app, ctx);
+  registerAnalysisGraphRoutes(app, ctx);
 
   app.get("/cases/:id/lock-status", async (req: Request, res: Response) => {
     try {
@@ -1333,64 +1334,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // The asset ↔ IoC graph (compromised assets and the IoCs that touched each), derived on
-  // demand from the current state with the same scope/legitimate filtering as the report.
-  app.get("/cases/:id/asset-graph", async (req: Request, res: Response) => {
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    try {
-      return res.status(200).json(await options.reportWriter.assetGraph(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // The causal evidence chain graph (process trees + lateral movement), derived on demand
-  // from the current state with the same scope/legitimate filtering as the report.
-  app.get("/cases/:id/evidence-graph", async (req: Request, res: Response) => {
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    try {
-      return res.status(200).json(await options.reportWriter.evidenceGraph(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Temporal attack phases — the forensic timeline grouped into bursts of activity by time gap
-  // (no AI). Derived on demand with the same scope/legitimate filtering as the report.
-  app.get("/cases/:id/phases", async (req: Request, res: Response) => {
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    try {
-      return res.status(200).json(await options.reportWriter.phases(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Beacon / C2 candidates (#82): outbound connection channels whose inter-arrival intervals are too
-  // regular to be human traffic, derived on demand from the forensic timeline's network events (same
-  // scope/legitimate filtering as the report). Hunting leads, not verdicts. Powers the dashboard panel.
-  app.get("/cases/:id/beacon-candidates", async (req: Request, res: Response) => {
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    try {
-      return res.status(200).json(await options.reportWriter.beaconCandidates(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Timeline anomalies (#175): per-asset event-rate spikes — assets whose event count in a time
-  // bucket exceeds N× the median across all assets in that bucket. Derived on demand, no AI, same
-  // scope/legitimate filtering as the report. Thresholds DFIR_ANOMALY_BUCKET_MINUTES / _SPIKE_FACTOR
-  // / _MIN_EVENTS. Powers the dashboard Timeline Anomalies panel.
-  app.get("/cases/:id/anomalies", async (req: Request, res: Response) => {
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    try {
-      return res.status(200).json(await options.reportWriter.anomalies(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
   // Per-IOC corroboration: { iocId: [tools that observed it] }, derived on demand by matching each
   // IOC value against the forensic events' sources (same scope/legitimate filtering as the report).
   // Powers the dashboard's "⊕ N sources" badge on IOCs (#35 Phase 3).
@@ -1427,40 +1370,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         }
       } catch { /* no imports for this case yet */ }
       return res.status(200).json(computeCaseStats(state, importLog));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Suspicious host/account ranking (#202): which entities carry the attack's signal, scored by
-  // severity-weighted events + techniques + connective IOCs (not volume), plus a suggested scope
-  // time window. Derived on read.
-  app.get("/cases/:id/host-ranking", async (req: Request, res: Response) => {
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    try {
-      return res.status(200).json(await options.reportWriter.hostRanking(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // D3FEND defensive countermeasures (#178): per identified ATT&CK technique, the MITRE D3FEND
-  // hardening/detection/isolation countermeasures from the bundled offline mapping. Derived on read.
-  app.get("/cases/:id/d3fend-countermeasures", async (req: Request, res: Response) => {
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    try {
-      return res.status(200).json(await options.reportWriter.d3fendCountermeasures(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // ATT&CK Mitigations (#178): concrete, actionable mitigations (M-codes) recommended for the case's
-  // identified techniques, ranked by coverage. Offline, derived on read.
-  app.get("/cases/:id/attack-mitigations", async (req: Request, res: Response) => {
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    try {
-      return res.status(200).json(await options.reportWriter.attackMitigations(req.params.id));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -1507,48 +1416,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         .type("html")
         .set("Content-Disposition", `attachment; filename="${filename}"`)
         .send(html);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Geographic IP map (#133): markers for the case's geo-located IP IOCs, derived on demand with
-  // the same scope filtering as the report (legit IOCs kept + rendered gray). Coordinates come
-  // from the opt-in GeoIP enrichment, so the map is empty until IP IOCs are enriched.
-  app.get("/cases/:id/geo-map", async (req: Request, res: Response) => {
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    try {
-      return res.status(200).json(await options.reportWriter.geoMap(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // IP + geolocation CSV export for the map panel (#133) — for external OSINT tooling.
-  app.get("/cases/:id/geo-map.csv", async (req: Request, res: Response) => {
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    try {
-      const csv = await options.reportWriter.geoMapCsv(req.params.id);
-      res.type("text/csv; charset=utf-8");
-      res.setHeader("Content-Disposition", 'attachment; filename="geo-map.csv"');
-      res.setHeader("Cache-Control", "private, no-cache");
-      return res.send(csv);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Export a MITRE ATT&CK Navigator layer (JSON) for the case, generated on demand from the
-  // current state (same scope/legitimate filtering as the report). Drops straight into the
-  // Navigator's "Open Existing Layer → Upload from local"; techniques colored by severity.
-  app.get("/cases/:id/attack-layer.json", async (req: Request, res: Response) => {
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    try {
-      const layer = await options.reportWriter.attackLayer(req.params.id);
-      res.type("application/json; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="attack-navigator-${req.params.id}.json"`);
-      res.setHeader("Cache-Control", "private, no-cache");
-      return res.send(JSON.stringify(layer, null, 2));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -4642,17 +4509,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // Manual asset-graph edits (renames, additions, suppressions, link overrides). Each write
-  // pings live dashboard clients so the graph refreshes without a page reload.
-  app.get("/cases/:id/asset-overrides", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
-    try {
-      return res.status(200).json(await options.assetOverridesStore.load(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
   app.post("/cases/:id/notebook", async (req: Request, res: Response) => {
     if (!options.notebookStore) return res.status(501).json({ error: "notebook not configured" });
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
@@ -4698,19 +4554,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (!updated) return res.status(404).json({ error: "notebook entry not found" });
       options.onNotebook?.(req.params.id);
       return res.status(200).json(updated);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Rename (or un-rename) an asset by its graph id. Pass an empty name to clear the rename.
-  app.put("/cases/:id/asset-overrides/assets/:assetId", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
-    const name = typeof req.body?.name === "string" ? req.body.name : "";
-    try {
-      const ov = await options.assetOverridesStore.rename(req.params.id, req.params.assetId, name);
-      options.onAssetOverrides?.(req.params.id);
-      return res.status(200).json(ov);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -4805,57 +4648,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // Saved timeframes (formerly "dwell-time windows") — analyst-defined attacker-presence time ranges.
-  // CRUD over the per-case DwellWindowStore; each write pings live dashboard clients. The derived,
-  // origin-filterable timeline view is now the super-timeline query route (GET .../super-timeline).
-  app.get("/cases/:id/dwell-windows", async (req: Request, res: Response) => {
-    if (!options.dwellWindowStore) return res.status(501).json({ error: "dwell windows not configured" });
-    try {
-      return res.status(200).json(await options.dwellWindowStore.list(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.post("/cases/:id/dwell-windows", async (req: Request, res: Response) => {
-    if (!options.dwellWindowStore) return res.status(501).json({ error: "dwell windows not configured" });
-    try {
-      const window = await options.dwellWindowStore.add(req.params.id, {
-        label: req.body?.label, start: req.body?.start, end: req.body?.end,
-      });
-      options.onDwellWindow?.(req.params.id);
-      return res.status(201).json(window);
-    } catch (err) {
-      return res.status(400).json({ error: (err as Error).message });
-    }
-  });
-
-  app.put("/cases/:id/dwell-windows/:windowId", async (req: Request, res: Response) => {
-    if (!options.dwellWindowStore) return res.status(501).json({ error: "dwell windows not configured" });
-    try {
-      const updated = await options.dwellWindowStore.update(req.params.id, req.params.windowId, {
-        label: req.body?.label, start: req.body?.start, end: req.body?.end,
-      });
-      if (!updated) return res.status(404).json({ error: "window not found" });
-      options.onDwellWindow?.(req.params.id);
-      return res.status(200).json(updated);
-    } catch (err) {
-      return res.status(400).json({ error: (err as Error).message });
-    }
-  });
-
-  app.delete("/cases/:id/dwell-windows/:windowId", async (req: Request, res: Response) => {
-    if (!options.dwellWindowStore) return res.status(501).json({ error: "dwell windows not configured" });
-    try {
-      const removed = await options.dwellWindowStore.remove(req.params.id, req.params.windowId);
-      if (!removed) return res.status(404).json({ error: "window not found" });
-      options.onDwellWindow?.(req.params.id);
-      return res.status(204).end();
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
   // Findings min-confidence display floor (#226): a per-case setting, persisted so it survives a
   // page reload — purely a display preference (nothing is removed from state). `minConfidence: null`
   // means "show all" (0). GET returns the current value; PUT sets/clears it.
@@ -4884,75 +4676,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         category: "settings", action: "confidence-control", detail: minConfidence === null ? "minConfidence cleared" : `minConfidence set to ${minConfidence}`,
       });
       return res.status(200).json({ minConfidence });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Create a manual asset (one not auto-derived from the forensic timeline).
-  app.post("/cases/:id/asset-overrides/assets", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
-    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
-    const type = typeof req.body?.type === "string" ? req.body.type.trim() : "host";
-    if (!name) return res.status(400).json({ error: "name is required" });
-    try {
-      const result = await options.assetOverridesStore.addAsset(req.params.id, { name, type: type as AssetType });
-      options.onAssetOverrides?.(req.params.id);
-      return res.status(201).json(result);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Suppress an auto-derived asset or delete a manual one.
-  app.delete("/cases/:id/asset-overrides/assets/:assetId", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
-    try {
-      const ov = await options.assetOverridesStore.removeAsset(req.params.id, req.params.assetId);
-      options.onAssetOverrides?.(req.params.id);
-      return res.status(200).json(ov);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Restore a suppressed auto-derived asset (remove it from the removed list).
-  app.post("/cases/:id/asset-overrides/assets/:assetId/restore", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
-    try {
-      const ov = await options.assetOverridesStore.restoreAsset(req.params.id, req.params.assetId);
-      options.onAssetOverrides?.(req.params.id);
-      return res.status(200).json(ov);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Add a manual link between an asset and an IoC. Body: { asset, ioc }.
-  app.post("/cases/:id/asset-overrides/links", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
-    const asset = typeof req.body?.asset === "string" ? req.body.asset.trim() : "";
-    const ioc = typeof req.body?.ioc === "string" ? req.body.ioc.trim() : "";
-    if (!asset || !ioc) return res.status(400).json({ error: "asset and ioc are required" });
-    try {
-      const ov = await options.assetOverridesStore.addLink(req.params.id, asset, ioc);
-      options.onAssetOverrides?.(req.params.id);
-      return res.status(201).json(ov);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Suppress (or delete) a link. Query params: ?asset=...&ioc=...
-  app.delete("/cases/:id/asset-overrides/links", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
-    const asset = typeof req.query?.asset === "string" ? req.query.asset : "";
-    const ioc = typeof req.query?.ioc === "string" ? req.query.ioc : "";
-    if (!asset || !ioc) return res.status(400).json({ error: "asset and ioc query params are required" });
-    try {
-      const ov = await options.assetOverridesStore.removeLink(req.params.id, asset, ioc);
-      options.onAssetOverrides?.(req.params.id);
-      return res.status(200).json(ov);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
