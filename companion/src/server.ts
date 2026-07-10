@@ -15,6 +15,7 @@ import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
 import { atomicWrite } from "./storage/atomicWrite.js";
 import type { RouteContext } from "./routes/context.js";
 import { registerSystemRoutes } from "./routes/system.js";
+import { registerCaptureRoutes } from "./routes/captures.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { JobManager } from "./analysis/jobManager.js";
@@ -24,7 +25,7 @@ import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
 import type { AnonTokenCategory } from "./analysis/anonymize.js";
 import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js";
 import { TesseractOcrRunner, type OcrRunner } from "./analysis/ocrRedact.js";
-import { extractOcrText, searchOcrIndex, isOcrSearchEnabled } from "./analysis/ocrSearch.js";
+import { extractOcrText, isOcrSearchEnabled } from "./analysis/ocrSearch.js";
 import { resolveRedactedExportOptions, redactedExportFilename } from "./analysis/redactedExport.js";
 import { buildRedactedExport } from "./reports/redactedExportBuilder.js";
 import { FalsePositiveStore, markerId, type FalsePositiveMarker, FALSE_POSITIVE_REASONS } from "./analysis/falsePositive.js";
@@ -583,24 +584,6 @@ export interface AppOptions {
   onPreflightReady?: (run: () => Promise<PreflightReport>) => void;
 }
 
-// Content type for an evidence file served back to the dashboard. CSVs/text are
-// served as text/plain so a click opens them in a tab rather than downloading.
-function evidenceContentType(file: string): string {
-  const ext = file.slice(file.lastIndexOf(".")).toLowerCase();
-  switch (ext) {
-    case ".webp": return "image/webp";
-    case ".png": return "image/png";
-    case ".jpg":
-    case ".jpeg": return "image/jpeg";
-    case ".gif": return "image/gif";
-    case ".csv":
-    case ".log":
-    case ".txt": return "text/plain; charset=utf-8";
-    case ".json": return "application/json; charset=utf-8";
-    default: return "application/octet-stream";
-  }
-}
-
 // Normalize a label/tag input that may arrive as a comma-separated string or an array of strings.
 function toStringArray(v: unknown): string[] {
   if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
@@ -637,8 +620,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   // ── Diagnostics runtime state (#118) ─────────────────────────────────────────────────
   // In-memory, best-effort rings powering the Health/Diagnostics page. They reset on restart
-  // (like `lastCapture` below) — durable history lives in the per-case audit logs. Capped so a
-  // long-running server can't grow them unbounded.
+  // (like the capture-recency marker in routes/captures.ts) — durable history lives in the
+  // per-case audit logs. Capped so a long-running server can't grow them unbounded.
   const appStartedAt = Date.now();
   const DIAG_RING = 50;
   const recentImportFailures: ImporterFailure[] = [];
@@ -758,6 +741,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     recentImportFailures,
     recentAiErrors,
     hasAiProvider,
+    getControl,
+    flush,
+    indexCaptureText,
     captureBuffers: () => buffers,
     synthInFlight: () => synthInFlight,
     importerRegistry: () => importerRegistry,
@@ -767,6 +753,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     enrichHealth: () => enrichHealth,
   };
   registerSystemRoutes(app, ctx);
+  registerCaptureRoutes(app, ctx);
 
   app.get("/cases/:id/lock-status", async (req: Request, res: Response) => {
     try {
@@ -851,33 +838,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return res.status(200).json({ ok: true });
   });
 
-  // Most-recent capture across ALL cases (in-memory; resets on restart). Powers the dashboard's
-  // check-on-connect for the cross-case capture warning.
-  let lastCapture: { caseId: string; at: number } | null = null;
-
-  // How many captures have been recorded for a case (counts the audit-log lines).
-  app.get("/cases/:id/captures/count", async (req: Request, res: Response) => {
-    try {
-      const log = await readFile(store.capturesLogPath(req.params.id), "utf8");
-      const count = log.split("\n").filter((l) => l.trim().length > 0).length;
-      return res.status(200).json({ count });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return res.status(200).json({ count: 0 });
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // The most-recent capture across ALL cases (in-memory; resets on restart) + its age in ms.
-  // A freshly-connected dashboard checks this to warn when screenshots are landing on a different
-  // case than the one it's viewing — catching the mismatch even without a live capture event.
-  app.get("/captures/recent", (_req: Request, res: Response) => {
-    if (!lastCapture) return res.status(200).json({ caseId: null });
-    return res.status(200).json({ caseId: lastCapture.caseId, ageMs: Date.now() - lastCapture.at });
-  });
-
   const windowSize = options.windowSize ?? 4;
   const buffers = new Map<string, CaptureMetadata[]>();
-  const SIGNIFICANT = new Set(["navigation", "tab_switch"]);
 
   // Screenshot OCR full-text search index (#176). Runs in the BACKGROUND after a capture is
   // persisted — never on the /captures hot path (Tesseract is ~0.5–2s/image and evidence-first
@@ -1357,57 +1319,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  app.post("/captures", async (req: Request, res: Response) => {
-    try {
-      const rawCaseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
-      if (rawCaseId) {
-        const caseMeta = await store.getCaseMeta(rawCaseId).catch(() => null);
-        if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
-          const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-          return res.status(423).json({ error: `Case "${rawCaseId}" is ${caseMeta.status} — ${action} before adding screenshots` });
-        }
-      }
-      const metadata = await ingestCapture(store, req.body);
-      // Pre-evaluate the analysis condition before responding so the dashboard knows whether
-      // this capture will produce timeline events (mirrors the analyzed/reason pattern on /import).
-      const willAnalyze = !metadata.isDuplicate && Boolean(options.pipeline) && hasAiProvider()
-        && (await getControl(metadata.caseId)).enabled;
-      res.status(201).json(
-        !metadata.isDuplicate && !willAnalyze
-          ? { ...metadata, analyzed: false, reason: "ai-off" as const }
-          : metadata,
-      );
-      serverLogger.debug(
-        `screenshot captured seq=${metadata.sequenceNumber} trigger=${metadata.triggerType} ` +
-          `file=${metadata.screenshotFile || "(none)"}${metadata.isDuplicate ? " (duplicate — not analyzed)" : ""}`,
-        { caseId: metadata.caseId },
-      );
-      // Cross-case signal: lets a dashboard warn when captures arrive for a case it isn't viewing
-      // (live, via the WS broadcast) or detect it on connect (via /captures/recent).
-      lastCapture = { caseId: metadata.caseId, at: Date.now() };
-      options.onCapture?.(metadata.caseId);
-      // Background OCR full-text index (#176) — independent of AI analysis (it's local + free),
-      // so it runs whenever OCR search is enabled, not gated on the AI provider.
-      indexCaptureText(metadata);
-      // Evidence is always stored; AI analysis only runs when enabled for the case.
-      if (willAnalyze) {
-        const buf = buffers.get(metadata.caseId) ?? [];
-        buf.push(metadata);
-        buffers.set(metadata.caseId, buf);
-        if (buf.length >= windowSize || SIGNIFICANT.has(metadata.triggerType)) {
-          void flush(metadata.caseId);
-        }
-      }
-      return;
-    } catch (err) {
-      if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
-      if (err instanceof CaseNotFoundError) {
-        return res.status(404).json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
-      }
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
   app.get("/cases/:id/state", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
@@ -1416,52 +1327,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
       const state = await options.stateStore.load(req.params.id);
       return res.status(200).json(state);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Serve a piece of evidence (a screenshot or an imported CSV) by filename so the
-  // dashboard can link findings/events straight to the artifact they came from.
-  // Strictly sandboxed: only a bare filename within the case's screenshots/ or
-  // imports/ dir is allowed (no path separators, no "..").
-  app.get("/cases/:id/evidence/:file", async (req: Request, res: Response) => {
-    const file = req.params.file;
-    if (!/^[A-Za-z0-9._-]+$/.test(file) || file.includes("..")) {
-      return res.status(400).json({ error: "invalid evidence filename" });
-    }
-    const candidates = [
-      join(store.screenshotsDir(req.params.id), file),
-      join(store.importsDir(req.params.id), file),
-    ];
-    for (const path of candidates) {
-      try {
-        const buf = await readFile(path);
-        res.type(evidenceContentType(file));
-        res.setHeader("Cache-Control", "private, max-age=300");
-        return res.send(buf);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-          return res.status(500).json({ error: (err as Error).message });
-        }
-      }
-    }
-    return res.status(404).json({ error: "evidence not found" });
-  });
-
-  // Screenshot OCR full-text search (#176). Scans the case's local OCR index for `q` and
-  // returns one hit per matching screenshot (snippet + match count); the dashboard links each
-  // hit back to the screenshot via GET /cases/:id/evidence/:file. Local-only, no AI.
-  app.get("/cases/:id/ocr-search", async (req: Request, res: Response) => {
-    try {
-      if (!(await store.caseExists(req.params.id))) {
-        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
-      }
-      const q = typeof req.query.q === "string" ? req.query.q : "";
-      if (q.trim().length === 0) return res.status(400).json({ error: "missing query parameter q" });
-      const index = await store.loadOcrIndex(req.params.id);
-      const hits = searchOcrIndex(index, q);
-      return res.status(200).json({ enabled: isOcrSearchEnabled(), indexed: Object.keys(index).length, hits });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
