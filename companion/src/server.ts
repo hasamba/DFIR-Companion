@@ -17,6 +17,7 @@ import type { RouteContext } from "./routes/context.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerCaptureRoutes } from "./routes/captures.js";
 import { registerPushNotifyRoutes } from "./routes/pushNotify.js";
+import { registerTemplatesViewsRoutes } from "./routes/templatesViews.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { JobManager } from "./analysis/jobManager.js";
@@ -133,7 +134,6 @@ import { ReportMetaStore } from "./reports/reportMeta.js";
 import { ReportTemplateStore } from "./reports/reportTemplateStore.js";
 import { ReportTemplateControlStore } from "./reports/reportTemplateControl.js";
 import { defaultReportTemplate, isReportSectionEnabled, type ReportSectionKey } from "./reports/reportTemplate.js";
-import { BUILT_IN_DASHBOARD_VIEWS } from "./analysis/dashboardViews.js";
 import { DashboardViewStore } from "./analysis/dashboardViewStore.js";
 import { injectPrintTrigger } from "./reports/html.js";
 import { ActivityLogStore, ACTIVITY_CATEGORIES, logActivity, type ActivityCategory } from "./analysis/activityLog.js";
@@ -756,6 +756,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerSystemRoutes(app, ctx);
   registerCaptureRoutes(app, ctx);
   registerPushNotifyRoutes(app, ctx);
+  registerTemplatesViewsRoutes(app, ctx);
 
   app.get("/cases/:id/lock-status", async (req: Request, res: Response) => {
     try {
@@ -1270,53 +1271,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
       errLine(`[delete] error case=${req.params.id}: ${(err as Error).message}`);
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // ── Case templates ──────────────────────────────────────────────────────────────────────
-  // Built-in templates are always available; custom templates are saved to the templates dir.
-
-  app.get("/templates", async (_req: Request, res: Response) => {
-    if (!options.templateStore) return res.status(200).json([]);
-    try {
-      return res.status(200).json(await options.templateStore.list());
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.get("/templates/:id", async (req: Request, res: Response) => {
-    if (!options.templateStore) return res.status(404).json({ error: "template store not configured" });
-    try {
-      const template = await options.templateStore.get(req.params.id);
-      if (!template) return res.status(404).json({ error: `template "${req.params.id}" not found` });
-      return res.status(200).json(template);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.post("/templates", async (req: Request, res: Response) => {
-    if (!options.templateStore) return res.status(501).json({ error: "template store not configured" });
-    try {
-      const { name, description, recommendedImports, initialKeyQuestions, initialNextSteps, severityFloor, huntPlatforms, id } = req.body ?? {};
-      if (!name) return res.status(400).json({ error: "name is required" });
-      const saved = await options.templateStore.save({ id, name, description, recommendedImports, initialKeyQuestions, initialNextSteps, severityFloor: severityFloor ?? null, huntPlatforms });
-      return res.status(201).json(saved);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.delete("/templates/:id", async (req: Request, res: Response) => {
-    if (!options.templateStore) return res.status(501).json({ error: "template store not configured" });
-    try {
-      const found = await options.templateStore.delete(req.params.id);
-      if (!found) return res.status(404).json({ error: `template "${req.params.id}" not found` });
-      return res.status(204).send();
-    } catch (err) {
-      if ((err as Error).message.includes("built-in")) return res.status(400).json({ error: (err as Error).message });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -1953,110 +1907,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // ── Report templates (issue #60) ─────────────────────────────────────────────────────────
-  // Global, shared-across-cases branded layouts: accent colour, cover title/subtitle, running
-  // header & footer, and which report sections appear and in what order. Built-ins are editable in
-  // place (saving under a built-in id writes an override; DELETE resets it). Mirrors /bundles.
-  app.get("/report-templates", async (_req: Request, res: Response) => {
-    if (!options.reportTemplateStore) return res.status(200).json([]);
-    try {
-      return res.status(200).json(await options.reportTemplateStore.list());
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.get("/report-templates/:id", async (req: Request, res: Response) => {
-    if (!options.reportTemplateStore) return res.status(501).json({ error: "report templates not configured" });
-    try {
-      const tpl = await options.reportTemplateStore.get(req.params.id);
-      if (!tpl) return res.status(404).json({ error: `report template "${req.params.id}" not found` });
-      return res.status(200).json(tpl);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.post("/report-templates", async (req: Request, res: Response) => {
-    if (!options.reportTemplateStore) return res.status(501).json({ error: "report templates not configured" });
-    try {
-      const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
-      if (!name) return res.status(400).json({ error: "name is required" });
-      const saved = await options.reportTemplateStore.save(req.body);
-      return res.status(201).json(saved);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Dashboard view presets (#142) — built-in + custom, role/phase-keyed layouts the dashboard applies
-  // client-side (section show/hide/reorder + a per-view severity/top-N filter + a matching report
-  // template). GLOBAL store beside cases/ (mirrors report templates): built-ins editable in place,
-  // custom views via POST, reset/delete via DELETE.
-  app.get("/dashboard-views", async (_req: Request, res: Response) => {
-    if (!options.dashboardViewStore) return res.status(200).json({ views: BUILT_IN_DASHBOARD_VIEWS });
-    try {
-      return res.status(200).json({ views: await options.dashboardViewStore.list() });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.get("/dashboard-views/:id", async (req: Request, res: Response) => {
-    if (!options.dashboardViewStore) return res.status(501).json({ error: "dashboard views not configured" });
-    try {
-      const view = await options.dashboardViewStore.get(req.params.id);
-      if (!view) return res.status(404).json({ error: `dashboard view "${req.params.id}" not found` });
-      return res.status(200).json(view);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.post("/dashboard-views", async (req: Request, res: Response) => {
-    if (!options.dashboardViewStore) return res.status(501).json({ error: "dashboard views not configured" });
-    try {
-      const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
-      if (!name) return res.status(400).json({ error: "name is required" });
-      const sections = Array.isArray(req.body?.sections) ? req.body.sections : [];
-      if (!sections.length) return res.status(400).json({ error: "at least one visible section is required" });
-      const saved = await options.dashboardViewStore.save(req.body);
-      return res.status(201).json(saved);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Delete a custom view, OR reset an edited built-in back to its shipped default (idempotent for a
-  // pristine built-in). 404 only for an unknown non-built-in id.
-  app.delete("/dashboard-views/:id", async (req: Request, res: Response) => {
-    if (!options.dashboardViewStore) return res.status(501).json({ error: "dashboard views not configured" });
-    try {
-      const removed = await options.dashboardViewStore.delete(req.params.id);
-      if (!removed && !options.dashboardViewStore.isBuiltIn(req.params.id)) {
-        return res.status(404).json({ error: `dashboard view "${req.params.id}" not found` });
-      }
-      return res.status(204).send();
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Delete a custom template, OR reset an edited built-in back to its shipped default (idempotent for
-  // a pristine built-in). 404 only for an unknown non-built-in id.
-  app.delete("/report-templates/:id", async (req: Request, res: Response) => {
-    if (!options.reportTemplateStore) return res.status(501).json({ error: "report templates not configured" });
-    try {
-      const removed = await options.reportTemplateStore.delete(req.params.id);
-      if (!removed && !options.reportTemplateStore.isBuiltIn(req.params.id)) {
-        return res.status(404).json({ error: `report template "${req.params.id}" not found` });
-      }
-      return res.status(204).send();
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
   // Per-case selection of which report template renders the report. GET returns { templateId }
   // (default "standard"); PUT sets it and re-broadcasts so other dashboards refresh.
   app.get("/cases/:id/report-template", async (req: Request, res: Response) => {
@@ -2612,46 +2462,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(200).json({ artifacts });
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
-    }
-  });
-
-  // Bundle CRUD (global / shared across cases). GET works even without a Velociraptor client so an
-  // analyst can assemble bundles before connecting a server.
-  app.get("/bundles", async (_req: Request, res: Response) => {
-    if (!options.artifactBundleStore) return res.status(200).json([]);
-    try {
-      return res.status(200).json(await options.artifactBundleStore.list());
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.post("/bundles", async (req: Request, res: Response) => {
-    if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
-    try {
-      const { id, name, description, artifacts, defaultWaitMinutes } = req.body ?? {};
-      if (!name) return res.status(400).json({ error: "name is required" });
-      if (!Array.isArray(artifacts) || artifacts.length === 0) return res.status(400).json({ error: "at least one artifact is required" });
-      const saved = await options.artifactBundleStore.save({ id, name, description, artifacts, defaultWaitMinutes });
-      return res.status(201).json(saved);
-    } catch (err) {
-      if ((err as Error).message.includes("built-in")) return res.status(400).json({ error: (err as Error).message });
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Delete a custom bundle, OR reset an edited built-in back to its shipped default (idempotent for a
-  // pristine built-in). 404 only for an unknown non-built-in id.
-  app.delete("/bundles/:id", async (req: Request, res: Response) => {
-    if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
-    try {
-      const removed = await options.artifactBundleStore.delete(req.params.id);
-      if (!removed && !options.artifactBundleStore.isBuiltIn(req.params.id)) {
-        return res.status(404).json({ error: `bundle "${req.params.id}" not found` });
-      }
-      return res.status(204).send();
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
     }
   });
 
