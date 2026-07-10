@@ -13024,8 +13024,9 @@
             : `case archived (${archiveFirst}) and deleted`;
           window.location.href = location.pathname;
         } else {
-          document.getElementById("status").textContent =
-            "archive succeeded, but deleting the case folder failed — it remains in the active list";
+          document.getElementById("status").textContent = archiveFirst === "none"
+            ? "delete failed — the case still exists, unchanged"
+            : `archived (${archiveFirst}), but deleting the case folder afterward failed — it was not removed`;
           loadCaseLifecycle(caseId);
           loadCaseList();
         }
