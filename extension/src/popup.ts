@@ -26,7 +26,9 @@ function describeStatus(status: CaptureStatusResult): string {
   const detected = status.detectedAdapterId
     ? ADAPTERS.find((a) => a.id === status.detectedAdapterId)?.label ?? status.detectedAdapterId
     : "not recognized";
-  return status.activeLabel ? `detected: ${detected} — capturing as ${status.activeLabel}` : `detected: ${detected}`;
+  if (!status.activeLabel) return `detected: ${detected}`;
+  const rows = status.rowCount > 0 ? ` (${status.rowCount} rows captured)` : "";
+  return `detected: ${detected} — capturing as ${status.activeLabel}${rows}`;
 }
 
 // Populate the "Detected tool" row from the active tab's content script, and wire the override

@@ -1,8 +1,9 @@
 // Content-script (isolated world) orchestration for automated artifact fetching (issue #102).
 //
 // Flow on a recognized DFIR console:
-//   1. adapterForUrl() decides if this tab is a known tool — if not, we do nothing (plain screenshot
-//      capture still works via content.ts).
+//   1. adapterForUrl() decides if this tab is a known tool. Unless the popup forces an override
+//      (see applyAdapter() / onExtensionMessage() below), an unrecognized page does nothing here
+//      — plain screenshot capture still works via content.ts.
 //   2. We ask the service worker to inject pageHook.js into the MAIN world (executeScript bypasses
 //      page CSP) and hand the hook the adapter's API URL patterns via postMessage.
 //   3. The hook forwards matching API response bodies back; we extract clean rows via the adapter and

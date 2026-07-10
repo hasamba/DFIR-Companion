@@ -20,9 +20,10 @@ export const ADAPTERS: readonly Adapter[] = [
 ];
 
 /**
- * Return the adapter that recognizes this page URL, or null. Pure — used by the content script to
- * decide whether to activate at all (on an unrecognized site the extension does nothing, falling
- * back to plain screenshot capture). Invalid URLs yield null rather than throwing.
+ * Return the adapter that recognizes this page URL, or null. Pure — used by the content script as
+ * the DEFAULT activation decision (on an unrecognized site, plain screenshot capture is used
+ * unless the popup's manual override forces an adapter on — see adapters/override.ts). Invalid
+ * URLs yield null rather than throwing.
  */
 export function adapterForUrl(href: string): Adapter | null {
   let url: URL;
