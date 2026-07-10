@@ -69,6 +69,23 @@ export interface RouteContext {
   getControl(caseId: string): Promise<AiControl>;
   flush(caseId: string): Promise<void>;
   indexCaptureText(metadata: CaptureMetadata): void;
+  // AI-control write path + the AI off→on catch-up, graduated for routes/aiSynthesis.ts's
+  // POST /cases/:id/ai-control handler. Both STAY in createApp because the capture/synth machinery
+  // they touch stays private there:
+  //   setControl — persist a patch to the per-case AI control record (updates the private
+  //                controlCache that backs getControl) and return the merged record; also called by
+  //                createApp's flush + backfill, so it was graduated rather than moved. controlCache
+  //                itself stays fully private to createApp (only getControl/setControl read/write it;
+  //                no route touches it directly).
+  //   backfill   — on an AI off→on transition, analyze every capture taken since lastAnalyzedSeq then
+  //                kick synthesis. Used ONLY by the moved ai-control route, but stays in createApp
+  //                because it's wired to the PRIVATE synth machinery (scheduleSynthesis + its
+  //                synthTimers debounce map, windowSize, autoSynth) that no route reaches — graduating
+  //                this one member is far less surface than exporting all of that.
+  // Both are hoisted `async function` declarations, so binding them at construction (before their
+  // textual definition) is safe.
+  setControl(caseId: string, patch: Partial<AiControl>): Promise<AiControl>;
+  backfill(caseId: string): Promise<void>;
   // Run a raw text/log blob through the full import → diff → re-synthesize pipeline (the same chain
   // as the Import button). A hoisted async function in createApp shared by the /import, /tools and
   // Velociraptor ingest paths (still there); graduated for routes/pushNotify.ts's POST /cases/:id/push.
