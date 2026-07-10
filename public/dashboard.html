@@ -1750,8 +1750,7 @@
     <div class="comment-modal">
       <h3>Archive to ZIP</h3>
       <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
-        Bundles the whole case into a single unencrypted <code>.zip</code> file
-        (filename marked "(no password)" so it's never mistaken for the encrypted archive).
+        Bundles the whole case into a single unencrypted <code>.zip</code> file.
         This may take a moment for large cases.</p>
       <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; cursor:pointer;">
         <input id="zaRemoveFromList" type="checkbox" style="margin:0" />
@@ -1785,6 +1784,37 @@
         <button id="eeDownload">Export &amp; download</button>
         <button id="eeCancel" style="background:var(--c-2a2f3a);">Cancel</button>
         <span id="eeMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="deleteCaseOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Delete case</h3>
+      <p id="dcCaseName" style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px"></p>
+      <label style="display:block; font-size:12px; margin-bottom:6px;">Before deleting:</label>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; cursor:pointer;">
+        <input type="radio" name="dcArchiveFirst" id="dcArchiveNone" value="none" checked style="margin:0" />
+        Don't archive — just delete
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; cursor:pointer;">
+        <input type="radio" name="dcArchiveFirst" id="dcArchiveZip" value="zip" style="margin:0" />
+        Archive to ZIP first
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:8px; cursor:pointer;">
+        <input type="radio" name="dcArchiveFirst" id="dcArchiveEncrypted" value="encrypted" style="margin:0" />
+        Archive encrypted first
+      </label>
+      <div id="dcPasswordFields" style="display:none; margin-bottom:8px;">
+        <label style="display:block; font-size:12px; margin-bottom:4px;">Password (min 8 characters)</label>
+        <input id="dcPassword" type="password" autocomplete="new-password" style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
+        <label style="display:block; font-size:12px; margin-bottom:4px;">Confirm password</label>
+        <input id="dcPasswordConfirm" type="password" autocomplete="new-password" style="width:100%; box-sizing:border-box;" />
+      </div>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="dcDelete" style="background:#3a2020;border:1px solid #5a2a2a;color:#ff9f9f">Delete</button>
+        <button id="dcCancel" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="dcMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -3888,7 +3918,8 @@
     <button id="reopenBtn" style="display:none;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Reopen case</button>
     <button id="archiveZipBtn" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Archive to ZIP…</button>
     <button id="archiveEncryptedBtn" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Archive (encrypted)…</button>
-    <button id="restoreCaseBtn" style="display:none;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;">Restore from archive</button>
+    <button id="restoreCaseBtn" style="display:none;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Restore from archive</button>
+    <button id="deleteCaseBtn" style="display:none;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:#ff9f9f;cursor:pointer;font-size:13px;">Delete case…</button>
   </div>
   <script>
     // ---- Theme (issue #53: dark/light with persistence + OS preference) ---------------------
