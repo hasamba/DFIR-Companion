@@ -1,4 +1,4 @@
-import express, { type Express, type Request, type Response, type NextFunction } from "express";
+import express, { type Express, type Request, type Response, type NextFunction, type CookieOptions } from "express";
 import { config as loadDotenv } from "dotenv";
 import { join, basename, isAbsolute, resolve, dirname, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,19 @@ import {
   MIN_PASSWORD_LENGTH,
   dfircaseFilename,
 } from "./analysis/caseExportArchive.js";
+import {
+  hashCasePassword,
+  verifyCasePassword,
+  sanitizeCaseMeta,
+  signUnlockToken,
+  verifyUnlockToken,
+  isRememberedUnlockToken,
+  unlockCookieName,
+  parseCookieHeader,
+  MIN_CASE_PASSWORD_LENGTH,
+} from "./analysis/casePassword.js";
+import { loadOrCreateInstanceSecret } from "./analysis/instanceSecret.js";
+import { createCaseLockGate } from "./analysis/caseLockGate.js";
 import { parseCsv } from "./analysis/csvImport.js";
 import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
 import { resolveHuntPlatforms, normalizeHuntPlatform, HUNT_PLATFORMS, type HuntPlatform } from "./analysis/huntPlatforms.js";
@@ -146,6 +159,7 @@ import {
   selectReadyFiles, classifyDropFile, rawToolInputExt, RAW_TOOL_EXTS, shouldIgnoreDropFile, isOversize,
   DROP_PROCESSED, DROP_FAILED, DROP_README, type DropFileStat,
 } from "./analysis/dropScan.js";
+import { formatDropLogLines, appendDropLog, buildSweepLogEntries, type DropLogEntry } from "./analysis/dropLog.js";
 import {
   loadAllToolConfigs, toolForExtension, suggestedToolForExtension, TOOL_DEFS, type ToolId, type ToolConfig,
 } from "./integrations/tools/toolConfig.js";
@@ -630,6 +644,9 @@ function toStringArray(v: unknown): string[] {
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const app = express();
+  // Signs/verifies case-unlock cookies (issue: case password protection). Persisted next to
+  // the cases root so "remember on this computer" survives a server restart.
+  const instanceSecret = loadOrCreateInstanceSecret(store.casesRoot);
   const hasAiProvider = (): boolean => options.aiConfigured ?? Boolean(options.pipeline?.hasAiProvider());
   // Resolve the report template selected for a case (mirrors ReportWriter.loadTemplate) and report
   // whether a given canonical section is enabled — used to gate the per-section AI generators so a
@@ -740,6 +757,111 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(400).json({ error: "request body is not valid JSON" });
     }
     return next(err);
+  });
+
+  // ── Case password protection ─────────────────────────────────────────────────────────
+  // Gates every /cases/:id/* route behind that case's password, when one is set. Mounted
+  // here, before ANY /cases/:id/* route is registered, so it covers all of them via prefix
+  // matching. See docs/superpowers/specs/2026-07-09-case-password-protection-design.md.
+  app.use("/cases/:id", createCaseLockGate(store, instanceSecret));
+
+  const UNLOCK_TTL_REMEMBER_MS = 365 * 24 * 60 * 60 * 1000; // ~1 year — "remember on this computer"
+  const UNLOCK_TTL_SESSION_MS = 12 * 60 * 60 * 1000;        // 12h backstop for a browser-session cookie
+
+  // Whether this request already carries a valid unlock for `id` (used by /lock-status), and
+  // whether that unlock — if present — was signed with "remember on this computer". The
+  // dashboard needs the latter to know whether it's safe to explicitly forget the unlock when
+  // navigating away from a case it didn't itself just unlock in this page load (e.g. a case
+  // that was already unlocked via a remembered cookie from an earlier session).
+  function readUnlockState(req: Request, id: string, salt: string): { unlocked: boolean; remembered: boolean } {
+    const cookies = parseCookieHeader(req.headers.cookie);
+    const token = cookies[unlockCookieName(id)];
+    if (!token) return { unlocked: false, remembered: false };
+    const unlocked = verifyUnlockToken(token, id, salt, instanceSecret);
+    return { unlocked, remembered: unlocked && isRememberedUnlockToken(token, id, salt, instanceSecret) };
+  }
+
+  app.get("/cases/:id/lock-status", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const meta = await store.getCaseMeta(id);
+      if (!meta) return res.status(404).json({ error: `case ${id} not found` });
+      const hasPassword = Boolean(meta.password);
+      if (!hasPassword) return res.status(200).json({ hasPassword: false, unlocked: true, remembered: false });
+      const state = readUnlockState(req, id, meta.password!.salt);
+      return res.status(200).json({ hasPassword: true, ...state });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/unlock", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const meta = await store.getCaseMeta(id);
+      if (!meta) return res.status(404).json({ error: `case ${id} not found` });
+      if (!meta.password) return res.status(200).json({ ok: true }); // nothing to unlock
+      const password = (req.body as { password?: unknown })?.password;
+      const remember = (req.body as { remember?: unknown })?.remember === true;
+      if (typeof password !== "string" || !verifyCasePassword(password, meta.password)) {
+        return res.status(401).json({ error: "incorrect password" });
+      }
+      const ttl = remember ? UNLOCK_TTL_REMEMBER_MS : UNLOCK_TTL_SESSION_MS;
+      const token = signUnlockToken(id, meta.password.salt, instanceSecret, ttl, remember);
+      const cookieOpts: CookieOptions = { httpOnly: true, sameSite: "strict", path: "/" };
+      if (remember) cookieOpts.maxAge = ttl;
+      res.cookie(unlockCookieName(id), token, cookieOpts);
+      return res.status(200).json({ ok: true });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/password", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
+      if (!(await store.caseExists(id))) return res.status(404).json({ error: `case ${id} not found` });
+      const newPassword = (req.body as { newPassword?: unknown })?.newPassword;
+      if (typeof newPassword !== "string" || newPassword.length < MIN_CASE_PASSWORD_LENGTH) {
+        return res.status(400).json({ error: `password must be at least ${MIN_CASE_PASSWORD_LENGTH} characters` });
+      }
+      const password = hashCasePassword(newPassword);
+      const updated = await store.updateCaseMeta(id, { password });
+      // Deliberately does NOT auto-unlock the browser that just set/changed it: setting a
+      // password (or changing one, which rotates the salt and invalidates the caller's own
+      // existing cookie) should require going through the real unlock prompt afterward, same
+      // as anyone else — matching the analyst's expectation that setting a password protects
+      // the case immediately, not just for other people.
+      return res.status(200).json(sanitizeCaseMeta(updated));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/cases/:id/password", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
+      if (!(await store.caseExists(id))) return res.status(404).json({ error: `case ${id} not found` });
+      const updated = await store.updateCaseMeta(id, { password: undefined });
+      res.clearCookie(unlockCookieName(id), { path: "/" });
+      return res.status(200).json(sanitizeCaseMeta(updated));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Explicitly forget THIS browser's unlock for a case, without touching the password
+  // itself. The dashboard calls this when navigating away from a case that was unlocked
+  // without "remember on this computer" — a session cookie survives switching cases within
+  // the same tab (only a real browser close clears it), so without this, a not-remembered
+  // unlock would silently stay valid for the rest of the browser session. No case-existence
+  // check: clearing a cookie that may not exist for a case that may not exist is harmless
+  // and always idempotent, and this route works even while the case is already locked.
+  app.post("/cases/:id/lock", (req: Request, res: Response) => {
+    res.clearCookie(unlockCookieName(req.params.id), { path: "/" });
+    return res.status(200).json({ ok: true });
   });
 
   // Lightweight reachability check used by the extension's connection status.
@@ -1049,7 +1171,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // to attach to — case CREATION lives in the dashboard, the extension only connects.
   app.get("/cases", async (_req: Request, res: Response) => {
     try {
-      return res.status(200).json(await store.listCases());
+      return res.status(200).json((await store.listCases()).map(sanitizeCaseMeta));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -1081,7 +1203,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       dispatchNotify(milestoneEvent(caseId, `Investigation opened: ${name}`, [`Investigator: ${investigator ?? "unknown"}`], new Date().toISOString()));
       // Create the evidence drop folder for every new case (best-effort — never block case creation).
       await ensureDropFolders(caseId).catch(() => { /* the watcher re-ensures on its next poll */ });
-      return res.status(201).json(meta);
+      return res.status(201).json(sanitizeCaseMeta(meta));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -1411,7 +1533,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (status !== "open" && status !== "closed") return res.status(400).json({ error: "status must be 'open' or 'closed'" });
       const updated = await store.updateCaseMeta(id, { status });
       logLine(`[lifecycle] case=${id} status=${status}`);
-      return res.status(200).json(updated);
+      return res.status(200).json(sanitizeCaseMeta(updated));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -2236,7 +2358,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const { meta, counts } = await importEncryptedCase(store, fileBuffer, password, {
         targetCaseId: typeof targetCaseId === "string" && targetCaseId.trim() ? targetCaseId.trim() : undefined,
       });
-      return res.status(201).json({ ...meta, counts });
+      // An archived case.json is written back byte-for-byte on import (see
+      // caseExportArchive.ts), so an exported case that had a case-lock password carries
+      // its salt+hash into the archive. Sanitize before responding — never let it reach
+      // the client, same as every other route that serializes a CaseMeta.
+      return res.status(201).json({ ...sanitizeCaseMeta(meta), counts });
     } catch (err) {
       if (err instanceof CaseImportConflictError) {
         return res.status(409).json({ error: err.message, caseId: err.caseId });
@@ -2739,38 +2865,56 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.toolRunner) return res.status(501).json({ error: "external tools not configured" });
     if (!options.dropStatusStore) return res.status(501).json({ error: "drop folder not enabled" });
     if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
-    const pending = (await options.dropStatusStore.load(caseId)).pendingRawInputs ?? [];
-    const configured = liveToolConfigs();
-    const dropDir = dropDirOf(caseId);
-    // ONE undo checkpoint for the whole "Run all" batch (the user clicked once): snapshot before, then
-    // push a single checkpoint after if anything imported — so undo reverts the batch in one step.
-    let before: InvestigationState | null = null;
-    if (options.stateStore) { try { before = await options.stateStore.load(caseId); } catch { /* keep null */ } }
-    let ran = 0, failed = 0, skipped = 0;
-    const stillPending: PendingRawInput[] = [];
-    for (const p of pending) {
-      const toolId = resolveToolForExt(p.ext, configured);
-      if (!toolId) { skipped++; stillPending.push({ ...p, configured: false, suggestedTool: suggestedToolForExtension(p.ext) }); continue; }
-      try {
-        await runToolAndIngest(caseId, toolId, join(dropDir, p.relpath));
-        await moveDropFile(dropDir, p.relpath, true).catch(() => { /* best-effort */ });
-        ran++;
-      } catch (err) {
-        failed++;
-        recordImportFailure(caseId, "drop-tool", p.relpath, err);
-        await moveDropFile(dropDir, p.relpath, false).catch(() => { /* best-effort */ });
+    // Serialize against the poller's scanCaseDrops sweep for this case: both are writers of
+    // dropPendingLogged, and this route awaits per-file tool runs, so an overlapping sweep could
+    // read a stale dropPendingLogged snapshot and clobber this route's deletes / emit a stray
+    // PENDING line for a file this route just resolved.
+    if (dropScanning.has(caseId)) return res.status(409).json({ error: "a drop sweep is in progress for this case, try again shortly" });
+    dropScanning.add(caseId);
+    try {
+      const pending = (await options.dropStatusStore.load(caseId)).pendingRawInputs ?? [];
+      const configured = liveToolConfigs();
+      const dropDir = dropDirOf(caseId);
+      // ONE undo checkpoint for the whole "Run all" batch (the user clicked once): snapshot before, then
+      // push a single checkpoint after if anything imported — so undo reverts the batch in one step.
+      let before: InvestigationState | null = null;
+      if (options.stateStore) { try { before = await options.stateStore.load(caseId); } catch { /* keep null */ } }
+      let ran = 0, failed = 0, skipped = 0;
+      const stillPending: PendingRawInput[] = [];
+      const resolvedEntries: DropLogEntry[] = [];
+      for (const p of pending) {
+        const toolId = resolveToolForExt(p.ext, configured);
+        if (!toolId) { skipped++; stillPending.push({ ...p, configured: false, suggestedTool: suggestedToolForExtension(p.ext) }); continue; }
+        try {
+          await runToolAndIngest(caseId, toolId, join(dropDir, p.relpath));
+          await moveDropFile(dropDir, p.relpath, true).catch(() => { /* best-effort */ });
+          resolvedEntries.push({ status: "IMPORTED", relpath: p.relpath, reason: `via ${toolId} (tool run)` });
+          ran++;
+        } catch (err) {
+          failed++;
+          recordImportFailure(caseId, "drop-tool", p.relpath, err);
+          resolvedEntries.push({ status: "FAILED", relpath: p.relpath, reason: (err as Error)?.message ?? String(err) });
+          await moveDropFile(dropDir, p.relpath, false).catch(() => { /* best-effort */ });
+        }
+        dropSeen.get(caseId)?.delete(p.relpath);   // moved out of the watched area — forget it
+        dropPendingLogged.get(caseId)?.delete(p.relpath); // resolved — no longer pending
       }
-      dropSeen.get(caseId)?.delete(p.relpath);   // moved out of the watched area — forget it
-    }
-    if (before && ran > 0) {
-      const s = await options.stateStore?.load(caseId).catch(() => null);
-      if (!s || s.forensicTimeline.length !== before.forensicTimeline.length || s.iocs.length !== before.iocs.length) {
-        await pushImportCheckpoint(caseId, before, `Tools: drop batch (${ran} file${ran !== 1 ? "s" : ""})`);
+      if (before && ran > 0) {
+        const s = await options.stateStore?.load(caseId).catch(() => null);
+        if (!s || s.forensicTimeline.length !== before.forensicTimeline.length || s.iocs.length !== before.iocs.length) {
+          await pushImportCheckpoint(caseId, before, `Tools: drop batch (${ran} file${ran !== 1 ? "s" : ""})`);
+        }
       }
+      if (resolvedEntries.length > 0) {
+        await appendDropLog(dropDir, formatDropLogLines(resolvedEntries, new Date().toISOString()))
+          .catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
+      }
+      await options.dropStatusStore.record(caseId, { dropPath: dropDir, imported: [], failed: [], pendingRawInputs: stillPending });
+      options.onDropStatus?.(caseId);
+      return res.status(200).json({ ok: true, ran, failed, skipped });
+    } finally {
+      dropScanning.delete(caseId);
     }
-    await options.dropStatusStore.record(caseId, { dropPath: dropDir, imported: [], failed: [], pendingRawInputs: stillPending });
-    options.onDropStatus?.(caseId);
-    return res.status(200).json({ ok: true, ran, failed, skipped });
   });
 
   // Run a tool's "update rules" command (Settings → Tools). Does NOT touch case data — a rule update is
@@ -3194,6 +3338,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const DROP_CONCURRENCY = 4;
   const dropSeen = new Map<string, Map<string, { size: number; mtimeMs: number }>>();
   const dropScanning = new Set<string>();
+  // Files logged as PENDING (relpath per case) so a still-waiting raw-tool file doesn't get a new
+  // PENDING line every poll — only once when first seen pending, cleared once it resolves.
+  const dropPendingLogged = new Map<string, Set<string>>();
   const DROP_README_TEXT = [
     "DFIR Companion — evidence drop folder",
     "",
@@ -3203,8 +3350,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "",
     "After processing, files move to _processed/ (success) or _failed/ (error).",
     "Failures are reported in the dashboard (📥 Drop banner) and any configured notification channel.",
+    "A running history of every file processed (imported/failed/pending, with reasons) is kept in",
+    "drop-log.txt in this same folder.",
     "",
-    "This README and the _processed/ and _failed/ subfolders are ignored by the scanner.",
+    "This README, drop-log.txt, and the _processed/ and _failed/ subfolders are ignored by the scanner.",
     "",
   ].join("\n");
 
@@ -3418,6 +3567,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
           await moveDropFile(dropDir, file.relpath, res.ok).catch((e) => logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`));
           nextSeen.delete(file.relpath); // moved out of the watched area — forget it
+          dropPendingLogged.get(caseId)?.delete(file.relpath); // resolved — no longer pending
         }));
       }
       if (imported.length === 0 && failed.length === 0 && pendingRawInputs.length === 0) return;
@@ -3428,6 +3578,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           options.onDropStatus?.(caseId);
         } catch (e) { logLine(`[drop] status record failed: ${(e as Error).message}`); }
       }
+
+      // Folder-visible history (drop/drop-log.txt): every imported/failed file gets a line; a pending
+      // raw-tool file gets ONE PENDING line the first time it's seen (dropPendingLogged dedups it across
+      // the ~10s poll interval until it resolves).
+      const { entries: logEntries, nextLoggedPending } = buildSweepLogEntries(
+        { imported, failed, pendingRawInputs },
+        dropPendingLogged.get(caseId) ?? new Set<string>(),
+      );
+      dropPendingLogged.set(caseId, nextLoggedPending);
+      if (logEntries.length > 0) {
+        await appendDropLog(dropDir, formatDropLogLines(logEntries, new Date().toISOString()))
+          .catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
+      }
+
       logLine(`[drop] ${caseId}: ${imported.length} imported, ${failed.length} failed`);
       if (failed.length > 0) {
         const lines = failed.slice(0, 20).map((x) => `• ${x.relpath} — ${x.reason}`);

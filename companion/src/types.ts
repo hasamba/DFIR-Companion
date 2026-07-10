@@ -12,6 +12,11 @@ export interface CaptureMetadata {
   screenshotFile: string;   // relative filename within screenshots/, e.g. "000123_<ts>_<tab-title>.webp" (title slugified; omitted when empty / no safe chars)
 }
 
+export interface CasePasswordHash {
+  salt: string; // hex-encoded, from scryptSync
+  hash: string; // hex-encoded, from scryptSync
+}
+
 export interface CaseMeta {
   caseId: string;
   name: string;
@@ -19,6 +24,10 @@ export interface CaseMeta {
   investigator: string;
   aiProvider: string | null;
   status?: "open" | "closed" | "archived"; // lifecycle state; absent means open
+  // scrypt hash+salt gating dashboard access to this case (issue: case password protection).
+  // NEVER serialize this directly in an API response — always go through
+  // analysis/casePassword.ts's sanitizeCaseMeta(), which replaces it with `hasPassword`.
+  password?: CasePasswordHash;
 }
 
 // Audit record for an uploaded CSV result set (e.g. a Velociraptor export),

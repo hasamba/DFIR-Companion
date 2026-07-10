@@ -62,11 +62,22 @@ export interface SiemEvent {
   artifactName?: string;
   // Full, untruncated event message/detail (beyond the truncated `description`) when the mapper had it.
   message?: string;
+  // The row's own aggKey, carried through unconditionally (independent of the `aggregate` option)
+  // so IOC provenance linkage (mergeRowIocs/resolveExtractedFrom) always has a stable key to
+  // resolve against — not persisted on ForensicEvent, stripped before it reaches case state.
+  aggKey?: string;
 }
 
 export interface SiemIoc {
   type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "sid" | "other";
   value: string;
+  // Import-scoped only: the aggKey(s) of the row(s) that produced this IOC within one parse call.
+  // Resolved to real case-scoped event ids by pipeline.ts and converted into `extractedFrom`;
+  // never itself persisted into case state.
+  sourceAggKeys?: string[];
+  // Case-scoped event id(s) this IOC was authoritatively extracted from. Set by pipeline.ts after
+  // resolving sourceAggKeys; empty/absent falls back to iocProvenanceChain.ts's approximate matcher.
+  extractedFrom?: string[];
 }
 
 export interface SiemParseResult {
@@ -926,6 +937,30 @@ export function addIoc(sink: Map<string, SiemIoc>, type: SiemIoc["type"], value:
   if (!sink.has(key)) sink.set(key, { type, value: v });
 }
 
+// Merge a per-row IOC sink into the file-level sink once that row's aggKey (from its MappedEvent)
+// is known, unioning sourceAggKeys so a value seen across multiple rows keeps every row's link.
+// Call with no aggKey for a row that produced IOCs but no event (e.g. non-alert network telemetry)
+// — the value still merges in, just without a link, matching today's approximate-only behavior.
+export function mergeRowIocs(fileSink: Map<string, SiemIoc>, rowSink: Map<string, SiemIoc>, aggKey?: string): void {
+  for (const [key, ioc] of rowSink) {
+    const existing = fileSink.get(key);
+    const keys = existing?.sourceAggKeys ?? [];
+    const nextKeys = aggKey && !keys.includes(aggKey) ? [...keys, aggKey] : keys;
+    fileSink.set(key, { ...(existing ?? ioc), ...(nextKeys.length ? { sourceAggKeys: nextKeys } : {}) });
+  }
+}
+
+// Resolve each IOC's sourceAggKeys against a final aggKey->event-id lookup (built once events have
+// their case-scoped ids), stamping extractedFrom. An aggKey with no match (e.g. the event was
+// capped by maxEvents) is silently dropped — that IOC just falls back to approximate matching.
+export function resolveExtractedFrom(iocs: readonly SiemIoc[], eventIdByAggKey: ReadonlyMap<string, string>): SiemIoc[] {
+  return iocs.map((c) => {
+    if (!c.sourceAggKeys?.length) return c;
+    const ids = [...new Set(c.sourceAggKeys.map((k) => eventIdByAggKey.get(k)).filter((x): x is string => !!x))];
+    return ids.length ? { ...c, extractedFrom: ids } : c;
+  });
+}
+
 // ───────────────────────────── aggregation (shared) ─────────────────────────────
 
 // Incremental accumulator behind aggregateEvents — collapse mapped events by aggKey into counted
@@ -973,6 +1008,7 @@ export function createEventAggregator(
           severity: m.severity,
           mitreTechniques: [...m.mitre],
           count: 1,
+          aggKey: m.aggKey,
           ...(m.sha256 ? { sha256: m.sha256 } : {}),
           ...(m.md5 ? { md5: m.md5 } : {}),
           ...(m.path ? { path: m.path } : {}),
@@ -1037,7 +1073,10 @@ export function buildSiemResult(records: Row[], format: string, opts: SiemImport
   for (const rec of records) {
     const host = pickHost(rec);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
-    mapped.push(mapWindows(rec, host, iocSink) ?? mapGeneric(rec, host, iocSink));
+    const rowSink = new Map<string, SiemIoc>();
+    const m = mapWindows(rec, host, rowSink) ?? mapGeneric(rec, host, rowSink);
+    mergeRowIocs(iocSink, rowSink, m.aggKey);
+    mapped.push(m);
   }
 
   const { events, groups } = aggregateEvents(mapped, {
