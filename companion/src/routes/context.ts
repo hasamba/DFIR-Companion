@@ -9,6 +9,7 @@ import type { IrisClient } from "../integrations/iris/irisClient.js";
 import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { ProviderHealthCache } from "../enrichment/providerHealth.js";
 import type { ImporterFailure, AiError } from "../analysis/diagnostics.js";
+import type { Severity } from "../analysis/stateTypes.js";
 
 /**
  * Dependencies shared across more than one route domain, built once in createApp and passed to
@@ -46,6 +47,12 @@ export interface RouteContext {
   getControl(caseId: string): Promise<AiControl>;
   flush(caseId: string): Promise<void>;
   indexCaptureText(metadata: CaptureMetadata): void;
+  // Run a raw text/log blob through the full import → diff → re-synthesize pipeline (the same chain
+  // as the Import button). A hoisted async function in createApp shared by the /import, /tools and
+  // Velociraptor ingest paths (still there); graduated for routes/pushNotify.ts's POST /cases/:id/push.
+  ingestStreamed(
+    caseId: string, kind: string, text: string, originalName: string, minSeverity?: Severity,
+  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
 
   // ── LIVE accessors ───────────────────────────────────────────────────────────────────
   // Call these INSIDE the request handler (or inside per-request logic like a preflight run),
@@ -59,4 +66,8 @@ export interface RouteContext {
   dropWatchEnabled(): boolean;
   enrichmentProviders(): EnrichmentProvider[];
   enrichHealth(): ProviderHealthCache;
+  // Detect the importer kind for a filename+text (honours user-authored custom importers). A `const`
+  // arrow defined in createApp AFTER this ctx literal, so it's exposed as a live accessor — call
+  // ctx.resolveImportKind() INSIDE the handler to reach the current binding, then invoke the result.
+  resolveImportKind(): (filename: string, text: string) => string;
 }
