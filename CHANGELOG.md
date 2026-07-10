@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Right-click "Send to DFIR-Companion"** — send a page's selected text, a table (nearest to the click), or a link's URL straight to the connected case from any page, not just recognized adapter consoles.
+
 ## [0.31.0] - 2026-07-10
 
 ### Added
