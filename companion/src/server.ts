@@ -1489,6 +1489,22 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
+  // Best-effort: permanently deletes a case's folder AFTER the caller has already fully built any
+  // requested archive. Failure here must NOT be treated as though the archive itself failed — the
+  // caller already has (or is about to send) that file; this just means the case's folder remains
+  // on disk until deletion is retried.
+  async function deleteCaseFolderBestEffort(id: string): Promise<{ deleted: boolean; error?: string }> {
+    try {
+      await store.deleteCaseFolder(id);
+      logLine(`[delete] case=${id} deleted`);
+      return { deleted: true };
+    } catch (err) {
+      const message = (err as Error).message;
+      errLine(`[delete] case=${id} failed to delete: ${message}`);
+      return { deleted: false, error: message };
+    }
+  }
+
   // Permanently delete a case: optionally archives it first (ZIP or encrypted), then removes its
   // folder from disk entirely — irreversible. Only allowed once a case is closed or archived (an
   // open case must be closed first, mirroring the restriction on archiving). If the archive step
@@ -1517,14 +1533,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         }
         const archive = await exportEncryptedCase(store, id, password);
         const filename = dfircaseFilename(id, meta.name);
-        let deleted = false;
-        try {
-          await store.deleteCaseFolder(id);
-          deleted = true;
-          logLine(`[delete] case=${id} deleted after encrypted archive`);
-        } catch (err) {
-          errLine(`[delete] case=${id} failed to delete after encrypted archive: ${(err as Error).message}`);
-        }
+        const { deleted } = await deleteCaseFolderBestEffort(id);
         res.type("application/octet-stream");
         res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
         res.setHeader("Cache-Control", "private, no-cache");
@@ -1538,16 +1547,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         logLine(`[delete] case=${id} archived to ZIP before deletion: ${archiveResult.archivePath}`);
       }
 
-      let deleted = false;
-      let deleteError: string | undefined;
-      try {
-        await store.deleteCaseFolder(id);
-        deleted = true;
-        logLine(`[delete] case=${id} deleted (archiveFirst=${archiveFirst})`);
-      } catch (err) {
-        deleteError = (err as Error).message;
-        errLine(`[delete] case=${id} failed to delete: ${deleteError}`);
-      }
+      const { deleted, error: deleteError } = await deleteCaseFolderBestEffort(id);
 
       return res.status(200).json({
         deleted,
@@ -1555,6 +1555,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         ...(archiveResult ? { archivePath: archiveResult.archivePath, manifest: archiveResult.manifest } : {}),
       });
     } catch (err) {
+      if ((err as Error).message.includes("does not exist")) {
+        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+      }
       errLine(`[delete] error case=${req.params.id}: ${(err as Error).message}`);
       return res.status(500).json({ error: (err as Error).message });
     }

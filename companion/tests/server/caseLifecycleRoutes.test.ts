@@ -244,6 +244,32 @@ describe("POST /cases/:id/delete", () => {
     await expect(stat(join(store.casesRoot, "_archived", "DEL-5"))).rejects.toThrow();
   });
 
+  it("archives to ZIP then deletes an already-archived case (exercises the archive-aware caseDirOverride path)", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, "DEL-8", "Case Del Eight");
+    await request(app).post("/cases/DEL-8/archive").send({ removeFromList: true });
+    const res = await request(app).post("/cases/DEL-8/delete").send({ archiveFirst: "zip" });
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(true);
+    expect(res.body.archivePath).toContain("(no password).zip");
+    const zipStat = await stat(res.body.archivePath);
+    expect(zipStat.isFile()).toBe(true);
+    await expect(stat(join(store.casesRoot, "_archived", "DEL-8"))).rejects.toThrow();
+  });
+
+  it("exports encrypted then deletes an already-archived case (exercises store.caseDir resolving to _archived/)", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, "DEL-9", "Case Del Nine");
+    await request(app).post("/cases/DEL-9/archive").send({ removeFromList: true });
+    const res = await bufferRequest(
+      request(app).post("/cases/DEL-9/delete").send({ archiveFirst: "encrypted", password: PASSWORD }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers["x-case-deleted"]).toBe("true");
+    expect((res.body as Buffer).length).toBeGreaterThan(0);
+    await expect(stat(join(store.casesRoot, "_archived", "DEL-9"))).rejects.toThrow();
+  });
+
   it("still returns the archive result if deletion itself fails", async () => {
     const { app, store } = await harness();
     await seedCase(app, "DEL-6", "Case Del Six");
