@@ -8,6 +8,7 @@ import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
 import { atomicWrite } from "./storage/atomicWrite.js";
+import type { RouteContext } from "./routes/context.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { JobManager } from "./analysis/jobManager.js";
@@ -781,6 +782,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const unlocked = verifyUnlockToken(token, id, salt, instanceSecret);
     return { unlocked, remembered: unlocked && isRememberedUnlockToken(token, id, salt, instanceSecret) };
   }
+
+  const ctx: RouteContext = {
+    store,
+    options,
+    serverLogger,
+    recordImportFailure,
+    recordAiError,
+    readUnlockState,
+  };
+  void ctx; // consumed by registerXRoutes calls added in later tasks
 
   app.get("/cases/:id/lock-status", async (req: Request, res: Response) => {
     try {
