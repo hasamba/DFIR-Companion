@@ -814,6 +814,7 @@
     .ev-row { display: flex; align-items: flex-start; border-bottom: 1px solid var(--c-1a1f28); padding: 3px 0; }
     .ev-row:hover { background: var(--c-0d1117); }
     .ev-row.ev-selected { background: var(--c-142038); }
+    .ev-row.ev-focused { outline: 2px solid var(--c-6aa9ff); outline-offset: -2px; border-radius: 3px; }
     .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 162px; padding-top: 1px; }
     .ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add, .ev-col-ctrl .explain-btn { margin-left: 0; }
     /* Action icons hidden (Settings → Timeline row display) → reclaim the control column's width, keep just the checkbox. */
@@ -1930,6 +1931,28 @@
     </div>
   </div>
 
+  <!-- ── Keyboard shortcuts cheat sheet ───────────────────────────────────── -->
+  <div id="kbdHelpOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>⌨ Keyboard shortcuts</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        Active on the Forensic Timeline whenever you're not typing in a field. Toggle in Settings → General.</p>
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace; white-space:nowrap;">j / k</td><td style="padding:4px 0;">Next / previous event</td></tr>
+        <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace;">f</td><td style="padding:4px 0;">Flag (star) the focused event</td></tr>
+        <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace;">i</td><td style="padding:4px 0;">Add the focused event's IP/host as an IOC</td></tr>
+        <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace;">/</td><td style="padding:4px 0;">Focus global search</td></tr>
+        <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace;">p</td><td style="padding:4px 0;">Pin / unpin the focused event's finding (only when it cites exactly one)</td></tr>
+        <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace;">n</td><td style="padding:4px 0;">Add a note (comment) to the focused event</td></tr>
+        <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace;">?</td><td style="padding:4px 0;">Show this cheat sheet</td></tr>
+        <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace;">Esc</td><td style="padding:4px 0;">Close this cheat sheet, or clear the focused row</td></tr>
+      </table>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="kbdHelpClose">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Settings modal ───────────────────────────────────────────────────── -->
   <div id="settingsOverlay" class="comment-overlay">
     <div class="comment-modal settings-modal">
@@ -1974,6 +1997,12 @@
           <label>Timeline row display <span class="sfield-hint" style="display:inline">— check what to show in each forensic-timeline event row (the timestamp &amp; message are always shown). Applies immediately.</span></label>
           <div class="sec-selall"><button type="button" id="tlSelectAll">Select all</button><button type="button" id="tlDeselectAll">Deselect all</button></div>
           <div class="sec-checks" id="tlDisplayChecks"></div>
+        </div>
+        <div class="sfield">
+          <label>Keyboard shortcuts <span class="sfield-hint" style="display:inline">— press ? on the Forensic Timeline anytime for the full list. Saved in this browser.</span></label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:4px 0">
+            <input type="checkbox" id="kbdShortcutsChk" /> Enable j/k/f/i/p/n/? vim-style navigation on the Forensic Timeline
+          </label>
         </div>
         <div class="sfield">
           <label>Import severity <span class="sfield-hint" style="display:inline">— the minimum severity used when importing evidence. "Ask every time" prompts on each import; pick a level to remember it and skip the prompt. Saved in this browser.</span></label>
@@ -12448,6 +12477,122 @@
       if (selAll && someSelected && !allSelected) selAll.indeterminate = true;
     }
 
+    // --- Vim-style keyboard navigation (Forensic Timeline) ----------------------
+    const KBD_SHORTCUTS_KEY = "dfir.kbdShortcuts.enabled";
+    function kbdShortcutsEnabled() {
+      const v = localStorage.getItem(KBD_SHORTCUTS_KEY);
+      return v === null ? true : v === "1";
+    }
+    function setKbdShortcutsEnabled(on) { localStorage.setItem(KBD_SHORTCUTS_KEY, on ? "1" : "0"); }
+
+    let focusedEventId = null;   // currently vim-focused timeline row (session-only, cleared on re-render)
+
+    function kbdVisibleRows() { return [...document.querySelectorAll("#forensicTimeline .ev-row")]; }
+
+    function kbdSetFocus(id) {
+      const prev = document.querySelector("#forensicTimeline .ev-row.ev-focused");
+      if (prev) prev.classList.remove("ev-focused");
+      focusedEventId = id;
+      if (!id) return;
+      const row = document.querySelector(`#forensicTimeline .ev-row[data-evid="${CSS.escape(id)}"]`);
+      if (row) { row.classList.add("ev-focused"); row.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+    }
+    function kbdClearFocus() { kbdSetFocus(null); }
+
+    // Move focus to the next/previous row on the CURRENT page (clamps at either end rather than
+    // auto-paging). Starts at the first/last row when nothing is focused yet, or when the previously
+    // focused row scrolled out of the current page/filter (e.g. a re-render dropped it).
+    function kbdMoveFocus(dir) {
+      const rows = kbdVisibleRows();
+      if (!rows.length) return;
+      const ids = rows.map(r => r.getAttribute("data-evid"));
+      let idx = focusedEventId ? ids.indexOf(focusedEventId) : -1;
+      idx = idx === -1 ? (dir > 0 ? 0 : ids.length - 1) : Math.min(ids.length - 1, Math.max(0, idx + dir));
+      kbdSetFocus(ids[idx]);
+    }
+
+    function kbdFocusedEvent() {
+      if (!focusedEventId) return null;
+      return (lastFt || []).find(e => String(e.id) === focusedEventId) || null;
+    }
+
+    function kbdToggleFlag() {
+      if (!focusedEventId) return;
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const id = focusedEventId;
+      toggleStar(caseId, id);          // re-renders the timeline, which drops DOM-level focus state
+      kbdSetFocus(id);                 // ...so restore the highlight on the same row
+    }
+
+    // No dedicated "add as IOC" hook exists on events, so prefill the manual IOC-add form (in the
+    // IOCs section) from the focused event's most likely indicator and let the analyst confirm/edit
+    // the type before submitting, rather than guessing and posting silently.
+    function kbdAddFocusedAsIoc() {
+      const e = kbdFocusedEvent();
+      if (!e) return;
+      const isIp = !!(e.dstIp || e.srcIp);
+      const candidate = e.dstIp || e.srcIp || e.asset || "";
+      if (!candidate) return;
+      const sec = document.getElementById("sec-iocs");
+      if (!sec) return;
+      sec.classList.remove("collapsed");
+      const wrap = sec.querySelector(".manual-add");
+      if (wrap) wrap.removeAttribute("hidden");
+      const typeSel = document.getElementById("miType");
+      const valInput = document.getElementById("miValue");
+      if (typeSel) typeSel.value = isIp ? "ip" : "other";
+      if (valInput) valInput.value = candidate;
+      sec.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (valInput) { valInput.focus(); valInput.select(); }
+    }
+
+    // Pinning is a Findings-section concept, not a per-event one — a timeline event only cites
+    // findings via relatedFindingIds. Only act when the focused event cites exactly one finding;
+    // otherwise it's ambiguous which one the analyst means, so this is a no-op.
+    function kbdTogglePin() {
+      const e = kbdFocusedEvent();
+      if (!e) return;
+      const fids = e.relatedFindingIds || [];
+      if (fids.length !== 1) return;
+      togglePin(fids[0]);
+    }
+
+    function kbdAddNote() {
+      if (!focusedEventId) return;
+      openCommentModal("event", focusedEventId);
+    }
+
+    function kbdOpenHelp() { document.getElementById("kbdHelpOverlay").classList.add("open"); }
+    function kbdCloseHelp() { document.getElementById("kbdHelpOverlay").classList.remove("open"); }
+
+    document.getElementById("kbdHelpOverlay").addEventListener("click", e => { if (e.target.id === "kbdHelpOverlay") kbdCloseHelp(); });
+    document.getElementById("kbdHelpClose").addEventListener("click", kbdCloseHelp);
+
+    // Global vim-style shortcuts. Ignored while typing/focused in any field or when a modifier key
+    // is held, so text entry and browser/OS shortcuts (Ctrl+F, Cmd+…) are never intercepted — same
+    // guard style as the existing "/" focus-search handler. "/" itself is deliberately NOT handled
+    // here since that handler already owns it.
+    document.addEventListener("keydown", e => {
+      if (!kbdShortcutsEnabled()) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const tag = e.target && e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target && e.target.isContentEditable)) return;
+      switch (e.key) {
+        case "j": e.preventDefault(); kbdMoveFocus(1); break;
+        case "k": e.preventDefault(); kbdMoveFocus(-1); break;
+        case "f": e.preventDefault(); kbdToggleFlag(); break;
+        case "i": e.preventDefault(); kbdAddFocusedAsIoc(); break;
+        case "p": e.preventDefault(); kbdTogglePin(); break;
+        case "n": e.preventDefault(); kbdAddNote(); break;
+        case "?": e.preventDefault(); kbdOpenHelp(); break;
+        case "Escape":
+          if (document.getElementById("kbdHelpOverlay").classList.contains("open")) kbdCloseHelp();
+          else if (focusedEventId) kbdClearFocus();
+          break;
+      }
+    });
+
     // Re-filter the timeline whenever a severity checkbox is toggled (no server round-trip).
     document.querySelector('.sev-legend').addEventListener('change', function(e) {
       if (e.target.classList.contains('sev-filter')) renderTimelineEvents(lastFt);
@@ -15305,6 +15450,7 @@
 
     function openSettingsModal() {
       document.getElementById("settingsInvestigator").value = localStorage.getItem("dfir.investigator") || "";
+      document.getElementById("kbdShortcutsChk").checked = kbdShortcutsEnabled();
       renderSecChecks();
       renderTlChecks();
       syncImportSevDefaultSelect();
@@ -15866,6 +16012,7 @@
       if (tog) ntfToggle(tog.dataset.id, tog.checked);
     });
     document.getElementById("settingsOverlay").addEventListener("click", (e) => { if (e.target.id === "settingsOverlay") closeSettingsModal(); });
+    document.getElementById("kbdShortcutsChk").addEventListener("change", e => setKbdShortcutsEnabled(e.target.checked));
     document.getElementById("secSelectAll").addEventListener("click", () => {
       document.querySelectorAll("#secChecks .sec-check input[type=checkbox]").forEach(cb => { cb.checked = true; });
     });
