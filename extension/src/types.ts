@@ -44,8 +44,12 @@ export interface ConnectionStatus {
 // ── Automated artifact fetching (issue #102) ──────────────────────────────────────────────────
 // Body for POST /cases/:id/import — the unified, unauthenticated, localhost import route the
 // extension pushes intercepted/scraped tool data through (mirrors the dashboard Import button).
+// Exactly one of json/text is populated: json for a table push (stringified row array), text for
+// a raw string push (context-menu selection or link URL) — the companion's importDetect.ts
+// classifies either shape the same way it classifies an uploaded file.
 export interface ImportPayload {
-  json: string;            // stringified array of rows
+  json?: string;           // stringified array of rows
+  text?: string;           // raw text (context-menu selection / link push)
   filename: string;        // synthetic name (adapter id + timestamp) — detection hint + audit label
   minSeverity?: string;
 }
@@ -56,11 +60,14 @@ export interface EnsureHookMessage {
   kind: "ensure_hook";
 }
 
-// content script → service worker: push a captured artifact to the companion.
+// content script → service worker: push a captured artifact to the companion. Exactly one of
+// rows/text is populated: rows for a table push (adapter-scraped or context-menu table), text for
+// a raw string push (context-menu selection or link URL).
 export interface PushArtifactMessage {
   kind: "push_artifact";
   adapterId: string;
-  rows: unknown[];
+  rows?: unknown[];
+  text?: string;
   sourceUrl: string;
   sourceLabel?: string;  // artifact / notebook the rows came from (for the evidence filename)
 }
@@ -72,4 +79,25 @@ export interface PushArtifactResult {
   rows?: number;
   caseId?: string;
   error?: string;
+}
+
+// ── Context-menu send (#new) ──────────────────────────────────────────────────────────────────
+// service worker → content script: Chrome's contextMenus API gives no reference to the element
+// under the cursor, so table targeting asks the content script (which remembered the element from
+// the native "contextmenu" event) to walk up to its nearest <table> ancestor.
+export interface GetContextTableMessage {
+  kind: "get_context_table";
+}
+
+// content script → service worker: the table rows found (or null when no <table> ancestor, or the
+// table had no data rows).
+export interface ContextTableResult {
+  rows: Record<string, string>[] | null;
+}
+
+// service worker → content script: the outcome of a context-menu push, rendered as a toast.
+export interface ContextPushResultMessage {
+  kind: "context_push_result";
+  ok: boolean;
+  message: string;
 }
