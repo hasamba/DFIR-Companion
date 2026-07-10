@@ -178,7 +178,7 @@ function scrapeVisibleTable(): CapturedArtifact | null {
   return { adapterId: activeAdapter.id, rows: objs, sourceUrl: location.href, via: "scrape", label };
 }
 
-function readTableMatrix(table: HTMLTableElement): { headers: string[]; rows: string[][] } {
+export function readTableMatrix(table: HTMLTableElement): { headers: string[]; rows: string[][] } {
   const cellText = (c: Element) => (c.textContent ?? "").replace(/\s+/g, " ").trim();
   const trs = Array.from(table.querySelectorAll("tr"));
   let headers: string[] = [];
