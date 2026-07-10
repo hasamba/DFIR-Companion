@@ -82,23 +82,30 @@ async function pushArtifact(msg: PushArtifactMessage): Promise<PushArtifactResul
   if (!settings.caseId) {
     return { ok: false, error: "No case selected — open the extension popup and pick a case." };
   }
-  const rows = Array.isArray(msg.rows) ? msg.rows : [];
-  if (!rows.length) return { ok: false, error: "No rows to push." };
+  const rows = Array.isArray(msg.rows) ? msg.rows : undefined;
+  const text = typeof msg.text === "string" ? msg.text : undefined;
+  if (!rows?.length && !text?.trim()) return { ok: false, error: "Nothing to push." };
 
   // Name the evidence file after the source artifact/notebook when known (nicer audit trail + a
   // Velociraptor-looking name keeps detectImportKind routing it to the Velociraptor importer).
   const filename = buildArtifactFilename(msg.sourceLabel?.trim() || msg.adapterId, new Date());
   const client = new CompanionClient(settings.companionUrl);
-  const result = await client.postImport(settings.caseId, { json: JSON.stringify(rows), filename });
+  // Exactly one of rows/text is set (context-menu selection/link pushes text; table pushes rows —
+  // see PushArtifactMessage). The companion's importDetect classifies either shape identically to
+  // an uploaded file, so no format hint beyond the filename is needed.
+  const result = rows?.length
+    ? await client.postImport(settings.caseId, { json: JSON.stringify(rows), filename })
+    : await client.postImport(settings.caseId, { text: text as string, filename });
 
+  const rowCount = rows?.length ?? 0;
   await chrome.storage.local.set({
     lastArtifactPush: {
-      at: new Date().toISOString(), adapterId: msg.adapterId, rows: rows.length,
+      at: new Date().toISOString(), adapterId: msg.adapterId, rows: rowCount,
       caseId: settings.caseId, ok: result.ok, status: result.status,
     },
   });
 
-  if (result.ok) return { ok: true, status: result.status, rows: rows.length, caseId: settings.caseId };
+  if (result.ok) return { ok: true, status: result.status, rows: rowCount, caseId: settings.caseId };
   const error = result.status === 0 ? `Companion offline at ${settings.companionUrl}`
     : result.status === 404 ? `Case "${settings.caseId}" not found — re-select it in the popup`
     : result.status === 400 ? "Companion couldn't detect the artifact format"
