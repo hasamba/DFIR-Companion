@@ -3,7 +3,11 @@ import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
 import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
-import { DEFAULT_SETTINGS, type PushArtifactMessage, type PushArtifactResult, type Settings, type TriggerType } from "./types.js";
+import {
+  DEFAULT_SETTINGS, type ContextPushResultMessage, type ContextTableResult,
+  type GetContextTableMessage, type PushArtifactMessage, type PushArtifactResult,
+  type Settings, type TriggerType,
+} from "./types.js";
 
 const ALARM = "dfir-capture-timer";
 const queue = new CaptureQueue();
@@ -82,29 +86,112 @@ async function pushArtifact(msg: PushArtifactMessage): Promise<PushArtifactResul
   if (!settings.caseId) {
     return { ok: false, error: "No case selected — open the extension popup and pick a case." };
   }
-  const rows = Array.isArray(msg.rows) ? msg.rows : [];
-  if (!rows.length) return { ok: false, error: "No rows to push." };
+  const rows = Array.isArray(msg.rows) ? msg.rows : undefined;
+  const text = typeof msg.text === "string" ? msg.text : undefined;
+  if (!rows?.length && !text?.trim()) return { ok: false, error: "Nothing to push." };
 
   // Name the evidence file after the source artifact/notebook when known (nicer audit trail + a
   // Velociraptor-looking name keeps detectImportKind routing it to the Velociraptor importer).
   const filename = buildArtifactFilename(msg.sourceLabel?.trim() || msg.adapterId, new Date());
   const client = new CompanionClient(settings.companionUrl);
-  const result = await client.postImport(settings.caseId, { json: JSON.stringify(rows), filename });
+  // Exactly one of rows/text is set (context-menu selection/link pushes text; table pushes rows —
+  // see PushArtifactMessage). The companion's importDetect classifies either shape identically to
+  // an uploaded file, so no format hint beyond the filename is needed.
+  const result = rows?.length
+    ? await client.postImport(settings.caseId, { json: JSON.stringify(rows), filename })
+    : await client.postImport(settings.caseId, { text: text as string, filename });
 
+  const rowCount = rows?.length ?? 0;
   await chrome.storage.local.set({
     lastArtifactPush: {
-      at: new Date().toISOString(), adapterId: msg.adapterId, rows: rows.length,
+      at: new Date().toISOString(), adapterId: msg.adapterId, rows: rowCount,
       caseId: settings.caseId, ok: result.ok, status: result.status,
     },
   });
 
-  if (result.ok) return { ok: true, status: result.status, rows: rows.length, caseId: settings.caseId };
+  if (result.ok) return { ok: true, status: result.status, rows: rowCount, caseId: settings.caseId };
   const error = result.status === 0 ? `Companion offline at ${settings.companionUrl}`
     : result.status === 404 ? `Case "${settings.caseId}" not found — re-select it in the popup`
     : result.status === 400 ? "Companion couldn't detect the artifact format"
     : result.status === 501 ? "Companion has no AI provider configured for this artifact type"
     : `Import rejected (HTTP ${result.status})`;
   return { ok: false, status: result.status, error };
+}
+
+// ── Context-menu send (#new) ──────────────────────────────────────────────────────────────────
+const MENU_PARENT = "dfir-companion-menu";
+const MENU_SELECTION = "dfir-send-selection";
+const MENU_TABLE = "dfir-send-table";
+const MENU_LINK = "dfir-send-link";
+
+// Menu items persist across service-worker restarts once created, so this only needs to run on
+// install/update — removeAll() first makes it idempotent (Chrome throws "duplicate id" otherwise).
+function registerContextMenus(): void {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: MENU_PARENT, title: "DFIR-Companion", contexts: ["page", "selection", "link"] });
+    chrome.contextMenus.create({ id: MENU_SELECTION, parentId: MENU_PARENT, title: "Send selection to DFIR-Companion", contexts: ["selection"] });
+    chrome.contextMenus.create({ id: MENU_TABLE, parentId: MENU_PARENT, title: "Send table to DFIR-Companion", contexts: ["page"] });
+    chrome.contextMenus.create({ id: MENU_LINK, parentId: MENU_PARENT, title: "Send link to DFIR-Companion", contexts: ["link"] });
+  });
+}
+
+// Best-effort toast delivery — a tab that can't receive messages (chrome://, a PDF viewer, or one
+// that navigated away before the push resolved) just doesn't show a toast; the push itself already
+// completed (or failed) server-side regardless.
+async function sendContextToast(tabId: number, ok: boolean, message: string): Promise<void> {
+  const payload: ContextPushResultMessage = { kind: "context_push_result", ok, message };
+  try { await chrome.tabs.sendMessage(tabId, payload); } catch { /* tab unreachable */ }
+}
+
+async function handleContextMenuClick(
+  info: chrome.contextMenus.OnClickData,
+  tab: chrome.tabs.Tab | undefined,
+): Promise<void> {
+  if (!tab?.id) return;
+  const tabId = tab.id;
+
+  let text: string | undefined;
+  let rows: unknown[] | undefined;
+  let sourceLabel: string;
+
+  if (info.menuItemId === MENU_SELECTION) {
+    text = info.selectionText ?? "";
+    sourceLabel = "context-menu:selection";
+  } else if (info.menuItemId === MENU_LINK) {
+    text = info.linkUrl ?? "";
+    sourceLabel = "context-menu:link";
+  } else if (info.menuItemId === MENU_TABLE) {
+    sourceLabel = "context-menu:table";
+    let result: ContextTableResult | undefined;
+    try {
+      const req: GetContextTableMessage = { kind: "get_context_table" };
+      result = await chrome.tabs.sendMessage(tabId, req);
+    } catch {
+      result = undefined; // content script unreachable on this tab
+    }
+    if (!result?.rows?.length) {
+      void sendContextToast(tabId, false, "No table found at that location.");
+      return;
+    }
+    rows = result.rows;
+  } else {
+    return; // not one of our menu items
+  }
+
+  if (!rows?.length && !text?.trim()) {
+    void sendContextToast(tabId, false, "Nothing to send.");
+    return;
+  }
+
+  const msg: PushArtifactMessage = {
+    kind: "push_artifact",
+    adapterId: "context-menu",
+    sourceUrl: tab.url ?? "",
+    sourceLabel,
+    ...(rows ? { rows } : { text }),
+  };
+  const res = await pushArtifact(msg);
+  void sendContextToast(tabId, res.ok, res.ok ? `Pushed to "${res.caseId}"` : (res.error ?? "Push failed"));
 }
 
 async function rescheduleAlarm(): Promise<void> {
@@ -148,8 +235,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
-chrome.runtime.onInstalled.addListener(() => void rescheduleAlarm());
+chrome.runtime.onInstalled.addListener(() => { void rescheduleAlarm(); registerContextMenus(); });
 chrome.runtime.onStartup.addListener(() => void rescheduleAlarm());
+chrome.contextMenus.onClicked.addListener((info, tab) => void handleContextMenuClick(info, tab));
 // Keyboard shortcut (default Ctrl+Shift+S / Cmd+Shift+S) to toggle capture on/off.
 chrome.commands?.onCommand.addListener((command) => {
   if (command === "toggle-capture") void toggleCapture();

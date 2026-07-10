@@ -1,6 +1,6 @@
 # Privacy Policy — DFIR Companion: Evidence Capture & Push
 
-_Last updated: 2026-06-20_
+_Last updated: 2026-07-10_
 
 This is the privacy policy for the **DFIR Companion — Evidence Capture & Push** browser
 extension (the "Extension"), published for Chrome and other Chromium browsers. It is part of
@@ -32,11 +32,18 @@ The Extension supports a forensic investigation workflow in two ways:
    button. This step only ever runs on your explicit click — nothing is sent automatically
    from these pages.
 
+3. **Right-click "Send to DFIR-Companion".** On any page, you can right-click a text
+   selection, a table, or a link and choose "Send to DFIR-Companion" to push that selected
+   text, the nearest table's rows, or the link's URL to your local companion. Like the Push
+   button above, this only ever runs when you explicitly choose it from the menu.
+
 ## What data is handled
 
 - **Screenshots** of the active tab (image data).
 - **Structured detection data** scraped from recognized DFIR consoles when you click Push
   (e.g. alert/event rows, hostnames, hashes, IP addresses contained in those results).
+- **Text you explicitly send via the right-click menu** — a page's selected text, a table's
+  rows, or a link's URL — only when you choose "Send to DFIR-Companion" from the menu.
 - **Extension settings and an offline send-queue**, stored locally via `chrome.storage`
   (e.g. the selected case, capture interval, the companion server URL, and any captures that
   could not be delivered yet because the companion was unreachable).
@@ -60,6 +67,7 @@ The Extension supports a forensic investigation workflow in two ways:
 | `tabs` | Identify the active tab and react to tab switches for event-driven capture. |
 | `webNavigation` | Capture on page navigations (so the timeline reflects what you browsed). |
 | `scripting` | Inject the small content script / page hook that powers the Push button and reads the console results you are viewing. |
+| `contextMenus` | Add the right-click "Send to DFIR-Companion" menu items (send selection / table / link). |
 | `storage` | Persist your settings and hold the offline send-queue locally. |
 | `alarms` | Drive the optional periodic-capture timer. |
 | `host_permissions: <all_urls>` | Evidence capture and the DFIR-console Push feature must work on any site or self-hosted console (security tools run on arbitrary hosts/ports), so the Extension needs access to all sites. It still only **sends** data to your local companion, and the Push feature only acts when you click it. |

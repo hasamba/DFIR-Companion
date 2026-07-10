@@ -64,4 +64,13 @@ describe("CompanionClient", () => {
     const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
     expect(await client.postImport("c1", { json: "[]", filename: "f.json" })).toEqual({ ok: false, status: 0 });
   });
+
+  it("postImport posts a text payload (context-menu push) without a json field", async () => {
+    const fetchFn = vi.fn(async () => new Response("{}", { status: 202 }));
+    const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
+    const payload = { text: "https://evil.example/payload", filename: "context-menu-link-2026.json" };
+    expect(await client.postImport("c1", payload)).toEqual({ ok: true, status: 202 });
+    const [, init] = fetchFn.mock.calls[0];
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual(payload);
+  });
 });

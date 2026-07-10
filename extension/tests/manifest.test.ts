@@ -17,3 +17,9 @@ describe("manifest.json commands", () => {
     expect(manifest.commands["_execute_action"].description).toBeTruthy();
   });
 });
+
+describe("manifest.json permissions", () => {
+  it("requests contextMenus for the right-click send feature", () => {
+    expect(manifest.permissions).toContain("contextMenus");
+  });
+});
