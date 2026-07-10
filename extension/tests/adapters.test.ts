@@ -6,6 +6,7 @@ import { elasticAdapter } from "../src/adapters/elastic.js";
 import { crowdstrikeAdapter } from "../src/adapters/crowdstrike.js";
 import { securityOnionAdapter } from "../src/adapters/securityonion.js";
 import { socratesAdapter } from "../src/adapters/socrates.js";
+import { volwebAdapter, volwebSourceLabel } from "../src/adapters/volweb.js";
 import { parseResponseBodies, decodeCapturedBodies } from "../src/adapters/extractUtils.js";
 import { deflateSync, gzipSync } from "node:zlib";
 
@@ -64,11 +65,23 @@ describe("adapterForUrl", () => {
     expect(adapterForUrl("http://localhost:9888/index.html")).toBeNull();
   });
 
-  it("adapterById resolves and the registry holds the six tools", () => {
-    expect(ADAPTERS.map((a) => a.id).sort()).toEqual(["crowdstrike", "elastic", "securityonion", "socrates", "splunk", "velociraptor"]);
+  it("matches VolWeb by host and case/evidence detail paths", () => {
+    expect(adapterForUrl("https://volweb.corp.local/cases/3")?.id).toBe("volweb");
+    expect(adapterForUrl("https://forensics.example.com/evidences/12")?.id).toBe("volweb");
+    expect(adapterForUrl("https://10.0.0.4/evidences/7/")?.id).toBe("volweb");
+  });
+
+  it("does not match VolWeb's list pages (no id) on a generic host", () => {
+    expect(adapterForUrl("https://forensics.example.com/cases")).toBeNull();
+    expect(adapterForUrl("https://forensics.example.com/evidences")).toBeNull();
+  });
+
+  it("adapterById resolves and the registry holds the seven tools", () => {
+    expect(ADAPTERS.map((a) => a.id).sort()).toEqual(["crowdstrike", "elastic", "securityonion", "socrates", "splunk", "velociraptor", "volweb"]);
     expect(adapterById("splunk")?.label).toBe("Splunk");
     expect(adapterById("securityonion")?.label).toBe("Security Onion");
     expect(adapterById("socrates")?.label).toBe("SO-CRATES");
+    expect(adapterById("volweb")?.label).toBe("VolWeb");
     expect(adapterById("nope")).toBeNull();
   });
 });
@@ -492,5 +505,39 @@ describe("socrates.extractRows / matchUrl / sourceLabel", () => {
   it("sourceLabel is SO-CRATES and apiPatterns cover both feeds", () => {
     expect(socratesAdapter.sourceLabel?.({ apiUrl: "/api/events", pageUrl: "http://x/socrates.html", domInputs: [], domHeadings: [], rows: [] })).toBe("SO-CRATES");
     expect([...socratesAdapter.apiPatterns]).toEqual(["/api/events", "/api/sigma-alerts"]);
+  });
+});
+
+describe("volweb.extractRows", () => {
+  it("returns the artefacts array from the plugin-detail envelope", () => {
+    const body = { name: "windows.pslist.PsList", artefacts: [{ PID: 4, ImageFileName: "System" }, { PID: 88, ImageFileName: "smss.exe" }] };
+    expect(volwebAdapter.extractRows("/api/evidence/12/plugin/windows.pslist.PsList/", body)).toEqual(body.artefacts);
+  });
+
+  it("returns the artefacts array from the timeliner (unfiltered) variant", () => {
+    const body = { name: "windows.netscan.NetScan", artefacts: [{ LocalAddr: "10.0.0.5" }] };
+    expect(volwebAdapter.extractRows("/api/evidence/12/plugin/windows.netscan.NetScan/artefacts/", body)).toEqual(body.artefacts);
+  });
+
+  it("returns null when artefacts is empty or missing, and for non-object bodies", () => {
+    expect(volwebAdapter.extractRows("u", { name: "x", artefacts: [] })).toBeNull();
+    expect(volwebAdapter.extractRows("u", { name: "x" })).toBeNull();
+    expect(volwebAdapter.extractRows("u", "nope")).toBeNull();
+  });
+});
+
+describe("volwebSourceLabel", () => {
+  it("derives the plugin name from the plugin-artefacts API URL", () => {
+    expect(volwebSourceLabel({ apiUrl: "/api/evidence/12/plugin/windows.pslist.PsList/" })).toBe("windows.pslist.PsList");
+  });
+  it("derives the plugin name from the timeliner artefacts URL variant", () => {
+    expect(volwebSourceLabel({ apiUrl: "/api/evidence/12/plugin/windows.netscan.NetScan/artefacts/" })).toBe("windows.netscan.NetScan");
+  });
+  it("returns empty when the URL doesn't carry a plugin name", () => {
+    expect(volwebSourceLabel({ apiUrl: "/api/evidence/12/plugins/" })).toBe("");
+    expect(volwebSourceLabel({})).toBe("");
+  });
+  it("is wired onto the adapter", () => {
+    expect(typeof volwebAdapter.sourceLabel).toBe("function");
   });
 });

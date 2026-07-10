@@ -1,4 +1,9 @@
 import express, { type Express, type Request, type Response, type NextFunction, type CookieOptions } from "express";
+// Patch Express 4's router so async route handlers that throw or reject are forwarded to the
+// terminal error middleware (see the end of createApp) instead of hanging the client connection
+// or surfacing an UnhandledPromiseRejection. Side-effect-only import; must load before any route
+// is registered, so it stays at the top with express itself.
+import "express-async-errors";
 import { config as loadDotenv } from "dotenv";
 import { join, basename, isAbsolute, resolve, dirname, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +13,10 @@ import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
 import { atomicWrite } from "./storage/atomicWrite.js";
+import type { RouteContext } from "./routes/context.js";
+import { registerSystemRoutes } from "./routes/system.js";
+import { registerCaptureRoutes } from "./routes/captures.js";
+import { registerPushNotifyRoutes } from "./routes/pushNotify.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { JobManager } from "./analysis/jobManager.js";
@@ -17,7 +26,7 @@ import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
 import type { AnonTokenCategory } from "./analysis/anonymize.js";
 import { isLocalAiProvider, deriveKnownEntities } from "./analysis/anonymize.js";
 import { TesseractOcrRunner, type OcrRunner } from "./analysis/ocrRedact.js";
-import { extractOcrText, searchOcrIndex, isOcrSearchEnabled } from "./analysis/ocrSearch.js";
+import { extractOcrText, isOcrSearchEnabled } from "./analysis/ocrSearch.js";
 import { resolveRedactedExportOptions, redactedExportFilename } from "./analysis/redactedExport.js";
 import { buildRedactedExport } from "./reports/redactedExportBuilder.js";
 import { FalsePositiveStore, markerId, type FalsePositiveMarker, FALSE_POSITIVE_REASONS } from "./analysis/falsePositive.js";
@@ -116,7 +125,7 @@ import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, hasChainWork, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity, ForensicEvent, IOC, Finding } from "./analysis/stateTypes.js";
-import type { CaptureMetadata } from "./types.js";
+import type { CaptureMetadata, ImportMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
 import type { IocBlocklistFormat, IocBlocklistOptions, BlocklistIocType } from "./reports/iocBlocklist.js";
@@ -138,6 +147,7 @@ import { DwellWindowStore } from "./analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "./analysis/superTimelineStore.js";
 import { deriveIocProvenance } from "./analysis/iocProvenance.js";
 import { buildIocProvenanceChains } from "./analysis/iocProvenanceChain.js";
+import { computeCaseStats } from "./analysis/caseStats.js";
 import { ForensicGateControlStore } from "./analysis/forensicGateControl.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "./analysis/forensicGate.js";
 import { ConfidenceControlStore } from "./analysis/confidenceControl.js";
@@ -179,8 +189,8 @@ import { parseNsrlText, nsrlMatchIocs, nsrlMatchEvents } from "./analysis/nsrl.j
 import { KevStore } from "./analysis/kevStore.js";
 import { getAppVersion } from "./version.js";
 import {
-  resolveUpdateMode, buildUpdateStatus, DEFAULT_UPDATE_REPO,
-  UPDATE_CHECK_THROTTLE_MS, type UpdateMode,
+  resolveUpdateMode, DEFAULT_UPDATE_REPO,
+  UPDATE_CHECK_THROTTLE_MS,
 } from "./analysis/updateCheck.js";
 import { UpdateCheckStore } from "./analysis/updateCheckStore.js";
 import { performUpdateCheck } from "./analysis/updateCheckRun.js";
@@ -205,9 +215,7 @@ import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
 import { VeloMonitorStore, monitorId, type VeloMonitor } from "./analysis/veloMonitorStore.js";
 import { pollMonitorOnce, monitorArtifactMap, type PollDeps } from "./integrations/velociraptor/monitorPoller.js";
 import { pollHuntStatusOnce, isHuntStoppedEarly, type HuntPollDeps } from "./integrations/velociraptor/huntStatusPoller.js";
-import { PushTokenStore, generatePushToken } from "./analysis/pushTokenStore.js";
-import { resolvePushAuth } from "./analysis/pushAuth.js";
-import { extractPushPayload } from "./analysis/pushPayload.js";
+import { PushTokenStore } from "./analysis/pushTokenStore.js";
 import { pushCaseToIris, type IrisPushOptions } from "./integrations/iris/irisPush.js";
 import { IrisExportStore, defaultIrisCaseName } from "./integrations/iris/irisExportStore.js";
 import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
@@ -221,20 +229,13 @@ import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
 import { pushPlaybookToClickUp } from "./integrations/clickup/clickupPush.js";
-import { getDiskStats, getDiskWarningLevel, diskWarnEnvThresholds } from "./analysis/diskWarn.js";
-import {
-  buildAiDiagnostics, summarizeImportAttempts, countByKind, aggregateCaseSizes, buildDiagnosticsText,
-  type DiagnosticsReport, type ImporterFailure, type AiError, type ScannedFile,
-} from "./analysis/diagnostics.js";
-import {
-  buildPreflightReport, buildPreflightText,
-  type PreflightItem, type PreflightReport,
-} from "./analysis/preflight.js";
+import type { ImporterFailure, AiError } from "./analysis/diagnostics.js";
+import type { PreflightReport } from "./analysis/preflight.js";
 import { archiveCase } from "./analysis/caseArchive.js";
 import { NotificationConfigStore } from "./analysis/notificationStore.js";
 import { seedDemoCase } from "./analysis/seedDemoCase.js";
 import {
-  findingEventsFromDiff, milestoneEvent, parseChannelInput, playbookTaskEvent, redactChannel,
+  findingEventsFromDiff, milestoneEvent, playbookTaskEvent,
   type NotificationEvent,
 } from "./analysis/notifications.js";
 import { createNotifier, type Notifier } from "./integrations/notify/notifyDispatch.js";
@@ -249,7 +250,6 @@ import {
   LoggerImpl,
   createConsoleLogger,
   normalizeLogLevel,
-  isLogLevel,
   type Logger,
 } from "./logging/logger.js";
 
@@ -583,58 +583,6 @@ export interface AppOptions {
   onPreflightReady?: (run: () => Promise<PreflightReport>) => void;
 }
 
-// Content type for an evidence file served back to the dashboard. CSVs/text are
-// served as text/plain so a click opens them in a tab rather than downloading.
-function evidenceContentType(file: string): string {
-  const ext = file.slice(file.lastIndexOf(".")).toLowerCase();
-  switch (ext) {
-    case ".webp": return "image/webp";
-    case ".png": return "image/png";
-    case ".jpg":
-    case ".jpeg": return "image/jpeg";
-    case ".gif": return "image/gif";
-    case ".csv":
-    case ".log":
-    case ".txt": return "text/plain; charset=utf-8";
-    case ".json": return "application/json; charset=utf-8";
-    default: return "application/octet-stream";
-  }
-}
-
-// Recursively collect files (path relative to `baseDir`, size in bytes) under `dir` for the
-// diagnostics size scan (#118). Best-effort: unreadable dirs/files are skipped, never thrown.
-// `budget.n` bounds the total files visited so a pathological case can't run unbounded.
-async function walkCaseFiles(
-  dir: string,
-  baseDir: string,
-  caseId: string,
-  out: ScannedFile[],
-  budget: { n: number },
-): Promise<void> {
-  if (budget.n <= 0) return;
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const e of entries) {
-    if (budget.n <= 0) return;
-    const full = join(dir, e.name);
-    if (e.isDirectory()) {
-      await walkCaseFiles(full, baseDir, caseId, out, budget);
-    } else if (e.isFile()) {
-      budget.n--;
-      try {
-        const st = await stat(full);
-        out.push({ caseId, path: relative(baseDir, full), bytes: st.size });
-      } catch {
-        /* unreadable file — skip */
-      }
-    }
-  }
-}
-
 // Normalize a label/tag input that may arrive as a comma-separated string or an array of strings.
 function toStringArray(v: unknown): string[] {
   if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
@@ -671,8 +619,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   // ── Diagnostics runtime state (#118) ─────────────────────────────────────────────────
   // In-memory, best-effort rings powering the Health/Diagnostics page. They reset on restart
-  // (like `lastCapture` below) — durable history lives in the per-case audit logs. Capped so a
-  // long-running server can't grow them unbounded.
+  // (like the capture-recency marker in routes/captures.ts) — durable history lives in the
+  // per-case audit logs. Capped so a long-running server can't grow them unbounded.
   const appStartedAt = Date.now();
   const DIAG_RING = 50;
   const recentImportFailures: ImporterFailure[] = [];
@@ -781,6 +729,34 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return { unlocked, remembered: unlocked && isRememberedUnlockToken(token, id, salt, instanceSecret) };
   }
 
+  const ctx: RouteContext = {
+    store,
+    options,
+    serverLogger,
+    recordImportFailure,
+    recordAiError,
+    readUnlockState,
+    appStartedAt,
+    recentImportFailures,
+    recentAiErrors,
+    hasAiProvider,
+    getControl,
+    flush,
+    indexCaptureText,
+    ingestStreamed,
+    resolveImportKind: () => resolveImportKind,
+    captureBuffers: () => buffers,
+    synthInFlight: () => synthInFlight,
+    importerRegistry: () => importerRegistry,
+    irisClient: () => irisClient,
+    dropWatchEnabled: () => dropWatchEnabled,
+    enrichmentProviders: () => allProviders,
+    enrichHealth: () => enrichHealth,
+  };
+  registerSystemRoutes(app, ctx);
+  registerCaptureRoutes(app, ctx);
+  registerPushNotifyRoutes(app, ctx);
+
   app.get("/cases/:id/lock-status", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
@@ -864,105 +840,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return res.status(200).json({ ok: true });
   });
 
-  // Lightweight reachability check used by the extension's connection status.
-  // aiEnabled tells the dashboard whether an AI provider is configured at all.
-  app.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, irisEnabled: !!irisClient, timesketchEnabled: !!options.timesketchClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, dropEnabled: dropWatchEnabled && !!options.dropStatusStore, toolsEnabled: !!options.toolRunner, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked, geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" });
-  });
-
-  // ── Update check (opt-in "newer release available" notice; NEVER downloads) ──────────────
-  const updateRepo = options.updateRepo ?? DEFAULT_UPDATE_REPO;
-  const updateAppVersion = options.appVersion ?? getAppVersion();
-  const updateEnv = options.updateCheckEnv;
-  const updateFetch = options.updateFetch ?? fetch;
-
-  async function currentUpdateMode(): Promise<UpdateMode> {
-    const stored = options.updateCheckStore ? (await options.updateCheckStore.load()).enabled : undefined;
-    return resolveUpdateMode(updateEnv, stored);
-  }
-
-  app.get("/update-check", async (_req: Request, res: Response) => {
-    try {
-      const mode = await currentUpdateMode();
-      const result = options.updateCheckStore ? (await options.updateCheckStore.load()).result : undefined;
-      res.status(200).json(buildUpdateStatus(mode, updateAppVersion, result));
-    } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.post("/update-check/settings", async (req: Request, res: Response) => {
-    try {
-      if (!options.updateCheckStore) return res.status(404).json({ error: "update-check store not configured — restart the server" });
-      if ((await currentUpdateMode()).locked) return res.status(423).json({ error: "update checks are disabled by DFIR_UPDATE_CHECK=0" });
-      const enabled = (req.body as { enabled?: unknown })?.enabled;
-      if (typeof enabled !== "boolean") return res.status(400).json({ error: "enabled must be a boolean" });
-      await options.updateCheckStore.setEnabled(enabled);
-      const mode = await currentUpdateMode();
-      const result = (await options.updateCheckStore.load()).result;
-      return res.status(200).json(buildUpdateStatus(mode, updateAppVersion, result));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.post("/update-check/run", async (_req: Request, res: Response) => {
-    try {
-      if (!options.updateCheckStore) return res.status(404).json({ error: "update-check store not configured — restart the server" });
-      const mode = await currentUpdateMode();
-      if (mode.locked) return res.status(423).json({ error: "update checks are disabled by DFIR_UPDATE_CHECK=0" });
-      if (!mode.enabled) return res.status(400).json({ error: "enable update checks first" });
-      const result = await performUpdateCheck({ store: options.updateCheckStore, repo: updateRepo, fetchFn: updateFetch, now: Date.now() });
-      return res.status(200).json(buildUpdateStatus(mode, updateAppVersion, result));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Read / change the live log verbosity (debug | info | warn | error). The dashboard's
-  // Settings → Logging control flips this at runtime — no server restart — and it takes
-  // effect immediately across the server AND the analysis pipeline (they share one logger).
-  app.get("/log-level", (_req: Request, res: Response) => {
-    res.status(200).json({ level: serverLogger.getLevel(), levels: ["debug", "info", "warn", "error"] });
-  });
-  app.post("/log-level", (req: Request, res: Response) => {
-    const level = (req.body as { level?: unknown })?.level;
-    if (!isLogLevel(level)) {
-      return res.status(400).json({ error: "level must be one of: debug, info, warn, error" });
-    }
-    const previous = serverLogger.getLevel();
-    serverLogger.setLevel(level);
-    logLine(`[log] level changed ${previous} -> ${level}`);
-    return res.status(200).json({ level: serverLogger.getLevel() });
-  });
-
-  // Most-recent capture across ALL cases (in-memory; resets on restart). Powers the dashboard's
-  // check-on-connect for the cross-case capture warning.
-  let lastCapture: { caseId: string; at: number } | null = null;
-
-  // How many captures have been recorded for a case (counts the audit-log lines).
-  app.get("/cases/:id/captures/count", async (req: Request, res: Response) => {
-    try {
-      const log = await readFile(store.capturesLogPath(req.params.id), "utf8");
-      const count = log.split("\n").filter((l) => l.trim().length > 0).length;
-      return res.status(200).json({ count });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return res.status(200).json({ count: 0 });
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // The most-recent capture across ALL cases (in-memory; resets on restart) + its age in ms.
-  // A freshly-connected dashboard checks this to warn when screenshots are landing on a different
-  // case than the one it's viewing — catching the mismatch even without a live capture event.
-  app.get("/captures/recent", (_req: Request, res: Response) => {
-    if (!lastCapture) return res.status(200).json({ caseId: null });
-    return res.status(200).json({ caseId: lastCapture.caseId, ageMs: Date.now() - lastCapture.at });
-  });
-
   const windowSize = options.windowSize ?? 4;
   const buffers = new Map<string, CaptureMetadata[]>();
-  const SIGNIFICANT = new Set(["navigation", "tab_switch"]);
 
   // Screenshot OCR full-text search index (#176). Runs in the BACKGROUND after a capture is
   // persisted — never on the /captures hot path (Tesseract is ~0.5–2s/image and evidence-first
@@ -1226,302 +1105,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  // ── Disk space stats (#119) ────────────────────────────────────────────────────────────
-  // Reports free/total bytes on the cases-root filesystem and the configured warning level.
-  app.get("/disk-stats", async (_req: Request, res: Response) => {
-    try {
-      const stats = await getDiskStats(store.casesRoot);
-      const thresholds = diskWarnEnvThresholds();
-      const level = getDiskWarningLevel(stats.usedPct, thresholds);
-      return res.status(200).json({ ...stats, level, thresholds });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // ── Health / Diagnostics (#118) ──────────────────────────────────────────────────────────
-  // Operator-facing system state to troubleshoot ingestion / AI problems without digging through
-  // logs. Fast by design — NO recursive directory scan here (per-case sizes are the separate
-  // compute-on-demand /diagnostics/sizes endpoint), so this stays well under the <2s budget. All
-  // AI config is REDACTED (buildAiDiagnostics never reads an API key), so the JSON + the
-  // copy-to-clipboard text blob are safe to share.
-  app.get("/diagnostics", async (_req: Request, res: Response) => {
-    try {
-      const thresholds = diskWarnEnvThresholds();
-      let disk: DiagnosticsReport["disk"];
-      try {
-        const stats = await getDiskStats(store.casesRoot);
-        disk = { ...stats, level: getDiskWarningLevel(stats.usedPct, thresholds), thresholds };
-      } catch {
-        // statfs can fail on exotic mounts — report zeros rather than 500 the whole page.
-        disk = { totalBytes: 0, freeBytes: 0, usedPct: 0, level: getDiskWarningLevel(0, thresholds), thresholds };
-      }
-
-      const cases = await store.listCases();
-      const archived = cases.filter((c) => c.status === "archived").length;
-      const open = cases.filter((c) => c.status !== "closed" && c.status !== "archived").length;
-
-      // Queue: in-memory capture buffers + synthesis in-flight + on-disk failure markers.
-      let bufferedCaptures = 0;
-      let casesBuffering = 0;
-      let oldestBufferedAtMs: number | null = null;
-      for (const buf of buffers.values()) {
-        if (buf.length === 0) continue;
-        casesBuffering++;
-        bufferedCaptures += buf.length;
-        for (const c of buf) {
-          const t = Date.parse(c.timestamp);
-          if (Number.isFinite(t)) oldestBufferedAtMs = oldestBufferedAtMs == null ? t : Math.min(oldestBufferedAtMs, t);
-        }
-      }
-      // Cases whose last analysis window failed (pending_analysis.json on disk).
-      const pendingChecks = await Promise.all(cases.map(async (c) => {
-        try { await stat(join(store.stateDir(c.caseId), "pending_analysis.json")); return 1; } catch { return 0; }
-      }));
-      const pendingAnalysisCases = pendingChecks.reduce<number>((a, b) => a + b, 0);
-
-      // Import attempts: count the per-case imports.jsonl audit lines (durable; survives restart).
-      const importTimestamps: number[] = [];
-      await Promise.all(cases.map(async (c) => {
-        try {
-          const log = await readFile(store.importsLogPath(c.caseId), "utf8");
-          for (const line of log.split("\n")) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            try {
-              const rec = JSON.parse(trimmed) as { importedAt?: string };
-              const ms = Date.parse(rec.importedAt ?? "");
-              if (Number.isFinite(ms)) importTimestamps.push(ms);
-            } catch { /* skip a malformed audit line */ }
-          }
-        } catch { /* no imports for this case */ }
-      }));
-
-      const now = Date.now();
-      const ai = buildAiDiagnostics(process.env);
-      const report: DiagnosticsReport = {
-        generatedAt: new Date(now).toISOString(),
-        uptimeMs: now - appStartedAt,
-        casesRoot: store.casesRoot,
-        disk,
-        cases: { count: cases.length, open, closed: cases.length - open - archived, archived },
-        queue: {
-          bufferedCaptures,
-          casesBuffering,
-          oldestBufferedAgeMs: oldestBufferedAtMs == null ? null : Math.max(0, now - oldestBufferedAtMs),
-          synthInFlight: synthInFlight.size,
-          pendingAnalysisCases,
-        },
-        ai: { ...ai, recentErrors: recentAiErrors.slice(0, 20), errorCounts: countByKind(recentAiErrors) },
-        importers: {
-          attempts: summarizeImportAttempts(importTimestamps, now),
-          recentFailures: recentImportFailures.slice(0, 20),
-          customImporters: importerRegistry.importers.size,
-        },
-        backups: options.backupManager
-          ? await (async () => {
-              let totalCount = 0;
-              let totalBytes = 0;
-              await Promise.all(cases.map(async (c) => {
-                try {
-                  const s = await options.backupManager!.summary(c.caseId);
-                  totalCount += s.count;
-                  totalBytes += s.totalBytes;
-                } catch { /* best-effort */ }
-              }));
-              return { enabled: true, totalCount, totalBytes, retain: options.backupManager!.config.retain };
-            })()
-          : { enabled: false, totalCount: 0, totalBytes: 0, retain: 0 },
-      };
-      return res.status(200).json({ report, text: buildDiagnosticsText(report) });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Per-case sizes + top-N largest evidence files. SEPARATE from /diagnostics because it walks the
-  // whole cases tree (compute-on-demand, behind the dashboard's "Compute sizes" button) so the
-  // default diagnostics load stays cheap. Bounded to DFIR_DIAG_MAX_FILES files (default 100k).
-  app.get("/diagnostics/sizes", async (req: Request, res: Response) => {
-    try {
-      const topN = Math.min(50, Math.max(1, Number(req.query.top) || 10));
-      const budget = { n: Number(process.env.DFIR_DIAG_MAX_FILES) || 100_000 };
-      const cases = await store.listCases();
-      const files: ScannedFile[] = [];
-      for (const c of cases) {
-        if (budget.n <= 0) break;
-        const dir = store.caseDir(c.caseId);
-        await walkCaseFiles(dir, dir, c.caseId, files, budget);
-      }
-      const report = aggregateCaseSizes(files, topN);
-      return res.status(200).json({ ...report, truncated: budget.n <= 0, scannedFiles: files.length });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Lightweight live AI connectivity test (validates auth + timeout against the CURRENT config).
-  // Makes ONE tiny request. 501 when no provider is configured; a reachable-but-failing provider
-  // returns 200 { ok:false, kind, error } so the dashboard renders the actionable error inline.
-  app.post("/diagnostics/ai-test", async (_req: Request, res: Response) => {
-    const provider = options.aiTestProvider?.();
-    if (!provider) {
-      return res.status(501).json({ ok: false, error: "AI provider not configured — set DFIR_AI_PROVIDER / DFIR_AI_MODEL / DFIR_AI_KEY in Settings → AI, then restart the server" });
-    }
-    const startedAt = Date.now();
-    try {
-      // The OpenAI/OpenRouter providers always send response_format: json_object, and OpenAI's JSON
-      // mode REQUIRES the literal word "json" somewhere in the messages (a 400 otherwise). So the probe
-      // asks for a tiny JSON object — both messages mention "json" — which also exercises the real
-      // request shape (auth + json_object + parse) across every provider, not just bare connectivity.
-      const result = await provider.analyze({
-        systemPrompt: "You are a connectivity probe. Reply ONLY with the JSON object {\"ok\":true} and nothing else.",
-        userPrompt: "Return the JSON object {\"ok\":true}.",
-        images: [],
-      });
-      const latencyMs = Date.now() - startedAt;
-      const reply = (result.rawText ?? "").trim().slice(0, 120);
-      logLine(`[diagnostics] AI test ok provider=${provider.name} latency=${latencyMs}ms`);
-      return res.status(200).json({ ok: true, provider: provider.name, latencyMs, reply });
-    } catch (err) {
-      const latencyMs = Date.now() - startedAt;
-      const kind = err instanceof ProviderError ? err.kind : "other";
-      logLine(`[diagnostics] AI test failed provider=${provider.name} kind=${kind}: ${(err as Error).message}`);
-      return res.status(200).json({ ok: false, provider: provider.name, latencyMs, kind, error: (err as Error).message });
-    }
-  });
-
-  // ── Startup pre-flight (#179) ─────────────────────────────────────────────────────────
-  // Results are cached for PREFLIGHT_TTL_MS so opening the dashboard repeatedly is cheap.
-  // A POST re-runs the checks immediately (the "Re-run" button in Settings → Diagnostics).
-  // The user can disable checks entirely via POST /diagnostics/preflight/control { disabled:true }
-  // (persisted in {casesRoot}/preflight/control.json so the setting survives restarts).
-  const PREFLIGHT_TTL_MS = 30_000;
-  let preflightCache: { report: PreflightReport; at: number } | null = null;
-
-  const preflightControlPath = join(store.casesRoot, "preflight", "control.json");
-  async function readPreflightDisabled(): Promise<boolean> {
-    try {
-      const raw = await readFile(preflightControlPath, "utf-8");
-      return !!(JSON.parse(raw)?.disabled);
-    } catch {
-      return false;
-    }
-  }
-  async function writePreflightControl(ctrl: { disabled: boolean }): Promise<void> {
-    await mkdir(join(store.casesRoot, "preflight"), { recursive: true });
-    await atomicWrite(preflightControlPath, JSON.stringify(ctrl, null, 2));
-  }
-
-  async function runPreflightChecks(): Promise<PreflightReport> {
-    // Honour the persistent disable flag — return an empty disabled report immediately.
-    if (await readPreflightDisabled()) {
-      const report = buildPreflightReport([], new Date().toISOString(), 0, true);
-      preflightCache = { report, at: Date.now() };
-      return report;
-    }
-
-    const startedAt = Date.now();
-    const items: PreflightItem[] = [];
-
-    // 1. AI provider — CRITICAL: without it, analysis and synthesis don't work.
-    const aiProvider = options.aiTestProvider?.();
-    if (!aiProvider) {
-      items.push({ name: "AI provider", ok: false, critical: true, detail: "not configured — set DFIR_AI_PROVIDER / DFIR_AI_MODEL / DFIR_AI_KEY in .env, then restart" });
-    } else {
-      try {
-        await aiProvider.analyze({
-          systemPrompt: "You are a connectivity probe. Reply ONLY with the JSON object {\"ok\":true} and nothing else.",
-          userPrompt: "Return the JSON object {\"ok\":true}.",
-          images: [],
-        });
-        items.push({ name: "AI provider", ok: true, critical: true, detail: `${aiProvider.name} reachable` });
-      } catch (err) {
-        const kind = err instanceof ProviderError ? err.kind : "other";
-        items.push({ name: "AI provider", ok: false, critical: true, detail: `${aiProvider.name} ${kind}: ${(err as Error).message}` });
-      }
-    }
-
-    // 2. Enrichment providers — non-critical (opt-in). A provider is only in allProviders when
-    //    it's configured (keyed providers are registered only when their DFIR_*_KEY is set), so
-    //    presence here == "configured". Local self-hosted instances (MISP/YETI/OpenCTI) implement
-    //    probe() — we verify they're reachable + auth works. External SaaS (VirusTotal, AbuseIPDB,
-    //    CrowdStrike, Hunting.ch, Shodan, …) have NO probe(): we deliberately do NOT call them at
-    //    startup (OPSEC: no automatic third-party traffic, no wasted API quota) and only confirm
-    //    they're configured.
-    for (const p of allProviders) {
-      if (p.probe) {
-        const h = await enrichHealth.check(p).catch(() => ({ ok: false as const, detail: "probe error" }));
-        items.push({
-          name: `Enrichment: ${p.name}`,
-          ok: h.ok,
-          critical: false,
-          detail: h.detail ?? (h.ok ? "reachable" : "unreachable"),
-        });
-      } else {
-        items.push({
-          name: `Enrichment: ${p.name}`,
-          ok: true,
-          critical: false,
-          detail: "configured (no live check)",
-        });
-      }
-    }
-
-    // 3. Velociraptor — non-critical (hunt-only feature).
-    if (options.velociraptorClient) {
-      try {
-        await options.velociraptorClient.listClients();
-        items.push({ name: "Velociraptor", ok: true, critical: false, detail: "API reachable" });
-      } catch (err) {
-        items.push({ name: "Velociraptor", ok: false, critical: false, detail: (err as Error).message });
-      }
-    }
-
-    const report = buildPreflightReport(items, new Date().toISOString(), Date.now() - startedAt);
-    preflightCache = { report, at: Date.now() };
-    return report;
-  }
-
-  app.get("/diagnostics/preflight", async (_req: Request, res: Response) => {
-    if (preflightCache && Date.now() - preflightCache.at < PREFLIGHT_TTL_MS) {
-      return res.status(200).json({ report: preflightCache.report, text: buildPreflightText(preflightCache.report) });
-    }
-    try {
-      const report = await runPreflightChecks();
-      return res.status(200).json({ report, text: buildPreflightText(report) });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Force a fresh run — used by the "Re-run" button in Settings → Diagnostics.
-  app.post("/diagnostics/preflight", async (_req: Request, res: Response) => {
-    preflightCache = null;
-    try {
-      const report = await runPreflightChecks();
-      return res.status(200).json({ report, text: buildPreflightText(report) });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Read / toggle the persistent disable flag.
-  app.get("/diagnostics/preflight/control", async (_req: Request, res: Response) => {
-    const disabled = await readPreflightDisabled().catch(() => false);
-    return res.status(200).json({ disabled });
-  });
-  app.post("/diagnostics/preflight/control", async (req: Request, res: Response) => {
-    const { disabled } = req.body as { disabled?: boolean };
-    if (typeof disabled !== "boolean") return res.status(400).json({ error: "disabled must be boolean" });
-    await writePreflightControl({ disabled });
-    preflightCache = null;
-    return res.status(200).json({ disabled });
-  });
-
-  // Hand the run function to startServer so it can fire it after app.listen().
-  options.onPreflightReady?.(runPreflightChecks);
-
   // ── Case lifecycle (#119) ──────────────────────────────────────────────────────────────
   // Set a case's lifecycle status (open / closed). A closed case is eligible for archiving.
   app.patch("/cases/:id/status", async (req: Request, res: Response) => {
@@ -1738,57 +1321,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   });
 
-  app.post("/captures", async (req: Request, res: Response) => {
-    try {
-      const rawCaseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
-      if (rawCaseId) {
-        const caseMeta = await store.getCaseMeta(rawCaseId).catch(() => null);
-        if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
-          const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-          return res.status(423).json({ error: `Case "${rawCaseId}" is ${caseMeta.status} — ${action} before adding screenshots` });
-        }
-      }
-      const metadata = await ingestCapture(store, req.body);
-      // Pre-evaluate the analysis condition before responding so the dashboard knows whether
-      // this capture will produce timeline events (mirrors the analyzed/reason pattern on /import).
-      const willAnalyze = !metadata.isDuplicate && Boolean(options.pipeline) && hasAiProvider()
-        && (await getControl(metadata.caseId)).enabled;
-      res.status(201).json(
-        !metadata.isDuplicate && !willAnalyze
-          ? { ...metadata, analyzed: false, reason: "ai-off" as const }
-          : metadata,
-      );
-      serverLogger.debug(
-        `screenshot captured seq=${metadata.sequenceNumber} trigger=${metadata.triggerType} ` +
-          `file=${metadata.screenshotFile || "(none)"}${metadata.isDuplicate ? " (duplicate — not analyzed)" : ""}`,
-        { caseId: metadata.caseId },
-      );
-      // Cross-case signal: lets a dashboard warn when captures arrive for a case it isn't viewing
-      // (live, via the WS broadcast) or detect it on connect (via /captures/recent).
-      lastCapture = { caseId: metadata.caseId, at: Date.now() };
-      options.onCapture?.(metadata.caseId);
-      // Background OCR full-text index (#176) — independent of AI analysis (it's local + free),
-      // so it runs whenever OCR search is enabled, not gated on the AI provider.
-      indexCaptureText(metadata);
-      // Evidence is always stored; AI analysis only runs when enabled for the case.
-      if (willAnalyze) {
-        const buf = buffers.get(metadata.caseId) ?? [];
-        buf.push(metadata);
-        buffers.set(metadata.caseId, buf);
-        if (buf.length >= windowSize || SIGNIFICANT.has(metadata.triggerType)) {
-          void flush(metadata.caseId);
-        }
-      }
-      return;
-    } catch (err) {
-      if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
-      if (err instanceof CaseNotFoundError) {
-        return res.status(404).json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
-      }
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
   app.get("/cases/:id/state", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
@@ -1797,52 +1329,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
       const state = await options.stateStore.load(req.params.id);
       return res.status(200).json(state);
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Serve a piece of evidence (a screenshot or an imported CSV) by filename so the
-  // dashboard can link findings/events straight to the artifact they came from.
-  // Strictly sandboxed: only a bare filename within the case's screenshots/ or
-  // imports/ dir is allowed (no path separators, no "..").
-  app.get("/cases/:id/evidence/:file", async (req: Request, res: Response) => {
-    const file = req.params.file;
-    if (!/^[A-Za-z0-9._-]+$/.test(file) || file.includes("..")) {
-      return res.status(400).json({ error: "invalid evidence filename" });
-    }
-    const candidates = [
-      join(store.screenshotsDir(req.params.id), file),
-      join(store.importsDir(req.params.id), file),
-    ];
-    for (const path of candidates) {
-      try {
-        const buf = await readFile(path);
-        res.type(evidenceContentType(file));
-        res.setHeader("Cache-Control", "private, max-age=300");
-        return res.send(buf);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-          return res.status(500).json({ error: (err as Error).message });
-        }
-      }
-    }
-    return res.status(404).json({ error: "evidence not found" });
-  });
-
-  // Screenshot OCR full-text search (#176). Scans the case's local OCR index for `q` and
-  // returns one hit per matching screenshot (snippet + match count); the dashboard links each
-  // hit back to the screenshot via GET /cases/:id/evidence/:file. Local-only, no AI.
-  app.get("/cases/:id/ocr-search", async (req: Request, res: Response) => {
-    try {
-      if (!(await store.caseExists(req.params.id))) {
-        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
-      }
-      const q = typeof req.query.q === "string" ? req.query.q : "";
-      if (q.trim().length === 0) return res.status(400).json({ error: "missing query parameter q" });
-      const index = await store.loadOcrIndex(req.params.id);
-      const hits = searchOcrIndex(index, q);
-      return res.status(200).json({ enabled: isOcrSearchEnabled(), indexed: Object.keys(index).length, hits });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -2067,6 +1553,32 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       return res.status(200).json(await options.reportWriter.adversaryHints(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Case introspection stats (#241): totals, event-count-by-source, and daily import velocity for
+  // the CURRENT case only — powers the Diagnostics tab "Case Statistics" panel. Derived on read,
+  // no caching (same as host-ranking below). Disk usage is intentionally NOT included here — it's
+  // global, not per-case, and already served by GET /disk-stats.
+  app.get("/cases/:id/stats", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    try {
+      if (!(await store.caseExists(req.params.id))) {
+        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+      }
+      const state = await options.stateStore.load(req.params.id);
+      const importLog: ImportMetadata[] = [];
+      try {
+        const log = await readFile(store.importsLogPath(req.params.id), "utf8");
+        for (const line of log.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try { importLog.push(JSON.parse(trimmed) as ImportMetadata); } catch { /* skip a malformed audit line */ }
+        }
+      } catch { /* no imports for this case yet */ }
+      return res.status(200).json(computeCaseStats(state, importLog));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -4613,82 +4125,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return res.status(204).end();
   });
 
-  // ── Generic push ingest (#84) ─────────────────────────────────────────────────────────────────
-  // An external tool (SIEM webhook, Velociraptor client-event poller, custom script) POSTs an alert
-  // payload here with an X-DFIR-Key token. The body is any importDetect-routable shape (artifact-map,
-  // SIEM alert, Hayabusa line, { source, events }, raw text…). Runs the SAME import → diff →
-  // re-synthesize pipeline as the file Import button; responds 202 immediately, imports in background.
-  app.post("/cases/:id/push", async (req: Request, res: Response) => {
-    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
-    const caseId = req.params.id;
-    // Auth: global DFIR_PUSH_TOKEN and/or a per-case token. 403 when push is unconfigured, 401 on a bad key.
-    let caseToken: string | undefined;
-    if (options.pushTokenStore) { try { caseToken = (await options.pushTokenStore.get(caseId))?.token; } catch { /* none */ } }
-    const bearer = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
-    const presented = String(req.get("x-dfir-key") || bearer || "");
-    const auth = resolvePushAuth({ globalToken: options.pushToken, caseToken, presented });
-    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
-
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
-
-    const { text, source, filename } = extractPushPayload(req.body);
-    if (!text.trim()) return res.status(400).json({ error: "empty push payload" });
-    const kind = resolveImportKind(filename, text);
-    if (kind === "unknown") return res.status(400).json({ error: "could not detect the payload type — not recognized as any supported import shape" });
-    if ((kind === "csv" || kind === "log") && !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
-
-    const minSeverity = parseMinSeverity(req.body?.minSeverity);
-    logLine(`[push] case ${caseId}: received "${source}" → ${kind}`);
-    res.status(202).json({ accepted: true, kind, source });
-    // Import in the background; the 202 already went out.
-    ingestStreamed(caseId, kind, text, filename, minSeverity)
-      .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: `push import failed: ${(err as Error).message}` }));
-  });
-
-  // Per-case push token management (#84). GET returns the case token's existence (NOT the secret on a
-  // plain GET — it's shown once on generate) plus whether a global token covers every case and the
-  // push URL. POST generates/rotates one; DELETE clears it.
-  app.get("/cases/:id/push-token", async (req: Request, res: Response) => {
-    const caseId = req.params.id;
-    const globalConfigured = !!(options.pushToken && options.pushToken.trim());
-    let rec: { token: string; createdAt: string } | null = null;
-    if (options.pushTokenStore) { try { rec = await options.pushTokenStore.get(caseId); } catch { /* none */ } }
-    const base = (options.dashboardBaseUrl || "").replace(/\/+$/, "");
-    return res.status(200).json({
-      configured: !!rec,
-      token: rec?.token ?? "",          // shown so Settings can display the active token + curl example
-      createdAt: rec?.createdAt ?? "",
-      globalConfigured,
-      storeAvailable: !!options.pushTokenStore,
-      pushUrl: `${base}/cases/${encodeURIComponent(caseId)}/push`,
-    });
-  });
-
-  app.post("/cases/:id/push-token/generate", async (req: Request, res: Response) => {
-    if (!options.pushTokenStore) return res.status(501).json({ error: "push token store not configured" });
-    const caseId = req.params.id;
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
-    try {
-      const token = generatePushToken();
-      const rec = await options.pushTokenStore.set(caseId, token, new Date().toISOString());
-      options.onPushToken?.(caseId);
-      return res.status(201).json({ token: rec.token, createdAt: rec.createdAt });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.delete("/cases/:id/push-token", async (req: Request, res: Response) => {
-    if (!options.pushTokenStore) return res.status(501).json({ error: "push token store not configured" });
-    try {
-      await options.pushTokenStore.clear(req.params.id);
-      options.onPushToken?.(req.params.id);
-      return res.status(204).end();
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
   // Push a case to DFIR-IRIS: find-or-create the case by name, then push assets→assets,
   // IOCs→IOCs, forensic timeline→timeline, executive summary→case summary, everything else→notes.
   // Body: { caseName? } — an explicit override; otherwise the name from the last push is reused
@@ -5025,78 +4461,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     } catch (err) {
       logLine(`[clickup] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
-    }
-  });
-
-  // ── Notifications (issue #58) ─────────────────────────────────────────────────────────────
-  // Global channel config: Slack/Teams webhooks + SMTP email, with per-channel severity threshold
-  // and per-event-kind toggles. Opt-in (the store starts empty). Secrets (webhook URLs, SMTP
-  // passwords) are REDACTED in every response — the browser only learns whether each is set.
-
-  app.get("/notifications/status", (_req: Request, res: Response) => {
-    res.status(200).json({ configured: !!options.notificationStore, emailEnabled: !!options.notifyEmailEnabled });
-  });
-
-  app.get("/notifications", async (_req: Request, res: Response) => {
-    if (!options.notificationStore) return res.status(200).json([]);
-    try {
-      return res.status(200).json((await options.notificationStore.load()).map(redactChannel));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.post("/notifications", async (req: Request, res: Response) => {
-    if (!options.notificationStore) return res.status(501).json({ error: "notifications not configured" });
-    const parsed = parseChannelInput(req.body);
-    if (!parsed.ok || !parsed.draft) return res.status(400).json({ error: parsed.error ?? "invalid channel" });
-    try {
-      const channel = await options.notificationStore.add(parsed.draft);
-      logLine(`[notify] channel added: ${channel.type} "${channel.name}" (${channel.id})`);
-      return res.status(201).json(redactChannel(channel));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.put("/notifications/:id", async (req: Request, res: Response) => {
-    if (!options.notificationStore) return res.status(501).json({ error: "notifications not configured" });
-    try {
-      const existing = await options.notificationStore.get(req.params.id);
-      if (!existing) return res.status(404).json({ error: "notification channel not found" });
-      // Pass `existing` so a blank (redacted) webhook URL keeps the saved one.
-      const parsed = parseChannelInput(req.body, existing);
-      if (!parsed.ok || !parsed.draft) return res.status(400).json({ error: parsed.error ?? "invalid channel" });
-      const channel = await options.notificationStore.update(req.params.id, parsed.draft);
-      if (!channel) return res.status(404).json({ error: "notification channel not found" });
-      return res.status(200).json(redactChannel(channel));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.delete("/notifications/:id", async (req: Request, res: Response) => {
-    if (!options.notificationStore) return res.status(501).json({ error: "notifications not configured" });
-    try {
-      const removed = await options.notificationStore.remove(req.params.id);
-      if (!removed) return res.status(404).json({ error: "notification channel not found" });
-      return res.status(204).end();
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Send a test notification to one channel ({ channelId }) or all configured channels. Bypasses
-  // the enable/threshold/kind filters so a disabled or high-threshold channel can be verified.
-  app.post("/notifications/test", async (req: Request, res: Response) => {
-    if (!options.notificationStore || !options.notifier) return res.status(501).json({ error: "notifications not configured" });
-    try {
-      const channelId = typeof req.body?.channelId === "string" ? req.body.channelId : undefined;
-      const results = await options.notifier.test(channelId, new Date().toISOString());
-      if (!results.length) return res.status(404).json({ error: "no matching channel to test" });
-      return res.status(200).json({ results });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -9448,6 +8812,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
     });
   }
+
+  // Terminal error handler (4-arg, last-registered so it runs after every route). express-async-errors
+  // forwards any error thrown or rejected inside an async route here; explicit next(err) calls land here
+  // too. Without it, Express 4 would fall through to its default handler and leak an HTML stack-trace page
+  // — or, for async routes it never catches, hang the connection. The failure is always logged (never
+  // silently swallowed); ZodError/CaseNotFoundError keep their conventional 400/404 for routes that forgot
+  // their own try/catch, and everything else becomes a generic JSON 500 so the client always gets a clean,
+  // closed response. Per-route try/catch blocks still handle their own errors and never reach this.
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) return next(err);
+    if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
+    if (err instanceof CaseNotFoundError) {
+      return res.status(404).json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    serverLogger.error(`unhandled error on ${req.method} ${req.path}: ${message}`);
+    return res.status(500).json({ error: "internal server error" });
+  });
 
   return app;
 }

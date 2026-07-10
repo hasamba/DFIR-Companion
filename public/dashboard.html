@@ -3244,6 +3244,12 @@
           </div>
         </div>
 
+        <!-- Case Statistics (#241) — totals/source-breakdown/import-velocity for the CURRENT case. -->
+        <div style="margin-bottom:12px;padding:10px;background:var(--c-161a22);border:1px solid var(--c-2a2f3a);border-radius:6px">
+          <div style="font-weight:600;color:var(--c-9aa4b2);font-size:12.5px;margin-bottom:6px">Case Statistics</div>
+          <div id="caseStatsPanel" style="font-size:12.5px;color:var(--c-cbd3df)">Loading…</div>
+        </div>
+
         <div class="sfield-row" style="margin-bottom:10px">
           <div class="sfield"><label>Size scan file limit<span class="sfield-hint">DFIR_DIAG_MAX_FILES — max files visited by "Compute case sizes" before stopping (default 100000)</span></label><input id="env-DFIR_DIAG_MAX_FILES" placeholder="100000" /></div>
           <div class="sfield"><label>Job registry retention<span class="sfield-hint">DFIR_JOBS_MAX — max finished jobs kept in the jobs badge/popover before the oldest are evicted (default 100); running jobs are never evicted</span></label><input id="env-DFIR_JOBS_MAX" placeholder="100" /></div>
@@ -16290,7 +16296,7 @@
         if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
         if (tab === "updates") loadUpdateCheck();
         if (tab === "tools") loadTools();
-        if (tab === "diagnostics") { loadPreflightStatus(); loadDiagnostics(); }
+        if (tab === "diagnostics") { loadPreflightStatus(); loadDiagnostics(); loadCaseStats(); }
       });
     });
 
@@ -17176,6 +17182,48 @@
         diagCopyText = j.text || "";
         body.innerHTML = renderDiagnostics(j.report, cost);
       }).catch(e => { body.textContent = "Could not load diagnostics: " + e.message + " — restart the companion server if this 404s."; });
+    }
+    // Case Statistics panel (#241) — totals/source-breakdown/import-velocity for the current case.
+    function caseStatsBarChart(days) {
+      if (!days.length) return `<div style="color:#7e8aa0">no imports yet</div>`;
+      const barW = 16, gap = 3, h = 46;
+      const maxRows = Math.max(1, ...days.map(d => d.rows));
+      const bars = days.map((d, i) => {
+        const barH = Math.max(2, Math.round((d.rows / maxRows) * (h - 12)));
+        const x = i * (barW + gap);
+        return `<rect x="${x}" y="${h - barH}" width="${barW}" height="${barH}" rx="2" fill="#7ec8e3">
+          <title>${esc(d.date)}: ${d.imports} import${d.imports !== 1 ? "s" : ""}, ${d.rows.toLocaleString()} rows</title>
+        </rect>`;
+      }).join("");
+      const w = days.length * (barW + gap) - gap;
+      return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="max-width:100%">${bars}</svg>
+        <div style="display:flex;justify-content:space-between;color:#7e8aa0;font-size:10px;margin-top:2px">
+          <span>${esc(days[0].date)}</span><span>${esc(days[days.length - 1].date)}</span>
+        </div>`;
+    }
+    function loadCaseStats() {
+      const el = document.getElementById("caseStatsPanel");
+      if (!el) return;
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) { el.innerHTML = '<span style="color:#7e8aa0">Select a case first.</span>'; return; }
+      el.textContent = "Loading…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/stats`)
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(j => {
+          const t = j.totals || {};
+          const tiles = ["events", "findings", "iocs", "assets"].map(k =>
+            `<div style="text-align:center;padding:4px 8px"><div style="font-size:18px;font-weight:600;color:#cbd3df">${(t[k] || 0).toLocaleString()}</div>
+              <div style="font-size:10.5px;color:#7e8aa0;text-transform:uppercase">${k}</div></div>`).join("");
+          const bySource = (j.bySource || []).map(s => diagRow(esc(s.source), s.count.toLocaleString())).join("")
+            || `<div style="color:#7e8aa0">no events yet</div>`;
+          el.innerHTML = `
+            <div style="display:flex;justify-content:space-around;flex-wrap:wrap;border-bottom:1px solid var(--c-2a2f3a);padding-bottom:8px;margin-bottom:8px">${tiles}</div>
+            <div style="font-weight:600;color:#9aa4b2;margin-bottom:3px">Events by source</div>
+            ${bySource}
+            <div style="font-weight:600;color:#9aa4b2;margin:8px 0 3px">Import velocity (daily)</div>
+            ${caseStatsBarChart(j.importVelocity || [])}`;
+        })
+        .catch(e => { el.innerHTML = `<span style="color:#ff9f9f">Could not load case stats: ${esc(e.message)}</span>`; });
     }
     function diagAiTest() {
       const btn = document.getElementById("diagAiTestBtn");

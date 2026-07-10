@@ -16,6 +16,10 @@
 <body>
   <strong>DFIR Capture</strong>
   <label>Case <select id="caseId"></select></label>
+  <div id="toolRow">
+    <label>Detected tool <select id="toolOverride"></select></label>
+    <div id="toolHint" class="hint"></div>
+  </div>
   <label>Companion URL <input id="companionUrl" /></label>
   <label>Interval (seconds) <input id="intervalSeconds" type="number" min="5" /></label>
   <label>Dedup threshold <input id="dedupThreshold" type="number" min="0" /></label>

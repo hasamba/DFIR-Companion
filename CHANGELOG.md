@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Right-click "Send to DFIR-Companion"** — send a page's selected text, a table (nearest to the click), or a link's URL straight to the connected case from any page, not just recognized adapter consoles.
+- **VolWeb adapter + manual tool override** — the extension now auto-detects VolWeb alongside the existing six consoles, and the popup shows the detected tool with a dropdown to force a different adapter (or none) for the current tab.
 
 ## [0.31.0] - 2026-07-10
 
