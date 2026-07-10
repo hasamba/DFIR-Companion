@@ -12953,6 +12953,89 @@
       }
     }
 
+    // ── Delete case (optionally archive first) ────────────────────────────────
+    function openDeleteCase() {
+      const caseId = document.getElementById("caseId").value.trim();
+      document.getElementById("dcCaseName").textContent =
+        `Delete case "${caseId}"? This permanently removes all its data and cannot be undone.`;
+      document.getElementById("dcArchiveNone").checked = true;
+      document.getElementById("dcPasswordFields").style.display = "none";
+      document.getElementById("dcPassword").value = "";
+      document.getElementById("dcPasswordConfirm").value = "";
+      document.getElementById("dcMsg").textContent = "";
+      document.getElementById("deleteCaseOverlay").classList.add("open");
+    }
+    function closeDeleteCase() { document.getElementById("deleteCaseOverlay").classList.remove("open"); }
+    document.querySelectorAll('input[name="dcArchiveFirst"]').forEach((r) => {
+      r.addEventListener("change", () => {
+        document.getElementById("dcPasswordFields").style.display =
+          document.getElementById("dcArchiveEncrypted").checked ? "block" : "none";
+      });
+    });
+    async function doDeleteCase() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("dcMsg");
+      if (!caseId) { msg.textContent = "no case loaded"; return; }
+      const archiveFirst = document.querySelector('input[name="dcArchiveFirst"]:checked').value;
+      let password;
+      if (archiveFirst === "encrypted") {
+        password = document.getElementById("dcPassword").value;
+        const confirmPassword = document.getElementById("dcPasswordConfirm").value;
+        if (password.length < 8) { msg.textContent = "password must be at least 8 characters"; return; }
+        if (password !== confirmPassword) { msg.textContent = "passwords do not match"; return; }
+      }
+      const btn = document.getElementById("dcDelete");
+      btn.disabled = true;
+      msg.textContent = "deleting… (may take a while for large cases)";
+      try {
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/delete`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ archiveFirst, ...(password ? { password } : {}) }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || ("HTTP " + res.status));
+        }
+        let deleted;
+        if (archiveFirst === "encrypted") {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          const cd = res.headers.get("content-disposition") || "";
+          const cdMatch = cd.match(/filename="([^"]*)"/);
+          a.download = cdMatch ? cdMatch[1] : `${caseId}.dfircase`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+          deleted = res.headers.get("x-case-deleted") === "true";
+        } else {
+          const body = await res.json();
+          deleted = body.deleted;
+        }
+        closeDeleteCase();
+        if (deleted) {
+          // The case is gone — reset the whole dashboard to "no case selected" rather than trying
+          // to unwind the dozens of per-panel load*(caseId) calls connect() fired for it.
+          localStorage.removeItem("dfir.caseId");
+          document.getElementById("status").textContent = archiveFirst === "none"
+            ? "case deleted"
+            : `case archived (${archiveFirst}) and deleted`;
+          window.location.href = location.pathname;
+        } else {
+          document.getElementById("status").textContent =
+            "archive succeeded, but deleting the case folder failed — it remains in the active list";
+          loadCaseLifecycle(caseId);
+          loadCaseList();
+        }
+      } catch (err) {
+        msg.textContent = "delete failed: " + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     // ── New case ── creation lives here (the extension only attaches to existing cases) ──
     async function openNewCase() {
       const idInput = document.getElementById("ncCaseId");
@@ -13545,6 +13628,9 @@
     document.getElementById("zaArchive").onclick = doZipArchive;
     document.getElementById("zaCancel").onclick = closeZipArchive;
     document.getElementById("zipArchiveOverlay").addEventListener("click", (e) => { if (e.target.id === "zipArchiveOverlay") closeZipArchive(); });
+    document.getElementById("dcDelete").onclick = doDeleteCase;
+    document.getElementById("dcCancel").onclick = closeDeleteCase;
+    document.getElementById("deleteCaseOverlay").addEventListener("click", (e) => { if (e.target.id === "deleteCaseOverlay") closeDeleteCase(); });
     document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
 
     // ── Import case (snapshot — issue #56 — or from DFIR-IRIS — issue #88) ──────────
@@ -16912,6 +16998,7 @@
           const archiveZipBtn = document.getElementById("archiveZipBtn");
           const archiveEncryptedBtn = document.getElementById("archiveEncryptedBtn");
           const restoreCaseBtn = document.getElementById("restoreCaseBtn");
+          const deleteCaseBtn = document.getElementById("deleteCaseBtn");
           if (btn) {
             btn.style.display = caseId ? "inline-flex" : "none";
             btn.classList.toggle("lc-closed", isClosed);
@@ -16925,6 +17012,8 @@
           if (archiveZipBtn) archiveZipBtn.style.display = isArchived ? "none" : "block";
           if (archiveEncryptedBtn) archiveEncryptedBtn.style.display = isArchived ? "none" : "block";
           if (restoreCaseBtn) restoreCaseBtn.style.display = isArchived ? "block" : "none";
+          // Delete is available once a case is closed OR archived — never for an open case.
+          if (deleteCaseBtn) deleteCaseBtn.style.display = (isClosed || isArchived) ? "block" : "none";
         })
         .catch(() => {});
     }
@@ -16937,6 +17026,7 @@
       const archiveZipBtn = document.getElementById("archiveZipBtn");
       const archiveEncryptedBtn = document.getElementById("archiveEncryptedBtn");
       const restoreCaseBtn = document.getElementById("restoreCaseBtn");
+      const deleteCaseBtn = document.getElementById("deleteCaseBtn");
       if (!btn || !menu) return;
 
       // Toggle menu on button click — position fixed relative to button so it works
@@ -17033,6 +17123,12 @@
         } catch (e) {
           alert("Restore error: " + e.message);
         }
+      });
+
+      // Delete case — opens the delete confirmation dialog (archive choice + Delete/Cancel).
+      deleteCaseBtn.addEventListener("click", () => {
+        menu.style.display = "none";
+        openDeleteCase();
       });
     })();
 
