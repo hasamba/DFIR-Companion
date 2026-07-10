@@ -1,4 +1,4 @@
-import { mkdir, writeFile, appendFile, readFile, stat, readdir, rename } from "node:fs/promises";
+import { mkdir, writeFile, appendFile, readFile, stat, readdir, rename, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -79,6 +79,14 @@ export class CaseStore {
   // Rejects (via rename's ENOENT) if caseId isn't currently archived under _archived/.
   async restoreCaseFolder(caseId: string): Promise<void> {
     await rename(join(this.root, ARCHIVED_DIRNAME, caseId), join(this.root, caseId));
+  }
+
+  // Permanently deletes a case's folder — recursive, irreversible. Works whether the case is
+  // currently active or archived (via the archive-aware caseDir()). Deliberately WITHOUT
+  // { force: true }, so it throws (ENOENT) for a caseId that doesn't currently exist, consistent
+  // with archiveCaseFolder/restoreCaseFolder's existing rejection behavior.
+  async deleteCaseFolder(caseId: string): Promise<void> {
+    await rm(this.caseDir(caseId), { recursive: true });
   }
 
   // NOTE: does not itself guard against an id collision with an archived case (caseDir()

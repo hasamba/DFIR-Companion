@@ -206,3 +206,25 @@ describe("CaseStore archive/restore folder moves", () => {
     await expect(store.restoreCaseFolder("af-6")).rejects.toThrow();
   });
 });
+
+describe("CaseStore.deleteCaseFolder", () => {
+  it("deletes an active case's folder entirely", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "del-1", name: "n", investigator: "i", aiProvider: null });
+    await store.deleteCaseFolder("del-1");
+    await expect(stat(join(root, "del-1"))).rejects.toThrow();
+  });
+
+  it("deletes an archived case's folder (under _archived/)", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "del-2", name: "n", investigator: "i", aiProvider: null });
+    await store.archiveCaseFolder("del-2");
+    await store.deleteCaseFolder("del-2");
+    await expect(stat(join(root, "_archived", "del-2"))).rejects.toThrow();
+  });
+
+  it("rejects when the case doesn't exist", async () => {
+    const store = new CaseStore(root);
+    await expect(store.deleteCaseFolder("never-created")).rejects.toThrow();
+  });
+});
