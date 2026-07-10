@@ -16,6 +16,8 @@ import type { CustomTool } from "../integrations/tools/customToolStore.js";
 import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
 import type { HuntDeployInput } from "../analysis/huntOutcomes.js";
 import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js";
+import type { PlaybookTask } from "../analysis/playbook.js";
+import type { PlaybookControl } from "../analysis/playbookControl.js";
 
 /**
  * Dependencies shared across more than one route domain, built once in createApp and passed to
@@ -160,6 +162,15 @@ export interface RouteContext {
     spec: { clientId: string; artifact: string; pollSeconds: number; hostname?: string; minSeverity?: Severity; allClients?: boolean },
   ): Promise<VeloMonitor>;
   recordHuntDeploy(caseId: string, input: HuntDeployInput): Promise<void>;
+  // Playbook derivation helpers (routes/playbookHunts.ts). Both are SHARED with createApp code that
+  // stays — syncPlaybook is also called by the POST /cases/:id/push/iris route, and loadPlaybookControl
+  // is a dependency of syncPlaybook — so they were graduated here rather than moved. Hoisted `function`
+  // declarations in createApp (defined after this literal but safe to bind, like the velociraptor set):
+  //   syncPlaybook        — re-derive the checklist against current state honoring the template setting
+  //                         (no-op-safe write); returns the task list.
+  //   loadPlaybookControl — read the per-case IR-template toggle (defaults when no store).
+  syncPlaybook(caseId: string): Promise<PlaybookTask[]>;
+  loadPlaybookControl(caseId: string): Promise<PlaybookControl>;
 
   // ── LIVE accessors ───────────────────────────────────────────────────────────────────
   // Call these INSIDE the request handler (or inside per-request logic like a preflight run),
