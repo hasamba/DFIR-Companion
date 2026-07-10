@@ -9,7 +9,7 @@ import type { IrisClient } from "../integrations/iris/irisClient.js";
 import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { ProviderHealthCache } from "../enrichment/providerHealth.js";
 import type { ImporterFailure, AiError } from "../analysis/diagnostics.js";
-import type { Severity } from "../analysis/stateTypes.js";
+import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { ToolConfig } from "../integrations/tools/toolConfig.js";
 import type { CustomTool } from "../integrations/tools/customToolStore.js";
 
@@ -23,6 +23,20 @@ import type { CustomTool } from "../integrations/tools/customToolStore.js";
  * on /iris/reconnect, importerRegistry after an async load) is exposed as an accessor function so
  * consumers always read the current binding rather than a value captured at construction time.
  */
+/**
+ * Options bag every pipeline.importX(...) call takes: the stored label + id prefix, the import
+ * timestamp, an optional progress callback, an optional severity floor, and an optional cancel
+ * signal. Shared by dispatchImport (graduated below) and the createApp import seams.
+ */
+export type ImportBase = {
+  label: string;
+  idPrefix: string;
+  importedAt: string;
+  onProgress?: (done: number, total: number) => void;
+  minSeverity?: Severity;
+  signal?: AbortSignal;
+};
+
 export interface RouteContext {
   // ── Stable value fields ──────────────────────────────────────────────────────────────
   // Constructed before this object and never rebound; safe to read or destructure anywhere.
@@ -65,6 +79,26 @@ export interface RouteContext {
     caseId: string, toolId: string, targetPath: string, opts?: { undoLabel?: string },
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   reloadCustomTools(): Promise<void>;
+  // Import machinery shared between routes/import.ts and the createApp import seams that stay
+  // (the Velociraptor bundle collector reuses dispatchImport/demoteForensicForCase/resynthesize,
+  // the drop-folder poller reuses moveDropFile, and the push/tool paths reuse the whitelist/NSRL/
+  // deobfuscation post-processing + pushImportCheckpoint). Stable (hoisted function declarations
+  // bound at construction), so safe to destructure at registration scope:
+  //   dispatchImport            — route a detected import kind to the matching pipeline.importX(...).
+  //   demoteForensicForCase     — drop sub-threshold telemetry to the super-timeline; returns state.
+  //   resynthesizeInBackground  — fire the AI re-synthesis (+ auto-enrich) after an import lands.
+  //   pushImportCheckpoint      — snapshot pre-import state onto the #76 undo stack (best-effort).
+  //   applyWhitelistToCase / applyNsrlToCase / applyDeobfuscationToCase — pre-synthesis passes that
+  //                               auto-mark known-good indicators + decode obfuscated commands.
+  //   moveDropFile              — move a processed drop file to _processed/_failed (shared w/ poller).
+  dispatchImport(kind: string, caseId: string, text: string, base: ImportBase): Promise<unknown>;
+  demoteForensicForCase(caseId: string): Promise<InvestigationState>;
+  resynthesizeInBackground(caseId: string): void;
+  pushImportCheckpoint(caseId: string, beforeState: InvestigationState, label: string): Promise<void>;
+  applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }>;
+  applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;
+  applyDeobfuscationToCase(caseId: string): Promise<{ deobfuscated: number; newIocs: number }>;
+  moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void>;
 
   // ── LIVE accessors ───────────────────────────────────────────────────────────────────
   // Call these INSIDE the request handler (or inside per-request logic like a preflight run),
@@ -91,4 +125,15 @@ export interface RouteContext {
   //                       call ctx.customTools() per request to read the current list.
   liveToolConfigs(): () => Map<string, ToolConfig>;
   customTools(): CustomTool[];
+  // Evidence drop-folder watcher state, SHARED between routes/import.ts (POST /drop/run-pending) and
+  // the drop poller that stays in createApp (scanCaseDrops mutates the SAME Maps/Set). Exposed as live
+  // accessors because the poller keeps writing them after this ctx literal is built — call
+  // ctx.dropSeen()/dropScanning()/dropPendingLogged() INSIDE the handler and mutate the returned
+  // collection in place; never capture it at registration scope:
+  //   dropSeen          — per-case size+mtime snapshot used to detect a settled (fully-copied) file.
+  //   dropScanning      — per-case in-flight-sweep guard (run-pending + the poller serialize on it).
+  //   dropPendingLogged — per-case relpaths already logged PENDING, to dedupe the drop-log across polls.
+  dropSeen(): Map<string, Map<string, { size: number; mtimeMs: number }>>;
+  dropScanning(): Set<string>;
+  dropPendingLogged(): Map<string, Set<string>>;
 }
