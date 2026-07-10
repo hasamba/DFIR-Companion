@@ -38,6 +38,7 @@ import {
   sanitizeCaseMeta,
   signUnlockToken,
   verifyUnlockToken,
+  isRememberedUnlockToken,
   unlockCookieName,
   parseCookieHeader,
   MIN_CASE_PASSWORD_LENGTH,
@@ -767,11 +768,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const UNLOCK_TTL_REMEMBER_MS = 365 * 24 * 60 * 60 * 1000; // ~1 year — "remember on this computer"
   const UNLOCK_TTL_SESSION_MS = 12 * 60 * 60 * 1000;        // 12h backstop for a browser-session cookie
 
-  // Whether this request already carries a valid unlock for `id` (used by /lock-status).
-  function hasValidUnlockCookie(req: Request, id: string, salt: string): boolean {
+  // Whether this request already carries a valid unlock for `id` (used by /lock-status), and
+  // whether that unlock — if present — was signed with "remember on this computer". The
+  // dashboard needs the latter to know whether it's safe to explicitly forget the unlock when
+  // navigating away from a case it didn't itself just unlock in this page load (e.g. a case
+  // that was already unlocked via a remembered cookie from an earlier session).
+  function readUnlockState(req: Request, id: string, salt: string): { unlocked: boolean; remembered: boolean } {
     const cookies = parseCookieHeader(req.headers.cookie);
     const token = cookies[unlockCookieName(id)];
-    return Boolean(token && verifyUnlockToken(token, id, salt, instanceSecret));
+    if (!token) return { unlocked: false, remembered: false };
+    const unlocked = verifyUnlockToken(token, id, salt, instanceSecret);
+    return { unlocked, remembered: unlocked && isRememberedUnlockToken(token, id, salt, instanceSecret) };
   }
 
   app.get("/cases/:id/lock-status", async (req: Request, res: Response) => {
@@ -780,8 +787,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
       const hasPassword = Boolean(meta.password);
-      const unlocked = !hasPassword || hasValidUnlockCookie(req, id, meta.password!.salt);
-      return res.status(200).json({ hasPassword, unlocked });
+      if (!hasPassword) return res.status(200).json({ hasPassword: false, unlocked: true, remembered: false });
+      const state = readUnlockState(req, id, meta.password!.salt);
+      return res.status(200).json({ hasPassword: true, ...state });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -799,7 +807,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         return res.status(401).json({ error: "incorrect password" });
       }
       const ttl = remember ? UNLOCK_TTL_REMEMBER_MS : UNLOCK_TTL_SESSION_MS;
-      const token = signUnlockToken(id, meta.password.salt, instanceSecret, ttl);
+      const token = signUnlockToken(id, meta.password.salt, instanceSecret, ttl, remember);
       const cookieOpts: CookieOptions = { httpOnly: true, sameSite: "strict", path: "/" };
       if (remember) cookieOpts.maxAge = ttl;
       res.cookie(unlockCookieName(id), token, cookieOpts);
@@ -820,9 +828,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
       const password = hashCasePassword(newPassword);
       const updated = await store.updateCaseMeta(id, { password });
-      // Re-unlock the browser that just set it, so it isn't immediately re-prompted.
-      const token = signUnlockToken(id, password.salt, instanceSecret, UNLOCK_TTL_SESSION_MS);
-      res.cookie(unlockCookieName(id), token, { httpOnly: true, sameSite: "strict", path: "/" });
+      // Deliberately does NOT auto-unlock the browser that just set/changed it: setting a
+      // password (or changing one, which rotates the salt and invalidates the caller's own
+      // existing cookie) should require going through the real unlock prompt afterward, same
+      // as anyone else — matching the analyst's expectation that setting a password protects
+      // the case immediately, not just for other people.
       return res.status(200).json(sanitizeCaseMeta(updated));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -840,6 +850,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // Explicitly forget THIS browser's unlock for a case, without touching the password
+  // itself. The dashboard calls this when navigating away from a case that was unlocked
+  // without "remember on this computer" — a session cookie survives switching cases within
+  // the same tab (only a real browser close clears it), so without this, a not-remembered
+  // unlock would silently stay valid for the rest of the browser session. No case-existence
+  // check: clearing a cookie that may not exist for a case that may not exist is harmless
+  // and always idempotent, and this route works even while the case is already locked.
+  app.post("/cases/:id/lock", (req: Request, res: Response) => {
+    res.clearCookie(unlockCookieName(req.params.id), { path: "/" });
+    return res.status(200).json({ ok: true });
   });
 
   // Lightweight reachability check used by the extension's connection status.

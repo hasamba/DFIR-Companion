@@ -21,7 +21,7 @@ describe("case password lifecycle", () => {
   it("an unprotected case reports hasPassword:false, unlocked:true, and every route is open", async () => {
     const status = await request(app).get("/cases/c1/lock-status");
     expect(status.status).toBe(200);
-    expect(status.body).toEqual({ hasPassword: false, unlocked: true });
+    expect(status.body).toEqual({ hasPassword: false, unlocked: true, remembered: false });
     expect((await request(app).get("/cases/c1/state")).status).toBe(200);
   });
 
@@ -53,10 +53,10 @@ describe("case password lifecycle", () => {
     expect(res.status).toBe(401);
   });
 
-  it("setting a password does not lock out the browser that just set it", async () => {
+  it("setting a password locks out the browser that just set it too — it must unlock like anyone else", async () => {
     const agent = request.agent(app);
     await agent.post("/cases/c1/password").send({ newPassword: "correct horse" });
-    expect((await agent.get("/cases/c1/state")).status).toBe(200);
+    expect((await agent.get("/cases/c1/state")).status).toBe(401);
   });
 
   it("unlock with the wrong password is rejected; the correct password unlocks", async () => {
@@ -82,8 +82,11 @@ describe("case password lifecycle", () => {
   });
 
   it("removing the password re-opens the case for everyone", async () => {
+    // POST /password no longer auto-unlocks the setter, and DELETE /password is itself gated
+    // once a password exists — so the agent must actually unlock before it can remove it.
     const agent = request.agent(app);
     await agent.post("/cases/c1/password").send({ newPassword: "correct horse" });
+    await agent.post("/cases/c1/unlock").send({ password: "correct horse" });
     const del = await agent.delete("/cases/c1/password");
     expect(del.status).toBe(200);
     expect(del.body.hasPassword).toBe(false);
@@ -93,11 +96,13 @@ describe("case password lifecycle", () => {
   it("changing the password invalidates a previously-unlocked cookie", async () => {
     // Per the design spec, POST /cases/:id/password is itself gated once a password is set —
     // "being unlocked is sufficient proof of knowing the current password" — so a stranger with
-    // no cookie cannot change it. The still-unlocked agent that set the first password is the
-    // one that changes it; we prove its OLD (pre-rotation) cookie stops working afterward.
+    // no cookie cannot change it, and (since setting no longer auto-unlocks) the agent must
+    // explicitly unlock with the first password before it can change it to a second one. We
+    // then prove its OLD (pre-rotation) cookie stops working afterward.
     const agent = request.agent(app);
-    const first = await agent.post("/cases/c1/password").send({ newPassword: "first-password" });
-    const staleCookie = first.headers["set-cookie"][0].split(";")[0];
+    await agent.post("/cases/c1/password").send({ newPassword: "first-password" });
+    const unlockRes = await agent.post("/cases/c1/unlock").send({ password: "first-password" });
+    const staleCookie = unlockRes.headers["set-cookie"][0].split(";")[0];
     expect((await agent.get("/cases/c1/state")).status).toBe(200);
     await agent.post("/cases/c1/password").send({ newPassword: "second-password" });
     const staleRes = await request(app).get("/cases/c1/state").set("Cookie", staleCookie);
@@ -112,13 +117,44 @@ describe("case password lifecycle", () => {
     expect(res.status).not.toBe(401);
   });
 
-  it("lock-status reflects both password-bearing states: locked for a stranger, unlocked for the setter", async () => {
+  it("lock-status is locked for everyone right after setting a password, including the setter", async () => {
     const agent = request.agent(app);
     await agent.post("/cases/c1/password").send({ newPassword: "correct horse" });
     const own = await agent.get("/cases/c1/lock-status");
-    expect(own.body).toEqual({ hasPassword: true, unlocked: true });
+    expect(own.body).toEqual({ hasPassword: true, unlocked: false, remembered: false });
     const stranger = await request(app).get("/cases/c1/lock-status");
-    expect(stranger.body).toEqual({ hasPassword: true, unlocked: false });
+    expect(stranger.body).toEqual({ hasPassword: true, unlocked: false, remembered: false });
+  });
+
+  it("lock-status is unlocked only after actually unlocking, and reports whether it was remembered", async () => {
+    await request(app).post("/cases/c1/password").send({ newPassword: "correct horse" });
+
+    const notRemembered = request.agent(app);
+    await notRemembered.post("/cases/c1/unlock").send({ password: "correct horse", remember: false });
+    expect((await notRemembered.get("/cases/c1/lock-status")).body).toEqual({ hasPassword: true, unlocked: true, remembered: false });
+
+    const remembered = request.agent(app);
+    await remembered.post("/cases/c1/unlock").send({ password: "correct horse", remember: true });
+    expect((await remembered.get("/cases/c1/lock-status")).body).toEqual({ hasPassword: true, unlocked: true, remembered: true });
+  });
+
+  it("POST /cases/:id/lock forgets THIS browser's unlock without touching the password", async () => {
+    await request(app).post("/cases/c1/password").send({ newPassword: "correct horse" });
+    const agent = request.agent(app);
+    await agent.post("/cases/c1/unlock").send({ password: "correct horse" });
+    expect((await agent.get("/cases/c1/state")).status).toBe(200);
+
+    const lockRes = await agent.post("/cases/c1/lock");
+    expect(lockRes.status).toBe(200);
+    expect((await agent.get("/cases/c1/state")).status).toBe(401);
+    // The password itself is untouched — a fresh unlock with the same password still works.
+    const reUnlock = await agent.post("/cases/c1/unlock").send({ password: "correct horse" });
+    expect(reUnlock.status).toBe(200);
+  });
+
+  it("POST /cases/:id/lock is a harmless no-op for an unprotected or unknown case", async () => {
+    expect((await request(app).post("/cases/c1/lock")).status).toBe(200);
+    expect((await request(app).post("/cases/nope/lock")).status).toBe(200);
   });
 
   it("404s for an unknown case on lock-status / unlock / password", async () => {

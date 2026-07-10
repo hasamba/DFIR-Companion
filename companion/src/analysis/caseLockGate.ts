@@ -3,11 +3,13 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { unlockCookieName, verifyUnlockToken, parseCookieHeader } from "./casePassword.js";
 
 // Routes that must stay reachable on a locked case:
-//  - lock-status / unlock: how a client checks/clears the lock in the first place
+//  - lock-status / unlock / lock: how a client checks/clears/re-locks in the first place.
+//    "lock" specifically must work even when ALREADY locked, so the dashboard can forget a
+//    non-remembered unlock on page unload without racing the gate.
 //  - import: the capture extension's evidence-ingestion route. A background capture
 //    session should keep recording evidence even while the dashboard is locked — it's
 //    write-only and never exposes case content back to the caller.
-const EXEMPT_SUFFIXES = ["/lock-status", "/unlock", "/import"];
+const EXEMPT_SUFFIXES = ["/lock-status", "/unlock", "/lock", "/import"];
 
 function pathOnly(url: string): string {
   const q = url.indexOf("?");
