@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
+    "build": "node scripts/build.mjs",
     "pretest": "node scripts/clean-vitest-temp.mjs",
     "test": "vitest run"
   },

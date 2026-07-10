@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Right-click "Send to DFIR-Companion"** — send a page's selected text, a table (nearest to the click), or a link's URL straight to the connected case from any page, not just recognized adapter consoles.
 - **VolWeb adapter + manual tool override** — the extension now auto-detects VolWeb alongside the existing six consoles, and the popup shows the detected tool with a dropdown to force a different adapter (or none) for the current tab.
 
+### Fixed
+- **Extension content script failed to load on every page** — `content.js` shared a chunk with `popup.js` and was built as an ES module (`import ...`), which Chrome rejects for a classic content script ("Cannot use import statement outside a module"). The build now compiles content.js and pageHook.js in their own isolated builds so they're always self-contained.
+
 ## [0.31.0] - 2026-07-10
 
 ### Added
