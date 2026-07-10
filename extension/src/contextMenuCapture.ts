@@ -8,7 +8,7 @@
 
 import { readTableMatrix } from "./artifactCapture.js";
 import { matrixToRows } from "./adapters/domTable.js";
-import type { ContextPushResultMessage, ContextTableResult, GetContextTableMessage } from "./types.js";
+import type { ContextPushResultMessage, ContextTableResult } from "./types.js";
 
 const TOAST_ID = "dfir-companion-toast";
 let toastTimer: ReturnType<typeof window.setTimeout> | undefined;
@@ -33,10 +33,6 @@ export function initContextMenuCapture(): void {
     }
   });
 }
-
-// Exported for GetContextTableMessage's documented contract even though the message kind check
-// above is untyped at the listener boundary (chrome.runtime.onMessage has no generic payload).
-export type { GetContextTableMessage };
 
 function findContextTable(): ContextTableResult {
   const table = lastRightClickTarget?.closest("table") ?? null;
