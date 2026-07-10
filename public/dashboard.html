@@ -12816,14 +12816,44 @@
       hideCaseMismatch();
     };
 
+    // Tracks the currently-connected password-protected case's unlock, so a NOT-"remembered"
+    // unlock can be explicitly forgotten (POST /cases/:id/lock) the moment we leave it. A
+    // session cookie otherwise survives switching cases within the same tab — only an actual
+    // browser close clears it — which is stricter persistence than "don't remember" should
+    // give: without this, unchecking "remember" would only matter across browser restarts,
+    // not across simply switching to another case and back.
+    let activeUnlockedCaseId = null;
+    let activeUnlockRemembered = true;
+    function forgetActiveCaseIfNotRemembered() {
+      if (activeUnlockedCaseId && !activeUnlockRemembered) {
+        fetch(`/cases/${activeUnlockedCaseId}/lock`, { method: "POST" }).catch(() => {});
+      }
+      activeUnlockedCaseId = null;
+      activeUnlockRemembered = true;
+    }
+    // Covers refresh / navigating away entirely / closing the tab — sendBeacon is the
+    // standard way to reliably fire a small POST during page teardown (a plain fetch can be
+    // cancelled mid-flight once the page starts unloading).
+    window.addEventListener("pagehide", () => {
+      if (activeUnlockedCaseId && !activeUnlockRemembered) {
+        navigator.sendBeacon(`/cases/${activeUnlockedCaseId}/lock`);
+      }
+    });
+
     function connect() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
+      if (activeUnlockedCaseId && activeUnlockedCaseId !== caseId) forgetActiveCaseIfNotRemembered();
       fetch(`/cases/${caseId}/lock-status`)
-        .then(r => r.ok ? r.json() : { hasPassword: false, unlocked: true })
+        .then(r => r.ok ? r.json() : { hasPassword: false, unlocked: true, remembered: false })
         .then(status => {
-          if (status.hasPassword && !status.unlocked) promptCaseUnlock(caseId);
-          else proceedConnect(caseId);
+          if (status.hasPassword && !status.unlocked) {
+            promptCaseUnlock(caseId);
+          } else {
+            activeUnlockedCaseId = caseId;
+            activeUnlockRemembered = !status.hasPassword || status.remembered;
+            proceedConnect(caseId);
+          }
         })
         .catch(() => proceedConnect(caseId)); // offline / older server — fall back to the old behavior
     }
@@ -17353,6 +17383,8 @@
           msg.textContent = body.error || "incorrect password";
           return;
         }
+        activeUnlockedCaseId = caseId;
+        activeUnlockRemembered = remember;
         closeCaseUnlock();
         proceedConnect(caseId);
       } catch (e) {

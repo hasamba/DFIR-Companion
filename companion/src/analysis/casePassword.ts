@@ -41,38 +41,56 @@ interface UnlockPayload {
   caseId: string;
   salt: string;
   exp: number;
+  remember: boolean;
 }
 
 /** Sign an unlock token for `caseId`, binding it to the case's CURRENT password salt (so
  * changing or removing the password invalidates every previously-issued token) and an
- * absolute expiry `ttlMs` milliseconds from now. */
-export function signUnlockToken(caseId: string, salt: string, secret: Buffer, ttlMs: number): string {
-  const payload: UnlockPayload = { caseId, salt, exp: Date.now() + ttlMs };
+ * absolute expiry `ttlMs` milliseconds from now. `remember` is carried in the token itself
+ * (not just the cookie's Max-Age) so a later request can tell whether THIS unlock was a
+ * "remember on this computer" one — see {@link isRememberedUnlockToken}. */
+export function signUnlockToken(caseId: string, salt: string, secret: Buffer, ttlMs: number, remember: boolean): string {
+  const payload: UnlockPayload = { caseId, salt, exp: Date.now() + ttlMs, remember };
   const payloadB64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   const sig = createHmac("sha256", secret).update(payloadB64).digest("base64url");
   return `${payloadB64}${TOKEN_SEPARATOR}${sig}`;
 }
 
-/** Verify a token produced by {@link signUnlockToken} against the CURRENT caseId/salt.
- * Returns false on any mismatch, tamper, or expiry — never throws. */
-export function verifyUnlockToken(token: string, caseId: string, salt: string, secret: Buffer): boolean {
+/** Verify signature, caseId/salt match, and expiry; return the decoded payload on success or
+ * null on any mismatch, tamper, or expiry. Never throws. Shared by {@link verifyUnlockToken}
+ * and {@link isRememberedUnlockToken} so there's one place that defines "valid". */
+function decodeVerifiedPayload(token: string, caseId: string, salt: string, secret: Buffer): UnlockPayload | null {
   const parts = token.split(TOKEN_SEPARATOR);
-  if (parts.length !== 2) return false;
+  if (parts.length !== 2) return null;
   const [payloadB64, sig] = parts;
   const expectedSig = createHmac("sha256", secret).update(payloadB64).digest("base64url");
   const sigBuf = Buffer.from(sig, "utf8");
   const expectedBuf = Buffer.from(expectedSig, "utf8");
-  if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) return false;
+  if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) return null;
 
   let payload: Partial<UnlockPayload>;
   try {
     payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
   } catch {
-    return false;
+    return null;
   }
-  if (payload.caseId !== caseId || payload.salt !== salt) return false;
-  if (typeof payload.exp !== "number" || Date.now() > payload.exp) return false;
-  return true;
+  if (payload.caseId !== caseId || payload.salt !== salt) return null;
+  if (typeof payload.exp !== "number" || Date.now() > payload.exp) return null;
+  return payload as UnlockPayload;
+}
+
+/** Verify a token produced by {@link signUnlockToken} against the CURRENT caseId/salt.
+ * Returns false on any mismatch, tamper, or expiry — never throws. */
+export function verifyUnlockToken(token: string, caseId: string, salt: string, secret: Buffer): boolean {
+  return decodeVerifiedPayload(token, caseId, salt, secret) !== null;
+}
+
+/** Whether a token — if it's otherwise valid — was signed with "remember on this computer".
+ * False for an invalid, expired, or tampered token, same as for one that's valid but wasn't
+ * remembered; callers that need to distinguish "invalid" from "valid but not remembered"
+ * should call {@link verifyUnlockToken} first. */
+export function isRememberedUnlockToken(token: string, caseId: string, salt: string, secret: Buffer): boolean {
+  return Boolean(decodeVerifiedPayload(token, caseId, salt, secret)?.remember);
 }
 
 /** Cookie name for a case's unlock token. Safe to build directly from caseId: this is only

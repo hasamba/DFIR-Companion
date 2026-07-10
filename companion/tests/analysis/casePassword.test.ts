@@ -6,6 +6,7 @@ import {
   sanitizeCaseMeta,
   signUnlockToken,
   verifyUnlockToken,
+  isRememberedUnlockToken,
   unlockCookieName,
   parseCookieHeader,
   MIN_CASE_PASSWORD_LENGTH,
@@ -55,33 +56,53 @@ describe("signUnlockToken / verifyUnlockToken", () => {
   const secret = randomBytes(32);
 
   it("round-trips a freshly signed token", () => {
-    const token = signUnlockToken("c1", "salt-a", secret, 60_000);
+    const token = signUnlockToken("c1", "salt-a", secret, 60_000, false);
     expect(verifyUnlockToken(token, "c1", "salt-a", secret)).toBe(true);
   });
   it("rejects a token checked against a different caseId", () => {
-    const token = signUnlockToken("c1", "salt-a", secret, 60_000);
+    const token = signUnlockToken("c1", "salt-a", secret, 60_000, false);
     expect(verifyUnlockToken(token, "c2", "salt-a", secret)).toBe(false);
   });
   it("rejects a token whose salt no longer matches (password was changed)", () => {
-    const token = signUnlockToken("c1", "salt-a", secret, 60_000);
+    const token = signUnlockToken("c1", "salt-a", secret, 60_000, false);
     expect(verifyUnlockToken(token, "c1", "salt-b", secret)).toBe(false);
   });
   it("rejects a tampered token", () => {
-    const token = signUnlockToken("c1", "salt-a", secret, 60_000);
+    const token = signUnlockToken("c1", "salt-a", secret, 60_000, false);
     const flipped = token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");
     expect(verifyUnlockToken(flipped, "c1", "salt-a", secret)).toBe(false);
   });
   it("rejects an already-expired token", () => {
-    const token = signUnlockToken("c1", "salt-a", secret, -1);
+    const token = signUnlockToken("c1", "salt-a", secret, -1, false);
     expect(verifyUnlockToken(token, "c1", "salt-a", secret)).toBe(false);
   });
   it("rejects a token signed with a different secret", () => {
-    const token = signUnlockToken("c1", "salt-a", secret, 60_000);
+    const token = signUnlockToken("c1", "salt-a", secret, 60_000, false);
     expect(verifyUnlockToken(token, "c1", "salt-a", randomBytes(32))).toBe(false);
   });
   it("rejects garbage input without throwing", () => {
     expect(verifyUnlockToken("not-a-token", "c1", "salt-a", secret)).toBe(false);
     expect(verifyUnlockToken("", "c1", "salt-a", secret)).toBe(false);
+  });
+});
+
+describe("isRememberedUnlockToken", () => {
+  const secret = randomBytes(32);
+
+  it("is true for a token signed with remember=true", () => {
+    const token = signUnlockToken("c1", "salt-a", secret, 60_000, true);
+    expect(isRememberedUnlockToken(token, "c1", "salt-a", secret)).toBe(true);
+  });
+  it("is false for a token signed with remember=false", () => {
+    const token = signUnlockToken("c1", "salt-a", secret, 60_000, false);
+    expect(isRememberedUnlockToken(token, "c1", "salt-a", secret)).toBe(false);
+  });
+  it("is false for an otherwise-invalid token (wrong caseId, tampered, expired, garbage)", () => {
+    const token = signUnlockToken("c1", "salt-a", secret, 60_000, true);
+    expect(isRememberedUnlockToken(token, "c2", "salt-a", secret)).toBe(false);
+    const expired = signUnlockToken("c1", "salt-a", secret, -1, true);
+    expect(isRememberedUnlockToken(expired, "c1", "salt-a", secret)).toBe(false);
+    expect(isRememberedUnlockToken("not-a-token", "c1", "salt-a", secret)).toBe(false);
   });
 });
 

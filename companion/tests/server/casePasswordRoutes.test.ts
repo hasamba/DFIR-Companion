@@ -21,7 +21,7 @@ describe("case password lifecycle", () => {
   it("an unprotected case reports hasPassword:false, unlocked:true, and every route is open", async () => {
     const status = await request(app).get("/cases/c1/lock-status");
     expect(status.status).toBe(200);
-    expect(status.body).toEqual({ hasPassword: false, unlocked: true });
+    expect(status.body).toEqual({ hasPassword: false, unlocked: true, remembered: false });
     expect((await request(app).get("/cases/c1/state")).status).toBe(200);
   });
 
@@ -121,17 +121,40 @@ describe("case password lifecycle", () => {
     const agent = request.agent(app);
     await agent.post("/cases/c1/password").send({ newPassword: "correct horse" });
     const own = await agent.get("/cases/c1/lock-status");
-    expect(own.body).toEqual({ hasPassword: true, unlocked: false });
+    expect(own.body).toEqual({ hasPassword: true, unlocked: false, remembered: false });
     const stranger = await request(app).get("/cases/c1/lock-status");
-    expect(stranger.body).toEqual({ hasPassword: true, unlocked: false });
+    expect(stranger.body).toEqual({ hasPassword: true, unlocked: false, remembered: false });
   });
 
-  it("lock-status is unlocked only after actually unlocking", async () => {
+  it("lock-status is unlocked only after actually unlocking, and reports whether it was remembered", async () => {
+    await request(app).post("/cases/c1/password").send({ newPassword: "correct horse" });
+
+    const notRemembered = request.agent(app);
+    await notRemembered.post("/cases/c1/unlock").send({ password: "correct horse", remember: false });
+    expect((await notRemembered.get("/cases/c1/lock-status")).body).toEqual({ hasPassword: true, unlocked: true, remembered: false });
+
+    const remembered = request.agent(app);
+    await remembered.post("/cases/c1/unlock").send({ password: "correct horse", remember: true });
+    expect((await remembered.get("/cases/c1/lock-status")).body).toEqual({ hasPassword: true, unlocked: true, remembered: true });
+  });
+
+  it("POST /cases/:id/lock forgets THIS browser's unlock without touching the password", async () => {
+    await request(app).post("/cases/c1/password").send({ newPassword: "correct horse" });
     const agent = request.agent(app);
-    await agent.post("/cases/c1/password").send({ newPassword: "correct horse" });
     await agent.post("/cases/c1/unlock").send({ password: "correct horse" });
-    const own = await agent.get("/cases/c1/lock-status");
-    expect(own.body).toEqual({ hasPassword: true, unlocked: true });
+    expect((await agent.get("/cases/c1/state")).status).toBe(200);
+
+    const lockRes = await agent.post("/cases/c1/lock");
+    expect(lockRes.status).toBe(200);
+    expect((await agent.get("/cases/c1/state")).status).toBe(401);
+    // The password itself is untouched — a fresh unlock with the same password still works.
+    const reUnlock = await agent.post("/cases/c1/unlock").send({ password: "correct horse" });
+    expect(reUnlock.status).toBe(200);
+  });
+
+  it("POST /cases/:id/lock is a harmless no-op for an unprotected or unknown case", async () => {
+    expect((await request(app).post("/cases/c1/lock")).status).toBe(200);
+    expect((await request(app).post("/cases/nope/lock")).status).toBe(200);
   });
 
   it("404s for an unknown case on lock-status / unlock / password", async () => {
