@@ -1,8 +1,64 @@
 import { DEFAULT_SETTINGS, normalizeCompanionUrl, type Settings } from "./types.js";
+import { ADAPTERS } from "./adapters/registry.js";
+import { OVERRIDE_NONE } from "./adapters/override.js";
+import type { CaptureStatusResult, GetCaptureStatusMessage, SetAdapterOverrideMessage } from "./types.js";
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 const caseSelect = () => document.getElementById("caseId") as HTMLSelectElement;
 const statusEl = () => document.getElementById("status") as HTMLDivElement;
+
+const toolSelect = () => document.getElementById("toolOverride") as HTMLSelectElement;
+const toolHint = () => document.getElementById("toolHint") as HTMLDivElement;
+
+async function activeTabId(): Promise<number | null> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab?.id ?? null;
+}
+
+function populateToolOptions(sel: HTMLSelectElement): void {
+  sel.innerHTML = "";
+  sel.appendChild(new Option("Auto-detect", ""));
+  for (const a of ADAPTERS) sel.appendChild(new Option(a.label, a.id));
+  sel.appendChild(new Option("None — plain screenshot", OVERRIDE_NONE));
+}
+
+function describeStatus(status: CaptureStatusResult): string {
+  const detected = status.detectedAdapterId
+    ? ADAPTERS.find((a) => a.id === status.detectedAdapterId)?.label ?? status.detectedAdapterId
+    : "not recognized";
+  return status.activeLabel ? `detected: ${detected} — capturing as ${status.activeLabel}` : `detected: ${detected}`;
+}
+
+// Populate the "Detected tool" row from the active tab's content script, and wire the override
+// <select> to push changes back to it. Hides the row entirely when the active tab has no content
+// script to talk to (a chrome:// page, or a page loaded before the extension was installed) —
+// same catch-and-degrade pattern loadCases() below uses for an offline companion.
+async function initToolOverride(): Promise<void> {
+  const row = document.getElementById("toolRow");
+  const sel = toolSelect();
+  if (!row || !sel) return;
+  const tabId = await activeTabId();
+  if (!tabId) { row.style.display = "none"; return; }
+  try {
+    const msg: GetCaptureStatusMessage = { kind: "get_capture_status" };
+    const status = (await chrome.tabs.sendMessage(tabId, msg)) as CaptureStatusResult;
+    populateToolOptions(sel);
+    sel.value = status.overrideAdapterId;
+    toolHint().textContent = describeStatus(status);
+  } catch {
+    row.style.display = "none";
+    return;
+  }
+  sel.onchange = async () => {
+    try {
+      const msg: SetAdapterOverrideMessage = { kind: "set_adapter_override", overrideAdapterId: sel.value };
+      const status = (await chrome.tabs.sendMessage(tabId, msg)) as CaptureStatusResult;
+      toolHint().textContent = describeStatus(status);
+    } catch {
+      toolHint().textContent = "override failed — reload the page and try again";
+    }
+  };
+}
 
 async function load(): Promise<Settings> {
   const stored = await chrome.storage.local.get("settings");
@@ -114,6 +170,7 @@ async function init() {
   await refreshStatus(s);
   await showLastCapture();
   await showHotkey();
+  await initToolOverride();
 
   // Auto-save the case selection immediately on change so the analyst can switch cases
   // (or clear them) without pressing Start — screenshots stay in their current state.
