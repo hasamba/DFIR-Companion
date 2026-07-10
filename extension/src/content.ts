@@ -1,4 +1,5 @@
 import { initArtifactCapture } from "./artifactCapture.js";
+import { initContextMenuCapture } from "./contextMenuCapture.js";
 
 let lastKeyNotify = 0;
 
@@ -19,4 +20,6 @@ document.addEventListener("keydown", () => {
 // Automated artifact fetching (#102): on recognized DFIR consoles (Splunk / Velociraptor /
 // Elastic / CrowdStrike) inject a "Push to DFIR-Companion" button + the API-interception hook.
 // No-ops on every other site.
+// Context-menu send (#new): right-click-target tracking + toast rendering, active on every page.
+initContextMenuCapture();
 void initArtifactCapture();
