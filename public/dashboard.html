@@ -12528,6 +12528,9 @@
     // No dedicated "add as IOC" hook exists on events, so prefill the manual IOC-add form (in the
     // IOCs section) from the focused event's most likely indicator and let the analyst confirm/edit
     // the type before submitting, rather than guessing and posting silently.
+    let _kbdIocFormAutoOpened = false;   // whether kbdAddFocusedAsIoc revealed the form itself — if
+                                          // so, Esc collapses it back; if the analyst had it open
+                                          // already (via the section's own + toggle), Esc leaves it.
     function kbdAddFocusedAsIoc() {
       const e = kbdFocusedEvent();
       if (!e) return;
@@ -12538,7 +12541,7 @@
       if (!sec) return;
       sec.classList.remove("collapsed");
       const wrap = sec.querySelector(".manual-add");
-      if (wrap) wrap.removeAttribute("hidden");
+      if (wrap) { _kbdIocFormAutoOpened = wrap.hasAttribute("hidden"); wrap.removeAttribute("hidden"); }
       const typeSel = document.getElementById("miType");
       const valInput = document.getElementById("miValue");
       if (typeSel) typeSel.value = isIp ? "ip" : "other";
@@ -12546,6 +12549,22 @@
       sec.scrollIntoView({ behavior: "smooth", block: "start" });
       if (valInput) { valInput.focus(); valInput.select(); }
     }
+
+    // Escape while the value field has focus cancels the "i" flow: clear the (possibly hand-edited)
+    // value, blur back out to the timeline, and re-collapse the form if this flow is what opened it.
+    // Scoped to this one field, mirroring #globalSearch's own Escape handler — the GLOBAL keydown
+    // handler below deliberately skips INPUT targets, so it can't reach this itself.
+    document.getElementById("miValue").addEventListener("keydown", e => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.target.value = "";
+      e.target.blur();
+      if (_kbdIocFormAutoOpened) {
+        const wrap = document.querySelector("#sec-iocs .manual-add");
+        if (wrap) wrap.setAttribute("hidden", "");
+        _kbdIocFormAutoOpened = false;
+      }
+    });
 
     // Pinning is a Findings-section concept, not a per-event one — a timeline event only cites
     // findings via relatedFindingIds. Only act when the focused event cites exactly one finding;
