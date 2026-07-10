@@ -23,7 +23,7 @@ export interface CaseMeta {
   createdAt: string;        // ISO-8601
   investigator: string;
   aiProvider: string | null;
-  status?: "open" | "closed"; // lifecycle state; absent means open
+  status?: "open" | "closed" | "archived"; // lifecycle state; absent means open
   // scrypt hash+salt gating dashboard access to this case (issue: case password protection).
   // NEVER serialize this directly in an API response — always go through
   // analysis/casePassword.ts's sanitizeCaseMeta(), which replaces it with `hasPassword`.

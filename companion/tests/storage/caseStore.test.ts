@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat, mkdir, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -131,5 +131,110 @@ describe("CaseStore OCR index (#176)", () => {
     const idx = await store.loadOcrIndex("o3");
     expect(Object.keys(idx)).toHaveLength(1);
     expect(idx["000001_t.webp"].text).toBe("new text");
+  });
+});
+
+describe("CaseStore.caseDir archive fallback (case archive lifecycle)", () => {
+  it("resolves to the active root when the case lives there", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "arch-1", name: "n", investigator: "i", aiProvider: null });
+    expect(store.caseDir("arch-1")).toBe(join(root, "arch-1"));
+  });
+
+  it("resolves to _archived/<caseId> once the folder has been moved there", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "arch-2", name: "n", investigator: "i", aiProvider: null });
+    await mkdir(join(root, "_archived"), { recursive: true });
+    await rename(join(root, "arch-2"), join(root, "_archived", "arch-2"));
+    expect(store.caseDir("arch-2")).toBe(join(root, "_archived", "arch-2"));
+  });
+
+  it("falls back to the active root for a case that doesn't exist yet", () => {
+    const store = new CaseStore(root);
+    expect(store.caseDir("brand-new")).toBe(join(root, "brand-new"));
+  });
+});
+
+describe("CaseStore archive/restore folder moves", () => {
+  it("archiveCaseFolder moves the case directory under _archived/", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "af-1", name: "n", investigator: "i", aiProvider: null });
+    await store.archiveCaseFolder("af-1");
+
+    const moved = await stat(join(root, "_archived", "af-1", "case.json"));
+    expect(moved.isFile()).toBe(true);
+    await expect(stat(join(root, "af-1"))).rejects.toThrow();
+  });
+
+  it("restoreCaseFolder moves it back to the active root", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "af-2", name: "n", investigator: "i", aiProvider: null });
+    await store.archiveCaseFolder("af-2");
+    await store.restoreCaseFolder("af-2");
+
+    const back = await stat(join(root, "af-2", "case.json"));
+    expect(back.isFile()).toBe(true);
+    await expect(stat(join(root, "_archived", "af-2"))).rejects.toThrow();
+  });
+
+  it("listCases includes archived cases alongside active ones", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "af-3", name: "Active", investigator: "i", aiProvider: null });
+    await store.createCase({ caseId: "af-4", name: "Archived", investigator: "i", aiProvider: null });
+    await store.archiveCaseFolder("af-4");
+
+    const cases = await store.listCases();
+    expect(cases.map((c) => c.caseId).sort()).toEqual(["af-3", "af-4"]);
+  });
+
+  it("caseExists returns true for an archived case, so callers can 409 before overwriting it", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "af-5", name: "n", investigator: "i", aiProvider: null });
+    await store.archiveCaseFolder("af-5");
+
+    expect(await store.caseExists("af-5")).toBe(true);
+  });
+
+  it("archiveCaseFolder rejects when the case doesn't exist in the active root", async () => {
+    const store = new CaseStore(root);
+    await expect(store.archiveCaseFolder("never-created")).rejects.toThrow();
+  });
+
+  it("restoreCaseFolder rejects when the case isn't currently archived", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "af-6", name: "n", investigator: "i", aiProvider: null });
+    await expect(store.restoreCaseFolder("af-6")).rejects.toThrow();
+  });
+});
+
+describe("CaseStore.deleteCaseFolder", () => {
+  it("deletes an active case's folder entirely", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "del-1", name: "n", investigator: "i", aiProvider: null });
+    await store.deleteCaseFolder("del-1");
+    await expect(stat(join(root, "del-1"))).rejects.toThrow();
+  });
+
+  it("deletes an archived case's folder (under _archived/)", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "del-2", name: "n", investigator: "i", aiProvider: null });
+    await store.archiveCaseFolder("del-2");
+    await store.deleteCaseFolder("del-2");
+    await expect(stat(join(root, "_archived", "del-2"))).rejects.toThrow();
+  });
+
+  it("rejects when the case doesn't exist", async () => {
+    const store = new CaseStore(root);
+    await expect(store.deleteCaseFolder("never-created")).rejects.toThrow();
+  });
+
+  it("refuses to delete a directory that isn't actually a case (no case.json)", async () => {
+    const store = new CaseStore(root);
+    await mkdir(join(root, "not-a-case"), { recursive: true });
+    await writeFile(join(root, "not-a-case", "some-file.txt"), "hello", "utf8");
+    await expect(store.deleteCaseFolder("not-a-case")).rejects.toThrow();
+    // confirm it's genuinely still there — nothing was deleted
+    const s = await stat(join(root, "not-a-case", "some-file.txt"));
+    expect(s.isFile()).toBe(true);
   });
 });

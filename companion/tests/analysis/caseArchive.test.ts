@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { archiveCase, buildZip } from "../../src/analysis/caseArchive.js";
+import { archiveCase, buildZip, zipArchiveFilename } from "../../src/analysis/caseArchive.js";
 import { join } from "node:path";
 
 // ── ZIP structure helpers ───────────────────────────────────────────────────
@@ -82,10 +82,16 @@ describe("archiveCase", () => {
     };
   }
 
-  it("returns the expected archive path", async () => {
+  it("names the archive '<caseId> (no password).zip' when no case name is given", async () => {
     const fs = makeFs({ "case.json": '{"caseId":"c1"}' });
     const result = await archiveCase("/cases", "c1", fs);
-    expect(result.archivePath).toBe(join("/cases", "c1.zip"));
+    expect(result.archivePath).toBe(join("/cases", "c1 (no password).zip"));
+  });
+
+  it("names the archive '<caseId> - <name> (no password).zip' when a case name is given", async () => {
+    const fs = makeFs({ "case.json": '{"caseId":"c1"}' });
+    const result = await archiveCase("/cases", "c1", fs, "Acme Breach");
+    expect(result.archivePath).toBe(join("/cases", "c1 - Acme Breach (no password).zip"));
   });
 
   it("includes a manifest with the correct caseId and file count", async () => {
@@ -136,5 +142,21 @@ describe("archiveCase", () => {
     const fs = makeFs(files);
     const result = await archiveCase("/cases", "c1", fs);
     expect(result.manifest.totalBytes).toBe(5);
+  });
+});
+
+describe("zipArchiveFilename", () => {
+  it("uses just the caseId when there's no distinct name", () => {
+    expect(zipArchiveFilename("c1", undefined)).toBe("c1 (no password).zip");
+    expect(zipArchiveFilename("c1", "c1")).toBe("c1 (no password).zip");
+    expect(zipArchiveFilename("c1", "")).toBe("c1 (no password).zip");
+  });
+
+  it("includes the case name when distinct from the id", () => {
+    expect(zipArchiveFilename("INC-1", "Acme Breach")).toBe("INC-1 - Acme Breach (no password).zip");
+  });
+
+  it("strips filesystem-unsafe characters from the name", () => {
+    expect(zipArchiveFilename("INC-1", 'Acme: "Breach"/Q4')).toBe("INC-1 - Acme_ _Breach_/Q4 (no password).zip".replace(/[<>:"/\\|?*\x00-\x1f]/g, "_"));
   });
 });

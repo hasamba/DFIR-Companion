@@ -26,7 +26,7 @@ describe("GET /diagnostics", () => {
     expect(r).toBeTruthy();
     expect(r.disk).toHaveProperty("freeBytes");
     expect(r.disk).toHaveProperty("level");
-    expect(r.cases).toEqual({ count: 0, open: 0, closed: 0 });
+    expect(r.cases).toEqual({ count: 0, open: 0, closed: 0, archived: 0 });
     expect(r.queue).toHaveProperty("bufferedCaptures", 0);
     expect(r.queue).toHaveProperty("synthInFlight", 0);
     expect(r.ai).toHaveProperty("configured");
@@ -41,7 +41,19 @@ describe("GET /diagnostics", () => {
     await store.updateCaseMeta("closed-1", { status: "closed" });
     const app = createApp(store, {});
     const res = await request(app).get("/diagnostics");
-    expect(res.body.report.cases).toEqual({ count: 2, open: 1, closed: 1 });
+    expect(res.body.report.cases).toEqual({ count: 2, open: 1, closed: 1, archived: 0 });
+  });
+
+  it("counts archived cases separately, not as open or closed", async () => {
+    await store.createCase({ caseId: "open-1", name: "A", investigator: "x", aiProvider: null });
+    await store.createCase({ caseId: "closed-1", name: "B", investigator: "x", aiProvider: null });
+    await store.updateCaseMeta("closed-1", { status: "closed" });
+    await store.createCase({ caseId: "archived-1", name: "C", investigator: "x", aiProvider: null });
+    await store.archiveCaseFolder("archived-1");
+    await store.updateCaseMeta("archived-1", { status: "archived" });
+    const app = createApp(store, {});
+    const res = await request(app).get("/diagnostics");
+    expect(res.body.report.cases).toEqual({ count: 3, open: 1, closed: 1, archived: 1 });
   });
 
   it("NEVER leaks an API key into the diagnostics payload", async () => {
