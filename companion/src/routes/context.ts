@@ -8,6 +8,7 @@ import type { ImporterRegistry } from "../analysis/importerStore.js";
 import type { IrisClient } from "../integrations/iris/irisClient.js";
 import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { ProviderHealthCache } from "../enrichment/providerHealth.js";
+import type { NsrlDb } from "../analysis/nsrlDb.js";
 import type { ImporterFailure, AiError } from "../analysis/diagnostics.js";
 import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { ToolConfig } from "../integrations/tools/toolConfig.js";
@@ -102,6 +103,21 @@ export interface RouteContext {
   applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;
   applyDeobfuscationToCase(caseId: string): Promise<{ deobfuscated: number; newIocs: number }>;
   moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void>;
+  // Threat-intel ENRICHMENT engine (routes/threatIntel.ts). The engine + its background reachability
+  // poller stay in createApp (the poller re-arms enrichInBackground and drains enrichPending on
+  // provider recovery, and resynthesize/import seams fire autoEnrichIfEnabled), so the moved enrich
+  // routes reach it through these graduated members. All hoisted `function`/`async function`
+  // declarations, so safe to bind at construction:
+  //   enrichInBackground   — run (or re-run) IOC + process-chain enrichment for a case in the
+  //                          background (force re-queries already-enriched IOCs). POST /enrich +
+  //                          POST /enrich-control drive it.
+  //   autoEnrichIfEnabled  — enrich a case's IOCs only if enrichment is enabled for it (fired after a
+  //                          manual IOC add).
+  //   enabledProvidersFor  — resolve the enrichment PROVIDER objects enabled for a case (the
+  //                          bulk-enrich route enriches a selected subset with them).
+  enrichInBackground(caseId: string, force?: boolean): void;
+  autoEnrichIfEnabled(caseId: string): void;
+  enabledProvidersFor(caseId: string): Promise<EnrichmentProvider[]>;
   // Velociraptor domain machinery shared with routes/velociraptor.ts. The live-monitor + hunt-status
   // subsystems are self-rescheduling timer loops that must survive a restart, so their RESUME functions
   // (resumeVeloMonitors / resumeVeloHuntStatusPolls) run once at the END of createApp AND from POST
@@ -157,6 +173,15 @@ export interface RouteContext {
   dropWatchEnabled(): boolean;
   enrichmentProviders(): EnrichmentProvider[];
   enrichHealth(): ProviderHealthCache;
+  // Cases whose last enrich run had to skip a down provider — the background poller (createApp) drains
+  // this Set on recovery. POST /cases/:id/enrich-control deletes a case from it when enrichment is
+  // turned off; call ctx.enrichPending() INSIDE the handler and mutate the returned Set in place.
+  enrichPending(): Set<string>;
+  // The active NSRL RDS SQLite connection (#63) — a MUTABLE shared handle. createApp's applyNsrlToCase
+  // reads it; the POST/DELETE /nsrl/db routes swap it at runtime. Read via nsrlDb() and reassign via
+  // setNsrlDb() (both reach the SAME createApp `let`), never a value captured at registration.
+  nsrlDb(): NsrlDb | undefined;
+  setNsrlDb(db: NsrlDb | undefined): void;
   // Detect the importer kind for a filename+text (honours user-authored custom importers). A `const`
   // arrow defined in createApp AFTER this ctx literal, so it's exposed as a live accessor — call
   // ctx.resolveImportKind() INSIDE the handler to reach the current binding, then invoke the result.
