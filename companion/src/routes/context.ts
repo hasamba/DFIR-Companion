@@ -10,6 +10,8 @@ import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { ProviderHealthCache } from "../enrichment/providerHealth.js";
 import type { ImporterFailure, AiError } from "../analysis/diagnostics.js";
 import type { Severity } from "../analysis/stateTypes.js";
+import type { ToolConfig } from "../integrations/tools/toolConfig.js";
+import type { CustomTool } from "../integrations/tools/customToolStore.js";
 
 /**
  * Dependencies shared across more than one route domain, built once in createApp and passed to
@@ -53,6 +55,16 @@ export interface RouteContext {
   ingestStreamed(
     caseId: string, kind: string, text: string, originalName: string, minSeverity?: Severity,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  // External-tool runner machinery shared between the drop-folder auto-run path + the drop batch route
+  // (both still in createApp) and routes/tools.ts. Stable (hoisted function declarations bound at
+  // construction), so safe to destructure at registration scope:
+  //   runToolAndIngest — run a configured tool against a contained raw file and ingest its output
+  //                      through the same chain as the Import button (with an optional undo checkpoint).
+  //   reloadCustomTools — refresh the in-memory custom-tool list after a custom-tool CRUD mutation.
+  runToolAndIngest(
+    caseId: string, toolId: string, targetPath: string, opts?: { undoLabel?: string },
+  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  reloadCustomTools(): Promise<void>;
 
   // ── LIVE accessors ───────────────────────────────────────────────────────────────────
   // Call these INSIDE the request handler (or inside per-request logic like a preflight run),
@@ -70,4 +82,13 @@ export interface RouteContext {
   // arrow defined in createApp AFTER this ctx literal, so it's exposed as a live accessor — call
   // ctx.resolveImportKind() INSIDE the handler to reach the current binding, then invoke the result.
   resolveImportKind(): (filename: string, text: string) => string;
+  // External-tool config + custom-tool list, both shared with the drop-folder code still in createApp
+  // (resolveToolForExt/rawExtClaimed read customTools; the drop batch route + poller read
+  // liveToolConfigs). Exposed as live accessors because they're built AFTER this ctx literal:
+  //   liveToolConfigs   — a `const` arrow returning the merged built-in+custom tool config map read
+  //                       LIVE from env; call ctx.liveToolConfigs() INSIDE the handler, then invoke it.
+  //   customTools       — a mutable array reassigned by the async initial load + reloadCustomTools;
+  //                       call ctx.customTools() per request to read the current list.
+  liveToolConfigs(): () => Map<string, ToolConfig>;
+  customTools(): CustomTool[];
 }
