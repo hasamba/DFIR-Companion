@@ -153,7 +153,7 @@ Standard DFIR questions auto-answered from the synthesized case
 
 - **Forensic timeline** — real events with timestamps from artifacts, sortable/filterable by date/severity/source
 - **Findings** — per-technique analytic conclusions with severity + MITRE ATT&CK mapping
-- **Pinned findings** — pin the key findings (📌) to a sticky top strip that stays visible while you scroll the timeline/graph; drag-to-reorder, one-click jump, capped shortlist, persisted per case (travels in the case archive export)
+- **Pinned findings** — pin the key findings (📌) to a sticky strip at the top of the Findings panel; drag-to-reorder, one-click jump, capped shortlist, persisted per case (travels in the case archive export)
 - **IOCs, MITRE coverage, attacker-path narrative** — cross-source corroboration badges + kill chain
 - **Inline IOC quick-actions** — click any detected value (IP/hash/domain/**SID**/URL/path) in an event row or an IOC value for a one-click tray: copy, mark benign, mark confirmed-malicious, suggest hunt — each outcome recorded to the investigation log
 - **Attack phases** — timeline grouped into activity bursts by time gap, labeled by dominant tactic (deterministic, no AI)
@@ -166,10 +166,10 @@ Standard DFIR questions auto-answered from the synthesized case
 - **Adversary emulation** — likely next techniques: the matched groups' named tradecraft the case hasn't observed yet, ranked by distinctiveness as hunt priorities, each with a one-click "hunt this" → Velociraptor VQL
 - **Mitigations & defensive countermeasures** — concrete **MITRE ATT&CK Mitigations** (M-codes) for the case's techniques, ranked by leverage (which one mitigation covers the most techniques), plus **MITRE D3FEND** hardening/detection/isolation steps; offline, no AI. Bridges "what the attacker did" to "what to actually do about it." A **✨ Generate remediation plan** button turns it into a concrete, incident-specific IR plan (one AI call)
 - **Compromised assets** — victim hosts/accounts + interactive asset↔IOC graph
-- **Host & account ranking** — which hosts/accounts carry the attack, scored by signal (severity-weighted events + techniques + connective IOCs) not volume, with a one-click suggested scope window
+- **Host & account ranking** — which hosts/accounts carry the attack, scored by signal (severity-weighted events + techniques + connective IOCs) not volume, with a one-click suggested scope window; click a ranked row to expand the events/IOCs behind its score inline (capped at 50 each) and jump straight to a cited event in the timeline
 - **Key investigative questions** — answered with pointers to evidence or next steps to collect
 - **Investigation threads** — open/resolved leads
-- **Dashboard view presets** — one-click Analyst/Lead/Executive (role) + Triage/Report/Deep-Dive/Hunt-Prep (phase) layouts that re-arrange panels, filter by severity, and pair a report template; per-case, fully editable
+- **Dashboard view presets** — one-click Analyst/Lead/Executive (role) + Triage/Report/Deep-Dive/Hunt-Prep (phase) layouts that re-arrange panels, filter by severity, and pair a report template; per-case, fully editable. **Analyst** is the default for any case with no saved per-case choice; explicitly picking Custom still sticks across reloads
 - **Reports** — Markdown, HTML, PDF, Word (.docx), CSVs, JSON exports
 
 ## Features
@@ -181,8 +181,10 @@ Standard DFIR questions auto-answered from the synthesized case
 - **MV3 browser extension** — timer + event-driven capture (navigation/tab/click), `Ctrl+Shift+S` hotkey, offline queue + auto-sync, per-case Start/Stop
 - **One-click artifact push** — Splunk/Velociraptor/Kibana/Security Onion/SO-CRATES/CrowdStrike injects **Push to DFIR-Companion** button; intercepts API JSON or scrapes table
 - **Case management** — **+ New case** in dashboard (templates auto-load incident questions + import hints); captures to unknown case rejected
+- **Case password protection** — set a password on a case (🔒 Password… in the case lifecycle menu) so opening it in the dashboard requires that password; a "remember on this computer" option skips the prompt on future visits from the same browser. Enforced server-side (an unlock cookie gates every `/cases/:id/*` route) — the capture extension's evidence ingestion keeps working while a case is locked
+- **Permanently delete a case** — 🗑️ Delete… in the case lifecycle menu removes a case's directory for good, with an optional ZIP/encrypted archive taken first; refuses to touch a directory that isn't a real case and won't delete an already-archived case's live folder out from under its archive
 - **Import screenshots** — multi-select PNG/JPEG/WebP; single **Import** button auto-detects artifact format (CSV/JSON/log)
-- **Evidence drop folder** — each case has a `drop/` folder; anything copied in (subfolders included) is auto-imported in the background via the same chain as the Import button (images → screenshot evidence), then moved to `_processed/` or `_failed/`; failures surface in a dashboard banner + notifications
+- **Evidence drop folder** — each case has a `drop/` folder; anything copied in (subfolders included) is auto-imported in the background via the same chain as the Import button (images → screenshot evidence), then moved to `_processed/` or `_failed/`; failures surface in a dashboard banner + notifications; every outcome (imported/failed/pending, with reason) is appended to a running `drop-log.txt` in the same folder
 - **External tool runner** (Settings → Tools) — run your **own locally-installed** Hayabusa / Velociraptor CLI / Suricata / Snort / YARA against raw evidence the Companion can't parse (EVTX/PCAP/files), then ingest the tool's *output* through the existing importers. Configure the binary path + args per tool (never bundled/downloaded). Importing a raw EVTX/PCAP from the dashboard — or dropping raw files in a case's `drop/` folder — shows a header banner that **asks once per batch** before running (auto-run is opt-in per tool); each tool also has a one-click "update rules" button. **Add your own custom tools** too (name, binary, command, update command, extensions) — their output is auto-detected and routed to the right importer. No-shell argv, path-contained, runs from the tool's own dir, off by default
 - **Import undo/redo** — roll back/forward to exact pre-import state (no re-synthesis); multi-level per-case stack
 - **Custom (declarative) importers** — teach a new file format with a JSON definition (no code); LLM-authorable via a built-in prompt, auto-detected + imported like a built-in, with built-in/custom precedence
@@ -258,12 +260,13 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Activity log** — a chronological, filterable record of every security-relevant action taken on a case (imports, mark/unmark false-positive, AI runs, enrichment/anonymization toggles, settings changes, playbook edits, comments/tags, hunt runs, exports)
 - **Bulk actions** — multi-select events/IOCs/findings: star/tag/mark-false-positive/enrich/copy
 - **IOC whitelist** (Settings) — CIDR/exact/regex patterns auto-mark matching IOCs false-positive; global; opt-in
+- **Per-case IOC exclude list** — permanently remove domain/hostname (or any IOC type) matches from a case via exact/suffix/regex rules in the IOCs panel title bar; excluded values are purged immediately and never re-imported or enriched
 - **NSRL known-good hashes** (Settings) — flat hash set or direct SQLite DB query (~160 GB); auto-marks matching events/IOCs false-positive
 - **Payload deobfuscation** — auto-decodes base64 PowerShell (`-enc`, `[Convert]::FromBase64String`); extracts hidden IOCs; shows [Decoded] blocks
 - **CISA KEV integration** (Settings) — cross-reference CVEs against CISA catalog; strong initial-access signal
 - **IOC corroboration** — ⊕ N badge shows how many tools observed each indicator
 - **IOC provenance** — each IOC classed detection-linked (seen in a Low+ event) vs telemetry-only (Info only), distinct from the threat-intel verdict; per-IOC badge + All/Detection-linked/Telemetry-only filter
-- **IOC provenance chain** — per-IOC 🔗 panel showing extraction event(s), enrichment lookups, and citing findings, each timestamped, with a JSON export
+- **IOC provenance chain** — per-IOC 🔗 panel showing extraction event(s), enrichment lookups, and citing findings, each timestamped, with a JSON export. For the Security Onion, combined-log, network, and Velociraptor importers the extraction event is the exact source row that produced the IOC — shown as "linked" (vs "approximate" elsewhere); AI synthesis can't forge this link
 - **IOC flagged-only filter** — hide everything except threat-intel-confirmed indicators
 - **IOC type filter** — faceted dropdown (ip/domain/url/hash/file/process/other) with per-type counts; composes with the flagged-only + search filters
 - **IOC list noise-reduction controls** — three composable display-only filters, default on: hide false-positive/no-intel IOCs, hide OS system-path files, and a "🎯 Signal only" narrow-to-flagged/corroborated/enriched view
@@ -276,7 +279,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Hunting feedback loop** — records each deployed hunt's outcome (new evidence + counts) per case; suggestions skip an already-run query and pivot on what hit, with a *Hunting Profile* of hunted/hit/missed
 - **Webhook push ingest** (opt-in, token) — external tools push alerts via `POST /cases/:id/push` (SIEM webhook, Velociraptor monitor, scripts)
 - **Velociraptor live monitoring** (opt-in) — stream CLIENT_EVENT artifacts (e.g., ProcessCreation) as events fire; auto-collect on interval; one-click auto-monitor for all enabled artifacts
-- **Import an external hunt/flow** — pull results from a Velociraptor hunt or collection launched in the Velociraptor GUI (paste a hunt id / flow / GUI URL); a flow's host is resolved automatically and events attributed to it, with an optional super-timeline-only route. For upload-only artifacts (THOR/Hayabusa reports, no result rows), paste the GUI's **Uploaded Files** tab URL instead to import just the uploaded report
+- **Import an external hunt/flow** — pull results from a Velociraptor hunt or collection launched in the Velociraptor GUI (paste a hunt id / flow / GUI URL); a flow's host is resolved automatically and events attributed to it, with an optional super-timeline-only route. For upload-only artifacts (THOR/Hayabusa reports, no result rows), paste the GUI's **Uploaded Files** tab URL instead to import just the uploaded report; the upload reader also picks up `.csv`/`.txt`/`.log`/`.jsonl` files, not just `.json`
 - **Scope + false-positive marking** — set time window; mark findings/IOCs/events false-positive with a structured reason (known-good tool/authorized test/detection misfire/duplicate/other) + analyst attribution (reversible); all views re-project
 - **False-positive similarity suggestions** — mark one item false-positive and get ranked "similar items" candidates (shared MITRE/process/hash/asset/IOCs), deterministic or AI-assisted, to dismiss the same pattern in one pass; single-IOC marks can also one-click-promote to the global IOC whitelist
 - **Super-Timeline** — a Timesketch-style complete record of *every* imported event, kept in a separate per-case store the AI never synthesizes (so the forensic timeline stays detections-focused). Filter by time / origin (e.g. hide Sigma/YARA/Hayabusa detections to see only raw host artifacts) / label, save named timeframes, and label events; **promote** selected events into the forensic timeline so AI synthesis picks them up. A "Super-Timeline Triage" Velociraptor bundle collects raw Windows host artifacts (MFT, USN, EVTX, registry, Prefetch, Amcache, LNK, browser history, RecycleBin, scheduled tasks, ActivitiesCache) into the super-timeline only
@@ -287,6 +290,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Timeline source filter** — faceted dropdown (beside the severity legend) to show/hide events by the tool/source that produced them; multi-source events stay visible unless every source is hidden
 - **Timeline origins filter** — one level more specific than the source filter: shows/hides events by the exact artifact that produced them (e.g. `DetectRaptor.Windows.Detection.MFT`), on both the forensic and super timelines
 - **Timeline row display** — Settings → General toggles which sub-elements each timeline row shows (action icons / tag pills / badges / host chip / MITRE / related findings / evidence links); timestamp + message always shown; per-browser, applies immediately
+- **Vim-style keyboard navigation** — `j`/`k` moves a focused-row highlight on the Forensic Timeline, `f` stars, `i` prefills the manual IOC form, `p` pins the cited finding, `n` opens a comment, `?` shows a cheat sheet; toggleable in Settings → General, default on
 - **Remember import severity** — the minimum-severity import prompt has a *don't ask again* checkbox that saves the chosen floor and skips the prompt on future imports; manage/clear it in Settings → General → Import severity; per-browser
 - **Correlation profile** — per-case Strict/Moderate/Aggressive/Custom window for cross-source event merging; toolbar dropdown + `PUT /cases/:id/correlation-profile`
 
@@ -319,9 +323,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Redacted case package** — ZIP with tokenized IPs/hosts/users, blurred PII in screenshots, adversary indicators preserved
 - **AI executive summary** — management-facing (no ATT&CK ids/hashes/tool names)
 - **Narrative Timeline** — prose story for non-technical stakeholders
-- **DFIR-IRIS push** — idempotent; maps assets/IOCs/timeline/tasks. **Settings → DFIR-IRIS** has Test/reconnect (no restart)
+- **DFIR-IRIS push** — idempotent; maps assets/IOCs/timeline/tasks; the push dialog shows (and lets you override) the target IRIS case name, remembered so later pushes keep hitting the same case. **Settings → DFIR-IRIS** has Test/reconnect (no restart)
 - **DFIR-IRIS import** — pull existing case assets/IOCs/timeline (deterministic, no AI)
-- **Timesketch push** — find-or-create sketch; export JSONL
+- **Timesketch push** — find-or-create sketch; push or download either the Forensic Timeline or the full Super Timeline (raw host-triage artifacts included), each into its own timeline within the same sketch so neither clobbers the other; export JSONL
 - **Notion export** — managed page block; your notes outside it untouched
 - **ClickUp export** — Response Playbook as tasks; re-push updates in place
 - **Notifications** — Slack/MS Teams/Mattermost/Discord/Telegram/SMTP for findings/playbook/milestones; per-channel threshold + toggles
@@ -332,6 +336,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Ops
 - **Health / Diagnostics** — **Settings → Diagnostics** one-page operator view: disk usage, case count, capture/synthesis queue, redacted AI config + live *Test AI connectivity*, importer attempts (24h/7d) + recent failures; compute-on-demand case sizes; key-free copy-to-clipboard
+- **Per-case AI cost tracking** — **Settings → Diagnostics** shows an "AI cost — this case" card: calls, dollar cost, and token counts by Vision/Synthesis/Other and by model, read from the provider's real per-call cost/token counts (never a fabricated `$0.00` when a provider doesn't report it)
 - **Logging** — console + global session log + per-case audit trail; `DFIR_LOG_LEVEL` live toggle; `debug` traces AI/captures/OCR/anonymization
 - **Chrome extension** — install from the [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf); connects to the local server, no standalone function
 - **Portable Windows EXE** — unzip + double-click, no Node required

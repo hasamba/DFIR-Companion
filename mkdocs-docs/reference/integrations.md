@@ -27,7 +27,10 @@ Settings → Velociraptor → Bundles. Built-in bundles include **Fast Triage** 
 
 ## DFIR-IRIS
 
-**Push:** Export findings, timeline, and IOCs from a Companion case into an IRIS case.
+**Push:** Export findings, timeline, and IOCs from a Companion case into an IRIS case. The push dialog
+shows the case name it will target — defaulting to `<case id> — <friendly name>` — and lets you type a
+different one; your choice is remembered so later pushes keep hitting the same IRIS case instead of
+reverting to the default.
 
 **Pull/Import:** Import an existing IRIS case (assets, IOCs, timeline) into a Companion case. Toolbar → Import case → From DFIR-IRIS.
 
@@ -37,7 +40,12 @@ Settings → Velociraptor → Bundles. Built-in bundles include **Fast Triage** 
 
 ## Timesketch
 
-Push the forensic timeline to a Timesketch instance for collaborative timeline analysis.
+Push or download two separate timelines to/from a Timesketch instance, both landing in the same
+sketch (so neither clobbers the other):
+
+- **Forensic Timeline export** — the curated, detections-focused timeline
+- **Super Timeline export** — the full super-timeline (forensic timeline + raw host-triage artifacts),
+  for collaborative analysis over everything that was imported, not just what synthesis flagged
 
 **Configure:** Settings → Integrations → Timesketch. Reconnect without restart after saving credentials.
 

@@ -32,9 +32,14 @@ Your primary conclusions. Each finding has:
 - **Supporting IOCs** — the indicators that back this finding
 - **🚫 Mark False Positive** — exclude from analysis
 
-The finding list is sorted worst-first. Click a finding to expand it. The **Min confidence** box above
-the list hides findings below the chosen floor (findings with no confidence score always show); the
-floor is a per-case setting, so it's remembered the next time you open the case.
+Findings sit in a dense table (severity / ID / confidence in real grid columns) with inline icon
+buttons for comment/tag/pin/false-positive/hunt/explain/chain-provenance, replacing bracket-style
+severity text and raw emoji glyphs. The finding list is sorted worst-first. Click a finding to expand
+it — the expansion shows the confidence explanation, supporting IOCs, and a real **cited-event
+timeline** (timestamp + description per event, each with its own jump link) instead of a bare
+`[1][2][3]` footnote line. The **Min confidence** box above the list hides findings below the chosen
+floor (findings with no confidence score always show); the floor is a per-case setting, so it's
+remembered the next time you open the case.
 
 **Cited AI answers** — supporting events/findings referenced by a finding, Ask-the-case, Explain Event,
 or an AI-suggested hunt appear as numbered, clickable citations — click a citation number to jump
@@ -88,6 +93,19 @@ Each row shows a compact title line (timestamp, severity badge, description, sou
 !!! tip
     Drag a time range on the **Timeline Swimlane** (below) to instantly scope the timeline to that window.
 
+### Vim-Style Keyboard Navigation
+
+Toggle in **Settings → General** (default on). With the timeline focused:
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Move the focused-row highlight down / up |
+| `f` | Star the focused row |
+| `i` | Prefill the manual IOC form from the focused row |
+| `p` | Pin the finding cited by the focused row |
+| `n` | Open a comment on the focused row |
+| `?` | Show the keyboard cheat sheet |
+
 ### Event-Density Heatmap
 
 A bar strip above the event rows buckets the **full filtered dataset** (not just the current page) by
@@ -106,6 +124,8 @@ Collapses to a thin sparkline on mobile.
 Ranks every host and account by **signal**, not volume: severity-weighted events + ATT&CK techniques + connective IOCs. Chatty-but-benign hosts sink; the entities actually carrying the attack rise to the top.
 
 A one-click **suggested scope** button sets the investigation scope window to cover the top-ranked hosts' activity. The top hosts also feed the synthesis prompt so an automatic run over a noisy multi-host timeline anchors its narrative on the right hosts instead of the loudest one.
+
+Click a ranked row to expand it inline and see the events and IOCs behind that score (capped at 50 each, with a "+N more" note beyond that). Click an event in the expansion to jump straight to it in the Forensic Timeline. Only one row expands at a time.
 
 ---
 
@@ -186,7 +206,9 @@ Filters: severity floor, SVG export.
 
 ## IOCs (Indicators of Compromise)
 
-Every indicator extracted from all evidence:
+Type and value sit in real grid columns, with inline icon buttons for the shared
+comment/tag/pin/false-positive/hunt/explain/chain-provenance controls (same pattern as Findings,
+above). Every indicator extracted from all evidence:
 
 - IP addresses
 - Domains
@@ -197,12 +219,21 @@ Every indicator extracted from all evidence:
 
 **Filters:** by type (ip/domain/url/hash/file/process/other), by flagged-only, text search, corroboration lens (see below), plus three composable noise-reduction toggles (default on, per-browser): **Hide FP/no-intel** (drops IOCs marked false-positive or with no enrichment result), **Hide OS system paths** (drops `file` IOCs under well-known system-binary directories), and **🎯 Signal only** (narrows to flagged, corroborated, or enriched IOCs).
 
+**IOC exclude list** — the panel's title bar has a control to permanently remove matching indicators
+from this case: exact-value, suffix, or regex rules, scopable to a specific IOC type (e.g. only
+domains). Matching IOCs are purged immediately and never re-imported or re-enriched afterward — unlike
+the corroboration lens or noise-reduction toggles above, this doesn't just hide items, it deletes them
+from the case.
+
 Each IOC shows:
 
 - **Verdict badge** — reputation from enrichment providers (malicious / suspicious / clean / unknown)
 - **Source badge** — how many tools corroborated this indicator (e.g. ⊕ 3 sources)
 - **🔗 Provenance chain** — opens a panel showing the full timestamped chain for this indicator:
-  extraction event(s), enrichment lookups, and the findings that cite it, with a JSON export
+  extraction event(s), enrichment lookups, and the findings that cite it, with a JSON export. For the
+  Security Onion, combined-log, network, and Velociraptor importers, each IOC is tagged with the exact
+  source-event row that produced it, so the chain shows **"linked"** (authoritative, traced to a real
+  event) rather than **"approximate"** (inferred). AI-synthesis output cannot forge a "linked" tag.
 - **🚫 Mark False Positive** — known-good, excludes from analysis
 - Click to run enrichment on demand
 
@@ -413,6 +444,11 @@ A Timesketch-style complete record of **every** imported event, kept separately 
 - Each row can expand a **[details ▶]** toggle for the full untruncated message, and a Velociraptor-sourced row shows a **↗ Velociraptor** link back to the originating hunt/flow
 
 A **"Super-Timeline Triage"** Velociraptor bundle collects raw Windows host artifacts (MFT, USN, EVTX, registry, Prefetch, Amcache, LNK, browser history, RecycleBin, scheduled tasks, ActivitiesCache) directly into the super-timeline only.
+
+**Export to Timesketch** — push or download the full super-timeline (forensic timeline + raw
+host-triage artifacts), alongside the existing Forensic Timeline export. Both push into the same
+Timesketch sketch under separate timelines, so neither clobbers the other — see
+[Integrations → Timesketch](integrations.md#timesketch).
 
 !!! info "Why events don't all reach the forensic timeline"
     Info-severity telemetry routes to the super-timeline only by default (the forensic timeline keeps Low+ graded signal) so synthesis isn't swamped by raw noise. Configure the floor via **Settings → General** (`DFIR_FORENSIC_MIN_SEVERITY`) globally, with a per-case override. Promoting an event always bypasses the gate, and IOCs are still extracted from every event regardless.

@@ -17,6 +17,7 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 - **Timeline row display** — choose which sub-elements show on each forensic-timeline row (see [Dashboard → Forensic Timeline](dashboard.md#forensic-timeline))
 - **Screenshot OCR search** — enable/disable local Tesseract OCR indexing of captures
 - **Evidence drop folder** — enable/disable the per-case auto-import watcher, poll interval, and per-file size cap (see [Importing Evidence](importing.md#evidence-drop-folder-auto-import-inbox))
+- **Vim-style timeline navigation** — toggle `j`/`k`/`f`/`i`/`p`/`n`/`?` keyboard shortcuts on the Forensic Timeline, default on (see [Dashboard → Forensic Timeline](dashboard.md#vim-style-keyboard-navigation))
 
 ---
 
@@ -165,13 +166,17 @@ Preset panel layouts:
 
 | View | Best for |
 |------|----------|
-| **Analyst** | All technical panels |
+| **Analyst** *(default)* | All technical panels, in the app's intended reading order |
 | **Lead** | Findings, timeline, playbook, hunting |
 | **Executive** | Findings, attack path, countermeasures, exposure |
 | **Triage** | Timeline, IOCs, MITRE, assets |
 | **Report** | Report-oriented panel order |
 | **Deep-Dive** | Evidence chain, hypotheses, threads, notebook |
 | **Hunt-Prep** | Hunting profile, adversary hints, next techniques, query translator |
+
+A new case (or any case with no saved per-case dashboard-view choice) opens with **Analyst** instead
+of the raw "Custom" section order. Explicitly picking **Custom** from the dashboard-view menu still
+sticks across reloads. A permanent note below all panels points back here for further customization.
 
 Each preset is fully customisable — reorder panels, set a severity floor, cap the timeline row count, link a report template. Saved per case.
 
@@ -214,6 +219,9 @@ Operator health view:
 - Processing queue (screenshots pending analysis, synthesis in flight)
 - Redacted AI config (provider, model, timeout — **never the API key**)
 - Recent AI error counts by type
+- **AI cost — this case** — calls, dollar cost, and token counts broken down by Vision / Synthesis /
+  Other and by model, read from the provider's real per-call cost and token counts (never a guessed
+  price). Providers that don't report cost/tokens show "n/a", never a fabricated `$0.00`.
 - Importer health (attempt counts over 24h/7d)
 - **Compute case sizes** button
 - **Live AI test** — connectivity test with latency
