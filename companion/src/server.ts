@@ -116,7 +116,7 @@ import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, hasChainWork, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { InvestigationState, InvestigationQuestion, QuestionStatus, Severity, ForensicEvent, IOC, Finding } from "./analysis/stateTypes.js";
-import type { CaptureMetadata } from "./types.js";
+import type { CaptureMetadata, ImportMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
 import type { IocBlocklistFormat, IocBlocklistOptions, BlocklistIocType } from "./reports/iocBlocklist.js";
@@ -138,6 +138,7 @@ import { DwellWindowStore } from "./analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "./analysis/superTimelineStore.js";
 import { deriveIocProvenance } from "./analysis/iocProvenance.js";
 import { buildIocProvenanceChains } from "./analysis/iocProvenanceChain.js";
+import { computeCaseStats } from "./analysis/caseStats.js";
 import { ForensicGateControlStore } from "./analysis/forensicGateControl.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "./analysis/forensicGate.js";
 import { ConfidenceControlStore } from "./analysis/confidenceControl.js";
@@ -2067,6 +2068,32 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       return res.status(200).json(await options.reportWriter.adversaryHints(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Case introspection stats (#241): totals, event-count-by-source, and daily import velocity for
+  // the CURRENT case only — powers the Diagnostics tab "Case Statistics" panel. Derived on read,
+  // no caching (same as host-ranking below). Disk usage is intentionally NOT included here — it's
+  // global, not per-case, and already served by GET /disk-stats.
+  app.get("/cases/:id/stats", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    try {
+      if (!(await store.caseExists(req.params.id))) {
+        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+      }
+      const state = await options.stateStore.load(req.params.id);
+      const importLog: ImportMetadata[] = [];
+      try {
+        const log = await readFile(store.importsLogPath(req.params.id), "utf8");
+        for (const line of log.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try { importLog.push(JSON.parse(trimmed) as ImportMetadata); } catch { /* skip a malformed audit line */ }
+        }
+      } catch { /* no imports for this case yet */ }
+      return res.status(200).json(computeCaseStats(state, importLog));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
