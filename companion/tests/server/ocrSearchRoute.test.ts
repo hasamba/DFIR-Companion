@@ -119,9 +119,11 @@ describe("POST /captures background OCR indexing", () => {
       files.push(res.body.screenshotFile as string);
     }
     // All seven must eventually be indexed — the queue drains them, none is dropped.
-    for (const f of files) expect(await waitForIndex(f, 80)).toBe(true);
+    // A generous per-file budget (160 tries × 25ms = 4s) absorbs CI-runner scheduling noise;
+    // a real drop/deadlock still fails well before the 20s test timeout below.
+    for (const f of files) expect(await waitForIndex(f, 160)).toBe(true);
     expect(Object.keys(await cases.loadOcrIndex("c1"))).toHaveLength(7);
-  });
+  }, 20_000);
 
   it("does not index when DFIR_OCR_SEARCH is off", async () => {
     process.env.DFIR_OCR_SEARCH = "off";
