@@ -18,6 +18,7 @@ import type { HuntDeployInput } from "../analysis/huntOutcomes.js";
 import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import type { PlaybookControl } from "../analysis/playbookControl.js";
+import type { NotificationEvent } from "../analysis/notifications.js";
 
 /**
  * Dependencies shared across more than one route domain, built once in createApp and passed to
@@ -188,6 +189,10 @@ export interface RouteContext {
   //   loadPlaybookControl — read the per-case IR-template toggle (defaults when no store).
   syncPlaybook(caseId: string): Promise<PlaybookTask[]>;
   loadPlaybookControl(caseId: string): Promise<PlaybookControl>;
+  // Fire a notification event to all matching channels (best-effort, fire-and-forget). A stable
+  // const arrow in createApp shared by create-case + the drop-import path (both still there);
+  // graduated for routes/reportsExport.ts's POST /cases/:id/report ("Report generated" milestone).
+  dispatchNotify(event: NotificationEvent): void;
 
   // ── LIVE accessors ───────────────────────────────────────────────────────────────────
   // Call these INSIDE the request handler (or inside per-request logic like a preflight run),
@@ -198,6 +203,15 @@ export interface RouteContext {
   synthInFlight(): Set<string>;
   importerRegistry(): ImporterRegistry;
   irisClient(): IrisClient | undefined;
+  // The DFIR-IRIS client is a MUTABLE shared handle: POST /iris/reconnect (routes/reportsExport.ts)
+  // rebuilds it at runtime and createApp's /cases/:id/push/iris reads it. Mirrors nsrlDb()/setNsrlDb():
+  //   setIrisClient    — reassign the shared binding (both the moved iris routes and the createApp
+  //                      push/iris route read the SAME `let irisClient`); call INSIDE the handler.
+  //   rebuildIrisClient — build a fresh client from the current .env, wrapping createApp's
+  //                       `options.rebuildIrisClient ?? buildIrisClient` so buildIrisClient's use stays
+  //                       inside server.ts (no route module imports a value from ../server.js).
+  setIrisClient(client: IrisClient | undefined): void;
+  rebuildIrisClient(): IrisClient | undefined;
   dropWatchEnabled(): boolean;
   enrichmentProviders(): EnrichmentProvider[];
   enrichHealth(): ProviderHealthCache;
