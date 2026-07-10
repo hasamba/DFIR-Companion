@@ -12,6 +12,9 @@ import type { ImporterFailure, AiError } from "../analysis/diagnostics.js";
 import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { ToolConfig } from "../integrations/tools/toolConfig.js";
 import type { CustomTool } from "../integrations/tools/customToolStore.js";
+import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
+import type { HuntDeployInput } from "../analysis/huntOutcomes.js";
+import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js";
 
 /**
  * Dependencies shared across more than one route domain, built once in createApp and passed to
@@ -99,6 +102,48 @@ export interface RouteContext {
   applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;
   applyDeobfuscationToCase(caseId: string): Promise<{ deobfuscated: number; newIocs: number }>;
   moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void>;
+  // Velociraptor domain machinery shared with routes/velociraptor.ts. The live-monitor + hunt-status
+  // subsystems are self-rescheduling timer loops that must survive a restart, so their RESUME functions
+  // (resumeVeloMonitors / resumeVeloHuntStatusPolls) run once at the END of createApp AND from POST
+  // /velociraptor/reconnect. A route module can't be invoked at startup, so the whole schedule/poll/
+  // resume/collect machinery STAYS in createApp and the moved routes reach the pieces they need through
+  // these graduated members. The monitor/status timer MAPS (veloMonitorTimers / veloStatusTimers) stay
+  // fully PRIVATE to createApp — no route mutates them directly (they go through the helpers below); only
+  // veloHuntTimers is exposed (live accessor, further down) because two routes set a collect timer on it.
+  // All hoisted `function` declarations, so safe to bind at construction:
+  //   refreshVeloClients          — snapshot the enrolled fleet into the persisted client inventory.
+  //   resumeVeloMonitors / resumeVeloHuntStatusPolls — re-arm persisted monitors / hunt-status polls
+  //                                 (the reconnect route reuses the SAME functions createApp fires at boot).
+  //   scheduleVeloMonitor / pollVeloMonitor / stopVeloMonitorTimer — arm / run-once / cancel a monitor.
+  //   scheduleVeloHuntStatusPoll / pollVeloHuntStatus — arm / run-once a hunt-status poll.
+  //   importVeloHuntResults       — collect a hunt + import through the normal chain (also fired on a timer).
+  //   ingestVeloArtifactMap / ingestVeloUploads — the /import-external hunt/flow-map + uploads ingest cores.
+  //   createVeloMonitor           — build + persist + schedule one monitor (manual + auto-monitor routes).
+  //   recordHuntDeploy            — record a deployed hunt in the #157 hunting-feedback-loop ledger.
+  refreshVeloClients(): Promise<number>;
+  resumeVeloMonitors(): Promise<void>;
+  resumeVeloHuntStatusPolls(): Promise<void>;
+  scheduleVeloMonitor(caseId: string, monitor: VeloMonitor): void;
+  pollVeloMonitor(caseId: string, id: string): Promise<void>;
+  stopVeloMonitorTimer(caseId: string, id: string): void;
+  scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
+  pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
+  importVeloHuntResults(caseId: string, huntId: string): Promise<void>;
+  ingestVeloArtifactMap(
+    caseId: string,
+    mapJson: string,
+    opts: { label: string; idBase: string; superOnly?: boolean; minSeverity?: Severity; hostFallback?: string; veloUrl?: string },
+  ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }>;
+  ingestVeloUploads(
+    caseId: string,
+    uploads: HuntUpload[],
+    opts: { minSeverity?: Severity; label: string },
+  ): Promise<{ addedEvents: number; addedIocs: number; imported: string[]; skipped: string[] }>;
+  createVeloMonitor(
+    caseId: string,
+    spec: { clientId: string; artifact: string; pollSeconds: number; hostname?: string; minSeverity?: Severity; allClients?: boolean },
+  ): Promise<VeloMonitor>;
+  recordHuntDeploy(caseId: string, input: HuntDeployInput): Promise<void>;
 
   // ── LIVE accessors ───────────────────────────────────────────────────────────────────
   // Call these INSIDE the request handler (or inside per-request logic like a preflight run),
@@ -136,4 +181,9 @@ export interface RouteContext {
   dropSeen(): Map<string, Map<string, { size: number; mtimeMs: number }>>;
   dropScanning(): Set<string>;
   dropPendingLogged(): Map<string, Set<string>>;
+  // Fixed-delay hunt auto-collect timers, keyed by huntId. SHARED between the moved run-bundle /
+  // deploy-hunt routes (which set a collect timer on it) and importVeloHuntResults (which clears it on
+  // collect, still in createApp) — exposed as a live accessor so the routes mutate the SAME Map; call
+  // ctx.veloHuntTimers() INSIDE the handler and set/delete on the returned map.
+  veloHuntTimers(): Map<string, NodeJS.Timeout>;
 }
