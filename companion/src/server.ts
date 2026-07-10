@@ -1,4 +1,9 @@
 import express, { type Express, type Request, type Response, type NextFunction, type CookieOptions } from "express";
+// Patch Express 4's router so async route handlers that throw or reject are forwarded to the
+// terminal error middleware (see the end of createApp) instead of hanging the client connection
+// or surfacing an UnhandledPromiseRejection. Side-effect-only import; must load before any route
+// is registered, so it stays at the top with express itself.
+import "express-async-errors";
 import { config as loadDotenv } from "dotenv";
 import { join, basename, isAbsolute, resolve, dirname, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9088,6 +9093,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }
     });
   }
+
+  // Terminal error handler (4-arg, last-registered so it runs after every route). express-async-errors
+  // forwards any error thrown or rejected inside an async route here; explicit next(err) calls land here
+  // too. Without it, Express 4 would fall through to its default handler and leak an HTML stack-trace page
+  // — or, for async routes it never catches, hang the connection. The failure is always logged (never
+  // silently swallowed); ZodError/CaseNotFoundError keep their conventional 400/404 for routes that forgot
+  // their own try/catch, and everything else becomes a generic JSON 500 so the client always gets a clean,
+  // closed response. Per-route try/catch blocks still handle their own errors and never reach this.
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) return next(err);
+    if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
+    if (err instanceof CaseNotFoundError) {
+      return res.status(404).json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    serverLogger.error(`unhandled error on ${req.method} ${req.path}: ${message}`);
+    return res.status(500).json({ error: "internal server error" });
+  });
 
   return app;
 }
