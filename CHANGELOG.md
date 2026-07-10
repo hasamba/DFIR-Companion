@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **VolWeb adapter + manual tool override** — the extension now auto-detects VolWeb alongside the existing six consoles, and the popup shows the detected tool with a dropdown to force a different adapter (or none) for the current tab.
+
 ## [0.31.0] - 2026-07-10
 
 ### Added

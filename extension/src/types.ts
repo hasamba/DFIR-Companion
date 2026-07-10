@@ -73,3 +73,26 @@ export interface PushArtifactResult {
   caseId?: string;
   error?: string;
 }
+
+// ── Manual adapter override (popup ⇄ content script) ──────────────────────────────────────────
+// popup → content script: read the current auto-detected/overridden adapter for this tab.
+export interface GetCaptureStatusMessage {
+  kind: "get_capture_status";
+}
+
+// popup → content script: force (or clear) which adapter is active for this tab. Session-only —
+// held in the content script's in-memory state, so it resets on navigation/tab close.
+// overrideAdapterId: "" = no override (auto-detect) | OVERRIDE_NONE (adapters/override.ts) =
+// force no adapter | else an adapter id.
+export interface SetAdapterOverrideMessage {
+  kind: "set_adapter_override";
+  overrideAdapterId: string;
+}
+
+// content script → popup: reply to both messages above.
+export interface CaptureStatusResult {
+  detectedAdapterId: string | null;
+  overrideAdapterId: string;  // mirrors the popup <select> value — see SetAdapterOverrideMessage
+  activeLabel: string | null; // the adapter actually in effect (detected, unless overridden)
+  rowCount: number;           // rows captured so far under the active adapter
+}
