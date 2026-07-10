@@ -83,10 +83,17 @@ export class CaseStore {
 
   // Permanently deletes a case's folder — recursive, irreversible. Works whether the case is
   // currently active or archived (via the archive-aware caseDir()). Deliberately WITHOUT
-  // { force: true }, so it throws (ENOENT) for a caseId that doesn't currently exist, consistent
-  // with archiveCaseFolder/restoreCaseFolder's existing rejection behavior.
+  // { force: true } on the directory itself, so it throws (ENOENT) for a caseId that doesn't
+  // currently exist, consistent with archiveCaseFolder/restoreCaseFolder's existing rejection
+  // behavior. Refuses to delete a directory that doesn't actually contain a case.json — this is
+  // the most dangerous method in this class (genuinely irreversible, unlike the archive/restore
+  // moves), so it shouldn't silently wipe an unrelated directory that happens to share the name.
   async deleteCaseFolder(caseId: string): Promise<void> {
-    await rm(this.caseDir(caseId), { recursive: true });
+    const dir = this.caseDir(caseId);
+    if (!(await this.caseExists(caseId))) {
+      throw new Error(`refusing to delete "${caseId}": no case.json found at ${dir}`);
+    }
+    await rm(dir, { recursive: true });
   }
 
   // NOTE: does not itself guard against an id collision with an archived case (caseDir()

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readFile, stat, mkdir, rename } from "node:fs/promises";
+import { mkdtemp, readFile, stat, mkdir, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -226,5 +226,15 @@ describe("CaseStore.deleteCaseFolder", () => {
   it("rejects when the case doesn't exist", async () => {
     const store = new CaseStore(root);
     await expect(store.deleteCaseFolder("never-created")).rejects.toThrow();
+  });
+
+  it("refuses to delete a directory that isn't actually a case (no case.json)", async () => {
+    const store = new CaseStore(root);
+    await mkdir(join(root, "not-a-case"), { recursive: true });
+    await writeFile(join(root, "not-a-case", "some-file.txt"), "hello", "utf8");
+    await expect(store.deleteCaseFolder("not-a-case")).rejects.toThrow();
+    // confirm it's genuinely still there — nothing was deleted
+    const s = await stat(join(root, "not-a-case", "some-file.txt"));
+    expect(s.isFile()).toBe(true);
   });
 });
