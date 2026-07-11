@@ -964,8 +964,9 @@
     /* "New since last import" highlight on forensic-timeline / IOC rows + its badge (see #importMeta) */
     .ev-row.ev-new { box-shadow: inset 3px 0 0 var(--c-6bcb77); }
     .ioc-new { box-shadow: inset 3px 0 0 var(--c-6bcb77); padding-left: 6px; border-radius: 3px; }
-    .ev-new-badge, .ev-badge-count, .ev-badge-corro { border-radius:4px; padding:0 5px; font-size:10px; font-weight:bold; }
+    .ev-new-badge, .ev-badge-count, .ev-badge-corro, .ev-promoted-badge { border-radius:4px; padding:0 5px; font-size:10px; font-weight:bold; }
     .ev-new-badge { background:var(--c-13331f); color:var(--c-6bcb77); border:1px solid var(--c-1f5a35); }
+    .ev-promoted-badge { background:var(--c-13331f); color:var(--c-6bcb77); border:1px solid var(--c-1f5a35); }
     .ev-badge-count { background: var(--c-3a2f1a); color: var(--c-ffd93b); border: 1px solid var(--c-5a4a1a); }
     .ev-badge-corro { background: var(--c-13331f); color: var(--c-6bcb77); border: 1px solid var(--c-1f5a35); }
     .ev-chain-badge { display: inline-flex; align-items: center; gap: 3px; border-radius: 4px; padding: 0 5px; font-size: 10px; text-decoration: none; }
@@ -6006,6 +6007,12 @@
           desc = desc.replace(new RegExp("^\\s*(?:\\S+\\s+)?\\[" + escOrigin + "\\]\\s*[:\\-]?\\s*", "i"), "");
         }
         const host = e.asset ? `<span class="ev-host" title="Affected host / asset">${ICON_HOST} ${esc(e.asset)}</span> ` : "";
+        // Persistent state so the promote button gives lasting feedback instead of a fire-and-forget
+        // "promoting…" toast: once an event's id lands in the forensic timeline, every subsequent load
+        // of the super-timeline marks it, even after paging away or reloading the page.
+        const promotedBadge = e.promoted
+          ? `<span class="ev-promoted-badge" title="Already pulled into the forensic timeline — promoting again is safe but a no-op">✓ Promoted</span> `
+          : "";
         // Per-row controls unified with the forensic timeline: star, comment, tag (all keyed by
         // ("event", e.id)). The delegated click handler on <main> already routes these for super rows.
         // Context button: scope From/To to this event's timestamp ± a window. Data-attr carries the ISO ts.
@@ -6032,7 +6039,7 @@
           `</div>` +
           `<div class="ev-col-time"><span class="sev-${escAttr(sev)}">${esc(e.timestamp || "")}</span></div>` +
           `<div class="ev-col-content">` +
-          `<span class="ev-origin" title="origin">${esc(origin)}</span> ` +
+          `<span class="ev-origin" title="origin">${esc(origin)}</span> ${promotedBadge}` +
           `${superTagPills("event", e.id)}${host}${details.toggle} ${descHtml(details.title)}${veloLink}` +
           `${details.panel}` +
           `</div>` +
