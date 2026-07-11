@@ -205,7 +205,7 @@ export function parsePlasoCsv(text: string, opts: PlasoImportOptions = {}): Plas
   const { events, groups } = aggregateEvents(mappedGen(), {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
@@ -246,7 +246,7 @@ export async function parsePlasoFromLines(
   const agg = createEventAggregator({
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000),
   });
   for await (const cols of records) {
     total++;

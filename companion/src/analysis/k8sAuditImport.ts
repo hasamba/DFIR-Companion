@@ -186,7 +186,7 @@ export function parseK8sAudit(text: string, opts: K8sAuditImportOptions = {}): K
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);

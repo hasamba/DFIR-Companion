@@ -215,7 +215,7 @@ function mapSigma(row: Row, sink: Map<string, SiemIoc>): MappedEvent {
 }
 
 export function parseSocrates(text: string, opts: SocratesImportOptions = {}): SocratesParseResult {
-  const maxEvents = opts.maxEvents ?? 2000;
+  const maxEvents = opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000);
   const maxIocs = opts.maxIocs ?? 5000;
   const { records } = extractRecords(text);
   const total = records.length;

@@ -181,7 +181,7 @@ export function parseShellHistoryFile(text: string, opts: BashHistoryImportOptio
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000),
   });
 
   const maxIocs = opts.maxIocs ?? 5000;

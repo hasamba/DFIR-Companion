@@ -54,7 +54,7 @@ export interface ChainsawImportOptions {
   aggregate?: boolean;
   // Drop events below this severity floor. Default undefined = keep everything.
   minSeverity?: Severity;
-  // Safety cap on emitted events (most-severe first). Default 2000.
+  // Safety cap on emitted events. Default 2000 (overridable via DFIR_MAX_EVENTS).
   maxEvents?: number;
   // Safety cap on emitted IOCs. Default 5000.
   maxIocs?: number;
@@ -311,7 +311,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);

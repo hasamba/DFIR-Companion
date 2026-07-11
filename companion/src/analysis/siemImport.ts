@@ -32,7 +32,7 @@ export interface SiemImportOptions {
   // Drop events below this severity floor (e.g. "Low" drops Info noise like logoffs /
   // process-terminated). Default undefined = keep everything.
   minSeverity?: Severity;
-  // Safety cap on emitted events (most-severe first). Default 2000.
+  // Safety cap on emitted events. Default 2000 (overridable via DFIR_MAX_EVENTS).
   maxEvents?: number;
   // Safety cap on emitted IOCs. Default 5000.
   maxIocs?: number;
@@ -977,7 +977,7 @@ export function createEventAggregator(
   opts: { aggregate?: boolean; minSeverity?: Severity; maxEvents?: number } = {},
 ): EventAggregator {
   const aggregate = opts.aggregate ?? true;
-  const maxEvents = opts.maxEvents ?? 2000;
+  const maxEvents = opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000);
   const floorRank = opts.minSeverity ? SEVERITY_RANK[opts.minSeverity] : Infinity;
 
   const byKey = new Map<string, SiemEvent>();
@@ -1082,7 +1082,7 @@ export function buildSiemResult(records: Row[], format: string, opts: SiemImport
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);

@@ -275,7 +275,7 @@ export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000),
   });
 
   const format = sawCape && sawFalcon ? "mixed" : sawCape ? "capev2" : sawFalcon ? "falcon" : "empty";
