@@ -81,3 +81,41 @@ On the fixed instance (`4775`), the reproduction now passes consistently:
 tests mock `rename`/`writeFile` and assert call counts and thrown errors, none of which the
 unique-tmp change affects; the synthesize change is a no-op when no concurrent mutation happens
 (`latest == loaded`, so nothing is added).
+
+## Phase 6 — Recursive quality pass (post router-split)
+
+The server has since been refactored: routes moved out of `server.ts` into `src/routes/*.ts` (18
+files). This pass re-validated the inventory against that new layout rather than re-deriving it
+from scratch.
+
+- **Regression, ground truth this time**: the vitest sandbox restriction above no longer applies
+  in this environment. `npm test` ran for real: companion server **296/296 test files, 3440/3440
+  tests passing**; extension **9/9 test files, 119/119 tests passing**. Zero automated failures.
+- **Coverage gap found**: 49 real features existed in code with no CSV row — most notably the
+  entire case password/lock-unlock feature (`routes/casePassword.ts`), encrypted case
+  export/import/delete, async job management, several AI-synthesis sub-features (hypotheses,
+  confidence control, remediation plan, presentation mode), and 8 distinct browser-extension
+  workflows (structured adapter push, manual adapter override, right-click capture, offline queue,
+  draggable button, case attach, connection settings, toolbar badge). Added as US-121 through
+  US-169. Two stale CSV route references were also corrected (US-105, US-107).
+- **Security review** of the newly-discovered case-password and encrypted-export code
+  (`analysis/casePassword.ts`, `analysis/caseEncryption.ts`, `analysis/caseExportArchive.ts`,
+  `analysis/instanceSecret.ts`) found the cryptography sound: `scryptSync` password hashing with a
+  fresh random salt, `crypto.timingSafeEqual` comparisons, a per-install random HMAC secret for
+  unlock-cookie signing, fresh IV/salt per AES-256-GCM encryption, and zip-slip-safe archive
+  extraction. Two real gaps found:
+  - **Fixed**: `GET /cases/:id/lock-status` and `POST /cases/:id/unlock` skipped the
+    `isValidCaseId` check present on the sibling password routes, letting a crafted caseId reach
+    `store.getCaseMeta` before an existence check (narrow path-traversal exposure). Added the same
+    guard plus a regression test (`casePasswordRoutes.test.ts`); 18/18 tests pass.
+  - **Open, not auto-fixed** (needs a policy decision, not a mechanical patch): `POST
+    /cases/:id/unlock` has no rate limiting or brute-force lockout. Low risk under the default
+    `127.0.0.1`-only binding, but a real gap if the server is ever run with `DFIR_HOST=0.0.0.0`
+    (e.g. Docker). Recommend `express-rate-limit` or a per-case/per-IP attempt counter on
+    `/unlock` before that deployment mode is treated as supported.
+- **Confidence**: of 169 rows, 88 are `passed` and 11 are `fixed` (99 total, 59%, live-tested via
+  the running-server pass in Phase 2 or dedicated unit tests observed in this pass); 54 (32%) are
+  `catalogued` (grounded in reading the code, not yet exercised against a live server); 16 (9%)
+  are `blocked` (need an external service/credential this environment doesn't have). No open
+  critical or high-severity defect remains except the rate-limiting gap noted above, which is
+  deployment-mode-dependent (default localhost-only binding is not exposed to it).
