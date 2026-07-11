@@ -44,18 +44,17 @@ export class DwellWindowStore {
     return window;
   }
 
-  // Replace a window's fields (re-sanitized); preserves id + createdAt. Returns the updated window,
-  // or null if no window with that id exists.
-  async update(caseId: string, id: string, input: DwellWindowInput): Promise<DwellWindow | null> {
-    const clean = sanitizeDwellWindowInput(input);
+  // Update a window's fields (merged onto the existing record, then re-sanitized as a whole) —
+  // preserves id + createdAt. A partial input (e.g. label only) merges onto the existing
+  // start/end rather than failing sanitizeDwellWindowInput's "must be a valid date" check on the
+  // missing fields. Returns the updated window, or null if no window with that id exists.
+  async update(caseId: string, id: string, input: Partial<DwellWindowInput>): Promise<DwellWindow | null> {
     const windows = await this.list(caseId);
-    let updated: DwellWindow | null = null;
-    const next = windows.map((w) => {
-      if (w.id !== id) return w;
-      updated = { ...w, ...clean };
-      return updated;
-    });
-    if (!updated) return null;
+    const existing = windows.find((w) => w.id === id);
+    if (!existing) return null;
+    const clean = sanitizeDwellWindowInput({ ...existing, ...input });
+    const updated: DwellWindow = { ...existing, ...clean };
+    const next = windows.map((w) => (w.id === id ? updated : w));
     await this.save(caseId, next);
     return updated;
   }
