@@ -113,9 +113,91 @@ from scratch.
     `127.0.0.1`-only binding, but a real gap if the server is ever run with `DFIR_HOST=0.0.0.0`
     (e.g. Docker). Recommend `express-rate-limit` or a per-case/per-IP attempt counter on
     `/unlock` before that deployment mode is treated as supported.
-- **Confidence**: of 169 rows, 88 are `passed` and 11 are `fixed` (99 total, 59%, live-tested via
-  the running-server pass in Phase 2 or dedicated unit tests observed in this pass); 54 (32%) are
-  `catalogued` (grounded in reading the code, not yet exercised against a live server); 16 (9%)
-  are `blocked` (need an external service/credential this environment doesn't have). No open
-  critical or high-severity defect remains except the rate-limiting gap noted above, which is
-  deployment-mode-dependent (default localhost-only binding is not exposed to it).
+- **Confidence** (superseded by Phase 7 below, kept for history): of 169 rows, 88 were `passed`
+  and 11 `fixed` at this point.
+
+## Phase 7 — Full live re-test (167 of 169 rows), post router-split
+
+The user explicitly asked not to trust the prior pass's results — "we did a massive code change,
+I don't care about the prior testing, I want to test everything possible again" — so this pass
+re-derived every live-testable row from scratch against a running server, rather than trusting any
+earlier `passed`/`fixed`/`catalogued` status.
+
+**Setup**: an isolated throwaway companion instance (`companion/.qa-cases-root`, port 4780, git-
+ignored, completely separate from real case data), with real credentials for the AI provider and
+every configured integration (MISP, YETI, IRIS, Timesketch, Notion, ClickUp, OpenCTI, VirusTotal,
+AbuseIPDB, Shodan, CrowdStrike, LeakCheck). With the user's explicit sign-off (confirmed these are
+lab/throwaway instances), real pushes were exercised end-to-end — a real case export to IRIS
+format, a real MISP/Timesketch push attempt, a real Notion/ClickUp push attempt, and a real test
+notification webhook fired.
+
+**Execution**: 9 parallel black-box test agents, one per feature area, together driving roughly 250
+live HTTP requests (plus real AI calls and real external-service calls) against the running
+server, each grepping the actual route source to find the real endpoint before exercising it, then
+comparing the live response against the row's documented expected behaviour.
+
+**Result**: 117 `passed`, 15 `fixed` (5 real defects found and fixed this pass, one already-fixed
+row plus 9 rows upgraded from `blocked`/`catalogued` to `passed` because they turned out to be
+live-testable or the environment turned out to have what they needed), 25 `catalogued` (client-side
+dashboard.html logic with no server route, or needing unseeded super-timeline data), 11 `blocked`
+(genuine external network/credential failures — IRIS/Timesketch/MISP hosts unreachable, ClickUp
+token rejected — all correctly error-handled server-side, not code bugs), 1 `failed` (see below).
+US-105/US-106 were explicitly left out of scope for this pass.
+
+### Defects found and fixed this pass
+
+1. **`GET /lock-status` / `POST /unlock` path-traversal guard** — carried over from the earlier
+   security review, re-verified live.
+2. **Dwell-window partial update failed validation** (`dwellWindowStore.ts`) — a `PUT` with only
+   `{label}` 400'd instead of merging onto the existing `start`/`end`.
+3. **`POST /cases/:id/enrich` falsely reported acceptance with 0 providers enabled** — returned
+   202 listing every server-configured provider even when nothing was enabled for the case, while
+   the background job silently no-op'd. Now 422, matching the sibling `bulk-enrich` route.
+4. **Renaming a manually-added asset was lost in the asset-graph view** (`assetOverrides.ts`) — the
+   rename persisted in storage but never applied to a manually-added asset's projected name.
+5. **Notion push failed when relying on the `.env` default database/parent ID** — the env value
+   (commonly a full Notion URL) was never parsed to a bare id, unlike the request-body path.
+6. **Generic push accepted an empty `{}` JSON body as a valid event** (`pushPayload.ts`) — produced
+   a junk timeline row instead of the documented 400.
+
+All six have regression tests; full suite re-run clean after (296/296 companion test files,
+3448/3448 tests — two transient timeouts under concurrent load during the full run were confirmed
+as environmental flakiness by re-running each file in isolation, not caused by these changes).
+
+### Real defect found, NOT auto-fixed (reported for review)
+
+**Evidence Chain graph — lateral-movement detection never fires** (`US-060`, status `failed`).
+`GET /cases/:id/evidence-graph` never returns a `lateral_move` edge even for demo's textbook
+3-host PsExec chain, because the hash-reuse and account-regex preconditions in
+`analysis/evidenceGraph.ts` are too narrow for how the data is actually shaped (no hash field on
+those events; accounts described in prose without a `DOMAIN\` prefix). This is a detection-
+heuristic change, not a mechanical bug fix — it needs a product decision (extend the account
+regex vs. add a lower-confidence network-flow-based signal vs. have importers populate a
+structured account field), so it's reported in the CSV `errors`/`fix` columns rather than
+silently patched.
+
+### Scope-sized gap found, NOT auto-fixed (reported for review)
+
+The 20 per-format import routes (`/import-thor`, `/import-wazuh`, etc.) never populate
+`import-meta` or push an undo checkpoint — only the generic `/import` and `/import-file` handlers
+do. Not user-facing today (the dashboard only ever calls the unified `/import`), but a real gap
+for any API/extension/script caller of a per-format endpoint. Fixing it cleanly means extracting
+the diff/checkpoint chain from the generic handler into a shared helper and wiring it into all 20
+call sites — a deliberate refactor, not a one-line patch, so left as a follow-up (`US-036` in the
+CSV).
+
+### Documentation correction, not a code defect
+
+`US-088` ("case snapshot export/import") described a route (`GET /export/snapshot`,
+`POST /snapshots/import`) that was intentionally removed and replaced by the password-encrypted
+`.dfircase` archive (`US-128`, fully live-verified). Updated the row to point at `US-128` instead
+of leaving it as a false "gap."
+
+### Confidence
+
+Of 169 rows: **132 are live-verified this pass** (117 `passed` + 15 `fixed`), 25 `catalogued`
+(client-side only or needs unseeded data — not a gap in server code), 11 `blocked` (external
+network/credentials only), 1 `failed` (real, reported, not fixed — see above). No open critical
+defect. One open high-severity item carried over from Phase 6 (unlock rate-limiting, still a
+policy decision) and one open medium-severity item found this pass (Evidence Chain lateral-move
+detection).
