@@ -1,5 +1,6 @@
 node_modules/
 cases/
+.qa-cases-root/
 # Notification channel config (issue #58) — holds webhook URLs + SMTP passwords. Never commit.
 notifications/
 # Velociraptor client inventory (issue #70) — the fleet's real hostnames/FQDNs/IPs. ANCHORED so it

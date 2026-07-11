@@ -62,6 +62,10 @@ export function extractPushPayload(body: unknown): PushPayload {
     }
 
     // Any other JSON object → push it whole (e.g. a Velociraptor artifact-map or a single alert).
+    // An empty object (`{}`, or no body at all under a JSON content-type) has nothing to import —
+    // stringifying it would otherwise produce the non-empty text "{}", silently slipping past the
+    // caller's `!text.trim()` empty-payload guard and landing as a junk "siem" event with no content.
+    if (Object.keys(body).length === 0) return { text: "", source, filename: explicitName || defaultName(source) };
     return { text: JSON.stringify(body), source, filename: explicitName || defaultName(source) };
   }
 

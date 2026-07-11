@@ -74,6 +74,18 @@ describe("applyAssetOverrides", () => {
     expect(added!.iocIds).toEqual([]);
   });
 
+  it("applies a rename to a manually-added asset, not just an auto-derived one", () => {
+    const g = baseGraph();
+    const manual = { id: "manual:pivot", name: "JUMP-SERVER", type: "host" as const };
+    const result = applyAssetOverrides(g, {
+      ...emptyOverrides(),
+      added: [manual],
+      renames: { "manual:pivot": "JUMP-SERVER-RENAMED" },
+    });
+    const added = result.assets.find((a) => a.id === "manual:pivot");
+    expect(added!.name).toBe("JUMP-SERVER-RENAMED");
+  });
+
   it("adds a manual link between an existing asset and IoC", () => {
     const g = baseGraph();
     const win02 = g.assets.find((a) => a.name === "WIN-02")!;

@@ -743,9 +743,11 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
     const caseId = req.params.id;
     const force = req.body?.force === true || req.query.force === "true";
     try {
+      const enabledProviders = await ctx.enabledProvidersFor(caseId);
+      if (enabledProviders.length === 0) return res.status(422).json({ error: "no enrichment providers enabled for this case — enable providers in the enrichment panel first" });
       const state = await options.stateStore.load(caseId);
       ctx.enrichInBackground(caseId, force);
-      return res.status(202).json({ accepted: true, iocs: state.iocs.length, providers: providers.map((p) => p.name) });
+      return res.status(202).json({ accepted: true, iocs: state.iocs.length, providers: enabledProviders.map((p) => p.name) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

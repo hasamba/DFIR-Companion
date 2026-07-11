@@ -37,6 +37,14 @@ describe("DwellWindowStore", () => {
     expect(await store.update("c1", "nope", { label: "x", start: w.start, end: w.end })).toBeNull();
   });
 
+  it("a partial update (label only) merges onto the existing start/end instead of failing validation", async () => {
+    const w = await store.add("c1", { label: "Session 1", start: "2026-06-01T00:00:00Z", end: "2026-06-02T00:00:00Z" });
+    const updated = await store.update("c1", w.id, { label: "Renamed" });
+    expect(updated?.label).toBe("Renamed");
+    expect(updated?.start).toBe(w.start);
+    expect(updated?.end).toBe(w.end);
+  });
+
   it("removes a window by id; returns false when it didn't exist", async () => {
     const w = await store.add("c1", { label: "Session 1", start: "2026-06-01T00:00:00Z", end: "2026-06-02T00:00:00Z" });
     expect(await store.remove("c1", w.id)).toBe(true);

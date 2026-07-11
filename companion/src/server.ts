@@ -168,7 +168,7 @@ import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js"
 import { type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
 import { MispPushClient } from "./integrations/misp/mispPushClient.js";
 import { type MispPushOptions } from "./integrations/misp/mispPush.js";
-import { NotionClient } from "./integrations/notion/notionClient.js";
+import { NotionClient, parseNotionPageId } from "./integrations/notion/notionClient.js";
 import { type NotionPushOptions } from "./integrations/notion/notionPush.js";
 import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
@@ -2542,8 +2542,11 @@ export function buildNotionClient(): NotionClient | undefined {
 export function notionPushOptions(): NotionPushOptions {
   return {
     baseUrl: "https://www.notion.so",
-    parentPageId: process.env.DFIR_NOTION_PARENT_PAGE_ID || undefined,
-    databaseId: process.env.DFIR_NOTION_DATABASE_ID || undefined,
+    // Same normalization the request-body page/parent/database fields go through
+    // (routes/caseLifecycle.ts parseNotionPageId calls) — an operator's .env value is commonly a
+    // full Notion URL, not a bare id, and the client-facing API rejects the unparsed URL.
+    parentPageId: parseNotionPageId(process.env.DFIR_NOTION_PARENT_PAGE_ID ?? "") ?? undefined,
+    databaseId: parseNotionPageId(process.env.DFIR_NOTION_DATABASE_ID ?? "") ?? undefined,
     containerTitle: process.env.DFIR_NOTION_CONTAINER_TITLE || undefined,
     maxTimelineRows: Number(process.env.DFIR_NOTION_MAX_TIMELINE) || undefined,
   };

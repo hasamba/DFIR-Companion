@@ -896,6 +896,19 @@ describe("server analysis wiring", () => {
     expect(res.status).toBe(501);
   });
 
+  it("returns 422 for enrich when providers are configured server-wide but none enabled for this case (not a false 202 accept)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-server-enrich-none-enabled-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const provider = { name: "VirusTotal", scope: "external" as const, supports: () => true, lookup: async () => null };
+    const app2 = createApp(store, { stateStore, enrichmentProviders: [provider], enrichDelayMs: 0 });
+    // enrich-control defaults to no external providers enabled — never turned on here.
+    const res = await request(app2).post("/cases/c1/enrich").send({});
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/no enrichment providers enabled/);
+  });
+
   it("enrichment toggle is OFF by default and enriches current IOCs when turned ON", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-enrichtoggle-"));
     const store = new CaseStore(root);
