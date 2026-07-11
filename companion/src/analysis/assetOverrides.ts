@@ -45,11 +45,13 @@ export function applyAssetOverrides(graph: AssetGraph, overrides: AssetOverrides
     assetMap.set(a.id, { ...a, name, iocIds: [] });
   }
 
-  // 2. Add manual assets (skip if id already in map from auto-derivation).
+  // 2. Add manual assets (skip if id already in map from auto-derivation). A manual asset can
+  // itself be renamed (overrides.renames keyed by the manual: id), same as an auto-derived one.
   for (const ma of overrides.added) {
     if (!assetMap.has(ma.id)) {
+      const name = overrides.renames[ma.id] ?? ma.name;
       assetMap.set(ma.id, {
-        id: ma.id, name: ma.name, type: ma.type,
+        id: ma.id, name, type: ma.type,
         compromised: false, iocIds: [], findingIds: [], eventCount: 0, maxSeverity: "Info",
       });
     }
@@ -154,12 +156,20 @@ export class AssetOverridesStore {
     return { overrides: next, asset };
   }
 
-  // Remove an asset: deletes from `added` if manual; pushes to `removed` if auto-derived.
+  // Remove an asset: deletes from `added` if manual (also pruning any now-orphaned rename entry
+  // for it — a deleted manual asset's id can never come back, so the rename would sit dead in
+  // storage forever otherwise); pushes to `removed` if auto-derived (its rename is kept — an
+  // auto-derived id can reappear on a later synthesis, and the analyst's rename should still apply).
   async removeAsset(caseId: string, assetId: string): Promise<AssetOverrides> {
     const ov = await this.load(caseId);
-    const next = assetId.startsWith("manual:")
-      ? { ...ov, added: ov.added.filter((a) => a.id !== assetId) }
-      : { ...ov, removed: [...new Set([...ov.removed, assetId])] };
+    if (assetId.startsWith("manual:")) {
+      const renames = { ...ov.renames };
+      delete renames[assetId];
+      const next = { ...ov, added: ov.added.filter((a) => a.id !== assetId), renames };
+      await this.save(caseId, next);
+      return next;
+    }
+    const next = { ...ov, removed: [...new Set([...ov.removed, assetId])] };
     await this.save(caseId, next);
     return next;
   }
