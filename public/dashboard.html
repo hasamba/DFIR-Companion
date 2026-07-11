@@ -815,8 +815,14 @@
     .ev-row:hover { background: var(--c-0d1117); }
     .ev-row.ev-selected { background: var(--c-142038); }
     .ev-row.ev-focused { outline: 2px solid var(--c-6aa9ff); outline-offset: -2px; border-radius: 3px; }
-    .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 162px; padding-top: 1px; }
-    .ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add, .ev-col-ctrl .explain-btn { margin-left: 0; }
+    .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 178px; margin-right: 6px; padding-top: 1px; }
+    /* Buttons default to flex-shrink:1, which silently compresses (and can visually clip) their
+       icon/count once the row's icon set (star/comment/tag/hunt/explain/geo) nears the column's
+       width budget — pin them to their natural size instead; the column's own width + margin above
+       is sized with headroom so this never overflows into the adjacent timestamp column. */
+    .ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add, .ev-col-ctrl .explain-btn, .ev-col-ctrl .ev-geo {
+      margin-left: 0; flex-shrink: 0;
+    }
     /* Action icons hidden (Settings → Timeline row display) → reclaim the control column's width, keep just the checkbox. */
     #forensicTimeline.tl-no-icons .ev-col-ctrl, #forensicTimeline.tl-no-icons .ev-header-ctrl { width: 22px; }
     .ev-checkbox { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; margin: 0; }
@@ -838,7 +844,7 @@
     .ev-details-panel { margin-top: 4px; padding: 6px 8px; background: var(--c-0d1117, #0d1117); border-left: 2px solid var(--c-2a4a6b); border-radius: 2px; font-size: 11px; color: var(--c-c9d1d9); }
     .ev-details-panel > * + * { margin-top: 4px; }
     .ev-header-row { display: flex; align-items: center; padding: 2px 0 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 1px; font-size: 11px; color: var(--c-6b7280); }
-    .ev-header-ctrl { width: 162px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
+    .ev-header-ctrl { width: 178px; margin-right: 6px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
     .ev-header-time { width: 192px; flex-shrink: 0; }
     .tl-pagesize-wrap { margin-left: auto; flex-shrink: 0; }
     .tl-pagesize-sel { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-9aa4b2); border-radius: 4px; padding: 1px 5px; font-size: 11px; cursor: pointer; }
