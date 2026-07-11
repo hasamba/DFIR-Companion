@@ -48,4 +48,11 @@ describe("extractPushPayload", () => {
   it("stringifies array / primitive bodies", () => {
     expect(JSON.parse(extractPushPayload([{ a: 1 }]).text)).toEqual([{ a: 1 }]);
   });
+
+  it("an empty JSON object body yields empty text, not the non-empty string \"{}\"", () => {
+    // A caller's `if (!text.trim())` empty-payload guard must catch this — JSON.stringify({})
+    // is the non-empty string "{}", which used to slip past that check and get imported as a
+    // junk event with no real content.
+    expect(extractPushPayload({}).text).toBe("");
+  });
 });
