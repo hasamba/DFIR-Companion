@@ -323,6 +323,8 @@ describe("super-timeline promote route", () => {
     const listed = await request(app).get(`/cases/c1/super-timeline`);
     expect(listed.body.events.length).toBeGreaterThan(0);
     const id = listed.body.events[0].id;
+    // Not yet promoted: GET marks the row unpromoted so the UI has no false-positive badge.
+    expect(listed.body.events.find((e: { id: string }) => e.id === id).promoted).toBe(false);
 
     const res = await request(app).post(`/cases/c1/super-timeline/promote`).send({ eventIds: [id] });
     expect(res.status).toBe(200);
@@ -330,6 +332,11 @@ describe("super-timeline promote route", () => {
 
     const state1 = await stateStore.load("c1");
     expect(state1.forensicTimeline.some((e) => e.id === id)).toBe(true);
+
+    // The row now carries a persistent "promoted" flag (survives reload/paging), which is what lets
+    // the UI show a lasting "✓ Promoted" mark instead of only a one-time toast.
+    const afterPromote = await request(app).get(`/cases/c1/super-timeline`);
+    expect(afterPromote.body.events.find((e: { id: string }) => e.id === id).promoted).toBe(true);
 
     // idempotent: promoting again does not duplicate
     await request(app).post(`/cases/c1/super-timeline/promote`).send({ eventIds: [id] });

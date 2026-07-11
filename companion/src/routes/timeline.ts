@@ -144,7 +144,14 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
         offset: num(req.query.offset),
         limit: num(req.query.limit),
       }, tagLabelMap);
-      return res.status(200).json(result);
+      // Mark rows already pulled into the forensic timeline (promote's mergeDelta dedups by id, so
+      // "promoted" means this event's id is already there) so the UI can show persistent state instead
+      // of a fire-and-forget button that gives no lasting feedback.
+      const promotedIds = options.stateStore
+        ? new Set((await options.stateStore.load(req.params.id)).forensicTimeline.map((e) => e.id))
+        : new Set<string>();
+      const events = result.events.map((e) => ({ ...e, promoted: promotedIds.has(e.id) }));
+      return res.status(200).json({ ...result, events });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
