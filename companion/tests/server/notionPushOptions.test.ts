@@ -8,16 +8,16 @@ describe("notionPushOptions", () => {
   });
 
   it("passes through a bare id unchanged", () => {
-    process.env.DFIR_NOTION_DATABASE_ID = "c65caad5aaaa4444bbbb888888888888";
+    process.env.DFIR_NOTION_DATABASE_ID = "11111111aaaa2222bbbb333333333333";
     process.env.DFIR_NOTION_PARENT_PAGE_ID = "";
     const opts = notionPushOptions();
-    expect(opts.databaseId).toBe("c65caad5-aaaa-4444-bbbb-888888888888");
+    expect(opts.databaseId).toBe("11111111-aaaa-2222-bbbb-333333333333");
   });
 
   it("extracts the id from a full Notion URL, matching the request-body parsing path", () => {
-    process.env.DFIR_NOTION_DATABASE_ID = "https://notion.com/p/tenroot/c65caad5aaaa4444bbbb888888888888";
+    process.env.DFIR_NOTION_DATABASE_ID = "https://notion.com/p/acme-workspace/11111111aaaa2222bbbb333333333333";
     const opts = notionPushOptions();
-    expect(opts.databaseId).toBe("c65caad5-aaaa-4444-bbbb-888888888888");
+    expect(opts.databaseId).toBe("11111111-aaaa-2222-bbbb-333333333333");
   });
 
   it("is undefined when unset, not an empty/unparsed string", () => {
