@@ -162,4 +162,10 @@ describe("case password lifecycle", () => {
     expect((await request(app).post("/cases/nope/unlock").send({ password: "x" })).status).toBe(404);
     expect((await request(app).post("/cases/nope/password").send({ newPassword: "correct horse" })).status).toBe(404);
   });
+
+  it("400s on a path-traversal caseId for lock-status / unlock, matching the password routes", async () => {
+    const traversalId = "..%2f..%2fetc";
+    expect((await request(app).get(`/cases/${traversalId}/lock-status`)).status).toBe(400);
+    expect((await request(app).post(`/cases/${traversalId}/unlock`).send({ password: "x" })).status).toBe(400);
+  });
 });

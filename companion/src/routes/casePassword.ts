@@ -41,6 +41,7 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
   app.get("/cases/:id/lock-status", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
       const hasPassword = Boolean(meta.password);
@@ -55,6 +56,7 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
   app.post("/cases/:id/unlock", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
       if (!meta.password) return res.status(200).json({ ok: true }); // nothing to unlock
