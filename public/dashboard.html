@@ -815,8 +815,14 @@
     .ev-row:hover { background: var(--c-0d1117); }
     .ev-row.ev-selected { background: var(--c-142038); }
     .ev-row.ev-focused { outline: 2px solid var(--c-6aa9ff); outline-offset: -2px; border-radius: 3px; }
-    .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 162px; padding-top: 1px; }
-    .ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add, .ev-col-ctrl .explain-btn { margin-left: 0; }
+    .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 178px; margin-right: 6px; padding-top: 1px; }
+    /* Buttons default to flex-shrink:1, which silently compresses (and can visually clip) their
+       icon/count once the row's icon set (star/comment/tag/hunt/explain/geo) nears the column's
+       width budget — pin them to their natural size instead; the column's own width + margin above
+       is sized with headroom so this never overflows into the adjacent timestamp column. */
+    .ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add, .ev-col-ctrl .explain-btn, .ev-col-ctrl .ev-geo {
+      margin-left: 0; flex-shrink: 0;
+    }
     /* Action icons hidden (Settings → Timeline row display) → reclaim the control column's width, keep just the checkbox. */
     #forensicTimeline.tl-no-icons .ev-col-ctrl, #forensicTimeline.tl-no-icons .ev-header-ctrl { width: 22px; }
     .ev-checkbox { width: 13px; height: 13px; cursor: pointer; accent-color: var(--c-6aa9ff); flex-shrink: 0; margin: 0; }
@@ -838,7 +844,7 @@
     .ev-details-panel { margin-top: 4px; padding: 6px 8px; background: var(--c-0d1117, #0d1117); border-left: 2px solid var(--c-2a4a6b); border-radius: 2px; font-size: 11px; color: var(--c-c9d1d9); }
     .ev-details-panel > * + * { margin-top: 4px; }
     .ev-header-row { display: flex; align-items: center; padding: 2px 0 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 1px; font-size: 11px; color: var(--c-6b7280); }
-    .ev-header-ctrl { width: 162px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
+    .ev-header-ctrl { width: 178px; margin-right: 6px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
     .ev-header-time { width: 192px; flex-shrink: 0; }
     .tl-pagesize-wrap { margin-left: auto; flex-shrink: 0; }
     .tl-pagesize-sel { background: var(--c-1e2330); border: 1px solid var(--c-3a4050); color: var(--c-9aa4b2); border-radius: 4px; padding: 1px 5px; font-size: 11px; cursor: pointer; }
@@ -1425,9 +1431,6 @@
     #ocrSearchResults .ocr-hit .ocr-snippet { font-size: 12px; margin-top: 2px; }
     #ocrSearchResults .ocr-hit mark { background: var(--c-ffd93b); color: #000; padding: 0 1px; border-radius: 2px; }
     #ocrSearchResults .ocr-empty { color: var(--c-9aa4b2); font-size: 12px; padding: 4px; }
-    /* Toolbar is tight on real estate: on narrower screens collapse the "deep" label to just the
-       🧠 checkbox (the tooltip still explains it). */
-    @media (max-width: 1440px) { #deepReasoningLabel .dr-text { display: none; } }
   </style>
 </head>
 <body>
@@ -1459,7 +1462,7 @@
     <button id="synthesize" data-tip="Re-derive the case conclusions — findings, MITRE ATT&CK, attacker path, narrative, key questions and next steps — from the in-scope forensic timeline. Replaces the previous conclusions but keeps the timeline, IOCs and threads.">AI Re-synthesize</button>
     <button id="secondOpinion" style="display:none" data-tip="Second LLM opinion: refreshes the primary synthesis (only if the timeline changed), then runs a DIFFERENT model over the same case as an independent QA cross-check, and shows where it disagrees with the primary (findings it adds/drops, severity, ATT&CK technique) for you to accept or reject each. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
     <label id="deepReasoningLabel" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--c-9aa4b2);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs an Anthropic or OpenRouter reasoning-capable synthesis model.">
-      <input type="checkbox" id="deepReasoning" style="margin:0;cursor:pointer" />🧠<span class="dr-text">&nbsp;deep</span>
+      <input type="checkbox" id="deepReasoning" style="margin:0;cursor:pointer" />🧠
     </label>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.xml,.eml,.msg,.bash_history,.zsh_history,.history,.evtx,.evt,.pcap,.pcapng,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,text/xml,application/xml,image/png,image/jpeg,image/webp" style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux shell history, auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
@@ -3612,7 +3615,7 @@
       <div id="swimlaneTooltip"></div>
     </section>
     <section id="sec-assets" style="grid-column: 1 / -1">
-      <h2>Compromised Assets &amp; IoC Graph<button class="add-toggle" type="button" title="Add / edit assets and links manually" aria-label="Add asset">+</button></h2>
+      <h2>Compromised Assets &amp; IoC Graph<span class="ev-sub">assets and IOCs derived from findings and the timeline, plus any you add by hand — edges show how they connect</span><button class="add-toggle" type="button" title="Add / edit assets and links manually" aria-label="Add asset">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <span style="color:var(--c-9aa4b2)">Add asset:</span>
@@ -3760,9 +3763,9 @@
         </div>
         <div id="customerExposure">—</div>
       </div></section>
-    <section id="sec-questions" style="grid-column: 1 / -1"><h2>Key Investigative Questions</h2><div id="keyQuestions">—</div></section>
+    <section id="sec-questions" style="grid-column: 1 / -1"><h2>Key Investigative Questions<span class="ev-sub">open questions the AI is tracking — answered automatically once the evidence supports them</span></h2><div id="keyQuestions">—</div></section>
     <section id="sec-huntprofile" style="grid-column: 1 / -1"><h2>Hunting Profile<span class="ev-sub">What has been hunted in this case and whether it found anything</span></h2><div id="huntProfile">—</div></section>
-    <section id="sec-threads"><h2>Investigation Threads</h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
+    <section id="sec-threads"><h2>Investigation Threads<span class="ev-sub">open leads the AI tracks across re-synthesis runs — closed automatically once the evidence resolves them</span></h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
     <section id="sec-adversary" style="grid-column: 1 / -1"><h2>Adversary Hints<span class="ev-sub">known ATT&amp;CK groups by technique overlap + their likely next techniques — hypothesis fuel, not attribution (derived, no AI)</span></h2><div id="adversaryHints">—</div></section>
     <style>
@@ -4090,7 +4093,7 @@
         </div>
       </div>
     </section>
-    <section id="sec-inv-log" style="grid-column: 1 / -1"><h2>Investigation Log</h2><div id="timeline">—</div></section>
+    <section id="sec-inv-log" style="grid-column: 1 / -1"><h2>Investigation Log<span class="ev-sub">import events and AI notes merged with analyst quick-action entries, in chronological order</span></h2><div id="timeline">—</div></section>
     <section id="sec-activity" style="grid-column: 1 / -1"><h2>Activity Log<span class="ev-sub">Every security-relevant action taken on this case</span></h2>
       <div style="margin-bottom:8px">
         <select id="activityFilter" style="font-size:12px">
@@ -15243,6 +15246,10 @@
           // and its up/down arrows reflect the new order too.
           saveSectionsOrder([...main.querySelectorAll(":scope > section[id]")].map(s => s.id));
           if (typeof renderSecChecks === "function") renderSecChecks();
+          // A manual drag makes this a Custom layout — otherwise the next page load's
+          // applySavedViewForCase() re-applies the active preset's canned order over this one,
+          // silently discarding the drag (the layout looked "reset" after refresh).
+          if (typeof applyDashboardView === "function") applyDashboardView(null, { persist: true, rerender: false });
         });
       });
       // The initial order is applied by applySectionsVis() → applySecOrder() (runs last in init),
@@ -15416,6 +15423,9 @@
             container.insertBefore(dragSrc, row);
             saveSectionsOrder([...container.querySelectorAll(".sec-check")].map(r => r.dataset.id));
             applySecOrder();
+            // Same as the in-page drag grip: a manual reorder here makes this a Custom layout, so
+            // the next load's applySavedViewForCase() doesn't overwrite it with the active preset.
+            if (typeof applyDashboardView === "function") applyDashboardView(null, { persist: true, rerender: false });
           }
         });
         row.addEventListener("dragend", () => {

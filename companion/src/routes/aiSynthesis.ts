@@ -136,7 +136,9 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     const thinkingTokens = Number.isFinite(reqThinking) && reqThinking > 0 ? Math.floor(reqThinking) : undefined;
     options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: deepReasoning ? "synthesizing (deep reasoning)" : "synthesizing conclusions" });
     // #225: track this manual synthesis as a cancellable job so the analyst can abort a long run.
-    const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "synthesis", cancellable: true });
+    // exclusive: a second re-synthesize for the same case (double-click, or racing the "Generate
+    // hypotheses" button / a live auto-synthesis) supersedes rather than running alongside it.
+    const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "synthesis", cancellable: true, exclusive: true });
     // Pre-synthesis backup (#180): snapshot state before overwriting conclusions. Best-effort.
     if (options.backupManager) {
       await options.backupManager.createBackup(caseId, "pre-synthesis").catch(() => {});
@@ -170,7 +172,11 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const aborted = job?.signal?.aborted === true;
       if (job) options.jobManager?.fail(job.jobId, err); // no-op if a cancel already marked it cancelled
       if (aborted) {
-        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" });
+        // A newer exclusive registration may have superseded this run (see above) — if a synthesis
+        // job for this case is still active, that newer run owns the status; don't stomp it to idle.
+        if (!options.jobManager?.hasActive(caseId, "synthesis")) {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" });
+        }
         return res.status(499).json({ error: "synthesis cancelled" });
       }
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
