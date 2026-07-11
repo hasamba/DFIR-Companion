@@ -4,8 +4,9 @@ import type { Logger } from "../logging/logger.js";
 import type { AppOptions } from "../server.js";
 import type { CaptureMetadata } from "../types.js";
 import type { AiControl } from "../analysis/aiControl.js";
-import type { ImporterRegistry } from "../analysis/importerStore.js";
+import type { ImporterRegistry, ImporterPrecedence } from "../analysis/importerStore.js";
 import type { IrisClient } from "../integrations/iris/irisClient.js";
+import type { TimesketchClient } from "../integrations/timesketch/timesketchClient.js";
 import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { ProviderHealthCache } from "../enrichment/providerHealth.js";
 import type { NsrlDb } from "../analysis/nsrlDb.js";
@@ -53,6 +54,10 @@ export interface RouteContext {
   readonly appStartedAt: number;
   readonly recentImportFailures: ImporterFailure[]; // diagnostics ring, mutated in place by recordImportFailure
   readonly recentAiErrors: AiError[]; // diagnostics ring, mutated in place by recordAiError
+  // The HMAC secret (persisted next to the cases root) that signs/verifies case-unlock cookies. Graduated
+  // for routes/casePassword.ts's unlock route: the staying case-lock GATE (createCaseLockGate) + readUnlockState
+  // use the SAME secret, so it's graduated (a stable readonly value), not recomputed per module.
+  readonly instanceSecret: Buffer;
 
   // ── Stable helper methods ────────────────────────────────────────────────────────────
   // Pure/stateless-facing helpers bound at construction; safe to destructure at registration scope.
@@ -60,6 +65,20 @@ export interface RouteContext {
   recordAiError(caseId: string, phase: string, err: unknown): void;
   readUnlockState(req: Request, id: string, salt: string): { unlocked: boolean; remembered: boolean };
   hasAiProvider(): boolean;
+  // Per-case state mutex + drop-folder + importer-reload helpers graduated for routes/caseLifecycle.ts.
+  // All defined in createApp and SHARED with code that stays (the state lock backs every import/enrich/
+  // synthesis write; the drop watcher re-ensures the inbox; dispatchImport/resolveImportKind read the
+  // in-memory importer registry + precedence that reloadImporters/setImporterPrecedence mutate), so they
+  // were graduated rather than moved. runStateExclusive is a `const` arrow bound at construction;
+  // ensureDropFolders/reloadImporters are hoisted `async function` declarations (safe to bind before
+  // their textual definition, like the velociraptor set):
+  //   runStateExclusive  — serialize a case's load→save critical section (manual-event add here).
+  //   ensureDropFolders  — create the evidence drop inbox for a case (fired on case creation).
+  //   reloadImporters    — re-read the on-disk declarative-importer registry into the in-memory copy +
+  //                        precedence, then fire onImporters (the importer CRUD writes call it).
+  runStateExclusive<T>(caseId: string, fn: () => Promise<T>): Promise<T>;
+  ensureDropFolders(caseId: string): Promise<void>;
+  reloadImporters(): Promise<void>;
   // Capture→analyze machinery shared with the drop-watch ingest path and the AI-control routes
   // (all still in createApp). Graduated for routes/captures.ts's POST /captures handler:
   //   getControl         — read the per-case AI on/off + last-analyzed-seq control record.
@@ -202,6 +221,12 @@ export interface RouteContext {
   captureBuffers(): Map<string, CaptureMetadata[]>;
   synthInFlight(): Set<string>;
   importerRegistry(): ImporterRegistry;
+  // The active importer precedence (builtin-first / external-first). A `let` in createApp read live by
+  // dispatchImport/resolveImportKind (stay) and the moved GET /importers route; PUT /importers/precedence
+  // rewrites it via setImporterPrecedence. Read via importerPrecedence() INSIDE the handler (mirrors
+  // importerRegistry()); the setter reassigns the SAME createApp binding the detection seam reads.
+  importerPrecedence(): ImporterPrecedence;
+  setImporterPrecedence(precedence: ImporterPrecedence): void;
   irisClient(): IrisClient | undefined;
   // The DFIR-IRIS client is a MUTABLE shared handle: POST /iris/reconnect (routes/reportsExport.ts)
   // rebuilds it at runtime and createApp's /cases/:id/push/iris reads it. Mirrors nsrlDb()/setNsrlDb():
@@ -212,6 +237,12 @@ export interface RouteContext {
   //                       inside server.ts (no route module imports a value from ../server.js).
   setIrisClient(client: IrisClient | undefined): void;
   rebuildIrisClient(): IrisClient | undefined;
+  // Rebuild the Timesketch client from the current .env (mirrors rebuildIrisClient). Graduated for
+  // routes/caseLifecycle.ts's POST /timesketch/reconnect, which reassigns options.timesketchClient with the
+  // result; the timesketch push routes read options.timesketchClient live. Wraps createApp's
+  // `options.rebuildTimesketchClient ?? buildTimesketchClient` so buildTimesketchClient's use stays in
+  // server.ts (no route module imports a value from ../server.js). Call INSIDE the handler.
+  rebuildTimesketchClient(): TimesketchClient | undefined;
   dropWatchEnabled(): boolean;
   enrichmentProviders(): EnrichmentProvider[];
   enrichHealth(): ProviderHealthCache;
