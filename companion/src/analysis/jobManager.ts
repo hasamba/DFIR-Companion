@@ -40,6 +40,9 @@ export interface RegisterInput {
   label?: string;
   detail?: string;
   cancellable?: boolean;
+  // Cancel any other non-terminal job of the same kind for this case before starting this one —
+  // e.g. two synthesis runs for the same case racing serves no purpose; the newer supersedes.
+  exclusive?: boolean;
 }
 
 export interface RegisteredJob {
@@ -67,6 +70,11 @@ export class JobManager {
   }
 
   register(input: RegisterInput): RegisteredJob {
+    if (input.exclusive) {
+      for (const j of listJobs(this.table, { caseId: input.caseId })) {
+        if (j.kind === input.kind && !isTerminal(j.status)) this.cancel(j.id);
+      }
+    }
     const jobId = `job_${++this.counter}`;
     this.table = capJobs(
       createJob(this.table, {
@@ -119,6 +127,13 @@ export class JobManager {
 
   list(caseId?: string): Job[] {
     return listJobs(this.table, caseId ? { caseId } : {});
+  }
+
+  // Is any non-terminal job of this kind still running for the case? Callers use this to avoid
+  // announcing a stale "idle" status after their own (superseded) job was cancelled out from under
+  // them by a newer exclusive registration — see aiSynthesis.ts / scheduleSynthesis.
+  hasActive(caseId: string, kind: JobKind): boolean {
+    return listJobs(this.table, { caseId }).some((j) => j.kind === kind && !isTerminal(j.status));
   }
 
   get(jobId: string): Job | undefined {

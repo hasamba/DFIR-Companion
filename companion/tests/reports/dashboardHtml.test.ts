@@ -155,6 +155,25 @@ describe("dashboard.html", () => {
     expect(html).not.toContain("new/unknown sections go to the end");
   });
 
+  it("marks the layout Custom on a manual drag reorder, so a page refresh doesn't re-apply the active dashboard-view preset over it", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // applySavedViewForCase() runs on every case connect (including the auto-reconnect on page
+    // refresh) and, for any case without an explicit view choice, re-applies a preset's canned
+    // section order — clobbering a manual drag unless the drag itself records a Custom choice.
+    // Both drag-reorder call sites (the in-page grip, and the Settings section-list drag) must
+    // call applyDashboardView(null, ...) right after saveSectionsOrder(...) to persist that choice.
+    const markCustom = 'if (typeof applyDashboardView === "function") applyDashboardView(null, { persist: true, rerender: false });';
+    expect(html.split(markCustom).length - 1).toBe(2); // exactly the two drag-reorder sites
+    const gripDrop = html.indexOf('saveSectionsOrder([...main.querySelectorAll(":scope > section[id]")]');
+    const gripMark = html.indexOf(markCustom, gripDrop);
+    expect(gripMark).toBeGreaterThan(gripDrop);
+    expect(gripMark - gripDrop).toBeLessThan(600); // the very next thing the handler does
+    const settingsDrop = html.indexOf('saveSectionsOrder([...container.querySelectorAll(".sec-check")]');
+    const settingsMark = html.indexOf(markCustom, settingsDrop);
+    expect(settingsMark).toBeGreaterThan(settingsDrop);
+    expect(settingsMark - settingsDrop).toBeLessThan(400);
+  });
+
   it("offers a unified multi-file import (images → /captures, data → /import)", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="importBtn"');
