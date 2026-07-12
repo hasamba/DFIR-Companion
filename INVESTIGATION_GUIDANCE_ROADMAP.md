@@ -1,5 +1,16 @@
 # Making DFIR-Companion Lead the Investigation
 
+> **Implementation status (Tier 0 + Tier 1 shipped on this branch).** Proposals #1–#7 are
+> implemented, unit-tested, and committed here (one commit each). Full suite green: 2294 analysis +
+> 695 reports/server tests, clean `tsc`. Deferred within those items (documented in each commit):
+> the `~` context-prefix prompt notation and per-class counts into synthMeta (#4); the anchor-scoring
+> bump retune and the auto-generated "corroborate `<ioc>`" nextStep (#7, needs #8's structured collect
+> targets). **One operational step remains for #1:** the live `companion/prompts/*.txt` override files
+> are gitignored deployment artifacts — regenerate them with `npm run prompts:eject` so the deployment
+> picks up the built-in prompt (hypotheses / confidenceReason / the new structured-tag & attack-graph
+> instructions). Until then the new drift-detection check will warn on every preflight and synthesis
+> run. Tiers 2–3 (#8–#15) remain as specified below.
+
 **Goal.** Make the Companion genuinely lead an investigation — better decisions, higher recall of
 what actually happened, better dot-connecting, a working FP / rabbit-hole / real-lead triage, the
 right questions at the right time, and concrete "collect X from host Y, here's why" direction —
