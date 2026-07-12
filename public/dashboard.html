@@ -1018,6 +1018,7 @@
     .ai-analyzing { background: var(--c-3a3320); color: var(--c-ffd93b); }
     .ai-error { background: var(--c-3a2020); color: var(--c-ff5c5c); }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     .ai-analyzing { animation: pulse 1s ease-in-out infinite; }
     /* Secondary action — muted by default, only lights up on hover so it reads as
        "click to mark", not as a status tag. Hidden until you hover the row. */
@@ -4160,6 +4161,16 @@
     <button id="casePasswordBtn" style="width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">&#128274; Password…</button>
     <button id="restoreCaseBtn" style="display:none;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:var(--c-c9d1d9);cursor:pointer;font-size:13px;border-bottom:1px solid var(--c-30363d);">Restore from archive</button>
     <button id="deleteCaseBtn" style="display:none;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;color:#ff9f9f;cursor:pointer;font-size:13px;">Delete case…</button>
+  </div>
+  <!-- Case loading overlay: shown while proceedConnect() waits for the timeline + lifecycle
+       status to load, so the analyst isn't left staring at a half-populated dashboard with no
+       indication anything is still happening. Hidden by default (single display:none — do not
+       add a second `display` declaration here, JS toggles it via style.display). -->
+  <div id="caseLoadingOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:99999;align-items:center;justify-content:center;">
+    <div style="background:var(--c-161b22);border:1px solid var(--c-30363d);border-radius:8px;padding:32px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,0.3);">
+      <div style="width:40px;height:40px;border:3px solid var(--c-30363d);border-top-color:var(--c-4ade80);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div>
+      <div id="caseLoadingText" style="color:var(--c-c9d1d9);font-size:14px;font-weight:500;">Loading case…</div>
+    </div>
   </div>
   <script>
     // ---- Theme (issue #53: dark/light with persistence + OS preference) ---------------------
@@ -13181,13 +13192,47 @@
         .catch(() => proceedConnect(caseId)); // offline / older server — fall back to the old behavior
     }
 
+    // Case loading overlay: blocks the screen from the moment a case is selected until
+    // the timeline (state fetch) and the lifecycle status icon have both loaded — the two things
+    // an analyst visually checks to know "is this case fully up yet?". The ~40 other secondary
+    // panels (geo map, host ranking, playbook, ...) keep loading in the background afterward, same
+    // as before this change — only these two block the overlay.
+    let _caseLoadingTimeoutId = null;
+    function showCaseLoadingOverlay() {
+      const overlay = document.getElementById("caseLoadingOverlay");
+      if (!overlay) return;
+      const textEl = document.getElementById("caseLoadingText");
+      if (textEl) textEl.textContent = "Loading case…";
+      overlay.onclick = null;
+      overlay.style.cursor = "";
+      overlay.style.display = "flex";
+      clearTimeout(_caseLoadingTimeoutId);
+      // Failsafe: never block the screen forever if a load hangs — after 15s, tell the analyst
+      // honestly that it's still loading and let them dismiss it manually, rather than either
+      // lying that it finished or leaving them stuck with no way out.
+      _caseLoadingTimeoutId = setTimeout(() => {
+        if (textEl) textEl.textContent = "Still loading — click to dismiss";
+        overlay.style.cursor = "pointer";
+        overlay.onclick = hideCaseLoadingOverlay;
+      }, 15000);
+    }
+    function hideCaseLoadingOverlay() {
+      const overlay = document.getElementById("caseLoadingOverlay");
+      if (!overlay) return;
+      overlay.style.display = "none";
+      overlay.onclick = null;
+      overlay.style.cursor = "";
+      clearTimeout(_caseLoadingTimeoutId);
+    }
+
     function proceedConnect(caseId) {
+      showCaseLoadingOverlay();
       hideCaseMismatch(); mismatchDismissed = "";   // fresh start for the newly-connected case
       if (ws) { try { ws.close(); } catch {} ws = null; }
       // Remember the case so a page refresh reconnects automatically.
       localStorage.setItem("dfir.caseId", caseId);
       history.replaceState(null, "", "?caseId=" + encodeURIComponent(caseId) + location.hash);   // keep #event=... (deep link) intact
-      fetch(`/cases/${caseId}/state`).then(r => r.json()).then(state => { render(state); jumpToEventFromHash(); }).catch(() => {});
+      const stateLoadPromise = fetch(`/cases/${caseId}/state`).then(r => r.json()).then(state => { render(state); jumpToEventFromHash(); }).catch(() => {});
       pollCount(caseId);
       loadAiToggle(caseId);
       loadEnrichToggle(caseId);
@@ -13259,7 +13304,8 @@
       loadJobs(caseId);   // #225 background-jobs badge/popover
       loadUndoStack(caseId);
       loadCustomerExposure(caseId);
-      loadCaseLifecycle(caseId);
+      const lifecycleLoadPromise = loadCaseLifecycle(caseId);
+      Promise.allSettled([stateLoadPromise, lifecycleLoadPromise]).then(hideCaseLoadingOverlay);
       loadVeloTriage(caseId);
       loadHuntProfile(caseId);  // #157 hunting feedback loop — what's been hunted, what hit/missed
       resetVeloHuntSuggest();   // clear AI-suggested fleet hunts; analyst regenerates per case on demand
@@ -17671,14 +17717,10 @@
     loadPreflightBanner();
 
     // ── Case lifecycle (#119) ───────────────────────────────────────────────
-    // Load the case's status (open/closed) and update the toolbar button + label.
+    // Load the case's status (open/closed) and update the toolbar button + label. Returns its
+    // promise so proceedConnect() can gate the loading overlay on it (see showCaseLoadingOverlay).
     function loadCaseLifecycle(caseId) {
-      fetch(`/cases/${caseId}/state`)
-        .then(r => r.ok ? r.json() : null)
-        .then(() => {
-          // State doesn't include case meta. Fetch the cases list to get status.
-          return fetch("/cases").then(r => r.ok ? r.json() : []);
-        })
+      return fetch("/cases").then(r => r.ok ? r.json() : [])
         .then(cases => {
           const meta = cases.find(c => c.caseId === caseId);
           const isClosed = meta && meta.status === "closed";
