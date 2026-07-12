@@ -159,6 +159,9 @@ import type { PlaybookTask } from "./playbook.js";
 import type { PlaybookStore } from "./playbookStore.js";
 import { renderPlaybookProgressBlock, renderRefutedHypothesesBlock, demoteCompletedNextSteps } from "./priorWork.js";
 import { flagContradictedAnswers } from "./answerContradiction.js";
+import { renderStructuredTags, buildBeaconDigest, buildAttackPhaseDigest } from "./synthEvidence.js";
+import { detectBeacons, beaconEnvOptions } from "./beaconDetect.js";
+import { buildAttackPhases } from "./burstDetect.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
@@ -480,6 +483,16 @@ export const SYNTHESIS_PROMPT = [
   "Those are the analyst's work log — do NOT base any finding, IOC, technique, or attacker-path step",
   "on them. Base conclusions ONLY on real host/attacker activity (executions, logons, file/registry",
   "/network/persistence changes).",
+  "",
+  "Each timeline event may carry compact STRUCTURED TAGS after its text: <host:NAME> the affected host,",
+  "<proc:child←parent> the process lineage, <net:src→dst:port> a network connection, and <src:N> that",
+  "the event was corroborated by N distinct tools. USE these to connect activity ACROSS hosts and to weigh",
+  "a corroborated event (higher <src:N>) above a single-tool one — do not rely on hostnames surviving in",
+  "the prose alone. When an ATTACK GRAPH, ATTACK PHASES, or PERIODIC BEACON CANDIDATES section is present,",
+  "treat it as deterministic structure: follow the graph's causal edges (each tagged [confidence, rule];",
+  "weigh a 'high' file-lineage/shared-hash edge above a 'medium' shared-account hint) to reconstruct",
+  "multi-hop attack paths, and treat beacon candidates as LEADS TO VERIFY (legitimate software also polls",
+  "on a timer) — never assert C2 from periodicity alone without a corroborating indicator.",
   "",
   "Produce:",
   "- findings: produce a SEPARATE finding for EACH distinct attacker technique, tool, or behavior",
@@ -4254,6 +4267,14 @@ export class AnalysisPipeline {
     // above, so they never affect skip-if-unchanged.
     const knownUnknownsBlock = this.knownUnknownsBlock(state, scopedEvents);
     const adversaryBlock = this.adversaryHintBlock(state);
+    // Structured causal evidence (investigation-guidance #5), all DERIVED after the skip-hash so they
+    // never affect skip-if-unchanged: the deterministic ATTACK GRAPH (spawn/file-lineage/lateral/network
+    // edges with confidence+rule — previously fed only to ask()/suggestHunts(), never the call that
+    // writes findings), the statistically-confirmed periodic-beacon candidates, and the activity-phase
+    // digest. These give synthesis the cross-host structure it was inferring blind from truncated prose.
+    const graphBlock = buildGraphContext({ ...state, forensicTimeline: scopedEvents }, { maxEdges: DEFAULT_MAX_GRAPH_EDGES });
+    const beaconBlock = buildBeaconDigest(detectBeacons(scopedEvents, beaconEnvOptions()));
+    const attackPhaseBlock = buildAttackPhaseDigest(buildAttackPhases(scopedEvents));
     // Analyst-pinned open questions: tell the model to address each (answer when the evidence
     // now supports it) and keep them. They're re-merged into the output below so they persist.
     const pinnedQuestions = state.keyQuestions.filter((q) => q.pinned);
@@ -4294,10 +4315,13 @@ export class AnalysisPipeline {
     // (context block, findings echo, system prompt) is the fixed overhead. Re-select for the
     // smaller count so the kept events stay the most important; the high-severity backfill
     // still creates findings for any Critical/High event dropped here.
+    // Each event carries its structured tags (host / process lineage / src→dst / corroborating-source
+    // count) after the prose (investigation-guidance #5) — only when set, so a bare event costs no extra
+    // tokens. This is what lets the model connect cross-host activity instead of guessing from prose.
     const renderEvent = (e: ForensicEvent) =>
-      `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
+      `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -4308,6 +4332,9 @@ export class AnalysisPipeline {
     const userPrompt =
       scopeNote +
       contextBlock +
+      graphBlock +
+      beaconBlock +
+      attackPhaseBlock +
       knownUnknownsBlock +
       adversaryBlock +
       notebookBlock +
