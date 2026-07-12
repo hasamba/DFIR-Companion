@@ -2721,6 +2721,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     correlationProfileStore: new CorrelationProfileStore(params.store),
     notebookStore: new NotebookStore(params.store),
     hypothesisStore: new HypothesisStore(params.store),     // #140 auto-generate hypotheses on synthesis
+    playbookStore: new PlaybookStore(params.store),         // #2 feed DONE/SKIPPED task status into synthesis
     aiControlStore: new AiControlStore(params.store),
     huntOutcomeStore: new HuntOutcomeStore(params.store),   // #157 hunting feedback loop
     superTimelineStore: new SuperTimelineStore(params.store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined),  // explainEvent falls back here for raw super-only events

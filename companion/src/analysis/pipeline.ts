@@ -156,6 +156,8 @@ import {
 } from "./queryTranslate.js";
 import { HUNT_PLATFORMS, type HuntPlatform } from "./huntPlatforms.js";
 import type { PlaybookTask } from "./playbook.js";
+import type { PlaybookStore } from "./playbookStore.js";
+import { renderPlaybookProgressBlock, renderRefutedHypothesesBlock, demoteCompletedNextSteps } from "./priorWork.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
@@ -1264,6 +1266,9 @@ export interface PipelineOptions {
   // Per-case hypothesis store (issue #140). When set, synthesis merges the model's auto-generated
   // hypotheses into it (refresh-pristine / freeze-touched). Absent → no auto-generation (CLI/tests).
   hypothesisStore?: HypothesisStore;
+  // Per-case playbook store. When set, synthesis reads DONE/SKIPPED task status so it can build on
+  // completed work instead of re-recommending it (investigation-guidance #2). Absent → no digest.
+  playbookStore?: PlaybookStore;
 }
 
 // Whole-word (id-boundary) match of a finding id inside free text — used to catch a key question's
@@ -4181,8 +4186,12 @@ export class AnalysisPipeline {
     // analyst-authored or analyst-touched OPEN ones (pure inputs, never rewritten by synthesis),
     // so including them in the hash below can't cause a re-synthesis loop. Bounded for prompt size.
     let analystHypothesesBlock = "";
+    // Refuted hypotheses fed back as NEGATIVE KNOWLEDGE (investigation-guidance #2): a theory the
+    // analyst ruled out must not be re-asserted or re-opened. Loaded from the same store, once.
+    let refutedHypothesesBlock = "";
     if (this.opts.hypothesisStore) {
-      const open = (await this.opts.hypothesisStore.load(caseId))
+      const allHypotheses = await this.opts.hypothesisStore.load(caseId);
+      const open = allHypotheses
         .filter((h) => h.status === "open" && (h.source === "analyst" || h.analystTouched))
         .slice(0, 15);
       if (open.length) {
@@ -4193,7 +4202,16 @@ export class AnalysisPipeline {
           open.map((h) => `- ${h.title}${h.expectedOutcome ? ` (decided by: ${h.expectedOutcome})` : ""}`).join("\n") +
           "\n\n";
       }
+      refutedHypothesesBlock = renderRefutedHypothesesBlock(allHypotheses);
     }
+
+    // Prior-work feedback (investigation-guidance #2): the hunt hit/miss ledger (#157, previously fed
+    // only to the hunt prompts) and the playbook DONE/SKIPPED digest, so synthesis builds on completed
+    // work and dead hunts instead of re-recommending them. Loaded before the hash so completing a task
+    // or collecting a hunt triggers a fresh synthesis (a hit is a pivot; a miss is negative evidence).
+    const priorHuntsBlock = renderPriorHuntsBlock(await this.loadHuntOutcomes(caseId));
+    const playbookTasks = this.opts.playbookStore ? await this.opts.playbookStore.load(caseId) : [];
+    const playbookProgressBlock = renderPlaybookProgressBlock(playbookTasks);
 
     // Skip-if-unchanged: hash only the STABLE INPUTS to synthesis — the in-scope timeline,
     // the IOCs (value + intel verdicts), the scope, the legitimate markers, and (when opted
@@ -4207,6 +4225,10 @@ export class AnalysisPipeline {
       sc: scope, lg: markers.map((m) => m.id),
       nb: notebookBlock,
       hy: analystHypothesesBlock,
+      // Prior-work feedback (#2): completing a task, collecting a hunt, or refuting a hypothesis
+      // changes these strings, so an otherwise-identical timeline re-synthesizes to fold in the
+      // new negative knowledge instead of skipping. Pure inputs — synthesis never rewrites them.
+      pw: priorHuntsBlock + playbookProgressBlock + refutedHypothesesBlock,
     })).digest("hex");
     if (!opts.force && !opts.dryRun && this.lastSynthHash.get(caseId) === synthHash) return loaded;
 
@@ -4274,7 +4296,7 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -4289,6 +4311,9 @@ export class AnalysisPipeline {
       adversaryBlock +
       notebookBlock +
       analystHypothesesBlock +
+      refutedHypothesesBlock +
+      priorHuntsBlock +
+      playbookProgressBlock +
       pinnedBlock +
       reanswerBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
@@ -4400,6 +4425,18 @@ export class AnalysisPipeline {
     // discovery phase (whoami/net group/findstr password/cat .env) tagged by the importers — still
     // appear in the case's MITRE table and report. Same scoped events synthesis saw; pure + idempotent.
     next = { ...next, mitreTechniques: unionEventTechniques(next.mitreTechniques, scopedEvents) };
+
+    // Prior-work safety net (investigation-guidance #2): even with the PLAYBOOK PROGRESS prompt block,
+    // the model may still echo a nextStep that repeats a COMPLETED task. Deterministically DEMOTE (not
+    // drop) any such step to priority "low" with an annotation, requiring a shared host/artifact token
+    // so a same-verb different-target step survives. Keeps the top of the next-steps list actionable.
+    if (playbookTasks.length) {
+      const doneTitles = playbookTasks.filter((t) => t.status === "done").map((t) => t.title);
+      if (doneTitles.length) {
+        const { steps, demotedIds } = demoteCompletedNextSteps(next.nextSteps, doneTitles);
+        if (demotedIds.length) next = { ...next, nextSteps: steps };
+      }
+    }
 
     // Dry run (second-opinion Pass 1): return model B's conclusions WITHOUT persisting or any side
     // effect — and WITHOUT folding in accepted deltas, so B stays an independent opinion.
