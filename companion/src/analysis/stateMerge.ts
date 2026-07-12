@@ -1,5 +1,5 @@
 import type { AnalysisDelta } from "./responseSchema.js";
-import type { InvestigationState, Finding, IOC, Technique, ForensicEvent } from "./stateTypes.js";
+import type { InvestigationState, Finding, IOC, Technique, ForensicEvent, CollectDirective } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { isAnalystWorkLog } from "./workLogFilter.js";
 import { correlateEvents } from "./correlate.js";
@@ -8,6 +8,22 @@ import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
+
+// Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
+// undefined when nothing useful is present, so an all-blank object isn't persisted.
+function cleanCollect(raw: CollectDirective | undefined): CollectDirective | undefined {
+  if (!raw) return undefined;
+  const out: CollectDirective = {};
+  const host = raw.host?.trim();
+  const artifact = raw.artifact?.trim();
+  const logSource = raw.logSource?.trim();
+  const expectedOutcome = raw.expectedOutcome?.trim();
+  if (host) out.host = host;
+  if (artifact) out.artifact = artifact;
+  if (logSource) out.logSource = logSource;
+  if (expectedOutcome) out.expectedOutcome = expectedOutcome;
+  return Object.keys(out).length ? out : undefined;
+}
 
 export interface WindowContext {
   windowSequence: number;
@@ -246,13 +262,18 @@ export function mergeDelta(
     ? delta.keyQuestions.map((q) => ({
         id: q.id, question: q.question, status: q.status, answer: q.answer, pointer: q.pointer,
         ...(q.relatedFindingIds?.length ? { relatedFindingIds: q.relatedFindingIds } : {}),
+        ...(cleanCollect(q.collect) ? { collect: cleanCollect(q.collect) } : {}),
       }))
     : state.keyQuestions;
 
   // Next steps are likewise a holistic recommendation — replaced wholesale by
   // synthesis, preserved when a per-window delta omits them.
   const nextSteps = delta.nextSteps !== undefined
-    ? delta.nextSteps.map((s) => ({ id: s.id, priority: s.priority, action: s.action, rationale: s.rationale, pointer: s.pointer }))
+    ? delta.nextSteps.map((s) => ({
+        id: s.id, priority: s.priority, action: s.action, rationale: s.rationale, pointer: s.pointer,
+        ...(cleanCollect(s.collect) ? { collect: cleanCollect(s.collect) } : {}),
+        ...(s.relatedFindingIds?.length ? { relatedFindingIds: s.relatedFindingIds } : {}),
+      }))
     : state.nextSteps;
 
   return {

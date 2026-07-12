@@ -11,6 +11,7 @@ import { detectTimelineGaps, gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDe
 import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timelineAnomalies.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { corroborationLabel } from "../analysis/findingGrounding.js";
+import { collectSummary } from "../analysis/collectDirective.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { ADVERSARY_EMULATION_CAVEAT } from "../analysis/adversaryEmulation.js";
@@ -582,7 +583,10 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
         ? ` ⚠️ contradicted by timeline (${q.contradicted.techniques.join(", ")})`
         : "";
       const answerCell = (q.answer || "_unknown_") + contra;
-      lines.push(`| ${mark(q.status)} | ${cellMd(q.question)} | ${cellMd(answerCell)} | ${cellMd(q.pointer || "—")} |`);
+      // Prefer the structured collect directive (investigation-guidance #8) as the "where to find it"
+      // for an open question — it names the exact host + log source to collect to answer it.
+      const where = collectSummary(q.collect) || q.pointer || "—";
+      lines.push(`| ${mark(q.status)} | ${cellMd(q.question)} | ${cellMd(answerCell)} | ${cellMd(where)} |`);
     }
     lines.push("");
   }
@@ -728,7 +732,10 @@ function conclusions(state: InvestigationState, meta: ReportMeta, lines: string[
     lines.push("_Draft recommendations from the recommended next steps — review and finalize._", "");
     lines.push("| Priority | Action | Why it matters | Where / what to collect |", "| --- | --- | --- | --- |");
     for (const s of state.nextSteps) {
-      lines.push(`| ${s.priority.toUpperCase()} | ${cellMd(s.action)} | ${cellMd(s.rationale || "—")} | ${cellMd(s.pointer || "—")} |`);
+      // Prefer the structured collect directive (investigation-guidance #8) over the free-text pointer:
+      // "collect Security.evtx from HOST7 — expected: …" is directly actionable.
+      const where = collectSummary(s.collect) || s.pointer || "—";
+      lines.push(`| ${s.priority.toUpperCase()} | ${cellMd(s.action)} | ${cellMd(s.rationale || "—")} | ${cellMd(where)} |`);
     }
     lines.push("");
   } else {

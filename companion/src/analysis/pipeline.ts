@@ -159,6 +159,7 @@ import type { PlaybookTask } from "./playbook.js";
 import type { PlaybookStore } from "./playbookStore.js";
 import { renderPlaybookProgressBlock, renderRefutedHypothesesBlock, demoteCompletedNextSteps } from "./priorWork.js";
 import { flagContradictedAnswers } from "./answerContradiction.js";
+import { detectSatisfiedCollections, buildSatisfiedCollectionsBlock } from "./collectSatisfaction.js";
 import { renderStructuredTags, buildBeaconDigest, buildAttackPhaseDigest } from "./synthEvidence.js";
 import { detectBeacons, beaconEnvOptions } from "./beaconDetect.js";
 import { buildAttackPhases } from "./burstDetect.js";
@@ -578,6 +579,12 @@ export const SYNTHESIS_PROMPT = [
   "  rests only on raw events/context, not a specific finding). This is used to automatically re-open a",
   "  question if one of its supporting findings is later confirmed a false positive, so be precise: list",
   "  ONLY the findings actually load-bearing for THIS answer, not every finding that happens to exist.",
+  "  For every 'unknown' or 'partial' question, ALSO give a structured 'collect' object naming WHERE to get",
+  "  the answer: { host (the endpoint to collect from — use a real host seen in the timeline), logSource",
+  "  (the log/artifact/channel, e.g. 'Security.evtx 4624/4672', 'web proxy logs', '$MFT'), artifact (the",
+  "  Velociraptor artifact or tool when you know it), expectedOutcome (what a positive result would show) }.",
+  "  Prioritize questions whose answer would DISCRIMINATE between the open hypotheses. Omit 'collect' only",
+  "  when the question is fully answered.",
   "  Always include these questions: initial access vector; execution / tooling used; persistence",
   "  mechanisms; privilege escalation; credential access; lateral movement (from→to); command & control;",
   "  data exfiltration; impact; which USER accounts are compromised; which HOSTS are compromised;",
@@ -587,8 +594,12 @@ export const SYNTHESIS_PROMPT = [
   "  ('critical' | 'high' | 'medium' | 'low'), most important first. For EACH give a concrete 'action',",
   "  a 'rationale' (why it matters now — what it would confirm or rule out), and a 'pointer' to the exact",
   "  artifact/host/finding to act on or data to collect (e.g. 'pull Security.evtx 4624/4672 on ALClient07',",
-  "  'sandbox-detonate Bubeus.exe', 'check web proxy logs for the C2 domain'). Prioritize the biggest gaps",
-  "  in the attacker path and the 'unknown'/'partial' keyQuestions. Return 3-7 steps.",
+  "  'sandbox-detonate Bubeus.exe', 'check web proxy logs for the C2 domain'). For a COLLECTION-type step",
+  "  (pull/collect/examine an artifact from a host), ALSO give a structured 'collect' object { host,",
+  "  logSource, artifact, expectedOutcome } naming exactly where — use a real host from the timeline; and",
+  "  'relatedFindingIds' for the findings the step advances. Omit 'collect' for non-collection steps (e.g.",
+  "  'sandbox-detonate X'). Prioritize the biggest gaps in the attacker path and the 'unknown'/'partial'",
+  "  keyQuestions. Return 3-7 steps.",
   "- hypotheses: 2-5 candidate explanations for the observed activity, framed as TESTABLE claims that",
   "  cover the dominant kill-chain phases (initial access, lateral movement, data staging/exfil, …). For",
   "  EACH give a 'title' (a falsifiable statement, e.g. 'Initial access was spear-phishing'), an",
@@ -616,13 +627,13 @@ export const SYNTHESIS_PROMPT = [
       threadsClosed: ["t0"],
       keyQuestions: [
         { id: "q_initial_access", question: "What was the initial access vector?", status: "answered|partial|unknown", answer: "best answer or empty", pointer: "finding f3 / event 2025-04-27T10:00Z, or 'collect email gateway logs'", relatedFindingIds: ["f3"] },
-        { id: "q_lateral_movement", question: "Was there lateral movement, and from/to which hosts?", status: "partial", answer: "…", pointer: "events on ALClient07; confirm with logon 4624 on the target", relatedFindingIds: [] },
+        { id: "q_lateral_movement", question: "Was there lateral movement, and from/to which hosts?", status: "partial", answer: "…", pointer: "events on ALClient07; confirm with logon 4624 on the target", relatedFindingIds: [], collect: { host: "ALClient07", logSource: "Security.evtx 4624/4672 (type 3/10)", artifact: "Windows.EventLogs.Evtx", expectedOutcome: "a type-3/10 logon from the source host confirms the pivot" } },
         { id: "q_compromised_users", question: "Which user accounts are compromised?", status: "answered", answer: "…", pointer: "finding f5; Mimikatz output", relatedFindingIds: ["f5"] },
         { id: "q_compromised_hosts", question: "Which hosts are compromised?", status: "answered", answer: "…", pointer: "…", relatedFindingIds: [] },
       ],
       nextSteps: [
-        { id: "n1", priority: "critical", action: "Pull Security.evtx (4624/4672/4688) on ALClient07 and timeline ±15m around the first execution", rationale: "Confirms the initial access vector and whether lateral movement preceded execution", pointer: "event e3 / finding f1; collect from ALClient07" },
-        { id: "n2", priority: "high", action: "Sandbox-detonate Bubeus.exe and capture network IOCs", rationale: "Establishes C2 infrastructure still unknown in the timeline", pointer: "ioc i2; submit hash, watch for the C2 domain" },
+        { id: "n1", priority: "critical", action: "Pull Security.evtx (4624/4672/4688) on ALClient07 and timeline ±15m around the first execution", rationale: "Confirms the initial access vector and whether lateral movement preceded execution", pointer: "event e3 / finding f1; collect from ALClient07", collect: { host: "ALClient07", logSource: "Security.evtx 4624/4672/4688", artifact: "Windows.EventLogs.Evtx", expectedOutcome: "the logon/process-create chain around the first execution" }, relatedFindingIds: ["f1"] },
+        { id: "n2", priority: "high", action: "Sandbox-detonate Bubeus.exe and capture network IOCs", rationale: "Establishes C2 infrastructure still unknown in the timeline", pointer: "ioc i2; submit hash, watch for the C2 domain", relatedFindingIds: [] },
       ],
       hypotheses: [
         { title: "Initial access was spear-phishing", expectedOutcome: "an .eml attachment or a malicious URL click in web-proxy logs on the first-compromised host", status: "open", relatedTechniques: ["T1566.001"], relatedEventIds: ["e3"], relatedIocIds: ["i1"] },
@@ -4284,6 +4295,16 @@ export class AnalysisPipeline {
     const graphBlock = buildGraphContext({ ...state, forensicTimeline: scopedEvents }, { maxEdges: DEFAULT_MAX_GRAPH_EDGES });
     const beaconBlock = buildBeaconDigest(detectBeacons(scopedEvents, beaconEnvOptions()));
     const attackPhaseBlock = buildAttackPhaseDigest(buildAttackPhases(scopedEvents));
+    // Import-satisfaction (investigation-guidance #8, phase 2): a collection this case previously
+    // recommended (prior nextSteps / unknown questions carrying a structured collect target) whose host
+    // now HAS matching events was fulfilled — stop re-recommending it and re-evaluate the question it
+    // served. Derived from the PRIOR run's guidance vs the current events; the served questions are
+    // added to the re-answer set below so the model reconsiders them with the new evidence.
+    const satisfiedCollections = detectSatisfiedCollections(state, scopedEvents);
+    const satisfiedBlock = buildSatisfiedCollectionsBlock(satisfiedCollections);
+    const satisfiedQuestionIds = new Set(
+      satisfiedCollections.filter((s) => s.target.from === "question").map((s) => s.target.refId),
+    );
     // Analyst-pinned open questions: tell the model to address each (answer when the evidence
     // now supports it) and keep them. They're re-merged into the output below so they persist.
     const pinnedQuestions = state.keyQuestions.filter((q) => q.pinned);
@@ -4305,6 +4326,9 @@ export class AnalysisPipeline {
     );
     const questionsToReanswer = state.keyQuestions.filter((q) => {
       if (q.pinned) return false;
+      // A question whose recommended collection was just satisfied (#8 phase 2) must be re-evaluated
+      // with the evidence now present, not left showing its old "unknown".
+      if (satisfiedQuestionIds.has(q.id)) return true;
       if ((q.relatedFindingIds ?? []).some((id) => droppedFindingIds.has(id))) return true;
       // Fallback for a question that predates relatedFindingIds (or whose answer only ever named
       // the finding in prose): its free-text pointer/answer still cites the now-rejected finding.
@@ -4330,7 +4354,7 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -4351,6 +4375,7 @@ export class AnalysisPipeline {
       refutedHypothesesBlock +
       priorHuntsBlock +
       playbookProgressBlock +
+      satisfiedBlock +
       pinnedBlock +
       reanswerBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +

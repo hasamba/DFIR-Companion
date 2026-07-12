@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Finding, InvestigationState, Severity, StepPriority } from "./stateTypes.js";
 import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
+import { collectSummary, isActionableCollect } from "./collectDirective.js";
 
 // Playbook tracking (issue #36, Phase 1). Turns the AI's "next steps" and the
 // high-severity findings into a trackable checklist of remediation/investigation
@@ -15,7 +16,7 @@ import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitre
 export const PLAYBOOK_STATUSES = ["todo", "in_progress", "done", "skipped"] as const;
 export type PlaybookStatus = (typeof PLAYBOOK_STATUSES)[number];
 
-export const PLAYBOOK_SOURCES = ["next_step", "finding", "custom"] as const;
+export const PLAYBOOK_SOURCES = ["next_step", "finding", "question", "custom"] as const;
 export type PlaybookSource = (typeof PLAYBOOK_SOURCES)[number];
 
 const STEP_PRIORITIES = ["critical", "high", "medium", "low"] as const;
@@ -46,7 +47,7 @@ export interface DerivedTaskSeed {
   title: string;
   description: string;
   priority: StepPriority;
-  source: "next_step" | "finding";
+  source: "next_step" | "finding" | "question";
   sourceKey: string;
   relatedFindingId?: string;
 }
@@ -204,17 +205,20 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
   const foldedNotesByFindingId = new Map<string, string[]>();
   const seeds: DerivedTaskSeed[] = [];
   for (const s of state.nextSteps ?? []) {
-    const relatedFindingId = extractFindingId(s.pointer, findingIds);
+    // Prefer the STRUCTURED links/target (investigation-guidance #8) over prose-scraping the pointer:
+    // a real relatedFindingIds entry, and the structured collect directive as the "where to collect" line.
+    const structuredFindingId = (s.relatedFindingIds ?? []).find((id) => findingIds.has(id));
+    const relatedFindingId = structuredFindingId ?? extractFindingId(s.pointer, findingIds);
+    const collectLine = collectSummary(s.collect);
+    const whereLine = collectLine || (s.pointer ? `Where / what to collect: ${s.pointer}` : "");
     if (relatedFindingId && coveredFindingIds.has(relatedFindingId)) {
-      const note = [s.rationale, s.pointer ? `Where / what to collect: ${s.pointer}` : ""].filter(Boolean).join(" — ") || s.action;
+      const note = [s.rationale, whereLine].filter(Boolean).join(" — ") || s.action;
       const notes = foldedNotesByFindingId.get(relatedFindingId) ?? [];
       notes.push(note);
       foldedNotesByFindingId.set(relatedFindingId, notes);
       continue;
     }
-    const desc = [s.rationale, s.pointer ? `Where / what to collect: ${s.pointer}` : ""]
-      .filter(Boolean)
-      .join("\n\n");
+    const desc = [s.rationale, whereLine].filter(Boolean).join("\n\n");
     seeds.push({
       title: s.action,
       description: desc,
@@ -246,6 +250,22 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
         relatedFindingId: f.id,
       });
     }
+  }
+  // Collection tasks from OPEN questions (investigation-guidance #8): an unknown/partial key question
+  // that carries an actionable structured collect target becomes a trackable "collect X from host Y"
+  // task, so the gap the model identified is status-tracked instead of just displayed. Stable
+  // sourceKey `question:<id>` keeps re-derivation idempotent (refreshes text, preserves analyst status).
+  for (const q of state.keyQuestions ?? []) {
+    if (q.status === "answered") continue;
+    if (!isActionableCollect(q.collect)) continue;
+    const summary = collectSummary(q.collect);
+    seeds.push({
+      title: `Collect to answer: ${q.question}`,
+      description: [summary, q.collect.expectedOutcome ? `Expected: ${q.collect.expectedOutcome}` : ""].filter(Boolean).join("\n\n"),
+      priority: "high",
+      source: "question",
+      sourceKey: `question:${q.id}`,
+    });
   }
   return seeds;
 }

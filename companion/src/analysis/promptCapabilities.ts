@@ -34,7 +34,8 @@ export const PROMPT_CAPABILITIES: readonly PromptCapability[] = [
     // hypotheses      → issue #140 auto-generation (delta.hypotheses consumed in pipeline.ts)
     // confidenceReason→ issue #226 (confidence.ts / finding cards)
     // relatedFindingIds→ issue #222 FP→question re-answer wiring (else it degrades to prose matching)
-    markers: ["hypotheses", "confidenceReason", "relatedFindingIds"],
+    // collect         → guidance #8 structured collection directives (deploy button + import-satisfaction)
+    markers: ["hypotheses", "confidenceReason", "relatedFindingIds", "collect"],
   },
 ];
 

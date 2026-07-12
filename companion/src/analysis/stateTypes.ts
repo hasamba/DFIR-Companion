@@ -162,6 +162,18 @@ export interface Technique {
   findingIds: string[];
 }
 
+// A STRUCTURED collection directive (investigation-guidance #8). The synthesis prompt already asks the
+// model to name what to collect and where — but only as free prose in `pointer`, which nothing can act
+// on. This captures the same intent as fields so the UI can attach a one-click Velociraptor Deploy
+// button, the playbook can task it against the right endpoint, and a later import can be matched to it.
+// Every field optional/best-effort so an older state or a partial model reply still validates.
+export interface CollectDirective {
+  host?: string;            // the endpoint to collect from (validated against the case's known endpoints before deploy)
+  artifact?: string;        // the artifact/tool to collect, e.g. "Windows.EventLogs" or "$MFT"
+  logSource?: string;       // the log source/channel/file, e.g. "Security.evtx 4624/4672", "web proxy logs"
+  expectedOutcome?: string; // what a positive result would show — ties the collection to the question/hypothesis it serves
+}
+
 export type QuestionStatus = "answered" | "partial" | "unknown";
 
 // A standard DFIR question the AI tracks across the case, with its current answer
@@ -185,6 +197,10 @@ export interface InvestigationQuestion {
     techniques: string[];   // the contradicting technique ids observed in-scope
     eventIds: string[];     // the events that carry them (a few, for the pointer/badge)
   };
+  // Structured collection directive for an 'unknown'/'partial' question (investigation-guidance #8):
+  // where/what to collect to answer it, so the UI can offer a one-click Deploy and a later import can be
+  // matched back to it. Complements the free-text `pointer`.
+  collect?: CollectDirective;
 }
 
 export type StepPriority = "critical" | "high" | "medium" | "low";
@@ -197,6 +213,12 @@ export interface NextStep {
   action: string;              // what to do, e.g. "Pull Security.evtx 4624/4672 on ALClient07"
   rationale: string;           // why it matters now — what it confirms or rules out
   pointer: string;             // concrete artifact/host/finding to act on, or data to collect
+  // Structured collection directive (investigation-guidance #8): the machine-actionable form of a
+  // collection-type step, so the UI can attach a one-click Velociraptor Deploy and a later import can
+  // be matched to it. Absent for non-collection steps (e.g. "sandbox-detonate X").
+  collect?: CollectDirective;
+  // Finding ids this step advances, so the playbook can link it without prose-scraping "f<n>" tokens.
+  relatedFindingIds?: string[];
 }
 
 export interface InvestigationState {
