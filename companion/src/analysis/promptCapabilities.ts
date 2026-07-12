@@ -34,8 +34,11 @@ export const PROMPT_CAPABILITIES: readonly PromptCapability[] = [
     // hypotheses      → issue #140 auto-generation (delta.hypotheses consumed in pipeline.ts)
     // confidenceReason→ issue #226 (confidence.ts / finding cards)
     // relatedFindingIds→ issue #222 FP→question re-answer wiring (else it degrades to prose matching)
-    // collect         → guidance #8 structured collection directives (deploy button + import-satisfaction)
-    markers: ["hypotheses", "confidenceReason", "relatedFindingIds", "collect"],
+    // logSource       → guidance #8 structured collection directives. NOTE: use "logSource" (a field
+    //   name unique to the #8 `collect` instruction), NOT the bare word "collect" — that appears as
+    //   prose in every older prompt ("collect email gateway logs"), so it silently PASSED a stale
+    //   pre-#8 override that lacked the structured directive.
+    markers: ["hypotheses", "confidenceReason", "relatedFindingIds", "logSource"],
   },
 ];
 
