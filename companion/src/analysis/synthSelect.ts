@@ -3,7 +3,7 @@ import { byEventTime } from "./forensicSort.js";
 import { buildAttackPhases } from "./burstDetect.js";
 import { buildAssetGraph } from "./assetGraph.js";
 import { extractCveIds, matchKevEntries, buildKevDigest, type KevCatalog } from "./kev.js";
-import { rankConnectiveIocs, buildConnectiveIocDigest, shortHost, isKnownHostAsset } from "./iocAnchors.js";
+import { rankConnectiveIocs, buildConnectiveIocDigest, shortHost, isKnownHostAsset, classifyVerdict, iocHasBehavioralEvent } from "./iocAnchors.js";
 import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 
 const SEV_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
@@ -223,17 +223,27 @@ export function buildSynthesisContext(
     return `- ${a.name} (${a.type})${iocs ? ` ← ${iocs}` : ""}`;
   });
 
-  const verdictLines = state.iocs
-    .filter((i) => (i.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"))
-    .slice(0, 25)
-    .map((i) => {
-      const e = (i.enrichments ?? []).find((x) => x.verdict === "malicious")
-        ?? (i.enrichments ?? []).find((x) => x.verdict === "suspicious");
-      const conflict = isKnownHostAsset(i.value, hostNames)
-        ? " ⚠ CONFLICT: also one of this case's OWN host assets — this verdict may be stale/wrong; requires independent corroboration before treating it as confirmed malicious"
-        : "";
-      return `- ${i.value} = ${e?.verdict}${e?.source ? ` (${e.source}${e.score ? ` ${e.score}` : ""})` : ""}${conflict}`;
-    });
+  // Threat-intel verdicts, classified by trust (investigation-guidance #7): a single stale provider
+  // verdict on the case's OWN infra flowed unchecked into a Critical finding (northpeak). Each verdict
+  // is tagged [corroborated] (2+ providers, or intel+behavioral evidence) vs [lone-intel] (single
+  // provider — a LEAD, not a compromise), and CONFLICTED verdicts (own-host/internal address) are moved
+  // to their own "do not treat as confirmed" block so the model can't read them as external C2.
+  const trustedVerdicts: string[] = [];
+  const conflictVerdicts: string[] = [];
+  for (const i of state.iocs) {
+    const hit = (i.enrichments ?? []).find((x) => x.verdict === "malicious")
+      ?? (i.enrichments ?? []).find((x) => x.verdict === "suspicious");
+    if (!hit) continue;
+    const cls = classifyVerdict(i, { hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents), hostNames });
+    if (cls === "none") continue;
+    const base = `${i.value} = ${hit.verdict}${hit.source ? ` (${hit.source}${hit.score ? ` ${hit.score}` : ""})` : ""}`;
+    if (cls === "conflicted") {
+      conflictVerdicts.push(`- ${base} ⚠ CONFLICT: also one of this case's OWN host assets or an internal address — this verdict is most likely stale/wrong; do NOT treat it as confirmed malicious or as external C2`);
+    } else {
+      trustedVerdicts.push(`- ${base} [${cls}]`);
+    }
+    if (trustedVerdicts.length + conflictVerdicts.length >= 25) break;
+  }
 
   // KEV correlation: scan the scoped events + IOC values for CVE ids and cross-reference
   // against the loaded catalog. Only fires when a catalog is provided (opt-in, store starts
@@ -260,7 +270,8 @@ export function buildSynthesisContext(
   if (concentrationBlock) block += concentrationBlock;
   if (connectiveBlock) block += connectiveBlock;
   if (assetLines.length) block += `COMPROMISED ASSETS (host/account ← IoCs seen on it):\n${assetLines.join("\n")}\n\n`;
-  if (verdictLines.length) block += `THREAT-INTEL VERDICTS (third-party):\n${verdictLines.join("\n")}\n\n`;
+  if (trustedVerdicts.length) block += `THREAT-INTEL VERDICTS (third-party — [corroborated] = 2+ providers or intel PLUS behavioral evidence; [lone-intel] = a single provider with no corroborating activity, treat as a LEAD, not a confirmed compromise):\n${trustedVerdicts.join("\n")}\n\n`;
+  if (conflictVerdicts.length) block += `INTEL CONFLICTS (do NOT treat as confirmed — a verdict on the case's OWN infrastructure or an internal address, most likely stale/incorrect third-party data):\n${conflictVerdicts.join("\n")}\n\n`;
   if (kevBlock) block += kevBlock;
   return block;
 }

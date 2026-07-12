@@ -72,9 +72,30 @@ describe("buildSynthesisContext", () => {
       severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "db-01.northpeaklabs.com" });
 
     const ctx = buildSynthesisContext(s, s.forensicTimeline);
-    expect(ctx).toContain("THREAT-INTEL VERDICTS");
+    // #7: a conflicted verdict (own-host asset) is moved to the dedicated INTEL CONFLICTS block so the
+    // model can't read it as confirmed external C2 — not the trusted THREAT-INTEL VERDICTS list.
+    expect(ctx).toContain("INTEL CONFLICTS");
     expect(ctx).toContain("db-01.northpeaklabs.com = suspicious (OpenCTI)");
     expect(ctx).toContain("CONFLICT");
     expect(ctx).toContain("also one of this case's OWN host assets");
+  });
+
+  it("tags a corroborated verdict (provider + behavioral event) as [corroborated]", () => {
+    const s = emptyState("c1");
+    s.iocs.push({ id: "i1", type: "process", value: "evil.exe", firstSeen: "",
+      enrichments: [{ source: "VirusTotal", verdict: "malicious", score: "52/73", fetchedAt: "" }] });
+    s.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "evil.exe run", severity: "Critical",
+      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WIN-01" });
+    const ctx = buildSynthesisContext(s, s.forensicTimeline);
+    expect(ctx).toContain("THREAT-INTEL VERDICTS");
+    expect(ctx).toContain("evil.exe = malicious (VirusTotal 52/73) [corroborated]");
+  });
+
+  it("tags a single-provider verdict with no behavioral evidence as [lone-intel]", () => {
+    const s = emptyState("c1");
+    s.iocs.push({ id: "i1", type: "domain", value: "evil-c2.example", firstSeen: "",
+      enrichments: [{ source: "VirusTotal", verdict: "suspicious", score: "", fetchedAt: "" }] });
+    const ctx = buildSynthesisContext(s, s.forensicTimeline);
+    expect(ctx).toContain("[lone-intel]");
   });
 });

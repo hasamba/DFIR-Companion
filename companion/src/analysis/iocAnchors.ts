@@ -40,6 +40,60 @@ export function isKnownHostAsset(value: string, hostNames: ReadonlySet<string>):
   return hostNames.has(shortHost(value));
 }
 
+// RFC1918 / loopback / link-local / CGNAT — a "verdict" on an internal address is almost always stale
+// or mis-attributed third-party data, not a real external indicator. A HINT toward "conflicted".
+const INTERNAL_IP =
+  /^(?:10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/;
+export function isInternalAddress(value: string): boolean {
+  return INTERNAL_IP.test(value.trim());
+}
+
+// The trust class of a threat-intel verdict on one IOC (investigation-guidance #7). The current guard
+// is prompt text plus a score-bump reduction, which the model can (and in northpeak DID) ignore — a
+// stale OpenCTI verdict on the org's OWN db-01 server became a Critical "C2" finding. This deterministic
+// classification is the gate:
+//   conflicted  — the value is one of the case's OWN host assets or an internal address: a verdict here
+//                 is likely stale/wrong; never treat as confirmed external infrastructure.
+//   corroborated— 2+ DISTINCT providers agree malicious/suspicious (scan ALL enrichments, not the first),
+//                 OR one provider PLUS a linked behavioral event (a real execution/transfer/connection).
+//   lone-intel  — a single provider with no behavioral corroboration: a lead worth mentioning, not a
+//                 confirmed compromise.
+//   none        — no malicious/suspicious verdict at all.
+export type VerdictClass = "corroborated" | "lone-intel" | "conflicted" | "none";
+
+export interface VerdictInput {
+  value: string;
+  enrichments?: Array<{ verdict?: string; source?: string; provider?: string }>;
+}
+
+export function classifyVerdict(
+  ioc: VerdictInput,
+  opts: { hasBehavioralEvent: boolean; hostNames: ReadonlySet<string> },
+): VerdictClass {
+  const hits = (ioc.enrichments ?? []).filter((e) => e.verdict === "malicious" || e.verdict === "suspicious");
+  if (!hits.length) return "none";
+  if (isKnownHostAsset(ioc.value, opts.hostNames) || isInternalAddress(ioc.value)) return "conflicted";
+  const providers = new Set(hits.map((e) => (e.provider || e.source || "").trim().toLowerCase()).filter(Boolean));
+  if (providers.size >= 2) return "corroborated";
+  if (providers.size >= 1 && opts.hasBehavioralEvent) return "corroborated";
+  return "lone-intel";
+}
+
+// Whether any Critical/High/Medium event in `events` references this IOC value in a structured field or
+// its description — the "behavioral corroboration" a lone intel verdict needs to be trusted. Pure.
+const BEHAVIORAL_SEVERITIES = new Set(["Critical", "High", "Medium"]);
+export function iocHasBehavioralEvent(value: string, events: readonly ForensicEvent[]): boolean {
+  const v = value.trim().toLowerCase();
+  if (!v) return false;
+  for (const e of events) {
+    if (!BEHAVIORAL_SEVERITIES.has(e.severity)) continue;
+    const fields = [e.dstIp, e.srcIp, e.path, e.sha256, e.md5, e.processName, e.parentName];
+    if (fields.some((f) => f && String(f).trim().toLowerCase() === v)) return true;
+    if ((e.description ?? "").toLowerCase().includes(v)) return true;
+  }
+  return false;
+}
+
 // High-abuse / commonly-malicious TLDs — a HINT, never a verdict.
 const RISKY_TLD = /\.(?:tk|top|bit|gq|ml|cf|ga|xyz|cloud|to|cc|pw|click|link|work|zip|mov)$/i;
 const DOMAIN_SHAPE = /^[a-z0-9.-]+\.[a-z]{2,}$/i;

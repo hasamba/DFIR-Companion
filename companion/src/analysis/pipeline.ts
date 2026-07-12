@@ -163,7 +163,9 @@ import { renderStructuredTags, buildBeaconDigest, buildAttackPhaseDigest } from 
 import { detectBeacons, beaconEnvOptions } from "./beaconDetect.js";
 import { buildAttackPhases } from "./burstDetect.js";
 import { buildEvidenceGraph } from "./evidenceGraph.js";
-import { groundAndScoreFindings, corroborationLabel } from "./findingGrounding.js";
+import { buildAssetGraph } from "./assetGraph.js";
+import { shortHost } from "./iocAnchors.js";
+import { groundAndScoreFindings, capIntelOnlyFindings, corroborationLabel } from "./findingGrounding.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
@@ -4500,7 +4502,12 @@ export class AnalysisPipeline {
     {
       const graphLinkedEventIds = new Set(buildEvidenceGraph(next).edges.flatMap((e) => e.eventIds));
       const inScope = next.forensicTimeline.filter((e) => eligibleIds.has(e.id));
-      next = { ...next, findings: groundAndScoreFindings({ findings: next.findings, scopedEvents: inScope, iocs: next.iocs, graphLinkedEventIds }) };
+      const grounded = groundAndScoreFindings({ findings: next.findings, scopedEvents: inScope, iocs: next.iocs, graphLinkedEventIds });
+      // Intel-verdict gate (investigation-guidance #7): floor an intel-ONLY High/Critical finding (no
+      // behavioral corroboration, all its verdict IOCs lone-intel/conflicted) to Medium/≤60 — the
+      // northpeak stale-CTI-on-own-server class. Runs after grounding so it sees the corroboration rollup.
+      const hostNames = new Set(buildAssetGraph(next).assets.filter((a) => a.type === "host").map((a) => shortHost(a.name)));
+      next = { ...next, findings: capIntelOnlyFindings({ findings: grounded, iocs: next.iocs, scopedEvents: inScope, hostNames }) };
     }
 
     // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest

@@ -11,7 +11,8 @@
 //   CAPS       — a single-tool, single-host, uncorroborated finding can't keep a high confidence.
 // It only ever LOWERS confidence (never invents grounding, never raises a score) and is pure + idempotent.
 
-import type { Finding, ForensicEvent, IOC, FindingCorroboration } from "./stateTypes.js";
+import type { Finding, ForensicEvent, IOC, FindingCorroboration, Severity } from "./stateTypes.js";
+import { classifyVerdict, iocHasBehavioralEvent } from "./iocAnchors.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
@@ -94,6 +95,53 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       ...(ungrounded ? { ungrounded: true } : {}),
       ...(confidence !== undefined ? { confidence } : {}),
       ...(confidenceReason !== undefined ? { confidenceReason } : {}),
+    };
+  });
+}
+
+// An intel-only High/Critical finding can't keep its severity — the confidence cap (investigation-
+// guidance #7 coordinating with #6). A finding whose ONLY malicious signal is threat-intel (all its
+// verdict-carrying IOCs are lone-intel/conflicted) and which has no behavioral corroboration (≤1 tool,
+// not graph-linked) is floored to Medium / confidence ≤ 60 with a reason. This is the northpeak class:
+// a stale OpenCTI verdict on the org's own db-01 became a Critical "C2" finding on a benign connection.
+export const INTEL_ONLY_SEVERITY_FLOOR: Severity = "Medium";
+export const INTEL_ONLY_CONFIDENCE_CAP = 60;
+const SEV_ORDER: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+
+export interface IntelCapInput {
+  findings: readonly Finding[];
+  iocs: readonly IOC[];
+  scopedEvents: readonly ForensicEvent[];
+  hostNames: ReadonlySet<string>;          // the case's own host short-names (see iocAnchors.shortHost)
+}
+
+export function capIntelOnlyFindings(input: IntelCapInput): Finding[] {
+  const { findings, iocs, scopedEvents, hostNames } = input;
+  const iocById = new Map(iocs.map((i) => [i.id, i] as const));
+  return findings.map((f) => {
+    // Only High/Critical findings can be over-graded by intel; leave the rest.
+    if (SEV_ORDER[f.severity] > SEV_ORDER.High) return f;
+    // The finding's verdict-carrying related IOCs.
+    const verdictIocs = (f.relatedIocs ?? [])
+      .map((id) => iocById.get(id))
+      .filter((i): i is IOC => !!i && (i.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"));
+    if (!verdictIocs.length) return f;   // not intel-driven
+
+    const classes = verdictIocs.map((i) =>
+      classifyVerdict(i, { hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents), hostNames }));
+    const intelOnly = classes.every((c) => c === "lone-intel" || c === "conflicted");
+    const hasConflict = classes.some((c) => c === "conflicted");
+    const behavioralGrounding = !!f.corroboration && (f.corroboration.distinctTools >= 2 || f.corroboration.graphLinked);
+    if (!intelOnly || behavioralGrounding) return f;
+
+    const note = hasConflict
+      ? "capped: rests on a threat-intel verdict about the case's OWN infrastructure — most likely stale/wrong, verify before acting"
+      : "capped: rests on uncorroborated single-provider threat-intel only — a lead, not a confirmed compromise; verify before acting";
+    return {
+      ...f,
+      severity: INTEL_ONLY_SEVERITY_FLOOR,
+      confidence: Math.min(f.confidence ?? INTEL_ONLY_CONFIDENCE_CAP, INTEL_ONLY_CONFIDENCE_CAP),
+      confidenceReason: appendReason(f.confidenceReason, note),
     };
   });
 }
