@@ -7,6 +7,7 @@ import { buildVelociraptorClient, matchClient, ALL_CLIENTS, normalizeHuntExpiryS
 import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import type { HuntOutcomeSource } from "../analysis/huntOutcomes.js";
+import { resolveCollectVql } from "../analysis/collectDirectiveResolve.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -547,6 +548,39 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       return res.status(200).json({ mode, waitMinutes, ...launch });
     } catch (err) {
       logLine(`[velociraptor] deploy-hunt ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // One-click deploy of a structured collection directive (investigation-guidance #8, phase 3). The
+  // dashboard next-steps / key-questions Deploy button posts { hostname, artifact?, logSource? }; we
+  // resolve those to a real client artifact VQL (collectDirectiveResolve) and launch a per-host
+  // collection via the same collectHostResolved path deploy-hunt uses — which itself refuses a host that
+  // isn't an enrolled client, the server-side backstop to the dashboard's own known-host gating. 400
+  // when the directive names nothing collectable (the UI then shows a manual checklist instead).
+  app.post("/cases/:id/velociraptor/collect-directive", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const caseId = req.params.id;
+    const hostname = typeof req.body?.hostname === "string" ? req.body.hostname.trim() : "";
+    const artifact = typeof req.body?.artifact === "string" ? req.body.artifact.trim() : "";
+    const logSource = typeof req.body?.logSource === "string" ? req.body.logSource.trim() : "";
+    if (!hostname) return res.status(400).json({ error: "hostname is required" });
+    const resolved = resolveCollectVql({ artifact: artifact || undefined, logSource: logSource || undefined });
+    if (!resolved) {
+      return res.status(400).json({ error: `could not map "${artifact || logSource}" to a Velociraptor artifact — collect it manually` });
+    }
+    const title = `Collect ${resolved.artifact} on ${hostname}`;
+    try {
+      logLine(`[velociraptor] collect-directive ${resolved.artifact} on ${hostname}`);
+      const result = await collectHostResolved(hostname, resolved.vql, title);
+      await ctx.recordHuntDeploy(caseId, { source: "playbook", title, vql: resolved.vql, deployedAt: new Date().toISOString() });
+      options.onVeloHunt?.(caseId);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "hunt", action: "deploy-collection", detail: `collection ${resolved.artifact} on ${hostname}`,
+      });
+      return res.status(200).json({ ...result, artifact: resolved.artifact, vql: resolved.vql });
+    } catch (err) {
+      logLine(`[velociraptor] collect-directive ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
     }
   });

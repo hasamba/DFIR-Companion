@@ -1057,6 +1057,13 @@
     .qrow .q-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
     .qrow .q-answer, .qrow .q-pointer { display: block; margin-top: 3px; font-size: 12px; color: var(--c-9aa4b2); }
     .qrow .q-pointer { color: var(--c-6aa9ff); }
+    /* Structured collection directive + one-click Deploy (investigation-guidance #8, phase 3). */
+    .collect-directive { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 4px; font-size: 12px; }
+    .collect-directive .collect-what { color: var(--c-e0a458, #e0a458); }
+    .collect-deploy { background: var(--c-2f8f4e, #2f8f4e); border: 0; color: #fff; border-radius: 5px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
+    .collect-deploy:disabled { opacity: .6; cursor: default; }
+    .collect-deploy.collect-done { background: var(--c-3a6ea5, #3a6ea5); }
+    .collect-manual { color: var(--c-9aa4b2); font-style: italic; }
     .q-status { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
     .q-status-answered { color: var(--c-6bcb77); }
     .q-status-partial { color: var(--c-e0b84a); }
@@ -12867,6 +12874,36 @@
       if (caseId) saveConfidenceControl(caseId, parseInt(this.value, 10) || 0);
     });
 
+    // One-click deploy of a structured collection directive (investigation-guidance #8, phase 3).
+    // Delegated (the next-steps / key-questions HTML is re-rendered on every synthesis). Confirms, then
+    // POSTs to the case collect-directive route which resolves the artifact VQL and launches the
+    // collection on the (known, enrolled) host. The Deploy button is only rendered for a known case host.
+    document.addEventListener("click", async (ev) => {
+      const btn = ev.target && ev.target.closest && ev.target.closest(".collect-deploy");
+      if (!btn || btn.disabled) return;
+      const host = btn.getAttribute("data-host");
+      const artifact = btn.getAttribute("data-artifact") || "";
+      const logSource = btn.getAttribute("data-logsource") || "";
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !host) return;
+      if (!confirm(`Deploy a Velociraptor collection on ${host}?\n\nArtifact/source: ${artifact || logSource || "(auto)"}`)) return;
+      const orig = btn.textContent;
+      btn.disabled = true; btn.textContent = "deploying…";
+      try {
+        const r = await fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/collect-directive`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ hostname: host, artifact, logSource }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        btn.textContent = `✓ ${j.artifact || "collection"} launched`;
+        btn.classList.add("collect-done");
+      } catch (e) {
+        btn.disabled = false; btn.textContent = orig;
+        alert(`Collection failed: ${e.message}`);
+      }
+    });
+
     function render(rawState) {
       // Keep the raw state so scope-preset clicks can re-project without a refetch.
       lastState = rawState;
@@ -12876,6 +12913,24 @@
       document.getElementById("narrativeView").textContent = state.narrativeTimeline || "—";
 
       const PRIO = { critical: "#ff5c5c", high: "#ff9f43", medium: "#ffd93b", low: "#6bcB77" };
+
+      // Structured collection directives (investigation-guidance #8, phase 3): render a one-click
+      // Deploy for a collect target on a KNOWN case host when Velociraptor is configured, else a
+      // copyable manual-collection line. Host is matched on its short name (mirrors the server's
+      // shortHost) against the case's observed assets, so a hallucinated hostname never gets a button.
+      const shortHostJs = (v) => String(v || "").toLowerCase().replace(/^https?:\/\//, "").split(/[\/:?]/)[0].split(".")[0];
+      const knownHostKeys = new Set((state.forensicTimeline || []).map(e => shortHostJs(e.asset)).filter(Boolean));
+      const collectDirectiveHtml = (c) => {
+        if (!c || !c.host) return "";
+        const what = c.logSource || c.artifact || "";
+        const summary = `collect ${esc(what)}${what ? " " : ""}from ${esc(c.host)}` + (c.expectedOutcome ? ` — expected: ${esc(c.expectedOutcome)}` : "");
+        const deployable = veloEnabled && knownHostKeys.has(shortHostJs(c.host));
+        const btn = deployable
+          ? `<button class="collect-deploy" data-host="${escAttr(c.host)}" data-artifact="${escAttr(c.artifact || "")}" data-logsource="${escAttr(c.logSource || "")}" title="Launch this collection on ${escAttr(c.host)} via Velociraptor">⬇ Collect on ${esc(c.host)}</button>`
+          : `<span class="collect-manual" title="${veloEnabled ? 'Host not seen in this case — collect manually' : 'Velociraptor API not configured — collect manually'}">manual collection</span>`;
+        return `<span class="collect-directive"><span class="collect-what">📥 ${summary}</span> ${btn}</span>`;
+      };
+
       const ns = state.nextSteps || [];
       document.getElementById("nextSteps").innerHTML = ns.length
         ? ns.map(s => {
@@ -12884,6 +12939,7 @@
               `<span class="step-priority">${esc(String(s.priority || "").toUpperCase())}</span> ${esc(s.action)}` +
               (s.rationale ? `<span class="step-rationale">${esc(s.rationale)}</span>` : "") +
               (s.pointer ? `<span class="step-pointer">→ ${esc(s.pointer)}</span>` : "") +
+              collectDirectiveHtml(s.collect) +
               `</div>`;
           }).join("")
         : "<div style='color:var(--c-9aa4b2)'>Not assessed yet — run Synthesize.</div>";
@@ -12904,6 +12960,7 @@
                 ? ` <span class="q-contradicted" style="color:var(--c-ff6b6b,#ff6b6b);font-weight:600" title="The timeline contains events tagged ${esc(q.contradicted.techniques.join(', '))} that contradict this negative answer — review before concluding.">⚠️ contradicted by timeline (${esc(q.contradicted.techniques.join(', '))})</span>`
                 : "") +
               (q.pointer ? `<span class="q-pointer">→ ${esc(q.pointer)}</span>` : "") +
+              (q.status !== "answered" ? collectDirectiveHtml(q.collect) : "") +
               `</div>`;
           }).join("")
         : "<div style='color:var(--c-9aa4b2)'>Not assessed yet — run Synthesize.</div>";
