@@ -10,6 +10,7 @@ import { buildGeoMap } from "../analysis/geoMap.js";
 import { detectTimelineGaps, gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDetect.js";
 import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timelineAnomalies.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
+import { corroborationLabel } from "../analysis/findingGrounding.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { ADVERSARY_EMULATION_CAVEAT } from "../analysis/adversaryEmulation.js";
@@ -514,6 +515,13 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
     for (const f of sorted) {
       const confLabel = f.confidence !== undefined ? ` [${f.confidence}% confidence]` : "";
       lines.push(`#### [${f.severity}]${confLabel} ${f.title} (${f.id})`);
+      // Corroboration/grounding badge (investigation-guidance #6): "2 tools / 3 hosts / intel ✓" or a
+      // prominent "⚠️ no cited evidence" for an ungrounded finding, so a hypothesis never reads as fact.
+      if (f.ungrounded) {
+        lines.push(`> ⚠️ **No cited evidence** — treat as a hypothesis, not a fact (confidence capped).`);
+      } else if (f.corroboration) {
+        lines.push(`- Corroboration: ${corroborationLabel(f)}`);
+      }
       lines.push(f.description || "_no description_");
       if (f.relatedIocs.length) lines.push(`- IOCs: ${f.relatedIocs.join(", ")}`);
       if (f.mitreTechniques.length) lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);

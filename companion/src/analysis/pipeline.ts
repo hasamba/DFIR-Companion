@@ -162,6 +162,8 @@ import { flagContradictedAnswers } from "./answerContradiction.js";
 import { renderStructuredTags, buildBeaconDigest, buildAttackPhaseDigest } from "./synthEvidence.js";
 import { detectBeacons, beaconEnvOptions } from "./beaconDetect.js";
 import { buildAttackPhases } from "./burstDetect.js";
+import { buildEvidenceGraph } from "./evidenceGraph.js";
+import { groundAndScoreFindings, corroborationLabel } from "./findingGrounding.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
@@ -4250,8 +4252,13 @@ export class AnalysisPipeline {
       ? `INVESTIGATION SCOPE: only consider activity from ${scope.start ?? "the beginning"} to ${scope.end ?? "now"}. ` +
         `Events outside this window have already been removed below.\n\n`
       : "";
-    // Cap the existing-findings echo too (a big import can produce 100s of auto-findings).
-    const existingFindings = state.findings.slice(0, 150).map((f) => `[${f.id}] ${f.title}`).join("\n") || "(none yet)";
+    // Cap the existing-findings echo too (a big import can produce 100s of auto-findings). Append the
+    // prior run's corroboration label (investigation-guidance #6) so the model sees which of its own
+    // earlier claims were weak/uncorroborated and can strengthen or drop them this run.
+    const existingFindings = state.findings.slice(0, 150).map((f) => {
+      const corr = corroborationLabel(f);
+      return `[${f.id}] ${f.title}${corr ? ` — ${corr}` : ""}`;
+    }).join("\n") || "(none yet)";
     const openThreads = state.openThreads
       .filter((t) => t.status === "open")
       .map((t) => `[${t.id}] ${t.description}`)
@@ -4482,6 +4489,18 @@ export class AnalysisPipeline {
     // on re-synthesis. Pure + idempotent; a no-op when the store or record is absent/empty.
     if (this.opts.secondOpinionStore) {
       next = applyAcceptedSecondOpinion(next, await this.opts.secondOpinionStore.load(caseId));
+    }
+
+    // Per-finding grounding + corroboration (investigation-guidance #6): resolve each finding's
+    // supporting in-scope events (forward relatedEventIds AND reverse forensicTimeline links, so the
+    // deterministic backfill findings ground correctly), roll up { tools, hosts, intel, graph-linked },
+    // flag an uncited finding as `ungrounded`, and CAP an ungrounded/single-source finding's confidence.
+    // Deterministic + idempotent; only ever lowers confidence. Runs last, so it grades the FINAL finding
+    // set (incl. backfills + accepted second-opinion deltas).
+    {
+      const graphLinkedEventIds = new Set(buildEvidenceGraph(next).edges.flatMap((e) => e.eventIds));
+      const inScope = next.forensicTimeline.filter((e) => eligibleIds.has(e.id));
+      next = { ...next, findings: groundAndScoreFindings({ findings: next.findings, scopedEvents: inScope, iocs: next.iocs, graphLinkedEventIds }) };
     }
 
     // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest

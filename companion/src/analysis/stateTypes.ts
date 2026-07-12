@@ -36,11 +36,27 @@ export interface IOC {
   extractedFrom?: string[];
 }
 
+// Deterministic corroboration rollup for a finding (investigation-guidance #6), computed post-synthesis
+// from its supporting in-scope events + related IOCs. Lets the UI/report show "2 tools / 3 hosts / intel"
+// vs "uncorroborated", and drives the confidence caps — an unverifiable AI-emitted number alone let a
+// single stale CTI verdict mint a Critical finding (northpeak).
+export interface FindingCorroboration {
+  distinctTools: number;   // union of event.sources across the finding's supporting events
+  distinctHosts: number;   // distinct event.asset across them
+  intelSources: number;    // this finding's related IOCs carrying a malicious/suspicious intel verdict
+  graphLinked: boolean;    // any supporting event participates in an evidence-graph causal edge
+}
+
 export interface Finding {
   id: string;
   severity: Severity;
   confidence?: number;          // 0–100: AI certainty this finding is real (absent = unknown)
   confidenceReason?: string;    // one-sentence why (evidence strength, source corroboration, model certainty)
+  // Set post-synthesis by groundAndScoreFindings (investigation-guidance #6). `ungrounded` = no cited
+  // in-scope event supports it (a hypothesis, not a fact) → confidence hard-capped + badged.
+  // `corroboration` is the rollup above. Both recomputed every synthesis; persisted for display.
+  ungrounded?: boolean;
+  corroboration?: FindingCorroboration;
   title: string;
   description: string;
   relatedIocs: string[];        // IOC ids
