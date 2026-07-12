@@ -62,13 +62,23 @@ describe("checkConfiguredPromptDrift", () => {
     const drift = checkConfiguredPromptDrift({ DFIR_AI_SYNTH_PROMPT_FILE: file });
     expect(drift).toHaveLength(1);
     expect(drift[0].name).toBe("SYNTH");
-    expect(drift[0].missing).toEqual(["hypotheses", "confidenceReason", "relatedFindingIds", "collect"]);
+    expect(drift[0].missing).toEqual(["hypotheses", "confidenceReason", "relatedFindingIds", "logSource"]);
     expect(driftMessage(drift[0])).toContain("synthesis.txt");
+  });
+
+  it("flags a stale pre-#8 override whose only 'collect' is prose (the bare-word false-pass bug)", () => {
+    const file = join(tmp, "pre8-synthesis.txt");
+    // A pre-#8 re-eject: has hypotheses/confidenceReason/relatedFindingIds AND the prose "collect email
+    // gateway logs" — but NOT the structured `collect { logSource }` directive. Must still be flagged.
+    writeFileSync(file, "output: hypotheses, confidenceReason, relatedFindingIds. pointer: 'collect email gateway logs'", "utf8");
+    const drift = checkConfiguredPromptDrift({ DFIR_AI_SYNTH_PROMPT_FILE: file });
+    expect(drift).toHaveLength(1);
+    expect(drift[0].missing).toEqual(["logSource"]);
   });
 
   it("passes a fresh override file that contains every marker", () => {
     const file = join(tmp, "fresh-synthesis.txt");
-    writeFileSync(file, "output: hypotheses, confidenceReason, relatedFindingIds, collect", "utf8");
+    writeFileSync(file, "output: hypotheses, confidenceReason, relatedFindingIds, collect { logSource }", "utf8");
     expect(checkConfiguredPromptDrift({ DFIR_AI_SYNTH_PROMPT_FILE: file })).toEqual([]);
   });
 
