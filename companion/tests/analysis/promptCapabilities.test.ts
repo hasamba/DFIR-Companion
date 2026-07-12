@@ -62,13 +62,13 @@ describe("checkConfiguredPromptDrift", () => {
     const drift = checkConfiguredPromptDrift({ DFIR_AI_SYNTH_PROMPT_FILE: file });
     expect(drift).toHaveLength(1);
     expect(drift[0].name).toBe("SYNTH");
-    expect(drift[0].missing).toEqual(["hypotheses", "confidenceReason", "relatedFindingIds"]);
+    expect(drift[0].missing).toEqual(["hypotheses", "confidenceReason", "relatedFindingIds", "collect"]);
     expect(driftMessage(drift[0])).toContain("synthesis.txt");
   });
 
   it("passes a fresh override file that contains every marker", () => {
     const file = join(tmp, "fresh-synthesis.txt");
-    writeFileSync(file, "output: hypotheses, confidenceReason, relatedFindingIds", "utf8");
+    writeFileSync(file, "output: hypotheses, confidenceReason, relatedFindingIds, collect", "utf8");
     expect(checkConfiguredPromptDrift({ DFIR_AI_SYNTH_PROMPT_FILE: file })).toEqual([]);
   });
 

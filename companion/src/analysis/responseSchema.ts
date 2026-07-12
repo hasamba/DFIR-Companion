@@ -5,6 +5,16 @@ import { z } from "zod";
 const severity = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
 const iocType = z.enum(["ip", "domain", "hash", "file", "process", "url", "sid", "other"]);
 
+// A structured collection directive (investigation-guidance #8) — where/what to collect. Every field is
+// optional + lenient so a partial model reply still parses; sanitized/validated (host vs known
+// endpoints) at the consumer, not here.
+const collectDirective = z.object({
+  host: z.string().optional().catch(undefined),
+  artifact: z.string().optional().catch(undefined),
+  logSource: z.string().optional().catch(undefined),
+  expectedOutcome: z.string().optional().catch(undefined),
+}).optional();
+
 export const deltaSchema = z.object({
   findings: z.array(z.object({
     id: z.string().min(1),
@@ -80,6 +90,8 @@ export const deltaSchema = z.object({
     pointer: z.string().default(""),
     // Finding ids this answer is based on — lets a later false-positive mark force a re-answer.
     relatedFindingIds: z.array(z.string()).default([]).catch([]),
+    // Structured collection directive for an unknown/partial question (#8): where/what to collect.
+    collect: collectDirective,
   })).optional(),
   // Prioritized recommendations for the most valuable next investigative actions.
   nextSteps: z.array(z.object({
@@ -88,6 +100,9 @@ export const deltaSchema = z.object({
     action: z.string().min(1),
     rationale: z.string().default(""),
     pointer: z.string().default(""),
+    // Structured collection directive (#8) for a collection-type step + the findings it advances.
+    collect: collectDirective,
+    relatedFindingIds: z.array(z.string()).default([]).catch([]),
   })).optional(),
   // Candidate explanations for the observed activity (issue #140 — hypothesis-driven mode). Title is
   // NOT .min(1) so a blank one doesn't reject the whole array — sanitizeHypotheses drops it. These are
