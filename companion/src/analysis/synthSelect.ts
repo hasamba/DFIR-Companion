@@ -1,5 +1,6 @@
-import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
+import type { ForensicEvent, InvestigationState, Severity } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
+import { buildAttackPhases } from "./burstDetect.js";
 import { buildAssetGraph } from "./assetGraph.js";
 import { extractCveIds, matchKevEntries, buildKevDigest, type KevCatalog } from "./kev.js";
 import { rankConnectiveIocs, buildConnectiveIocDigest, shortHost, isKnownHostAsset } from "./iocAnchors.js";
@@ -10,38 +11,195 @@ const SEV_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low:
 // How many of the earliest events to always keep (initial-access context).
 const EARLIEST_KEEP = 15;
 
-// Pick the events that best inform synthesis when the timeline exceeds the prompt budget.
-// Severity-only "top N" can bury the kill chain — early low-severity initial-access events
-// drop out, and one noisy host crowds out everything else. This keeps ALL Critical/High
-// events, the earliest events, and an even time-spread sample of the rest, returned in
-// CHRONOLOGICAL order so the model reads the attack as a story.
-export function selectSynthesisEvents(events: ForensicEvent[], max: number): ForensicEvent[] {
-  const byTime = [...events].sort(byEventTime);
-  if (events.length <= max || max <= 0) return byTime;
+// The window around a Critical/High "anchor" within which same-host events are pulled in as CONTEXT —
+// the low-graded "what happened right before/after on this host" chain that carries the real story
+// (fairhaven's sqlcmd→tar→curl-PUT, halcyon's robocopy/7z) but never won a seat under even-spread.
+const ANCHOR_WINDOW_MS = 15 * 60 * 1000;
+const PER_ANCHOR_CONTEXT_CAP = 6;
 
-  const chosen = new Set<string>();
-  byTime.slice(0, EARLIEST_KEEP).forEach((e) => chosen.add(e.id));                 // initial-access context
-  for (const e of events) if (e.severity === "Critical" || e.severity === "High") chosen.add(e.id);
+// Reserved fractions of the post-guaranteed budget for each behavioral class, so a burst of mis-graded
+// High noise can't starve the corroborated/technique-tagged evidence. Filled in order, each capped, so
+// an over-supplied earlier class can't consume a later class's share; unused capacity rolls to spread.
+const BUDGET_ANCHOR_CONTEXT = 0.40;
+const BUDGET_CORROBORATED = 0.25;
+const BUDGET_TECHNIQUE = 0.15;
 
-  if (chosen.size < max) {                                                          // even time-spread fill of the rest
-    const rest = byTime.filter((e) => !chosen.has(e.id));
-    const slots = max - chosen.size;
-    if (rest.length <= slots) {
-      rest.forEach((e) => chosen.add(e.id));
-    } else {
-      const step = rest.length / slots;
-      for (let i = 0; i < slots; i++) chosen.add(rest[Math.min(rest.length - 1, Math.floor(i * step))].id);
+// Why an event earned a synthesis seat. "anchor" = Critical/High verdict; "earliest" = initial-access
+// context; the rest are the behavioral fills. Exposed (via the annotated selection) so the dashboard
+// can show the analyst what CLASSES of evidence the model actually saw.
+export type SelectionClass =
+  | "anchor"
+  | "earliest"
+  | "anchor_context"
+  | "corroborated"
+  | "technique"
+  | "spread";
+
+export interface AnnotatedSelection {
+  events: ForensicEvent[];                       // chosen events, CHRONOLOGICAL (the model reads a story)
+  classOf: Map<string, SelectionClass>;          // event id → the class that claimed it (strongest wins)
+  counts: Record<SelectionClass, number>;        // per-class tally of the final selection
+  omitted: number;                               // scoped events NOT selected (still in the case)
+}
+
+function emptyCounts(): Record<SelectionClass, number> {
+  return { anchor: 0, earliest: 0, anchor_context: 0, corroborated: 0, technique: 0, spread: 0 };
+}
+
+function eventMs(e: ForensicEvent): number | null {
+  const t = Date.parse(e.timestamp);
+  return Number.isNaN(t) ? null : t;
+}
+
+function sameAsset(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+// Process/command-line-bearing events are the highest-value context around an anchor (they show what
+// ran), so they're preferred when an anchor has more nearby events than the per-anchor cap.
+function isProcessLike(e: ForensicEvent): boolean {
+  if (e.processName || e.parentName || e.action === "execute") return true;
+  return /\b(cmd|powershell|pwsh|bash|sh|wscript|cscript|rundll32|regsvr32|mshta|\.exe|\.ps1|\.dll|-enc|-e[nc]{0,2} |http)\b/i.test(e.description ?? "");
+}
+
+// The same-host events within ±ANCHOR_WINDOW of each anchor, best-first per anchor (process-like, then
+// nearest in time), interleaved ROUND-ROBIN across anchors so a single busy anchor can't hog the whole
+// context budget. Already-claimed events (anchors, earliest) are skipped by the caller's fill guard.
+function anchorContextCandidates(
+  byTime: ForensicEvent[],
+  anchors: ForensicEvent[],
+  claimed: ReadonlySet<string>,
+): ForensicEvent[] {
+  const perAnchor: ForensicEvent[][] = [];
+  for (const a of anchors) {
+    const am = eventMs(a);
+    if (am === null || !a.asset) continue;
+    const near = byTime.filter((e) => {
+      if (e.id === a.id || claimed.has(e.id)) return false;
+      if (!sameAsset(e.asset, a.asset)) return false;
+      const em = eventMs(e);
+      return em !== null && Math.abs(em - am) <= ANCHOR_WINDOW_MS;
+    });
+    near.sort((x, y) => {
+      const px = isProcessLike(x) ? 0 : 1;
+      const py = isProcessLike(y) ? 0 : 1;
+      if (px !== py) return px - py;
+      return Math.abs((eventMs(x) as number) - am) - Math.abs((eventMs(y) as number) - am);
+    });
+    if (near.length) perAnchor.push(near.slice(0, PER_ANCHOR_CONTEXT_CAP));
+  }
+  // Round-robin flatten, de-duped (a context event near two anchors appears once).
+  const out: ForensicEvent[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; ; i++) {
+    let progressed = false;
+    for (const list of perAnchor) {
+      if (i < list.length) {
+        progressed = true;
+        const e = list[i];
+        if (!seen.has(e.id)) { seen.add(e.id); out.push(e); }
+      }
     }
+    if (!progressed) break;
+  }
+  return out;
+}
+
+// Pick the events that best inform synthesis when the timeline exceeds the prompt budget. Severity-only
+// / even-spread selection buried the kill chain: the true attack steps often graded Low/Info while
+// mis-graded noise filled the cap. This keeps the GUARANTEED classes (all Critical/High anchors + the
+// earliest initial-access events) and then fills with reserved per-class budgets — same-host context
+// around each anchor, cross-source-corroborated events, and ATT&CK-technique-tagged events — before an
+// even/whole-burst spread. Returns CHRONOLOGICAL order so the model reads the attack as a story.
+export function selectSynthesisEventsAnnotated(events: ForensicEvent[], max: number): AnnotatedSelection {
+  const byTime = [...events].sort(byEventTime);
+  if (events.length <= max || max <= 0) {
+    return { events: byTime, classOf: new Map(), counts: emptyCounts(), omitted: 0 };
   }
 
-  let selected = byTime.filter((e) => chosen.has(e.id));
-  if (selected.length > max) {                                                      // too many Critical/High — keep severest, then earliest
-    selected = [...selected]
+  const classOf = new Map<string, SelectionClass>();
+  const claim = (id: string, c: SelectionClass): void => { if (!classOf.has(id)) classOf.set(id, c); };
+  const capacityLeft = (): number => max - classOf.size;
+
+  // GUARANTEED 1: anchors — every Critical/High event (the verdict-bearing rows).
+  for (const e of events) if (e.severity === "Critical" || e.severity === "High") claim(e.id, "anchor");
+
+  // Overflow: anchors alone exceed the budget → keep the severest, then earliest, chronological.
+  if (classOf.size > max) {
+    const anchorEvents = byTime.filter((e) => classOf.get(e.id) === "anchor");
+    const trimmed = [...anchorEvents]
       .sort((a, b) => (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || byEventTime(a, b))
       .slice(0, max)
       .sort(byEventTime);
+    const counts = emptyCounts();
+    counts.anchor = trimmed.length;
+    return { events: trimmed, classOf: new Map(trimmed.map((e) => [e.id, "anchor" as const])), counts, omitted: events.length - trimmed.length };
   }
-  return selected;
+
+  // GUARANTEED 2: earliest events — initial-access context (guarded against the cap).
+  for (const e of byTime.slice(0, EARLIEST_KEEP)) {
+    if (capacityLeft() <= 0) break;
+    claim(e.id, "earliest");
+  }
+
+  const remaining = Math.max(0, max - classOf.size);
+  const fill = (candidates: ForensicEvent[], cap: number, cls: SelectionClass): void => {
+    let added = 0;
+    for (const e of candidates) {
+      if (added >= cap || capacityLeft() <= 0) break;
+      if (classOf.has(e.id)) continue;
+      classOf.set(e.id, cls);
+      added++;
+    }
+  };
+
+  // RESERVED FILL 1: same-host context around each anchor.
+  const anchors = events.filter((e) => classOf.get(e.id) === "anchor");
+  fill(anchorContextCandidates(byTime, anchors, new Set(classOf.keys())), Math.floor(remaining * BUDGET_ANCHOR_CONTEXT), "anchor_context");
+
+  // RESERVED FILL 2: cross-source-corroborated events (correlate.ts already merged their sources).
+  fill(byTime.filter((e) => !classOf.has(e.id) && (e.sources?.length ?? 0) >= 2), Math.floor(remaining * BUDGET_CORROBORATED), "corroborated");
+
+  // RESERVED FILL 3: ATT&CK-technique-tagged events regardless of severity (behavioral signal).
+  fill(byTime.filter((e) => !classOf.has(e.id) && (e.mitreTechniques?.length ?? 0) > 0), Math.floor(remaining * BUDGET_TECHNIQUE), "technique");
+
+  // SPREAD remainder: keep whole activity bursts (burstDetect phases) rather than shredding clusters
+  // with an even sample; whatever budget is left after whole bursts is filled by an even time-spread.
+  if (capacityLeft() > 0) {
+    const byId = new Map(byTime.map((e) => [e.id, e] as const));
+    const phases = buildAttackPhases(events);
+    const phaseRank = (p: { maxSeverity: Severity }): number => SEV_RANK[p.maxSeverity] ?? 9;
+    for (const p of [...phases].sort((a, b) => phaseRank(a) - phaseRank(b))) {
+      const pending = p.eventIds.map((id) => byId.get(id)).filter((e): e is ForensicEvent => !!e && !classOf.has(e.id));
+      if (!pending.length) continue;
+      if (pending.length <= capacityLeft()) {                    // keep the whole burst, or skip it whole
+        for (const e of pending) classOf.set(e.id, "spread");
+      }
+      if (capacityLeft() <= 0) break;
+    }
+  }
+  if (capacityLeft() > 0) {                                       // residual even time-spread of what's left
+    const rest = byTime.filter((e) => !classOf.has(e.id));
+    const slots = capacityLeft();
+    if (rest.length <= slots) {
+      rest.forEach((e) => classOf.set(e.id, "spread"));
+    } else {
+      const step = rest.length / slots;
+      for (let i = 0; i < slots; i++) classOf.set(rest[Math.min(rest.length - 1, Math.floor(i * step))].id, "spread");
+    }
+  }
+
+  const selected = byTime.filter((e) => classOf.has(e.id));
+  const counts = emptyCounts();
+  for (const e of selected) counts[classOf.get(e.id) as SelectionClass]++;
+  return { events: selected, classOf, counts, omitted: events.length - selected.length };
+}
+
+// Backwards-compatible wrapper: the chosen events in chronological order. All existing callers use this;
+// the reserved-budget improvement flows through them automatically.
+export function selectSynthesisEvents(events: ForensicEvent[], max: number): ForensicEvent[] {
+  return selectSynthesisEventsAnnotated(events, max).events;
 }
 
 // A compact context digest for the synthesis prompt: the compromised assets (host/account
