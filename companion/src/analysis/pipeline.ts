@@ -158,6 +158,7 @@ import { HUNT_PLATFORMS, type HuntPlatform } from "./huntPlatforms.js";
 import type { PlaybookTask } from "./playbook.js";
 import type { PlaybookStore } from "./playbookStore.js";
 import { renderPlaybookProgressBlock, renderRefutedHypothesesBlock, demoteCompletedNextSteps } from "./priorWork.js";
+import { flagContradictedAnswers } from "./answerContradiction.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
@@ -4419,6 +4420,13 @@ export class AnalysisPipeline {
           : { ...q, relatedFindingIds: related };
       }),
     };
+
+    // Answer-contradiction validator (investigation-guidance #3): a key question whose answer asserts
+    // an ABSENCE ("no data exfiltration confirmed") while in-scope events carry the matching ATT&CK
+    // techniques is a dangerous false negative. Force such answers to "partial" and cite the
+    // contradicting events. Runs AFTER the FP reset (so a reset-to-unknown answer isn't re-flagged) over
+    // the same scoped, non-FP events the model saw. Pure + idempotent.
+    next = { ...next, keyQuestions: flagContradictedAnswers(next.keyQuestions, scopedEvents) };
 
     // Union the deterministically-identified ATT&CK techniques carried by the (in-scope) timeline
     // into the synthesized MITRE table, so techniques the model didn't echo — especially the Info/Low

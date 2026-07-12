@@ -161,6 +161,14 @@ export interface InvestigationQuestion {
   // supporting finding was marked false-positive and force the question back to "unknown" instead
   // of silently keeping a stale answer — see applyFalsePositive/reconsiderKeyQuestions in pipeline.ts.
   relatedFindingIds?: string[];
+  // Deterministic contradiction flag (investigation-guidance #3): set when the answer asserts an
+  // ABSENCE ("no data exfiltration confirmed") but in-scope events carry the matching ATT&CK
+  // techniques — the timeline contradicts the answer. Set post-synthesis by flagContradictedAnswers;
+  // the UI/report render it as a "contradicted by timeline evidence" badge. Absent = no contradiction.
+  contradicted?: {
+    techniques: string[];   // the contradicting technique ids observed in-scope
+    eventIds: string[];     // the events that carry them (a few, for the pointer/badge)
+  };
 }
 
 export type StepPriority = "critical" | "high" | "medium" | "low";

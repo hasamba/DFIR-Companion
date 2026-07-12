@@ -12885,6 +12885,11 @@
               (q.pinned ? ` <span class="icon-pinned" title="Pinned">${ICON_PIN}</span>` : "") +
               ` <span class="q-status q-status-${st}">${QSTATUS[st]}</span> <strong>${esc(q.question)}</strong></div>` +
               `<span class="q-answer">${esc(q.answer || "unknown")}</span>` +
+              // Contradiction badge (investigation-guidance #3): the negative answer conflicts with
+              // ATT&CK-tagged events in the timeline — flag it so a wrong "no" is never read as settled.
+              (q.contradicted && q.contradicted.techniques && q.contradicted.techniques.length
+                ? ` <span class="q-contradicted" style="color:var(--c-ff6b6b,#ff6b6b);font-weight:600" title="The timeline contains events tagged ${esc(q.contradicted.techniques.join(', '))} that contradict this negative answer — review before concluding.">⚠️ contradicted by timeline (${esc(q.contradicted.techniques.join(', '))})</span>`
+                : "") +
               (q.pointer ? `<span class="q-pointer">→ ${esc(q.pointer)}</span>` : "") +
               `</div>`;
           }).join("")

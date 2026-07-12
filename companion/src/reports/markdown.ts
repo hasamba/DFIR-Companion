@@ -568,7 +568,13 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
     const mark = (s: string) => (s === "answered" ? "✅" : s === "partial" ? "🟡" : "❓");
     lines.push("| | Question | Answer | Where to find it |", "| --- | --- | --- | --- |");
     for (const q of state.keyQuestions) {
-      lines.push(`| ${mark(q.status)} | ${cellMd(q.question)} | ${cellMd(q.answer || "_unknown_")} | ${cellMd(q.pointer || "—")} |`);
+      // A ⚠️ contradiction badge (investigation-guidance #3): the negative answer conflicts with
+      // ATT&CK-tagged events in the timeline — surface it so a wrong "no" is never read as settled.
+      const contra = q.contradicted?.techniques?.length
+        ? ` ⚠️ contradicted by timeline (${q.contradicted.techniques.join(", ")})`
+        : "";
+      const answerCell = (q.answer || "_unknown_") + contra;
+      lines.push(`| ${mark(q.status)} | ${cellMd(q.question)} | ${cellMd(answerCell)} | ${cellMd(q.pointer || "—")} |`);
     }
     lines.push("");
   }
