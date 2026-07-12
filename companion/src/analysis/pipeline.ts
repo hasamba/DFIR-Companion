@@ -28,6 +28,7 @@ import type { ExternalImporter } from "./declarativeImporter.js";
 import { parseJsonLoose } from "./extractJson.js";
 import { applyFalsePositive, buildFalsePositiveContext, filterFalsePositiveEvents, type FalsePositiveStore } from "./falsePositive.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
+import { checkConfiguredPromptDrift } from "./promptCapabilities.js";
 import { resolveSynthThinkingBudget, type SynthThinkingInput } from "./synthThinking.js";
 import { detectTimelineGaps, backfillSilenceGapFindings, gapEnvOptions } from "./gapDetect.js";
 import {
@@ -639,6 +640,13 @@ function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC"
   }
   return fallback;
 }
+
+// The built-in prompt text for each capability the drift check knows about (see promptCapabilities.ts),
+// keyed by resolvePrompt name. Exported so the rot-guard test can assert each built-in still contains
+// its own required markers (if a rewrite drops one, the drift check silently rots — the test catches it).
+export const BUILTIN_PROMPT_BY_NAME: Record<string, string> = {
+  SYNTH: SYNTHESIS_PROMPT,
+};
 
 // Answer a free-form analyst question about ONE case using only its evidence digest.
 export const ASK_PROMPT = [
@@ -1463,6 +1471,21 @@ export class AnalysisPipeline {
   // when nothing that affects the output has changed since the last run. In-memory: a
   // fresh process (or an explicit `force`) always synthesizes.
   private readonly lastSynthHash = new Map<string, string>();
+  // Warn ONCE per process when a configured synthesis-prompt override is missing shipped capabilities
+  // (investigation-guidance #1). Preflight surfaces the same drift in the UI; this covers a post-boot
+  // edit to the override file, and keeps the warning from spamming every synthesis run.
+  private warnedPromptDrift = false;
+
+  private warnOnPromptDrift(): void {
+    if (this.warnedPromptDrift) return;
+    this.warnedPromptDrift = true;
+    for (const d of checkConfiguredPromptDrift()) {
+      this.log.warn(
+        `[DFIR] prompt override ${d.file} is missing capabilities: ${d.missing.join(", ")} — ` +
+        `model output will silently lack them; re-run 'npm run prompts:eject' to refresh it`,
+      );
+    }
+  }
 
   async analyzeWindow(caseId: string, captures: CaptureMetadata[]): Promise<InvestigationState> {
     const provider = this.requireProvider("screenshot analysis");
@@ -4091,6 +4114,7 @@ export class AnalysisPipeline {
   // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
   async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal } & SynthThinkingInput = {}): Promise<InvestigationState> {
     const synthProvider = opts.provider ?? this.opts.synthesisProvider ?? this.requireProvider("synthesis");
+    this.warnOnPromptDrift();   // once per process: a stale synthesis-prompt override silently drops shipped capabilities
     const loaded = await this.opts.stateStore.load(caseId);
     if (loaded.forensicTimeline.length === 0) return loaded;
 
