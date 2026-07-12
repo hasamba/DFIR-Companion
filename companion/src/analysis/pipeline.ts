@@ -159,6 +159,7 @@ import type { PlaybookTask } from "./playbook.js";
 import type { PlaybookStore } from "./playbookStore.js";
 import { renderPlaybookProgressBlock, renderRefutedHypothesesBlock, demoteCompletedNextSteps } from "./priorWork.js";
 import { flagContradictedAnswers } from "./answerContradiction.js";
+import { detectSatisfiedCollections, buildSatisfiedCollectionsBlock } from "./collectSatisfaction.js";
 import { renderStructuredTags, buildBeaconDigest, buildAttackPhaseDigest } from "./synthEvidence.js";
 import { detectBeacons, beaconEnvOptions } from "./beaconDetect.js";
 import { buildAttackPhases } from "./burstDetect.js";
@@ -4294,6 +4295,16 @@ export class AnalysisPipeline {
     const graphBlock = buildGraphContext({ ...state, forensicTimeline: scopedEvents }, { maxEdges: DEFAULT_MAX_GRAPH_EDGES });
     const beaconBlock = buildBeaconDigest(detectBeacons(scopedEvents, beaconEnvOptions()));
     const attackPhaseBlock = buildAttackPhaseDigest(buildAttackPhases(scopedEvents));
+    // Import-satisfaction (investigation-guidance #8, phase 2): a collection this case previously
+    // recommended (prior nextSteps / unknown questions carrying a structured collect target) whose host
+    // now HAS matching events was fulfilled — stop re-recommending it and re-evaluate the question it
+    // served. Derived from the PRIOR run's guidance vs the current events; the served questions are
+    // added to the re-answer set below so the model reconsiders them with the new evidence.
+    const satisfiedCollections = detectSatisfiedCollections(state, scopedEvents);
+    const satisfiedBlock = buildSatisfiedCollectionsBlock(satisfiedCollections);
+    const satisfiedQuestionIds = new Set(
+      satisfiedCollections.filter((s) => s.target.from === "question").map((s) => s.target.refId),
+    );
     // Analyst-pinned open questions: tell the model to address each (answer when the evidence
     // now supports it) and keep them. They're re-merged into the output below so they persist.
     const pinnedQuestions = state.keyQuestions.filter((q) => q.pinned);
@@ -4315,6 +4326,9 @@ export class AnalysisPipeline {
     );
     const questionsToReanswer = state.keyQuestions.filter((q) => {
       if (q.pinned) return false;
+      // A question whose recommended collection was just satisfied (#8 phase 2) must be re-evaluated
+      // with the evidence now present, not left showing its old "unknown".
+      if (satisfiedQuestionIds.has(q.id)) return true;
       if ((q.relatedFindingIds ?? []).some((id) => droppedFindingIds.has(id))) return true;
       // Fallback for a question that predates relatedFindingIds (or whose answer only ever named
       // the finding in prose): its free-text pointer/answer still cites the now-rejected finding.
@@ -4340,7 +4354,7 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -4361,6 +4375,7 @@ export class AnalysisPipeline {
       refutedHypothesesBlock +
       priorHuntsBlock +
       playbookProgressBlock +
+      satisfiedBlock +
       pinnedBlock +
       reanswerBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
