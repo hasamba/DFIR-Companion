@@ -61,7 +61,9 @@ export function buildGraphContext(state: InvestigationState, opts: GraphContextO
     lines.push(`${TYPE_LABEL[type]}:`);
     for (const e of group) {
       const cites = e.eventIds.slice(0, CITES_PER_EDGE).join(", ");
-      lines.push(`- ${e.basis}${cites ? ` [${cites}]` : ""}`);
+      // Surface the edge's confidence + derivation rule (investigation-guidance #5) so the model can
+      // weigh a hard file-lineage/shared-hash edge above a regex-scraped shared-account hint.
+      lines.push(`- ${e.basis} [${e.confidence}, ${e.rule}]${cites ? ` [${cites}]` : ""}`);
     }
   }
   if (!lines.length) return "";

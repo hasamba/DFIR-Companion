@@ -9795,6 +9795,19 @@
       if (f.confidenceReason) {
         rows.push(`<div class="fev-row"><span class="fev-k">Confidence</span><span class="fev-v">${f.confidence !== undefined ? esc(String(f.confidence)) + "% — " : ""}${esc(f.confidenceReason)}</span></div>`);
       }
+      // Grounding/corroboration (investigation-guidance #6): flag an ungrounded finding prominently, else
+      // show the tools/hosts/intel rollup so a single-source claim is visibly distinguishable from a
+      // multi-tool one.
+      if (f.ungrounded) {
+        rows.push(`<div class="fev-row"><span class="fev-k">Grounding</span><span class="fev-v" style="color:var(--c-ff6b6b,#ff6b6b);font-weight:600">⚠️ no cited evidence — treat as a hypothesis, not a fact (confidence capped)</span></div>`);
+      } else if (f.corroboration) {
+        const c = f.corroboration;
+        const parts = [`${c.distinctTools} tool${c.distinctTools === 1 ? "" : "s"}`, `${c.distinctHosts} host${c.distinctHosts === 1 ? "" : "s"}`];
+        if (c.intelSources > 0) parts.push("intel ✓");
+        if (c.graphLinked) parts.push("graph-linked");
+        const corroborated = c.distinctTools >= 2 || c.intelSources > 0 || c.graphLinked;
+        rows.push(`<div class="fev-row"><span class="fev-k">Corroboration</span><span class="fev-v"${corroborated ? "" : ' style="color:var(--c-e0a458,#e0a458)"'}>${esc(parts.join(" / "))}${corroborated ? "" : " — uncorroborated"}</span></div>`);
+      }
       const byVal = new Map((iocs || []).map(i => [String(i.value).trim().toLowerCase(), i.value]));
       const vals = new Set();
       for (const id of (f.relatedIocs || [])) { const ioc = (iocs || []).find(x => x.id === id); if (ioc) vals.add(ioc.value); }
@@ -12885,6 +12898,11 @@
               (q.pinned ? ` <span class="icon-pinned" title="Pinned">${ICON_PIN}</span>` : "") +
               ` <span class="q-status q-status-${st}">${QSTATUS[st]}</span> <strong>${esc(q.question)}</strong></div>` +
               `<span class="q-answer">${esc(q.answer || "unknown")}</span>` +
+              // Contradiction badge (investigation-guidance #3): the negative answer conflicts with
+              // ATT&CK-tagged events in the timeline — flag it so a wrong "no" is never read as settled.
+              (q.contradicted && q.contradicted.techniques && q.contradicted.techniques.length
+                ? ` <span class="q-contradicted" style="color:var(--c-ff6b6b,#ff6b6b);font-weight:600" title="The timeline contains events tagged ${esc(q.contradicted.techniques.join(', '))} that contradict this negative answer — review before concluding.">⚠️ contradicted by timeline (${esc(q.contradicted.techniques.join(', '))})</span>`
+                : "") +
               (q.pointer ? `<span class="q-pointer">→ ${esc(q.pointer)}</span>` : "") +
               `</div>`;
           }).join("")

@@ -11,6 +11,7 @@ import {
   buildPreflightReport, buildPreflightText,
   type PreflightItem, type PreflightReport,
 } from "../analysis/preflight.js";
+import { checkConfiguredPromptDrift } from "../analysis/promptCapabilities.js";
 import { getAppVersion } from "../version.js";
 import {
   resolveUpdateMode, buildUpdateStatus, DEFAULT_UPDATE_REPO, type UpdateMode,
@@ -400,6 +401,19 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       } catch (err) {
         items.push({ name: "Velociraptor", ok: false, critical: false, detail: (err as Error).message });
       }
+    }
+
+    // 4. Prompt overrides — non-critical. A stale DFIR_AI_*_PROMPT_FILE (an old `prompts:eject` from
+    //    before a capability shipped) REPLACES the built-in wholesale, so shipped output (hypotheses,
+    //    confidenceReason, …) silently disappears with no error. Warn per drifted override; silent when
+    //    no override is set (the built-in has every capability) or all markers are present.
+    for (const d of checkConfiguredPromptDrift()) {
+      items.push({
+        name: `Prompt override: ${d.file}`,
+        ok: false,
+        critical: false,
+        detail: `missing capabilities: ${d.missing.join(", ")} — re-run 'npm run prompts:eject' to refresh it`,
+      });
     }
 
     const report = buildPreflightReport(items, new Date().toISOString(), Date.now() - startedAt);

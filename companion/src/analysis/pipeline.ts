@@ -28,6 +28,7 @@ import type { ExternalImporter } from "./declarativeImporter.js";
 import { parseJsonLoose } from "./extractJson.js";
 import { applyFalsePositive, buildFalsePositiveContext, filterFalsePositiveEvents, type FalsePositiveStore } from "./falsePositive.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
+import { checkConfiguredPromptDrift } from "./promptCapabilities.js";
 import { resolveSynthThinkingBudget, type SynthThinkingInput } from "./synthThinking.js";
 import { detectTimelineGaps, backfillSilenceGapFindings, gapEnvOptions } from "./gapDetect.js";
 import {
@@ -155,6 +156,16 @@ import {
 } from "./queryTranslate.js";
 import { HUNT_PLATFORMS, type HuntPlatform } from "./huntPlatforms.js";
 import type { PlaybookTask } from "./playbook.js";
+import type { PlaybookStore } from "./playbookStore.js";
+import { renderPlaybookProgressBlock, renderRefutedHypothesesBlock, demoteCompletedNextSteps } from "./priorWork.js";
+import { flagContradictedAnswers } from "./answerContradiction.js";
+import { renderStructuredTags, buildBeaconDigest, buildAttackPhaseDigest } from "./synthEvidence.js";
+import { detectBeacons, beaconEnvOptions } from "./beaconDetect.js";
+import { buildAttackPhases } from "./burstDetect.js";
+import { buildEvidenceGraph } from "./evidenceGraph.js";
+import { buildAssetGraph } from "./assetGraph.js";
+import { shortHost } from "./iocAnchors.js";
+import { groundAndScoreFindings, capIntelOnlyFindings, corroborationLabel } from "./findingGrounding.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
@@ -477,6 +488,16 @@ export const SYNTHESIS_PROMPT = [
   "on them. Base conclusions ONLY on real host/attacker activity (executions, logons, file/registry",
   "/network/persistence changes).",
   "",
+  "Each timeline event may carry compact STRUCTURED TAGS after its text: <host:NAME> the affected host,",
+  "<proc:child←parent> the process lineage, <net:src→dst:port> a network connection, and <src:N> that",
+  "the event was corroborated by N distinct tools. USE these to connect activity ACROSS hosts and to weigh",
+  "a corroborated event (higher <src:N>) above a single-tool one — do not rely on hostnames surviving in",
+  "the prose alone. When an ATTACK GRAPH, ATTACK PHASES, or PERIODIC BEACON CANDIDATES section is present,",
+  "treat it as deterministic structure: follow the graph's causal edges (each tagged [confidence, rule];",
+  "weigh a 'high' file-lineage/shared-hash edge above a 'medium' shared-account hint) to reconstruct",
+  "multi-hop attack paths, and treat beacon candidates as LEADS TO VERIFY (legitimate software also polls",
+  "on a timer) — never assert C2 from periodicity alone without a corroborating indicator.",
+  "",
   "Produce:",
   "- findings: produce a SEPARATE finding for EACH distinct attacker technique, tool, or behavior",
   "  observed — e.g. Mimikatz credential dumping is one finding; SharpHound AD reconnaissance is",
@@ -639,6 +660,13 @@ function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC"
   }
   return fallback;
 }
+
+// The built-in prompt text for each capability the drift check knows about (see promptCapabilities.ts),
+// keyed by resolvePrompt name. Exported so the rot-guard test can assert each built-in still contains
+// its own required markers (if a rewrite drops one, the drift check silently rots — the test catches it).
+export const BUILTIN_PROMPT_BY_NAME: Record<string, string> = {
+  SYNTH: SYNTHESIS_PROMPT,
+};
 
 // Answer a free-form analyst question about ONE case using only its evidence digest.
 export const ASK_PROMPT = [
@@ -1256,6 +1284,9 @@ export interface PipelineOptions {
   // Per-case hypothesis store (issue #140). When set, synthesis merges the model's auto-generated
   // hypotheses into it (refresh-pristine / freeze-touched). Absent → no auto-generation (CLI/tests).
   hypothesisStore?: HypothesisStore;
+  // Per-case playbook store. When set, synthesis reads DONE/SKIPPED task status so it can build on
+  // completed work instead of re-recommending it (investigation-guidance #2). Absent → no digest.
+  playbookStore?: PlaybookStore;
 }
 
 // Whole-word (id-boundary) match of a finding id inside free text — used to catch a key question's
@@ -1463,6 +1494,21 @@ export class AnalysisPipeline {
   // when nothing that affects the output has changed since the last run. In-memory: a
   // fresh process (or an explicit `force`) always synthesizes.
   private readonly lastSynthHash = new Map<string, string>();
+  // Warn ONCE per process when a configured synthesis-prompt override is missing shipped capabilities
+  // (investigation-guidance #1). Preflight surfaces the same drift in the UI; this covers a post-boot
+  // edit to the override file, and keeps the warning from spamming every synthesis run.
+  private warnedPromptDrift = false;
+
+  private warnOnPromptDrift(): void {
+    if (this.warnedPromptDrift) return;
+    this.warnedPromptDrift = true;
+    for (const d of checkConfiguredPromptDrift()) {
+      this.log.warn(
+        `[DFIR] prompt override ${d.file} is missing capabilities: ${d.missing.join(", ")} — ` +
+        `model output will silently lack them; re-run 'npm run prompts:eject' to refresh it`,
+      );
+    }
+  }
 
   async analyzeWindow(caseId: string, captures: CaptureMetadata[]): Promise<InvestigationState> {
     const provider = this.requireProvider("screenshot analysis");
@@ -4091,6 +4137,7 @@ export class AnalysisPipeline {
   // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
   async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal } & SynthThinkingInput = {}): Promise<InvestigationState> {
     const synthProvider = opts.provider ?? this.opts.synthesisProvider ?? this.requireProvider("synthesis");
+    this.warnOnPromptDrift();   // once per process: a stale synthesis-prompt override silently drops shipped capabilities
     const loaded = await this.opts.stateStore.load(caseId);
     if (loaded.forensicTimeline.length === 0) return loaded;
 
@@ -4157,8 +4204,12 @@ export class AnalysisPipeline {
     // analyst-authored or analyst-touched OPEN ones (pure inputs, never rewritten by synthesis),
     // so including them in the hash below can't cause a re-synthesis loop. Bounded for prompt size.
     let analystHypothesesBlock = "";
+    // Refuted hypotheses fed back as NEGATIVE KNOWLEDGE (investigation-guidance #2): a theory the
+    // analyst ruled out must not be re-asserted or re-opened. Loaded from the same store, once.
+    let refutedHypothesesBlock = "";
     if (this.opts.hypothesisStore) {
-      const open = (await this.opts.hypothesisStore.load(caseId))
+      const allHypotheses = await this.opts.hypothesisStore.load(caseId);
+      const open = allHypotheses
         .filter((h) => h.status === "open" && (h.source === "analyst" || h.analystTouched))
         .slice(0, 15);
       if (open.length) {
@@ -4169,7 +4220,16 @@ export class AnalysisPipeline {
           open.map((h) => `- ${h.title}${h.expectedOutcome ? ` (decided by: ${h.expectedOutcome})` : ""}`).join("\n") +
           "\n\n";
       }
+      refutedHypothesesBlock = renderRefutedHypothesesBlock(allHypotheses);
     }
+
+    // Prior-work feedback (investigation-guidance #2): the hunt hit/miss ledger (#157, previously fed
+    // only to the hunt prompts) and the playbook DONE/SKIPPED digest, so synthesis builds on completed
+    // work and dead hunts instead of re-recommending them. Loaded before the hash so completing a task
+    // or collecting a hunt triggers a fresh synthesis (a hit is a pivot; a miss is negative evidence).
+    const priorHuntsBlock = renderPriorHuntsBlock(await this.loadHuntOutcomes(caseId));
+    const playbookTasks = this.opts.playbookStore ? await this.opts.playbookStore.load(caseId) : [];
+    const playbookProgressBlock = renderPlaybookProgressBlock(playbookTasks);
 
     // Skip-if-unchanged: hash only the STABLE INPUTS to synthesis — the in-scope timeline,
     // the IOCs (value + intel verdicts), the scope, the legitimate markers, and (when opted
@@ -4183,6 +4243,10 @@ export class AnalysisPipeline {
       sc: scope, lg: markers.map((m) => m.id),
       nb: notebookBlock,
       hy: analystHypothesesBlock,
+      // Prior-work feedback (#2): completing a task, collecting a hunt, or refuting a hypothesis
+      // changes these strings, so an otherwise-identical timeline re-synthesizes to fold in the
+      // new negative knowledge instead of skipping. Pure inputs — synthesis never rewrites them.
+      pw: priorHuntsBlock + playbookProgressBlock + refutedHypothesesBlock,
     })).digest("hex");
     if (!opts.force && !opts.dryRun && this.lastSynthHash.get(caseId) === synthHash) return loaded;
 
@@ -4190,8 +4254,13 @@ export class AnalysisPipeline {
       ? `INVESTIGATION SCOPE: only consider activity from ${scope.start ?? "the beginning"} to ${scope.end ?? "now"}. ` +
         `Events outside this window have already been removed below.\n\n`
       : "";
-    // Cap the existing-findings echo too (a big import can produce 100s of auto-findings).
-    const existingFindings = state.findings.slice(0, 150).map((f) => `[${f.id}] ${f.title}`).join("\n") || "(none yet)";
+    // Cap the existing-findings echo too (a big import can produce 100s of auto-findings). Append the
+    // prior run's corroboration label (investigation-guidance #6) so the model sees which of its own
+    // earlier claims were weak/uncorroborated and can strengthen or drop them this run.
+    const existingFindings = state.findings.slice(0, 150).map((f) => {
+      const corr = corroborationLabel(f);
+      return `[${f.id}] ${f.title}${corr ? ` — ${corr}` : ""}`;
+    }).join("\n") || "(none yet)";
     const openThreads = state.openThreads
       .filter((t) => t.status === "open")
       .map((t) => `[${t.id}] ${t.description}`)
@@ -4207,6 +4276,14 @@ export class AnalysisPipeline {
     // above, so they never affect skip-if-unchanged.
     const knownUnknownsBlock = this.knownUnknownsBlock(state, scopedEvents);
     const adversaryBlock = this.adversaryHintBlock(state);
+    // Structured causal evidence (investigation-guidance #5), all DERIVED after the skip-hash so they
+    // never affect skip-if-unchanged: the deterministic ATTACK GRAPH (spawn/file-lineage/lateral/network
+    // edges with confidence+rule — previously fed only to ask()/suggestHunts(), never the call that
+    // writes findings), the statistically-confirmed periodic-beacon candidates, and the activity-phase
+    // digest. These give synthesis the cross-host structure it was inferring blind from truncated prose.
+    const graphBlock = buildGraphContext({ ...state, forensicTimeline: scopedEvents }, { maxEdges: DEFAULT_MAX_GRAPH_EDGES });
+    const beaconBlock = buildBeaconDigest(detectBeacons(scopedEvents, beaconEnvOptions()));
+    const attackPhaseBlock = buildAttackPhaseDigest(buildAttackPhases(scopedEvents));
     // Analyst-pinned open questions: tell the model to address each (answer when the evidence
     // now supports it) and keep them. They're re-merged into the output below so they persist.
     const pinnedQuestions = state.keyQuestions.filter((q) => q.pinned);
@@ -4247,10 +4324,13 @@ export class AnalysisPipeline {
     // (context block, findings echo, system prompt) is the fixed overhead. Re-select for the
     // smaller count so the kept events stay the most important; the high-severity backfill
     // still creates findings for any Critical/High event dropped here.
+    // Each event carries its structured tags (host / process lineage / src→dst / corroborating-source
+    // count) after the prose (investigation-guidance #5) — only when set, so a bare event costs no extra
+    // tokens. This is what lets the model connect cross-host activity instead of guessing from prose.
     const renderEvent = (e: ForensicEvent) =>
-      `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
+      `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -4261,10 +4341,16 @@ export class AnalysisPipeline {
     const userPrompt =
       scopeNote +
       contextBlock +
+      graphBlock +
+      beaconBlock +
+      attackPhaseBlock +
       knownUnknownsBlock +
       adversaryBlock +
       notebookBlock +
       analystHypothesesBlock +
+      refutedHypothesesBlock +
+      priorHuntsBlock +
+      playbookProgressBlock +
       pinnedBlock +
       reanswerBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
@@ -4371,11 +4457,30 @@ export class AnalysisPipeline {
       }),
     };
 
+    // Answer-contradiction validator (investigation-guidance #3): a key question whose answer asserts
+    // an ABSENCE ("no data exfiltration confirmed") while in-scope events carry the matching ATT&CK
+    // techniques is a dangerous false negative. Force such answers to "partial" and cite the
+    // contradicting events. Runs AFTER the FP reset (so a reset-to-unknown answer isn't re-flagged) over
+    // the same scoped, non-FP events the model saw. Pure + idempotent.
+    next = { ...next, keyQuestions: flagContradictedAnswers(next.keyQuestions, scopedEvents) };
+
     // Union the deterministically-identified ATT&CK techniques carried by the (in-scope) timeline
     // into the synthesized MITRE table, so techniques the model didn't echo — especially the Info/Low
     // discovery phase (whoami/net group/findstr password/cat .env) tagged by the importers — still
     // appear in the case's MITRE table and report. Same scoped events synthesis saw; pure + idempotent.
     next = { ...next, mitreTechniques: unionEventTechniques(next.mitreTechniques, scopedEvents) };
+
+    // Prior-work safety net (investigation-guidance #2): even with the PLAYBOOK PROGRESS prompt block,
+    // the model may still echo a nextStep that repeats a COMPLETED task. Deterministically DEMOTE (not
+    // drop) any such step to priority "low" with an annotation, requiring a shared host/artifact token
+    // so a same-verb different-target step survives. Keeps the top of the next-steps list actionable.
+    if (playbookTasks.length) {
+      const doneTitles = playbookTasks.filter((t) => t.status === "done").map((t) => t.title);
+      if (doneTitles.length) {
+        const { steps, demotedIds } = demoteCompletedNextSteps(next.nextSteps, doneTitles);
+        if (demotedIds.length) next = { ...next, nextSteps: steps };
+      }
+    }
 
     // Dry run (second-opinion Pass 1): return model B's conclusions WITHOUT persisting or any side
     // effect — and WITHOUT folding in accepted deltas, so B stays an independent opinion.
@@ -4386,6 +4491,23 @@ export class AnalysisPipeline {
     // on re-synthesis. Pure + idempotent; a no-op when the store or record is absent/empty.
     if (this.opts.secondOpinionStore) {
       next = applyAcceptedSecondOpinion(next, await this.opts.secondOpinionStore.load(caseId));
+    }
+
+    // Per-finding grounding + corroboration (investigation-guidance #6): resolve each finding's
+    // supporting in-scope events (forward relatedEventIds AND reverse forensicTimeline links, so the
+    // deterministic backfill findings ground correctly), roll up { tools, hosts, intel, graph-linked },
+    // flag an uncited finding as `ungrounded`, and CAP an ungrounded/single-source finding's confidence.
+    // Deterministic + idempotent; only ever lowers confidence. Runs last, so it grades the FINAL finding
+    // set (incl. backfills + accepted second-opinion deltas).
+    {
+      const graphLinkedEventIds = new Set(buildEvidenceGraph(next).edges.flatMap((e) => e.eventIds));
+      const inScope = next.forensicTimeline.filter((e) => eligibleIds.has(e.id));
+      const grounded = groundAndScoreFindings({ findings: next.findings, scopedEvents: inScope, iocs: next.iocs, graphLinkedEventIds });
+      // Intel-verdict gate (investigation-guidance #7): floor an intel-ONLY High/Critical finding (no
+      // behavioral corroboration, all its verdict IOCs lone-intel/conflicted) to Medium/≤60 — the
+      // northpeak stale-CTI-on-own-server class. Runs after grounding so it sees the corroboration rollup.
+      const hostNames = new Set(buildAssetGraph(next).assets.filter((a) => a.type === "host").map((a) => shortHost(a.name)));
+      next = { ...next, findings: capIntelOnlyFindings({ findings: grounded, iocs: next.iocs, scopedEvents: inScope, hostNames }) };
     }
 
     // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest
