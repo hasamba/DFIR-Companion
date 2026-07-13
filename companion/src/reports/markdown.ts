@@ -340,13 +340,18 @@ function timelineAnomalies(state: InvestigationState, lines: string[]): void {
 // panel. Only the uncovered-tactic items are rendered here (silent windows already have §3.3, and
 // lookalike-actor next techniques are §4.6.1); "" when the case has none.
 function evidenceGaps(state: InvestigationState, lines: string[]): void {
-  const items = buildKnownUnknownItems(state, state.forensicTimeline).filter((i) => i.kind === "uncovered_tactic");
-  if (!items.length) return;
-  lines.push("#### 4.6.2 Evidence gaps — uncovered kill-chain phases", "");
-  lines.push("_A real (Critical/High) finding exists but no finding explains these phases. Collect the named evidence to close each gap — a lead, not proof._", "");
-  for (const i of items) {
+  const all = buildKnownUnknownItems(state, state.forensicTimeline);
+  const uncovered = all.filter((i) => i.kind === "uncovered_tactic");
+  const yieldGaps = all.filter((i) => i.kind === "yield_gap");   // #10 source-yield blind spots
+  if (!uncovered.length && !yieldGaps.length) return;
+  lines.push("#### 4.6.2 Evidence gaps — what this case is missing", "");
+  lines.push("_Coverage gaps derived from the case (a lead, not proof). Collect the named evidence to close each._", "");
+  for (const i of uncovered) {
     lines.push(`- **${i.tactic}** — ${cellMd(i.label)}`);
     for (const c of i.collect) lines.push(`  - ${cellMd(collectSummary(c))}`);
+  }
+  for (const i of yieldGaps) {
+    lines.push(`- **Source blind spot** — ${cellMd(i.label)}`);
   }
   lines.push("");
 }

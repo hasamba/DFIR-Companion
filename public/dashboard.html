@@ -3562,6 +3562,7 @@
       #sec-evidence-gaps .eg-item{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-b5651d);border-radius:6px;padding:8px 10px}
       #sec-evidence-gaps .eg-item.eg-gap{border-left-color:var(--c-ffb454)}
       #sec-evidence-gaps .eg-item.eg-next{border-left-color:var(--c-6aa9ff)}
+      #sec-evidence-gaps .eg-item.eg-yield{border-left-color:var(--c-ff6b6b,#ff6b6b)}
       #sec-evidence-gaps .eg-kind{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--c-9aa4b2);margin-right:6px}
       #sec-evidence-gaps .eg-label{color:var(--c-d6deea)}
       #sec-evidence-gaps .eg-collect{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:6px;font-size:12px}
@@ -8558,7 +8559,15 @@
         const more = remaining > 0 ? `<span class="sm-item" style="color:var(--c-9aa4b2)">…and ${remaining} more</span>` : "";
         detail = `<details><summary>what this import added to the timeline</summary>${items}${more}</details>`;
       }
-      el.innerHTML = `<div class="sm-line"><span>📥 Last import <strong>${esc(relTime(m.lastImportedAt))}</strong>${src}${kind}</span><span>${summary}</span></div>${detail}`;
+      // Source-yield warning (investigation-guidance #10): a large file run through the AI-triage path
+      // that produced ZERO events is a blind spot, not a clean source — say so with a directive action,
+      // instead of a bland "no new events". Mirrors the server classifyImportYield (path ai / +0 / >=500).
+      let yieldWarn = "";
+      if (m.path === "ai" && (m.addedCount || 0) === 0 && (m.linesIn || 0) >= 500) {
+        const label = m.lastImportFile || m.lastImportKind || "this file";
+        yieldWarn = `<div class="sm-line" style="color:var(--c-ff6b6b,#ff6b6b);font-weight:600">⚠️ ${esc(label)}: ${(m.linesIn).toLocaleString()} lines → 0 events via AI triage — re-run triage or grep the raw file for the case's IOCs/hosts before treating this source as clean.</div>`;
+      }
+      el.innerHTML = `<div class="sm-line"><span>📥 Last import <strong>${esc(relTime(m.lastImportedAt))}</strong>${src}${kind}</span><span>${summary}</span></div>${yieldWarn}${detail}`;
     }
     function paintIocImportMeta(m) {
       const el = document.getElementById("iocImportMeta");
@@ -10098,6 +10107,11 @@
         }
         if (it.kind === "likely_next_technique") {
           return `<div class="eg-item eg-next"><span class="eg-kind">likely next</span><span class="eg-label">${esc(it.label)}</span></div>`;
+        }
+        if (it.kind === "yield_gap") {
+          // Source-yield gap (investigation-guidance #10): a source that was collected but yielded nothing,
+          // or a telemetry type with no detector to corroborate it — a blind spot, not a clean source.
+          return `<div class="eg-item eg-yield"><span class="eg-kind">blind spot</span><span class="eg-label">${esc(it.label)}</span></div>`;
         }
         const collects = (it.collect || []).map(collectBtn).join("");
         return `<div class="eg-item"><span class="eg-kind">uncovered phase</span><span class="eg-label">${esc(it.label)}</span>${collects}</div>`;

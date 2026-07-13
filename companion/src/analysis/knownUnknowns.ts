@@ -22,6 +22,7 @@ import { rankHosts } from "./hostRanking.js";
 import { rankConnectiveIocs } from "./iocAnchors.js";
 import { buildEvidenceGraph } from "./evidenceGraph.js";
 import { byEventTime } from "./forensicSort.js";
+import type { ImportYieldWarning } from "./importMeta.js";
 
 // The kill-chain phases an intrusion usually touches. A case with real (Critical/High) findings that
 // has NO finding covering one of these is a conspicuous gap worth calling out ("how did they get
@@ -41,6 +42,7 @@ const CORE_TACTICS: readonly IrisTactic[] = [
 export interface KnownUnknownsOptions {
   gapOptions?: GapOptions;                      // forwarded to detectTimelineGaps
   nextTechniques?: readonly NextTechnique[];    // from adversaryEmulation — caller supplies (needs the offline dataset)
+  yieldWarning?: ImportYieldWarning | null;     // source-yield #10 trigger (a): a zero-yield AI import (caller loads importMeta)
   maxGaps?: number;                             // cap on coverage-gap lines (default 3)
   maxNextTechniques?: number;                   // cap on likely-next-technique lines (default 5)
   max?: number;                                 // hard cap on TOTAL bullets in the rendered block (default 10)
@@ -51,7 +53,7 @@ const DEFAULT_MAX_NEXT = 5;
 const DEFAULT_MAX_TOTAL = 10;
 const MAX_HOSTS_PER_TACTIC = 3;
 
-export type KnownUnknownKind = "uncovered_tactic" | "silence_gap" | "likely_next_technique";
+export type KnownUnknownKind = "uncovered_tactic" | "silence_gap" | "likely_next_technique" | "yield_gap";
 
 // One structured gap the case is missing. `collect` carries deterministic "where to look" directives
 // (only for uncovered_tactic — silence gaps link to the existing Timeline Gaps panel, and likely-next
@@ -171,8 +173,37 @@ function uncoveredTacticLabel(tactic: IrisTactic): string {
   return `No finding yet explains ${tactic}${where ? ` — collect ${where}` : ""}.`;
 }
 
+// Source-yield trigger (c) (investigation-guidance #10): the case carries network telemetry (Zeek /
+// proxy / firewall / netflow) but NO endpoint-detector feed (EDR / Sigma / AV / EVTX-rule engine), so
+// on-host execution/persistence is likely invisible. A soft LEAD, gated on a real finding so a quiet
+// case doesn't nag. Heuristic over event sources/artifact names; conservative (needs net present AND
+// detector fully absent). "" when it doesn't apply.
+const NETWORK_TELEMETRY_RE = /zeek|\bbro\b|conn\.log|proxy|squid|bluecoat|firewall|netflow|\bflow\b|\bpcap\b|http[_-]?access/i;
+const DETECTOR_RE = /sigma|\bedr\b|velociraptor|\bthor\b|crowdstrike|defender|carbonblack|sentinel|hayabusa|chainsaw|\byara\b|antivirus|\bav\b|snort|suricata|\bids\b|sysmon|evtx|security\.evtx|windows event/i;
+
+function sourceText(e: ForensicEvent): string {
+  return `${(e.sources ?? []).join(" ")} ${e.artifactName ?? ""} ${e.description ?? ""}`;
+}
+
+export function networkTelemetryWithoutDetector(state: InvestigationState): string | null {
+  const serious = state.findings.some((f) => f.severity === "Critical" || f.severity === "High");
+  if (!serious) return null;
+  let hasNet = false;
+  let hasDetector = false;
+  for (const e of state.forensicTimeline ?? []) {
+    const t = sourceText(e);
+    if (!hasNet && NETWORK_TELEMETRY_RE.test(t)) hasNet = true;
+    if (!hasDetector && DETECTOR_RE.test(t)) hasDetector = true;
+    if (hasNet && hasDetector) return null;
+  }
+  if (hasNet && !hasDetector) {
+    return "Network telemetry is present but NO endpoint-detector feed (EDR / Sigma / Sysmon / EVTX rules) — on-host execution and persistence may be invisible; collect endpoint detections on the active hosts to corroborate the network activity.";
+  }
+  return null;
+}
+
 // The STRUCTURED known-unknowns for a case: uncovered kill-chain phases (each with a collection
-// directive), silence gaps, and lookalike-actor likely-next techniques. Pure + offline.
+// directive), silence gaps, source-yield gaps, and lookalike-actor likely-next techniques. Pure + offline.
 export function buildKnownUnknownItems(
   state: InvestigationState,
   scopedEvents: ForensicEvent[],
@@ -207,7 +238,19 @@ export function buildKnownUnknownItems(
     });
   }
 
-  // 3. Likely-next techniques — what lookalike actors use that this case hasn't shown (predictive hunt
+  // 3. Source-yield gaps (investigation-guidance #10) — a source the case has but can't SEE.
+  //    (a) a large file that produced ZERO events via AI triage (caller supplies the classified
+  //    warning from importMeta — the northpeak proxy-log failure); (b) network telemetry present but no
+  //    endpoint-detector feed. Both are coverage blind spots: the collection ran, the signal didn't land.
+  if (opts.yieldWarning) {
+    const w = opts.yieldWarning;
+    const phases = w.inferredPhases.length ? ` This source would typically evidence ${w.inferredPhases.join(", ")}.` : "";
+    items.push({ kind: "yield_gap", label: `${w.message}.${phases}`, collect: [] });
+  }
+  const netGap = networkTelemetryWithoutDetector(state);
+  if (netGap) items.push({ kind: "yield_gap", label: netGap, collect: [] });
+
+  // 4. Likely-next techniques — what lookalike actors use that this case hasn't shown (predictive hunt
   //    priorities; statistical similarity, NOT attribution). Caller supplies them.
   const maxNext = Math.max(0, opts.maxNextTechniques ?? DEFAULT_MAX_NEXT);
   for (const nt of (opts.nextTechniques ?? []).slice(0, maxNext)) {
@@ -234,7 +277,7 @@ export function renderKnownUnknowns(items: readonly KnownUnknownItem[], max: num
   if (uncovered.length) bullets.push(`No finding yet explains these ATT&CK phases: ${uncovered.join(", ")}.`);
 
   for (const i of items) {
-    if (i.kind === "silence_gap" || i.kind === "likely_next_technique") bullets.push(i.label);
+    if (i.kind === "silence_gap" || i.kind === "likely_next_technique" || i.kind === "yield_gap") bullets.push(i.label);
   }
 
   if (!bullets.length) return "";

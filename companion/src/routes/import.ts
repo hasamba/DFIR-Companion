@@ -265,7 +265,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
               const iDiff = diffIocs(stateBefore.iocs, s.iocs);
               if (options.importMetaStore) {
-                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff });
+                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic" });
                 options.onImportMeta?.(caseId);
               }
               logActivity(options.activityLogStore, options.onActivity, caseId, {
@@ -438,7 +438,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
               const iDiff = diffIocs(stateBefore.iocs, s.iocs);
               if (options.importMetaStore) {
-                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff });
+                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic" });
                 options.onImportMeta?.(caseId);
               }
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {

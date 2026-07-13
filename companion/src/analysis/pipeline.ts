@@ -46,6 +46,7 @@ import {
 import { SHADOW_ARTIFACTS } from "./shadowArtifacts.js";
 import { diffFindings, type FindingsDiff } from "./findingsDiff.js";
 import { buildKnownUnknownItems, renderKnownUnknowns, type KnownUnknownItem } from "./knownUnknowns.js";
+import { classifyImportYield, type ImportMetaStore, type ImportYieldWarning } from "./importMeta.js";
 import { buildAdversaryHintsResult } from "./adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "./adversaryGroupsData.js";
 import type { SynthMetaStore } from "./synthMeta.js";
@@ -1298,6 +1299,9 @@ export interface PipelineOptions {
   // Per-case playbook store. When set, synthesis reads DONE/SKIPPED task status so it can build on
   // completed work instead of re-recommending it (investigation-guidance #2). Absent → no digest.
   playbookStore?: PlaybookStore;
+  // Per-case import-meta store. When set, synthesis + the evidence-gap panel flag a zero-yield AI
+  // import (a source read as "clean" that actually dropped everything — investigation-guidance #10).
+  importMetaStore?: ImportMetaStore;
 }
 
 // Whole-word (id-boundary) match of a finding id inside free text — used to catch a key question's
@@ -3664,21 +3668,34 @@ export class AnalysisPipeline {
   // The STRUCTURED known-unknowns for a case (investigation-guidance #9) — the SINGLE source the
   // synthesis prompt block AND the GET /cases/:id/known-unknowns panel both consume, so the model and
   // the analyst provably see the same gap list. Defensive: a failure here must never break synthesis.
-  private knownUnknownItems(state: InvestigationState, scopedEvents: ForensicEvent[]): KnownUnknownItem[] {
+  private knownUnknownItems(state: InvestigationState, scopedEvents: ForensicEvent[], yieldWarning?: ImportYieldWarning | null): KnownUnknownItem[] {
     try {
       const hints = buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
       return buildKnownUnknownItems(state, scopedEvents, {
         gapOptions: gapEnvOptions(),
         nextTechniques: hints.nextTechniques,
+        yieldWarning,
       });
     } catch {
       return [];
     }
   }
 
-  private knownUnknownsBlock(state: InvestigationState, scopedEvents: ForensicEvent[]): string {
+  // The classified source-yield warning for the LAST import (investigation-guidance #10) — a large file
+  // that yielded ZERO events via AI triage (the northpeak blind spot). Defensive: null when no store,
+  // no import-meta, or nothing anomalous.
+  private async loadYieldWarning(caseId: string): Promise<ImportYieldWarning | null> {
+    if (!this.opts.importMetaStore) return null;
+    try {
+      return classifyImportYield(await this.opts.importMetaStore.load(caseId));
+    } catch {
+      return null;
+    }
+  }
+
+  private async knownUnknownsBlock(state: InvestigationState, scopedEvents: ForensicEvent[], caseId: string): Promise<string> {
     const max = Math.max(0, Number(process.env.DFIR_SYNTH_KNOWN_UNKNOWNS_MAX) || 10);
-    return renderKnownUnknowns(this.knownUnknownItems(state, scopedEvents), max);
+    return renderKnownUnknowns(this.knownUnknownItems(state, scopedEvents, await this.loadYieldWarning(caseId)), max);
   }
 
   // Read-only: the structured evidence-gap items for a case (scope + false-positive filtered, exactly
@@ -3688,7 +3705,7 @@ export class AnalysisPipeline {
     const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
     const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
-    return this.knownUnknownItems(loaded, scopedEvents);
+    return this.knownUnknownItems(loaded, scopedEvents, await this.loadYieldWarning(caseId));
   }
 
   // Candidate-threat-actor preamble (#165), OFF by default (DFIR_SYNTH_ADVERSARY_HINTS). Feeds the
@@ -3753,7 +3770,7 @@ export class AnalysisPipeline {
     const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
     // Known unknowns (#165): the gaps in the story (silent windows, uncovered ATT&CK phases, likely-
     // next techniques) so suggested hunts target what's MISSING, not just re-confirm what's known.
-    const knownUnknownsBlock = this.knownUnknownsBlock(loaded, scopedEvents);
+    const knownUnknownsBlock = await this.knownUnknownsBlock(loaded, scopedEvents, caseId);
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getHuntSuggestPrompt())
@@ -4301,7 +4318,7 @@ export class AnalysisPipeline {
     // next techniques) so the model builds on what's MISSING instead of glossing over it. Plus the
     // (env-gated, default OFF) candidate-actor block. Both DERIVED — computed AFTER the skip-hash
     // above, so they never affect skip-if-unchanged.
-    const knownUnknownsBlock = this.knownUnknownsBlock(state, scopedEvents);
+    const knownUnknownsBlock = await this.knownUnknownsBlock(state, scopedEvents, caseId);
     const adversaryBlock = this.adversaryHintBlock(state);
     // Structured causal evidence (investigation-guidance #5), all DERIVED after the skip-hash so they
     // never affect skip-if-unchanged: the deterministic ATTACK GRAPH (spawn/file-lineage/lateral/network
