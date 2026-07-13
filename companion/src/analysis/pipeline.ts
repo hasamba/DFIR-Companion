@@ -107,7 +107,7 @@ import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisCo
 import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
-import type { KevCatalog } from "./kev.js";
+import { extractCveIds, matchKevEntries, type KevCatalog } from "./kev.js";
 import {
   huntSuggestionsResponseSchema,
   sanitizeHuntSuggestions,
@@ -4646,7 +4646,17 @@ export class AnalysisPipeline {
       const evidenceGraph = buildEvidenceGraph(next);
       const graphLinkedEventIds = new Set(evidenceGraph.edges.flatMap((e) => e.eventIds));
       const inScope = next.forensicTimeline.filter((e) => eligibleIds.has(e.id));
-      const grounded = groundAndScoreFindings({ findings: next.findings, scopedEvents: inScope, iocs: next.iocs, graphLinkedEventIds });
+      // KEV-linked confidence signal (issue #61): the CVEs mentioned in-scope (events + IOCs) that match
+      // the CISA KEV catalog. Empty when no catalog is loaded, so the signal is simply never set then.
+      const kevCatalog = await this.getKevCatalog();
+      let kevCveIds: Set<string> | undefined;
+      if (kevCatalog && kevCatalog.size > 0) {
+        const cveIds = new Set<string>();
+        for (const e of inScope) { extractCveIds(e.description).forEach((id) => cveIds.add(id)); if (e.message) extractCveIds(e.message).forEach((id) => cveIds.add(id)); }
+        for (const i of next.iocs) extractCveIds(i.value).forEach((id) => cveIds.add(id));
+        kevCveIds = new Set(matchKevEntries([...cveIds], kevCatalog).map((m) => m.cveID));
+      }
+      const grounded = groundAndScoreFindings({ findings: next.findings, scopedEvents: inScope, iocs: next.iocs, graphLinkedEventIds, kevCveIds });
       // Intel-verdict gate (investigation-guidance #7): floor an intel-ONLY High/Critical finding (no
       // behavioral corroboration, all its verdict IOCs lone-intel/conflicted) to Medium/≤60 — the
       // northpeak stale-CTI-on-own-server class. Runs after grounding so it sees the corroboration rollup.

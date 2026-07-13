@@ -45,6 +45,11 @@ export interface FindingCorroboration {
   distinctHosts: number;   // distinct event.asset across them
   intelSources: number;    // this finding's related IOCs carrying a malicious/suspicious intel verdict
   graphLinked: boolean;    // any supporting event participates in an evidence-graph causal edge
+  // Issue #61 — three additional deterministic confidence signals, all computed in
+  // groundAndScoreFindings and optional so findings persisted before they existed still validate:
+  verdictFirst?: boolean;      // ≥1 supporting event is a graded (Low+) detection — a tool adjudicated it
+  huntArtifactOnly?: boolean;  // grounded, but EVERY supporting event is Info telemetry (raw collection) — penalised
+  kevLinked?: boolean;         // a CISA-KEV (actively-exploited) CVE appears in the finding, its events, or its IOCs
 }
 
 export interface Finding {

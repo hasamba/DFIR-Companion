@@ -4,6 +4,7 @@ import {
   corroborationLabel,
   UNGROUNDED_CONFIDENCE_CAP,
   SINGLE_SOURCE_CONFIDENCE_CAP,
+  HUNT_ARTIFACT_CONFIDENCE_CAP,
 } from "../../src/analysis/findingGrounding.js";
 import type { Finding, ForensicEvent, IOC, Severity } from "../../src/analysis/stateTypes.js";
 
@@ -48,7 +49,7 @@ describe("groundAndScoreFindings", () => {
     });
     expect(out[0].ungrounded).toBeUndefined();
     expect(out[0].relatedEventIds).toEqual(["e1"]);
-    expect(out[0].corroboration).toEqual({ distinctTools: 2, distinctHosts: 1, intelSources: 0, graphLinked: false });
+    expect(out[0].corroboration).toEqual({ distinctTools: 2, distinctHosts: 1, intelSources: 0, graphLinked: false, verdictFirst: true, huntArtifactOnly: false, kevLinked: false });
     expect(out[0].confidence).toBe(100); // corroborated by 2 tools → not capped
   });
 
@@ -109,5 +110,70 @@ describe("corroborationLabel", () => {
   });
   it("marks a single-tool finding uncorroborated", () => {
     expect(corroborationLabel(f({ corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 0, graphLinked: false } }))).toMatch(/uncorroborated/);
+  });
+  it("surfaces a KEV badge and a hunt-artifact caution", () => {
+    expect(corroborationLabel(f({ corroboration: { distinctTools: 2, distinctHosts: 1, intelSources: 0, graphLinked: false, kevLinked: true } }))).toMatch(/KEV/);
+    expect(corroborationLabel(f({ corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 0, graphLinked: false, huntArtifactOnly: true } }))).toMatch(/hunt-artifact/i);
+  });
+});
+
+describe("groundAndScoreFindings — verdict-first / hunt-artifact / KEV signals (issue #61)", () => {
+  it("marks verdictFirst when a supporting event is graded (Low+), not hunt-artifact-only", () => {
+    const out = groundAndScoreFindings({
+      findings: [f({ id: "f1", confidence: 90, relatedEventIds: ["e1"] })],
+      scopedEvents: [ev({ id: "e1", severity: "High", sources: ["EDR"], asset: "H1" })],
+      iocs: [], graphLinkedEventIds: new Set(),
+    });
+    expect(out[0].corroboration?.verdictFirst).toBe(true);
+    expect(out[0].corroboration?.huntArtifactOnly).toBe(false);
+  });
+
+  it("marks huntArtifactOnly and caps at 55 when every supporting event is Info telemetry", () => {
+    const out = groundAndScoreFindings({
+      findings: [f({ id: "f1", confidence: 90, relatedEventIds: ["e1"] })],
+      scopedEvents: [ev({ id: "e1", severity: "Info", sources: ["Velociraptor"], asset: "H1", artifactName: "Windows.NTFS.MFT" })],
+      iocs: [], graphLinkedEventIds: new Set(),
+    });
+    expect(out[0].corroboration?.huntArtifactOnly).toBe(true);
+    expect(out[0].corroboration?.verdictFirst).toBe(false);
+    expect(out[0].confidence).toBe(HUNT_ARTIFACT_CONFIDENCE_CAP);
+    expect(out[0].confidenceReason).toMatch(/hunt-collection artifacts/i);
+  });
+
+  it("does NOT apply the hunt-artifact cap when intel or KEV backs it", () => {
+    const out = groundAndScoreFindings({
+      findings: [f({ id: "f1", confidence: 90, relatedEventIds: ["e1"], relatedIocs: ["i1"] })],
+      scopedEvents: [ev({ id: "e1", severity: "Info", sources: ["Velociraptor"], asset: "H1" })],
+      iocs: [ioc({ id: "i1", enrichments: [{ source: "VT", verdict: "malicious", fetchedAt: "" }] })],
+      graphLinkedEventIds: new Set(),
+    });
+    expect(out[0].corroboration?.huntArtifactOnly).toBe(true);
+    expect(out[0].confidence).toBe(90); // intel lifts it above the hunt-artifact cap
+  });
+
+  it("marks kevLinked and exempts a single-source finding from the 65 cap", () => {
+    const out = groundAndScoreFindings({
+      findings: [f({ id: "f1", confidence: 90, relatedEventIds: ["e1"], description: "exploitation of CVE-2024-38094" })],
+      scopedEvents: [ev({ id: "e1", severity: "High", sources: ["OneTool"], asset: "H1" })],
+      iocs: [], graphLinkedEventIds: new Set(),
+      kevCveIds: new Set(["CVE-2024-38094"]),
+    });
+    expect(out[0].corroboration?.kevLinked).toBe(true);
+    expect(out[0].confidence).toBe(90); // KEV is independent corroboration → not single-source-capped
+  });
+
+  it("kevLinked reads CVEs from a supporting event's message and related IOC values", () => {
+    const viaEvent = groundAndScoreFindings({
+      findings: [f({ id: "f1", relatedEventIds: ["e1"] })],
+      scopedEvents: [ev({ id: "e1", severity: "High", message: "Suspected CVE-2023-1234 exploit", sources: ["T"], asset: "H" })],
+      iocs: [], graphLinkedEventIds: new Set(), kevCveIds: new Set(["CVE-2023-1234"]),
+    });
+    expect(viaEvent[0].corroboration?.kevLinked).toBe(true);
+    const notInKev = groundAndScoreFindings({
+      findings: [f({ id: "f1", relatedEventIds: ["e1"], description: "CVE-2000-9999" })],
+      scopedEvents: [ev({ id: "e1", severity: "High", sources: ["T"], asset: "H" })],
+      iocs: [], graphLinkedEventIds: new Set(), kevCveIds: new Set(["CVE-2024-38094"]),
+    });
+    expect(notInKev[0].corroboration?.kevLinked).toBe(false);
   });
 });

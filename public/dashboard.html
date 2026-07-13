@@ -9969,8 +9969,15 @@
         const parts = [`${c.distinctTools} tool${c.distinctTools === 1 ? "" : "s"}`, `${c.distinctHosts} host${c.distinctHosts === 1 ? "" : "s"}`];
         if (c.intelSources > 0) parts.push("intel ✓");
         if (c.graphLinked) parts.push("graph-linked");
-        const corroborated = c.distinctTools >= 2 || c.intelSources > 0 || c.graphLinked;
-        rows.push(`<div class="fev-row"><span class="fev-k">Corroboration</span><span class="fev-v"${corroborated ? "" : ' style="color:var(--c-e0a458,#e0a458)"'}>${esc(parts.join(" / "))}${corroborated ? "" : " — uncorroborated"}</span></div>`);
+        // Issue #61 provenance signals: KEV-linked (actively exploited) and verdict-first (a tool
+        // adjudicated it) are positive; hunt-artifact-only (raw collection, no verdict) is a caution.
+        if (c.kevLinked) parts.push("🎯 KEV");
+        if (c.verdictFirst) parts.push("⚑ verdict-first");
+        const corroborated = c.distinctTools >= 2 || c.intelSources > 0 || c.graphLinked || c.kevLinked;
+        const huntCaution = c.huntArtifactOnly && c.intelSources === 0 && !c.kevLinked;
+        const suffix = huntCaution ? " — 🐇 hunt-artifact only (triage before acting)" : (corroborated ? "" : " — uncorroborated");
+        const warn = huntCaution || !corroborated;
+        rows.push(`<div class="fev-row"><span class="fev-k">Corroboration</span><span class="fev-v"${warn ? ' style="color:var(--c-e0a458,#e0a458)"' : ""}>${esc(parts.join(" / "))}${esc(suffix)}</span></div>`);
       }
       const byVal = new Map((iocs || []).map(i => [String(i.value).trim().toLowerCase(), i.value]));
       const vals = new Set();
