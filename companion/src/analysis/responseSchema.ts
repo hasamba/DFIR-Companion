@@ -29,6 +29,11 @@ export const deltaSchema = z.object({
     // Synthesis only: the forensic-event ids this finding is based on. Used to
     // back-link events to the correct findings (extraction can't know finding ids).
     relatedEventIds: z.array(z.string()).optional(),
+    // Rabbit-hole detection (investigation-guidance #13): the model's relevance verdict for genuine-
+    // but-possibly-unrelated activity. 'unrelated-but-real' = real, but NOT part of THIS incident's
+    // attack path (a separate issue to park); 'undetermined' = unsure. The deterministic connectedness
+    // pass is authoritative for 'connected'/'disconnected'; this only refines a disconnected finding.
+    relevance: z.enum(["connected", "unrelated-but-real", "undetermined"]).optional().catch(undefined),
   })),
   iocs: z.array(z.object({
     id: z.string().min(1),

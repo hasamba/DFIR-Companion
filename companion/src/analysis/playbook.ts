@@ -67,6 +67,12 @@ function normalizePriority(p: string): StepPriority {
   return (STEP_PRIORITIES as readonly string[]).includes(v) ? (v as StepPriority) : "medium";
 }
 
+// Drop a priority one notch (rabbit-hole down-weight, #13). "low" is the floor.
+function demotePriority(p: StepPriority): StepPriority {
+  const i = STEP_PRIORITIES.indexOf(p);
+  return STEP_PRIORITIES[Math.min(i + 1, STEP_PRIORITIES.length - 1)];
+}
+
 // A next step's `pointer` is free text (e.g. "finding f1; collect from ALClient07") but the LLM
 // consistently cites finding ids as bare "f<n>" tokens per the synthesis prompt's shape example.
 // Pull out the first token that matches a REAL finding id in this case (case-insensitive) — this
@@ -234,19 +240,27 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
     if (f.status === "dismissed") continue;
     const priority = PRIORITY_FROM_SEVERITY[f.severity] ?? "medium";
     if (priority !== "critical" && priority !== "high") continue;
+    // Rabbit-hole down-weight (investigation-guidance #13): a finding with no causal link to the main
+    // attack path ('disconnected') is a possible rabbit hole — DEMOTE its playbook priority one notch and
+    // reframe it as "verify before chasing" so guidance stops spending top-of-list budget on it, without
+    // hiding it. The deterministic relevance pass already decided this; here we only re-seat it.
+    const rabbitHole = f.relevance === "disconnected";
+    const seedPriority = rabbitHole ? demotePriority(priority) : priority;
     const foldedNotes = foldedNotesByFindingId.get(f.id) ?? [];
     if (opts.useTemplates) {
-      const templateSeeds = buildFindingTemplateSeeds(f);
+      const templateSeeds = buildFindingTemplateSeeds(f).map((t) => rabbitHole ? { ...t, priority: demotePriority(t.priority) } : t);
       appendFoldedNotes(templateSeeds, foldedNotes);
       seeds.push(...templateSeeds);
     } else {
-      const description = foldedNotes.length
-        ? [f.description, `Next step: ${foldedNotes.join("; ")}`].filter(Boolean).join("\n\n")
-        : f.description;
+      const rabbitNote = rabbitHole
+        ? `Possible rabbit hole — no causal link to the main attack path; verify before chasing.${f.relevanceDiscriminator ? ` (${f.relevanceDiscriminator})` : ""}`
+        : "";
+      const description = [f.description, rabbitNote, foldedNotes.length ? `Next step: ${foldedNotes.join("; ")}` : ""]
+        .filter(Boolean).join("\n\n");
       seeds.push({
-        title: `Investigate & remediate: ${f.title}`,
+        title: `${rabbitHole ? "Verify (possible rabbit hole)" : "Investigate & remediate"}: ${f.title}`,
         description,
-        priority,
+        priority: seedPriority,
         source: "finding",
         sourceKey: `finding:${f.id}`,
         relatedFindingId: f.id,
